@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import axios from 'axios';
 import Web3 from 'web3';
-import { TensorFlow } from 'tensorflow';
+import * as tf from '@tensorflow/tfjs'; // Updated import
 import { shopifyAgent } from './agents/shopifyAgent.js';
 import { cryptoAgent } from './agents/cryptoAgent.js';
 import { dataAgent } from './agents/dataAgent.js';
@@ -55,10 +55,18 @@ const runAgents = async () => {
 
 // ML Model for Revenue Optimization
 const optimizeRevenue = async (data) => {
-  const model = await TensorFlow.loadLayersModel('model.json');
-  const input = TensorFlow.tensor([data.price, data.demand]);
-  const prediction = model.predict(input);
-  return prediction.dataSync()[0];
+  try {
+    const model = await tf.loadLayersModel('file://./model.json'); // Ensure model.json exists
+    const input = tf.tensor([data.price, data.demand]);
+    const prediction = model.predict(input);
+    const result = prediction.dataSync()[0];
+    input.dispose();
+    prediction.dispose();
+    return result;
+  } catch (error) {
+    console.error('ML Model Error:', error);
+    return data.price; // Fallback to original price
+  }
 };
 
 // API Endpoints
