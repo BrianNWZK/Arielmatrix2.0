@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract APIKeyGenerator {
+    mapping(address => string) public apiKeys;
+
+    function generateKey(address user) external returns (string memory) {
+        string memory key = string(abi.encodePacked(block.timestamp, user));
+        apiKeys[user] = key;
+        return key;
+    }
+
+    function validateKey(address user, string memory key) external view returns (bool) {
+        return keccak256(abi.encodePacked(apiKeys[user])) == keccak256(abi.encodePacked(key));
+    }
+}
