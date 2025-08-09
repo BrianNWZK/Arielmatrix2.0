@@ -1,0 +1,53 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build artifacts
+dist/
+build/
+artifacts/
+cache/
+coverage/
+
+# Hardhat specific
+deployments/
+artifacts-*
+cache-*
+
+# Puppeteer cache
+.puppeteer_cache/
+
+# Temporary files
+*.log
+*.log.*
+*.tmp
+temp/
+api-keys.json
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Sensitive files
+secrets.json
+private-key.json
+aws-credentials.json
+keys.json
+*.key
+*.secret
