@@ -1,8 +1,5 @@
-# Use Node.js 22.16.0 as the base image
+# Use Node.js 22.16.0
 FROM node:22.16.0
-
-# Set working directory
-WORKDIR /app
 
 # Install dependencies for puppeteer
 RUN apt-get update && apt-get install -y \
@@ -18,6 +15,13 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user
+RUN useradd -m appuser
+USER appuser
+
+# Set working directory
+WORKDIR /app
+
 # Copy backend package.json and install dependencies
 COPY backend/package.json backend/package-lock.json* ./backend/
 RUN npm install --prefix ./backend
@@ -26,17 +30,17 @@ RUN npm install --prefix ./backend
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
 RUN npm install --prefix ./frontend
 
-# Copy the rest of the application
+# Copy all files
 COPY . .
 
-# Build the frontend
+# Build frontend
 RUN npm run build --prefix ./frontend
 
-# Copy frontend build to backend public directory
+# Serve frontend static files through backend
 RUN cp -r frontend/dist ./backend/public
 
-# Expose the port
+# Expose port
 EXPOSE 10000
 
-# Start the backend
+# Start backend
 CMD ["npm", "start", "--prefix", "./backend"]
