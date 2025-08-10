@@ -17,10 +17,13 @@ RUN apt-get update && apt-get install -y \
 
 # Create a non-root user
 RUN useradd -m appuser
-USER appuser
 
-# Set working directory
+# Set working directory and permissions
 WORKDIR /app
+RUN mkdir -p /app/backend && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Copy backend package.json and install dependencies
 COPY backend/package.json backend/package-lock.json* ./backend/
