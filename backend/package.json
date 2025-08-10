@@ -11,8 +11,9 @@
     "express": "^4.19.2",
     "axios": "^1.7.7",
     "web3": "^4.11.1",
-    "@tensorflow/tfjs": "^4.22.0",
+    "tensorflow": "^0.13.0",
     "puppeteer": "^23.0.2",
+    "playwright": "^1.45.1",
     "hardhat": "^2.22.0"
   },
   "devDependencies": {
