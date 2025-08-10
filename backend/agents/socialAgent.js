@@ -2,8 +2,9 @@ import axios from 'axios';
 
 export const socialAgent = async (CONFIG) => {
   try {
-    if (!process.env.TWITTER_API_KEY) {
-      throw new Error('Twitter API key missing');
+    if (!process.env.TWITTER_API_KEY || process.env.TWITTER_API_KEY.includes('fallback')) {
+      console.log('Fallback keys detected, skipping social revenue generation');
+      return {};
     }
     const trends = await axios.get(`${CONFIG.TWITTER_API}?query=trending`, {
       headers: { Authorization: `Bearer ${process.env.TWITTER_API_KEY}` },
