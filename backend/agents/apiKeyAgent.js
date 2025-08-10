@@ -4,9 +4,33 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 
+async function getTempEmail() {
+  try {
+    const response = await axios.get('https://api.temp-mail.org/request/mail/id', { timeout: 5000 });
+    return response.data.email || 'fallback@example.com';
+  } catch {
+    console.warn('Temp email API failed, trying fallback service');
+    try {
+      const fallbackResponse = await axios.get('https://api.temp-mail.io/request/mail', { timeout: 5000 });
+      return fallbackResponse.data.email || 'fallback@example.com';
+    } catch {
+      console.warn('Fallback email service failed, using static email');
+      return 'fallback@example.com';
+    }
+  }
+}
+
+async function signUpAndGetKey(page, url, emailSelector, submitSelector, keyExtractor) {
+  await page.goto(url, { waitUntil: 'networkidle2' });
+  await page.waitForSelector(emailSelector, { timeout: 10000 }).catch(() => console.warn('Email field not found'));
+  await page.type(emailSelector, email);
+  await page.click(submitSelector);
+  await page.waitForTimeout(Math.random() * 5000 + 2000);
+  return await page.evaluate(keyExtractor) || 'default_key';
+}
+
 export const apiKeyAgent = async (CONFIG) => {
   try {
-    // Configure Puppeteer with updated Chrome path
     const browser = await puppeteer.launch({
       headless: true,
       executablePath: '/home/appuser/.cache/puppeteer/chrome/linux-139.0.7258.66/chrome-linux64/chrome',
@@ -15,64 +39,32 @@ export const apiKeyAgent = async (CONFIG) => {
     });
     const page = await browser.newPage();
 
-    // Generate temporary email with fallback
-    let email;
-    try {
-      const emailResponse = await axios.get('https://api.temp-mail.org/request/mail/id', { timeout: 5000 });
-      email = emailResponse.data.email || 'fallback@example.com';
-    } catch {
-      console.warn('Temp email API failed, trying fallback service');
-      try {
-        const fallbackResponse = await axios.get('https://api.temp-mail.io/request/mail', { timeout: 5000 });
-        email = fallbackResponse.data.email || 'fallback@example.com';
-      } catch {
-        console.warn('Fallback email service failed, using static email');
-        email = 'fallback@example.com';
-      }
-    }
+    const email = await getTempEmail();
 
-    // Sign up for NewsAPI
-    await page.goto('https://newsapi.org/register', { waitUntil: 'networkidle2' });
-    await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('NewsAPI email field not found'));
-    await page.type('#email, input[name="email"]', email);
-    await page.click('button[type="submit"], #signup-button');
-    await page.waitForTimeout(Math.random() * 5000 + 2000);
-    const newsApiKey = await fetchApiKeyFromEmail(email, 'newsapi.org') || CONFIG.NEWS_API_KEY || 'fallback_news_key';
+    // Fetch keys from various platforms
+    const newsApiKey = await signUpAndGetKey(page, 'https://newsapi.org/register', '#email, input[name="email"]', 'button[type="submit"], #signup-button', () => document.querySelector('#api-key')?.textContent);
+    const weatherApiKey = await signUpAndGetKey(page, 'https://openweathermap.org/api', '#email, input[name="email"]', 'button[type="submit"], #signup', () => document.querySelector('#api-key')?.textContent);
+    const xApiKey = await signUpAndGetKey(page, 'https://developer.x.com/en/portal/register', '#email, input[name="email"]', 'button[type="submit"], #submit', () => document.querySelector('#api-key')?.textContent);
+    const bscScanApiKey = await signUpAndGetKey(page, 'https://bscscan.com/register', '#email, input[name="email"]', 'button[type="submit"], #btnRegister', () => document.querySelector('#api-key')?.textContent);
 
-    // Sign up for OpenWeatherMap
-    await page.goto('https://openweathermap.org/api', { waitUntil: 'networkidle2' });
-    await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('OpenWeatherMap email field not found'));
-    await page.type('#email, input[name="email"]', email);
-    await page.click('button[type="submit"], #signup');
-    await page.waitForTimeout(Math.random() * 5000 + 2000);
-    const weatherApiKey = await fetchApiKeyFromEmail(email, 'openweathermap.org') || CONFIG.WEATHER_API_KEY || 'fallback_weather_key';
+    // For APIs like Dog API, Cat API (require keys)
+    const dogApiKey = await signUpAndGetKey(page, 'https://dog.ceo/dog-api/', '#email, input[name="email"]', 'button[type="submit"]', () => document.querySelector('#api-key')?.textContent);
+    const catApiKey = await signUpAndGetKey(page, 'https://thecatapi.com/', '#email, input[name="email"]', 'button[type="submit"]', () => document.querySelector('#api-key')?.textContent);
 
-    // Sign up for X API (updated from Twitter)
-    await page.goto('https://developer.x.com/en/portal/register', { waitUntil: 'networkidle2' });
-    await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('X API email field not found'));
-    await page.type('#email, input[name="email"]', email);
-    await page.click('button[type="submit"], #submit');
-    await page.waitForTimeout(Math.random() * 5000 + 2000);
-    const xApiKey = await fetchApiKeyFromEmail(email, 'x.com') || CONFIG.TWITTER_API_KEY || 'fallback_x_key';
+    // For RapidAPI (sign up and get key for multiple APIs)
+    const rapidApiKey = await signUpAndGetKey(page, 'https://rapidapi.com/auth/sign-up', '#email, input[name="email"]', 'button[type="submit"]', () => document.querySelector('#api-key')?.textContent);
 
-    // Sign up for BSCScan if needed
-    let bscScanApiKey = CONFIG.BSCSCAN_API_KEY;
-    const testBscScan = await axios.get(`${CONFIG.BSCSCAN_API}?module=account&action=balance&address=${CONFIG.GAS_WALLET}&apikey=${bscScanApiKey}`, { timeout: 5000 }).catch(() => null);
-    if (!testBscScan || testBscScan.data.status !== '1') {
-      await page.goto('https://bscscan.com/register', { waitUntil: 'networkidle2' });
-      await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('BSCScan email field not found'));
-      await page.type('#email, input[name="email"]', email);
-      await page.click('button[type="submit"], #btnRegister');
-      await page.waitForTimeout(Math.random() * 5000 + 2000);
-      bscScanApiKey = await fetchApiKeyFromEmail(email, 'bscscan.com') || CONFIG.BSCSCAN_API_KEY || 'fallback_bscscan_key';
-    }
+    // REST Countries, Public APIs don't need keys
 
-    // Store keys locally for Render API update
+    // Store keys locally
     const keys = {
       NEWS_API_KEY: newsApiKey,
       WEATHER_API_KEY: weatherApiKey,
       X_API_KEY: xApiKey,
       BSCSCAN_API_KEY: bscScanApiKey,
+      DOG_API_KEY: dogApiKey,
+      CAT_API_KEY: catApiKey,
+      RAPID_API_KEY: rapidApiKey,
     };
     try {
       const filePath = path.join('/app/backend', 'api-keys.json');
@@ -81,7 +73,6 @@ export const apiKeyAgent = async (CONFIG) => {
       console.log('API Keys acquired and saved:', keys);
     } catch (error) {
       console.error('Failed to write api-keys.json:', error);
-      // Fallback to returning keys without writing to file
     }
 
     await browser.close();
@@ -101,64 +92,25 @@ async function apiKeyAgentWithPlaywright(CONFIG) {
     });
     const page = await browser.newPage();
 
-    // Generate temporary email with fallback
-    let email;
-    try {
-      const emailResponse = await axios.get('https://api.temp-mail.org/request/mail/id', { timeout: 5000 });
-      email = emailResponse.data.email || 'fallback@example.com';
-    } catch {
-      console.warn('Temp email API failed, trying fallback service');
-      try {
-        const fallbackResponse = await axios.get('https://api.temp-mail.io/request/mail', { timeout: 5000 });
-        email = fallbackResponse.data.email || 'fallback@example.com';
-      } catch {
-        console.warn('Fallback email service failed, using static email');
-        email = 'fallback@example.com';
-      }
-    }
+    const email = await getTempEmail();
 
-    // Sign up for NewsAPI
-    await page.goto('https://newsapi.org/register', { waitUntil: 'networkidle2' });
-    await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('NewsAPI email field not found'));
-    await page.type('#email, input[name="email"]', email);
-    await page.click('button[type="submit"], #signup-button');
-    await page.waitForTimeout(Math.random() * 5000 + 2000);
-    const newsApiKey = await fetchApiKeyFromEmail(email, 'newsapi.org') || CONFIG.NEWS_API_KEY || 'fallback_news_key';
+    // Similar sign-up logic as Puppeteer
+    const newsApiKey = await signUpAndGetKey(page, 'https://newsapi.org/register', '#email, input[name="email"]', 'button[type="submit"], #signup-button', () => document.querySelector('#api-key')?.textContent);
+    const weatherApiKey = await signUpAndGetKey(page, 'https://openweathermap.org/api', '#email, input[name="email"]', 'button[type="submit"], #signup', () => document.querySelector('#api-key')?.textContent);
+    const xApiKey = await signUpAndGetKey(page, 'https://developer.x.com/en/portal/register', '#email, input[name="email"]', 'button[type="submit"], #submit', () => document.querySelector('#api-key')?.textContent);
+    const bscScanApiKey = await signUpAndGetKey(page, 'https://bscscan.com/register', '#email, input[name="email"]', 'button[type="submit"], #btnRegister', () => document.querySelector('#api-key')?.textContent);
+    const dogApiKey = await signUpAndGetKey(page, 'https://dog.ceo/dog-api/', '#email, input[name="email"]', 'button[type="submit"]', () => document.querySelector('#api-key')?.textContent);
+    const catApiKey = await signUpAndGetKey(page, 'https://thecatapi.com/', '#email, input[name="email"]', 'button[type="submit"]', () => document.querySelector('#api-key')?.textContent);
+    const rapidApiKey = await signUpAndGetKey(page, 'https://rapidapi.com/auth/sign-up', '#email, input[name="email"]', 'button[type="submit"]', () => document.querySelector('#api-key')?.textContent);
 
-    // Sign up for OpenWeatherMap
-    await page.goto('https://openweathermap.org/api', { waitUntil: 'networkidle2' });
-    await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('OpenWeatherMap email field not found'));
-    await page.type('#email, input[name="email"]', email);
-    await page.click('button[type="submit"], #signup');
-    await page.waitForTimeout(Math.random() * 5000 + 2000);
-    const weatherApiKey = await fetchApiKeyFromEmail(email, 'openweathermap.org') || CONFIG.WEATHER_API_KEY || 'fallback_weather_key';
-
-    // Sign up for X API (updated from Twitter)
-    await page.goto('https://developer.x.com/en/portal/register', { waitUntil: 'networkidle2' });
-    await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('X API email field not found'));
-    await page.type('#email, input[name="email"]', email);
-    await page.click('button[type="submit"], #submit');
-    await page.waitForTimeout(Math.random() * 5000 + 2000);
-    const xApiKey = await fetchApiKeyFromEmail(email, 'x.com') || CONFIG.TWITTER_API_KEY || 'fallback_x_key';
-
-    // Sign up for BSCScan if needed
-    let bscScanApiKey = CONFIG.BSCSCAN_API_KEY;
-    const testBscScan = await axios.get(`${CONFIG.BSCSCAN_API}?module=account&action=balance&address=${CONFIG.GAS_WALLET}&apikey=${bscScanApiKey}`, { timeout: 5000 }).catch(() => null);
-    if (!testBscScan || testBscScan.data.status !== '1') {
-      await page.goto('https://bscscan.com/register', { waitUntil: 'networkidle2' });
-      await page.waitForSelector('#email, input[name="email"]', { timeout: 10000 }).catch(() => console.warn('BSCScan email field not found'));
-      await page.type('#email, input[name="email"]', email);
-      await page.click('button[type="submit"], #btnRegister');
-      await page.waitForTimeout(Math.random() * 5000 + 2000);
-      bscScanApiKey = await fetchApiKeyFromEmail(email, 'bscscan.com') || CONFIG.BSCSCAN_API_KEY || 'fallback_bscscan_key';
-    }
-
-    // Store keys locally for Render API update
     const keys = {
       NEWS_API_KEY: newsApiKey,
       WEATHER_API_KEY: weatherApiKey,
       X_API_KEY: xApiKey,
       BSCSCAN_API_KEY: bscScanApiKey,
+      DOG_API_KEY: dogApiKey,
+      CAT_API_KEY: catApiKey,
+      RAPID_API_KEY: rapidApiKey,
     };
     try {
       const filePath = path.join('/app/backend', 'api-keys.json');
@@ -167,7 +119,6 @@ async function apiKeyAgentWithPlaywright(CONFIG) {
       console.log('API Keys acquired and saved:', keys);
     } catch (error) {
       console.error('Failed to write api-keys.json:', error);
-      // Fallback to returning keys without writing to file
     }
 
     await browser.close();
@@ -179,31 +130,27 @@ async function apiKeyAgentWithPlaywright(CONFIG) {
       WEATHER_API_KEY: CONFIG.WEATHER_API_KEY || 'fallback_weather_key',
       X_API_KEY: CONFIG.TWITTER_API_KEY || 'fallback_x_key',
       BSCSCAN_API_KEY: CONFIG.BSCSCAN_API_KEY || 'fallback_bscscan_key',
+      DOG_API_KEY: CONFIG.DOG_API_KEY || 'fallback_dog_key',
+      CAT_API_KEY: CONFIG.CAT_API_KEY || 'fallback_cat_key',
+      RAPID_API_KEY: CONFIG.RAPID_API_KEY || 'fallback_rapid_key',
     };
   }
-}
+};
 
-async function fetchApiKeyFromEmail(email, domain, retries = 3, delay = 2000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+async function fetchApiKeyFromEmail(email, domain) {
+  try {
+    const response = await axios.get(`https://api.temp-mail.org/request/mail/id/${email}`, { timeout: 5000 });
+    const emailContent = response.data.find((mail) => mail?.from?.includes(domain));
+    return emailContent?.body?.match(/[a-z0-9]{32}/)?.[0] || 'default_key';
+  } catch {
+    console.warn(`Failed to fetch email for ${domain}, trying fallback service`);
     try {
-      const response = await axios.get(`https://api.temp-mail.org/request/mail/id/${email}`, { timeout: 5000 });
-      const emailContent = response.data.find((mail) => mail?.from?.includes(domain));
-      const key = emailContent?.body?.match(/[a-z0-9]{32}/)?.[0] || 'default_key';
-      if (key !== 'default_key') return key;
+      const fallbackResponse = await axios.get(`https://api.temp-mail.io/request/mail/${email}`, { timeout: 5000 });
+      const emailContent = fallbackResponse.data.find((mail) => mail?.from?.includes(domain));
+      return emailContent?.body?.match(/[a-z0-9]{32}/)?.[0] || 'default_key';
     } catch {
-      console.warn(`Attempt ${attempt}/${retries}: Failed to fetch email for ${domain}`);
-      if (attempt < retries) await new Promise(resolve => setTimeout(resolve, delay));
-    }
-    if (attempt === retries) {
-      console.warn(`Trying fallback service for ${domain}`);
-      try {
-        const fallbackResponse = await axios.get(`https://api.temp-mail.io/request/mail/${email}`, { timeout: 5000 });
-        const emailContent = fallbackResponse.data.find((mail) => mail?.from?.includes(domain));
-        return emailContent?.body?.match(/[a-z0-9]{32}/)?.[0] || 'default_key';
-      } catch {
-        console.warn(`Fallback email fetch failed for ${domain}, using default key`);
-        return 'default_key';
-      }
+      console.warn(`Fallback email fetch failed for ${domain}, using default key`);
+      return 'default_key';
     }
   }
 }
