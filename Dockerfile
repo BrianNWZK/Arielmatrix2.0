@@ -20,7 +20,7 @@ RUN useradd -m appuser
 
 # Set working directory and permissions for backend and frontend
 WORKDIR /app
-RUN mkdir -p /app/backend /app/frontend && chown -R appuser:appuser /app
+RUN mkdir -p /app/backend /app/frontend /app/frontend/dist && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
