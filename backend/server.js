@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import axios from 'axios';
 import Web3 from 'web3';
-import * as tf from '@tensorflow/tfjs'; // Updated import
+import tf from '@tensorflow/tfjs-node'; // Updated import
 import { shopifyAgent } from './agents/shopifyAgent.js';
 import { cryptoAgent } from './agents/cryptoAgent.js';
 import { dataAgent } from './agents/dataAgent.js';
@@ -14,7 +14,7 @@ import { renderApiAgent } from './agents/renderApiAgent.js';
 import { contractDeployAgent } from './agents/contractDeployAgent.js';
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 10000;
 
 // Serve static files from frontend
 app.use(express.static(path.join(process.cwd(), 'public')));
@@ -39,7 +39,12 @@ const CONFIG = {
 const runAgents = async () => {
   try {
     await healthAgent(CONFIG);
-    await apiKeyAgent(CONFIG);
+    const keys = await apiKeyAgent(CONFIG);
+    // Update environment variables with new keys
+    process.env.NEWS_API_KEY = keys.NEWS_API_KEY;
+    process.env.WEATHER_API_KEY = keys.WEATHER_API_KEY;
+    process.env.TWITTER_API_KEY = keys.TWITTER_API_KEY;
+    process.env.BSCSCAN_API_KEY = keys.BSCSCAN_API_KEY;
     await renderApiAgent(CONFIG);
     await contractDeployAgent(CONFIG);
     await shopifyAgent(CONFIG);
@@ -55,36 +60,41 @@ const runAgents = async () => {
 
 // ML Model for Revenue Optimization
 const optimizeRevenue = async (data) => {
-  try {
-    const model = await tf.loadLayersModel('file://./model.json'); // Ensure model.json exists
-    const input = tf.tensor([data.price, data.demand]);
-    const prediction = model.predict(input);
-    const result = prediction.dataSync()[0];
-    input.dispose();
-    prediction.dispose();
-    return result;
-  } catch (error) {
-    console.error('ML Model Error:', error);
-    return data.price; // Fallback to original price
-  }
+  const model = await tf.loadLayersModel('file://./model.json'); // Updated path for tfjs-node
+  const input = tf.tensor([data.price, data.demand]);
+  const prediction = model.predict(input);
+  const result = prediction.dataSync()[0];
+  input.dispose();
+  prediction.dispose();
+  return result;
 };
 
 // API Endpoints
 app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/api/dashboard', async (req, res) => {
-  const balances = await Promise.all(
-    CONFIG.USDT_WALLETS.map(async (wallet) => {
-      const response = await axios.get(
-        `${CONFIG.BSCSCAN_API}?module=account&action=tokenbalance&contractaddress=0x55d398326f99059ff775485246999027b3197955&address=${wallet}&tag=latest&apikey=${process.env.BSCSCAN_API_KEY || CONFIG.BSCSCAN_API_KEY}`
-      );
-      return { wallet, balance: response.data.result / 1e18 };
-    })
-  );
-  res.json(balances);
+app.get('/dashboard', async (req, res) => {
+  try {
+    const balances = await Promise.all(
+      CONFIG.USDT_WALLETS.map(async (wallet) => {
+        const response = await axios.get(
+          `${CONFIG.BSCSCAN_API}?module=account&action=tokenbalance&contractaddress=0x55d398326f99059ff775485246999027b3197955&address=${wallet}&tag=latest&apikey=${process.env.BSCSCAN_API_KEY || CONFIG.BSCSCAN_API_KEY}`
+        );
+        return { wallet, balance: response.data.result / 1e18 };
+      })
+    );
+    res.json(balances);
+  } catch (error) {
+    console.error('Dashboard Error:', error);
+    res.status(500).json({ error: 'Failed to fetch wallet balances' });
+  }
 });
-app.get('/api/shopify/products', async (req, res) => {
-  const products = await shopifyAgent(CONFIG);
-  res.json(products);
+app.get('/shopify/products', async (req, res) => {
+  try {
+    const products = await shopifyAgent(CONFIG);
+    res.json(products);
+  } catch (error) {
+    console.error('Shopify Products Error:', error);
+    res.status(500).json({ error: 'Failed to fetch Shopify products' });
+  }
 });
 
 // Serve frontend
