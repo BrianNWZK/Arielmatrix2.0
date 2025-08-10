@@ -22,8 +22,9 @@ WORKDIR /app
 # Copy backend package.json and install dependencies
 COPY backend/package.json backend/package-lock.json* ./backend/
 RUN npm install --prefix ./backend
+# Install Puppeteer and Playwright browsers
 RUN npx puppeteer browsers install chrome
-RUN npx playwright install chromium
+RUN npm install playwright@1.48.2 --prefix ./backend && npx playwright install chromium --prefix ./backend
 
 # Copy frontend package.json and install dependencies
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
@@ -62,12 +63,14 @@ RUN mkdir -p /app/backend /app/frontend /app/frontend/dist /app/backend/public /
 
 # Copy from builder with chown to appuser
 COPY --from=builder --chown=appuser:appuser /app /app
+COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
+COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
 # Switch to non-root user
 USER appuser
 
 # Serve frontend static files through backend
-RUN cp -r frontend/dist ./backend/public
+RUN cp -r /app/frontend/dist /app/backend/public
 
 # Expose port
 EXPOSE 10000
