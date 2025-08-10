@@ -40,10 +40,6 @@ api-keys.json
 *.sublime-project
 *.sublime-workspace
 
-# OS generated files
-.DS_Store
-Thumbs.db
-
 # Sensitive files
 secrets.json
 private-key.json
@@ -51,3 +47,6 @@ aws-credentials.json
 keys.json
 *.key
 *.secret
+
+# Exclude model weights (remove this line to include model files)
+# *.weights.bin
