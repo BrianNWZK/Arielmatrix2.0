@@ -12,12 +12,11 @@
     "axios": "^1.7.7",
     "web3": "^4.11.1",
     "@tensorflow/tfjs-node": "^4.22.0",
-    "puppeteer": "^23.5.3",
+    "puppeteer": "^24.16.0",
     "playwright": "^1.48.2",
     "hardhat": "^2.22.12",
-    "@nomiclabs/hardhat-ethers": "^2.2.3",
-    "@nomiclabs/hardhat-waffle": "^2.0.6",
-    "ethers": "^5.7.2"
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "ethers": "^6.13.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
