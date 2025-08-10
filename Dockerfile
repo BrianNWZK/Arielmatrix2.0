@@ -24,7 +24,7 @@ COPY backend/package.json backend/package-lock.json* ./backend/
 RUN npm install --prefix ./backend
 # Install Puppeteer and Playwright browsers
 RUN npx puppeteer browsers install chrome@139.0.7258.66
-RUN npm install playwright@1.48.2 --prefix ./backend && npx playwright install chromium --with-deps
+RUN npm install playwright@1.48.2 node-cron@3.0.3 --prefix ./backend && npx playwright install chromium --with-deps
 
 # Copy frontend package.json and install dependencies
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
@@ -39,7 +39,7 @@ RUN npm run build --prefix ./frontend
 # Final stage (non-root)
 FROM node:22.16.0
 
-# Install dependencies for puppeteer, playwright, and cron
+# Install dependencies for puppeteer and playwright
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -52,7 +52,6 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
-    cron \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -76,5 +75,5 @@ RUN cp -r /app/frontend/dist /app/backend/public
 # Expose port
 EXPOSE 10000
 
-# Start backend with cron for scheduled tasks
-CMD ["sh", "-c", "npm start --prefix ./backend"]
+# Start backend
+CMD ["npm", "start", "--prefix", "./backend"]
