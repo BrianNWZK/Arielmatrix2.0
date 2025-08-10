@@ -29,14 +29,14 @@ const CONFIG = {
   STORE_SECRET: process.env.STORE_SECRET,
   ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET,
   COINGECKO_API: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
-  X_API: 'https://api.x.com/2/tweets/search/recent', // Updated from TWITTER_API
+  X_API: 'https://api.x.com/2/tweets/search/recent',
   BSC_NODE: 'https://bsc-dataseed.binance.org/',
   BSCSCAN_API: 'https://api.bscscan.com/api',
   USDT_WALLETS: process.env.USDT_WALLETS ? process.env.USDT_WALLETS.split(',') : [],
   GAS_WALLET: process.env.GAS_WALLET,
   BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
   RENDER_API_TOKEN: process.env.RENDER_API_TOKEN,
-  STRIPE_API_KEY: process.env.STRIPE_API_KEY, // For forex subscriptions
+  STRIPE_API_KEY: process.env.STRIPE_API_KEY,
 };
 
 // Autonomous Agents
@@ -44,11 +44,12 @@ const runAgents = async () => {
   try {
     await healthAgent(CONFIG);
     const keys = await apiKeyAgent(CONFIG);
-    // Update environment variables with new keys
     process.env.NEWS_API_KEY = keys.NEWS_API_KEY;
     process.env.WEATHER_API_KEY = keys.WEATHER_API_KEY;
-    process.env.X_API_KEY = keys.X_API_KEY; // Updated to X
+    process.env.X_API_KEY = keys.X_API_KEY;
     process.env.BSCSCAN_API_KEY = keys.BSCSCAN_API_KEY;
+    process.env.REDDIT_API_KEY = keys.REDDIT_API_KEY;
+    process.env.SOLANA_API_KEY = keys.SOLANA_API_KEY;
     await renderApiAgent(CONFIG);
     await contractDeployAgent(CONFIG);
     await shopifyAgent(CONFIG);
@@ -56,8 +57,8 @@ const runAgents = async () => {
     await dataAgent(CONFIG);
     await socialAgent(CONFIG);
     await complianceAgent(CONFIG);
-    await adRevenueAgent(CONFIG); // Pet content with ads
-    await forexSignalAgent(CONFIG); // Forex signals with subscriptions
+    await adRevenueAgent(CONFIG);
+    await forexSignalAgent(CONFIG);
   } catch (error) {
     console.error('Agent Error:', error);
     setTimeout(runAgents, 5000);
@@ -116,7 +117,6 @@ app.get('/shopify/products', async (req, res) => {
   }
 });
 
-// New endpoint for ad revenue stats
 app.get('/ad-revenue', async (req, res) => {
   try {
     const adStats = await adRevenueAgent(CONFIG);
@@ -127,7 +127,6 @@ app.get('/ad-revenue', async (req, res) => {
   }
 });
 
-// New endpoint for forex signals
 app.get('/forex-signals', async (req, res) => {
   try {
     const signals = await forexSignalAgent(CONFIG);
@@ -145,5 +144,5 @@ app.get('*', (req, res) => {
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-  runAgents(); // Initial run
+  runAgents();
 });
