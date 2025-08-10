@@ -4,17 +4,19 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "dev": "nodemon server.js",
     "precommit": "node scripts/precommit.js"
   },
   "dependencies": {
-    "@tensorflow/tfjs-node": "^4.22.0",
+    "express": "^4.19.2",
     "axios": "^1.7.7",
-    "express": "^4.21.0",
-    "playwright": "^1.48.2",
-    "web3": "^4.11.1"
+    "web3": "^4.11.1",
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "puppeteer": "^23.0.2",
+    "playwright": "^1.45.1",
+    "hardhat": "^2.22.0"
   },
   "devDependencies": {
-    "eslint": "^9.12.0",
-    "eslint-plugin-node": "^11.1.0"
+    "nodemon": "^3.1.4"
   }
 }
