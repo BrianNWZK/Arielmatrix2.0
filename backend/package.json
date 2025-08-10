@@ -8,15 +8,20 @@
     "precommit": "node scripts/precommit.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
+    "express": "^4.21.0",
     "axios": "^1.7.7",
     "web3": "^4.11.1",
     "@tensorflow/tfjs-node": "^4.22.0",
-    "puppeteer": "^23.0.2",
-    "playwright": "^1.45.1",
-    "hardhat": "^2.22.0"
+    "puppeteer": "^23.5.3",
+    "playwright": "^1.48.2",
+    "hardhat": "^2.22.12",
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@nomiclabs/hardhat-waffle": "^2.0.6",
+    "ethers": "^5.7.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.4",
+    "eslint": "^9.12.0",
+    "eslint-plugin-node": "^11.1.0"
   }
 }
