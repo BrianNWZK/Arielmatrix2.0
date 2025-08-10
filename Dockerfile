@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y \
 # Create a non-root user
 RUN useradd -m appuser
 
-# Set working directory and permissions
+# Set working directory and permissions for backend and frontend
 WORKDIR /app
-RUN mkdir -p /app/backend && chown -R appuser:appuser /app
+RUN mkdir -p /app/backend /app/frontend && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
