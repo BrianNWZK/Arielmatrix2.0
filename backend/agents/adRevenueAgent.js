@@ -1,26 +1,55 @@
 import axios from 'axios';
-import { getAdCode } from './adsenseApi.js'; // Assume this fetches AdSense code using fetched key
+import { fetchAdSenseData } from './adsenseApi.js';
 
 export const adRevenueAgent = async (CONFIG) => {
   try {
-    const dogPic = await axios.get('https://dog.ceo/api/breeds/image/random', { headers: { 'x-api-key': CONFIG.DOG_API_KEY } });
-    const catPic = await axios.get('https://thecatapi.com/v1/images/search', { headers: { 'x-api-key': CONFIG.CAT_API_KEY } });
-    const news = await axios.get('https://newsapi.org/v2/top-headlines', { headers: { 'x-api-key': CONFIG.NEWS_API_KEY } });
-    const countries = await axios.get('https://restcountries.com/v3.1/all');
+    // Fetch pet content from Dog and Cat APIs
+    const dogResponse = await axios.get('https://dog.ceo/api/breeds/image/random', {
+      headers: { 'x-api-key': CONFIG.DOG_API_KEY },
+      timeout: 10000,
+    });
+    const catResponse = await axios.get('https://api.thecatapi.com/v1/images/search', {
+      headers: { 'x-api-key': CONFIG.CAT_API_KEY },
+      timeout: 10000,
+    });
 
-    // Novel: Generate pet meme with localized news sentiment and ads
-    const memeContent = `Dog Pic: ${dogPic.data.message}\nCat Pic: ${catPic.data[0].url}\nLocalized News: ${news.data.articles[0].title} from ${countries.data[0].name.common}`;
-    const adCode = await getAdCode(CONFIG.RAPID_API_KEY); // Fetch AdSense ad code using RapidAPI key
+    // Fetch news for context
+    const newsResponse = await axios.get('https://newsapi.org/v2/top-headlines', {
+      headers: { 'x-api-key': CONFIG.NEWS_API_KEY },
+      params: { category: 'general', pageSize: 5 },
+      timeout: 10000,
+    });
 
-    // Post to social using X/Instagram/Reddit APIs
-    await axios.post('https://api.twitter.com/2/tweets', { text: memeContent + adCode }, { headers: { 'Authorization': `Bearer ${CONFIG.X_API_KEY}` } });
-    // Similar for Instagram and Reddit
+    // Generate pet content post
+    const petContent = {
+      image: dogResponse.data.message || catResponse.data[0]?.url,
+      caption: `Cute pet of the day! In the news: ${newsResponse.data.articles[0]?.title || 'No news today!'}`,
+    };
 
-    // Monetize: Track clicks on ads/affiliates, generate revenue
-    console.log('Novel revenue generated from pet meme with ads');
-    return 'revenue_generated';
+    // Post to Reddit for visibility
+    if (CONFIG.REDDIT_API_KEY) {
+      await axios.post('https://oauth.reddit.com/api/submit', {
+        sr: 'pets',
+        kind: 'link',
+        title: 'Daily Cute Pet Post',
+        url: petContent.image,
+        text: petContent.caption,
+      }, {
+        headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}` },
+        timeout: 10000,
+      });
+    }
+
+    // Fetch AdSense metrics
+    const adStats = await fetchAdSenseData(CONFIG);
+
+    // Mock Amazon affiliate link for pet products
+    const affiliateLink = 'https://www.amazon.com/pet-products?tag=mockaffiliate123';
+
+    console.log('Ad content generated:', { petContent, adStats, affiliateLink });
+    return { petContent, adStats, affiliateLink };
   } catch (error) {
     console.error('adRevenueAgent Error:', error);
-    throw error;
+    return { petContent: {}, adStats: { pageViews: 0, adRequests: 0, earnings: 0 }, affiliateLink: '' };
   }
 };
