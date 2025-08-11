@@ -23,6 +23,8 @@ WORKDIR /app
 # Copy backend files
 COPY backend ./backend
 WORKDIR ./backend
+
+# Install dependencies (critical: includes chrome-aws-lambda if used)
 RUN npm install
 
 # Install Puppeteer browser with custom cache dir
