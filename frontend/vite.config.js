@@ -9,19 +9,29 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    minify: 'terser',
-    sourcemap: false, // Disable in production
+    minify: 'terser', // ✅ Requires terser to be in frontend/package.json
+    sourcemap: false,
     terserOptions: {
       compress: {
-        drop_console: true, // Strip console logs in production
+        drop_console: true, // Remove logs in production
         drop_debugger: true,
+      },
+      format: {
+        comments: false, // Strip comments
+      },
+    },
+    rollupOptions: {
+      output: {
+        entryFileNames: `assets/[name].[hash].js`,
+        chunkFileNames: `assets/[name].[hash].js`,
+        assetFileNames: `assets/[name].[hash].[ext]`,
       },
     },
   },
   server: {
-    host: 'localhost', // Bind to localhost during dev
+    host: 'localhost',
     port: 3000,
-    strictPort: true, // Fail if port is occupied
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:10000',
@@ -31,7 +41,6 @@ export default defineConfig({
       },
     },
   },
-  // Prevent 404 on SPA routes
   preview: {
     host: 'localhost',
     port: 5000,
