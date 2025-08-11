@@ -120,6 +120,10 @@ keys.json
 # -----------------------
 # Development Tools
 # -----------------------
-.dockerignore
 *.tgz
 .DS_Store
+
+# -----------------------
+# DO NOT IGNORE: .dockerignore itself
+# -----------------------
+!.dockerignore
