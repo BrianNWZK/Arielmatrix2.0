@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
+    curl \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -23,9 +25,9 @@ COPY backend/package.json ./backend/package.json
 WORKDIR ./backend
 RUN npm install
 
-# Install Puppeteer & Playwright browsers
-RUN npx puppeteer browsers install chrome --allow-root
-RUN npx playwright install chromium --with-deps
+# Install Puppeteer & Playwright browsers (critical: use full path)
+RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
+RUN npx playwright install chromium --with-deps --cache-dir=/root/.cache/ms-playwright
 
 # Go back to /app
 WORKDIR /app
@@ -34,12 +36,20 @@ WORKDIR /app
 COPY frontend/package.json ./frontend/package.json
 WORKDIR ./frontend
 RUN npm install
+
+# Copy ALL frontend source files
+COPY frontend/src ./src
+COPY frontend/index.html ./
+COPY frontend/vite.config.js ./
+COPY frontend/tailwind.config.js ./
+
+# Build frontend
 RUN npm run build
 
 # Final stage
 FROM node:22.16.0
 
-# Install runtime deps
+# Install runtime deps (same as builder)
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -58,7 +68,7 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m appuser
 WORKDIR /app
 
-# Create directories
+# Create required directories
 RUN mkdir -p \
     /app/backend \
     /app/backend/public \
@@ -66,16 +76,27 @@ RUN mkdir -p \
     /home/appuser/.cache/ms-playwright \
     && chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built files
+# Copy built app
 COPY --from=builder --chown=appuser:appuser /app /app
+
+# Copy browser binaries to correct location
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
-# Link frontend build
-RUN cp -r /app/frontend/dist/* /app/backend/public/ 2>/dev/null || echo "Warning: Frontend build assets not copied."
+# Ensure frontend assets are copied
+RUN if [ -d "/app/frontend/dist" ]; then \
+      cp -r /app/frontend/dist/* /app/backend/public/ && \
+      echo "✅ Frontend assets copied to /backend/public"; \
+    else \
+      echo "❌ Error: /app/frontend/dist not found!"; \
+      exit 1; \
+    fi
 
 # Switch to non-root user
 USER appuser
 
+# Expose port
 EXPOSE 10000
+
+# Start backend
 CMD ["node", "backend/server.js"]
