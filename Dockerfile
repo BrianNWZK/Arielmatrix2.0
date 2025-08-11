@@ -25,9 +25,12 @@ COPY backend/package.json ./backend/package.json
 WORKDIR ./backend
 RUN npm install
 
-# Install Puppeteer & Playwright browsers (critical: use full path)
+# Install Puppeteer browser with custom cache dir
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
-RUN npx playwright install chromium --with-deps --cache-dir=/root/.cache/ms-playwright
+
+# Install Playwright browser (NO --cache-dir allowed)
+# Playwright automatically uses /root/.cache/ms-playwright
+RUN npx playwright install chromium --with-deps
 
 # Go back to /app
 WORKDIR /app
