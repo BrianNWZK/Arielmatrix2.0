@@ -116,6 +116,7 @@ keys.json
 *.pem
 *.cer
 *.crt
+api-keys.json          # ✅ Add this — never commit API keys
 
 # -----------------------
 # Development Tools
