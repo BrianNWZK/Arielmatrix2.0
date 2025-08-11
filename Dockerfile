@@ -1,7 +1,7 @@
 # Builder stage
 FROM node:22.16.0 as builder
 
-# Install system dependencies (with cron for node-cron)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -24,13 +24,16 @@ WORKDIR /app
 COPY backend ./backend
 WORKDIR ./backend
 
-# Install dependencies (critical: includes chrome-aws-lambda if used)
-RUN npm install
+# Upgrade npm first (fixes audit warnings)
+RUN npm install -g npm@11.5.2
 
-# Install Puppeteer browser with custom cache dir
+# Install dependencies
+RUN npm install --legacy-peer-deps
+
+# Install Puppeteer browser
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 
-# Install Playwright browser with dependencies
+# Install Playwright browser with full dependencies
 RUN npx playwright install chromium --with-deps
 
 # Go back to /app
@@ -53,7 +56,7 @@ RUN npm run build
 # Final stage
 FROM node:22.16.0
 
-# Install runtime deps + cron (required for node-cron scheduling)
+# Install runtime deps + cron (for node-cron)
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
