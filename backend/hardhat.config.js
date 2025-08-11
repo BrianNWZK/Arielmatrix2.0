@@ -1,3 +1,4 @@
+// backend/hardhat.config.js
 import { HardhatUserConfig } from 'hardhat/config';
 import '@nomicfoundation/hardhat-toolbox';
 
@@ -13,9 +14,22 @@ const config: HardhatUserConfig = {
   },
   networks: {
     bsc: {
-      url: 'https://bsc-dataseed.binance.org/',
+      url: 'https://bsc-dataseed.binance.org/', // ✅ Fixed: removed trailing spaces
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 56,
+      timeout: 60000,
     },
+    solana: {
+      url: 'https://api.mainnet-beta.solana.com', // For future Solana NFT integration
+      chainId: 'solana-mainnet',
+    },
+  },
+  paths: {
+    artifacts: './artifacts',
+    sources: './backend/contracts',
+  },
+  mocha: {
+    timeout: 40000,
   },
 };
 
