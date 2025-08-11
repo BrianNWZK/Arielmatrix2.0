@@ -1,58 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Arielmatrix2.0</title>
-  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel">
-    import React, { useState, useEffect } from 'react';
-    import { createRoot } from 'react-dom/client';
-    import axios from 'axios';
-
-    const Dashboard = () => {
-      const [walletBalances, setWalletBalances] = useState([]);
-      const [products, setProducts] = useState([]);
-
-      useEffect(() => {
-        const fetchData = async () => {
-          const balances = await axios.get('/api/dashboard');
-          setWalletBalances(balances.data);
-          const products = await axios.get('/api/shopify/products');
-          setProducts(products.data);
-        };
-        fetchData();
-      }, []);
-
-      return (
-        <div className="container mx-auto p-4">
-          <h1 className="text-3xl font-bold mb-4">Arielmatrix2.0 Dashboard</h1>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white p-4 rounded shadow">
-              <h2 className="text-xl font-semibold">USDT Wallet Balances</h2>
-              {walletBalances.map(({ wallet, balance }) => (
-                <p key={wallet}>{wallet}: {balance} USDT</p>
-              ))}
-            </div>
-            <div className="bg-white p-4 rounded shadow">
-              <h2 className="text-xl font-semibold">Shopify Products</h2>
-              {products.map((product) => (
-                <p key={product.id}>{product.title}: ${product.variants[0].price}</p>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    const root = createRoot(document.getElementById('root'));
-    root.render(<Dashboard />);
-  </script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arielmatrix2.0 Dashboard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>
