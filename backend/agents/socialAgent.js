@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { Keypair, Connection, PublicKey } from '@solana/web3.js';
 
 export const socialAgent = async (CONFIG) => {
   try {
@@ -18,10 +17,6 @@ export const socialAgent = async (CONFIG) => {
       console.log('Invalid or fallback API keys detected, skipping social revenue generation');
       return {};
     }
-
-    // Initialize Solana wallet for tracking (replace with your wallet public key)
-    const SOLANA_WALLET = process.env.SOLANA_WALLET || 'YOUR_SOLANA_PUBLIC_KEY';
-    const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 
     // Fetch viral pet content
     const dogResponse = await axios.get('https://dog.ceo/api/breeds/image/random', {
@@ -129,10 +124,7 @@ export const socialAgent = async (CONFIG) => {
               url: shortenedImageUrl,
               text: `${caption}\n\nShop pet products: ${shortenedAffiliateLink}`,
             },
-            {
-              headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}` },
-              timeout: 10000,
-            }
+            { headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}` }, timeout: 10000 }
           );
           redditPosts.push({ subreddit, postId: redditPost.data.data?.name });
         } catch (error) {
@@ -147,14 +139,8 @@ export const socialAgent = async (CONFIG) => {
       try {
         const xPost = await axios.post(
           'https://api.x.com/2/tweets',
-          {
-            text: `${caption}\n\nShop pet products: ${shortenedAffiliateLink}`,
-            media: { media_ids: [] },
-          },
-          {
-            headers: { Authorization: `Bearer ${CONFIG.X_API_KEY}` },
-            timeout: 10000,
-          }
+          { text: `${caption}\n\nShop pet products: ${shortenedAffiliateLink}`, media: { media_ids: [] } },
+          { headers: { Authorization: `Bearer ${CONFIG.X_API_KEY}` }, timeout: 10000 }
         );
         xPostId = xPost.data.data?.id;
       } catch (error) {
@@ -175,99 +161,11 @@ export const socialAgent = async (CONFIG) => {
             media_source: { source_type: 'image_base64', content_type: 'image/jpeg', data: petContent.image },
             board_id: CONFIG.PINTEREST_BOARD_ID || 'default_board',
           },
-          {
-            headers: { Authorization: `Bearer ${CONFIG.PINTEREST_API_KEY}` },
-            timeout: 10000,
-          }
+          { headers: { Authorization: `Bearer ${CONFIG.PINTEREST_API_KEY}` }, timeout: 10000 }
         );
         pinterestPinId = pinterestPost.data.id;
       } catch (error) {
         console.warn('Pinterest Post Error:', error.message);
-      }
-    }
-
-    // Post to Tumblr via RapidAPI
-    let tumblrPostId = null;
-    if (CONFIG.RAPID_API_KEY) {
-      try {
-        const tumblrPost = await axios.post(
-          'https://tumblr4u.p.rapidapi.com/v2/blog/post',
-          {
-            blog: 'your-blog.tumblr.com', // Replace with your Tumblr blog
-            type: 'photo',
-            caption: `${caption}\n\nShop pet products: ${shortenedAffiliateLink}`,
-            source: petContent.image,
-            tags: trends.join(',').replace(/#/g, ''),
-          },
-          {
-            headers: {
-              'x-rapidapi-key': CONFIG.RAPID_API_KEY,
-              'x-rapidapi-host': 'tumblr4u.p.rapidapi.com',
-            },
-            timeout: 10000,
-          }
-        );
-        tumblrPostId = tumblrPost.data.response?.id;
-      } catch (error) {
-        console.warn('Tumblr Post Error:', error.message);
-      }
-    }
-
-    // Cross-promote top Reddit post
-    if (redditPosts.length > 0) {
-      const topPost = redditPosts[0];
-      const crossPromoText = `Check out this cute pet post on Reddit! https://reddit.com/r/${topPost.subreddit}/comments/${topPost.postId}\n${caption}\n\nShop: ${shortenedAffiliateLink}`;
-      if (xPostId) {
-        try {
-          await axios.post(
-            'https://api.x.com/2/tweets',
-            { text: crossPromoText, reply: { in_reply_to_tweet_id: xPostId } },
-            { headers: { Authorization: `Bearer ${CONFIG.X_API_KEY}` }, timeout: 10000 }
-          );
-        } catch (error) {
-          console.warn('X Cross-Promo Error:', error.message);
-        }
-      }
-      if (pinterestPinId) {
-        try {
-          await axios.post(
-            'https://api.pinterest.com/v5/pins',
-            {
-              link: `https://reddit.com/r/${topPost.subreddit}/comments/${topPost.postId}`,
-              title: `Cute Pet from Reddit!`,
-              description: crossPromoText,
-              media_source: { source_type: 'image_base64', content_type: 'image/jpeg', data: petContent.image },
-              board_id: CONFIG.PINTEREST_BOARD_ID || 'default_board',
-            },
-            { headers: { Authorization: `Bearer ${CONFIG.PINTEREST_API_KEY}` }, timeout: 10000 }
-          );
-        } catch (error) {
-          console.warn('Pinterest Cross-Promo Error:', error.message);
-        }
-      }
-      if (tumblrPostId) {
-        try {
-          await axios.post(
-            'https://tumblr4u.p.rapidapi.com/v2/blog/post',
-            {
-              blog: 'your-blog.tumblr.com',
-              type: 'link',
-              url: `https://reddit.com/r/${topPost.subreddit}/comments/${topPost.postId}`,
-              title: `Cute Pet from Reddit!`,
-              description: crossPromoText,
-              tags: trends.join(',').replace(/#/g, ''),
-            },
-            {
-              headers: {
-                'x-rapidapi-key': CONFIG.RAPID_API_KEY,
-                'x-rapidapi-host': 'tumblr4u.p.rapidapi.com',
-              },
-              timeout: 10000,
-            }
-          );
-        } catch (error) {
-          console.warn('Tumblr Cross-Promo Error:', error.message);
-        }
       }
     }
 
@@ -286,38 +184,34 @@ export const socialAgent = async (CONFIG) => {
       console.warn('AdFly Analytics Error:', error.message);
     }
 
-    // Convert earnings to Solana wallet via Coinbase Commerce
-    if (adFlyStats.earnings > 5 && process.env.COINBASE_COMMERCE_API_KEY) {
+    // Convert earnings to BSC USDT wallet via Changelly
+    if (adFlyStats.earnings > 5 && CONFIG.CHANGELLY_API_KEY) {
       try {
-        const charge = await axios.post(
-          'https://api.commerce.coinbase.com/charges',
-          {
-            name: 'AdFly Earnings',
-            description: `Converting ${adFlyStats.earnings} USD to SOL`,
-            pricing_type: 'fixed_price',
-            local_price: { amount: adFlyStats.earnings, currency: 'USD' },
-            metadata: { wallet: SOLANA_WALLET },
-            redirect_url: `${CONFIG.STORE_URL}/success`,
-            cancel_url: `${CONFIG.STORE_URL}/cancel`,
-          },
-          {
-            headers: { 'X-CC-Api-Key': process.env.COINBASE_COMMERCE_API_KEY },
-            timeout: 10000,
-          }
-        );
-        console.log('Coinbase charge created:', charge.data.data.hosted_url);
+        const changellyResponse = await axios.post('https://api.changelly.com/v1/exchange', {
+          from: 'usd',
+          to: 'usdt',
+          amount: adFlyStats.earnings,
+          address: CONFIG.USDT_WALLET, // Your BSC USDT wallet
+          extraId: '',
+          refundAddress: '',
+        }, {
+          headers: { 'x-api-key': CONFIG.CHANGELLY_API_KEY },
+          timeout: 10000,
+        });
+        const transactionId = changellyResponse.data.transactionId;
+        console.log('Changelly exchange initiated:', transactionId);
       } catch (error) {
-        console.warn('Coinbase Commerce Error:', error.message);
+        console.warn('Changelly API Error:', error.message);
       }
     }
 
-    console.log('Social content posted:', { petContent, redditPosts, xPostId, pinterestPinId, tumblrPostId, adFlyStats });
+    console.log('Social content posted:', { petContent, redditPosts, xPostId, pinterestPinId, adFlyStats });
     return {
       petContent,
-      socialPosts: { reddit: redditPosts, x: xPostId, pinterest: pinterestPinId, tumblr: tumblrPostId },
+      socialPosts: { reddit: redditPosts, x: xPostId, pinterest: pinterestPinId },
       adFlyStats,
       affiliateLink: shortenedAffiliateLink,
-      wallet: SOLANA_WALLET,
+      wallet: CONFIG.USDT_WALLET,
     };
   } catch (error) {
     console.error('socialAgent Error:', error);
