@@ -20,11 +20,11 @@ const app = express();
 const port = process.env.PORT || 10000;
 
 // Serve static files from frontend
-app.use(express.static(path.join(process.cwd(), 'public')));
+app.use(express.static(path.join(process.cwd(), 'frontend')));
 
 // Configuration
 const CONFIG = {
-  STORE_URL: process.env.STORE_URL || 'https://skh4pq-9d.myshopify.com',
+  STORE_URL: process.env.STORE_URL || 'https://tracemarkventures.myshopify.com/',
   STORE_KEY: process.env.STORE_KEY,
   STORE_SECRET: process.env.STORE_SECRET,
   ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET,
@@ -97,6 +97,10 @@ app.get('/dashboard', async (req, res) => {
         const response = await axios.get(
           `${CONFIG.BSCSCAN_API}?module=account&action=tokenbalance&contractaddress=0x55d398326f99059ff775485246999027b3197955&address=${wallet}&tag=latest&apikey=${process.env.BSCSCAN_API_KEY || CONFIG.BSCSCAN_API_KEY}`
         );
+          if (response.data.status === "0") {
+              console.error(`BscScan API Error for wallet ${wallet}: ${response.data.message}`);
+              return { wallet, balance: 'Error fetching balance' };
+          }
         return { wallet, balance: response.data.result / 1e18 };
       })
     );
@@ -108,13 +112,20 @@ app.get('/dashboard', async (req, res) => {
 });
 
 app.get('/shopify/products', async (req, res) => {
-  try {
-    const products = await shopifyAgent(CONFIG);
-    res.json(products);
-  } catch (error) {
-    console.error('Shopify Products Error:', error);
-    res.status(500).json({ error: 'Failed to fetch Shopify products' });
-  }
+    try {
+        const response = await axios.get(`${CONFIG.STORE_URL}/products.json`);
+        const products = response.data.products.map(product => ({
+            id: product.id,
+            title: product.title,
+            variants: product.variants.map(variant => ({
+                price: variant.price
+            }))
+        }));
+        res.json(products);
+    } catch (error) {
+        console.error('Shopify Products Error:', error);
+        res.status(500).json({ error: 'Failed to fetch Shopify products' });
+    }
 });
 
 app.get('/ad-revenue', async (req, res) => {
@@ -137,9 +148,20 @@ app.get('/forex-signals', async (req, res) => {
   }
 });
 
+app.get('/bitcoin-price', async (req, res) => {
+    try {
+        const response = await axios.get(CONFIG.COINGECKO_API);
+        const bitcoinPrice = response.data.bitcoin.usd;
+        res.json({ price: bitcoinPrice });
+    } catch (error) {
+        console.error('Bitcoin Price Error:', error);
+        res.status(500).json({ error: 'Failed to fetch Bitcoin price' });
+    }
+});
+
 // Serve frontend
 app.get('*', (req, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+  res.sendFile(path.join(process.cwd(), 'frontend', 'index.html'));
 });
 
 app.listen(port, () => {
