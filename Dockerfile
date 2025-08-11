@@ -1,7 +1,7 @@
 # Builder stage
 FROM node:22.16.0 as builder
 
-# Install system dependencies
+# Install system dependencies (with cron for node-cron)
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -28,8 +28,7 @@ RUN npm install
 # Install Puppeteer browser with custom cache dir
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 
-# Install Playwright browser (NO --cache-dir allowed)
-# Playwright automatically uses /root/.cache/ms-playwright
+# Install Playwright browser with dependencies
 RUN npx playwright install chromium --with-deps
 
 # Go back to /app
@@ -52,7 +51,7 @@ RUN npm run build
 # Final stage
 FROM node:22.16.0
 
-# Install runtime deps (same as builder)
+# Install runtime deps + cron (required for node-cron scheduling)
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -65,6 +64,7 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
+    cron \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -82,7 +82,7 @@ RUN mkdir -p \
 # Copy built app
 COPY --from=builder --chown=appuser:appuser /app /app
 
-# Copy browser binaries to correct location
+# Copy browser binaries
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
