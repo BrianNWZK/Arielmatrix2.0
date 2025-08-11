@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy and install backend dependencies
-COPY backend/package.json ./backend/package.json
+# Copy backend files
+COPY backend ./backend
 WORKDIR ./backend
 RUN npm install
 
