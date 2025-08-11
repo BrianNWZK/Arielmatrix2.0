@@ -1,7 +1,7 @@
-# Builder stage (run as root)
+# Builder stage
 FROM node:22.16.0 as builder
 
-# Install system dependencies for Puppeteer, Playwright, and fonts
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -14,36 +14,32 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
-    curl \
-    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
 # Copy and install backend dependencies
 COPY backend/package.json ./backend/package.json
-COPY backend/package-lock.json ./backend/package-lock.json
-RUN npm install --prefix ./backend
+WORKDIR ./backend
+RUN npm install
 
-# Install Chrome & Chromium binaries (critical for headless automation)
-RUN npx puppeteer browsers install chrome
-RUN cd ./backend && npx playwright install chromium --with-deps
+# Install Puppeteer & Playwright browsers
+RUN npx puppeteer browsers install chrome --allow-root
+RUN npx playwright install chromium --with-deps
 
-# Copy and install frontend dependencies
+# Go back to /app
+WORKDIR /app
+
+# Copy frontend
 COPY frontend/package.json ./frontend/package.json
-RUN npm install --prefix ./frontend
+WORKDIR ./frontend
+RUN npm install
+RUN npm run build
 
-# Copy all source files
-COPY . .
-
-# Build frontend
-RUN npm run build --prefix ./frontend
-
-# Final stage (non-root)
+# Final stage
 FROM node:22.16.0
 
-# Install minimal runtime dependencies
+# Install runtime deps
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -60,11 +56,9 @@ RUN apt-get update && apt-get install -y \
 
 # Create non-root user
 RUN useradd -m appuser
-
-# Set working directory
 WORKDIR /app
 
-# Create required directories with ownership
+# Create directories
 RUN mkdir -p \
     /app/backend \
     /app/backend/public \
@@ -72,19 +66,16 @@ RUN mkdir -p \
     /home/appuser/.cache/ms-playwright \
     && chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built app and browser binaries
+# Copy built files
 COPY --from=builder --chown=appuser:appuser /app /app
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
-# Ensure frontend assets are available
-RUN cp -r /app/frontend/dist/* /app/backend/public/ 2>/dev/null || echo "Warning: Frontend build assets not found. Check vite.config.js and build output."
+# Link frontend build
+RUN cp -r /app/frontend/dist/* /app/backend/public/ 2>/dev/null || echo "Warning: Frontend build assets not copied."
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
 EXPOSE 10000
-
-# Start backend server
 CMD ["node", "backend/server.js"]
