@@ -1,11 +1,125 @@
-# .dockerignore
-node_modules
-*.log
+# -----------------------
+# Node.js & Build Systems
+# -----------------------
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+.pnpm-debug.log
+.npm/
+.yarn/
+.pnpm/
+
+# -----------------------
+# Lockfiles & Packages
+# -----------------------
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+npm-shrinkwrap.json
+
+# -----------------------
+# Environment & Secrets
+# -----------------------
+.env
 .env.local
-.git
+.env.development.local
+.env.test.local
+.env.production.local
+.env.example
+
+# -----------------------
+# Git & IDE
+# -----------------------
+.git/
 .gitignore
-README.md
-frontend/node_modules
-backend/node_modules
+.gitmodules
+*.sublime-project
+*.sublime-workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -----------------------
+# OS Generated
+# -----------------------
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# -----------------------
+# Logs & Dumps
+# -----------------------
+*.log
+*.log.*
+*.out
+*.pid
+logs/
+temp/
+tmp/
+
+# -----------------------
+# Coverage & Testing
+# -----------------------
+coverage/
+.nyc_output/
+test-results/
+*.coverage.json
+
+# -----------------------
+# Frontend Build Artifacts
+# -----------------------
+frontend/dist/
+frontend/build/
+frontend/out/
+
+# -----------------------
+# Backend Public (Auto-generated)
+# -----------------------
+backend/public/
+backend/dist/
+
+# -----------------------
+# Hardhat & Blockchain
+# -----------------------
+artifacts/
+cache/
+deployments/
+hardhat.config.js.backup
+slither/
+foundry.toml
+
+# -----------------------
+# Caches
+# -----------------------
+.puppeteer_cache/
+.puppeteer/
+.cache/puppeteer/
+.cache/ms-playwright/
+.chromium/
+
+# -----------------------
+# Sensitive Files
+# -----------------------
+secrets.json
+private-key.json
+aws-credentials.json
+keys.json
+*.key
+*.secret
+*.pem
+*.cer
+*.crt
+
+# -----------------------
+# Development Tools
+# -----------------------
+.dockerignore
+*.tgz
+.DS_Store
