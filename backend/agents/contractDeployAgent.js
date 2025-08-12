@@ -4,7 +4,14 @@ import util from 'util';
 import Web3 from 'web3';
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
 const execPromise = util.promisify(exec);
+
+// Fix for __dirname in ES6 modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export const contractDeployAgent = async (CONFIG) => {
   try {
@@ -68,7 +75,7 @@ export const contractDeployAgent = async (CONFIG) => {
     CONFIG.API_KEY_GENERATOR_ADDRESS = apiKeyGenerator.options.address;
 
     // Save to file for other agents
-    await fs.writeFile('contracts.json', JSON.stringify({
+    await fs.writeFile(path.join(__dirname, '../contracts.json'), JSON.stringify({
       RevenueDistributor: revenueDistributor.options.address,
       APIKeyGenerator: apiKeyGenerator.options.address,
     }, null, 2));
