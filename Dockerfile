@@ -31,7 +31,7 @@ RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 # Install Playwright browser with full dependencies
 RUN npx playwright install chromium --with-deps
 
-# Ensure cache directories exist even if empty (fixes COPY errors)
+# Ensure cache directories exist
 RUN mkdir -p /root/.cache/puppeteer /root/.cache/ms-playwright
 
 # Go back to root app directory
@@ -82,7 +82,7 @@ RUN mkdir -p \
 # Copy built app
 COPY --from=builder --chown=appuser:appuser /app /app
 
-# Copy browser binaries (now guaranteed to exist)
+# Copy browser binaries
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
