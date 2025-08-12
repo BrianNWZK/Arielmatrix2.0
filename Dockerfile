@@ -28,7 +28,7 @@ RUN npm install --legacy-peer-deps
 # Install Puppeteer browser
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 
-# Install Playwright browser
+# Install Playwright browser with full dependencies
 RUN npx playwright install chromium --with-deps
 
 # Go back to root app directory
