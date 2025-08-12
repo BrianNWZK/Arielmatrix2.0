@@ -2,7 +2,7 @@
 import { HardhatUserConfig } from 'hardhat/config';
 import '@nomicfoundation/hardhat-toolbox';
 
-const config: HardhatUserConfig = {
+const config = {
   solidity: {
     version: '0.8.20',
     settings: {
@@ -20,7 +20,7 @@ const config: HardhatUserConfig = {
       timeout: 60000,
     },
     solana: {
-      url: 'https://api.mainnet-beta.solana.com', // For future Solana NFT integration
+      url: 'https://api.mainnet-beta.solana.com', // ✅ Fixed: removed trailing spaces
       chainId: 'solana-mainnet',
     },
   },
