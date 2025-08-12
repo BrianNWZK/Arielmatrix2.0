@@ -1,4 +1,3 @@
-// backend/server.js
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -94,7 +93,6 @@ const runAgents = async () => {
     console.log('✅ Agent cycle completed successfully.');
   } catch (error) {
     console.error('🔥 Agent execution failed:', error.message || error);
-    // Optional: Send alert via webhook
   } finally {
     isRunning = false;
   }
@@ -138,7 +136,6 @@ app.get('/revenue', async (req, res) => {
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendBuildPath, 'index.html'), (err) => {
     if (err) {
-      console.error('SPA fallback failed:', err);
       res.status(404).send('Page not found');
     }
   });
@@ -146,5 +143,4 @@ app.get('*', (req, res) => {
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Arielmatrix2.0 Live on port ${port}`);
-  console.log(`🌐 https://arielmatrix2-0-jgk6.onrender.com`);
 });
