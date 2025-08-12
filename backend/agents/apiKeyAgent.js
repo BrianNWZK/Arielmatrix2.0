@@ -4,6 +4,11 @@ import playwright from 'playwright';
 import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Retry with exponential backoff
 const withRetry = (fn, retries = 3, delay = 2000) => async (...args) => {
@@ -18,62 +23,29 @@ const withRetry = (fn, retries = 3, delay = 2000) => async (...args) => {
   }
 };
 
-// Get temporary email with fallbacks
+// Use reliable temp email service
 const getTempEmail = async () => {
-  const services = [
-    { url: 'https://api.tempmail.plus/request/mail/id', field: 'email' },
-    { url: 'https://api.mail.tm/accounts', method: 'POST', field: 'address' },
-    { url: 'https://www.developermail.com/api/v1/mailbox', method: 'POST', field: 'result' }
-  ];
-
-  for (const service of services) {
-    try {
-      const res = await axios({
-        method: service.method || 'GET',
-        url: service.url,
-        timeout: 8000,
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const email = res.data[service.field];
-      if (email) {
-        console.log(`📧 Email created: ${email} via ${service.url}`);
-        return email;
-      }
-    } catch (e) {
-      console.warn(`📨 Temp email service failed: ${service.url} →`, e.message?.substring(0, 60));
-    }
+  try {
+    const res = await axios.get('https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1');
+    return res.data[0];
+  } catch (e) {
+    return `user${Date.now()}@fallback-${Math.random().toString(36).substring(2, 8)}.com`;
   }
-
-  // Final fallback: use timestamped email
-  const fallback = `user${Date.now()}@fallback-${Math.random().toString(36).substring(2, 8)}.com`;
-  console.log(`📧 Using fallback email: ${fallback}`);
-  return fallback;
 };
 
 // Extract API key from email
 const fetchApiKeyFromEmail = async (email, domain, keyPattern = /[a-z0-9]{32}/i) => {
-  const services = [
-    { url: `https://api.tempmail.plus/request/mail/id/${email}` },
-    { url: `https://api.mail.tm/messages` },
-  ];
-
-  for (const service of services) {
-    try {
-      const res = await axios.get(service.url, { timeout: 10000 });
-      const mails = Array.isArray(res.data) ? res.data : res.data.messages || [];
-      const mail = mails.find(m => m.from && m.from.toLowerCase().includes(domain.toLowerCase()));
-      if (mail && mail.body) {
-        const match = mail.body.match(keyPattern);
-        if (match) {
-          console.log(`🔑 Key extracted for ${domain}: ${match[0]}`);
-          return match[0];
-        }
-      }
-    } catch (e) {
-      console.warn(`📧 Fetch failed for ${domain} via ${service.url}`);
+  try {
+    const res = await axios.get(`https://www.1secmail.com/api/v1/?action=getMessages&login=${email.split('@')[0]}&domain=${email.split('@')[1]}`);
+    const mail = res.data[0];
+    if (mail) {
+      const bodyRes = await axios.get(`https://www.1secmail.com/api/v1/?action=readMessage&login=${email.split('@')[0]}&domain=${email.split('@')[1]}&id=${mail.id}`);
+      const match = bodyRes.data.body.match(keyPattern);
+      if (match) return match[0];
     }
+  } catch (e) {
+    console.warn(`📧 Fetch failed for ${domain}`);
   }
-  console.warn(`❌ No key found for ${domain} in email`);
   return null;
 };
 
@@ -124,18 +96,18 @@ export const apiKeyAgent = async (CONFIG) => {
   const email = await getTempEmail();
 
   try {
-    // ✅ Use cached Chrome from Docker build
+    // Use glob pattern to find Chrome
+    const executablePath = '/home/appuser/.cache/puppeteer/chrome/*/chrome-linux64/chrome';
+
     browser = await puppeteer.launch({
       headless: 'new',
-      executablePath: '/home/appuser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+      executablePath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--single-process',
-        '--no-zygote',
-        '--disable-web-security'
+        '--single-process'
       ],
       timeout: 60000
     });
@@ -232,7 +204,7 @@ export const apiKeyAgent = async (CONFIG) => {
     }
 
     // Save keys
-    const filePath = path.join(process.cwd(), 'api-keys.json');
+    const filePath = path.join(__dirname, '../api-keys.json');
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(keys, null, 2));
     console.log('✅ All API keys saved to api-keys.json');
@@ -253,9 +225,10 @@ async function apiKeyAgentWithPlaywright(CONFIG) {
   const password = generatePassword();
 
   try {
+    const executablePath = '/home/appuser/.cache/ms-playwright/chromium-*/chromium-linux/chrome';
     browser = await playwright.chromium.launch({
       headless: true,
-      executablePath: '/home/appuser/.cache/ms-playwright/chromium-*/chromium-linux/chrome',
+      executablePath,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
 
