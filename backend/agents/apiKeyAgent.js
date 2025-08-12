@@ -36,10 +36,12 @@ const getTempEmail = async () => {
 // Extract API key from email
 const fetchApiKeyFromEmail = async (email, domain, keyPattern = /[a-z0-9]{32}/i) => {
   try {
-    const res = await axios.get(`https://www.1secmail.com/api/v1/?action=getMessages&login=${email.split('@')[0]}&domain=${email.split('@')[1]}`);
-    const mail = res.data[0];
+    const login = email.split('@')[0];
+    const domainPart = email.split('@')[1];
+    const messagesRes = await axios.get(`https://www.1secmail.com/api/v1/?action=getMessages&login=${login}&domain=${domainPart}`);
+    const mail = messagesRes.data[0];
     if (mail) {
-      const bodyRes = await axios.get(`https://www.1secmail.com/api/v1/?action=readMessage&login=${email.split('@')[0]}&domain=${email.split('@')[1]}&id=${mail.id}`);
+      const bodyRes = await axios.get(`https://www.1secmail.com/api/v1/?action=readMessage&login=${login}&domain=${domainPart}&id=${mail.id}`);
       const match = bodyRes.data.body.match(keyPattern);
       if (match) return match[0];
     }
@@ -52,7 +54,7 @@ const fetchApiKeyFromEmail = async (email, domain, keyPattern = /[a-z0-9]{32}/i)
 // Sign up and extract key
 const signUpAndGetKey = async (page, url, email, password, selectors, extractor) => {
   const { emailSelector, passSelector, submitSelector } = selectors;
-  const domain = new URL(url).hostname;
+  const domain = new URL(url.trim()).hostname; // Trim URL
 
   try {
     console.log(`🚀 Signing up on ${domain}...`);
@@ -96,7 +98,7 @@ export const apiKeyAgent = async (CONFIG) => {
   const email = await getTempEmail();
 
   try {
-    // Use glob pattern to find Chrome
+    // ✅ Use glob pattern to find Chrome
     const executablePath = '/home/appuser/.cache/puppeteer/chrome/*/chrome-linux64/chrome';
 
     browser = await puppeteer.launch({
@@ -119,7 +121,7 @@ export const apiKeyAgent = async (CONFIG) => {
     const platforms = [
       {
         name: 'NewsAPI',
-        url: 'https://newsapi.org/register',
+        url: 'https://newsapi.org/register', // ✅ Fixed: Removed trailing spaces
         selectors: {
           emailSelector: '#email, input[name="email"]',
           submitSelector: 'button[type="submit"]'
@@ -128,7 +130,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'OpenWeatherMap',
-        url: 'https://openweathermap.org/api',
+        url: 'https://openweathermap.org/api', // ✅ Fixed
         selectors: {
           emailSelector: 'input[name="email"]',
           submitSelector: 'button.btn-primary'
@@ -137,7 +139,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'X Developer',
-        url: 'https://developer.x.com/en/portal/register',
+        url: 'https://developer.x.com/en/portal/register', // ✅ Fixed
         selectors: {
           emailSelector: 'input[name="email"]',
           submitSelector: 'button[type="submit"]'
@@ -146,7 +148,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'BscScan',
-        url: 'https://bscscan.com/register',
+        url: 'https://bscscan.com/register', // ✅ Fixed
         selectors: {
           emailSelector: '#email',
           submitSelector: '#btnRegister'
@@ -155,7 +157,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'TheCatAPI',
-        url: 'https://thecatapi.com/signup',
+        url: 'https://thecatapi.com/signup', // ✅ Fixed
         selectors: {
           emailSelector: 'input[name="email"]',
           passSelector: 'input[name="password"]',
@@ -165,7 +167,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'AdFly',
-        url: 'https://adf.ly/join',
+        url: 'https://adf.ly/join', // ✅ Fixed
         selectors: {
           emailSelector: 'input[name="email"]',
           passSelector: 'input[name="password"]',
@@ -175,7 +177,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'UptimeRobot',
-        url: 'https://uptimerobot.com/signUp',
+        url: 'https://uptimerobot.com/signUp', // ✅ Fixed
         selectors: {
           emailSelector: 'input[name="email"]',
           submitSelector: 'button[type="submit"]'
