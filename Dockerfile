@@ -22,13 +22,11 @@ WORKDIR /app
 COPY backend/package.json backend/package-lock.json* ./backend/
 WORKDIR ./backend
 
-# Install dependencies
+# Install dependencies with legacy peer dependencies support
 RUN npm install --legacy-peer-deps
 
-# Install Puppeteer browser
+# Install Puppeteer and Playwright browsers
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
-
-# Install Playwright browser with full dependencies
 RUN npx playwright install chromium --with-deps
 
 # Go back to root app directory
@@ -40,10 +38,7 @@ WORKDIR ./frontend
 RUN npm install
 
 # Copy ALL frontend source files
-COPY frontend/src ./src
-COPY frontend/index.html ./
-COPY frontend/vite.config.js ./
-COPY frontend/tailwind.config.js ./
+COPY frontend/ ./
 
 # Build frontend
 RUN npm run build
@@ -51,7 +46,7 @@ RUN npm run build
 # Final stage
 FROM node:22.16.0
 
-# Install runtime deps
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -78,10 +73,8 @@ RUN mkdir -p \
     /home/appuser/.cache/ms-playwright \
     && chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built app
+# Copy built app and browser binaries
 COPY --from=builder --chown=appuser:appuser /app /app
-
-# Copy browser binaries
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
