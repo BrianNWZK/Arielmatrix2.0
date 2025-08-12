@@ -121,7 +121,7 @@ export const apiKeyAgent = async (CONFIG) => {
     const platforms = [
       {
         name: 'NewsAPI',
-        url: 'https://newsapi.org/register', // ✅ Fixed: Removed trailing spaces
+        url: 'https://newsapi.org/register',
         selectors: {
           emailSelector: '#email, input[name="email"]',
           submitSelector: 'button[type="submit"]'
@@ -130,7 +130,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'OpenWeatherMap',
-        url: 'https://openweathermap.org/api', // ✅ Fixed
+        url: 'https://openweathermap.org/api',
         selectors: {
           emailSelector: 'input[name="email"]',
           submitSelector: 'button.btn-primary'
@@ -139,7 +139,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'X Developer',
-        url: 'https://developer.x.com/en/portal/register', // ✅ Fixed
+        url: 'https://developer.x.com/en/portal/register',
         selectors: {
           emailSelector: 'input[name="email"]',
           submitSelector: 'button[type="submit"]'
@@ -148,7 +148,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'BscScan',
-        url: 'https://bscscan.com/register', // ✅ Fixed
+        url: 'https://bscscan.com/register',
         selectors: {
           emailSelector: '#email',
           submitSelector: '#btnRegister'
@@ -157,7 +157,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'TheCatAPI',
-        url: 'https://thecatapi.com/signup', // ✅ Fixed
+        url: 'https://thecatapi.com/signup',
         selectors: {
           emailSelector: 'input[name="email"]',
           passSelector: 'input[name="password"]',
@@ -167,7 +167,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'AdFly',
-        url: 'https://adf.ly/join', // ✅ Fixed
+        url: 'https://adf.ly/join',
         selectors: {
           emailSelector: 'input[name="email"]',
           passSelector: 'input[name="password"]',
@@ -177,7 +177,7 @@ export const apiKeyAgent = async (CONFIG) => {
       },
       {
         name: 'UptimeRobot',
-        url: 'https://uptimerobot.com/signUp', // ✅ Fixed
+        url: 'https://uptimerobot.com/signUp',
         selectors: {
           emailSelector: 'input[name="email"]',
           submitSelector: 'button[type="submit"]'
