@@ -135,7 +135,6 @@ export const apiKeyAgent = async (CONFIG) => {
         '--disable-gpu',
         '--single-process',
         '--no-zygote',
-        '--no-sandbox',
         '--disable-web-security'
       ],
       timeout: 60000
@@ -268,10 +267,6 @@ async function apiKeyAgentWithPlaywright(CONFIG) {
       ADFLY_EMAIL: email,
       ADFLY_PASSWORD: password
     };
-
-    // Repeat same sign-up logic via Playwright
-    // (Same platforms array as above — omitted for brevity)
-    // You can reuse the same logic with minor adaptation
 
     console.log('✅ Playwright: Keys generated as fallback');
     return keys;
