@@ -28,7 +28,7 @@ RUN npm install --legacy-peer-deps
 # Install Puppeteer browser
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 
-# Install Playwright browser
+# Install Playwright browser with full dependencies
 RUN npx playwright install chromium --with-deps
 
 # Go back to root app directory
@@ -40,7 +40,10 @@ WORKDIR ./frontend
 RUN npm install
 
 # Copy ALL frontend source files
-COPY frontend/ ./
+COPY frontend/src ./src
+COPY frontend/index.html ./
+COPY frontend/vite.config.js ./
+COPY frontend/tailwind.config.js ./
 
 # Build frontend
 RUN npm run build
