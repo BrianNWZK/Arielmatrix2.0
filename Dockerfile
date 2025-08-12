@@ -14,8 +14,6 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
-    curl \
-    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -24,16 +22,13 @@ WORKDIR /app
 COPY backend/package.json backend/package-lock.json* ./backend/
 WORKDIR ./backend
 
-# Upgrade npm first (fixes audit warnings)
-RUN npm install -g npm@11.5.2
-
 # Install dependencies
 RUN npm install --legacy-peer-deps
 
 # Install Puppeteer browser
 RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 
-# Install Playwright browser with full dependencies
+# Install Playwright browser
 RUN npx playwright install chromium --with-deps
 
 # Go back to root app directory
@@ -45,10 +40,7 @@ WORKDIR ./frontend
 RUN npm install
 
 # Copy ALL frontend source files
-COPY frontend/src ./src
-COPY frontend/index.html ./
-COPY frontend/vite.config.js ./
-COPY frontend/tailwind.config.js ./
+COPY frontend/ ./
 
 # Build frontend
 RUN npm run build
@@ -56,7 +48,7 @@ RUN npm run build
 # Final stage
 FROM node:22.16.0
 
-# Install runtime deps + cron (for node-cron)
+# Install runtime deps
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -69,7 +61,6 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
-    cron \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
