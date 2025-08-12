@@ -75,8 +75,7 @@ test-results/
 # -----------------------
 # Frontend Build Artifacts
 # -----------------------
-# ❌ DO NOT IGNORE: Docker needs to build frontend/dist
-# Comment out these lines:
+# Keep commented out - Docker needs to build these
 # frontend/dist/
 # frontend/build/
 # frontend/out/
@@ -84,8 +83,7 @@ test-results/
 # -----------------------
 # Backend Public (Auto-generated)
 # -----------------------
-# ❌ DO NOT IGNORE: Docker needs to copy backend/public
-# Comment out these lines:
+# Keep commented out - Docker needs to copy these
 # backend/public/
 # backend/dist/
 
@@ -102,8 +100,7 @@ foundry.toml
 # -----------------------
 # Caches
 # -----------------------
-# ❌ DO NOT IGNORE: Docker uses these for browser binaries
-# Comment out these lines:
+# Keep commented out - Docker uses these for browser binaries
 # .puppeteer_cache/
 # .puppeteer/
 # .cache/puppeteer/
