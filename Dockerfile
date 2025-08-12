@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy backend files
-COPY backend ./backend
+COPY backend/package.json backend/package-lock.json* ./backend/
 WORKDIR ./backend
 
 # Upgrade npm first (fixes audit warnings)
@@ -36,11 +36,11 @@ RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
 # Install Playwright browser with full dependencies
 RUN npx playwright install chromium --with-deps
 
-# Go back to /app
+# Go back to root app directory
 WORKDIR /app
 
-# Copy frontend
-COPY frontend/package.json ./frontend/package.json
+# Copy frontend files
+COPY frontend/package.json frontend/package-lock.json* ./frontend/
 WORKDIR ./frontend
 RUN npm install
 
@@ -92,13 +92,8 @@ COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
 # Ensure frontend assets are copied
-RUN if [ -d "/app/frontend/dist" ]; then \
-      cp -r /app/frontend/dist/* /app/backend/public/ && \
-      echo "✅ Frontend assets copied to /backend/public"; \
-    else \
-      echo "❌ Error: /app/frontend/dist not found!"; \
-      exit 1; \
-    fi
+RUN cp -r /app/frontend/dist/* /app/backend/public/ && \
+    echo "✅ Frontend assets copied to /backend/public"
 
 # Switch to non-root user
 USER appuser
