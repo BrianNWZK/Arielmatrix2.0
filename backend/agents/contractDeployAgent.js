@@ -21,9 +21,9 @@ export const contractDeployAgent = async (CONFIG) => {
 
     const web3 = new Web3(CONFIG.BSC_NODE);
 
-    // Compile contracts
+    // ✅ Compile contracts from correct directory
     console.log('📦 Compiling contracts...');
-    await execPromise('cd backend && npx hardhat compile', { cwd: path.resolve(__dirname, '..') });
+    await execPromise('npx hardhat compile', { cwd: path.resolve(__dirname, '..') });
 
     // Get gas price
     const gasResponse = await fetch(
@@ -41,7 +41,7 @@ export const contractDeployAgent = async (CONFIG) => {
       const bytecode = JSON.parse(await fs.readFile(bytecodePath, 'utf8')).bytecode.object;
 
       const contract = new web3.eth.Contract(abi);
-      const deployTx = contract.deploy({ data: bytecode, arguments: args });
+      const deployTx = contract.deploy({ bytecode, arguments: args });
       const estimatedGas = await deployTx.estimateGas({ from: CONFIG.GAS_WALLET });
 
       const deployedContract = await deployTx.send({
