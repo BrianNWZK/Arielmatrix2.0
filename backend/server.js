@@ -20,6 +20,9 @@ import { contractDeployAgent } from './agents/contractDeployAgent.js';
 import { adRevenueAgent } from './agents/adRevenueAgent.js';
 import { forexSignalAgent } from './agents/forexSignalAgent.js';
 
+// Autonomous Ecosystem
+import { payoutAgent, mintRevenueNFT, scaleTo195Countries } from './agents/autonomousEcosystem.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -38,7 +41,7 @@ app.use((req, res, next) => {
 const frontendBuildPath = path.resolve(__dirname, '../frontend/dist');
 app.use(express.static(frontendBuildPath));
 
-// CONFIG — ALL REAL, NO MOCKS
+// CONFIG - ALL REAL, NO MOCKS
 const CONFIG = {
   STORE_URL: process.env.STORE_URL || 'https://tracemarkventures.myshopify.com',
   ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET,
@@ -108,6 +111,22 @@ cron.schedule('0 */4 * * *', () => {
     runAgents().catch(console.error);
   } else {
     console.log('⏩ Skipping scheduled run: agents already executing.');
+  }
+});
+
+// === INTEGRATE AUTONOMOUS ECOSYSTEM ===
+// Run enhanced agents every 6 hours
+cron.schedule('0 */6 * * *', async () => {
+  console.log('🌍 Running enhanced autonomous ecosystem...');
+  try {
+    if (CONFIG.ADFLY_API_KEY && CONFIG.BSCSCAN_API_KEY) {
+      await payoutAgent(CONFIG);
+      await scaleTo195Countries();
+    } else {
+      console.log('🔑 Waiting for API keys before running enhanced agents...');
+    }
+  } catch (error) {
+    console.error('🚨 Enhanced agent cycle failed:', error.message);
   }
 });
 
