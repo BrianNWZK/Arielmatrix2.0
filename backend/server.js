@@ -1,3 +1,4 @@
+// backend/server.js
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -129,6 +130,50 @@ app.get('/revenue', async (req, res) => {
       error: 'Failed to fetch revenue data',
       timestamp: new Date().toISOString(),
     });
+  }
+});
+
+// ✅ NEW: Wallet Balances Endpoint
+app.get('/api/wallet-balances', async (req, res) => {
+  try {
+    const balances = await Promise.all(
+      CONFIG.USDT_WALLETS.map(async (wallet) => {
+        const response = await axios.get(
+          `https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0x55d398326f99059ff775485246999027b3197955&address=${wallet}&tag=latest&apikey=${CONFIG.BSCSCAN_API_KEY}`
+        );
+        const balanceInWei = response.data.result;
+        const balanceInUSDT = parseFloat(balanceInWei) / 1e18;
+        return { wallet, balance: balanceInUSDT };
+      })
+    );
+    res.json(balances);
+  } catch (error) {
+    console.error('Wallet balance error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch wallet balances' });
+  }
+});
+
+// ✅ NEW: Shopify Products Endpoint
+app.get('/api/shopify-products', async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${CONFIG.STORE_URL}/admin/api/2024-07/products.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': CONFIG.ADMIN_SHOP_SECRET,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    const products = response.data.products.map(p => ({
+      title: p.title,
+      price: p.variants[0].price,
+      image: p.image?.src || null
+    }));
+    res.json(products);
+  } catch (error) {
+    console.error('Shopify API error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch Shopify products' });
   }
 });
 
