@@ -9,7 +9,6 @@ import { dirname } from 'path';
 
 const execPromise = util.promisify(exec);
 
-// Fix for __dirname in ES6 modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -21,9 +20,9 @@ export const contractDeployAgent = async (CONFIG) => {
 
     const web3 = new Web3(CONFIG.BSC_NODE);
 
-    // Compile contracts
+    // ✅ Run from correct directory
     console.log('📦 Compiling contracts...');
-    await execPromise('cd backend && npx hardhat compile', { cwd: path.resolve(__dirname, '..') });
+    await execPromise('npx hardhat compile', { cwd: path.resolve(__dirname, '..') });
 
     // Get gas price
     const gasResponse = await fetch(
@@ -41,7 +40,7 @@ export const contractDeployAgent = async (CONFIG) => {
       const bytecode = JSON.parse(await fs.readFile(bytecodePath, 'utf8')).bytecode.object;
 
       const contract = new web3.eth.Contract(abi);
-      const deployTx = contract.deploy({ data: bytecode, arguments: args });
+      const deployTx = contract.deploy({ bytecode, arguments: args });
       const estimatedGas = await deployTx.estimateGas({ from: CONFIG.GAS_WALLET });
 
       const deployedContract = await deployTx.send({
@@ -57,27 +56,14 @@ export const contractDeployAgent = async (CONFIG) => {
     const revenueDistributor = await deployContract(
       path.resolve(__dirname, '../artifacts/contracts/RevenueDistributor.sol/RevenueDistributor.json'),
       path.resolve(__dirname, '../artifacts/contracts/RevenueDistributor.sol/RevenueDistributor.json'),
-      [CONFIG.USDT_WALLETS, CONFIG.GAS_WALLET, '0x55d398326f99059ff775485246999027b3197955'] // USDT on BSC
+      [CONFIG.USDT_WALLETS, CONFIG.GAS_WALLET, '0x55d398326f99059ff775485246999027b3197955']
     );
 
     console.log('✅ RevenueDistributor deployed at:', revenueDistributor.options.address);
 
-    // Deploy APIKeyGenerator
-    const apiKeyGenerator = await deployContract(
-      path.resolve(__dirname, '../artifacts/contracts/APIKeyGenerator.sol/APIKeyGenerator.json'),
-      path.resolve(__dirname, '../artifacts/contracts/APIKeyGenerator.sol/APIKeyGenerator.json')
-    );
-
-    console.log('✅ APIKeyGenerator deployed at:', apiKeyGenerator.options.address);
-
-    // Update CONFIG
-    CONFIG.REVENUE_DISTRIBUTOR_ADDRESS = revenueDistributor.options.address;
-    CONFIG.API_KEY_GENERATOR_ADDRESS = apiKeyGenerator.options.address;
-
-    // Save to file for other agents
+    // Save to file
     await fs.writeFile(path.join(__dirname, '../contracts.json'), JSON.stringify({
       RevenueDistributor: revenueDistributor.options.address,
-      APIKeyGenerator: apiKeyGenerator.options.address,
     }, null, 2));
 
     console.log('💾 Contract addresses saved to contracts.json');
