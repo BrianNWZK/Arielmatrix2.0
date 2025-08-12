@@ -75,15 +75,19 @@ test-results/
 # -----------------------
 # Frontend Build Artifacts
 # -----------------------
-frontend/dist/
-frontend/build/
-frontend/out/
+# ❌ DO NOT IGNORE: Docker needs to build frontend/dist
+# Comment out these lines:
+# frontend/dist/
+# frontend/build/
+# frontend/out/
 
 # -----------------------
 # Backend Public (Auto-generated)
 # -----------------------
-backend/public/
-backend/dist/
+# ❌ DO NOT IGNORE: Docker needs to copy backend/public
+# Comment out these lines:
+# backend/public/
+# backend/dist/
 
 # -----------------------
 # Hardhat & Blockchain
@@ -98,11 +102,13 @@ foundry.toml
 # -----------------------
 # Caches
 # -----------------------
-.puppeteer_cache/
-.puppeteer/
-.cache/puppeteer/
-.cache/ms-playwright/
-.chromium/
+# ❌ DO NOT IGNORE: Docker uses these for browser binaries
+# Comment out these lines:
+# .puppeteer_cache/
+# .puppeteer/
+# .cache/puppeteer/
+# .cache/ms-playwright/
+# .chromium/
 
 # -----------------------
 # Sensitive Files
