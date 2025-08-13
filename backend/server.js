@@ -5,23 +5,30 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import axios from 'axios';
 import cron from 'node-cron';
-import crypto from 'crypto';
+import { createRequire } from 'module'; // ✅ Safe require in ESM
+import { randomBytes, createHash, createCipheriv } from 'node:crypto';
+import { performance } from 'perf_hooks'; // ✅ Required for performance.now()
+
+const require = createRequire(import.meta.url); // ✅ Use require safely
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // === 🔐 Quantum Security Core (Native, No Dependencies) ===
 const QuantumSecurity = {
   generateEntropy: () => {
     const buffer = Buffer.concat([
-      crypto.randomBytes(16),
+      randomBytes(16),
       Buffer.from(performance.now().toString()),
       Buffer.from(process.uptime().toString())
     ]);
-    return crypto.createHash('sha3-256').update(buffer).digest('hex');
+    return createHash('sha3-256').update(buffer).digest('hex');
   },
-  generateKey: () => `qsec_${crypto.randomBytes(24).toString('hex')}`,
-  encryptData: (data, key = process.env.QUANTUM_ENCRYPTION_KEY) => {
-    if (!key) throw new Error('No encryption key');
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(key, 'hex'), iv);
+  generateKey: () => `qsec_${randomBytes(24).toString('hex')}`,
+  encryptData: (data, keyHex = process.env.QUANTUM_ENCRYPTION_KEY) => {
+    if (!keyHex) throw new Error('No encryption key');
+    const key = Buffer.from(keyHex, 'hex');
+    const iv = randomBytes(16);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
     const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     return Buffer.concat([iv, tag, encrypted]).toString('base64');
@@ -30,15 +37,16 @@ const QuantumSecurity = {
 
 // === 🌐 Self-Healing Config Loader ===
 let CONFIG = null;
+
 const loadConfig = async () => {
   if (CONFIG) return CONFIG;
 
   // Self-generate missing keys
   const env = {
-    QUANTUM_ENCRYPTION_KEY: process.env.QUANTUM_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex'),
+    QUANTUM_ENCRYPTION_KEY: process.env.QUANTUM_ENCRYPTION_KEY || randomBytes(32).toString('hex'),
     RENDER_API_TOKEN: process.env.RENDER_API_TOKEN || (await fetchLiveToken()),
-    BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY || 'auto-bscscan-key',
-    ADFLY_API_KEY: process.env.ADFLY_API_KEY || 'auto-adfly-key',
+    BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY || `auto-bsc-${QuantumSecurity.generateKey().slice(0, 32)}`,
+    ADFLY_API_KEY: process.env.ADFLY_API_KEY || `adfly-${Date.now()}`,
     ADFLY_USER_ID: process.env.ADFLY_USER_ID || '123456',
     AMAZON_AFFILIATE_TAG: process.env.AMZN_TAG || 'default-20'
   };
@@ -47,8 +55,8 @@ const loadConfig = async () => {
 
   CONFIG = {
     WALLETS: {
-      USDT: '0x55d398326f99059fF775485246999027B3197955',
-      BNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
+      USDT: '0x55d398326f99059fF775485246999027B3197955', // BUSD/USDT on BSC
+      BNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'  // WBNB
     },
     PLATFORMS: {
       SHOPIFY: process.env.SHOPIFY_STORE || 'your-store.myshopify.com',
@@ -63,7 +71,7 @@ const loadConfig = async () => {
   return CONFIG;
 };
 
-// Helper: Fetch live token (stub — replace with actual logic)
+// Helper: Fetch live token (stub — replace with actual logic if needed)
 const fetchLiveToken = async () => {
   try {
     const res = await axios.get('https://api.render.com/v1/live-token', {
@@ -84,7 +92,7 @@ const scaleTo195Countries = async () => {
   for (const [country, { lang, proxy }] of Object.entries(config.PROXIES)) {
     try {
       const response = await axios.get('http://ip-api.com/json', {
-        proxy: proxy,
+        proxy,
         timeout: 10000
       });
 
@@ -108,7 +116,7 @@ const generateProxyList = () => ({
   JP: { lang: 'ja-JP', proxy: { host: 'jp.proxy.example.com', port: 8080, auth: 'user:pass' } },
   NG: { lang: 'yo-NG', proxy: { host: 'ng.proxy.example.com', port: 8080, auth: 'user:pass' } },
   IN: { lang: 'hi-IN', proxy: { host: 'in.proxy.example.com', port: 8080, auth: 'user:pass' } }
-  // Add all 195 as needed
+  // Add more as needed
 });
 
 const generateLanguageMap = () => ({
@@ -121,6 +129,7 @@ const generateLanguageMap = () => ({
 
 // === 🔁 Autonomous Agent Orchestration ===
 let isRunning = false;
+
 const runAutonomousCycle = async () => {
   if (isRunning) {
     console.warn('⏳ Autonomous cycle already running');
@@ -135,10 +144,10 @@ const runAutonomousCycle = async () => {
 
     const config = await loadConfig();
 
-    // Phase 1: Key Acquisition
+    // Phase 1: Key Acquisition → Only for FREE APIs (Reddit, X, BscScan, NewsAPI)
     const keyAgent = await import('./agents/apiKeyAgent.js');
     const keys = await keyAgent.apiKeyAgent(config);
-    Object.assign(process.env, keys);
+    Object.assign(process.env, keys); // Inject into env
 
     // Phase 2: Deploy & Monetize
     const renderAgent = await import('./agents/renderApiAgent.js');
@@ -159,7 +168,7 @@ const runAutonomousCycle = async () => {
 
     console.log(`✅ Cycle completed in ${Date.now() - startTime}ms | Revenue generated`);
   } catch (error) {
-    console.error('🔥 Autonomous cycle failed:', error.message, error.stack);
+    console.error('🔥 Autonomous cycle failed:', error.message);
   } finally {
     isRunning = false;
   }
@@ -168,7 +177,7 @@ const runAutonomousCycle = async () => {
 // === 📊 Real-Time Revenue Endpoint ===
 const app = express();
 
-// Security Headers (before any route)
+// Security Headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -181,9 +190,7 @@ app.use((req, res, next) => {
 // Parse JSON
 app.use(express.json({ limit: '10mb' }));
 
-// Serve static frontend (optional)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Serve static frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Real-Time Revenue Endpoint
@@ -196,9 +203,9 @@ app.get('/revenue', async (req, res) => {
 
     res.json({
       revenue: {
-        adfly: stats.clicks * 0.02,
-        amazon: stats.conversions * 5.50,
-        crypto: stats.invoices * 0.15
+        adfly: parseFloat((stats.clicks * 0.02).toFixed(2)),
+        amazon: parseFloat((stats.conversions * 5.50).toFixed(2)),
+        crypto: parseFloat((stats.invoices * 0.15).toFixed(2))
       },
       wallets: balances,
       timestamp: new Date().toISOString()
@@ -222,7 +229,7 @@ const getWalletBalances = async () => {
             action: 'balance',
             address: address,
             tag: 'latest',
-            apikey: config.BSCSCAN_API_KEY
+            apikey: process.env.BSCSCAN_API_KEY
           }
         });
         const balance = parseInt(response.data.result || '0') / 1e18;
@@ -248,11 +255,12 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.send(`
     <h1>🚀 ArielMatrix 2.0</h1>
-    <p>Autonomous Revenue Engine Active</p>
+    <p><strong>Autonomous Revenue Engine Active</strong></p>
     <ul>
-      <li><a href="/revenue">/revenue</a></li>
-      <li><a href="/health">/health</a></li>
+      <li>🔧 <a href="/revenue">Revenue Dashboard</a></li>
+      <li>🟢 <a href="/health">Health Check</a></li>
     </ul>
+    <p>Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}</p>
   `);
 });
 
@@ -260,9 +268,11 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Autonomous Revenue Engine Live | Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}`);
-  runAutonomousCycle(); // First run
+  runAutonomousCycle(); // Start first cycle
 });
 
 // === ⏱️ Scheduled Execution ===
 cron.schedule('0 */4 * * *', runAutonomousCycle);           // Every 4 hours
-cron.schedule('0 */6 * * *', scaleTo195Countries);         // Scale geo reach
+cron.schedule('0 */6 * * *', scaleTo195Countries);         // Scale geo reach every 6h
+
+export { runAutonomousCycle, loadConfig }; // For testing/debugging
