@@ -90,7 +90,7 @@ const getQuantumEmail = async () => {
 
   for (const url of providers) {
     try {
-      const res = await axios.get(url, { timeout: 5000 });
+      const res = await axios.get(url.trim(), { timeout: 5000 });
       if (res.data.email) return res.data.email;
       if (Array.isArray(res.data) && res.data[0]) return res.data[0];
     } catch (e) {
@@ -143,11 +143,10 @@ const safeClick = async (page, selectors) => {
 const extractRevenueKey = async (page) => {
   return await page.evaluate(() => {
     const patterns = [
-      /[a-f0-9]{32}/i,           // Stripe, generic
-      /sk_live_[a-zA-Z0-9_]{24}/,
-      /pk_live_[a-zA-Z0-9_]{24}/,
-      /live_[a-zA-Z0-9_]{40}/,   // Coinbase
-      /api_key-[a-zA-Z0-9]{32}/,
+      /[a-f0-9]{32}/i,           // Generic 32-char hex
+      /sk_live_[a-zA-Z0-9_]{24}/, // Stripe
+      /live_[a-zA-Z0-9_]{40}/,    // Coinbase
+      /api_key-[a-zA-Z0-9]{32}/,  // Custom APIs
       /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/ // JWT
     ];
 
@@ -168,32 +167,37 @@ const extractRevenueKey = async (page) => {
   });
 };
 
-// === 🌐 Autonomous Revenue Platforms ===
+// === 🌐 Autonomous Revenue Platforms (ONLY VALID FREE APIs) ===
 const REVENUE_PLATFORMS = [
-  {
-    name: 'STRIPE',
-    url: 'https://dashboard.stripe.com/register',
-    type: 'signup'
-  },
-  {
-    name: 'PAYPAL',
-    url: 'https://www.paypal.com/signup',
-    type: 'signup'
-  },
-  {
-    name: 'COINBASE',
-    url: 'https://www.coinbase.com/signup',
-    type: 'signup'
-  },
   {
     name: 'REDDIT',
     url: 'https://www.reddit.com/register',
-    type: 'signup'
+    type: 'signup',
+    keyUrl: 'https://www.reddit.com/prefs/apps'
   },
   {
-    name: 'PINTEREST',
-    url: 'https://www.pinterest.com/signup',
-    type: 'signup'
+    name: 'X',
+    url: 'https://signup.x.com/',
+    type: 'signup',
+    keyUrl: 'https://developer.x.com/en/docs/twitter-api/getting-started'
+  },
+  {
+    name: 'BSCSCAN',
+    url: 'https://bscscan.com/register',
+    type: 'signup',
+    keyUrl: 'https://bscscan.com/myapikey'
+  },
+  {
+    name: 'NEWSDATA',
+    url: 'https://newsdata.io/register',
+    type: 'signup',
+    keyUrl: 'https://newsdata.io/account'
+  },
+  {
+    name: 'CAT_API',
+    url: 'https://thecatapi.com/signup',
+    type: 'signup',
+    keyUrl: 'https://thecatapi.com/keys'
   }
 ];
 
@@ -209,7 +213,6 @@ export const apiKeyAgent = async () => {
   let browser = null;
 
   try {
-    // Launch with optional proxy (from config or env)
     const proxy = process.env.PROXY_URL ? {
       host: new URL(process.env.PROXY_URL).hostname,
       port: parseInt(new URL(process.env.PROXY_URL).port)
@@ -237,10 +240,21 @@ export const apiKeyAgent = async () => {
         await safeClick(page, ['button[type="submit"]', 'button[data-test="submit"]', 'button.btn-primary']);
         await quantumDelay(5000);
 
+        // Navigate to key page if needed
+        if (platform.keyUrl) {
+          try {
+            await page.goto(platform.keyUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+            await quantumDelay(3000);
+          } catch (e) {
+            console.warn(`⚠️ Could not access key page for ${platform.name}`);
+          }
+        }
+
         // Try to extract API key
         const key = await extractRevenueKey(page);
         if (key) {
-          revenueKeys[`${platform.name}_API_KEY`] = key;
+          const keyName = `${platform.name}_API_KEY`;
+          revenueKeys[keyName] = key;
           console.log(`💰 ${platform.name} Key Acquired: ${key.slice(0, 8)}...`);
         } else {
           console.warn(`⚠️ ${platform.name}: No key found — may require manual approval`);
