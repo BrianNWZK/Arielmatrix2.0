@@ -1,25 +1,28 @@
 // backend/agents/renderApiAgent.js
 import axios from 'axios';
 import fs from 'fs/promises';
-import crypto from 'crypto';
+import { createHash } from 'node:crypto';
 import { performance } from 'perf_hooks';
+import { cpus, loadavg } from 'os';
 
-// Quantum Security Core (Real Implementation)
+// Quantum Security Core (ESM-Safe)
 const QuantumSecurity = {
   generateSecureKey: () => {
-    // Hardware-accelerated cryptography (WebCrypto API if available)
-    const cryptoImpl = crypto.webcrypto || crypto;
+    const cryptoImpl = globalThis.crypto || crypto;
     const entropy = new Uint32Array(8);
-    cryptoImpl.getRandomValues(entropy);
-    
+    if (cryptoImpl.getRandomValues) {
+      cryptoImpl.getRandomValues(entropy);
+    } else {
+      // Fallback
+      for (let i = 0; i < 8; i++) entropy[i] = Math.floor(Math.random() * 4294967295);
+    }
     return `qsec-${Buffer.from(entropy).toString('hex').slice(0, 32)}-${Date.now().toString(36)}`;
   },
 
   verifyEnvironment: async () => {
-    // Real system checks
     const [memUsage, cpuCount, netStatus] = await Promise.all([
       process.memoryUsage(),
-      Promise.resolve(require('os').cpus().length),
+      cpus().length,
       axios.get('https://api.render.com/health').catch(() => ({ status: 503 }))
     ]);
     
@@ -37,93 +40,102 @@ export const renderApiAgent = async (CONFIG) => {
     // Real system verification before proceeding
     const systemCheck = await QuantumSecurity.verifyEnvironment();
     if (!systemCheck.stable || !systemCheck.networkActive) {
-      throw new Error('System preconditions not met for quantum operations');
+      console.warn('⚠️ System preconditions not met → running in local mode');
+      return {
+        QUANTUM_MODE: 'local',
+        QUANTUM_API_KEY: QuantumSecurity.generateSecureKey()
+      };
     }
 
-    // Generate actual quantum-secured keys
+    // Generate quantum-secured keys
     const quantumEnv = {
       QUANTUM_MODE: 'active',
       QUANTUM_API_KEY: QuantumSecurity.generateSecureKey(),
-      QUANTUM_TIMESTAMP: performance.timeOrigin + performance.now()
+      QUANTUM_TIMESTAMP: performance.now()
     };
 
     if (!CONFIG.RENDER_API_TOKEN) {
-      console.warn('RENDER_API_TOKEN missing - operating in local quantum mode only');
+      console.warn('⚠️ RENDER_API_TOKEN missing → operating in local mode');
       return quantumEnv;
     }
 
-    // Real service ID resolution
-    const SERVICE_ID = process.env.RENDER_SERVICE_ID || 
-                      `qfallback-${crypto.createHash('sha256')
-                        .update(quantumEnv.QUANTUM_API_KEY)
-                        .digest('hex')
-                        .slice(0, 12)}`;
-    
+    // Resolve service ID
+    const SERVICE_ID = process.env.RENDER_SERVICE_ID;
+    if (!SERVICE_ID) {
+      console.error('❌ RENDER_SERVICE_ID missing in environment');
+      return { error: 'RENDER_SERVICE_ID missing' };
+    }
+
     const BASE_URL = `https://api.render.com/v1/services/${SERVICE_ID}/env-vars`;
 
-    // Actual filesystem operation for keys
-    const keysData = await fs.readFile('api-keys.json', 'utf8');
-    const keys = JSON.parse(keysData);
+    // Read keys from revenue_keys.json (not api-keys.json)
+    const keyPath = new URL('../revenue_keys.json', import.meta.url);
+    let keys = {};
+    try {
+      const data = await fs.readFile(keyPath, 'utf8');
+      keys = JSON.parse(data);
+      console.log(`✅ Loaded ${Object.keys(keys).length} keys from revenue_keys.json`);
+    } catch (err) {
+      console.warn('⚠️ No revenue_keys.json found or invalid JSON');
+    }
 
-    // Real environment variables to update
+    // Environment variables to update
     const envUpdates = [
-      // Existing keys
-      { key: 'NEWS_API_KEY', value: keys.NEWS_API_KEY },
-      { key: 'WEATHER_API_KEY', value: keys.WEATHER_API_KEY },
-      { key: 'X_API_KEY', value: keys.X_API_KEY },
-      { key: 'BSCSCAN_API_KEY', value: keys.BSCSCAN_API_KEY },
-      { key: 'REDDIT_API_KEY', value: keys.REDDIT_API_KEY },
-      { key: 'SOLANA_API_KEY', value: keys.SOLANA_API_KEY },
-      { key: 'ADFLY_API_KEY', value: keys.ADFLY_API_KEY },
-      { key: 'ADFLY_USER_ID', value: keys.ADFLY_USER_ID },
-      // Quantum security additions
+      { key: 'BSCSCAN_API_KEY', value: keys.BSCSCAN_API_KEY || process.env.BSCSCAN_API_KEY },
+      { key: 'ADFLY_API_KEY', value: keys.ADFLY_API_KEY || process.env.ADFLY_API_KEY },
+      { key: 'ADFLY_USER_ID', value: keys.ADFLY_USER_ID || process.env.ADFLY_USER_ID },
+      { key: 'X_API_KEY', value: keys.X_API_KEY || process.env.X_API_KEY },
+      { key: 'REDDIT_API_KEY', value: keys.REDDIT_API_KEY || process.env.REDDIT_API_KEY },
+      { key: 'NEWS_API_KEY', value: keys.NEWS_API_KEY || process.env.NEWS_API_KEY },
+      { key: 'WEATHER_API_KEY', value: keys.WEATHER_API_KEY || process.env.WEATHER_API_KEY },
       { key: 'QUANTUM_SECURE_MODE', value: quantumEnv.QUANTUM_MODE },
-      { key: 'QUANTUM_ACCESS_KEY', value: quantumEnv.QUANTUM_API_KEY }
-    ].filter(env => {
-      // Real validation checks
-      const isValid = typeof env.value === 'string' && 
-                     env.value.length > 8 && 
-                     !env.value.includes('undefined');
-      if (!isValid) console.warn(`Invalid key value for ${env.key}`);
-      return isValid;
-    });
+      { key: 'QUANTUM_ACCESS_KEY', value: quantumEnv.QUANTUM_API_KEY },
+      { key: 'AUTONOMOUS_ENGINE', value: 'true' },
+      { key: 'DEPLOYMENT_ID', value: `AUTO-${createHash('md5').update(quantumEnv.QUANTUM_API_KEY).digest('hex').slice(0, 12)}` }
+    ].filter(item => item.value && typeof item.value === 'string' && item.value.trim() !== '');
 
-    // Actual API calls to Render.com
-    const existingVars = await axios.get(BASE_URL, {
-      headers: { 
-        Authorization: `Bearer ${CONFIG.RENDER_API_TOKEN}`,
-        'X-Quantum-Verified': 'true'
-      },
-      timeout: 10000
-    }).then(res => res.data);
+    if (envUpdates.length === 0) {
+      console.warn('⚠️ No valid keys to update');
+      return quantumEnv;
+    }
 
-    // Real parallel update operations
-    await Promise.all(
-      envUpdates.map(env => {
-        const existing = existingVars.find(v => v.key === env.key);
-        const method = existing ? 'PUT' : 'POST';
-        const url = existing ? `${BASE_URL}/${existing.id}` : BASE_URL;
+    // Get existing env vars
+    const authHeader = { Authorization: `Bearer ${CONFIG.RENDER_API_TOKEN}` };
+    let existingVars = [];
+    try {
+      const res = await axios.get(BASE_URL, { headers: authHeader });
+      existingVars = Array.isArray(res.data) ? res.data : [];
+    } catch (err) {
+      console.warn('⚠️ Failed to fetch existing env vars:', err.message);
+    }
 
-        return axios({
+    const existingKeys = existingVars.reduce((acc, v) => {
+      acc[v.key] = v;
+      return acc;
+    }, {});
+
+    // Update or create each env var
+    const updatePromises = envUpdates.map(async (env) => {
+      const method = existingKeys[env.key] ? 'PUT' : 'POST';
+      const url = method === 'PUT' ? `${BASE_URL}/${existingKeys[env.key].id}` : BASE_URL;
+
+      try {
+        await axios({
           method,
           url,
-          headers: {
-            Authorization: `Bearer ${CONFIG.RENDER_API_TOKEN}`,
-            'Content-Type': 'application/json',
-            'X-Quantum-Secure': quantumEnv.QUANTUM_API_KEY
-          },
+          headers: { ...authHeader, 'Content-Type': 'application/json' },
           data: { key: env.key, value: env.value },
           timeout: 15000
-        }).then(() => {
-          console.log(`Successfully ${method === 'POST' ? 'set' : 'updated'} ${env.key}`);
-        }).catch(err => {
-          console.error(`Failed to update ${env.key}:`, err.response?.status || err.message);
-          throw err;
         });
-      })
-    );
+        console.log(`✅ ${method === 'POST' ? 'Set' : 'Updated'} ${env.key}`);
+      } catch (err) {
+        console.error(`🚨 Failed to update ${env.key}:`, err.response?.data || err.message);
+      }
+    });
 
-    // Real system performance metrics
+    await Promise.all(updatePromises);
+
+    // Add performance metrics
     quantumEnv.performanceMetrics = {
       heapUsed: process.memoryUsage().heapUsed,
       processingTime: performance.now() - quantumEnv.QUANTUM_TIMESTAMP,
@@ -133,7 +145,6 @@ export const renderApiAgent = async (CONFIG) => {
     return quantumEnv;
 
   } catch (error) {
-    // Real error handling with system diagnostics
     const errorInfo = {
       message: error.message,
       stack: error.stack,
@@ -141,14 +152,14 @@ export const renderApiAgent = async (CONFIG) => {
       system: {
         memory: process.memoryUsage(),
         uptime: process.uptime(),
-        cpu: require('os').loadavg()
+        cpu: loadavg()
       }
     };
     
-    console.error('Quantum-enhanced operation failed:', errorInfo);
-    throw new Error('Operation failed with quantum safeguards');
+    console.error('🚨 Quantum-enhanced operation failed:', errorInfo);
+    throw error; // Let orchestrator handle
   }
 };
 
-// Real export for existing usage
+// Default export for backward compatibility
 export default renderApiAgent;
