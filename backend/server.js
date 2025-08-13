@@ -131,11 +131,18 @@ const runAutonomousCycle = async () => {
     console.log(`⚡ [${new Date().toISOString()}] Starting Autonomous Revenue Cycle`);
     const config = await loadConfig();
 
+    // Phase 0: Scout for new APIs
+    const apiScoutAgent = await import('./agents/apiScoutAgent.js');
+    const newKeys = await apiScoutAgent.apiScoutAgent(config);
+    for (const [key, value] of Object.entries(newKeys)) {
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+
     // Phase 1: Use ENV keys first → only generate if missing
     const keyAgent = await import('./agents/apiKeyAgent.js');
     const keys = await keyAgent.apiKeyAgent(config);
-
-    // Inject only new keys (don't overwrite real ones)
     for (const [key, value] of Object.entries(keys)) {
       if (!process.env[key]) {
         process.env[key] = value;
