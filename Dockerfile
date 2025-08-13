@@ -20,23 +20,31 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Set environment variables for browsers
+ENV PUPPETEER_CACHE_DIR=/home/appuser/.cache/puppeteer
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
+
 # ---------- BACKEND ----------
 COPY backend/package.json backend/package-lock.json* ./backend/
+
+# Install Hardhat and all required devDependencies first to prevent HH801
 RUN npm install --prefix ./backend --legacy-peer-deps
+
 COPY backend/ ./backend/
 
-# Install and cache browsers in builder stage
-RUN npx puppeteer browsers install chrome --cache-dir=/home/appuser/.cache/puppeteer && \
-    PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright npx playwright install chromium --with-deps
+# Install browsers
+RUN npx puppeteer browsers install chrome --cache-dir=$PUPPETEER_CACHE_DIR && \
+    npx playwright install chromium --with-deps
 
-# Compile contracts (now that Hardhat is installed locally)
+# Compile contracts
 RUN cd backend && npx hardhat compile
 
 # ---------- FRONTEND ----------
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
-RUN if [ -f frontend/package-lock.json ]; \
-    then npm ci --prefix ./frontend; \
-    else npm install --prefix ./frontend; \
+RUN if [ -f frontend/package-lock.json ]; then \
+      npm ci --prefix ./frontend; \
+    else \
+      npm install --prefix ./frontend; \
     fi
 COPY frontend/ ./frontend/
 RUN npx vite build --prefix ./frontend
@@ -46,7 +54,7 @@ RUN npx vite build --prefix ./frontend
 # =========================
 FROM node:22.16.0
 
-# Install runtime deps
+# Install runtime dependencies for browsers
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -65,23 +73,17 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m appuser
 WORKDIR /app
 
-# Create required directories
-RUN mkdir -p \
-    /app/backend \
-    /app/backend/public \
-    /home/appuser/.cache/puppeteer \
-    /home/appuser/.cache/ms-playwright \
-    && chown -R appuser:appuser /app /home/appuser/.cache
+# Create cache directories
+RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright && \
+    chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built app from builder
+# Copy built app and caches from builder
 COPY --from=builder --chown=appuser:appuser /app /app
-
-# Copy browser binaries from builder
 COPY --from=builder --chown=appuser:appuser /home/appuser/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /home/appuser/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
-# Environment variables for executable paths
-ENV PUPPETEER_EXECUTABLE_PATH=/home/appuser/.cache/puppeteer/chrome/**/chrome-linux64/chrome \
+# Set environment variables for executable paths
+ENV PUPPETEER_EXECUTABLE_PATH=$PUPPETEER_CACHE_DIR/chrome/**/chrome-linux64/chrome \
     PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
 
 # Ensure frontend assets are in backend/public
@@ -89,7 +91,6 @@ RUN cp -r /app/frontend/dist/* /app/backend/public/ && \
     echo "✅ Frontend assets copied to /backend/public"
 
 USER appuser
-
 EXPOSE 10000
 
 CMD ["node", "backend/server.js"]
