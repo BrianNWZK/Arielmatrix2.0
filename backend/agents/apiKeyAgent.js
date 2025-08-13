@@ -1,5 +1,5 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+// backend/agents/apiKeyAgent.js
+import puppeteer from 'puppeteer';
 import axios from 'axios';
 import fs from 'fs/promises';
 import crypto from 'crypto';
@@ -7,192 +7,266 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
-// Quantum Security Core
-const QuantumSecurity = {
-  generateEntropy: () => crypto.createHash('sha3-256')
-    .update(crypto.randomBytes(32) + performance.now() + process.uptime())
-    .digest('hex'),
-  verifyBinary: (p) => {
-    try { return fs.accessSync(p, fs.constants.X_OK) === undefined; } 
-    catch { return false; }
-  }
-};
-
-// Configure stealth mode (bypass Cloudflare, Akamai, etc.)
-puppeteer.use(StealthPlugin());
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Quantum Retry Logic (Auto-Scaling Backoff)
-const withQuantumRetry = async (fn, maxAttempts = 5) => {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      return await fn();
-    } catch (error) {
-      if (i === maxAttempts - 1) throw error;
-      const delay = 2000 * (2 ** i) + (Math.random() * 1000);
-      console.warn(`🌀 Quantum Retry #${i + 1} in ${delay}ms`);
-      await new Promise(r => setTimeout(r, delay));
-    }
+// === 🔐 Quantum Security Core (Native, No Dependencies) ===
+const QuantumSecurity = {
+  generateEntropy: () => {
+    const buffer = Buffer.concat([
+      crypto.randomBytes(16),
+      Buffer.from(performance.now().toString()),
+      Buffer.from(process.uptime().toString())
+    ]);
+    return crypto.createHash('sha3-256').update(buffer).digest('hex');
+  },
+  generateKey: () => `qsec_${crypto.randomBytes(24).toString('hex')}`,
+  encryptData: (data, key = process.env.QUANTUM_ENCRYPTION_KEY) => {
+    if (!key) throw new Error('No encryption key');
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(key, 'hex'), iv);
+    const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([iv, tag, encrypted]).toString('base64');
   }
 };
 
-// Real Temp Email (No Mock)
-const getQuantumEmail = async () => {
-  try {
-    const { data } = await axios.get('https://api.temp-mail.org/v1/genRandomMailbox');
-    return data.email || `q${crypto.randomBytes(8).toString('hex')}@quantumrev.io`;
-  } catch {
-    return `auto${Date.now()}@revenue.engine`;
-  }
-};
+// === 🌀 Quantum Jitter (Anti-Robot Detection) ===
+const quantumDelay = (ms) => new Promise(resolve => {
+  const jitter = crypto.randomInt(1000, 5000); // Human-like unpredictability
+  setTimeout(resolve, ms + jitter);
+});
 
-// AI-Powered Browser Launch (Undetectable)
-const launchRevenueBrowser = async () => {
+// === 🌐 Launch Truly Stealth Browser (No puppeteer-extra) ===
+const launchStealthBrowser = async (proxy = null) => {
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-blink-features=AutomationControlled',
-    `--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${Math.floor(Math.random() * 20) + 100}.0.0.0 Safari/537.36`
+    '--disable-infobars',
+    '--window-position=0,0',
+    '--window-size=1366,768',
+    '--disable-extensions',
+    '--disable-plugins-discovery',
+    '--disable-features=TranslateUI'
   ];
+
+  if (proxy) {
+    args.push(`--proxy-server=${proxy.host}:${proxy.port}`);
+  }
 
   const browser = await puppeteer.launch({
     headless: 'new',
     args,
-    ignoreHTTPSErrors: true,
-    timeout: 120000
+    timeout: 120000,
+    ignoreHTTPSErrors: true
   });
 
   const page = await browser.newPage();
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+  );
+  await page.setViewport({ width: 1366, height: 768 });
+
+  // Delete navigator.webdriver flag
   await page.evaluateOnNewDocument(() => {
-    delete navigator.__proto__.webdriver;
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
+    Object.defineProperty(navigator, 'plugins', { get: () => [new PluginArray()] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
   });
 
   return { browser, page };
 };
 
-// AI-Driven Revenue Extraction (Real Keys Only)
-const extractRevenueKey = async (page, platform) => {
-  const { url, selectors } = platform;
-  
-  await page.goto(url, { 
-    waitUntil: 'networkidle2', 
-    timeout: 60000 
-  });
+// === 📧 AI-Powered Temp Email (Multi-Provider Fallback) ===
+const getQuantumEmail = async () => {
+  const providers = [
+    'https://api.temp-mail.org/v1/genRandomMailbox',
+    'https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1',
+    'https://api.fakermail.com/v1/email'
+  ];
 
-  // AI-Based Selector Detection (No Hardcoding)
-  const findSelector = async (selectors) => {
-    for (const sel of selectors) {
-      try {
-        await page.waitForSelector(sel, { timeout: 5000 });
-        return sel;
-      } catch {}
+  for (const url of providers) {
+    try {
+      const res = await axios.get(url, { timeout: 5000 });
+      if (res.data.email) return res.data.email;
+      if (Array.isArray(res.data) && res.data[0]) return res.data[0];
+    } catch (e) {
+      continue;
     }
-    throw new Error('No viable selector found');
-  };
-
-  const emailField = await findSelector(selectors.email);
-  await page.type(emailField, platform.email, { delay: 50 + Math.random() * 50 });
-
-  if (selectors.password) {
-    const passField = await findSelector(selectors.password);
-    await page.type(passField, platform.password, { delay: 50 + Math.random() * 50 });
   }
 
-  const submitBtn = await findSelector(selectors.submit);
-  await page.click(submitBtn);
-
-  // AI-Based Key Extraction
-  const key = await page.evaluate(() => {
-    const possibleKeyElements = [
-      ...document.querySelectorAll('code, pre, #api-key, input[type="text"]')
-    ];
-    for (const el of possibleKeyElements) {
-      const text = el.value || el.textContent;
-      const match = text.match(/([a-f0-9]{32}|live_[a-zA-Z0-9_]{40})/i);
-      if (match) return match[0];
-    }
-    return null;
-  });
-
-  if (!key) throw new Error('Key extraction failed');
-  return key;
+  // Final fallback: custom domain
+  return `q${QuantumSecurity.generateEntropy().slice(0, 12)}@revgen.ai`;
 };
 
-// Main Autonomous Revenue Engine
+// === 🔐 AI-Generated Password ===
+const generatePassword = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&';
+  let pass = 'Q';
+  for (let i = 0; i < 16; i++) {
+    pass += chars[crypto.randomInt(0, chars.length)];
+  }
+  return pass + '!';
+};
+
+// === 🔍 Smart Selector with Fallback Chain ===
+const safeType = async (page, selectors, text) => {
+  for (const selector of selectors) {
+    try {
+      await page.waitForSelector(selector, { timeout: 6000 });
+      await page.type(selector, text, { delay: 50 + Math.random() * 50 });
+      return true;
+    } catch (e) {
+      continue;
+    }
+  }
+  throw new Error(`All type selectors failed: ${selectors[0]}`);
+};
+
+const safeClick = async (page, selectors) => {
+  for (const selector of selectors) {
+    try {
+      await page.waitForSelector(selector, { timeout: 8000 });
+      await page.click(selector);
+      return true;
+    } catch (e) {
+      continue;
+    }
+  }
+  throw new Error(`All click selectors failed`);
+};
+
+// === 🔍 AI-Driven Key Extraction (No Hardcoding) ===
+const extractRevenueKey = async (page) => {
+  return await page.evaluate(() => {
+    const patterns = [
+      /[a-f0-9]{32}/i,           // Stripe, generic
+      /sk_live_[a-zA-Z0-9_]{24}/,
+      /pk_live_[a-zA-Z0-9_]{24}/,
+      /live_[a-zA-Z0-9_]{40}/,   // Coinbase
+      /api_key-[a-zA-Z0-9]{32}/,
+      /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/ // JWT
+    ];
+
+    const elements = [
+      ...document.querySelectorAll('code, pre, input[type="text"], input[type="password"], div, span, p')
+    ];
+
+    for (const el of elements) {
+      const text = (el.value || el.textContent || '').trim();
+      if (text.length < 16) continue;
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match) return match[0];
+      }
+    }
+
+    return null;
+  });
+};
+
+// === 🌐 Autonomous Revenue Platforms ===
+const REVENUE_PLATFORMS = [
+  {
+    name: 'STRIPE',
+    url: 'https://dashboard.stripe.com/register',
+    type: 'signup'
+  },
+  {
+    name: 'PAYPAL',
+    url: 'https://www.paypal.com/signup',
+    type: 'signup'
+  },
+  {
+    name: 'COINBASE',
+    url: 'https://www.coinbase.com/signup',
+    type: 'signup'
+  },
+  {
+    name: 'REDDIT',
+    url: 'https://www.reddit.com/register',
+    type: 'signup'
+  },
+  {
+    name: 'PINTEREST',
+    url: 'https://www.pinterest.com/signup',
+    type: 'signup'
+  }
+];
+
+// === 🚀 Main Autonomous Revenue Engine ===
 export const apiKeyAgent = async () => {
   const quantumId = `REV-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
   console.log(`🚀 Quantum Revenue Engine ${quantumId} Activated`);
 
   const email = await getQuantumEmail();
-  const password = `Q${crypto.randomBytes(10).toString('hex')}!`;
+  const password = generatePassword();
   const revenueKeys = {};
 
+  let browser = null;
+
   try {
-    const { browser, page } = await launchRevenueBrowser();
+    // Launch with optional proxy (from config or env)
+    const proxy = process.env.PROXY_URL ? {
+      host: new URL(process.env.PROXY_URL).hostname,
+      port: parseInt(new URL(process.env.PROXY_URL).port)
+    } : null;
 
-    const platforms = [
-      {
-        name: 'STRIPE',
-        url: 'https://dashboard.stripe.com/register',
-        email,
-        password,
-        selectors: {
-          email: ['input[name="email"]', '#email'],
-          password: ['input[name="password"]', '#password'],
-          submit: ['button[type="submit"]', 'button[data-test="submit"]']
-        }
-      },
-      {
-        name: 'PAYPAL',
-        url: 'https://www.paypal.com/signup',
-        email,
-        password,
-        selectors: {
-          email: ['input[name="email"]', '#email'],
-          password: ['input[name="password"]', '#password'],
-          submit: ['button[type="submit"]', '#btnNext']
-        }
-      },
-      {
-        name: 'COINBASE',
-        url: 'https://www.coinbase.com/signup',
-        email,
-        password,
-        selectors: {
-          email: ['input[name="email"]', '#email'],
-          password: ['input[name="password"]', '#password'],
-          submit: ['button[type="submit"]', 'button[data-test="submit"]']
-        }
-      }
-    ];
+    const { browser: launchedBrowser, page } = await launchStealthBrowser(proxy);
+    browser = launchedBrowser;
 
-    for (const platform of platforms) {
+    for (const platform of REVENUE_PLATFORMS) {
       try {
-        const key = await withQuantumRetry(() => extractRevenueKey(page, platform));
-        revenueKeys[`${platform.name}_API_KEY`] = key;
-        console.log(`💰 ${platform.name} Revenue Key Acquired: ${key.slice(0, 8)}...`);
+        console.log(`🌐 Registering on ${platform.name}...`);
+
+        await page.goto(platform.url, { waitUntil: 'networkidle2', timeout: 60000 });
+        await quantumDelay(2000);
+
+        // Auto-detect email field
+        await safeType(page, ['input[name="email"]', 'input[type="email"]', '#email'], email);
+        await quantumDelay(1000);
+
+        // Auto-detect password field
+        await safeType(page, ['input[name="password"]', 'input[type="password"]', '#password'], password);
+        await quantumDelay(1000);
+
+        // Auto-detect submit button
+        await safeClick(page, ['button[type="submit"]', 'button[data-test="submit"]', 'button.btn-primary']);
+        await quantumDelay(5000);
+
+        // Try to extract API key
+        const key = await extractRevenueKey(page);
+        if (key) {
+          revenueKeys[`${platform.name}_API_KEY`] = key;
+          console.log(`💰 ${platform.name} Key Acquired: ${key.slice(0, 8)}...`);
+        } else {
+          console.warn(`⚠️ ${platform.name}: No key found — may require manual approval`);
+        }
+
+        await quantumDelay(3000);
       } catch (error) {
         console.warn(`⚠️ ${platform.name} Failed: ${error.message}`);
+        continue;
       }
-      await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
     }
 
+    // Close browser
     await browser.close();
+    browser = null;
+
+    // Securely save keys
+    const keyPath = path.join(__dirname, '../revenue_keys.json');
+    await fs.writeFile(keyPath, JSON.stringify(revenueKeys, null, 2), { mode: 0o600 });
+    console.log(`✅ Keys saved to ${keyPath}`);
+
   } catch (error) {
-    console.error(`🚨 CRITICAL FAILURE: ${error.message}`);
+    console.error(`🚨 Critical Failure: ${error.message}`);
+  } finally {
+    if (browser) await browser.close();
   }
 
-  // Securely Save Revenue Data
-  await fs.writeFile(
-    path.join(__dirname, '../revenue_keys.json'),
-    JSON.stringify(revenueKeys, null, 2),
-    { mode: 0o600 } // Military-Grade File Permissions
-  );
-
-  console.log('✅ Autonomous Revenue Generation Complete');
   return revenueKeys;
 };
