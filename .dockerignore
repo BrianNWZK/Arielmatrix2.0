@@ -75,7 +75,7 @@ test-results/
 # -----------------------
 # Frontend Build Artifacts
 # -----------------------
-# Keep commented out - Docker needs to build these
+# ⚠ Keep commented — Docker builds these
 # frontend/dist/
 # frontend/build/
 # frontend/out/
@@ -83,7 +83,7 @@ test-results/
 # -----------------------
 # Backend Public (Auto-generated)
 # -----------------------
-# Keep commented out - Docker needs to copy these
+# ⚠ Keep commented — Docker copies these
 # backend/public/
 # backend/dist/
 
@@ -100,7 +100,7 @@ foundry.toml
 # -----------------------
 # Caches
 # -----------------------
-# Keep commented out - Docker uses these for browser binaries
+# ⚠ Keep commented — needed for browser binaries in image
 # .puppeteer_cache/
 # .puppeteer/
 # .cache/puppeteer/
@@ -119,13 +119,12 @@ keys.json
 *.pem
 *.cer
 *.crt
-api-keys.json          # ✅ Add this — never commit API keys
+api-keys.json          # ✅ Never commit API keys
 
 # -----------------------
 # Development Tools
 # -----------------------
 *.tgz
-.DS_Store
 
 # -----------------------
 # DO NOT IGNORE: .dockerignore itself
