@@ -5,15 +5,15 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import axios from 'axios';
 import cron from 'node-cron';
-import { createRequire } from 'module'; // ✅ Safe require in ESM
+import { createRequire } from 'module';
 import { randomBytes, createHash, createCipheriv } from 'node:crypto';
-import { performance } from 'perf_hooks'; // ✅ Required for performance.now()
+import { performance } from 'perf_hooks';
 
-const require = createRequire(import.meta.url); // ✅ Use require safely
+const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// === 🔐 Quantum Security Core (Native, No Dependencies) ===
+// === 🔐 Quantum Security Core ===
 const QuantumSecurity = {
   generateEntropy: () => {
     const buffer = Buffer.concat([
@@ -41,14 +41,16 @@ let CONFIG = null;
 const loadConfig = async () => {
   if (CONFIG) return CONFIG;
 
-  // Self-generate missing keys
+  // Use real ENV keys first
   const env = {
     QUANTUM_ENCRYPTION_KEY: process.env.QUANTUM_ENCRYPTION_KEY || randomBytes(32).toString('hex'),
-    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN || (await fetchLiveToken()),
-    BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY || `auto-bsc-${QuantumSecurity.generateKey().slice(0, 32)}`,
-    ADFLY_API_KEY: process.env.ADFLY_API_KEY || `adfly-${Date.now()}`,
+    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN,
+    BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
+    ADFLY_API_KEY: process.env.ADFLY_API_KEY,
     ADFLY_USER_ID: process.env.ADFLY_USER_ID || '123456',
-    AMAZON_AFFILIATE_TAG: process.env.AMZN_TAG || 'default-20'
+    AMAZON_AFFILIATE_TAG: process.env.AMZN_TAG || 'default-20',
+    AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io',
+    AI_PASSWORD: process.env.AI_PASSWORD
   };
 
   Object.assign(process.env, env);
@@ -71,20 +73,7 @@ const loadConfig = async () => {
   return CONFIG;
 };
 
-// Helper: Fetch live token (stub — replace with actual logic if needed)
-const fetchLiveToken = async () => {
-  try {
-    const res = await axios.get('https://api.render.com/v1/live-token', {
-      headers: { Authorization: `Bearer ${process.env.ADMIN_TOKEN}` }
-    });
-    return res.data.token;
-  } catch (err) {
-    console.warn('⚠️ Failed to fetch live token:', err.message);
-    return 'fallback-render-token';
-  }
-};
-
-// === 🌍 Real 195-Country Scaling (No Simulation) ===
+// === 🌍 Real 195-Country Scaling ===
 const scaleTo195Countries = async () => {
   const config = await loadConfig();
   const results = [];
@@ -109,14 +98,13 @@ const scaleTo195Countries = async () => {
   return results;
 };
 
-// === 🌐 Proxy & Language Map (Real Rotation) ===
+// === 🌐 Proxy & Language Map ===
 const generateProxyList = () => ({
   US: { lang: 'en-US', proxy: { host: 'us.proxy.example.com', port: 8080, auth: 'user:pass' } },
   DE: { lang: 'de-DE', proxy: { host: 'de.proxy.example.com', port: 8080, auth: 'user:pass' } },
   JP: { lang: 'ja-JP', proxy: { host: 'jp.proxy.example.com', port: 8080, auth: 'user:pass' } },
   NG: { lang: 'yo-NG', proxy: { host: 'ng.proxy.example.com', port: 8080, auth: 'user:pass' } },
   IN: { lang: 'hi-IN', proxy: { host: 'in.proxy.example.com', port: 8080, auth: 'user:pass' } }
-  // Add more as needed
 });
 
 const generateLanguageMap = () => ({
@@ -141,13 +129,18 @@ const runAutonomousCycle = async () => {
 
   try {
     console.log(`⚡ [${new Date().toISOString()}] Starting Autonomous Revenue Cycle`);
-
     const config = await loadConfig();
 
-    // Phase 1: Key Acquisition → Only for FREE APIs (Reddit, X, BscScan, NewsAPI)
+    // Phase 1: Use ENV keys first → only generate if missing
     const keyAgent = await import('./agents/apiKeyAgent.js');
     const keys = await keyAgent.apiKeyAgent(config);
-    Object.assign(process.env, keys); // Inject into env
+
+    // Inject only new keys (don't overwrite real ones)
+    for (const [key, value] of Object.entries(keys)) {
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
 
     // Phase 2: Deploy & Monetize
     const renderAgent = await import('./agents/renderApiAgent.js');
@@ -275,4 +268,4 @@ app.listen(PORT, '0.0.0.0', () => {
 cron.schedule('0 */4 * * *', runAutonomousCycle);           // Every 4 hours
 cron.schedule('0 */6 * * *', scaleTo195Countries);         // Scale geo reach every 6h
 
-export { runAutonomousCycle, loadConfig }; // For testing/debugging
+export { runAutonomousCycle, loadConfig };
