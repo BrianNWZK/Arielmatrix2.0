@@ -1,7 +1,9 @@
+# =========================
 # Builder stage
-FROM node:22.16.0 as builder
+# =========================
+FROM node:22.16.0 AS builder
 
-# Install system dependencies
+# Install system dependencies once (covers Puppeteer/Playwright headless)
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -14,42 +16,45 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
-    && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/*
+
+# Deterministic cache locations for browsers (copied into final image)
+ENV PUPPETEER_CACHE_DIR=/browsers/puppeteer \
+    PLAYWRIGHT_BROWSERS_PATH=/browsers/ms-playwright
 
 WORKDIR /app
 
-# Copy backend files
+# ---- Backend deps (before copying full source for better layer caching)
 COPY backend/package.json backend/package-lock.json* ./backend/
-WORKDIR ./backend
+RUN --mount=type=cache,target=/app/backend/node_modules \
+    npm ci --prefix ./backend || npm install --legacy-peer-deps --prefix ./backend
 
-# Install dependencies
-RUN npm install --legacy-peer-deps
+# Install browsers into deterministic cache dirs
+RUN mkdir -p $PUPPETEER_CACHE_DIR $PLAYWRIGHT_BROWSERS_PATH \
+ && npx puppeteer browsers install chrome --cache-dir=$PUPPETEER_CACHE_DIR \
+ && PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH npx playwright install chromium
 
-# Install Puppeteer browser
-RUN npx puppeteer browsers install chrome --cache-dir=/root/.cache/puppeteer
-
-# Install Playwright browser with full dependencies
-RUN npx playwright install chromium --with-deps
-
-# Go back to root app directory
-WORKDIR /app
-
-# Copy ALL backend source files
+# ---- Copy backend source & compile contracts (if present)
 COPY backend/ ./backend/
+WORKDIR /app/backend
+# If contracts are missing or Hardhat not configured yet, don't fail the build
+RUN npx hardhat compile || echo "ⓘ Hardhat will compile at runtime if needed"
 
-# Copy frontend files
+# ---- Frontend build
+WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
-WORKDIR ./frontend
-RUN npm install
-
-# Copy ALL frontend source files
-COPY frontend/ ./
+RUN --mount=type=cache,target=/app/frontend/node_modules \
+    npm ci --prefix ./frontend || npm install --prefix ./frontend
+COPY frontend/ ./frontend/
+WORKDIR /app/frontend
 RUN npm run build
 
-# Final stage
+# =========================
+# Final runtime stage
+# =========================
 FROM node:22.16.0
 
-# Install runtime deps
+# Runtime system libs
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -62,36 +67,34 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
-    && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Non-root runtime
 RUN useradd -m appuser
 WORKDIR /app
 
-# Create required directories
-RUN mkdir -p \
-    /app/backend \
-    /app/backend/public \
-    /home/appuser/.cache/puppeteer \
-    /home/appuser/.cache/ms-playwright \
-    && chown -R appuser:appuser /app /home/appuser/.cache
+# Copy app
+COPY --from=builder /app /app
 
-# Copy built app
-COPY --from=builder --chown=appuser:appuser /app /app
+# Copy browser caches into appuser's home so we control the paths/permissions
+COPY --from=builder /browsers/puppeteer /home/appuser/.cache/puppeteer
+COPY --from=builder /browsers/ms-playwright /home/appuser/.cache/ms-playwright
 
-# Copy browser binaries
-COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
-COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
+# Ensure backend/public exists and ship built frontend
+RUN mkdir -p /app/backend/public \
+ && cp -r /app/frontend/dist/* /app/backend/public/ || true
 
-# Ensure frontend assets are copied
-RUN cp -r /app/frontend/dist/* /app/backend/public/ && \
-    echo "✅ Frontend assets copied to /backend/public"
+# Ownership
+RUN chown -R appuser:appuser /app /home/appuser
 
-# Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose deterministic locations via env (agent resolves final executable below)
+ENV NODE_ENV=production \
+    PUPPETEER_CACHE_DIR="/home/appuser/.cache/puppeteer" \
+    PLAYWRIGHT_BROWSERS_PATH="/home/appuser/.cache/ms-playwright" \
+    PUPPETEER_EXECUTABLE_PATH=""
+
 EXPOSE 10000
 
-# Start backend
 CMD ["node", "backend/server.js"]
