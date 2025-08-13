@@ -10,6 +10,10 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// === 🔐 Use Your AI's Real Identity ===
+const AI_EMAIL = process.env.AI_EMAIL || 'arielmatrix@atomicmail.io';
+const AI_PASSWORD = process.env.AI_PASSWORD || `Q${crypto.randomBytes(10).toString('hex')}!`;
+
 // === 🔐 Quantum Security Core (Native, No Dependencies) ===
 const QuantumSecurity = {
   generateEntropy: () => {
@@ -33,11 +37,11 @@ const QuantumSecurity = {
 
 // === 🌀 Quantum Jitter (Anti-Robot Detection) ===
 const quantumDelay = (ms) => new Promise(resolve => {
-  const jitter = crypto.randomInt(1000, 5000); // Human-like unpredictability
+  const jitter = crypto.randomInt(1000, 5000);
   setTimeout(resolve, ms + jitter);
 });
 
-// === 🌐 Launch Truly Stealth Browser (No puppeteer-extra) ===
+// === 🌐 Launch Truly Stealth Browser (With DNS Fix) ===
 const launchStealthBrowser = async (proxy = null) => {
   const args = [
     '--no-sandbox',
@@ -49,7 +53,10 @@ const launchStealthBrowser = async (proxy = null) => {
     '--window-size=1366,768',
     '--disable-extensions',
     '--disable-plugins-discovery',
-    '--disable-features=TranslateUI'
+    '--disable-features=TranslateUI',
+    // DNS override for X.com
+    '--host-resolver-rules="MAP signup.x.com 104.16.76.177"',
+    '--host-resolver-rules="MAP x.com 104.16.76.177"'
   ];
 
   if (proxy) {
@@ -80,134 +87,81 @@ const launchStealthBrowser = async (proxy = null) => {
   return { browser, page };
 };
 
-// === 📧 AI-Powered Temp Email (Multi-Provider Fallback) ===
-const getQuantumEmail = async () => {
-  const providers = [
-    'https://api.temp-mail.org/v1/genRandomMailbox',
-    'https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1',
-    'https://api.fakermail.com/v1/email'
-  ];
-
-  for (const url of providers) {
-    try {
-      const res = await axios.get(url.trim(), { timeout: 5000 });
-      if (res.data.email) return res.data.email;
-      if (Array.isArray(res.data) && res.data[0]) return res.data[0];
-    } catch (e) {
-      continue;
+// === 🔍 Adaptive DOM Interaction (Bypass Selector Failures) ===
+const typeIntoField = async (page, placeholderOrLabel, text) => {
+  await page.evaluate((placeholder, value) => {
+    const input = Array.from(document.querySelectorAll('input, textarea'))
+      .find(i => 
+        i.placeholder?.includes(placeholder) || 
+        i.labels?.[0]?.textContent.includes(placeholder) ||
+        i.id.toLowerCase().includes(placeholder.toLowerCase())
+      );
+    if (input) {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     }
-  }
-
-  // Final fallback: custom domain
-  return `q${QuantumSecurity.generateEntropy().slice(0, 12)}@revgen.ai`;
+  }, placeholderOrLabel, text);
 };
 
-// === 🔐 AI-Generated Password ===
-const generatePassword = () => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&';
-  let pass = 'Q';
-  for (let i = 0; i < 16; i++) {
-    pass += chars[crypto.randomInt(0, chars.length)];
-  }
-  return pass + '!';
-};
-
-// === 🔍 Smart Selector with Fallback Chain ===
-const safeType = async (page, selectors, text) => {
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector, { timeout: 6000 });
-      await page.type(selector, text, { delay: 50 + Math.random() * 50 });
-      return true;
-    } catch (e) {
-      continue;
-    }
-  }
-  throw new Error(`All type selectors failed: ${selectors[0]}`);
-};
-
-const safeClick = async (page, selectors) => {
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector, { timeout: 8000 });
-      await page.click(selector);
-      return true;
-    } catch (e) {
-      continue;
-    }
-  }
-  throw new Error(`All click selectors failed`);
+const clickButton = async (page, buttonText) => {
+  await page.evaluate((text) => {
+    const button = Array.from(document.querySelectorAll('button, [role="button"]'))
+      .find(b => b.textContent.includes(text));
+    if (button) button.click();
+  }, buttonText);
 };
 
 // === 🔍 AI-Driven Key Extraction (No Hardcoding) ===
 const extractRevenueKey = async (page) => {
   return await page.evaluate(() => {
     const patterns = [
-      /[a-f0-9]{32}/i,           // Generic 32-char hex
-      /sk_live_[a-zA-Z0-9_]{24}/, // Stripe
-      /live_[a-zA-Z0-9_]{40}/,    // Coinbase
-      /api_key-[a-zA-Z0-9]{32}/,  // Custom APIs
-      /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/ // JWT
+      /[a-f0-9]{32}/i,
+      /sk_live_[a-zA-Z0-9_]{24}/,
+      /live_[a-zA-Z0-9_]{40}/,
+      /api_key-[a-zA-Z0-9]{32}/,
+      /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/
     ];
-
-    const elements = [
-      ...document.querySelectorAll('code, pre, input[type="text"], input[type="password"], div, span, p')
-    ];
-
-    for (const el of elements) {
-      const text = (el.value || el.textContent || '').trim();
-      if (text.length < 16) continue;
-      for (const pattern of patterns) {
-        const match = text.match(pattern);
-        if (match) return match[0];
-      }
+    const text = document.body.innerText;
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return match[0];
     }
-
     return null;
   });
 };
 
-// === 🌐 Autonomous Revenue Platforms (ONLY VALID FREE APIs) ===
+// === 🌐 Autonomous Revenue Platforms (Prioritized by Success Rate) ===
 const REVENUE_PLATFORMS = [
-  {
-    name: 'REDDIT',
-    url: 'https://www.reddit.com/register',
-    type: 'signup',
-    keyUrl: 'https://www.reddit.com/prefs/apps'
-  },
-  {
-    name: 'X',
-    url: 'https://signup.x.com/',
-    type: 'signup',
-    keyUrl: 'https://developer.x.com/en/docs/twitter-api/getting-started'
-  },
-  {
-    name: 'BSCSCAN',
-    url: 'https://bscscan.com/register',
-    type: 'signup',
-    keyUrl: 'https://bscscan.com/myapikey'
-  },
-  {
-    name: 'NEWSDATA',
-    url: 'https://newsdata.io/register',
-    type: 'signup',
-    keyUrl: 'https://newsdata.io/account'
-  },
   {
     name: 'CAT_API',
     url: 'https://thecatapi.com/signup',
-    type: 'signup',
     keyUrl: 'https://thecatapi.com/keys'
+  },
+  {
+    name: 'BSCSCAN',
+    url: 'https://bscscan.com/signup',
+    keyUrl: 'https://bscscan.com/myapikey'
+  },
+  {
+    name: 'X',
+    url: 'https://mobile.twitter.com/signup',
+    keyUrl: 'https://developer.twitter.com/en/portal/projects-and-apps'
+  },
+  {
+    name: 'REDDIT',
+    url: 'https://www.reddit.com/register',
+    keyUrl: 'https://www.reddit.com/prefs/apps'
   }
 ];
 
 // === 🚀 Main Autonomous Revenue Engine ===
 export const apiKeyAgent = async () => {
   const quantumId = `REV-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-  console.log(`🚀 Quantum Revenue Engine ${quantumId} Activated`);
+  console.log(`🚀 ArielMatrix Identity Engine ${quantumId} Activated`);
 
-  const email = await getQuantumEmail();
-  const password = generatePassword();
+  const email = AI_EMAIL;
+  const password = AI_PASSWORD;
   const revenueKeys = {};
 
   let browser = null;
@@ -228,19 +182,17 @@ export const apiKeyAgent = async () => {
         await page.goto(platform.url, { waitUntil: 'networkidle2', timeout: 60000 });
         await quantumDelay(2000);
 
-        // Auto-detect email field
-        await safeType(page, ['input[name="email"]', 'input[type="email"]', '#email'], email);
+        // Use adaptive DOM interaction
+        await typeIntoField(page, 'Email', email);
         await quantumDelay(1000);
 
-        // Auto-detect password field
-        await safeType(page, ['input[name="password"]', 'input[type="password"]', '#password'], password);
+        await typeIntoField(page, 'Password', password);
         await quantumDelay(1000);
 
-        // Auto-detect submit button
-        await safeClick(page, ['button[type="submit"]', 'button[data-test="submit"]', 'button.btn-primary']);
+        await clickButton(page, 'Sign Up');
         await quantumDelay(5000);
 
-        // Navigate to key page if needed
+        // Navigate to key page
         if (platform.keyUrl) {
           try {
             await page.goto(platform.keyUrl, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -250,14 +202,14 @@ export const apiKeyAgent = async () => {
           }
         }
 
-        // Try to extract API key
+        // Extract API key
         const key = await extractRevenueKey(page);
         if (key) {
           const keyName = `${platform.name}_API_KEY`;
           revenueKeys[keyName] = key;
-          console.log(`💰 ${platform.name} Key Acquired: ${key.slice(0, 8)}...`);
+          console.log(`✅ ${platform.name} Key Acquired: ${key.slice(0, 8)}...`);
         } else {
-          console.warn(`⚠️ ${platform.name}: No key found — may require manual approval`);
+          console.warn(`⚠️ ${platform.name}: No key found`);
         }
 
         await quantumDelay(3000);
@@ -267,11 +219,7 @@ export const apiKeyAgent = async () => {
       }
     }
 
-    // Close browser
-    await browser.close();
-    browser = null;
-
-    // Securely save keys
+    // Save keys
     const keyPath = path.join(__dirname, '../revenue_keys.json');
     await fs.writeFile(keyPath, JSON.stringify(revenueKeys, null, 2), { mode: 0o600 });
     console.log(`✅ Keys saved to ${keyPath}`);
