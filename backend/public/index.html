@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ArielMatrix 2.0</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; margin: 40px; line-height: 1.6; }
+    h1, h2 { color: #2c3e50; }
+    .endpoint { background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0; }
+    .error { color: #e74c3c; }
+  </style>
+</head>
+<body>
+  <h1>🚀 ArielMatrix 2.0</h1>
+  <p><strong>Autonomous Revenue Engine Active</strong></p>
+
+  <h2>🔧 Endpoints</h2>
+  <div class="endpoint"><a href="/revenue">/revenue</a> - View real-time revenue</div>
+  <div class="endpoint"><a href="/health">/health</a> - Check system status</div>
+
+  <h2>📊 Dashboard</h2>
+  <p><strong>USDT Wallet Balances:</strong> <span id="wallets">Loading...</span></p>
+  <p><strong>Revenue (Last Cycle):</strong> <span id="revenue">Loading...</span></p>
+
+  <script>
+    fetch('/health')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('wallets').textContent = 'Active';
+      })
+      .catch(() => {
+        document.getElementById('wallets').innerHTML = '<span class="error">Failed to load</span>';
+      });
+
+    fetch('/revenue')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('revenue').textContent = `$${data.revenue.adfly + data.revenue.amazon + data.revenue.crypto}`;
+      })
+      .catch(() => {
+        document.getElementById('revenue').innerHTML = '<span class="error">Failed to load</span>';
+      });
+  </script>
+</body>
+</html>
