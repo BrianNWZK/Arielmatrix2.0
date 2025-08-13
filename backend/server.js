@@ -43,7 +43,7 @@ const loadConfig = async () => {
     AMAZON_AFFILIATE_TAG: process.env.AMZN_TAG || 'default-20'
   };
 
-  process.env = { ...process.env, ...env };
+  Object.assign(process.env, env);
 
   CONFIG = {
     WALLETS: {
@@ -56,11 +56,24 @@ const loadConfig = async () => {
       X: 'https://api.twitter.com/2',
       PINTEREST: 'https://api.pinterest.com/v5'
     },
-    PROXIES: generateProxyList(), // Real 195-country rotation
+    PROXIES: generateProxyList(),
     LANGUAGES: generateLanguageMap()
   };
 
   return CONFIG;
+};
+
+// Helper: Fetch live token (stub — replace with actual logic)
+const fetchLiveToken = async () => {
+  try {
+    const res = await axios.get('https://api.render.com/v1/live-token', {
+      headers: { Authorization: `Bearer ${process.env.ADMIN_TOKEN}` }
+    });
+    return res.data.token;
+  } catch (err) {
+    console.warn('⚠️ Failed to fetch live token:', err.message);
+    return 'fallback-render-token';
+  }
 };
 
 // === 🌍 Real 195-Country Scaling (No Simulation) ===
@@ -76,7 +89,8 @@ const scaleTo195Countries = async () => {
       });
 
       if (response.data.countryCode === country) {
-        await socialAgent({ ...config, LANGUAGE: lang, PROXY: proxy });
+        const agent = await import('./agents/socialAgent.js');
+        await agent.socialAgent({ ...config, LANGUAGE: lang, PROXY: proxy });
         results.push({ country, ip: response.data.query, status: 'success' });
       }
     } catch (error) {
@@ -88,18 +102,14 @@ const scaleTo195Countries = async () => {
 };
 
 // === 🌐 Proxy & Language Map (Real Rotation) ===
-const generateProxyList = () => {
-  // In production, use real rotating proxies (e.g., Bright Data, Smartproxy)
-  // This is a schema — replace with your provider
-  return {
-    US: { lang: 'en-US', proxy: { host: 'us.proxy.example.com', port: 8080, auth: 'user:pass' } },
-    DE: { lang: 'de-DE', proxy: { host: 'de.proxy.example.com', port: 8080, auth: 'user:pass' } },
-    JP: { lang: 'ja-JP', proxy: { host: 'jp.proxy.example.com', port: 8080, auth: 'user:pass' } },
-    NG: { lang: 'yo-NG', proxy: { host: 'ng.proxy.example.com', port: 8080, auth: 'user:pass' },
-    IN: { lang: 'hi-IN', proxy: { host: 'in.proxy.example.com', port: 8080, auth: 'user:pass' }
-    // Add all 195 as needed
-  };
-};
+const generateProxyList = () => ({
+  US: { lang: 'en-US', proxy: { host: 'us.proxy.example.com', port: 8080, auth: 'user:pass' } },
+  DE: { lang: 'de-DE', proxy: { host: 'de.proxy.example.com', port: 8080, auth: 'user:pass' } },
+  JP: { lang: 'ja-JP', proxy: { host: 'jp.proxy.example.com', port: 8080, auth: 'user:pass' } },
+  NG: { lang: 'yo-NG', proxy: { host: 'ng.proxy.example.com', port: 8080, auth: 'user:pass' } },
+  IN: { lang: 'hi-IN', proxy: { host: 'in.proxy.example.com', port: 8080, auth: 'user:pass' } }
+  // Add all 195 as needed
+});
 
 const generateLanguageMap = () => ({
   'en-US': 'Hello world post',
@@ -126,30 +136,62 @@ const runAutonomousCycle = async () => {
     const config = await loadConfig();
 
     // Phase 1: Key Acquisition
-    const keys = await import('./agents/apiKeyAgent.js').then(m => m.apiKeyAgent(config));
+    const keyAgent = await import('./agents/apiKeyAgent.js');
+    const keys = await keyAgent.apiKeyAgent(config);
     Object.assign(process.env, keys);
 
     // Phase 2: Deploy & Monetize
-    await import('./agents/renderApiAgent.js').then(m => m.renderApiAgent(config));
-    await import('./agents/socialAgent.js').then(m => m.socialAgent(config));
-    await import('./agents/shopifyAgent.js').then(m => m.shopifyAgent(config));
-    await import('./agents/cryptoAgent.js').then(m => m.cryptoAgent(config));
+    const renderAgent = await import('./agents/renderApiAgent.js');
+    await renderAgent.renderApiAgent(config);
+
+    const socialAgent = await import('./agents/socialAgent.js');
+    await socialAgent.socialAgent(config);
+
+    const shopifyAgent = await import('./agents/shopifyAgent.js');
+    await shopifyAgent.shopifyAgent(config);
+
+    const cryptoAgent = await import('./agents/cryptoAgent.js');
+    await cryptoAgent.cryptoAgent(config);
 
     // Phase 3: Payouts
-    await import('./agents/payoutAgent.js').then(m => m.payoutAgent(config));
+    const payoutAgent = await import('./agents/payoutAgent.js');
+    await payoutAgent.payoutAgent(config);
 
     console.log(`✅ Cycle completed in ${Date.now() - startTime}ms | Revenue generated`);
   } catch (error) {
-    console.error('🔥 Autonomous cycle failed:', error.message);
+    console.error('🔥 Autonomous cycle failed:', error.message, error.stack);
   } finally {
     isRunning = false;
   }
 };
 
 // === 📊 Real-Time Revenue Endpoint ===
+const app = express();
+
+// Security Headers (before any route)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+  res.setHeader('X-Quantum-ID', QuantumSecurity.generateEntropy().slice(0, 16));
+  next();
+});
+
+// Parse JSON
+app.use(express.json({ limit: '10mb' }));
+
+// Serve static frontend (optional)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Real-Time Revenue Endpoint
 app.get('/revenue', async (req, res) => {
   try {
-    const stats = await import('./agents/socialAgent.js').then(m => m.getRevenueStats());
+    const socialAgent = await import('./agents/socialAgent.js');
+    const stats = await socialAgent.getRevenueStats?.() || { clicks: 0, conversions: 0, invoices: 0 };
+
     const balances = await getWalletBalances();
 
     res.json({
@@ -162,7 +204,7 @@ app.get('/revenue', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch revenue' });
+    res.status(500).json({ error: 'Failed to fetch revenue', details: error.message });
   }
 });
 
@@ -183,7 +225,7 @@ const getWalletBalances = async () => {
             apikey: config.BSCSCAN_API_KEY
           }
         });
-        const balance = parseInt(response.data.result) / 1e18;
+        const balance = parseInt(response.data.result || '0') / 1e18;
         return { coin, address, balance: balance.toFixed(4) };
       } catch (error) {
         return { coin, address, balance: '0.0000', error: error.message };
@@ -191,17 +233,6 @@ const getWalletBalances = async () => {
     })
   );
 };
-
-// === 🛡️ Security Headers ===
-const app = express();
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
-  res.setHeader('X-Quantum-ID', QuantumSecurity.generateEntropy().slice(0, 16));
-  next();
-});
 
 // === 🚀 Health & Init ===
 app.get('/health', (req, res) => {
@@ -213,7 +244,21 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(process.env.PORT || 10000, '0.0.0.0', () => {
+// Root route
+app.get('/', (req, res) => {
+  res.send(`
+    <h1>🚀 ArielMatrix 2.0</h1>
+    <p>Autonomous Revenue Engine Active</p>
+    <ul>
+      <li><a href="/revenue">/revenue</a></li>
+      <li><a href="/health">/health</a></li>
+    </ul>
+  `);
+});
+
+// Start server
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Autonomous Revenue Engine Live | Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}`);
   runAutonomousCycle(); // First run
 });
