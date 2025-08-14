@@ -16,7 +16,11 @@ export const shopifyAgent = async (CONFIG) => {
   console.log('🛍️ Shopify Agent Activated: Optimizing Store for Global Revenue');
 
   try {
-    if (!CONFIG.STORE_URL || !CONFIG.ADMIN_SHOP_SECRET) {
+    // ✅ Use CONFIG first, fallback to process.env
+    const STORE_URL = CONFIG.STORE_URL || process.env.STORE_URL;
+    const ADMIN_SHOP_SECRET = CONFIG.ADMIN_SHOP_SECRET || process.env.ADMIN_SHOP_SECRET;
+
+    if (!STORE_URL || !ADMIN_SHOP_SECRET) {
       throw new Error('Shopify credentials missing: STORE_URL or ADMIN_SHOP_SECRET');
     }
 
@@ -42,7 +46,7 @@ export const shopifyAgent = async (CONFIG) => {
       try {
         const price = optimizeRevenue({ price: 99.99, demand: Math.random() * 100 });
         await axios.post(
-          `${CONFIG.STORE_URL}/admin/api/2024-07/products.json`,
+          `${STORE_URL}/admin/api/2024-07/products.json`,
           {
             product: {
               title: `${topic} - Exclusive 2025 Edition`,
@@ -54,7 +58,7 @@ export const shopifyAgent = async (CONFIG) => {
           },
           {
             headers: {
-              'X-Shopify-Access-Token': CONFIG.ADMIN_SHOP_SECRET,
+              'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
               'Content-Type': 'application/json'
             },
             timeout: 10000
@@ -69,9 +73,9 @@ export const shopifyAgent = async (CONFIG) => {
     // Phase 3: Dynamic Pricing for High-Net-Worth Countries
     try {
       const res = await axios.get(
-        `${CONFIG.STORE_URL}/admin/api/2024-07/products.json`,
+        `${STORE_URL}/admin/api/2024-07/products.json`,
         {
-          headers: { 'X-Shopify-Access-Token': CONFIG.ADMIN_SHOP_SECRET },
+          headers: { 'X-Shopify-Access-Token': ADMIN_SHOP_SECRET },
           timeout: 10000
         }
       );
@@ -86,7 +90,7 @@ export const shopifyAgent = async (CONFIG) => {
 
         if (Math.abs(newPrice - currentPrice) > 0.01) {
           await axios.put(
-            `${CONFIG.STORE_URL}/admin/api/2024-07/products/${product.id}.json`,
+            `${STORE_URL}/admin/api/2024-07/products/${product.id}.json`,
             {
               product: {
                 variants: [{ id: product.variants[0].id, price: newPrice.toFixed(2) }]
@@ -94,7 +98,7 @@ export const shopifyAgent = async (CONFIG) => {
             },
             {
               headers: {
-                'X-Shopify-Access-Token': CONFIG.ADMIN_SHOP_SECRET,
+                'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
                 'Content-Type': 'application/json'
               }
             }
