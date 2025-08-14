@@ -13,7 +13,6 @@ const QuantumSecurity = {
     if (cryptoImpl.getRandomValues) {
       cryptoImpl.getRandomValues(entropy);
     } else {
-      // Fallback
       for (let i = 0; i < 8; i++) entropy[i] = Math.floor(Math.random() * 4294967295);
     }
     return `qsec-${Buffer.from(entropy).toString('hex').slice(0, 32)}-${Date.now().toString(36)}`;
@@ -23,7 +22,7 @@ const QuantumSecurity = {
     const [memUsage, cpuCount, netStatus] = await Promise.all([
       process.memoryUsage(),
       cpus().length,
-      axios.get('https://api.render.com/health').catch(() => ({ status: 503 }))
+      axios.get('https://api.render.com/health').catch(() => ({ status: 503 })) // ✅ Fixed: No trailing spaces
     ]);
     
     return {
@@ -66,9 +65,10 @@ export const renderApiAgent = async (CONFIG) => {
       return { error: 'RENDER_SERVICE_ID missing' };
     }
 
+    // ✅ Fixed: No trailing spaces in URL
     const BASE_URL = `https://api.render.com/v1/services/${SERVICE_ID}/env-vars`;
 
-    // Read keys from revenue_keys.json (not api-keys.json)
+    // Read keys from revenue_keys.json
     const keyPath = new URL('../revenue_keys.json', import.meta.url);
     let keys = {};
     try {
