@@ -23,8 +23,8 @@ const quantumDelay = (ms) => new Promise(resolve => {
 const safeType = async (page, selectors, text) => {
   for (const selector of selectors) {
     try {
-      await page.waitForSelector(selector, { timeout: 6000 });
-      await page.type(selector, text);
+      await page.waitForSelector(selector.trim(), { timeout: 6000 });
+      await page.type(selector.trim(), text);
       return true;
     } catch (e) {
       continue;
@@ -36,8 +36,8 @@ const safeType = async (page, selectors, text) => {
 const safeClick = async (page, selectors) => {
   for (const selector of selectors) {
     try {
-      await page.waitForSelector(selector, { timeout: 8000 });
-      await page.click(selector);
+      await page.waitForSelector(selector.trim(), { timeout: 8000 });
+      await page.click(selector.trim());
       return true;
     } catch (e) {
       continue;
@@ -48,29 +48,39 @@ const safeClick = async (page, selectors) => {
 
 // === 🌐 Launch Stealth Browser ===
 const launchStealthBrowser = async () => {
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-blink-features=AutomationControlled',
-      '--host-resolver-rules="MAP signup.x.com 104.16.76.177"',
-      '--host-resolver-rules="MAP x.com 104.16.76.177"'
-    ],
-    timeout: 120000
-  });
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-blink-features=AutomationControlled',
+    '--host-resolver-rules="MAP signup.x.com 104.16.76.177"',
+    '--host-resolver-rules="MAP x.com 104.16.76.177"'
+  ];
 
-  const page = await browser.newPage();
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-  await page.setViewport({ width: 1366, height: 768 });
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args,
+      timeout: 120000,
+      ignoreHTTPSErrors: true
+    });
 
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    window.chrome = { runtime: {} };
-  });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    await page.setViewport({ width: 1366, height: 768 });
 
-  return { browser, page };
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.chrome = { runtime: {} };
+    });
+
+    return { browser, page };
+  } catch (error) {
+    console.warn('⚠️ Browser launch failed:', error.message);
+    if (browser) await browser.close();
+    return null;
+  }
 };
 
 // === 📧 Use Real ENV First, Then AI Identity ===
@@ -89,7 +99,7 @@ const getCredentials = (platform) => {
 
   // Fallback to AI's universal identity
   return {
-    email: process.env.AI_EMAIL,
+    email: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io',
     pass: process.env.AI_PASSWORD
   };
 };
@@ -106,8 +116,9 @@ const shortenWithLinkvertise = async (longUrl) => {
     const page = await browser.newPage();
     await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' });
 
-    await page.type('input[name="email"]', process.env.AI_EMAIL);
-    await page.type('input[name="password"]', process.env.AI_PASSWORD);
+    const { email, pass } = getCredentials('LINKVERTISE');
+    await page.type('input[name="email"]', email);
+    await page.type('input[name="password"]', pass);
     await page.click('button[type="submit"]');
     await page.waitForNavigation({ waitUntil: 'networkidle2' });
 
@@ -120,6 +131,7 @@ const shortenWithLinkvertise = async (longUrl) => {
       document.querySelector('input.share-link-input').value
     );
 
+    console.log(`✅ Linkvertise success: ${shortLink}`);
     return shortLink;
   } catch (error) {
     console.warn('⚠️ Linkvertise failed → using long URL');
@@ -158,8 +170,9 @@ export const socialAgent = async (CONFIG) => {
       shortenWithLinkvertise(process.env.UPTIMEROBOT_AFFILIATE_LINK)
     ]);
 
-    const { browser: launchedBrowser, page } = await launchStealthBrowser();
-    browser = launchedBrowser;
+    const result = await launchStealthBrowser();
+    if (!result) return { success: false, error: 'Browser launch failed' };
+    ({ browser, page } = result);
 
     // Post to Pinterest
     await page.goto('https://www.pinterest.com/login/', { waitUntil: 'networkidle2' });
@@ -225,7 +238,7 @@ export const mintRevenueNFT = async (amount) => {
 
 // === 🌐 Autonomous Key Generation (If Missing) ===
 export const apiKeyAgent = async () => {
-  const email = process.env.AI_EMAIL;
+  const email = process.env.AI_EMAIL || 'arielmatrix@atomicmail.io';
   const password = process.env.AI_PASSWORD;
   const revenueKeys = {};
 
@@ -238,8 +251,9 @@ export const apiKeyAgent = async () => {
 
   let browser = null;
   try {
-    const { browser: launchedBrowser, page } = await launchStealthBrowser();
-    browser = launchedBrowser;
+    const result = await launchStealthBrowser();
+    if (!result) return {};
+    ({ browser, page } = result);
 
     for (const platform of platforms) {
       try {
