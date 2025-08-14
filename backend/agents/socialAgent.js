@@ -37,8 +37,8 @@ const quantumDelay = (ms) => new Promise(resolve => {
 const safeType = async (page, selectors, text) => {
   for (const selector of selectors) {
     try {
-      await page.waitForSelector(selector, { timeout: 6000 });
-      await page.type(selector, text);
+      await page.waitForSelector(selector.trim(), { timeout: 6000 });
+      await page.type(selector.trim(), text);
       return true;
     } catch (e) {
       continue;
@@ -50,8 +50,8 @@ const safeType = async (page, selectors, text) => {
 const safeClick = async (page, selectors) => {
   for (const selector of selectors) {
     try {
-      await page.waitForSelector(selector, { timeout: 8000 });
-      await page.click(selector);
+      await page.waitForSelector(selector.trim(), { timeout: 8000 });
+      await page.click(selector.trim());
       return true;
     } catch (e) {
       continue;
@@ -60,8 +60,8 @@ const safeClick = async (page, selectors) => {
   throw new Error(`All click selectors failed`);
 };
 
-// === 🌐 Launch Truly Stealth Browser (No puppeteer-extra) ===
-const launchStealthBrowser = async (proxy = null) => {
+// === 🌐 Launch Truly Stealth Browser ===
+const launchStealthBrowser = async () => {
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -75,35 +75,34 @@ const launchStealthBrowser = async (proxy = null) => {
     '--disable-features=TranslateUI'
   ];
 
-  if (proxy) {
-    args.push(`--proxy-server=${proxy.host}:${proxy.port}`);
-    if (proxy.auth) {
-      const [user, pass] = proxy.auth.split(':');
-      await page.authenticate({ username: user, password: pass });
-    }
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args,
+      timeout: 120000,
+      ignoreHTTPSErrors: true
+    });
+
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+    );
+    await page.setViewport({ width: 1366, height: 768 });
+
+    // Anti-detection
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
+      Object.defineProperty(navigator, 'plugins', { get: () => [new PluginArray()] });
+    });
+
+    return { browser, page };
+  } catch (error) {
+    console.warn('⚠️ Browser launch failed:', error.message);
+    if (browser) await browser.close();
+    return null;
   }
-
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args,
-    timeout: 120000,
-    ignoreHTTPSErrors: true
-  });
-
-  const page = await browser.newPage();
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-  );
-  await page.setViewport({ width: 1366, height: 768 });
-
-  // Delete navigator.webdriver flag
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
-    Object.defineProperty(navigator, 'plugins', { get: () => [new PluginArray()] });
-  });
-
-  return { browser, page };
 };
 
 // === 📸 AI-Generated Women-Centric Content (Real-Time) ===
@@ -129,12 +128,12 @@ const generateWomenCentricContent = async (countryCode, CONFIG) => {
   try {
     const [dogRes, newsRes] = await Promise.all([
       axios.get('https://api.thedogapi.com/v1/images/search', {
-        headers: { 'x-api-key': CONFIG.DOG_API_KEY },
+        headers: { 'x-api-key': CONFIG.DOG_API_KEY || process.env.DOG_API_KEY },
         timeout: 5000
       }).catch(() => null),
       axios.get('https://newsapi.org/v2/top-headlines', {
         params: { country: countryCode.toLowerCase(), category: 'health', pageSize: 1 },
-        headers: { 'Authorization': `Bearer ${CONFIG.NEWS_API_KEY}` },
+        headers: { 'Authorization': `Bearer ${CONFIG.NEWS_API_KEY || process.env.NEWS_API_KEY}` },
         timeout: 5000
       }).catch(() => null)
     ]);
@@ -162,8 +161,8 @@ const shortenLink = async (url, CONFIG) => {
   try {
     const res = await axios.post('https://api.adf.ly/v1/shorten', {
       url,
-      api_key: CONFIG.ADFLY_API_KEY,
-      user_id: CONFIG.ADFLY_USER_ID,
+      api_key: CONFIG.ADFLY_API_KEY || process.env.ADFLY_API_KEY,
+      user_id: CONFIG.ADFLY_USER_ID || process.env.ADFLY_USER_ID,
       domain: 'qgs.gs',
       advert_type: 'int'
     }, { timeout: 3000 });
@@ -176,7 +175,7 @@ const shortenLink = async (url, CONFIG) => {
         price_currency: 'usd',
         pay_currency: 'usdt',
         order_description: `Access Pass: ${url}`
-      }, { headers: { 'x-api-key': CONFIG.NOWPAYMENTS_API_KEY } });
+      }, { headers: { 'x-api-key': CONFIG.NOWPAYMENTS_API_KEY || process.env.NOWPAYMENTS_API_KEY } });
       return npRes.data.invoice_url;
     } catch {
       return url; // Final fallback
@@ -186,7 +185,10 @@ const shortenLink = async (url, CONFIG) => {
 
 // === 🚀 Autonomous Stealth Posting Engine ===
 export const socialAgent = async (CONFIG) => {
-  if (!CONFIG.PINTEREST_EMAIL || !CONFIG.PINTEREST_PASS) {
+  const PINTEREST_EMAIL = CONFIG.PINTEREST_EMAIL || process.env.PINTEREST_EMAIL;
+  const PINTEREST_PASS = CONFIG.PINTEREST_PASS || process.env.PINTEREST_PASS;
+
+  if (!PINTEREST_EMAIL || !PINTEREST_PASS) {
     console.warn('❌ Pinterest credentials missing → skipping socialAgent');
     return { success: false, error: 'Missing credentials' };
   }
@@ -209,26 +211,45 @@ export const socialAgent = async (CONFIG) => {
       shortenLink(CONFIG.UPTIMEROBOT_AFFILIATE_LINK, CONFIG)
     ]);
 
-    // 4. Launch Stealth Browser with Proxy (Optional)
-    const proxy = CONFIG.PROXIES?.[countryCode] || null;
-    const { browser: launchedBrowser, page } = await launchStealthBrowser(proxy);
-    browser = launchedBrowser;
+    // 4. Launch Stealth Browser
+    const result = await launchStealthBrowser();
+    if (!result) return { success: false, error: 'Browser launch failed' };
+    ({ browser, page } = result);
 
     // 5. Post to Pinterest (80% Female Audience)
     await page.goto('https://pinterest.com/login', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
-    await safeType(page, ['input[placeholder="Email or username"]', 'input[type="text"]'], CONFIG.PINTEREST_EMAIL);
-    await safeType(page, ['input[placeholder="Password"]', 'input[type="password"]'], CONFIG.PINTEREST_PASS);
-    await safeClick(page, ['button[type="submit"]', 'button[data-test-id="login-button"]']);
-    await quantumDelay(5000); // Wait for navigation
+    await safeType(page, [
+      'input[placeholder="Email or username"]',
+      'input[type="text"]',
+      'input[name="id"]'
+    ], PINTEREST_EMAIL);
+
+    await safeType(page, [
+      'input[placeholder="Password"]',
+      'input[type="password"]',
+      'input[name="password"]'
+    ], PINTEREST_PASS);
+
+    await safeClick(page, [
+      'button[type="submit"]',
+      'button[data-test-id="login-button"]'
+    ]);
+    await quantumDelay(5000);
 
     await page.goto('https://pinterest.com/pin-builder/', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
-    await safeType(page, ['[data-test-id="pin-title-input"]'], title);
-    await safeType(page, ['[data-test-id="pin-description-input"]'], 
-      caption.replace('{{AFF_LINK}}', affiliateLink).replace('{{MONITOR_LINK}}', monitorLink));
+    await safeType(page, [
+      '[data-test-id="pin-title-input"]',
+      'textarea[name="title"]'
+    ], title);
+
+    await safeType(page, [
+      '[data-test-id="pin-description-input"]',
+      'textarea[name="description"]'
+    ], caption.replace('{{AFF_LINK}}', affiliateLink).replace('{{MONITOR_LINK}}', monitorLink));
 
     const fileInput = await page.$('input[type="file"]');
     if (fileInput) {
@@ -236,16 +257,31 @@ export const socialAgent = async (CONFIG) => {
       await quantumDelay(1000);
     }
 
-    await safeClick(page, ['[data-test-id="board-dropdown-save-button"]']);
+    await safeClick(page, [
+      '[data-test-id="board-dropdown-save-button"]',
+      'button[type="submit"]'
+    ]);
     await quantumDelay(3000);
 
     // 6. Post to Reddit (Luxury Communities)
     await page.goto('https://reddit.com/r/LuxuryLifeHabits/submit', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
-    await safeType(page, ['[aria-label="title"]', 'input[placeholder="Title"]'], title);
-    await safeType(page, ['[aria-label="text"]', 'textarea[placeholder="Text"]'], caption);
-    await safeClick(page, ['button[aria-label="Post"]', 'button[type="submit"]']);
+    await safeType(page, [
+      '[aria-label="title"]',
+      'input[placeholder="Title"]'
+    ], title);
+
+    await safeType(page, [
+      '[aria-label="text"]',
+      'textarea[placeholder="Text"]'
+    ], caption);
+
+    await safeClick(page, [
+      'button[aria-label="Post"]',
+      'button[type="submit"]'
+    ]);
+    await quantumDelay(3000);
 
     console.log(`✅ Posts Live in ${countryCode} | CPM: $8–$25 | Links:`, { affiliateLink, monitorLink });
     return { success: true, country: countryCode, links: { affiliateLink, monitorLink } };
