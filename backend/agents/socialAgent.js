@@ -6,16 +6,14 @@ import path from 'path';
 
 // === 🌍 HIGH-VALUE WOMEN-CENTRIC MARKETS (Revenue-Optimized) ===
 const HIGH_VALUE_REGIONS = {
-  // Tier 1: Highest CPM & Luxury Spending (AdFly: $8–$25)
   WESTERN_EUROPE: ['MC', 'CH', 'LU', 'GB', 'DE', 'FR'],
   MIDDLE_EAST: ['AE', 'SA', 'QA', 'KW'],
   NORTH_AMERICA: ['US', 'CA'],
-  // Tier 2: High Growth & Pet Spending
   ASIA_PACIFIC: ['SG', 'HK', 'JP', 'AU', 'NZ'],
   OCEANIA: ['AU', 'NZ']
 };
 
-// === 💼 WOMEN'S TOP SPENDING CATEGORIES (Monetization Focus) ===
+// === 💼 WOMEN'S TOP SPENDING CATEGORIES ===
 const WOMEN_TOP_SPENDING_CATEGORIES = [
   "Luxury Pets",
   "Designer Handbags",
@@ -29,7 +27,7 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
 
 // === 🌀 Quantum Jitter (Anti-Robot Detection) ===
 const quantumDelay = (ms) => new Promise(resolve => {
-  const jitter = crypto.randomInt(800, 3000); // Human-like unpredictability
+  const jitter = crypto.randomInt(800, 3000);
   setTimeout(resolve, ms + jitter);
 });
 
@@ -105,7 +103,7 @@ const launchStealthBrowser = async () => {
   }
 };
 
-// === 📸 AI-Generated Women-Centric Content (Real-Time) ===
+// === 📸 AI-Generated Women-Centric Content ===
 const generateWomenCentricContent = async (countryCode, CONFIG) => {
   const COUNTRY_NAMES = {
     MC: 'Monaco', CH: 'Switzerland', LU: 'Luxembourg',
@@ -156,30 +154,75 @@ const generateWomenCentricContent = async (countryCode, CONFIG) => {
   };
 };
 
-// === 🔗 Smart Link Shortener (AdFly + Crypto Fallback) ===
+// === 🔗 Smart Link Shortener (Linkvertise + Crypto Fallback) ===
 const shortenLink = async (url, CONFIG) => {
+  let browser = null;
   try {
-    const res = await axios.post('https://api.adf.ly/v1/shorten', {
-      url,
-      api_key: CONFIG.ADFLY_API_KEY || process.env.ADFLY_API_KEY,
-      user_id: CONFIG.ADFLY_USER_ID || process.env.ADFLY_USER_ID,
-      domain: 'qgs.gs',
-      advert_type: 'int'
-    }, { timeout: 3000 });
-    return res.data.short_url;
-  } catch (error) {
-    console.warn('⚠️ AdFly failed → falling back to NowPayments');
-    try {
-      const npRes = await axios.post('https://api.nowpayments.io/v1/invoice', {
-        price_amount: 0.01,
-        price_currency: 'usd',
-        pay_currency: 'usdt',
-        order_description: `Access Pass: ${url}`
-      }, { headers: { 'x-api-key': CONFIG.NOWPAYMENTS_API_KEY || process.env.NOWPAYMENTS_API_KEY } });
-      return npRes.data.invoice_url;
-    } catch {
-      return url; // Final fallback
+    // Try to shorten with Linkvertise
+    const result = await launchStealthBrowser();
+    if (!result) throw new Error('Browser launch failed');
+    ({ browser } = result);
+    const page = await browser.newPage();
+
+    await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' });
+    await quantumDelay(2000);
+
+    await safeType(page, [
+      'input[name="email"]',
+      'input[type="email"]'
+    ], CONFIG.AI_EMAIL || 'arielmatrix@atomicmail.io');
+
+    await safeType(page, [
+      'input[name="password"]',
+      'input[type="password"]'
+    ], CONFIG.AI_PASSWORD);
+
+    await safeClick(page, [
+      'button[type="submit"]',
+      'button.btn-primary'
+    ]);
+    await quantumDelay(5000);
+
+    await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'networkidle2' });
+    await quantumDelay(2000);
+
+    await safeType(page, [
+      'input[name="url"]',
+      'input#url-input'
+    ], url);
+
+    await safeClick(page, [
+      'button[type="submit"]',
+      'button:contains("Create")'
+    ]);
+    await quantumDelay(3000);
+
+    const shortLink = await page.evaluate(() => {
+      const input = document.querySelector('input.share-link-input');
+      return input?.value || null;
+    });
+
+    if (shortLink) {
+      console.log(`✅ Linkvertise success: ${shortLink}`);
+      return shortLink;
     }
+  } catch (error) {
+    console.warn('⚠️ Linkvertise failed → falling back to NowPayments');
+  } finally {
+    if (browser) await browser.close();
+  }
+
+  // Fallback to NowPayments
+  try {
+    const npRes = await axios.post('https://api.nowpayments.io/v1/invoice', {
+      price_amount: 0.01,
+      price_currency: 'usd',
+      pay_currency: 'usdt',
+      order_description: `Access Pass: ${url}`
+    }, { headers: { 'x-api-key': CONFIG.NOWPAYMENTS_API_KEY || process.env.NOWPAYMENTS_API_KEY } });
+    return npRes.data.invoice_url;
+  } catch {
+    return url; // Final fallback
   }
 };
 
@@ -205,7 +248,7 @@ export const socialAgent = async (CONFIG) => {
     // 2. Generate AI Content
     const { title, caption, media } = await generateWomenCentricContent(countryCode, CONFIG);
 
-    // 3. Shorten Links
+    // 3. Shorten Links (Linkvertise)
     const [affiliateLink, monitorLink] = await Promise.all([
       shortenLink(`${CONFIG.AMAZON_AFFILIATE_TAG}?tag=womenlux-20`, CONFIG),
       shortenLink(CONFIG.UPTIMEROBOT_AFFILIATE_LINK, CONFIG)
@@ -216,7 +259,7 @@ export const socialAgent = async (CONFIG) => {
     if (!result) return { success: false, error: 'Browser launch failed' };
     ({ browser, page } = result);
 
-    // 5. Post to Pinterest (80% Female Audience)
+    // 5. Post to Pinterest
     await page.goto('https://pinterest.com/login', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
@@ -263,7 +306,7 @@ export const socialAgent = async (CONFIG) => {
     ]);
     await quantumDelay(3000);
 
-    // 6. Post to Reddit (Luxury Communities)
+    // 6. Post to Reddit
     await page.goto('https://reddit.com/r/LuxuryLifeHabits/submit', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
