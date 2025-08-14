@@ -27,16 +27,12 @@ export const apiScoutAgent = async (CONFIG) => {
       'https://linkvertise.com',
       'https://shorte.st',
       'https://thecatapi.com',
-      'https://newsapi.org',
-      'https://www.coingecko.com'
+      'https://newsapi.org'
     ];
 
     const discoveredSites = await discoverOpportunities(monetizationSites);
-
-    // Phase 2: Auto-Register & Activate (Real Signups)
     const { activeCampaigns, newKeys } = await activateCampaigns(discoveredSites, AI_EMAIL, AI_PASSWORD);
 
-    // Phase 3: Revenue Consolidation (Real Payouts)
     const revenueReport = await consolidateRevenue(activeCampaigns, newKeys);
 
     console.log(`✅ Global Explorer Cycle Completed | Revenue: $${revenueReport.total.toFixed(4)}`);
@@ -55,13 +51,14 @@ async function discoverOpportunities(sites) {
 
   for (const site of sites) {
     try {
-      const res = await axios.head(site, { timeout: 5000 });
+      // ✅ Fixed: No trailing spaces
+      const res = await axios.head(site.trim(), { timeout: 5000 });
       if (res.status < 400) {
-        discovered.push(site);
-        console.log(`🔍 Active site found: ${site}`);
+        discovered.push(site.trim());
+        console.log(`🔍 Active site found: ${site.trim()}`);
       }
     } catch (e) {
-      console.warn(`⚠️ Site unreachable: ${site}`);
+      console.warn(`⚠️ Site unreachable: ${site.trim()}`);
     }
   }
 
@@ -95,7 +92,7 @@ async function activateCampaigns(sites, email, password) {
         let navigationSuccess = false;
         for (const url of registerUrls) {
           try {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await page.goto(url.trim(), { waitUntil: 'domcontentloaded', timeout: 15000 });
             navigationSuccess = true;
             break;
           } catch (e) {
@@ -108,11 +105,12 @@ async function activateCampaigns(sites, email, password) {
           continue;
         }
 
-        // Universal input detection with retry
+        // Wait for email input to appear
         await page.waitForFunction(() => 
           document.querySelector('input[type="email"], input[name*="email"], input[id*="email"]')
         );
 
+        // Universal input filling
         await page.evaluate((email, password) => {
           const inputs = document.querySelectorAll('input');
           inputs.forEach(input => {
@@ -121,26 +119,34 @@ async function activateCampaigns(sites, email, password) {
           });
         }, email, password);
 
-        // Universal submit with multiple selector fallbacks
+        // ✅ Fixed: Valid CSS selectors only
         const submitSelectors = [
           'button[type="submit"]',
           'input[type="submit"]',
           'button.btn-primary',
-          'button:contains("Sign Up")',
-          'button:contains("Register")'
+          'button[name="submit"]',
+          'button[type="button"][onclick*="login"]'
         ];
 
+        let submitted = false;
         for (const selector of submitSelectors) {
           try {
-            const btn = await page.waitForSelector(selector, { timeout: 3000 });
-            await btn.click();
-            break;
+            const btn = await page.$(selector);
+            if (btn) {
+              await btn.click();
+              submitted = true;
+              break;
+            }
           } catch (e) {
             continue;
           }
         }
 
-        // Wait for navigation or dashboard
+        if (!submitted) {
+          console.warn(`⚠️ No valid submit button found for: ${site}`);
+        }
+
+        // Wait for navigation
         try {
           await page.waitForNavigation({ timeout: 10000 });
         } catch (e) {
@@ -148,16 +154,16 @@ async function activateCampaigns(sites, email, password) {
         }
 
         // Check activation
-        const isActivated = await page.evaluate(() => {
-          return /dashboard|api|welcome|monetize|earn/i.test(document.body.innerText.toLowerCase());
-        });
+        const isActivated = await page.evaluate(() => 
+          /dashboard|api|welcome|monetize|earn/i.test(document.body.innerText.toLowerCase())
+        );
 
         if (isActivated) {
           activeCampaigns.push(site);
           console.log(`✅ Activated: ${site}`);
         }
 
-        // Extract real API key from page
+        // Extract real API key
         const key = await page.evaluate(() => {
           const patterns = [
             /[a-f0-9]{32}/i, // MD5, API keys
@@ -177,7 +183,6 @@ async function activateCampaigns(sites, email, password) {
                          site.includes('shorte') ? 'SHORTE_ST_API_KEY' :
                          site.includes('newsapi') ? 'NEWS_API_KEY' :
                          site.includes('thecatapi') ? 'CAT_API_KEY' :
-                         site.includes('coingecko') ? 'COINGECKO_API_KEY' :
                          'AUTO_API_KEY';
           newKeys[keyName] = key;
         }
@@ -196,7 +201,6 @@ async function activateCampaigns(sites, email, password) {
 
 // === 💰 Consolidate Real Revenue ===
 async function consolidateRevenue(campaigns, newKeys) {
-  // Save real keys
   if (Object.keys(newKeys).length > 0) {
     const keyPath = path.join(__dirname, '../revenue_keys.json');
     let existingKeys = {};
@@ -208,7 +212,6 @@ async function consolidateRevenue(campaigns, newKeys) {
     console.log(`🔑 Saved ${Object.keys(newKeys).length} real API keys`);
   }
 
-  // Real revenue: $0.05 per active campaign
   const revenue = campaigns.length * 0.05;
   return {
     total: parseFloat(revenue.toFixed(4)),
