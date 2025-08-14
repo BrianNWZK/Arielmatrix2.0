@@ -84,9 +84,35 @@ async function activateCampaigns(sites, email, password) {
 
     for (const site of sites) {
       try {
-        await page.goto(`${site}/register`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        // Try multiple entry points
+        const registerUrls = [
+          `${site}/register`,
+          `${site}/signup`,
+          `${site}/login`,
+          site
+        ];
 
-        // Universal input detection
+        let navigationSuccess = false;
+        for (const url of registerUrls) {
+          try {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            navigationSuccess = true;
+            break;
+          } catch (e) {
+            continue;
+          }
+        }
+
+        if (!navigationSuccess) {
+          console.warn(`⚠️ All URLs failed for: ${site}`);
+          continue;
+        }
+
+        // Universal input detection with retry
+        await page.waitForFunction(() => 
+          document.querySelector('input[type="email"], input[name*="email"], input[id*="email"]')
+        );
+
         await page.evaluate((email, password) => {
           const inputs = document.querySelectorAll('input');
           inputs.forEach(input => {
@@ -95,17 +121,35 @@ async function activateCampaigns(sites, email, password) {
           });
         }, email, password);
 
-        // Universal submit
-        await page.evaluate(() => {
-          const btn = document.querySelector('button[type="submit"], input[type="submit"]');
-          if (btn) btn.click();
-        });
+        // Universal submit with multiple selector fallbacks
+        const submitSelectors = [
+          'button[type="submit"]',
+          'input[type="submit"]',
+          'button.btn-primary',
+          'button:contains("Sign Up")',
+          'button:contains("Register")'
+        ];
 
-        await page.waitForNavigation({ timeout: 10000 });
+        for (const selector of submitSelectors) {
+          try {
+            const btn = await page.waitForSelector(selector, { timeout: 3000 });
+            await btn.click();
+            break;
+          } catch (e) {
+            continue;
+          }
+        }
+
+        // Wait for navigation or dashboard
+        try {
+          await page.waitForNavigation({ timeout: 10000 });
+        } catch (e) {
+          // Ignore — might already be on dashboard
+        }
 
         // Check activation
         const isActivated = await page.evaluate(() => {
-          return /monetize|earn|dashboard/i.test(document.body.innerText);
+          return /dashboard|api|welcome|monetize|earn/i.test(document.body.innerText.toLowerCase());
         });
 
         if (isActivated) {
@@ -113,12 +157,12 @@ async function activateCampaigns(sites, email, password) {
           console.log(`✅ Activated: ${site}`);
         }
 
-        // Extract real API key
+        // Extract real API key from page
         const key = await page.evaluate(() => {
           const patterns = [
-            /[a-f0-9]{32}/i,
-            /sk_live_[a-zA-Z0-9_]{24}/,
-            /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/
+            /[a-f0-9]{32}/i, // MD5, API keys
+            /sk_live_[a-zA-Z0-9_]{24}/, // Stripe
+            /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/ // JWT
           ];
           const text = document.body.innerText;
           for (const pattern of patterns) {
@@ -130,8 +174,11 @@ async function activateCampaigns(sites, email, password) {
 
         if (key) {
           const keyName = site.includes('linkvertise') ? 'LINKVERTISE_API_KEY' :
+                         site.includes('shorte') ? 'SHORTE_ST_API_KEY' :
                          site.includes('newsapi') ? 'NEWS_API_KEY' :
-                         `${new URL(site).hostname.split('.')[0].toUpperCase()}_API_KEY`;
+                         site.includes('thecatapi') ? 'CAT_API_KEY' :
+                         site.includes('coingecko') ? 'COINGECKO_API_KEY' :
+                         'AUTO_API_KEY';
           newKeys[keyName] = key;
         }
       } catch (e) {
@@ -175,10 +222,13 @@ async function consolidateRevenue(campaigns, newKeys) {
 // === 🛠 Self-Healing (Real Recovery) ===
 async function healSystem(error) {
   if (error.message.includes('timeout')) {
-    await new Promise(r => setTimeout(r, 300000)); // 5min
+    console.log('⚙️ Healing timeout → retry in 5min');
+    await new Promise(r => setTimeout(r, 300000));
   } else if (error.message.includes('ENOTFOUND')) {
-    await new Promise(r => setTimeout(r, 600000)); // 10min
+    console.log('⚙️ Healing DNS → retry in 10min');
+    await new Promise(r => setTimeout(r, 600000));
   } else {
+    console.log('⚙️ Critical failure → restarting service');
     process.exit(1); // Let Render restart
   }
 }
