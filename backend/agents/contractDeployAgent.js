@@ -6,7 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import axios from 'axios'; // Use axios instead of fetch
+import axios from 'axios';
 
 const execPromise = util.promisify(exec);
 
@@ -19,12 +19,50 @@ const quantumDelay = (ms) => new Promise(resolve => {
   setTimeout(resolve, ms + jitter);
 });
 
+// === 💰 Self-Funding: Get Initial Capital from Revenue Agents ===
+async function getInitialCapital(CONFIG) {
+  const web3 = new Web3(CONFIG.BSC_NODE);
+  const balance = await web3.eth.getBalance(CONFIG.GAS_WALLET);
+  const bnbBalance = web3.utils.fromWei(balance, 'ether');
+
+  // If we have less than 0.01 BNB, generate capital
+  if (bnbBalance < 0.01) {
+    console.log(`⚠️ Low gas: ${bnbBalance} BNB. Generating initial capital...`);
+
+    try {
+      const payoutAgent = await import('./payoutAgent.js');
+      const socialAgent = await import('./socialAgent.js');
+      const shopifyAgent = await import('./shopifyAgent.js');
+
+      // Run social and e-commerce agents to generate revenue
+      await socialAgent.socialAgent(CONFIG);
+      await shopifyAgent.shopifyAgent(CONFIG);
+
+      // Trigger payout to refill gas wallet
+      await payoutAgent.payoutAgent({ ...CONFIG, earnings: 5 });
+
+      // Wait for blockchain to update
+      await quantumDelay(10000);
+
+      const newBalance = await web3.eth.getBalance(CONFIG.GAS_WALLET);
+      const newBnbBalance = web3.utils.fromWei(newBalance, 'ether');
+      console.log(`✅ Gas wallet refilled: ${newBnbBalance} BNB`);
+      return newBnbBalance >= 0.01;
+    } catch (error) {
+      console.warn('⚠️ Failed to generate capital:', error.message);
+      return false;
+    }
+  }
+
+  console.log(`✅ Sufficient gas: ${bnbBalance} BNB`);
+  return true;
+}
+
 // === 🔐 Secure Key Access (No Direct Exposure) ===
 const getPrivateKey = () => {
   if (!process.env.PRIVATE_KEY) {
     throw new Error('PRIVATE_KEY missing in environment');
   }
-  // Optional: Decrypt if encrypted
   return process.env.PRIVATE_KEY;
 };
 
@@ -36,7 +74,14 @@ export const contractDeployAgent = async (CONFIG) => {
       return;
     }
 
-    const web3 = new Web3(CONFIG.BSC_NODE || 'https://bsc-dataseed.binance.org/');
+    // ===== 1. SELF-FUNDING: GET INITIAL CAPITAL =====
+    const hasCapital = await getInitialCapital(CONFIG);
+    if (!hasCapital) {
+      console.warn('⚠️ Failed to generate initial capital. Skipping contract deployment.');
+      return;
+    }
+
+    const web3 = new Web3(CONFIG.BSC_NODE || 'https://bsc-dataseed.binance.org');
 
     // 1. Compile Contracts
     console.log('📦 Compiling contracts with Hardhat...');
@@ -143,6 +188,6 @@ export const contractDeployAgent = async (CONFIG) => {
 
   } catch (error) {
     console.error('🚨 ContractDeployAgent Error:', error.message);
-    throw error; // Let orchestrator handle
+    throw error;
   }
 };
