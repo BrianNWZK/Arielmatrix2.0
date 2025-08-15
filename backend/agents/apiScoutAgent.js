@@ -9,6 +9,7 @@ import path from 'path';
  * - Uses AI identity: arielmatrix@atomicmail.io
  * - Generates real API keys, no mocks
  * - Zero cost, 100% autonomous
+ * - Novel: Leverages credential gaps across platforms
  */
 export const apiScoutAgent = async (CONFIG) => {
   console.log('🌍 ArielMatrix Global Explorer Activated: Scanning for Revenue...');
@@ -51,14 +52,13 @@ async function discoverOpportunities(sites) {
 
   for (const site of sites) {
     try {
-      // ✅ Fixed: No trailing spaces
-      const res = await axios.head(site.trim(), { timeout: 5000 });
+      const res = await axios.head(site, { timeout: 5000 });
       if (res.status < 400) {
-        discovered.push(site.trim());
-        console.log(`🔍 Active site found: ${site.trim()}`);
+        discovered.push(site);
+        console.log(`🔍 Active site found: ${site}`);
       }
     } catch (e) {
-      console.warn(`⚠️ Site unreachable: ${site.trim()}`);
+      console.warn(`⚠️ Site unreachable: ${site}`);
     }
   }
 
@@ -92,7 +92,7 @@ async function activateCampaigns(sites, email, password) {
         let navigationSuccess = false;
         for (const url of registerUrls) {
           try {
-            await page.goto(url.trim(), { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             navigationSuccess = true;
             break;
           } catch (e) {
@@ -105,11 +105,6 @@ async function activateCampaigns(sites, email, password) {
           continue;
         }
 
-        // Wait for email input to appear
-        await page.waitForFunction(() => 
-          document.querySelector('input[type="email"], input[name*="email"], input[id*="email"]')
-        );
-
         // Universal input filling
         await page.evaluate((email, password) => {
           const inputs = document.querySelectorAll('input');
@@ -119,13 +114,12 @@ async function activateCampaigns(sites, email, password) {
           });
         }, email, password);
 
-        // ✅ Fixed: Valid CSS selectors only
+        // Universal submit
         const submitSelectors = [
           'button[type="submit"]',
           'input[type="submit"]',
           'button.btn-primary',
-          'button[name="submit"]',
-          'button[type="button"][onclick*="login"]'
+          'button[name="submit"]'
         ];
 
         let submitted = false;
@@ -146,7 +140,7 @@ async function activateCampaigns(sites, email, password) {
           console.warn(`⚠️ No valid submit button found for: ${site}`);
         }
 
-        // Wait for navigation
+        // Wait for navigation or dashboard
         try {
           await page.waitForNavigation({ timeout: 10000 });
         } catch (e) {
