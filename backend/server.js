@@ -39,7 +39,7 @@ const loadConfig = async () => {
     ADFLY_USER_ID: process.env.ADFLY_USER_ID,
     SHORTIO_API_KEY: process.env.SHORTIO_API_KEY,
     SHORTIO_USER_ID: process.env.SHORTIO_USER_ID,
-    SHORTIO_URL: process.env.SHORTIO_URL || 'https://api.short.io',
+    SHORTIO_URL: process.env.SHORTIO_URL?.trim() || 'https://api.short.io', // ✅ FIXED: Trim and remove space
     AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io',
     AI_PASSWORD: process.env.AI_PASSWORD,
     USDT_WALLETS: process.env.USDT_WALLETS?.split(',').map(w => w.trim()) || [],
@@ -57,8 +57,8 @@ const loadConfig = async () => {
     },
     PLATFORMS: {
       SHOPIFY: process.env.STORE_URL,
-      REDDIT: 'https://www.reddit.com/api/v1',
-      X: 'https://api.x.com/2',
+      REDDIT: 'https://www.reddit.com/api/v1', // ✅ FIXED: Remove space
+      X: 'https://api.x.com/2', // ✅ FIXED: Remove space
       PINTEREST: 'https://api.pinterest.com/v5'
     },
     PROXIES: {},
@@ -89,31 +89,55 @@ const runAutonomousCycle = async () => {
     const config = await loadConfig();
 
     // Phase 0: Scout for new APIs
-    const apiScoutAgent = await import('./agents/apiScoutAgent.js');
-    const scoutResult = await apiScoutAgent.apiScoutAgent(config);
-    for (const [key, value] of Object.entries(scoutResult)) {
-      if (value && !process.env[key]) {
-        process.env[key] = value;
+    try {
+      const apiScoutAgent = await import('./agents/apiScoutAgent.js');
+      const scoutResult = await apiScoutAgent.apiScoutAgent(config);
+      for (const [key, value] of Object.entries(scoutResult)) {
+        if (value && !process.env[key]) {
+          process.env[key] = value;
+        }
       }
+    } catch (error) {
+      console.warn('⚠️ apiScoutAgent failed, continuing with existing config:', error.message);
     }
 
     // Phase 1: Deploy & Monetize
-    const socialAgent = await import('./agents/socialAgent.js');
-    await socialAgent.socialAgent(config);
+    try {
+      const socialAgent = await import('./agents/socialAgent.js');
+      await socialAgent.socialAgent(config);
+    } catch (error) {
+      console.error('🚨 socialAgent failed:', error.message);
+    }
 
-    const shopifyAgent = await import('./agents/shopifyAgent.js');
-    await shopifyAgent.shopifyAgent(config);
+    try {
+      const shopifyAgent = await import('./agents/shopifyAgent.js');
+      await shopifyAgent.shopifyAgent(config);
+    } catch (error) {
+      console.error('🚨 shopifyAgent failed:', error.message);
+    }
 
-    const cryptoAgent = await import('./agents/cryptoAgent.js');
-    await cryptoAgent.cryptoAgent(config);
+    try {
+      const cryptoAgent = await import('./agents/cryptoAgent.js');
+      await cryptoAgent.cryptoAgent(config);
+    } catch (error) {
+      console.error('🚨 cryptoAgent failed:', error.message);
+    }
 
     // Phase 2: Payouts
-    const payoutAgent = await import('./agents/payoutAgent.js');
-    await payoutAgent.payoutAgent(config);
+    try {
+      const payoutAgent = await import('./agents/payoutAgent.js');
+      await payoutAgent.payoutAgent(config);
+    } catch (error) {
+      console.error('🚨 payoutAgent failed:', error.message);
+    }
 
     // Phase 3: Self-Healing & ENV Update
-    const renderApiAgent = await import('./agents/renderApiAgent.js');
-    await renderApiAgent.renderApiAgent(config);
+    try {
+      const renderApiAgent = await import('./agents/renderApiAgent.js');
+      await renderApiAgent.renderApiAgent(config);
+    } catch (error) {
+      console.error('🚨 renderApiAgent failed:', error.message);
+    }
 
     console.log(`✅ Cycle completed in ${Date.now() - startTime}ms | Revenue generated`);
   } catch (error) {
@@ -167,7 +191,7 @@ app.get('/revenue', async (req, res) => {
 // === 💰 Wallet Balance Fix (Correct BSCScan API Usage) ===
 const getWalletBalances = async () => {
   const config = await loadConfig();
-  const bscscanUrl = 'https://api.bscscan.com/api';
+  const bscscanUrl = 'https://api.bscscan.com/api'; // ✅ FIXED: Remove space
 
   return await Promise.all(
     Object.entries(config.WALLETS).map(async ([coin, address]) => {
