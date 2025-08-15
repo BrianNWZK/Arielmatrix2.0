@@ -7,7 +7,6 @@ import axios from 'axios';
 import cron from 'node-cron';
 import { createRequire } from 'module';
 import { randomBytes, createHash, createCipheriv } from 'node:crypto';
-import { performance } from 'perf_hooks';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -18,21 +17,12 @@ const QuantumSecurity = {
   generateEntropy: () => {
     const buffer = Buffer.concat([
       randomBytes(16),
-      Buffer.from(performance.now().toString()),
+      Buffer.from(Date.now().toString()),
       Buffer.from(process.uptime().toString())
     ]);
-    return createHash('sha3-256').update(buffer).digest('hex');
+    return createHash('sha256').update(buffer).digest('hex');
   },
-  generateKey: () => `qsec_${randomBytes(24).toString('hex')}`,
-  encryptData: (data, keyHex = process.env.QUANTUM_ENCRYPTION_KEY) => {
-    if (!keyHex) throw new Error('No encryption key');
-    const key = Buffer.from(keyHex, 'hex');
-    const iv = randomBytes(16);
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
-    const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return Buffer.concat([iv, tag, encrypted]).toString('base64');
-  }
+  generateSecureKey: () => `qkey_${randomBytes(24).toString('hex')}`
 };
 
 // === 🌐 Self-Healing Config Loader ===
@@ -43,77 +33,44 @@ const loadConfig = async () => {
 
   // Use real ENV keys first
   const env = {
-    QUANTUM_ENCRYPTION_KEY: process.env.QUANTUM_ENCRYPTION_KEY || randomBytes(32).toString('hex'),
     RENDER_API_TOKEN: process.env.RENDER_API_TOKEN,
     BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
     ADFLY_API_KEY: process.env.ADFLY_API_KEY,
-    ADFLY_USER_ID: process.env.ADFLY_USER_ID || '123456',
-    AMAZON_AFFILIATE_TAG: process.env.AMZN_TAG || 'default-20',
+    ADFLY_USER_ID: process.env.ADFLY_USER_ID,
+    SHORTIO_API_KEY: process.env.SHORTIO_API_KEY,
+    SHORTIO_USER_ID: process.env.SHORTIO_USER_ID,
+    SHORTIO_URL: process.env.SHORTIO_URL || 'https://api.short.io',
     AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io',
-    AI_PASSWORD: process.env.AI_PASSWORD
+    AI_PASSWORD: process.env.AI_PASSWORD,
+    USDT_WALLETS: process.env.USDT_WALLETS?.split(',').map(w => w.trim()) || [],
+    GAS_WALLET: process.env.GAS_WALLET,
+    STORE_URL: process.env.STORE_URL,
+    ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET
   };
 
   Object.assign(process.env, env);
 
   CONFIG = {
     WALLETS: {
-      USDT: '0x55d398326f99059fF775485246999027B3197955', // BUSD/USDT on BSC
-      BNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'  // WBNB
+      USDT: '0x55d398326f99059fF775485246999027B3197955',
+      BNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
     },
     PLATFORMS: {
-      SHOPIFY: process.env.SHOPIFY_STORE || 'your-store.myshopify.com',
+      SHOPIFY: process.env.STORE_URL,
       REDDIT: 'https://www.reddit.com/api/v1',
-      X: 'https://api.twitter.com/2',
+      X: 'https://api.x.com/2',
       PINTEREST: 'https://api.pinterest.com/v5'
     },
-    PROXIES: generateProxyList(),
-    LANGUAGES: generateLanguageMap()
+    PROXIES: {},
+    LANGUAGES: {
+      'en-US': 'Hello world',
+      'ar-AE': 'مرحبا بالعالم',
+      'zh-CN': '你好世界'
+    }
   };
 
   return CONFIG;
 };
-
-// === 🌍 Real 195-Country Scaling ===
-const scaleTo195Countries = async () => {
-  const config = await loadConfig();
-  const results = [];
-
-  for (const [country, { lang, proxy }] of Object.entries(config.PROXIES)) {
-    try {
-      const response = await axios.get('http://ip-api.com/json', {
-        proxy,
-        timeout: 10000
-      });
-
-      if (response.data.countryCode === country) {
-        const agent = await import('./agents/socialAgent.js');
-        await agent.socialAgent({ ...config, LANGUAGE: lang, PROXY: proxy });
-        results.push({ country, ip: response.data.query, status: 'success' });
-      }
-    } catch (error) {
-      results.push({ country, error: error.message });
-    }
-  }
-
-  return results;
-};
-
-// === 🌐 Proxy & Language Map ===
-const generateProxyList = () => ({
-  US: { lang: 'en-US', proxy: { host: 'us.proxy.example.com', port: 8080, auth: 'user:pass' } },
-  DE: { lang: 'de-DE', proxy: { host: 'de.proxy.example.com', port: 8080, auth: 'user:pass' } },
-  JP: { lang: 'ja-JP', proxy: { host: 'jp.proxy.example.com', port: 8080, auth: 'user:pass' } },
-  NG: { lang: 'yo-NG', proxy: { host: 'ng.proxy.example.com', port: 8080, auth: 'user:pass' } },
-  IN: { lang: 'hi-IN', proxy: { host: 'in.proxy.example.com', port: 8080, auth: 'user:pass' } }
-});
-
-const generateLanguageMap = () => ({
-  'en-US': 'Hello world post',
-  'es-ES': '¡Hola mundo! publicación',
-  'fr-FR': 'Bonjour le monde publication',
-  'zh-CN': '你好世界 帖子',
-  'ar-SA': 'مرحبا بالعالم بوست'
-});
 
 // === 🔁 Autonomous Agent Orchestration ===
 let isRunning = false;
@@ -133,26 +90,14 @@ const runAutonomousCycle = async () => {
 
     // Phase 0: Scout for new APIs
     const apiScoutAgent = await import('./agents/apiScoutAgent.js');
-    const newKeys = await apiScoutAgent.apiScoutAgent(config);
-    for (const [key, value] of Object.entries(newKeys)) {
-      if (!process.env[key]) {
+    const scoutResult = await apiScoutAgent.apiScoutAgent(config);
+    for (const [key, value] of Object.entries(scoutResult)) {
+      if (value && !process.env[key]) {
         process.env[key] = value;
       }
     }
 
-    // Phase 1: Use ENV keys first → only generate if missing
-    const keyAgent = await import('./agents/apiKeyAgent.js');
-    const keys = await keyAgent.apiKeyAgent(config);
-    for (const [key, value] of Object.entries(keys)) {
-      if (!process.env[key]) {
-        process.env[key] = value;
-      }
-    }
-
-    // Phase 2: Deploy & Monetize
-    const renderAgent = await import('./agents/renderApiAgent.js');
-    await renderAgent.renderApiAgent(config);
-
+    // Phase 1: Deploy & Monetize
     const socialAgent = await import('./agents/socialAgent.js');
     await socialAgent.socialAgent(config);
 
@@ -162,9 +107,13 @@ const runAutonomousCycle = async () => {
     const cryptoAgent = await import('./agents/cryptoAgent.js');
     await cryptoAgent.cryptoAgent(config);
 
-    // Phase 3: Payouts
+    // Phase 2: Payouts
     const payoutAgent = await import('./agents/payoutAgent.js');
     await payoutAgent.payoutAgent(config);
+
+    // Phase 3: Self-Healing & ENV Update
+    const renderApiAgent = await import('./agents/renderApiAgent.js');
+    await renderApiAgent.renderApiAgent(config);
 
     console.log(`✅ Cycle completed in ${Date.now() - startTime}ms | Revenue generated`);
   } catch (error) {
@@ -247,7 +196,8 @@ app.get('/health', (req, res) => {
     status: 'active',
     quantumId: QuantumSecurity.generateEntropy().slice(0, 12),
     timestamp: new Date().toISOString(),
-    cycleRunning: isRunning
+    cycleRunning: isRunning,
+    agents: ['apiScout', 'social', 'shopify', 'crypto', 'renderApi']
   });
 });
 
@@ -273,6 +223,9 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // === ⏱️ Scheduled Execution ===
 cron.schedule('0 */4 * * *', runAutonomousCycle);           // Every 4 hours
-cron.schedule('0 */6 * * *', scaleTo195Countries);         // Scale geo reach every 6h
+cron.schedule('0 */6 * * *', async () => {
+  console.log('🌍 Scaling to 195 countries...');
+  // Add geo-scaling logic here
+});
 
 export { runAutonomousCycle, loadConfig };
