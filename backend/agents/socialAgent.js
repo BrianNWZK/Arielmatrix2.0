@@ -154,11 +154,56 @@ const generateWomenCentricContent = async (countryCode, CONFIG) => {
   };
 };
 
-// === 🔗 Smart Link Shortener (Linkvertise + Crypto Fallback) ===
+// === 🔗 Smart Link Shortener (Short.io Primary, AdFly, Linkvertise Fallback) ===
 const shortenLink = async (url, CONFIG) => {
+  // === PRIMARY: Short.io API ===
+  try {
+    const response = await axios.post(
+      `${CONFIG.SHORTIO_URL}/links/public`,
+      {
+        domain: CONFIG.SHORTIO_DOMAIN || 'qgs.gs',
+        originalURL: url
+      },
+      {
+        headers: {
+          'accept': 'application/json',
+          'content-type': 'application/json',
+          'authorization': CONFIG.SHORTIO_API_KEY,
+          'userId': CONFIG.SHORTIO_USER_ID
+        }
+      }
+    );
+
+    const shortUrl = response.data.shortURL;
+    console.log(`✅ Short.io success: ${shortUrl}`);
+    return shortUrl;
+  } catch (error) {
+    console.warn('⚠️ Short.io failed → falling back to AdFly:', error.message);
+  }
+
+  // === SECONDARY: AdFly API ===
+  try {
+    const response = await axios.post(CONFIG.ADFLY_URL || 'https://api.adf.ly/v1/shorten', {
+      url,
+      api_key: CONFIG.ADFLY_API_KEY,
+      user_id: CONFIG.ADFLY_USER_ID,
+      domain: 'qgs.gs',
+      advert_type: 'int'
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 5000
+    });
+
+    const shortUrl = response.data.short_url;
+    console.log(`✅ AdFly success: ${shortUrl}`);
+    return shortUrl;
+  } catch (error) {
+    console.warn('⚠️ AdFly failed → falling back to Linkvertise');
+  }
+
+  // === TERTIARY: Linkvertise ===
   let browser = null;
   try {
-    // Try to shorten with Linkvertise
     const result = await launchStealthBrowser();
     if (!result) throw new Error('Browser launch failed');
     ({ browser } = result);
@@ -167,34 +212,16 @@ const shortenLink = async (url, CONFIG) => {
     await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
-    await safeType(page, [
-      'input[name="email"]',
-      'input[type="email"]'
-    ], CONFIG.AI_EMAIL || 'arielmatrix@atomicmail.io');
-
-    await safeType(page, [
-      'input[name="password"]',
-      'input[type="password"]'
-    ], CONFIG.AI_PASSWORD);
-
-    await safeClick(page, [
-      'button[type="submit"]',
-      'button.btn-primary'
-    ]);
+    await safeType(page, ['input[name="email"]'], CONFIG.AI_EMAIL || 'arielmatrix@atomicmail.io');
+    await safeType(page, ['input[name="password"]'], CONFIG.AI_PASSWORD);
+    await safeClick(page, ['button[type="submit"]']);
     await quantumDelay(5000);
 
     await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'networkidle2' });
     await quantumDelay(2000);
 
-    await safeType(page, [
-      'input[name="url"]',
-      'input#url-input'
-    ], url);
-
-    await safeClick(page, [
-      'button[type="submit"]',
-      'button:contains("Create")'
-    ]);
+    await safeType(page, ['input[name="url"]'], url);
+    await safeClick(page, ['button[type="submit"]']);
     await quantumDelay(3000);
 
     const shortLink = await page.evaluate(() => {
@@ -212,7 +239,7 @@ const shortenLink = async (url, CONFIG) => {
     if (browser) await browser.close();
   }
 
-  // Fallback to NowPayments
+  // === QUATERNARY: NowPayments ===
   try {
     const npRes = await axios.post('https://api.nowpayments.io/v1/invoice', {
       price_amount: 0.01,
@@ -221,8 +248,9 @@ const shortenLink = async (url, CONFIG) => {
       order_description: `Access Pass: ${url}`
     }, { headers: { 'x-api-key': CONFIG.NOWPAYMENTS_API_KEY || process.env.NOWPAYMENTS_API_KEY } });
     return npRes.data.invoice_url;
-  } catch {
-    return url; // Final fallback
+  } catch (error) {
+    console.warn('⚠️ NowPayments failed → using direct URL');
+    return url;
   }
 };
 
@@ -248,7 +276,7 @@ export const socialAgent = async (CONFIG) => {
     // 2. Generate AI Content
     const { title, caption, media } = await generateWomenCentricContent(countryCode, CONFIG);
 
-    // 3. Shorten Links (Linkvertise)
+    // 3. Shorten Links (Short.io Primary)
     const [affiliateLink, monitorLink] = await Promise.all([
       shortenLink(`${CONFIG.AMAZON_AFFILIATE_TAG}?tag=womenlux-20`, CONFIG),
       shortenLink(CONFIG.UPTIMEROBOT_AFFILIATE_LINK, CONFIG)
