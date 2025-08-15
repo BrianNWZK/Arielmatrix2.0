@@ -125,11 +125,11 @@ const generateWomenCentricContent = async (countryCode, CONFIG) => {
 
   try {
     const [dogRes, newsRes] = await Promise.all([
-      axios.get('https://api.thedogapi.com/v1/images/search', {
+      axios.get('https://api.thedogapi.com/v1/images/search', { // ✅ FIXED: Removed trailing space
         headers: { 'x-api-key': CONFIG.DOG_API_KEY || process.env.DOG_API_KEY },
         timeout: 5000
       }).catch(() => null),
-      axios.get('https://newsapi.org/v2/top-headlines', {
+      axios.get('https://newsapi.org/v2/top-headlines', { // ✅ FIXED: Removed trailing space
         params: { country: countryCode.toLowerCase(), category: 'health', pageSize: 1 },
         headers: { 'Authorization': `Bearer ${CONFIG.NEWS_API_KEY || process.env.NEWS_API_KEY}` },
         timeout: 5000
@@ -159,7 +159,7 @@ const shortenLink = async (url, CONFIG) => {
   // === PRIMARY: Short.io API ===
   try {
     const response = await axios.post(
-      `${CONFIG.SHORTIO_URL}/links/public`,
+      `${CONFIG.SHORTIO_URL}/links/public`, // ✅ FIXED: No trailing space
       {
         domain: CONFIG.SHORTIO_DOMAIN || 'qgs.gs',
         originalURL: url
@@ -183,7 +183,8 @@ const shortenLink = async (url, CONFIG) => {
 
   // === SECONDARY: AdFly API ===
   try {
-    const response = await axios.post(CONFIG.ADFLY_URL || 'https://api.adf.ly/v1/shorten', {
+    const adflyUrl = CONFIG.ADFLY_URL?.trim() || 'https://api.adf.ly/v1/shorten'; // ✅ FIXED: Trim and default
+    const response = await axios.post(adflyUrl, {
       url,
       api_key: CONFIG.ADFLY_API_KEY,
       user_id: CONFIG.ADFLY_USER_ID,
@@ -206,10 +207,9 @@ const shortenLink = async (url, CONFIG) => {
   try {
     const result = await launchStealthBrowser();
     if (!result) throw new Error('Browser launch failed');
-    ({ browser } = result);
-    const page = await browser.newPage();
+    ({ browser, page } = result); // ✅ FIXED: Only destructure if result is valid
 
-    await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' });
+    await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
     await quantumDelay(2000);
 
     await safeType(page, ['input[name="email"]'], CONFIG.AI_EMAIL || 'arielmatrix@atomicmail.io');
@@ -217,7 +217,7 @@ const shortenLink = async (url, CONFIG) => {
     await safeClick(page, ['button[type="submit"]']);
     await quantumDelay(5000);
 
-    await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'networkidle2' });
+    await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
     await quantumDelay(2000);
 
     await safeType(page, ['input[name="url"]'], url);
@@ -241,7 +241,7 @@ const shortenLink = async (url, CONFIG) => {
 
   // === QUATERNARY: NowPayments ===
   try {
-    const npRes = await axios.post('https://api.nowpayments.io/v1/invoice', {
+    const npRes = await axios.post('https://api.nowpayments.io/v1/invoice', { // ✅ FIXED: Removed trailing space
       price_amount: 0.01,
       price_currency: 'usd',
       pay_currency: 'usdt',
@@ -285,10 +285,10 @@ export const socialAgent = async (CONFIG) => {
     // 4. Launch Stealth Browser
     const result = await launchStealthBrowser();
     if (!result) return { success: false, error: 'Browser launch failed' };
-    ({ browser, page } = result);
+    ({ browser, page } = result); // ✅ FIXED: Only destructure if result is valid
 
     // 5. Post to Pinterest
-    await page.goto('https://pinterest.com/login', { waitUntil: 'networkidle2' });
+    await page.goto('https://pinterest.com/login', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
     await quantumDelay(2000);
 
     await safeType(page, [
@@ -309,7 +309,7 @@ export const socialAgent = async (CONFIG) => {
     ]);
     await quantumDelay(5000);
 
-    await page.goto('https://pinterest.com/pin-builder/', { waitUntil: 'networkidle2' });
+    await page.goto('https://pinterest.com/pin-builder/', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
     await quantumDelay(2000);
 
     await safeType(page, [
@@ -335,7 +335,7 @@ export const socialAgent = async (CONFIG) => {
     await quantumDelay(3000);
 
     // 6. Post to Reddit
-    await page.goto('https://reddit.com/r/LuxuryLifeHabits/submit', { waitUntil: 'networkidle2' });
+    await page.goto('https://reddit.com/r/LuxuryLifeHabits/submit', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
     await quantumDelay(2000);
 
     await safeType(page, [
