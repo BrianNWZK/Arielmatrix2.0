@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'perf_hooks';
 import { cpus, loadavg } from 'os';
 
-// Quantum Security Core (ESM-Safe)
+// === 🔐 Quantum Security Core (ESM-Safe) ===
 const QuantumSecurity = {
   generateSecureKey: () => {
     const cryptoImpl = globalThis.crypto || crypto;
@@ -22,7 +22,7 @@ const QuantumSecurity = {
     const [memUsage, cpuCount, netStatus] = await Promise.all([
       process.memoryUsage(),
       cpus().length,
-      axios.get('https://api.render.com/health').catch(() => ({ status: 503 })) // ✅ Fixed: No trailing spaces
+      axios.get('https://api.render.com/health').catch(() => ({ status: 503 }))
     ]);
     
     return {
@@ -33,7 +33,7 @@ const QuantumSecurity = {
   }
 };
 
-// Enhanced Render API Agent (100% Production Code)
+// === 🌐 Enhanced Render API Agent (100% Production Code) ===
 export const renderApiAgent = async (CONFIG) => {
   try {
     // Real system verification before proceeding
@@ -79,19 +79,44 @@ export const renderApiAgent = async (CONFIG) => {
       console.warn('⚠️ No revenue_keys.json found or invalid JSON');
     }
 
-    // Environment variables to update
+    // === 🔑 Environment variables to update ===
+    // This is where your AI becomes self-aware
     const envUpdates = [
-      { key: 'BSCSCAN_API_KEY', value: keys.BSCSCAN_API_KEY || process.env.BSCSCAN_API_KEY },
+      // === Monetization Platforms ===
       { key: 'ADFLY_API_KEY', value: keys.ADFLY_API_KEY || process.env.ADFLY_API_KEY },
       { key: 'ADFLY_USER_ID', value: keys.ADFLY_USER_ID || process.env.ADFLY_USER_ID },
+      { key: 'SHORTIO_API_KEY', value: keys.SHORTIO_API_KEY || process.env.SHORTIO_API_KEY },
+      { key: 'SHORTIO_USER_ID', value: keys.SHORTIO_USER_ID || process.env.SHORTIO_USER_ID },
+      { key: 'LINKVERTISE_EMAIL', value: keys.LINKVERTISE_EMAIL || process.env.LINKVERTISE_EMAIL },
+      { key: 'LINKVERTISE_PASSWORD', value: keys.LINKVERTISE_PASSWORD || process.env.LINKVERTISE_PASSWORD },
+      { key: 'NOWPAYMENTS_EMAIL', value: keys.NOWPAYMENTS_EMAIL || process.env.NOWPAYMENTS_EMAIL },
+      { key: 'NOWPAYMENTS_PASSWORD', value: keys.NOWPAYMENTS_PASSWORD || process.env.NOWPAYMENTS_PASSWORD },
+
+      // === Social & Market APIs ===
       { key: 'X_API_KEY', value: keys.X_API_KEY || process.env.X_API_KEY },
       { key: 'REDDIT_API_KEY', value: keys.REDDIT_API_KEY || process.env.REDDIT_API_KEY },
+      { key: 'PINTEREST_EMAIL', value: keys.PINTEREST_EMAIL || process.env.PINTEREST_EMAIL },
+      { key: 'PINTEREST_PASS', value: keys.PINTEREST_PASS || process.env.PINTEREST_PASS },
       { key: 'NEWS_API_KEY', value: keys.NEWS_API_KEY || process.env.NEWS_API_KEY },
       { key: 'WEATHER_API_KEY', value: keys.WEATHER_API_KEY || process.env.WEATHER_API_KEY },
-      { key: 'QUANTUM_SECURE_MODE', value: quantumEnv.QUANTUM_MODE },
+      { key: 'DOG_API_KEY', value: keys.DOG_API_KEY || process.env.DOG_API_KEY },
+      { key: 'CAT_API_KEY', value: keys.CAT_API_KEY || process.env.CAT_API_KEY },
+
+      // === E-Commerce & Crypto ===
+      { key: 'STORE_URL', value: keys.STORE_URL || process.env.STORE_URL },
+      { key: 'ADMIN_SHOP_SECRET', value: keys.ADMIN_SHOP_SECRET || process.env.ADMIN_SHOP_SECRET },
+      { key: 'BSCSCAN_API_KEY', value: keys.BSCSCAN_API_KEY || process.env.BSCSCAN_API_KEY },
+      { key: 'COINGECKO_API', value: keys.COINGECKO_API || process.env.COINGECKO_API },
+      { key: 'GAS_WALLET', value: keys.GAS_WALLET || process.env.GAS_WALLET },
+      { key: 'USDT_WALLETS', value: keys.USDT_WALLETS || process.env.USDT_WALLETS },
+
+      // === Quantum Autonomy Layer ===
+      { key: 'QUANTUM_MODE', value: quantumEnv.QUANTUM_MODE },
       { key: 'QUANTUM_ACCESS_KEY', value: quantumEnv.QUANTUM_API_KEY },
       { key: 'AUTONOMOUS_ENGINE', value: 'true' },
-      { key: 'DEPLOYMENT_ID', value: `AUTO-${createHash('md5').update(quantumEnv.QUANTUM_API_KEY).digest('hex').slice(0, 12)}` }
+      { key: 'DEPLOYMENT_ID', value: `AUTO-${createHash('md5').update(quantumEnv.QUANTUM_API_KEY).digest('hex').slice(0, 12)}` },
+      { key: 'AI_EMAIL', value: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io' },
+      { key: 'AI_PASSWORD', value: process.env.AI_PASSWORD }
     ].filter(item => item.value && typeof item.value === 'string' && item.value.trim() !== '');
 
     if (envUpdates.length === 0) {
@@ -142,6 +167,7 @@ export const renderApiAgent = async (CONFIG) => {
       varsUpdated: envUpdates.length
     };
 
+    console.log(`🚀 Render environment updated successfully | ${envUpdates.length} vars updated`);
     return quantumEnv;
 
   } catch (error) {
