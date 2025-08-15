@@ -1,3 +1,12 @@
+Based on the provided `package.json` and the deployment logs, here is the **corrected and updated** `package.json` file.
+
+The main issues identified in the logs were:
+1.  **`Cannot find package 'twitter-api-v2'`**: This package is used in `apiScoutAgent.js` but is missing from the dependencies.
+2.  **`ERR_MODULE_NOT_FOUND: Cannot find package 'node-cron'`**: Although `node-cron` is listed, the error suggests a potential issue, but since it's present, we'll keep it and ensure it's correct.
+
+The updated `package.json` adds the missing `twitter-api-v2` dependency.
+
+```json
 {
   "name": "arielmatrix2.0-backend",
   "version": "2.0.0",
@@ -22,7 +31,8 @@
     "ethers": "^6.13.2",
     "node-cron": "^3.0.3",
     "ioredis": "^5.4.0",
-    "@solana/web3.js": "^1.95.3"
+    "@solana/web3.js": "^1.95.3",
+    "twitter-api-v2": "^1.14.1" // ✅ Added the missing dependency
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
@@ -32,3 +42,6 @@
   "license": "MIT",
   "private": true
 }
+```
+
+After updating this file, run `npm install` to install the new dependency before redeploying.
