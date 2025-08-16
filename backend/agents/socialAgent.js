@@ -3,9 +3,10 @@ import { browserManager } from './browserManager.js'; // ✅ Import the central 
 import axios from 'axios';
 import crypto from 'crypto';
 import path from 'path';
+import fs from 'fs/promises'; // Import fs for temporary file operations
 import { TwitterApi } from 'twitter-api-v2'; // For X (Twitter) API interaction
 
-// Reusable Render ENV update function (extracted from previous agents)
+// Reusable Render ENV update function (extracted for common use across agents)
 async function _updateRenderEnvWithKeys(keysToSave, config) {
     if (Object.keys(keysToSave).length === 0) return;
 
@@ -374,7 +375,7 @@ const shortenLink = async (url, CONFIG) => {
     console.warn('⚠️ Linkvertise skipped: Credentials missing/placeholder. Falling back.');
   }
 
-  // === QUATERNARY: NowPayments ===
+  // --- QUATERNARY: NowPayments ---
   if (CONFIG.NOWPAYMENTS_API_KEY && !String(CONFIG.NOWPAYMENTS_API_KEY).includes('PLACEHOLDER')) {
     try {
       console.log('Attempting NowPayments invoice URL generation...');
@@ -552,6 +553,79 @@ async function remediateMissingSocialConfig(keyName, config) {
                     console.warn('⚠️ Could not find NEWS_API_KEY on signup page directly. Manual signup might be needed.');
                 }
                 break;
+            // Add other social/shortening remediation cases here if needed
+            case 'ADFLY_API_KEY':
+            case 'ADFLY_USER_ID':
+            case 'ADFLY_PASS':
+            case 'ADFLY_URL':
+                targetSite = 'https://adf.ly/publisher/register';
+                console.log(`Attempting to remediate AdFly credentials at ${targetSite}`);
+                page = await browserManager.getNewPage();
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await quantumDelay(2000);
+                // AdFly often aggressively blocks bots. This is highly likely to fail.
+                const adflyPageContent = await page.evaluate(() => document.body.innerText);
+                const adflyFoundKey = QuantumIntelligence.analyzePattern(adflyPageContent);
+                if (adflyFoundKey && adflyFoundKey.value) {
+                    newFoundCredential = { ADFLY_API_KEY: adflyFoundKey.value }; // assuming API key is found
+                    // user id/pass would require full signup flow
+                } else {
+                    console.warn('⚠️ AdFly key not found, full signup flow not automated. Manual setup likely needed due to bot detection.');
+                }
+                break;
+
+            case 'SHORTIO_API_KEY':
+            case 'SHORTIO_URL':
+            case 'SHORTIO_USER_ID':
+                targetSite = 'https://app.short.io/signup';
+                console.log(`Attempting to remediate Short.io credentials at ${targetSite}`);
+                page = await browserManager.getNewPage();
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await quantumDelay(2000);
+                const shortioPageContent = await page.evaluate(() => document.body.innerText);
+                const shortioFoundKey = QuantumIntelligence.analyzePattern(shortioPageContent);
+                if (shortioFoundKey && shortioFoundKey.value) {
+                    newFoundCredential = { SHORTIO_API_KEY: shortioFoundKey.value };
+                    // If URL is missing, try to extract from dashboard after login
+                    const dashboardUrlMatch = page.url().match(/https:\/\/(.*?)\.short\.io/);
+                    if (dashboardUrlMatch && dashboardUrlMatch[0]) {
+                        newFoundCredential.SHORTIO_URL = dashboardUrlMatch[0];
+                    }
+                    console.log('🔑 Found Short.io API Key during remediation!');
+                } else {
+                    console.warn('⚠️ Short.io key/URL not found, full signup flow not automated.');
+                }
+                break;
+            case 'LINKVERTISE_EMAIL':
+            case 'LINKVERTISE_PASSWORD': // These are remediated in apiScoutAgent.js via activateCampaigns.
+                // This agent just uses them. No specific remediation here beyond what apiScoutAgent does.
+                // If it's still placeholder here, it means apiScoutAgent's remediation failed.
+                console.log(`Linkvertise credentials are remediated by apiScoutAgent.js. Checking for validity.`);
+                if (config.LINKVERTISE_EMAIL && !String(config.LINKVERTISE_EMAIL).includes('PLACEHOLDER') &&
+                    config.LINKVERTISE_PASSWORD && !String(config.LINKVERTISE_PASSWORD).includes('PLACEHOLDER')) {
+                        console.log('✅ Linkvertise credentials found in config.');
+                        newFoundCredential = {
+                            LINKVERTISE_EMAIL: config.LINKVERTISE_EMAIL,
+                            LINKVERTISE_PASSWORD: config.LINKVERTISE_PASSWORD
+                        };
+                }
+                break;
+            case 'NOWPAYMENTS_API_KEY':
+                targetSite = 'https://nowpayments.io/auth/signup';
+                console.log(`Attempting to remediate NowPayments API key at ${targetSite}`);
+                page = await browserManager.getNewPage();
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await quantumDelay(2000);
+                const nowpaymentsPageContent = await page.evaluate(() => document.body.innerText);
+                const nowpaymentsFoundKey = QuantumIntelligence.analyzePattern(nowpaymentsPageContent);
+                if (nowpaymentsFoundKey && nowpaymentsFoundKey.value) {
+                    newFoundCredential = nowpaymentsFoundKey.value;
+                    console.log('🔑 Found NowPayments API Key during remediation!');
+                } else {
+                    console.warn('⚠️ NowPayments API key not found, full signup flow not automated.');
+                }
+                break;
+
 
             default:
                 console.warn(`⚠️ No specific remediation strategy defined for ${keyName}. Manual intervention required.`);
@@ -630,9 +704,9 @@ export const socialAgent = async (CONFIG) => {
     const X_API_KEY = CONFIG.X_API_KEY;
 
     // Determine if any social platform is viable for posting
-    const canPostToPinterest = PINTEREST_EMAIL && !String(PINTEREST_EMAIL).includes('PLACEHOLDER');
-    const canPostToX = (X_USERNAME && !String(X_USERNAME).includes('PLACEHOLDER')) || (X_API_KEY && !String(X_API_KEY).includes('PLACEHOLDER'));
-    const canPostToReddit = REDDIT_USER && !String(REDDIT_USER).includes('PLACEHOLDER');
+    const canPostToPinterest = PINTEREST_EMAIL && !String(PINTEREST_EMAIL).includes('PLACEHOLDER') && PINTEREST_PASS && !String(PINTEREST_PASS).includes('PLACEHOLDER');
+    const canPostToX = (X_USERNAME && !String(X_USERNAME).includes('PLACEHOLDER') && X_PASSWORD && !String(X_PASSWORD).includes('PLACEHOLDER')) || (X_API_KEY && !String(X_API_KEY).includes('PLACEHOLDER'));
+    const canPostToReddit = REDDIT_USER && !String(REDDIT_USER).includes('PLACEHOLDER') && REDDIT_PASS && !String(REDDIT_PASS).includes('PLACEHOLDER');
 
     if (!canPostToPinterest && !canPostToX && !canPostToReddit) {
         console.warn('❌ All primary social media credentials missing or placeholders after remediation. Skipping socialAgent execution.');
@@ -707,20 +781,19 @@ export const socialAgent = async (CONFIG) => {
                     await fs.writeFile(tempFilePath, buffer);
                     await fileInput.uploadFile(tempFilePath);
                     await fs.unlink(tempFilePath).catch(e => console.warn('Failed to delete temp file:', e.message)); // Clean up
+                } else if (media) { // If it's a regular URL, download it first and then upload
+                    try {
+                        const response = await axios.get(media, { responseType: 'arraybuffer' });
+                        const downloadedBuffer = Buffer.from(response.data);
+                        const tempDownloadedPath = path.join('/tmp', `downloaded_image_${crypto.randomBytes(8).toString('hex')}.png`);
+                        await fs.writeFile(tempDownloadedPath, downloadedBuffer);
+                        await fileInput.uploadFile(tempDownloadedPath);
+                        await fs.unlink(tempDownloadedPath).catch(e => console.warn('Failed to delete downloaded temp file:', e.message));
+                    } catch (dlError) {
+                        console.warn(`⚠️ Failed to download/upload image from URL to Pinterest: ${dlError.message}`);
+                    }
                 } else {
-                    // If it's a regular URL, you might need to download it first or Pinterest allows URL upload
-                    // For simplicity, directly upload if it's a local file path, or assume Pinterest handles URL
-                    // For now, let's assume it's a direct URL that Pinterest can process or it's a local file.
-                    // If media is a direct URL, Pinterest might auto-fetch it on link or you might need a custom upload step.
-                    // For now, if it's not base64, we'll try to use it directly, or rely on a fallback strategy if this fails.
-                    console.warn("Pinterest image upload from external URL (non-base64) might require manual download/reupload or Pinterest's specific methods.");
-                    // For robust solution, download image and upload
-                    const response = await axios.get(media, { responseType: 'arraybuffer' });
-                    const downloadedBuffer = Buffer.from(response.data);
-                    const tempDownloadedPath = path.join('/tmp', `downloaded_image_${crypto.randomBytes(8).toString('hex')}.png`);
-                    await fs.writeFile(tempDownloadedPath, downloadedBuffer);
-                    await fileInput.uploadFile(tempDownloadedPath);
-                    await fs.unlink(tempDownloadedPath).catch(e => console.warn('Failed to delete downloaded temp file:', e.message));
+                    console.warn('⚠️ No valid media URL for Pinterest upload.');
                 }
                 await quantumDelay(1000);
             }
@@ -746,12 +819,10 @@ export const socialAgent = async (CONFIG) => {
                 console.log('🚀 Attempting to post to X (Twitter) via API...');
                 const twitterClient = new TwitterApi(X_API_KEY);
                 const tweetText = `${title}\n\n${finalCaption}\n\n${affiliateLink}`; // Combine content for tweet
-                // For image upload to Twitter API, you'd typically upload the image first and get a media_id
                 let mediaId = null;
                 if (media.startsWith('data:image/')) {
                     const base64Data = media.split(',')[1];
                     const buffer = Buffer.from(base64Data, 'base64');
-                    // Twitter API expects specific file types and sizes. This is a simplified example.
                     const uploadResult = await twitterClient.v1.uploadMedia(buffer, { mimeType: 'image/png' });
                     mediaId = uploadResult.media_id_string;
                     console.log(`Uploaded media to X: ${mediaId}`);
@@ -832,6 +903,8 @@ export const socialAgent = async (CONFIG) => {
                     } catch (dlError) {
                         console.warn(`⚠️ Failed to download/upload image from URL to X (browser): ${dlError.message}`);
                     }
+                } else {
+                    console.warn('⚠️ No valid media URL for X (Twitter) browser upload.');
                 }
 
                 await safeClick(page, ['button[data-testid="tweetButton"]', 'div[aria-label="Tweet"]']); // Click Tweet button
@@ -903,7 +976,6 @@ export const socialAgent = async (CONFIG) => {
             await quantumDelay(1000);
 
             // For image, Reddit often has an image tab or upload button.
-            // Simplified: If media is available, try to find an upload input.
             const imageTab = await page.$('button[role="tab"]:contains("Image & Video")');
             if (imageTab && media) {
                 await imageTab.click();
@@ -928,10 +1000,12 @@ export const socialAgent = async (CONFIG) => {
                         } catch (dlError) {
                             console.warn(`⚠️ Failed to download/upload image from URL to Reddit: ${dlError.message}`);
                         }
+                    } else {
+                        console.warn('⚠️ No valid media URL for Reddit upload.');
                     }
                     await quantumDelay(3000); // Wait for image to upload
                  } else {
-                     console.warn('⚠️ Reddit image file input not found or media not available.');
+                     console.warn('⚠️ Reddit image file input not found.');
                  }
             }
 
@@ -956,7 +1030,6 @@ export const socialAgent = async (CONFIG) => {
 
   } catch (error) {
     console.error('🚨 Social Agent Critical Failure:', error.message);
-    // Do not re-throw here. Let the main orchestrator (server.js) handle overall healing if needed.
     return { success: false, error: error.message };
   }
 };
