@@ -1,5 +1,4 @@
 // backend/agents/autonomousEcosystem.js
-import puppeteer from 'puppeteer';
 import axios from 'axios';
 import fs from 'fs/promises';
 import crypto from 'crypto';
