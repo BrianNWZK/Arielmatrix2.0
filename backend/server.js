@@ -11,8 +11,8 @@ import Web3 from 'web3'; // Required for wallet validation in loadConfig/getWall
 // Import all agents from their consolidated files
 import { apiScoutAgent } from './agents/apiScoutAgent.js'; // For API key management and general discovery
 
-// FIXED: Import socialAgent.js as a namespace to resolve potential import issues
-import * as socialAgentModule from './agents/socialAgent.js'; // For social media automation and link shortening
+// FIXED: Changed back to direct named import for clarity and to resolve 'not a function' error
+import { performSocialCampaigns } from './agents/socialAgent.js'; // For social media automation and link shortening
 
 import { payoutAgent, mintRevenueNFT } from './agents/payoutAgent.js'; // For payouts and NFT minting (now consolidated)
 import { shopifyAgent } from './agents/shopifyAgent.js'; // For Shopify store management
@@ -83,7 +83,7 @@ const loadConfig = () => {
     LINKVERTISE_EMAIL: process.env.LINKVERTISE_EMAIL,
     LINKVERTISE_PASSWORD: process.env.LINKVERTISE_PASSWORD,
     NOWPAYMENTS_API_KEY: process.env.NOWPAYMENTS_API_KEY,
-    NOWPAYMENTS_CALLBACK_URL: process.env.NOWPAYMENTS_CALLBACK_URL || 'https://your-actual-secure-callback-url.com/nowpayments-webhook', // Added for realness
+    NOWPAYMENTS_CALLBACK_URL: process.env.NOWPAYMENTS_CALLBACK_URL || 'https://your-actual-secure-callback-url.com/nowpayments-webhook',
   });
 
   // Example of how dynamic agent config might look, can be extended by agents
@@ -123,7 +123,6 @@ const runAutonomousCycle = async () => {
   try {
     console.log(`⚡ [${new Date().toISOString()}] Starting Autonomous Revenue Cycle`);
     // Load config freshly from process.env at the start of each cycle
-    // This allows picking up any Render ENV updates from previous cycle's remediation.
     loadConfig();
 
     // Ensure browserManager is initialized only once for the entire application lifecycle
@@ -147,8 +146,8 @@ const runAutonomousCycle = async () => {
 
     // Phase 1: Deploy & Monetize
     try {
-      // Access performSocialCampaigns from the socialAgentModule namespace
-      const socialResult = await socialAgentModule.performSocialCampaigns(CONFIG);
+      // Access performSocialCampaigns directly after import
+      const socialResult = await performSocialCampaigns(CONFIG);
       console.log('✅ socialAgent completed.', socialResult);
       conceptualEarningsForPayout += socialResult.postsPublished * 0.10; // $0.10 per published social post
     } catch (error) {
@@ -257,7 +256,7 @@ const getWalletBalances = async (currentConfig) => {
   if (currentConfig.GAS_WALLET && Web3.utils.isAddress(currentConfig.GAS_WALLET)) {
       walletsToCheck.push({ coin: 'BNB (Gas)', address: currentConfig.GAS_WALLET });
   }
-  // Convert comma-separated string to array and filter for valid addresses
+  // USDT_WALLETS is already an array from loadConfig, no need to split
   const usdtWalletAddresses = (currentConfig.USDT_WALLETS || []).filter(w => Web3.utils.isAddress(w));
   usdtWalletAddresses.forEach(addr => {
       walletsToCheck.push({ coin: 'USDT', address: addr });
@@ -291,9 +290,6 @@ const getWalletBalances = async (currentConfig) => {
         let formattedBalance = '0.0000';
         if (balance > 0) {
              formattedBalance = (balance / 1e18).toFixed(4); // For BNB
-             // For USDT, typically 6 decimal places, but BSCScan balance API usually gives smallest unit
-             // If this were a real USDT balance check for a specific token, you'd need the token's ABI and decimal places
-             // For now, assuming standard 18 decimals for simplicity or if it's BNB.
         }
         return { ...walletInfo, balance: formattedBalance };
       } catch (error) {
@@ -311,7 +307,7 @@ app.get('/health', (req, res) => {
     quantumId: QuantumSecurity.generateEntropy().slice(0, 12),
     timestamp: new Date().toISOString(),
     cycleRunning: isRunning,
-    agents: ['apiScout', 'social', 'shopify', 'crypto', 'payout', 'renderApi'] // Updated agents list
+    agents: ['apiScout', 'social', 'shopify', 'crypto', 'payout', 'renderApi']
   });
 });
 
@@ -342,12 +338,12 @@ app.listen(PORT, '0.0.0.0', () => {
 cron.schedule('0 */4 * * *', runAutonomousCycle); // Every 4 hours
 cron.schedule('0 */6 * * *', async () => {
   console.log('🌍 Scaling to 195 countries...');
-  // Access performSocialCampaigns from the socialAgentModule namespace
+  // Direct call to performSocialCampaigns
   // This could involve dynamically adjusting agent parameters, adding new target regions,
   // or activating new agent instances for different locales.
   // For now, it's a placeholder for future geo-scaling intelligence.
   // Example: You could trigger socialAgent with different countryCodes here.
-  // await socialAgentModule.performSocialCampaigns({ ...CONFIG, targetCountry: 'DE' });
+  // await performSocialCampaigns({ ...CONFIG, targetCountry: 'DE' });
 });
 
 // Export for potential testing or external triggers if needed
