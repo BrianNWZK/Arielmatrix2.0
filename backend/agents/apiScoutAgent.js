@@ -635,6 +635,23 @@ async function discoverAdvancedOpportunities(config, dynamicKeywords) {
         await new Promise(res => setTimeout(res, 2 ** githubRetries * 1000 + Math.random() * 1000));
       }
     }
+
+  // Blockchain Analysis (Correctly structured if/else block)
+  if (config.BSC_NODE && !String(config.BSC_NODE).includes('PLACEHOLDER') && config.PRIVATE_KEY && !String(config.PRIVATE_KEY).includes('PLACEHOLDER')) {
+    let web3;
+    try {
+      web3 = new Web3(config.BSC_NODE);
+      const latestBlock = await web3.eth.getBlockNumber();
+      console.log(`🔗 REAL Blockchain analysis: Latest BSC block: ${latestBlock}`);
+      opportunities.push({
+        source: 'blockchain', type: 'smart_contract_activity_insight',
+        description: `REAL-TIME insight into BSC network activity around block ${latestBlock}. Potential for new DeFi/dApp APIs.`,
+        block: latestBlock, chain: 'BSC'
+      });
+      console.log('✅ Generated REAL blockchain insight.');
+    } catch (error) {
+      console.warn('REAL Blockchain analysis failed:', error.message);
+    }
   } else {
     console.warn('REAL Blockchain analysis skipped: BSC_NODE or PRIVATE_KEY missing or placeholder. Provide REAL keys for full blockchain insight.');
   }
