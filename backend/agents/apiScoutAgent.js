@@ -3,7 +3,7 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import { TwitterApi } from 'twitter-api-v2';
-import cron from 'node-cron';
+import cron from 'node-cron'; // Potentially for future scheduling if not used by orchestrator
 import Web3 from 'web3';
 import crypto from 'crypto'; // Explicitly import crypto for this file
 import { ethers } from 'ethers';
@@ -15,7 +15,7 @@ import { cpus, loadavg } from 'os'; // For system environment checks
 const __filename = new URL(import.meta.url).pathname;
 const __dirname = path.dirname(__filename);
 
-// === 🌌 QUANTUM INTELLIGENCE CORE (Inspired by APIKeyGenerator.sol and Quantum Security) ===
+// === 🌌 QUANTUM INTELLIGENCE CORE (Combined from all agents) ===
 const QuantumIntelligence = {
   // Generate entropy from multiple sources for internal use (e.g., as part of unique IDs)
   generateEntropy: () => {
@@ -120,7 +120,7 @@ const QuantumIntelligence = {
           defaultStrategy.loginSelectors.unshift(QuantumIntelligence.learningMemory.get(siteUrl + '_login_selector'));
       }
       if (QuantumIntelligence.learningMemory.has(siteUrl + '_password_selector')) {
-          defaultStrategy.passwordSelectors.unshift(QuantumIntelligence.learningMemory.get(siteUrl + '_password_selector'));
+          defaultStrategy.passwordSelectors.unshift(QuantumIntelligence.learningMemory.get(siteUrl + '_password_password'));
       }
       return defaultStrategy;
   },
@@ -327,7 +327,7 @@ async function remediateMissingConfig(keyName, config) {
                 const urlMatchShortio = currentUrlShortio.match(/https:\/\/(.*?)\.short\.io/);
                 if (urlMatchShortio && urlMatchShortio[0]) {
                     config.SHORTIO_URL = urlMatchShortio[0]; // Update CONFIG directly for URL
-                    await syncConfigToRenderEnv({ SHORTIO_URL: urlMatchShortio[0] }, config); // Use new sync function
+                    await syncConfigToRenderEnv({ SHORTIO_URL: urlMatchShortio[0] }, config);
                     console.log('🌐 Found Short.io URL during remediation!');
                 }
                 break;
@@ -343,7 +343,6 @@ async function remediateMissingConfig(keyName, config) {
                 await safeClick(page, ['button[type="submit"]', 'button:contains("Register")', 'button:contains("Login")']).catch(() => {});
                 await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: page.getDefaultTimeout() }).catch(() => null);
                 await new Promise(r => setTimeout(r, 3000));
-                // If login/signup was successful, assume AI_EMAIL/PASSWORD are the new credentials
                 const linkvertiseLoggedIn = await page.evaluate(() => document.querySelector('a[href*="/dashboard"]') !== null);
                 if (linkvertiseLoggedIn) {
                     newFoundCredential = { LINKVERTISE_EMAIL: AI_EMAIL, LINKVERTISE_PASSWORD: AI_PASSWORD }; // Store as object for multiple
@@ -391,7 +390,7 @@ async function remediateMissingConfig(keyName, config) {
                     console.log('🔑 Found DOG_API_KEY during remediation!');
                 }
                 break;
-            case 'NEWS_API_KEY':
+            case 'NEWS_API_KEY': // Corrected from NEWS_API
                 targetSite = 'https://newsapi.org/register';
                 console.log(`Attempting to scout for NewsAPI key at ${targetSite}`);
                 await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
@@ -403,20 +402,22 @@ async function remediateMissingConfig(keyName, config) {
                     console.log('🔑 Found NEWS_API_KEY during remediation!');
                 }
                 break;
-            case 'COINGECKO_API':
+            case 'COINGECKO_API': // This is usually a base URL, not a key
                 targetSite = 'https://www.coingecko.com/account/login';
                 console.log(`Attempting to verify/scout for CoinGecko API base URL at ${targetSite}`);
                 await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
                 await new Promise(r => setTimeout(r, 2000));
+                // CoinGecko public API doesn't require a key, but if they introduce one, this is where it'd be scouted.
+                // For now, if CONFIG.COINGECKO_API is missing, we'll default it elsewhere. This remediation step would confirm access.
                 const coingeckoContent = await page.evaluate(() => document.body.innerText);
-                if (coingeckoContent.includes('CoinGecko API')) {
-                    newFoundCredential = config.COINGECKO_API || 'https://api.coingecko.com/api/v3';
+                if (coingeckoContent.includes('CoinGecko API')) { // Heuristic: presence of "CoinGecko API" text
+                    newFoundCredential = config.COINGECKO_API || 'https://api.coingecko.com/api/v3'; // Confirm existing or set default
                     console.log('✅ CoinGecko API access confirmed/set to default during remediation!');
                 }
                 break;
-            case 'REDDIT_USER':
-            case 'REDDIT_PASS':
-                targetSite = 'https://www.reddit.com/login/';
+            case 'REDDIT_USER': // From original apiKeyAgent.js
+            case 'REDDIT_PASS': // From original apiKeyAgent.js
+                targetSite = 'https://www.reddit.com/login/'; // Or signup if not logged in
                 console.log(`Attempting to remediate Reddit credentials at ${targetSite}`);
                 await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
                 await new Promise(r => setTimeout(r, 2000));
@@ -425,15 +426,19 @@ async function remediateMissingConfig(keyName, config) {
                 await safeType(page, ['input[name="password"]', '#loginPassword'], AI_PASSWORD).catch(() => {});
                 await safeClick(page, ['button[type="submit"]', '.AnimatedForm__submitButton', 'button:contains("Log In")']).catch(() => {});
                 await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: page.getDefaultTimeout() }).catch(() => null);
-                await new Promise(r => setTimeout(r, 5000));
+                await new Promise(r => setTimeout(r, 5000)); // Wait for login to process
 
                 const redditLoggedIn = await page.evaluate(() => document.querySelector('a[href="/r/all/"]') !== null);
                 if (redditLoggedIn) {
                     newFoundCredential = { REDDIT_USER: AI_EMAIL, REDDIT_PASS: AI_PASSWORD };
                     console.log('✅ Reddit login successful during remediation. Credentials confirmed.');
+                    // After successful login, try to find an API key if Reddit provides one on a dashboard/settings page.
+                    // (Reddit's API requires app registration, which is more complex than direct key extraction)
+                    // For now, confirming login means the credentials are valid.
                 } else {
                     console.warn('⚠️ Reddit login failed during remediation. Attempting signup if login failed.');
-                    targetSite = 'https://www.reddit.com/register';
+                    // Fallback to signup if login fails. (Similar to other agents)
+                    targetSite = 'https://www.reddit.com/register'; // Try signup
                     await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
                     await new Promise(r => setTimeout(r, 2000));
                     await safeType(page, ['input[name="email"]', 'input[type="email"]'], AI_EMAIL).catch(() => {});
@@ -456,11 +461,12 @@ async function remediateMissingConfig(keyName, config) {
         }
 
         if (newFoundCredential) {
+            // If it's an object (for multiple credentials like Linkvertise, Reddit)
             if (typeof newFoundCredential === 'object' && newFoundCredential !== null) {
-                await syncConfigToRenderEnv(newFoundCredential, config); // Use new sync function
+                await syncConfigToRenderEnv(newFoundCredential, config);
                 Object.assign(config, newFoundCredential); // Update in-memory
-            } else {
-                await syncConfigToRenderEnv({ [keyName]: newFoundCredential }, config); // Use new sync function
+            } else { // Single key string
+                await syncConfigToRenderEnv({ [keyName]: newFoundCredential }, config);
                 config[keyName] = newFoundCredential; // Update in-memory
             }
             return true;
@@ -542,16 +548,16 @@ async function syncConfigToRenderEnv(keysToSync, config) {
     console.log(`🔄 Attempted to sync ${Object.keys(keysToSync).length} keys to Render ENV.`);
 }
 
-// === 🌍 ARIELMATRIX GLOBAL EXPLORER AGENT (v10.0 - Self-Healing & Render Integration) ===
+// === 🌍 ARIELMATRIX GLOBAL EXPLORER AGENT (v7.0 - Self-Healing) ===
 /**
- * The main autonomous agent responsible for discovering, activating, monetizing opportunities,
- * and managing Render environment configurations for true self-healing and persistence.
+ * The main autonomous agent responsible for discovering, activating, and monetizing opportunities.
  * Prioritizes real environment variables and avoids all mocks/simulations for core logic.
+ * Now includes proactive self-remediation for missing critical configurations.
  * @param {object} CONFIG - The global configuration object populated from Render ENV.
- * @returns {Promise<object>} A comprehensive revenue report and system status.
+ * @returns {Promise<object>} A comprehensive revenue report based on real actions.
  */
 export const apiScoutAgent = async (CONFIG) => {
-  console.log('🌌 ArielMatrix Quantum Explorer Activated: Scanning for REAL Revenue & System Health...');
+  console.log('🌌 ArielMatrix Quantum Explorer Activated: Scanning for REAL Revenue...');
   const cycleStartTime = performance.now();
 
   try {
@@ -580,6 +586,7 @@ export const apiScoutAgent = async (CONFIG) => {
 
 
     // --- CRITICAL VALIDATION: Ensure AI identity is real and not placeholder ---
+    // This is the only place where missing AI_EMAIL/PASSWORD will block further web-based operations.
     if (!AI_EMAIL || String(AI_EMAIL).includes('PLACEHOLDER') || !AI_PASSWORD || String(AI_PASSWORD).includes('PLACEHOLDER')) {
       console.error('❌ CRITICAL: AI identity (email/password) is missing or still a placeholder. Cannot proceed with REAL web activation or remediation for other keys. Please set AI_EMAIL and AI_PASSWORD in Render ENV.');
       return { status: 'failed', error: 'AI identity not configured with real values.' };
@@ -587,6 +594,8 @@ export const apiScoutAgent = async (CONFIG) => {
     console.log(`✅ AI Identity confirmed: ${AI_EMAIL}`);
 
     // === PHASE 0: Proactive Configuration Remediation ===
+    // Define critical keys that the system should attempt to remediate if missing/placeholder
+    // Added ADFLY_PASS based on server.js config
     const criticalKeysToRemediate = [
         'BSCSCAN_API_KEY',
         'X_API_KEY',
@@ -597,13 +606,13 @@ export const apiScoutAgent = async (CONFIG) => {
         'NOWPAYMENTS_API_KEY',
         'CAT_API_KEY',
         'DOG_API_KEY',
-        'NEWS_API_KEY',
+        'NEWS_API_KEY', // Corrected from NEWS_API
         'COINGECKO_API',
         'ADFLY_API_KEY',
         'ADFLY_USER_ID',
-        'ADFLY_PASS',
-        'REDDIT_USER',
-        'REDDIT_PASS',
+        'ADFLY_PASS', // Added here for remediation too
+        'REDDIT_USER', // Added from apiKeyAgent.js
+        'REDDIT_PASS' // Added from apiKeyAgent.js
         // PRIVATE_KEY and BSC_NODE are handled in cryptoAgent's remediation for now,
         // as they are blockchain-specific and require different generation logic.
     ];
@@ -619,6 +628,8 @@ export const apiScoutAgent = async (CONFIG) => {
     console.log('\n--- Finished Configuration Remediation Phase ---');
 
     // Attempt to initialize contract interaction with REAL data.
+    // This now runs AFTER remediation attempts, potentially using a newly found PRIVATE_KEY or BSC_NODE
+    // (though those are currently not auto-remediated for safety/complexity).
     await initializeContractInteraction(CONFIG);
 
     // ✅ PHASE 1: Discover Monetization Sites (Real Web Interaction & API Calls)
@@ -630,6 +641,7 @@ export const apiScoutAgent = async (CONFIG) => {
       'https://openai.com/api/', 'https://aws.amazon.com/api-gateway/'
     ];
 
+    // Pass AI_EMAIL and AI_PASSWORD for login attempts during discovery/activation
     const discoveredSites = await discoverOpportunities(initialMonetizationSites, CONFIG);
     const { activeCampaigns, newKeys } = await activateCampaigns(discoveredSites, AI_EMAIL, AI_PASSWORD);
 
