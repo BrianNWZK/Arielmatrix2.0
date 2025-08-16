@@ -1,6 +1,8 @@
+// backend/agents/healthAgent.js
 import { exec } from 'child_process';
 import util from 'util';
 import fs from 'fs/promises';
+
 const execPromise = util.promisify(exec);
 
 export const healthAgent = async (CONFIG) => {
@@ -10,16 +12,18 @@ export const healthAgent = async (CONFIG) => {
     if (!nodeVersion.includes('22.16.0')) {
       throw new Error('Incorrect Node.js version');
     }
+
     // Install missing dependencies
     const dependencies = ['terser', 'puppeteer'];
     for (const dep of dependencies) {
       try {
-        require(dep);
+        await import(dep);
       } catch {
         console.log(`Installing ${dep}...`);
         await execPromise(`npm install ${dep} --save-dev`);
       }
     }
+
     // Monitor logs and ensure no sensitive data
     const { stdout } = await execPromise('tail -n 100 /var/log/app.log || true');
     if (stdout.includes('key') || stdout.includes('secret') || stdout.includes('0x')) {
