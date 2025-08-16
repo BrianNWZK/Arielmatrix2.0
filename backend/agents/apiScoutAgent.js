@@ -3,7 +3,7 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import { TwitterApi } from 'twitter-api-v2';
-import { scheduleJob } from 'node-schedule';
+import cron from 'node-cron'; // ✅ Changed from 'node-schedule'
 import Web3 from 'web3';
 
 // Fix for __dirname in ES6 modules
@@ -352,3 +352,16 @@ function extractApiUrl(text) {
     url.endsWith('.dev')
   );
 }
+
+// === 🕵️ Setup Scheduled Scouting ===
+apiScoutAgent.setupScheduledScouting = (config) => {
+  // Run every 6 hours for continuous discovery
+  cron.schedule('0 */6 * * *', async () => {
+    console.log('⏰ Running scheduled API scouting');
+    try {
+      await apiScoutAgent(config);
+    } catch (error) {
+      console.error('Scheduled scouting failed:', error);
+    }
+  });
+};
