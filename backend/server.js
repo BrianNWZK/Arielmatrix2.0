@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import axios from 'axios';
 import cron from 'node-cron';
-// Removed: import { randomBytes, createHash } from 'node:crypto'; // This functionality is now handled by QuantumSecurity's internal definitions or other agents
+import * as crypto from 'node:crypto'; // Changed import to get the entire crypto module as a namespace
 import Web3 from 'web3'; // Required for wallet validation in loadConfig/getWalletBalances
 
 // Fix for __dirname in ES6 modules
@@ -14,24 +14,15 @@ const __dirname = dirname(__filename);
 
 // === 🔐 Quantum Security Core ===
 const QuantumSecurity = {
-  // Directly use Node.js crypto methods. These are not dependent on a specific import alias
-  // and are directly available from the global 'crypto' module in Node.js >= 15.0.0 for ES Modules,
-  // or can be explicitly imported where needed in other files.
-  // Removing the global import here as it was causing conflicts in some environments
-  // or was not the most precise way to handle it for global utility.
-  // Instead, individual agents needing `randomBytes` or `createHash` should import them directly from 'crypto'.
   generateEntropy: () => {
-    // Note: randomBytes and createHash must be imported directly into files that need them if not globally accessible.
-    // For this 'server.js' file, if this function is only used here, a local import would be more precise.
-    // For now, assuming environment provides or they are covered by other modules.
     const buffer = Buffer.concat([
-      crypto.randomBytes(16), // Assuming crypto is globally available or handled by Node.js runtime
+      crypto.randomBytes(16), // Now correctly accessed as crypto.randomBytes
       Buffer.from(Date.now().toString()),
       Buffer.from(process.uptime().toString())
     ]);
-    return crypto.createHash('sha256').update(buffer).digest('hex');
+    return crypto.createHash('sha256').update(buffer).digest('hex'); // Now correctly accessed as crypto.createHash
   },
-  generateSecureKey: () => `qkey_${crypto.randomBytes(24).toString('hex')}` // Assuming crypto is globally available
+  generateSecureKey: () => `qkey_${crypto.randomBytes(24).toString('hex')}` // Now correctly accessed as crypto.randomBytes
 };
 
 // === 🌐 Self-Healing Config Loader (Enhanced to be dynamic) ===
