@@ -13,6 +13,50 @@ import { browserManager } from './browserManager.js'; // Ensure this is correctl
 const __filename = new URL(import.meta.url).pathname;
 const __dirname = path.dirname(__filename);
 
+// Reusable Render ENV update function (extracted for common use across agents)
+async function _updateRenderEnvWithKeys(keysToSave, config) {
+    if (Object.keys(keysToSave).length === 0) return;
+
+    if (config.RENDER_API_TOKEN && !String(config.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
+        config.RENDER_SERVICE_ID && !String(config.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
+        console.log('Attempting to sync new keys to Render environment variables via API Scout Agent...');
+        try {
+            const envVarsToAdd = Object.entries(keysToSave).map(([key, value]) => ({ key, value }));
+            const currentEnvResponse = await axios.get(
+                `https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}/env-vars`,
+                { headers: { Authorization: `Bearer ${config.RENDER_API_TOKEN}` }, timeout: 15000 }
+            );
+            const existingEnvVars = currentEnvResponse.data;
+
+            const updatedEnvVars = existingEnvVars.map(envVar => {
+                if (keysToSave[envVar.key] && !String(keysToSave[envVar.key]).includes('PLACEHOLDER')) {
+                    return { key: envVar.key, value: keysToSave[envVar.key] };
+                }
+                return envVar;
+            });
+
+            envVarsToAdd.forEach(newEnv => {
+                if (!updatedEnvVars.some(existing => existing.key === newEnv.key)) {
+                    updatedEnvVars.push(newEnv);
+                }
+            });
+
+            await axios.put(
+                `https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}/env-vars`,
+                { envVars: updatedEnvVars },
+                { headers: { Authorization: `Bearer ${config.RENDER_API_TOKEN}` }, timeout: 20000 }
+            );
+            console.log(`🔄 Successfully synced ${envVarsToAdd.length} new/updated keys to Render ENV.`);
+        } catch (envUpdateError) {
+            console.warn('⚠️ Failed to update Render ENV with new keys:', envUpdateError.message);
+            console.warn('Ensure RENDER_API_TOKEN has write permissions for environment variables and is valid. This is CRITICAL for persistent learning.');
+        }
+    } else {
+        console.warn('Skipping Render ENV update: RENDER_API_TOKEN or RENDER_SERVICE_ID missing or are placeholders. Key persistence to Render ENV is disabled.');
+    }
+}
+
+
 // === 🌌 QUANTUM INTELLIGENCE CORE (Inspired by APIKeyGenerator.sol) ===
 const QuantumIntelligence = {
   // Generate entropy from multiple sources for internal use (e.g., as part of unique IDs)
@@ -254,9 +298,9 @@ async function remediateMissingConfig(keyName, config) {
 
             // Now, push this new key to Render ENV using consolidateRevenue's logic
             // We create a temporary object for this specific key
-            await consolidateRevenue([], { [keyName]: newFoundKey }, config);
+            await _updateRenderEnvWithKeys({ [foundKeyEntry[0]]: newFoundKey }, config); // Use foundKeyEntry[0] to use the actual keyName if different
             // Update the in-memory config immediately
-            config[keyName] = newFoundKey;
+            config[foundKeyEntry[0]] = newFoundKey;
             return true;
         }
     }
@@ -330,7 +374,7 @@ export const apiScoutAgent = async (CONFIG) => {
       'https://openai.com/api/', 'https://aws.amazon.com/api-gateway/'
     ];
 
-    const discoveredSites = await discoverOpportunities(initialMonetizationSites, CONFIG);
+    const discoveredSites = await discoverOpportunities(initialMonizationSites, CONFIG);
     const { activeCampaigns, newKeys } = await activateCampaigns(discoveredSites, AI_EMAIL, AI_PASSWORD);
 
     for (const keyName in newKeys) {
@@ -634,7 +678,7 @@ async function discoverAdvancedOpportunities(config, dynamicKeywords) {
         console.warn(`GitHub scan failed (Attempt ${githubRetries}/${maxGithubRetries}): ${error.message}`);
         await new Promise(res => setTimeout(res, 2 ** githubRetries * 1000 + Math.random() * 1000));
       }
-    }
+  }
 
   // Blockchain Analysis (Correctly structured if/else block)
   if (config.BSC_NODE && !String(config.BSC_NODE).includes('PLACEHOLDER') && config.PRIVATE_KEY && !String(config.PRIVATE_KEY).includes('PLACEHOLDER')) {
