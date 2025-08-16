@@ -148,7 +148,7 @@ export const payoutAgent = async (CONFIG) => {
             } catch (txError) {
                 console.warn(`⚠️ Failed to distribute to ${recipientWallet.slice(0, 10)}...: ${txError.message.substring(0, 100)}...`);
                 if (txError.code === 'INSUFFICIENT_FUNDS') {
-                    console.error('   Reason: Gas wallet has insufficient funds for this specific transaction.');
+                    console.error('    Reason: Gas wallet has insufficient funds for this specific transaction.');
                 }
                 // Continue to next wallet even if one transaction fails
             }
@@ -169,5 +169,22 @@ export const payoutAgent = async (CONFIG) => {
         console.error('🚨 Payout Agent Critical Error:', error.message);
         // Do not re-throw here; let the orchestrator (`server.js`) handle overall flow.
         return { status: 'failed', reason: error.message };
+    }
+};
+
+// === 🎨 Mint Revenue NFT (Optional) ===
+/**
+ * A conceptual function for minting an NFT based on revenue.
+ * It does NOT use Puppeteer.
+ * @param {number} amount - The revenue amount.
+ * @returns {Promise<object>} Status of the conceptual NFT minting.
+ */
+export const mintRevenueNFT = async (amount) => {
+    if (amount >= 50) {
+        console.log(`🎨 Conceptual: Minting NFT for $${amount} revenue (threshold $50)...`);
+        return { status: 'mint_initiated', amount };
+    } else {
+        console.log(`ℹ️ Conceptual: Skipping NFT minting. Revenue $${amount} below threshold $50.`);
+        return { status: 'skipped', reason: 'amount_below_threshold' };
     }
 };
