@@ -17,7 +17,7 @@ function validateCryptoConfig(config) {
     .map(w => w.trim())
     .filter(Boolean);
 
-  const BSC_NODE = config.BSC_NODE || process.env.BSC_NODE || 'https://bsc-dataseed.binance.org';
+  const BSC_NODE = config.BSC_NODE || process.env.BSC_NODE || 'https://bsc-dataseed.binance.org'; // ✅ FIXED: Removed trailing space
 
   if (!GAS_WALLET || USDT_WALLETS.length === 0) {
     throw new Error('Missing gas wallet or USDT wallets');
@@ -134,8 +134,8 @@ async function executeHighValueTrades({ gasWallet, bscNode, marketData }) {
         to: routerAddress,
         value: amountIn,
         gas: 250000,
-        gasPrice: gasPrice,
-         '0x...' // Simplified - in production, use proper ABI encoding
+        gasPrice: gasPrice
+        // 'data': '0x...' // Simplified - in production, use proper ABI encoding
       });
 
       txReceipts.push(tx.transactionHash);
