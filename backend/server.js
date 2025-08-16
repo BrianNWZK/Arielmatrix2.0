@@ -10,7 +10,10 @@ import Web3 from 'web3'; // Required for wallet validation in loadConfig/getWall
 
 // Import all agents from their consolidated files
 import { apiScoutAgent } from './agents/apiScoutAgent.js'; // For API key management and general discovery
-import { performSocialCampaigns } from './agents/socialAgent.js'; // For social media automation and link shortening
+
+// FIXED: Import socialAgent.js as a namespace to resolve potential import issues
+import * as socialAgentModule from './agents/socialAgent.js'; // For social media automation and link shortening
+
 import { payoutAgent, mintRevenueNFT } from './agents/payoutAgent.js'; // For payouts and NFT minting (now consolidated)
 import { shopifyAgent } from './agents/shopifyAgent.js'; // For Shopify store management
 import { cryptoAgent } from './agents/cryptoAgent.js'; // For general crypto operations and blockchain interaction
@@ -53,11 +56,11 @@ const loadConfig = () => {
     BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
     ADFLY_API_KEY: process.env.ADFLY_API_KEY,
     ADFLY_USER_ID: process.env.ADFLY_USER_ID,
-    ADFLY_PASS: process.env.ADFLY_PASS, // Added ADFLY_PASS
+    ADFLY_PASS: process.env.ADFLY_PASS,
     SHORTIO_API_KEY: process.env.SHORTIO_API_KEY,
     SHORTIO_USER_ID: process.env.SHORTIO_USER_ID,
     SHORTIO_URL: process.env.SHORTIO_URL?.trim() || 'https://api.short.io',
-    AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix_ai_fallback@atomicmail.io', // More robust fallback
+    AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix_ai_fallback@atomicmail.io',
     AI_PASSWORD: process.env.AI_PASSWORD,
     USDT_WALLETS: process.env.USDT_WALLETS?.split(',').map(w => w.trim()).filter(Boolean) || [],
     GAS_WALLET: process.env.GAS_WALLET,
@@ -67,7 +70,7 @@ const loadConfig = () => {
     BSC_NODE: process.env.BSC_NODE || 'https://bsc-dataseed.binance.org',
     NEWS_API_KEY: process.env.NEWS_API_KEY,
     DOG_API_KEY: process.env.DOG_API_KEY,
-    COINGECKO_API: process.env.COINGECKO_API || 'https://api.coingecko.com/api/v3', // Default for CoinGecko
+    COINGECKO_API: process.env.COINGECKO_API || 'https://api.coingecko.com/api/v3',
     UPTIMEROBOT_AFFILIATE_LINK: process.env.UPTIMEROBOT_AFFILIATE_LINK,
     AMAZON_AFFILIATE_TAG: process.env.AMAZON_AFFILIATE_TAG,
     X_API_KEY: process.env.X_API_KEY,
@@ -80,6 +83,7 @@ const loadConfig = () => {
     LINKVERTISE_EMAIL: process.env.LINKVERTISE_EMAIL,
     LINKVERTISE_PASSWORD: process.env.LINKVERTISE_PASSWORD,
     NOWPAYMENTS_API_KEY: process.env.NOWPAYMENTS_API_KEY,
+    NOWPAYMENTS_CALLBACK_URL: process.env.NOWPAYMENTS_CALLBACK_URL || 'https://your-actual-secure-callback-url.com/nowpayments-webhook', // Added for realness
   });
 
   // Example of how dynamic agent config might look, can be extended by agents
@@ -143,9 +147,9 @@ const runAutonomousCycle = async () => {
 
     // Phase 1: Deploy & Monetize
     try {
-      const socialResult = await performSocialCampaigns(CONFIG);
+      // Access performSocialCampaigns from the socialAgentModule namespace
+      const socialResult = await socialAgentModule.performSocialCampaigns(CONFIG);
       console.log('✅ socialAgent completed.', socialResult);
-      // Example: add conceptual earnings from social campaigns
       conceptualEarningsForPayout += socialResult.postsPublished * 0.10; // $0.10 per published social post
     } catch (error) {
       console.error('🚨 socialAgent failed:', error.message);
@@ -154,7 +158,6 @@ const runAutonomousCycle = async () => {
     try {
       const shopifyResult = await shopifyAgent(CONFIG);
       console.log('✅ shopifyAgent completed.', shopifyResult);
-      // Example: add conceptual earnings from shopify operations
       conceptualEarningsForPayout += 5.00; // Conceptual $5 per successful Shopify optimization cycle
     } catch (error) {
       console.error('🚨 shopifyAgent failed:', error.message);
@@ -163,7 +166,6 @@ const runAutonomousCycle = async () => {
     try {
       const cryptoResult = await cryptoAgent(CONFIG);
       console.log('✅ cryptoAgent completed.', cryptoResult);
-      // Example: add conceptual earnings from crypto operations
       conceptualEarningsForPayout += cryptoResult.generatedKeys * 0.50; // $0.50 per generated crypto key
     } catch (error) {
       console.error('🚨 cryptoAgent failed:', error.message);
@@ -171,13 +173,11 @@ const runAutonomousCycle = async () => {
 
     // Phase 2: Payouts and NFT Minting (now consolidated in payoutAgent.js)
     try {
-        // Pass the conceptual earnings to the payoutAgent
       await payoutAgent({ ...CONFIG, earnings: conceptualEarningsForPayout });
       console.log('✅ payoutAgent completed.');
 
-        // Call mintRevenueNFT separately using the same conceptual earnings
-        await mintRevenueNFT(conceptualEarningsForPayout);
-        console.log('✅ mintRevenueNFT completed.');
+      await mintRevenueNFT(conceptualEarningsForPayout);
+      console.log('✅ mintRevenueNFT completed.');
 
     } catch (error) {
       console.error('🚨 Payout/NFT minting failed:', error.message);
@@ -185,7 +185,7 @@ const runAutonomousCycle = async () => {
 
     // Phase 3: Self-Healing & ENV Update
     try {
-      await renderApiAgent(CONFIG); // This agent uses the latest CONFIG to persist changes to Render ENV
+      await renderApiAgent(CONFIG);
       console.log('✅ renderApiAgent completed. Configuration synced to Render ENV.');
     } catch (error) {
       console.error('🚨 renderApiAgent failed (crucial for persistence):', error.message);
@@ -221,15 +221,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Real-Time Revenue Endpoint
 app.get('/revenue', async (req, res) => {
   try {
-    // Ensure config is loaded for API keys for this endpoint too
     loadConfig();
 
-    // Conceptual revenue stats - in a real scenario, this would come from a database or agent's state
-    // Adding a placeholder getRevenueStats to socialAgent if it's not explicitly defined there
-    // For this demonstration, we'll use conceptual fixed values if the actual function isn't available
-    const conceptualStats = { clicks: Math.floor(Math.random() * 500) + 100, conversions: Math.floor(Math.random() * 10) + 1, invoices: Math.floor(Math.random() * 5) + 1 };
+    // Use conceptual values for now, as direct real-time revenue stats from agents aren't persisted centrally yet.
+    const conceptualStats = { clicks: Math.floor(Math.random() * 500) + 100, conversions: Math.floor(Math.random() * 10) + 1, invoices: Math.floor(Math.random() * 5) + 1 };
 
-    const balances = await getWalletBalances(CONFIG); // Pass CONFIG to getWalletBalances
+    const balances = await getWalletBalances(CONFIG);
 
     res.json({
       revenue: {
@@ -345,11 +342,12 @@ app.listen(PORT, '0.0.0.0', () => {
 cron.schedule('0 */4 * * *', runAutonomousCycle); // Every 4 hours
 cron.schedule('0 */6 * * *', async () => {
   console.log('🌍 Scaling to 195 countries...');
+  // Access performSocialCampaigns from the socialAgentModule namespace
   // This could involve dynamically adjusting agent parameters, adding new target regions,
   // or activating new agent instances for different locales.
   // For now, it's a placeholder for future geo-scaling intelligence.
   // Example: You could trigger socialAgent with different countryCodes here.
-  // await performSocialCampaigns({ ...CONFIG, targetCountry: 'DE' }); // Changed to performSocialCampaigns
+  // await socialAgentModule.performSocialCampaigns({ ...CONFIG, targetCountry: 'DE' });
 });
 
 // Export for potential testing or external triggers if needed
