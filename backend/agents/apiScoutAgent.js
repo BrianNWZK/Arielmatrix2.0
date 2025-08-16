@@ -3,16 +3,46 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import { TwitterApi } from 'twitter-api-v2';
-import cron from 'node-cron'; // ✅ Changed from 'node-schedule'
+import cron from 'node-cron';
 import Web3 from 'web3';
 
 // Fix for __dirname in ES6 modules
 const __filename = new URL(import.meta.url).pathname;
 const __dirname = path.dirname(__filename);
 
-// === 🌍 ARIELMATRIX GLOBAL EXPLORER AGENT ===
+// === 🌌 QUANTUM INTELLIGENCE CORE (Inspired by APIKeyGenerator.sol) ===
+const QuantumIntelligence = {
+  // Generate entropy from multiple sources (like the contract)
+  generateEntropy: async (config) => {
+    const buffer = Buffer.concat([
+      crypto.randomBytes(16),
+      Buffer.from(Date.now().toString()),
+      Buffer.from(process.uptime().toString())
+    ]);
+    return createHash('sha256').update(buffer).digest('hex');
+  },
+
+  // AI-Driven Pattern Recognition (Like `upgradeKeySecurity`)
+  analyzePattern: (text) => {
+    const patterns = [
+      /[a-f0-9]{32}/i, // MD5, API keys
+      /sk_live_[a-zA-Z0-9_]{24}/, // Stripe
+      /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/ // JWT
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return { pattern: pattern.toString(), value: match[0] };
+    }
+    return null;
+  },
+
+  // Self-Learning: Remember successful selectors
+  learningMemory: new Map()
+};
+
+// === 🌍 ARIELMATRIX GLOBAL EXPLORER AGENT (v5.0) ===
 export const apiScoutAgent = async (CONFIG) => {
-  console.log('🌍 ArielMatrix Global Explorer Activated: Scanning for Revenue...');
+  console.log('🌌 ArielMatrix Quantum Explorer Activated: Scanning for Revenue...');
 
   try {
     const AI_EMAIL = CONFIG.AI_EMAIL || process.env.AI_EMAIL || 'arielmatrix@atomicmail.io';
@@ -25,13 +55,13 @@ export const apiScoutAgent = async (CONFIG) => {
 
     // ✅ PHASE 1: Discover Monetization Sites (Real Web) - NOW WITH CRYPTO
     const monetizationSites = [
-      'https://linkvertise.com', // Monetization
-      'https://shorte.st', // Monetization
-      'https://thecatapi.com', // Content
-      'https://newsapi.org', // Content
-      'https://bscscan.com', // ✅ Crypto API Key
-      'https://coinmarketcap.com', // ✅ Crypto API Key
-      'https://www.coingecko.com' // ✅ Crypto API Key
+      'https://linkvertise.com',
+      'https://shorte.st',
+      'https://thecatapi.com',
+      'https://newsapi.org',
+      'https://bscscan.com',
+      'https://coinmarketcap.com',
+      'https://www.coingecko.com'
     ];
 
     const discoveredSites = await discoverOpportunities(monetizationSites);
@@ -51,11 +81,11 @@ export const apiScoutAgent = async (CONFIG) => {
     const renderApiAgent = await import('./renderApiAgent.js');
     await renderApiAgent.renderApiAgent({ ...CONFIG, ...revenueReport });
 
-    console.log(`✅ Global Explorer Cycle Completed | Revenue: $${revenueReport.total.toFixed(4)}`);
+    console.log(`✅ Quantum Explorer Cycle Completed | Revenue: $${revenueReport.total.toFixed(4)}`);
     return revenueReport;
 
   } catch (error) {
-    console.error('🚨 Global Explorer Failed:', error.message);
+    console.error('🚨 Quantum Explorer Failed:', error.message);
     await healSystem(error);
     return { status: 'recovered', error: error.message };
   }
@@ -159,32 +189,22 @@ async function activateCampaigns(sites, email, password) {
           console.log(`✅ Activated: ${site.trim()}`);
         }
 
-        // ✅ EXTRACT REAL CRYPTO API KEYS
-        const key = await page.evaluate(() => {
-          const patterns = [
-            /[a-f0-9]{32}/i, // MD5, API keys
-            /sk_live_[a-zA-Z0-9_]{24}/, // Stripe
-            /eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+/ // JWT
-          ];
-          const text = document.body.innerText;
-          for (const pattern of patterns) {
-            const match = text.match(pattern);
-            if (match) return match[0];
-          }
-          return null;
-        });
-
-        if (key) {
+        // ✅ EXTRACT REAL CRYPTO API KEYS (Quantum Intelligence)
+        const textContent = await page.evaluate(() => document.body.innerText);
+        const keyPattern = QuantumIntelligence.analyzePattern(textContent);
+        if (keyPattern) {
           const keyName = 
             site.includes('linkvertise') ? 'LINKVERTISE_API_KEY' :
             site.includes('shorte') ? 'SHORTE_ST_API_KEY' :
             site.includes('newsapi') ? 'NEWS_API_KEY' :
             site.includes('thecatapi') ? 'CAT_API_KEY' :
-            site.includes('bscscan') ? 'BSCSCAN_API_KEY' : // ✅ NEW: BscScan
-            site.includes('coinmarketcap') ? 'CMC_API_KEY' : // ✅ NEW: CMC
-            site.includes('coingecko') ? 'COINGECKO_API_KEY' : // ✅ NEW: CoinGecko
+            site.includes('bscscan') ? 'BSCSCAN_API_KEY' :
+            site.includes('coinmarketcap') ? 'CMC_API_KEY' :
+            site.includes('coingecko') ? 'COINGECKO_API_KEY' :
             'AUTO_API_KEY';
-          newKeys[keyName] = key;
+          newKeys[keyName] = keyPattern.value;
+          // Remember the pattern for future learning
+          QuantumIntelligence.learningMemory.set(keyName, keyPattern.pattern);
         }
       } catch (e) {
         console.warn(`⚠️ Activation failed: ${site.trim()}`);
