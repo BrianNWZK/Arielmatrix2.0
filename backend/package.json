@@ -16,6 +16,8 @@
     "web3": "^4.11.1",
     "@tensorflow/tfjs-node": "^4.22.0",
     "puppeteer": "^24.16.0",
+    "puppeteer-extra": "^11.0.0",
+    "puppeteer-extra-plugin-stealth": "^2.11.0",
     "playwright": "^1.48.2",
     "hardhat": "^2.22.12",
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
