@@ -1,5 +1,5 @@
 // backend/agents/socialAgent.js
-import puppeteer from 'puppeteer';
+import { browserManager } from './browserManager.js'; // ✅ Import the central manager
 import axios from 'axios';
 import crypto from 'crypto';
 import path from 'path';
@@ -56,51 +56,6 @@ const safeClick = async (page, selectors) => {
     }
   }
   throw new Error(`All click selectors failed`);
-};
-
-// === 🌐 Launch Truly Stealth Browser ===
-const launchStealthBrowser = async () => {
-  const args = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-infobars',
-    '--window-position=0,0',
-    '--window-size=1366,768',
-    '--disable-extensions',
-    '--disable-plugins-discovery',
-    '--disable-features=TranslateUI'
-  ];
-
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args,
-      timeout: 120000,
-      ignoreHTTPSErrors: true
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-    );
-    await page.setViewport({ width: 1366, height: 768 });
-
-    // Anti-detection
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
-      Object.defineProperty(navigator, 'plugins', { get: () => [new PluginArray()] });
-    });
-
-    return { browser, page };
-  } catch (error) {
-    console.warn('⚠️ Browser launch failed:', error.message);
-    if (browser) await browser.close();
-    return null;
-  }
 };
 
 // === 📸 AI-Generated Women-Centric Content ===
@@ -206,11 +161,9 @@ const shortenLink = async (url, CONFIG) => {
   }
 
   // === TERTIARY: Linkvertise ===
-  let browser = null;
   try {
-    const result = await launchStealthBrowser();
-    if (!result) throw new Error('Browser launch failed');
-    ({ browser, page } = result); // ✅ FIXED: Only destructure if result is valid
+    // ✅ Use the central browserManager
+    const page = await browserManager.init();
 
     await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
     await quantumDelay(2000);
@@ -232,14 +185,15 @@ const shortenLink = async (url, CONFIG) => {
       return input?.value || null;
     });
 
+    await browserManager.close(); // ✅ Close via central manager
+
     if (shortLink) {
       console.log(`✅ Linkvertise success: ${shortLink}`);
       return shortLink;
     }
   } catch (error) {
     console.warn('⚠️ Linkvertise failed → falling back to NowPayments');
-  } finally {
-    if (browser) await browser.close();
+    await browserManager.close(); // ✅ Ensure cleanup on error
   }
 
   // === QUATERNARY: NowPayments ===
@@ -267,7 +221,6 @@ export const socialAgent = async (CONFIG) => {
     return { success: false, error: 'Missing credentials' };
   }
 
-  let browser = null;
   try {
     // 1. Select High-Value Country
     const tier1Countries = [
@@ -285,10 +238,8 @@ export const socialAgent = async (CONFIG) => {
       shortenLink(CONFIG.UPTIMEROBOT_AFFILIATE_LINK, CONFIG)
     ]);
 
-    // 4. Launch Stealth Browser
-    const result = await launchStealthBrowser();
-    if (!result) return { success: false, error: 'Browser launch failed' };
-    ({ browser, page } = result); // ✅ FIXED: Only destructure if result is valid
+    // 4. Launch Stealth Browser (Centralized)
+    const page = await browserManager.init();
 
     // 5. Post to Pinterest
     await page.goto('https://pinterest.com/login', { waitUntil: 'networkidle2' }); // ✅ FIXED: Removed trailing space
@@ -364,6 +315,6 @@ export const socialAgent = async (CONFIG) => {
     console.error('🚨 Autonomous Women-Centric Posting Failed:', error.message);
     throw error;
   } finally {
-    if (browser) await browser.close();
+    await browserManager.close(); // ✅ Close via central manager
   }
 };
