@@ -1,6 +1,6 @@
 // backend/agents/shopifyAgent.js
 import axios from 'axios';
-import puppeteer from 'puppeteer';
+import { browserManager } from './browserManager.js'; // ✅ Import the central manager
 import crypto from 'crypto';
 
 // === 🌏 GLOBAL SOURCING DATABASE ===
@@ -59,53 +59,12 @@ const optimizeRevenue = (data) => {
   return basePrice * countryMultiplier * originMultiplier;
 };
 
-// === 🌐 Launch Stealth Browser for Sourcing ===
-const launchStealthBrowser = async () => {
-  const args = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-infobars',
-    '--window-position=0,0',
-    '--window-size=1366,768'
-  ];
-
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args,
-      timeout: 120000,
-      ignoreHTTPSErrors: true
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-    );
-    await page.setViewport({ width: 1366, height: 768 });
-
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
-    });
-
-    return { browser, page };
-  } catch (error) {
-    console.warn('⚠️ Browser launch failed:', error.message);
-    if (browser) await browser.close();
-    return null;
-  }
-};
-
 // === 🕵️‍♀️ Autonomous Product Sourcing Agent ===
 const sourcePremiumProduct = async () => {
-  const result = await launchStealthBrowser();
-  if (!result) throw new Error('Browser launch failed for sourcing');
-  const { browser, page } = result;
-
   try {
+    // ✅ Use the central browserManager
+    const page = await browserManager.init();
+
     // Randomly select a country and site
     const countries = Object.keys(SOURCING_SITES);
     const randomCountry = countries[Math.floor(Math.random() * countries.length)];
@@ -152,7 +111,7 @@ const sourcePremiumProduct = async () => {
       origin: randomCountry
     });
 
-    await browser.close();
+    await browserManager.close(); // ✅ Close via central manager
 
     return {
       ...productData,
@@ -162,7 +121,7 @@ const sourcePremiumProduct = async () => {
     };
   } catch (error) {
     console.warn('⚠️ Sourcing failed → using fallback product');
-    await browser.close();
+    await browserManager.close(); // ✅ Ensure cleanup on error
     return {
       title: 'AI-Designed Luxury Pet Jewelry',
       basePrice: 15,
