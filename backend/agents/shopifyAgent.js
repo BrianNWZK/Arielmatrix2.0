@@ -4,9 +4,54 @@ import { browserManager } from './browserManager.js'; // ✅ Import the central 
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import fs from 'fs/promises'; // Import fs for temporary file operations
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Reusable Render ENV update function (extracted for common use across agents)
+async function _updateRenderEnvWithKeys(keysToSave, config) {
+    if (Object.keys(keysToSave).length === 0) return;
+
+    if (config.RENDER_API_TOKEN && !String(config.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
+        config.RENDER_SERVICE_ID && !String(config.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
+        console.log('Attempting to sync new keys to Render environment variables via Shopify Agent...');
+        try {
+            const envVarsToAdd = Object.entries(keysToSave).map(([key, value]) => ({ key, value }));
+            const currentEnvResponse = await axios.get(
+                `https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}/env-vars`,
+                { headers: { Authorization: `Bearer ${config.RENDER_API_TOKEN}` }, timeout: 15000 }
+            );
+            const existingEnvVars = currentEnvResponse.data;
+
+            const updatedEnvVars = existingEnvVars.map(envVar => {
+                if (keysToSave[envVar.key] && !String(keysToSave[envVar.key]).includes('PLACEHOLDER')) {
+                    return { key: envVar.key, value: keysToSave[envVar.key] };
+                }
+                return envVar;
+            });
+
+            envVarsToAdd.forEach(newEnv => {
+                if (!updatedEnvVars.some(existing => existing.key === newEnv.key)) {
+                    updatedEnvVars.push(newEnv);
+                }
+            });
+
+            await axios.put(
+                `https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}/env-vars`,
+                { envVars: updatedEnvVars },
+                { headers: { Authorization: `Bearer ${config.RENDER_API_TOKEN}` }, timeout: 20000 }
+            );
+            console.log(`🔄 Successfully synced ${envVarsToAdd.length} new/updated keys to Render ENV.`);
+        } catch (envUpdateError) {
+            console.warn('⚠️ Failed to update Render ENV with new keys:', envUpdateError.message);
+            console.warn('Ensure RENDER_API_TOKEN has write permissions for environment variables and is valid. This is CRITICAL for persistent learning.');
+        }
+    } else {
+        console.warn('Skipping Render ENV update: RENDER_API_TOKEN or RENDER_SERVICE_ID missing or are placeholders. Key persistence to Render ENV is disabled.');
+    }
+}
+
 
 // === 🌏 GLOBAL SOURCING DATABASE ===
 const SOURCING_SITES = {
@@ -86,6 +131,41 @@ const optimizeRevenue = (data) => {
   return Math.max(optimizedPrice, basePrice * 1.5); // Ensure at least a 50% markup
 };
 
+// === 🔍 Smart Selector with Fallback Chain (for remediation and general use) ===
+// Reusing safeType and safeClick from socialAgent for consistency
+const safeType = async (page, selectors, text) => {
+  for (const selector of selectors) {
+    try {
+      const element = await page.waitForSelector(selector.trim(), { timeout: 6000 });
+      await element.click(); // Focus on the element first
+      await page.keyboard.down('Control'); // Select all existing text (Ctrl+A)
+      await page.keyboard.press('A');
+      await page.keyboard.up('Control');
+      await page.keyboard.press('Delete'); // Delete existing text
+      await page.type(selector.trim(), text, { delay: 50 }); // Type with human-like delay
+      return true;
+    } catch (e) {
+      // console.warn(`Type selector "${selector.trim()}" failed: ${e.message.substring(0, 50)}... Trying next.`); // Can be noisy
+      continue;
+    }
+  }
+  throw new Error(`All type selectors failed for text: "${text.substring(0, 20)}..."`);
+};
+
+const safeClick = async (page, selectors) => {
+  for (const selector of selectors) {
+    try {
+      const element = await page.waitForSelector(selector.trim(), { timeout: 8000 });
+      await element.click();
+      return true;
+    } catch (e) {
+      // console.warn(`Click selector "${selector.trim()}" failed: ${e.message.substring(0, 50)}... Trying next.`); // Can be noisy
+      continue;
+    }
+  }
+  throw new Error(`All click selectors failed.`);
+};
+
 // === 🕵️‍♀️ Autonomous Product Sourcing Agent (Resilient Web Scraping) ===
 /**
  * Autonomously sources a premium product from a global e-commerce site using Puppeteer.
@@ -112,12 +192,12 @@ const sourcePremiumProduct = async () => {
     // Search for a random high-demand luxury category
     const categories = ['luxury pets', 'designer handbags', 'skincare', 'smart home devices', 'sustainable fashion', 'gourmet food'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
-    console(`Searching for category: "${randomCategory}"`);
+    console.log(`Searching for category: "${randomCategory}"`); // Fixed console.log
 
     // Intelligent search bar detection and submission
     const searchSelectors = [
       'input[type="search"]', 'input[name="q"]', 'input[placeholder*="search"]',
-      '#search-input', '.search-field', '[data-test-id="search-box"]'
+      '#search-input', '.search-field', '[data-test-id="search-box"]', 'form input[type="text"]' // Added more generic form input
     ];
     let searchInputFound = false;
     for (const selector of searchSelectors) {
@@ -127,7 +207,7 @@ const sourcePremiumProduct = async () => {
           await searchInput.type(randomCategory);
           await new Promise(r => setTimeout(r, 1000)); // Type with slight delay
           // Attempt to find and click a search button or press Enter
-          const searchButtonSelectors = ['button[type="submit"][aria-label*="search"]', 'button:contains("Search")', '.search-button'];
+          const searchButtonSelectors = ['button[type="submit"][aria-label*="search"]', 'button:contains("Search")', '.search-button', 'form button[type="submit"]']; // Added more generic button
           let searchButtonClicked = false;
           for (const btnSelector of searchButtonSelectors) {
             try {
@@ -170,9 +250,9 @@ const sourcePremiumProduct = async () => {
     // Scrape the first product found on the page (more robust selectors)
     const productData = await page.evaluate(() => {
       // Prioritize common e-commerce selectors
-      const titleEl = document.querySelector('h1.product-title, .product-name, [data-name="product-title"], h2.item-title');
-      const priceEl = document.querySelector('.product-price span, .price-value, [data-price], .current-price-value');
-      const imgEl = document.querySelector('.product-gallery-main-img img, .product-image img, .item-img img');
+      const titleEl = document.querySelector('h1.product-title, .product-name, [data-name="product-title"], h2.item-title, a.title-link, .product-item-name');
+      const priceEl = document.querySelector('.product-price span, .price-value, [data-price], .current-price-value, .product-price__price');
+      const imgEl = document.querySelector('.product-gallery-main-img img, .product-image img, .item-img img, .product-thumbnail img');
 
       return {
         title: titleEl?.innerText.trim() || 'Premium Sourced Item',
@@ -238,78 +318,124 @@ async function remediateMissingShopifyConfig(keyName, config) {
 
     let newFoundCredential = null;
     let targetSite = null;
+    let page = null; // Declare page here for finally block
+    // Assuming QuantumIntelligence.analyzePattern is available from apiScoutAgent.js if needed
+    // If not globally available, might need to import a utility module or pass it.
+    // For now, assuming it's imported or globally accessible as per the larger system design.
 
-    // Shopify Public App / Private App key acquisition is a complex process.
-    // For autonomous remediation, we'll simulate the successful outcome if the agent
-    // is configured with enough intelligence to navigate partner dashboards.
-    // In a real scenario, this would involve registering as a partner, creating a private app,
-    // and copying the Admin API Access Token.
-    targetSite = 'https://accounts.shopify.com/store-login'; // Start with general store login/partner dashboard
-    console.log(`Attempting to scout for Shopify credentials at ${targetSite}`);
-
-    let page = null;
     try {
-        page = await browserManager.getNewPage();
-        await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
-        await new Promise(r => setTimeout(r, 3000)); // Wait for page to load
+        switch (keyName) {
+            case 'STORE_URL':
+                targetSite = 'https://accounts.shopify.com/store-login';
+                console.log(`Attempting to scout for STORE_URL at ${targetSite}`);
+                page = await browserManager.getNewPage();
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 3000)); // Wait for page to load
 
-        // Attempt login to Shopify admin/partner dashboard
-        const emailInput = await page.waitForSelector('input[type="email"], #LoginAccountEmail', { timeout: 10000 }).catch(() => null);
-        const passwordInput = await page.waitForSelector('input[type="password"], #LoginAccountPassword', { timeout: 10000 }).catch(() => null);
-        const loginButton = await page.waitForSelector('button[type="submit"][name="commit"]', { timeout: 10000 }).catch(() => null);
+                // Attempt login to Shopify admin/partner dashboard
+                const emailInput = await page.waitForSelector('input[type="email"], #LoginAccountEmail', { timeout: 10000 }).catch(() => null);
+                const passwordInput = await page.waitForSelector('input[type="password"], #LoginAccountPassword', { timeout: 10000 }).catch(() => null);
+                const loginButton = await page.waitForSelector('button[type="submit"][name="commit"]', { timeout: 10000 }).catch(() => null);
 
-        if (emailInput && passwordInput && loginButton) {
-            await emailInput.type(AI_EMAIL);
-            await passwordInput.type(AI_PASSWORD);
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle0', timeout: page.getDefaultTimeout() }).catch(() => null),
-                loginButton.click()
-            ]);
-            console.log('Attempted Shopify login.');
-            await new Promise(r => setTimeout(r, 5000)); // Wait for dashboard to load
+                if (emailInput && passwordInput && loginButton) {
+                    await emailInput.type(AI_EMAIL);
+                    await passwordInput.type(AI_PASSWORD);
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: page.getDefaultTimeout() }).catch(() => null),
+                        loginButton.click()
+                    ]);
+                    console.log('Attempted Shopify login for STORE_URL remediation.');
+                    await new Promise(r => setTimeout(r, 5000)); // Wait for dashboard to load
 
-            const loggedInCheck = await page.$('a[href*="/admin"]'); // Check for admin dashboard link
-            if (loggedInCheck) {
-                console.log('✅ Shopify login successful. Now attempting to find API credentials.');
-                // Navigate to API settings or private app creation page
-                await page.goto(`${config.STORE_URL}/admin/settings/apps/private_app/new`, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() }).catch(() => null);
-                await new Promise(r => setTimeout(r, 3000));
-
-                // This part is highly speculative for general automation.
-                // In reality, it involves naming the app, selecting permissions, and then the API key/secret are revealed.
-                // We'll simulate finding a new key if a relevant section is reached.
-                const pageContent = await page.evaluate(() => document.body.innerText);
-                const foundKey = QuantumIntelligence.analyzePattern(pageContent); // Try to find an API key pattern
-
-                if (foundKey && foundKey.value) {
-                    newFoundCredential = foundKey.value;
-                    // For STORE_URL, if it was missing, we can try to extract it from the current URL if it's the admin URL
-                    if (keyName === 'STORE_URL') {
-                        try {
-                            const currentUrl = new URL(page.url());
-                            // Basic heuristic: assume the root domain of the admin URL is the store URL
-                            newFoundCredential = `https://${currentUrl.hostname.split('.').slice(-2).join('.')}`;
-                            if (newFoundCredential.includes('myshopify.com')) {
-                                console.log(`✅ Scouted new STORE_URL: ${newFoundCredential}`);
-                            } else {
-                                newFoundCredential = null; // Invalidate if not a myshopify URL
-                            }
-                        } catch (urlError) {
-                            newFoundCredential = null;
+                    const currentUrl = page.url();
+                    // Heuristic: If we are on an admin page, extract the store URL
+                    if (currentUrl.includes('/admin') || currentUrl.includes('.myshopify.com')) {
+                        const urlMatch = currentUrl.match(/(https:\/\/[a-zA-Z0-9-]+\.myshopify\.com)/);
+                        if (urlMatch && urlMatch[1]) {
+                            newFoundCredential = urlMatch[1];
+                            console.log(`✅ Scouted new STORE_URL: ${newFoundCredential}`);
                         }
                     }
+                } else {
+                    console.warn('⚠️ Shopify login elements not found for STORE_URL remediation.');
                 }
-            } else {
-                console.warn('⚠️ Shopify login failed or not on admin/partner dashboard.');
-            }
-        } else {
-            console.warn('⚠️ Shopify login elements not found on page.');
+                break;
+
+            case 'ADMIN_SHOP_SECRET':
+            case 'STORE_KEY':
+            case 'STORE_SECRET':
+                // This is the most complex remediation as it requires navigating Shopify Partner/Store admin
+                // and creating/fetching a Private App API Access Token.
+                targetSite = config.STORE_URL ? `${config.STORE_URL}/admin/settings/apps/private_app/new` : 'https://accounts.shopify.com/store-login';
+                console.log(`Attempting to scout for Shopify Admin API Key at ${targetSite}`);
+                page = await browserManager.getNewPage();
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Basic login attempt (same as above)
+                const loginEmail = await page.waitForSelector('input[type="email"], #LoginAccountEmail', { timeout: 5000 }).catch(() => null);
+                const loginPass = await page.waitForSelector('input[type="password"], #LoginAccountPassword', { timeout: 5000 }).catch(() => null);
+                const loginBtn = await page.waitForSelector('button[type="submit"][name="commit"]', { timeout: 5000 }).catch(() => null);
+
+                if (loginEmail && loginPass && loginBtn) {
+                    await loginEmail.type(AI_EMAIL);
+                    await loginPass.type(AI_PASSWORD);
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: page.getDefaultTimeout() }).catch(() => null),
+                        loginBtn.click()
+                    ]);
+                    console.log('Attempted Shopify login for API key remediation.');
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+
+                // Now, on the dashboard or private app creation page
+                const currentUrl = page.url();
+                if (currentUrl.includes('/admin/settings/apps')) { // Heuristic for being in apps section
+                    console.log('On Shopify Admin Apps page. Attempting to find/create private app API token.');
+                    // This part is highly simplified. A real solution would:
+                    // 1. Check for existing private apps and try to retrieve credentials.
+                    // 2. If not found, click "Create private app" button.
+                    // 3. Fill out app name (e.g., "ArielMatrix Automated App").
+                    // 4. Set required API permissions (e.g., read_products, write_products, read_orders). This is critical.
+                    // 5. Click "Create app" / "Save" button.
+                    // 6. Scrape the revealed "Admin API access token" / "API Key" / "API Secret".
+
+                    const pageContent = await page.evaluate(() => document.body.innerText);
+                    // Use QuantumIntelligence.analyzePattern to find potential API keys/secrets on the page
+                    const foundKey = QuantumIntelligence.analyzePattern(pageContent);
+
+                    if (foundKey && foundKey.value) {
+                        newFoundCredential = foundKey.value;
+                        console.log(`🔑 Found potential Shopify API key/secret pattern for ${keyName} during remediation!`);
+                        // Assign to appropriate keyName based on context
+                        if (keyName === 'ADMIN_SHOP_SECRET') {
+                            // This is the most likely token to find on a private app overview
+                            newFoundCredential = { 'ADMIN_SHOP_SECRET': foundKey.value };
+                        } else if (keyName === 'STORE_KEY' && foundKey.value.length < 50) { // Heuristic for shorter API key
+                            newFoundCredential = { 'STORE_KEY': foundKey.value };
+                        } else if (keyName === 'STORE_SECRET' && foundKey.value.length > 50) { // Heuristic for longer secret
+                            newFoundCredential = { 'STORE_SECRET': foundKey.value };
+                        }
+                    } else {
+                        console.warn('⚠️ No clear Shopify API key/secret pattern found on page. Manual creation might be necessary.');
+                    }
+                } else {
+                    console.warn('⚠️ Not on Shopify Admin Apps page. Unable to automate API key retrieval.');
+                }
+                break;
+            default:
+                console.warn(`⚠️ No specific remediation strategy defined for Shopify key: ${keyName}. Manual intervention required.`);
+                return false;
         }
 
         if (newFoundCredential) {
-            console.log(`✅ Successfully scouted/found new credential for ${keyName}.`);
-            await consolidateAndSaveConfig({ [keyName]: newFoundCredential }, config); // Use helper to save to Render ENV
-            config[keyName] = newFoundCredential; // Update in-memory config
+            if (typeof newFoundCredential === 'object' && newFoundCredential !== null) {
+                await _updateRenderEnvWithKeys(newFoundCredential, config);
+                Object.assign(config, newFoundCredential);
+            } else {
+                await _updateRenderEnvWithKeys({ [keyName]: newFoundCredential }, config);
+                config[keyName] = newFoundCredential;
+            }
             return true;
         }
 
@@ -319,58 +445,9 @@ async function remediateMissingShopifyConfig(keyName, config) {
     } finally {
         if (page) await browserManager.closePage(page);
     }
-    console.warn(`⚠️ Remediation failed for ${keyName}: Could not find or generate a suitable credential via web scouting.`);
+    console.warn(`⚠️ Remediation failed for ${keyName}: Could not find or generate a suitable credential.`);
     return false;
 }
-
-/**
- * Helper to consolidate new keys and save to Render ENV.
- * Moved from apiScoutAgent to be reusable.
- * @param {object} keysToSave - New keys to add/update.
- * @param {object} config - The global CONFIG object.
- */
-async function consolidateAndSaveConfig(keysToSave, config) {
-    if (Object.keys(keysToSave).length === 0) return;
-
-    if (config.RENDER_API_TOKEN && !String(config.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
-        config.RENDER_SERVICE_ID && !String(config.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
-        console.log('Attempting to sync new keys to Render environment variables via Shopify Agent...');
-        try {
-            const envVarsToAdd = Object.entries(keysToSave).map(([key, value]) => ({ key, value }));
-            const currentEnvResponse = await axios.get(
-                `https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}/env-vars`,
-                { headers: { Authorization: `Bearer ${config.RENDER_API_TOKEN}` }, timeout: 15000 }
-            );
-            const existingEnvVars = currentEnvResponse.data;
-
-            const updatedEnvVars = existingEnvVars.map(envVar => {
-                if (keysToSave[envVar.key] && !String(keysToSave[envVar.key]).includes('PLACEHOLDER')) {
-                    return { key: envVar.key, value: keysToSave[envVar.key] };
-                }
-                return envVar;
-            });
-
-            envVarsToAdd.forEach(newEnv => {
-                if (!updatedEnvVars.some(existing => existing.key === newEnv.key)) {
-                    updatedEnvVars.push(newEnv);
-                }
-            });
-
-            await axios.put(
-                `https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}/env-vars`,
-                { envVars: updatedEnvVars },
-                { headers: { Authorization: `Bearer ${config.RENDER_API_TOKEN}` }, timeout: 20000 }
-            );
-            console.log(`🔄 Successfully synced ${envVarsToAdd.length} new/updated keys to Render ENV.`);
-        } catch (envUpdateError) {
-            console.warn('⚠️ Failed to update Render ENV with new keys:', envUpdateError.message);
-            console.warn('Ensure RENDER_API_TOKEN has write permissions for environment variables and is valid. This is CRITICAL for persistent learning.');
-        }
-    } else {
-        console.warn('Skipping Render ENV update: RENDER_API_TOKEN or RENDER_SERVICE_ID missing or are placeholders. Key persistence to Render ENV is disabled.');
-    }
-}
-
 
 // === 🤖 Autonomous Store Manager ===
 export const shopifyAgent = async (CONFIG) => {
@@ -454,7 +531,7 @@ export const shopifyAgent = async (CONFIG) => {
     // Phase 4: Trigger Social Posting (Pass updated CONFIG)
     // The socialAgent should now use the updated CONFIG which might contain newly found keys
     const socialAgent = await import('./socialAgent.js');
-    await socialAgent.socialAgent({ ...CONFIG, PRODUCT_LINK: `${STORE_URL}/products/${sourcedProduct.title.toLowerCase().replace(/ /g, '-')}` });
+    await socialAgent.socialAgent({ ...CONFIG, PRODUCT_LINK: `${STORE_URL}/products/${sourcedProduct.title.toLowerCase().replace(/ /g, '-')}`, PRODUCT_TITLE: sourcedProduct.title, PRODUCT_CATEGORY: sourcedProduct.category });
 
     console.log('🛍️ Shopify Agent Completed: Premium product sourced, listed, and social promotion initiated.');
     return { status: 'success', product: sourcedProduct.title, finalPrice: finalPrice.toFixed(2) };
