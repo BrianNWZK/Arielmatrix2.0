@@ -5,7 +5,7 @@ import path from 'path';
 import { TwitterApi } from 'twitter-api-v2';
 import cron from 'node-cron';
 import Web3 from 'web3';
-import crypto from 'crypto';
+import crypto from 'crypto'; // Explicitly import crypto for this file
 import { ethers } from 'ethers';
 import { browserManager } from './browserManager.js'; // Ensure this is correctly importing the singleton instance
 
@@ -60,7 +60,7 @@ async function _updateRenderEnvWithKeys(keysToSave, config) {
 // === 🌌 QUANTUM INTELLIGENCE CORE (Inspired by APIKeyGenerator.sol) ===
 const QuantumIntelligence = {
   // Generate entropy from multiple sources for internal use (e.g., as part of unique IDs)
-  generateEntropy: async () => {
+  generateEntropy: () => {
     const buffer = Buffer.concat([
       crypto.randomBytes(16),
       Buffer.from(Date.now().toString()),
@@ -215,6 +215,39 @@ async function reportKeyToSmartContract(serviceId, rawKey) {
   }
 }
 
+// === 🔍 Smart Selector with Fallback Chain (Local to this file for web-scouting) ===
+const safeType = async (page, selectors, text) => {
+  for (const selector of selectors) {
+    try {
+      const element = await page.waitForSelector(selector.trim(), { timeout: 6000 });
+      await element.click(); // Focus on the element first
+      await page.keyboard.down('Control'); // Select all existing text (Ctrl+A)
+      await page.keyboard.press('A');
+      await page.keyboard.up('Control');
+      await page.keyboard.press('Delete'); // Delete existing text
+      await page.type(selector.trim(), text, { delay: 50 }); // Type with human-like delay
+      return true;
+    } catch (e) {
+      // console.warn(`Type selector "${selector.trim()}" failed: ${e.message.substring(0, 50)}... Trying next.`); // Can be noisy
+      continue;
+    }
+  }
+  throw new Error(`All type selectors failed for text: "${text.substring(0, 20)}..."`);
+};
+
+const safeClick = async (page, selectors) => {
+  for (const selector of selectors) {
+    try {
+      const element = await page.waitForSelector(selector.trim(), { timeout: 8000 });
+      await element.click();
+      return true;
+    } catch (e) {
+      // console.warn(`Click selector "${selector.trim()}" failed: ${e.message.substring(0, 50)}... Trying next.`); // Can be noisy
+      continue;
+    }
+  }
+  throw new Error(`All click selectors failed.`);
+};
 
 // === 🛠 CONFIGURATION REMEDIATION LAYER (NEW CORE FUNCTIONALITY) ===
 /**
@@ -226,7 +259,7 @@ async function reportKeyToSmartContract(serviceId, rawKey) {
  * @returns {Promise<boolean>} True if remediation was successful, false otherwise.
  */
 async function remediateMissingConfig(keyName, config) {
-    console.log(`\n⚙️ Initiating remediation for missing/placeholder key: ${keyName}`);
+    console.log(`\n⚙️ Initiating remediation for missing/placeholder API key: ${keyName}`);
 
     // --- Prerequisite: AI Identity for Web-based Remediation ---
     const AI_EMAIL = config.AI_EMAIL;
@@ -239,73 +272,184 @@ async function remediateMissingConfig(keyName, config) {
 
     let newFoundKey = null;
     let targetSite = null;
+    let page = null; // Declare page here for finally block
 
-    switch (keyName) {
-        case 'BSCSCAN_API_KEY':
-            targetSite = 'https://bscscan.com/register'; // Or API Key page if logged in
-            console.log(`Attempting to scout for BSCSCAN_API_KEY at ${targetSite}`);
-            break;
-        case 'X_API_KEY':
-            targetSite = 'https://developer.twitter.com/en/portal/dashboard';
-            console.log(`Attempting to scout for X_API_KEY at ${targetSite}`);
-            break;
-        case 'SHORTIO_API_KEY':
-        case 'SHORTIO_URL': // If URL is missing, assume key might also be missing or need re-finding
-            targetSite = 'https://app.short.io/signup';
-            console.log(`Attempting to scout for Short.io keys at ${targetSite}`);
-            break;
-        case 'LINKVERTISE_EMAIL':
-        case 'LINKVERTISE_PASSWORD': // If credentials missing, try signup
-            targetSite = 'https://publisher.linkvertise.com/signup';
-            console.log(`Attempting to scout for Linkvertise credentials at ${targetSite}`);
-            break;
-        case 'NOWPAYMENTS_API_KEY':
-            targetSite = 'https://nowpayments.io/auth/signup';
-            console.log(`Attempting to scout for NowPayments API key at ${targetSite}`);
-            break;
-        case 'CAT_API_KEY':
-            targetSite = 'https://thecatapi.com/signup';
-            console.log(`Attempting to scout for TheCatAPI key at ${targetSite}`);
-            break;
-        case 'DOG_API_KEY':
-            targetSite = 'https://thedogapi.com/signup'; // Assuming similar pattern to CatAPI
-            console.log(`Attempting to scout for TheDogAPI key at ${targetSite}`);
-            break;
-        case 'NEWS_API':
-            targetSite = 'https://newsapi.org/register';
-            console.log(`Attempting to scout for NewsAPI key at ${targetSite}`);
-            break;
-        case 'COINGECKO_API':
-            targetSite = 'https://www.coingecko.com/account/login'; // No direct API signup, need to login
-            console.log(`Attempting to scout for CoinGecko API URL/key at ${targetSite}`);
-            break;
-        // Add more cases for other critical missing keys
-        default:
-            console.warn(`⚠️ No specific remediation strategy defined for ${keyName}. Manual intervention required.`);
-            return false;
-    }
+    try {
+        // Use browserManager to get a new page for scouting/login
+        page = await browserManager.getNewPage();
+        page.setDefaultTimeout(page.getDefaultTimeout()); // Use adaptive timeout
 
-    // Use activateCampaigns logic to attempt to log in/sign up and extract the key
-    // We pass a single site as a list to match the function signature
-    const { newKeys: discoveredKeysFromRemediation } = await activateCampaigns([targetSite], AI_EMAIL, AI_PASSWORD);
+        switch (keyName) {
+            case 'BSCSCAN_API_KEY':
+                targetSite = 'https://bscscan.com/register'; // Or API Key page if logged in
+                console.log(`Attempting to scout for BSCSCAN_API_KEY at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                // Try to login/signup
+                await safeType(page, ['input[name="email"]', 'input[type="email"]'], AI_EMAIL).catch(() => {});
+                await safeType(page, ['input[name="password"]', 'input[type="password"]'], AI_PASSWORD).catch(() => {});
+                await safeClick(page, ['button[type="submit"]', 'button:contains("Sign Up")', 'button:contains("Login")']).catch(() => {});
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: page.getDefaultTimeout() }).catch(() => null);
+                await new Promise(r => setTimeout(r, 3000));
+                // After login/signup, try to find the API key on the dashboard or API settings page
+                const bscscanContent = await page.evaluate(() => document.body.innerText);
+                const foundBscscanKey = QuantumIntelligence.analyzePattern(bscscanContent);
+                if (foundBscscanKey && foundBscscanKey.value) {
+                    newFoundKey = foundBscscanKey.value;
+                    console.log('🔑 Found BSCSCAN_API_KEY during remediation!');
+                }
+                break;
 
-    if (Object.keys(discoveredKeysFromRemediation).length > 0) {
-        // Find if the specifically sought key was found, or a relevant one
-        const foundKeyEntry = Object.entries(discoveredKeysFromRemediation).find(([k]) => k.includes(keyName.replace('_API_KEY', '')) || k.includes(keyName.replace('_URL', '')));
-        if (foundKeyEntry) {
-            newFoundKey = foundKeyEntry[1];
-            console.log(`✅ Successfully scouted/found new key for ${keyName}.`);
+            case 'X_API_KEY':
+                targetSite = 'https://developer.twitter.com/en/portal/dashboard';
+                console.log(`Attempting to scout for X_API_KEY at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                // Assuming X login might happen via AI_EMAIL/PASSWORD if not already logged in
+                // This requires a more complex login flow, for now focus on direct key scouting if dashboard is reachable
+                const xContent = await page.evaluate(() => document.body.innerText);
+                const foundXKey = QuantumIntelligence.analyzePattern(xContent);
+                if (foundXKey && foundXKey.value) {
+                    newFoundKey = foundXKey.value;
+                    console.log('🔑 Found X_API_KEY during remediation!');
+                }
+                break;
+            case 'SHORTIO_API_KEY':
+            case 'SHORTIO_URL':
+                targetSite = 'https://app.short.io/signup';
+                console.log(`Attempting to scout for Short.io keys at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                // Try to login/signup
+                await safeType(page, ['input[name="email"]', 'input[type="email"]'], AI_EMAIL).catch(() => {});
+                await safeType(page, ['input[name="password"]', 'input[type="password"]'], AI_PASSWORD).catch(() => {});
+                await safeClick(page, ['button[type="submit"]', 'button:contains("Sign Up")', 'button:contains("Login")']).catch(() => {});
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: page.getDefaultTimeout() }).catch(() => null);
+                await new Promise(r => setTimeout(r, 3000));
+                const shortioContent = await page.evaluate(() => document.body.innerText);
+                const foundShortioKey = QuantumIntelligence.analyzePattern(shortioContent);
+                if (foundShortioKey && foundShortioKey.value) {
+                    newFoundKey = foundShortioKey.value; // Assume this is the API key
+                    console.log('🔑 Found Short.io API Key during remediation!');
+                }
+                // Try to get URL from current page after login (if it's a dashboard URL)
+                const currentUrlShortio = page.url();
+                const urlMatchShortio = currentUrlShortio.match(/https:\/\/(.*?)\.short\.io/);
+                if (urlMatchShortio && urlMatchShortio[0]) {
+                    config.SHORTIO_URL = urlMatchShortio[0]; // Update CONFIG directly for URL
+                    await _updateRenderEnvWithKeys({ SHORTIO_URL: urlMatchShortio[0] }, config);
+                    console.log('🌐 Found Short.io URL during remediation!');
+                }
+                break;
+            case 'LINKVERTISE_EMAIL':
+            case 'LINKVERTISE_PASSWORD':
+                targetSite = 'https://publisher.linkvertise.com/signup';
+                console.log(`Attempting to scout for Linkvertise credentials at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                // Try to signup/login
+                await safeType(page, ['input[name="email"]', 'input[type="email"]'], AI_EMAIL).catch(() => {});
+                await safeType(page, ['input[name="password"]', 'input[type="password"]'], AI_PASSWORD).catch(() => {});
+                await safeClick(page, ['button[type="submit"]', 'button:contains("Register")', 'button:contains("Login")']).catch(() => {});
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: page.getDefaultTimeout() }).catch(() => null);
+                await new Promise(r => setTimeout(r, 3000));
+                // If login/signup was successful, assume AI_EMAIL/PASSWORD are the new credentials
+                const linkvertiseLoggedIn = await page.evaluate(() => document.querySelector('a[href*="/dashboard"]') !== null);
+                if (linkvertiseLoggedIn) {
+                    newFoundKey = { LINKVERTISE_EMAIL: AI_EMAIL, LINKVERTISE_PASSWORD: AI_PASSWORD }; // Store as object for multiple
+                    console.log('✅ Linkvertise credentials confirmed during remediation!');
+                }
+                break;
+            case 'NOWPAYMENTS_API_KEY':
+                targetSite = 'https://nowpayments.io/auth/signup';
+                console.log(`Attempting to scout for NowPayments API key at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                await safeType(page, ['input[name="email"]', 'input[type="email"]'], AI_EMAIL).catch(() => {});
+                await safeType(page, ['input[name="password"]', 'input[type="password"]'], AI_PASSWORD).catch(() => {});
+                await safeClick(page, ['button[type="submit"]', 'button:contains("Sign Up")', 'button:contains("Login")']).catch(() => {});
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: page.getDefaultTimeout() }).catch(() => null);
+                await new Promise(r => setTimeout(r, 3000));
+                const nowpaymentsContent = await page.evaluate(() => document.body.innerText);
+                const foundNowpaymentsKey = QuantumIntelligence.analyzePattern(nowpaymentsContent);
+                if (foundNowpaymentsKey && foundNowpaymentsKey.value) {
+                    newFoundKey = foundNowpaymentsKey.value;
+                    console.log('🔑 Found NowPayments API Key during remediation!');
+                }
+                break;
+            case 'CAT_API_KEY':
+                targetSite = 'https://thecatapi.com/signup';
+                console.log(`Attempting to scout for TheCatAPI key at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                const catContent = await page.evaluate(() => document.body.innerText);
+                const foundCatKey = QuantumIntelligence.analyzePattern(catContent);
+                if (foundCatKey && foundCatKey.value) {
+                    newFoundKey = foundCatKey.value;
+                    console.log('🔑 Found CAT_API_KEY during remediation!');
+                }
+                break;
+            case 'DOG_API_KEY':
+                targetSite = 'https://thedogapi.com/signup';
+                console.log(`Attempting to scout for TheDogAPI key at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                const dogContent = await page.evaluate(() => document.body.innerText);
+                const foundDogKey = QuantumIntelligence.analyzePattern(dogContent);
+                if (foundDogKey && foundDogKey.value) {
+                    newFoundKey = foundDogKey.value;
+                    console.log('🔑 Found DOG_API_KEY during remediation!');
+                }
+                break;
+            case 'NEWS_API_KEY': // Corrected from NEWS_API
+                targetSite = 'https://newsapi.org/register';
+                console.log(`Attempting to scout for NewsAPI key at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                const newsContent = await page.evaluate(() => document.body.innerText);
+                const foundNewsKey = QuantumIntelligence.analyzePattern(newsContent);
+                if (foundNewsKey && foundNewsKey.value) {
+                    newFoundKey = foundNewsKey.value;
+                    console.log('🔑 Found NEWS_API_KEY during remediation!');
+                }
+                break;
+            case 'COINGECKO_API': // This is usually a base URL, not a key
+                targetSite = 'https://www.coingecko.com/account/login';
+                console.log(`Attempting to verify/scout for CoinGecko API base URL at ${targetSite}`);
+                await page.goto(targetSite, { waitUntil: 'domcontentloaded', timeout: page.getDefaultTimeout() });
+                await new Promise(r => setTimeout(r, 2000));
+                // CoinGecko public API doesn't require a key, but if they introduce one, this is where it'd be scouted.
+                // For now, if CONFIG.COINGECKO_API is missing, we'll default it elsewhere. This remediation step would confirm access.
+                const coingeckoContent = await page.evaluate(() => document.body.innerText);
+                if (coingeckoContent.includes('CoinGecko API')) { // Heuristic: presence of "CoinGecko API" text
+                    newFoundKey = config.COINGECKO_API || 'https://api.coingecko.com/api/v3'; // Confirm existing or set default
+                    console.log('✅ CoinGecko API access confirmed/set to default during remediation!');
+                }
+                break;
+            default:
+                console.warn(`⚠️ No specific remediation strategy defined for API key: ${keyName}. Manual intervention required.`);
+                return false;
+        }
 
-            // Now, push this new key to Render ENV using consolidateRevenue's logic
-            // We create a temporary object for this specific key
-            await _updateRenderEnvWithKeys({ [foundKeyEntry[0]]: newFoundKey }, config); // Use foundKeyEntry[0] to use the actual keyName if different
-            // Update the in-memory config immediately
-            config[foundKeyEntry[0]] = newFoundKey;
+        if (newFoundKey) {
+            // If it's an object (for multiple credentials like Linkvertise)
+            if (typeof newFoundKey === 'object' && newFoundKey !== null) {
+                await _updateRenderEnvWithKeys(newFoundKey, config);
+                Object.assign(config, newFoundKey); // Update in-memory
+            } else { // Single key string
+                await _updateRenderEnvWithKeys({ [keyName]: newFoundKey }, config);
+                config[keyName] = newFoundKey; // Update in-memory
+            }
             return true;
         }
-    }
 
-    console.warn(`⚠️ Remediation failed for ${keyName}: Could not find or generate a suitable key via web scouting.`);
+    } catch (error) {
+        console.warn(`⚠️ Remediation attempt for ${keyName} failed: ${error.message}`);
+        browserManager.reportNavigationFailure();
+    } finally {
+        if (page) await browserManager.closePage(page);
+    }
+    console.warn(`⚠️ Remediation failed for ${keyName}: Could not find or generate a suitable credential.`);
     return false;
 }
 
@@ -334,20 +478,24 @@ export const apiScoutAgent = async (CONFIG) => {
 
     // === PHASE 0: Proactive Configuration Remediation ===
     // Define critical keys that the system should attempt to remediate if missing/placeholder
+    // Added ADFLY_PASS based on server.js config
     const criticalKeysToRemediate = [
         'BSCSCAN_API_KEY',
         'X_API_KEY',
         'SHORTIO_API_KEY',
-        'SHORTIO_URL', // Remediate URL if missing
-        'LINKVERTISE_EMAIL', // Remediate credentials if missing
+        'SHORTIO_URL',
+        'LINKVERTISE_EMAIL',
         'LINKVERTISE_PASSWORD',
         'NOWPAYMENTS_API_KEY',
         'CAT_API_KEY',
         'DOG_API_KEY',
-        'NEWS_API',
-        'COINGECKO_API'
-        // PRIVATE_KEY and BSC_NODE are too critical/sensitive for auto-generation without explicit user consent
-        // and usually require specific blockchain setup beyond simple web signup.
+        'NEWS_API_KEY', // Corrected from NEWS_API
+        'COINGECKO_API',
+        'ADFLY_API_KEY',
+        'ADFLY_USER_ID',
+        'ADFLY_PASS' // Added here for remediation too
+        // PRIVATE_KEY and BSC_NODE are handled in cryptoAgent's remediation for now,
+        // as they are blockchain-specific and require different generation logic.
     ];
 
     for (const key of criticalKeysToRemediate) {
@@ -374,7 +522,8 @@ export const apiScoutAgent = async (CONFIG) => {
       'https://openai.com/api/', 'https://aws.amazon.com/api-gateway/'
     ];
 
-    const discoveredSites = await discoverOpportunities(initialMonizationSites, CONFIG);
+    // Pass AI_EMAIL and AI_PASSWORD for login attempts during discovery/activation
+    const discoveredSites = await discoverOpportunities(initialMonetizationSites, CONFIG);
     const { activeCampaigns, newKeys } = await activateCampaigns(discoveredSites, AI_EMAIL, AI_PASSWORD);
 
     for (const keyName in newKeys) {
@@ -407,8 +556,8 @@ export const apiScoutAgent = async (CONFIG) => {
 
   } catch (error) {
     console.error('🚨 Quantum Explorer Failed:', error.message);
-    await healSystem(error);
-    return { status: 'recovered', error: error.message };
+    // await healSystem(error); // healSystem should be called by the orchestrator (server.js), not agents
+    return { status: 'failed', error: error.message };
   }
 };
 
@@ -436,9 +585,10 @@ async function discoverOpportunities(sites, config) {
   }
 
   for (const check of externalApiChecks) {
+      // Ensure the key exists and is not a placeholder BEFORE attempting the API call
       if (!check.key || String(check.key).includes('PLACEHOLDER')) {
           console.warn(`⚠️ Skipping REAL external API check for ${check.name}: API Key missing or placeholder. Provide it in Render ENV or let remediation handle.`);
-          continue; // Skip if key is still placeholder after remediation
+          continue;
       }
       try {
           const response = await axios.get(check.url, { timeout: 7000 });
@@ -467,6 +617,7 @@ async function activateCampaigns(sites, email, password) {
 
   try {
     page = await browserManager.getNewPage();
+    page.setDefaultTimeout(page.getDefaultTimeout()); // Use adaptive timeout from browserManager
 
     for (const site of sites) {
       console.log(`\n--- Attempting REAL activation for: ${site.trim()} ---`);
@@ -833,40 +984,3 @@ async function consolidateRevenue(campaigns, newKeys, config) {
     status: 'completed'
   };
 }
-
-// === 🛠 Self-Healing (REAL Recovery & Adaptation) ===
-async function healSystem(error) {
-  console.log(`\n🛠 Attempting to heal system from REAL error: ${error.message.substring(0, 100)}...`);
-
-  if (error.message.includes('timeout') || error.message.includes('Navigation timeout')) {
-    console.log('⚙️ Diagnosed: REAL Network/Page Load Timeout. Healing: Reporting to browserManager for adaptive timeout adjustment.');
-    browserManager.reportNavigationFailure();
-    await new Promise(r => setTimeout(r, Math.min(300000, 5000 + Math.random() * 20000)));
-  } else if (error.message.includes('ENOTFOUND') || error.message.includes('ERR_ADDRESS_INVALID')) {
-    console.log('⚙️ Diagnosed: REAL DNS/Address Resolution Issue. Healing: Verifying network configuration and retrying after delay.');
-    await new Promise(r => setTimeout(r, 600000));
-  } else if (error.message.includes('No valid submit button found') || error.message.includes('No element found')) {
-    console.log('⚙️ Diagnosed: REAL Selector/Layout Change. Healing: This requires human intervention or dynamic selector generation (future advanced AI vision).');
-  } else if (error.message.includes('Browser launch') || error.message.includes('Chromium') || error.message.includes('Protocol error')) {
-    console.log('⚙️ Diagnosed: REAL Browser Environment/Protocol Error. Healing: Forcing global browser instance close and relying on browserManager to re-launch resiliently.');
-    await browserManager.closeGlobalBrowserInstance();
-    await new Promise(r => setTimeout(r, 10000));
-  } else if (error.message.includes('401') || error.message.includes('403') || error.message.includes('authentication')) {
-    console.log('⚙️ Diagnosed: REAL Authentication Failure. Healing: Verify stored credentials and flag for potential human review/update in Render ENV.');
-  } else {
-    console.log('⚙️ Critical/Unknown REAL Failure. Healing: Attempting graceful shutdown and restart.');
-    process.exit(1);
-  }
-}
-
-// === 🕵️ Setup Scheduled Scouting ===
-apiScoutAgent.setupScheduledScouting = (config) => {
-  cron.schedule('0 */6 * * *', async () => {
-    console.log('⏰ Running scheduled REAL API scouting');
-    try {
-      await apiScoutAgent(config);
-    } catch (error) {
-      console.error('Scheduled REAL scouting failed:', error);
-    }
-  });
-};
