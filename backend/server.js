@@ -1,350 +1,184 @@
 // backend/server.js
 import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import axios from 'axios';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import cron from 'node-cron';
-import * as crypto from 'node:crypto';
-import Web3 from 'web3'; // Required for wallet validation in loadConfig/getWalletBalances
+import { apiScoutAgent } from './agents/apiScoutAgent.js'; // apiScoutAgent now includes Render API interactions
+import { twitterAgent } from './agents/twitterAgent.js';
+import { transactionMonitorAgent } from './agents/transactionMonitorAgent.js';
+import { getGlobalBrowserInstance, closeGlobalBrowserInstance } from './utils/browserManager.js';
+import { config as dotenvConfig } from 'dotenv';
 
-// Import all agents from their consolidated files
-import { apiScoutAgent } from './agents/apiScoutAgent.js'; // For API key management and general discovery
+// Load environment variables from .env file
+dotenvConfig();
 
-// FIXED: Changed back to direct named import for clarity and to resolve 'not a function' error
-import { performSocialCampaigns } from './agents/socialAgent.js'; // For social media automation and link shortening
-
-import { payoutAgent, mintRevenueNFT } from './agents/payoutAgent.js'; // For payouts and NFT minting (now consolidated)
-import { shopifyAgent } from './agents/shopifyAgent.js'; // For Shopify store management
-import { cryptoAgent } from './agents/cryptoAgent.js'; // For general crypto operations and blockchain interaction
-import { renderApiAgent } from './agents/renderApiAgent.js'; // For persisting configs to Render ENV
-
-// Fix for __dirname in ES6 modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// === 🔐 Quantum Security Core ===
-const QuantumSecurity = {
-  generateEntropy: () => {
-    const buffer = Buffer.concat([
-      crypto.randomBytes(16),
-      Buffer.from(Date.now().toString()),
-      Buffer.from(process.uptime().toString())
-    ]);
-    return crypto.createHash('sha256').update(buffer).digest('hex');
-  },
-  generateSecureKey: () => `qkey_${crypto.randomBytes(24).toString('hex')}`
-};
-
-// === 🌐 Self-Healing Config Loader (Enhanced to be dynamic) ===
-// CONFIG will now be mutable and reflect updates from agents
-let CONFIG = {}; // Initialize as empty object
-
-/**
- * Loads and initializes the global CONFIG object from process.env.
- * Designed to be called at the start of each autonomous cycle to get the latest ENV variables.
- * @returns {object} The current configuration object.
- */
-const loadConfig = () => {
-  // Always load directly from process.env to ensure latest values are used
-  // Agents are responsible for pushing changes back to Render ENV for persistence
-  // and then these changes will be picked up on the next cycle by process.env.
-  // For immediate in-memory updates within a single cycle, agents will directly modify the passed CONFIG object.
-  Object.assign(CONFIG, {
-    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN,
-    RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID, // Critical for Render API calls
-    BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
-    ADFLY_API_KEY: process.env.ADFLY_API_KEY,
-    ADFLY_USER_ID: process.env.ADFLY_USER_ID,
-    ADFLY_PASS: process.env.ADFLY_PASS,
-    SHORTIO_API_KEY: process.env.SHORTIO_API_KEY,
-    SHORTIO_USER_ID: process.env.SHORTIO_USER_ID,
-    SHORTIO_URL: process.env.SHORTIO_URL?.trim() || 'https://api.short.io',
-    AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix_ai_fallback@atomicmail.io',
-    AI_PASSWORD: process.env.AI_PASSWORD,
-    USDT_WALLETS: process.env.USDT_WALLETS?.split(',').map(w => w.trim()).filter(Boolean) || [],
-    GAS_WALLET: process.env.GAS_WALLET,
-    STORE_URL: process.env.STORE_URL,
-    ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET,
-    PRIVATE_KEY: process.env.PRIVATE_KEY, // Critical for cryptoAgent
-    BSC_NODE: process.env.BSC_NODE || 'https://bsc-dataseed.binance.org',
-    NEWS_API_KEY: process.env.NEWS_API_KEY,
-    DOG_API_KEY: process.env.DOG_API_KEY,
-    COINGECKO_API: process.env.COINGECKO_API || 'https://api.coingecko.com/api/v3',
-    UPTIMEROBOT_AFFILIATE_LINK: process.env.UPTIMEROBOT_AFFILIATE_LINK,
-    AMAZON_AFFILIATE_TAG: process.env.AMAZON_AFFILIATE_TAG,
-    X_API_KEY: process.env.X_API_KEY,
-    X_USERNAME: process.env.X_USERNAME,
-    X_PASSWORD: process.env.X_PASSWORD,
-    PINTEREST_EMAIL: process.env.PINTEREST_EMAIL,
-    PINTEREST_PASS: process.env.PINTEREST_PASS,
-    REDDIT_USER: process.env.REDDIT_USER,
-    REDDIT_PASS: process.env.REDDIT_PASS,
-    LINKVERTISE_EMAIL: process.env.LINKVERTISE_EMAIL,
-    LINKVERTISE_PASSWORD: process.env.LINKVERTISE_PASSWORD,
-    NOWPAYMENTS_API_KEY: process.env.NOWPAYMENTS_API_KEY,
-    NOWPAYMENTS_CALLBACK_URL: process.env.NOWPAYMENTS_CALLBACK_URL || 'https://your-actual-secure-callback-url.com/nowpayments-webhook',
-  });
-
-  // Example of how dynamic agent config might look, can be extended by agents
-  CONFIG.WALLETS = {
-    USDT: '0x55d398326f99059fF775485246999027B3197955', // Example, actual wallets will come from GAS_WALLET / USDT_WALLETS
-    BNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
-  };
-  CONFIG.PLATFORMS = {
-    SHOPIFY: CONFIG.STORE_URL,
-    REDDIT: 'https://www.reddit.com/api/v1',
-    X: 'https://api.x.com/2',
-    PINTEREST: 'https://api.pinterest.com/v5'
-  };
-  CONFIG.PROXIES = {};
-  CONFIG.LANGUAGES = {
-    'en-US': 'Hello world',
-    'ar-AE': 'مرحبا بالعالم',
-    'zh-CN': '你好世界'
-  };
-
-  return CONFIG;
-};
-
-// === 🔁 Autonomous Agent Orchestration ===
-let isRunning = false;
-let browserManagerInitialized = false; // Flag to ensure browserManager is only initialized once
-
-const runAutonomousCycle = async () => {
-  if (isRunning) {
-    console.warn('⏳ Autonomous cycle already running. Skipping new cycle initiation.');
-    return;
-  }
-
-  isRunning = true;
-  const startTime = Date.now();
-
-  try {
-    console.log(`⚡ [${new Date().toISOString()}] Starting Autonomous Revenue Cycle`);
-    // Load config freshly from process.env at the start of each cycle
-    loadConfig();
-
-    // Ensure browserManager is initialized only once for the entire application lifecycle
-    const { browserManager } = await import('./agents/browserManager.js');
-    if (!browserManagerInitialized) {
-        console.log('Initializing global browser manager...');
-        await browserManager.init(); // Initialize the global browser instance
-        browserManagerInitialized = true;
-        console.log('✅ Global browser manager initialized.');
-    }
-
-    let conceptualEarningsForPayout = 0; // Initialize earnings for payout
-
-    // Phase 0: Scout for new APIs and remediate base configurations
-    try {
-      await apiScoutAgent(CONFIG); // apiScoutAgent updates CONFIG in-memory
-      console.log('✅ apiScoutAgent completed. CONFIG potentially updated in-memory.');
-    } catch (error) {
-      console.warn('⚠️ apiScoutAgent failed, continuing with existing (or default) config. Error:', error.message);
-    }
-
-    // Phase 1: Deploy & Monetize
-    try {
-      // Access performSocialCampaigns directly after import
-      const socialResult = await performSocialCampaigns(CONFIG);
-      console.log('✅ socialAgent completed.', socialResult);
-      conceptualEarningsForPayout += socialResult.postsPublished * 0.10; // $0.10 per published social post
-    } catch (error) {
-      console.error('🚨 socialAgent failed:', error.message);
-    }
-
-    try {
-      const shopifyResult = await shopifyAgent(CONFIG);
-      console.log('✅ shopifyAgent completed.', shopifyResult);
-      conceptualEarningsForPayout += 5.00; // Conceptual $5 per successful Shopify optimization cycle
-    } catch (error) {
-      console.error('🚨 shopifyAgent failed:', error.message);
-    }
-
-    try {
-      const cryptoResult = await cryptoAgent(CONFIG);
-      console.log('✅ cryptoAgent completed.', cryptoResult);
-      conceptualEarningsForPayout += cryptoResult.generatedKeys * 0.50; // $0.50 per generated crypto key
-    } catch (error) {
-      console.error('🚨 cryptoAgent failed:', error.message);
-    }
-
-    // Phase 2: Payouts and NFT Minting (now consolidated in payoutAgent.js)
-    try {
-      await payoutAgent({ ...CONFIG, earnings: conceptualEarningsForPayout });
-      console.log('✅ payoutAgent completed.');
-
-      await mintRevenueNFT(conceptualEarningsForPayout);
-      console.log('✅ mintRevenueNFT completed.');
-
-    } catch (error) {
-      console.error('🚨 Payout/NFT minting failed:', error.message);
-    }
-
-    // Phase 3: Self-Healing & ENV Update
-    try {
-      await renderApiAgent(CONFIG);
-      console.log('✅ renderApiAgent completed. Configuration synced to Render ENV.');
-    } catch (error) {
-      console.error('🚨 renderApiAgent failed (crucial for persistence):', error.message);
-    }
-
-    console.log(`✅ Autonomous Revenue Cycle completed in ${Date.now() - startTime}ms`);
-  } catch (error) {
-    console.error('🔥 Autonomous cycle experienced a critical unhandled failure:', error.message);
-  } finally {
-    isRunning = false;
-  }
-};
-
-// === 📊 Real-Time Revenue Endpoint ===
 const app = express();
-
-// Security Headers
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
-  res.setHeader('X-Quantum-ID', QuantumSecurity.generateEntropy().slice(0, 16));
-  next();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*", // Adjust in production
+        methods: ["GET", "POST"]
+    }
 });
 
-// Parse JSON
-app.use(express.json({ limit: '10mb' }));
+const PORT = process.env.PORT || 3000;
 
-// Serve static frontend
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Real-Time Revenue Endpoint
-app.get('/revenue', async (req, res) => {
-  try {
-    loadConfig();
-
-    // Use conceptual values for now, as direct real-time revenue stats from agents aren't persisted centrally yet.
-    const conceptualStats = { clicks: Math.floor(Math.random() * 500) + 100, conversions: Math.floor(Math.random() * 10) + 1, invoices: Math.floor(Math.random() * 5) + 1 };
-
-    const balances = await getWalletBalances(CONFIG);
-
-    res.json({
-      revenue: {
-        adfly: parseFloat((conceptualStats.clicks * 0.02).toFixed(2)),
-        amazon: parseFloat((conceptualStats.conversions * 5.50).toFixed(2)),
-        crypto: parseFloat((conceptualStats.invoices * 0.15).toFixed(2))
-      },
-      wallets: balances,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('🚨 Failed to fetch revenue for dashboard:', error.message);
-    res.status(500).json({ error: 'Failed to fetch revenue', details: error.message });
-  }
-});
-
-// === 💰 Wallet Balance Retrieval (Using latest CONFIG) ===
-/**
- * Fetches real-time wallet balances from BSCScan using the latest configuration.
- * @param {object} currentConfig - The current global configuration object.
- * @returns {Promise<Array<object>>} Array of wallet balances.
- */
-const getWalletBalances = async (currentConfig) => {
-  const bscscanUrl = 'https://api.bscscan.com/api';
-
-  // Use the GAS_WALLET and USDT_WALLETS directly from the currentConfig
-  const walletsToCheck = [];
-  if (currentConfig.GAS_WALLET && Web3.utils.isAddress(currentConfig.GAS_WALLET)) {
-      walletsToCheck.push({ coin: 'BNB (Gas)', address: currentConfig.GAS_WALLET });
-  }
-  // USDT_WALLETS is already an array from loadConfig, no need to split
-  const usdtWalletAddresses = (currentConfig.USDT_WALLETS || []).filter(w => Web3.utils.isAddress(w));
-  usdtWalletAddresses.forEach(addr => {
-      walletsToCheck.push({ coin: 'USDT', address: addr });
-  });
-
-  if (walletsToCheck.length === 0) {
-      console.warn('⚠️ No valid wallets configured to fetch balances for.');
-      return [];
-  }
-
-  // Ensure BSCSCAN_API_KEY is available
-  if (!currentConfig.BSCSCAN_API_KEY || String(currentConfig.BSCSCAN_API_KEY).includes('PLACEHOLDER')) {
-      console.warn('⚠️ BSCSCAN_API_KEY is missing or a placeholder. Cannot fetch real wallet balances.');
-      return walletsToCheck.map(w => ({ ...w, balance: 'N/A', error: 'Missing API key' }));
-  }
-
-  return await Promise.all(
-    walletsToCheck.map(async (walletInfo) => {
-      try {
-        const response = await axios.get(bscscanUrl, {
-          params: {
-            module: 'account',
-            action: 'balance',
-            address: walletInfo.address,
-            tag: 'latest',
-            apikey: currentConfig.BSCSCAN_API_KEY
-          },
-          timeout: 7000
-        });
-        const balance = parseInt(response.data.result || '0');
-        let formattedBalance = '0.0000';
-        if (balance > 0) {
-             formattedBalance = (balance / 1e18).toFixed(4); // For BNB
-        }
-        return { ...walletInfo, balance: formattedBalance };
-      } catch (error) {
-        console.warn(`⚠️ Failed to fetch balance for ${walletInfo.coin} ${walletInfo.address.slice(0, 10)}...: ${error.message}`);
-        return { ...walletInfo, balance: '0.0000', error: error.message };
-      }
-    })
-  );
+// Centralized Configuration Object
+// IMPORTANT: In a real production environment, never expose sensitive keys directly in client-side code
+// and manage them securely (e.g., AWS Secrets Manager, Google Secret Manager, Azure Key Vault).
+const CONFIG = {
+    AI_EMAIL: process.env.AI_EMAIL || 'ai_scout_email@example.com',
+    AI_PASSWORD: process.env.AI_PASSWORD || 'ai_scout_password',
+    LINKVERTISE_EMAIL: process.env.LINKVERTISE_EMAIL || 'linkvertise_email@example.com',
+    LINKVERTISE_PASSWORD: process.env.LINKVERTISE_PASSWORD || 'linkvertise_password',
+    SHORTIO_API_KEY: process.env.SHORTIO_API_KEY || 'YOUR_SHORTIO_API_KEY',
+    SHORTIO_PASSWORD: process.env.SHORTIO_PASSWORD || 'YOUR_SHORTIO_PASSWORD',
+    SHORTIO_USER_ID: process.env.SHORTIO_USER_ID || 'YOUR_SHORTIO_USER_ID',
+    SHORTIO_URL: process.env.SHORTIO_URL || 'YOUR_SHORTIO_URL',
+    ADFLY_API_KEY: process.env.ADFLY_API_KEY || 'YOUR_ADFLY_API_KEY',
+    ADFLY_USER_ID: process.env.ADFLY_USER_ID || 'YOUR_ADFLY_USER_ID',
+    ADFLY_PASS: process.env.ADFLY_PASS || 'YOUR_ADFLY_PASS', // Adfly password
+    NOWPAYMENTS_EMAIL: process.env.NOWPAYMENTS_EMAIL || 'nowpayments_email@example.com',
+    NOWPAYMENTS_PASSWORD: process.env.NOWPAYMENTS_PASSWORD || 'nowpayments_password',
+    NOWPAYMENTS_API_KEY: process.env.NOWPAYMENTS_API_KEY || 'YOUR_NOWPAYMENTS_API_KEY',
+    NEWS_API: process.env.NEWS_API || 'YOUR_NEWS_API_KEY',
+    CAT_API_KEY: process.env.CAT_API_KEY || 'YOUR_CAT_API_KEY',
+    DOG_API_KEY: process.env.DOG_API_KEY || 'YOUR_DOG_API_KEY',
+    TWITTER_APP_KEY: process.env.TWITTER_APP_KEY || 'YOUR_TWITTER_APP_KEY',
+    TWITTER_APP_SECRET: process.env.TWITTER_APP_SECRET || 'YOUR_TWITTER_APP_SECRET',
+    TWITTER_ACCESS_TOKEN: process.env.TWITTER_ACCESS_TOKEN || 'YOUR_TWITTER_ACCESS_TOKEN',
+    TWITTER_ACCESS_SECRET: process.env.TWITTER_ACCESS_SECRET || 'YOUR_TWITTER_ACCESS_SECRET',
+    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN || 'PLACEHOLDER_RENDER_API_TOKEN', // Used by apiScoutAgent for self-healing
+    RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID || 'PLACEHOLDER_RENDER_SERVICE_ID', // Used by apiScoutAgent for self-healing
+    PRIVATE_KEY: process.env.PRIVATE_KEY || 'YOUR_BSC_WALLET_PRIVATE_KEY', // For transactionMonitor and apiScout
+    BSC_NODE: process.env.BSC_NODE || 'https://bsc-dataseed.binance.org', // BSC Node URL
+    USDT_WALLETS: process.env.USDT_WALLETS || '0xYourWalletAddress1,0xYourWalletAddress2', // Comma-separated
+    TWITTER_USER_ID: process.env.TWITTER_USER_ID || 'YOUR_TWITTER_USER_ID', // For Twitter Agent
+    TWITTER_BEARER_TOKEN: process.env.TWITTER_BEARER_TOKEN || 'YOUR_TWITTER_BEARER_TOKEN', // For Twitter Agent
+    BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY || 'YOUR_BSCSCAN_API_KEY', // For transactionMonitor and API scout
+    COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY || 'YOUR_COINMARKETCAP_API_KEY', // For API scout
+    COINGECKO_API: process.env.COINGECKO_API || 'https://api.coingecko.com/api/v3', // For API scout
 };
 
-// === 🚀 Health & Init ===
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'active',
-    quantumId: QuantumSecurity.generateEntropy().slice(0, 12),
-    timestamp: new Date().toISOString(),
-    cycleRunning: isRunning,
-    agents: ['apiScout', 'social', 'shopify', 'crypto', 'payout', 'renderApi']
-  });
-});
+// Middleware to parse JSON bodies
+app.use(express.json());
 
-// Root route
+// Basic route
 app.get('/', (req, res) => {
-  res.send(`
-    <h1>🚀 ArielMatrix 2.0</h1>
-    <p><strong>Autonomous Revenue Engine Active</strong></p>
-    <ul>
-      <li>🔧 <a href="/revenue">Revenue Dashboard</a></li>
-      <li>🟢 <a href="/health">Health Check</a></li>
-    </ul>
-    <p>Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}</p>
-  `);
+    res.send('ArielMatrix Backend is running!');
 });
 
-// Start server
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Autonomous Revenue Engine Live | Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}`);
-  // Initial load of config upon server start
-  loadConfig();
-  // Start first autonomous cycle after a short delay to ensure server is fully up
-  setTimeout(runAutonomousCycle, 5000);
+// === Scheduled Tasks ===
+// Schedule API Scout Agent to run daily at a specific time (e.g., 2:00 AM)
+cron.schedule('0 2 * * *', async () => {
+    console.log('🤖 Running API Scout Agent (Daily Scan)...');
+    try {
+        const report = await apiScoutAgent(CONFIG);
+        io.emit('agentReport', { agent: 'apiScout', status: 'completed', report });
+        console.log('API Scout Agent Daily Scan Completed:', report);
+    } catch (error) {
+        console.error('Error running API Scout Agent daily:', error);
+        io.emit('agentReport', { agent: 'apiScout', status: 'error', message: error.message });
+    }
+}, {
+    timezone: "Etc/UTC" // Use UTC to avoid timezone issues
 });
 
-// === ⏱️ Scheduled Execution ===
-cron.schedule('0 */4 * * *', runAutonomousCycle); // Every 4 hours
+
+// Schedule Twitter Agent to run every 6 hours
 cron.schedule('0 */6 * * *', async () => {
-  console.log('🌍 Scaling to 195 countries...');
-  // Direct call to performSocialCampaigns
-  // This could involve dynamically adjusting agent parameters, adding new target regions,
-  // or activating new agent instances for different locales.
-  // For now, it's a placeholder for future geo-scaling intelligence.
-  // Example: You could trigger socialAgent with different countryCodes here.
-  // await performSocialCampaigns({ ...CONFIG, targetCountry: 'DE' });
+    console.log('🐦 Running Twitter Agent...');
+    try {
+        const tweetResult = await twitterAgent(CONFIG);
+        io.emit('agentReport', { agent: 'twitter', status: 'completed', tweetResult });
+        console.log('Twitter Agent Run Completed:', tweetResult);
+    } catch (error) {
+        console.error('Error running Twitter Agent:', error);
+        io.emit('agentReport', { agent: 'twitter', status: 'error', message: error.message });
+    }
+}, {
+    timezone: "Etc/UTC"
 });
 
-// Export for potential testing or external triggers if needed
-export { runAutonomousCycle, loadConfig, CONFIG };
+
+// Schedule Transaction Monitor Agent to run every 15 minutes
+cron.schedule('*/15 * * * *', async () => {
+    console.log('💰 Running Transaction Monitor Agent...');
+    try {
+        const monitoringReport = await transactionMonitorAgent(CONFIG);
+        io.emit('agentReport', { agent: 'transactionMonitor', status: 'completed', monitoringReport });
+        console.log('Transaction Monitor Agent Run Completed:', monitoringReport);
+    } catch (error) {
+        console.error('Error running Transaction Monitor Agent:', error);
+        io.emit('agentReport', { agent: 'transactionMonitor', status: 'error', message: error.message });
+    }
+}, {
+    timezone: "Etc/UTC"
+});
+
+
+// API endpoint to manually trigger agents (for testing/debugging)
+app.post('/trigger-agent/:agentName', async (req, res) => {
+    const { agentName } = req.params;
+    console.log(`Manual trigger requested for: ${agentName}`);
+    let report;
+    try {
+        switch (agentName) {
+            case 'apiScout':
+                report = await apiScoutAgent(CONFIG);
+                break;
+            case 'twitter':
+                report = await twitterAgent(CONFIG);
+                break;
+            case 'transactionMonitor':
+                report = await transactionMonitorAgent(CONFIG);
+                break;
+            default:
+                return res.status(404).json({ error: 'Agent not found' });
+        }
+        io.emit('agentReport', { agent: agentName, status: 'manual_completed', report });
+        res.status(200).json({ status: 'triggered', agent: agentName, report });
+    } catch (error) {
+        console.error(`Error manually triggering ${agentName} agent:`, error);
+        io.emit('agentReport', { agent: agentName, status: 'manual_error', message: error.message });
+        res.status(500).json({ error: `Failed to trigger ${agentName} agent`, details: error.message });
+    }
+});
+
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+    console.log('A client connected:', socket.id);
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
+    });
+
+    // You can add more socket event handlers here if needed
+});
+
+// Start the server
+httpServer.listen(PORT, async () => {
+    console.log(`ArielMatrix Backend listening on port ${PORT}`);
+    // Initialize the global browser instance when the server starts
+    await getGlobalBrowserInstance();
+});
+
+// Handle graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM signal received: closing HTTP server and browser...');
+    await closeGlobalBrowserInstance(); // Close the global browser instance
+    httpServer.close(() => {
+        console.log('HTTP server closed. Exiting process.');
+        process.exit(0);
+    });
+});
+
+process.on('SIGINT', async () => {
+    console.log('SIGINT signal received: closing HTTP server and browser...');
+    await closeGlobalBrowserInstance(); // Close the global browser instance
+    httpServer.close(() => {
+        console.log('HTTP server closed. Exiting process.');
+        process.exit(0);
+    });
+});
