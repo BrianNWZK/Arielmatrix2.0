@@ -158,8 +158,11 @@ const generateWomenCentricContent = async (countryCode, CONFIG) => {
 const shortenLink = async (url, CONFIG) => {
   // === PRIMARY: Short.io API ===
   try {
+    const shortIoUrl = CONFIG.SHORTIO_URL?.trim(); // ✅ FIXED: Trim any whitespace
+    if (!shortIoUrl) throw new Error('SHORTIO_URL is not defined');
+
     const response = await axios.post(
-      `${CONFIG.SHORTIO_URL}/links/public`, // ✅ FIXED: No trailing space
+      `${shortIoUrl}/links/public`,
       {
         domain: CONFIG.SHORTIO_DOMAIN || 'qgs.gs',
         originalURL: url
