@@ -6,7 +6,7 @@ import { dirname } from 'path';
 import axios from 'axios';
 import cron from 'node-cron';
 import { createRequire } from 'module';
-import { randomBytes, createHash, createCipheriv } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -39,7 +39,7 @@ const loadConfig = async () => {
     ADFLY_USER_ID: process.env.ADFLY_USER_ID,
     SHORTIO_API_KEY: process.env.SHORTIO_API_KEY,
     SHORTIO_USER_ID: process.env.SHORTIO_USER_ID,
-    SHORTIO_URL: process.env.SHORTIO_URL?.trim() || 'https://api.short.io', // ✅ FIXED: Trim and remove space
+    SHORTIO_URL: process.env.SHORTIO_URL?.trim() || 'https://api.short.io', // ✅ FIXED: Removed trailing space
     AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io',
     AI_PASSWORD: process.env.AI_PASSWORD,
     USDT_WALLETS: process.env.USDT_WALLETS?.split(',').map(w => w.trim()) || [],
@@ -57,8 +57,8 @@ const loadConfig = async () => {
     },
     PLATFORMS: {
       SHOPIFY: process.env.STORE_URL,
-      REDDIT: 'https://www.reddit.com/api/v1', // ✅ FIXED: Remove space
-      X: 'https://api.x.com/2', // ✅ FIXED: Remove space
+      REDDIT: 'https://www.reddit.com/api/v1', // ✅ FIXED: Removed trailing space
+      X: 'https://api.x.com/2', // ✅ FIXED: Removed trailing space
       PINTEREST: 'https://api.pinterest.com/v5'
     },
     PROXIES: {},
@@ -191,7 +191,7 @@ app.get('/revenue', async (req, res) => {
 // === 💰 Wallet Balance Fix (Correct BSCScan API Usage) ===
 const getWalletBalances = async () => {
   const config = await loadConfig();
-  const bscscanUrl = 'https://api.bscscan.com/api'; // ✅ FIXED: Remove space
+  const bscscanUrl = 'https://api.bscscan.com/api'; // ✅ FIXED: Removed trailing space
 
   return await Promise.all(
     Object.entries(config.WALLETS).map(async ([coin, address]) => {
