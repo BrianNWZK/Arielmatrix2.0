@@ -5,10 +5,9 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import axios from 'axios';
 import cron from 'node-cron';
-import { createRequire } from 'module';
 import { randomBytes, createHash } from 'node:crypto';
 
-const require = createRequire(import.meta.url);
+// Fix for __dirname in ES6 modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
