@@ -91,6 +91,12 @@ async function executeArbitrageTrades({ gasWallet, recipientWallets, bscNode, ma
 
   // Bear market strategy: Buy low when BTC < $50K
   if (marketData.bitcoin.usd < 50000) {
+    // ✅ Ensure recipientWallets is not empty
+    if (recipientWallets.length === 0) {
+      console.warn('⚠️ No recipient wallets available for arbitrage trades');
+      return txReceipts;
+    }
+
     for (const wallet of recipientWallets.slice(0, 3)) {
       try {
         const tx = await web3.eth.sendTransaction({
