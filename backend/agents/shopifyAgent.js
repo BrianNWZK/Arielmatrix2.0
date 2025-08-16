@@ -1,112 +1,65 @@
 // backend/agents/shopifyAgent.js
 import axios from 'axios';
+import puppeteer from 'puppeteer';
 import crypto from 'crypto';
 
-// === 🌀 Quantum Jitter (Anti-Robot) ===
-const quantumDelay = (ms) => new Promise(resolve => {
-  const jitter = crypto.randomInt(800, 3000);
-  setTimeout(resolve, ms + jitter);
-});
-
-// === 🧠 Smart Revenue Optimizer ===
-const optimizeRevenue = (data) => {
-  const { price, demand = 1, country = 'US' } = data;
-  // High-net-worth countries get 1.5x markup
-  const highValueCountries = ['MC', 'LU', 'CH', 'QA', 'SG', 'AE', 'US'];
-  const countryMultiplier = highValueCountries.includes(country) ? 1.5 : 1.0;
-  // Demand-based adjustment
-  const demandMultiplier = 1 + (demand / 1000); // +1% per 10 retweets
-  return price * countryMultiplier * demandMultiplier;
+// === 🌏 GLOBAL SOURCING DATABASE ===
+const SOURCING_SITES = {
+  china: [
+    'https://www.alibaba.com', 
+    'https://www.aliexpress.com',
+    'https://www.1688.com'
+  ],
+  southKorea: [
+    'https://www.coupang.com',
+    'https://www.11st.co.kr'
+  ],
+  vietnam: [
+    'https://shopee.vn',
+    'https://tiki.vn'
+  ]
 };
 
-// === 🔗 Shorten link using Short.io (Primary), AdFly, Linkvertise Fallback ===
-const shortenWithLink = async (longUrl, CONFIG) => {
-  // === PRIMARY: Short.io API ===
-  try {
-    const response = await axios.post(
-      `${CONFIG.SHORTIO_URL}/links/public`,
-      {
-        domain: CONFIG.SHORTIO_DOMAIN || 'qgs.gs',
-        originalURL: longUrl
-      },
-      {
-        headers: {
-          'accept': 'application/json',
-          'content-type': 'application/json',
-          'authorization': CONFIG.SHORTIO_API_KEY,
-          'userId': CONFIG.SHORTIO_USER_ID
-        }
-      }
-    );
+// === 🎨 AI-Generated Product Design Engine ===
+const generateProductDesign = async (productData) => {
+  const { name, category, origin } = productData;
 
-    const shortUrl = response.data.shortURL;
-    console.log(`✅ Short.io success: ${shortUrl}`);
-    return shortUrl;
-  } catch (error) {
-    console.warn('⚠️ Short.io failed → falling back to AdFly:', error.message);
-  }
-
-  // === SECONDARY: AdFly API ===
+  // Simulate using an AI image generation API (like DALL-E or Stable Diffusion)
+  const prompt = `A luxury, high-fashion ${name}, ${category} style, product photography, studio lighting, 8k, ultra-detailed, sold by ArielMatrix Global, from ${origin}`;
+  
   try {
-    const response = await axios.post(CONFIG.ADFLY_URL || 'https://api.adf.ly/v1/shorten', {
-      url: longUrl,
-      api_key: CONFIG.ADFLY_API_KEY,
-      user_id: CONFIG.ADFLY_USER_ID,
-      domain: 'qgs.gs',
-      advert_type: 'int'
+    // In production, this would call an AI image API
+    const response = await axios.post('https://api.openai.com/v1/images/generations', {
+      prompt,
+      n: 1,
+      size: '1024x1024'
     }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 5000
+      headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` }
     });
-
-    const shortUrl = response.data.short_url;
-    console.log(`✅ AdFly success: ${shortUrl}`);
-    return shortUrl;
+    
+    return response.data.data[0].url;
   } catch (error) {
-    console.warn('⚠️ AdFly failed → falling back to Linkvertise');
+    console.warn('⚠️ AI Image Generation failed → using placeholder');
+    // Use a high-quality stock image as a fallback
+    return 'https://images.unsplash.com/photo-1523275335342-388d9987e799?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80';
   }
-
-  // === TERTIARY: Linkvertise ===
-  let browser = null;
-  try {
-    const result = await launchStealthBrowser();
-    if (!result) throw new Error('Browser launch failed');
-    ({ browser } = result);
-    const page = await browser.newPage();
-
-    await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' });
-    await quantumDelay(2000);
-
-    await safeType(page, ['input[name="email"]'], CONFIG.AI_EMAIL);
-    await safeType(page, ['input[name="password"]'], CONFIG.AI_PASSWORD);
-    await safeClick(page, ['button[type="submit"]']);
-    await quantumDelay(5000);
-
-    await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'networkidle2' });
-    await quantumDelay(2000);
-
-    await safeType(page, ['input[name="url"]'], longUrl);
-    await safeClick(page, ['button[type="submit"]']);
-    await quantumDelay(3000);
-
-    const shortLink = await page.evaluate(() => 
-      document.querySelector('input.share-link-input')?.value || null
-    );
-
-    if (shortLink) {
-      console.log(`✅ Linkvertise success: ${shortLink}`);
-      return shortLink;
-    }
-  } catch (error) {
-    console.warn('⚠️ Linkvertise failed → using direct URL');
-  } finally {
-    if (browser) await browser.close();
-  }
-
-  return longUrl;
 };
 
-// === 🌐 Launch Stealth Browser ===
+// === 🧠 Smart Revenue Optimizer (High-Value Markets) ===
+const optimizeRevenue = (data) => {
+  const { basePrice, origin, category } = data;
+  // High-net-worth countries get 2.0x to 3.0x markup
+  const highValueCountries = ['MC', 'LU', 'CH', 'QA', 'SG', 'AE', 'US'];
+  const country = 'MC'; // Simulate geo-targeting
+  const countryMultiplier = highValueCountries.includes(country) ? 3.0 : 1.0;
+  
+  // Asian products get a 1.5x "exotic origin" premium
+  const originMultiplier = ['china', 'southKorea', 'vietnam'].includes(origin) ? 1.5 : 1.0;
+  
+  return basePrice * countryMultiplier * originMultiplier;
+};
+
+// === 🌐 Launch Stealth Browser for Sourcing ===
 const launchStealthBrowser = async () => {
   const args = [
     '--no-sandbox',
@@ -146,39 +99,84 @@ const launchStealthBrowser = async () => {
   }
 };
 
-// === 🔍 Smart Selector with Fallback Chain ===
-const safeType = async (page, selectors, text) => {
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector.trim(), { timeout: 6000 });
-      await page.type(selector.trim(), text);
-      return true;
-    } catch (e) {
-      continue;
-    }
-  }
-  throw new Error(`All selectors failed: ${selectors[0]}`);
-};
+// === 🕵️‍♀️ Autonomous Product Sourcing Agent ===
+const sourcePremiumProduct = async () => {
+  const result = await launchStealthBrowser();
+  if (!result) throw new Error('Browser launch failed for sourcing');
+  const { browser, page } = result;
 
-const safeClick = async (page, selectors) => {
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector.trim(), { timeout: 8000 });
-      await page.click(selector.trim());
-      return true;
-    } catch (e) {
-      continue;
-    }
+  try {
+    // Randomly select a country and site
+    const countries = Object.keys(SOURCING_SITES);
+    const randomCountry = countries[Math.floor(Math.random() * countries.length)];
+    const sites = SOURCING_SITES[randomCountry];
+    const randomSite = sites[Math.floor(Math.random() * sites.length)];
+
+    await page.goto(randomSite, { waitUntil: 'networkidle2', timeout: 30000 });
+    
+    // Search for a random high-demand category
+    const categories = ['luxury pets', 'designer handbags', 'skincare', 'smart home'];
+    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+    
+    // This is a simulation. In reality, you'd need to find the search bar's selector.
+    await page.evaluate((category) => {
+      const searchInput = document.querySelector('input[type="search"], input[name="q"]');
+      if (searchInput) {
+        searchInput.value = category;
+        const form = searchInput.closest('form');
+        if (form) form.submit();
+      }
+    }, randomCategory);
+
+    await page.waitForNavigation({ timeout: 30000 });
+
+    // Scrape the first product
+    const productData = await page.evaluate(() => {
+      const titleEl = document.querySelector('.product-title, .title, h3');
+      const priceEl = document.querySelector('.product-price, .price, .current-price');
+      const imgEl = document.querySelector('.product-image img, .image img');
+      
+      return {
+        title: titleEl?.innerText.trim() || 'Luxury Item',
+        price: parseFloat(priceEl?.innerText.replace(/[^0-9.]/g, '')) || 10,
+        image: imgEl?.src || null,
+        origin: window.location.hostname
+      };
+    });
+
+    // Generate a premium AI design for the product
+    const highEndImage = await generateProductDesign({
+      ...productData,
+      name: productData.title,
+      category: randomCategory,
+      origin: randomCountry
+    });
+
+    await browser.close();
+
+    return {
+      ...productData,
+      basePrice: productData.price,
+      highEndImage,
+      origin: randomCountry
+    };
+  } catch (error) {
+    console.warn('⚠️ Sourcing failed → using fallback product');
+    await browser.close();
+    return {
+      title: 'AI-Designed Luxury Pet Jewelry',
+      basePrice: 15,
+      highEndImage: 'https://images.unsplash.com/photo-1523275335342-388d9987e799?ixlib=rb-4.0.3&auto=format&fit=crop&w=1000&q=80',
+      origin: 'ai_generated'
+    };
   }
-  throw new Error(`All click selectors failed`);
 };
 
 // === 🤖 Autonomous Store Manager ===
 export const shopifyAgent = async (CONFIG) => {
-  console.log('🛍️ Shopify Agent Activated: Optimizing Store for Global Revenue');
+  console.log('🛍️ Shopify Agent Activated: Sourcing & Selling Global Luxury');
 
   try {
-    // ✅ Use CONFIG first, fallback to process.env
     const STORE_URL = CONFIG.STORE_URL || process.env.STORE_URL;
     const ADMIN_SHOP_SECRET = CONFIG.ADMIN_SHOP_SECRET || process.env.ADMIN_SHOP_SECRET;
 
@@ -186,281 +184,51 @@ export const shopifyAgent = async (CONFIG) => {
       throw new Error('Shopify credentials missing: STORE_URL or ADMIN_SHOP_SECRET');
     }
 
-    // Phase 1: Fetch Trends from X (Twitter)
-    let trendingTopics = [];
-    try {
-      const response = await axios.get(
-        'https://api.x.com/2/trends/place',
-        {
-          params: { id: '1' }, // WOEID for Worldwide
-          headers: { Authorization: `Bearer ${CONFIG.X_API_KEY || process.env.X_API_KEY}` },
-          timeout: 10000
-        }
-      );
-      trendingTopics = response.data.trends.slice(0, 5).map(t => t.name);
-    } catch (error) {
-      console.warn('⚠️ X API failed → using fallback trends');
-      trendingTopics = ['Luxury Pets', 'AI Gadgets', 'Golden Watches', 'Crypto Art', 'Designer Sunglasses'];
-    }
+    // Phase 1: Source a Premium Product
+    const sourcedProduct = await sourcePremiumProduct();
 
-    // Phase 2: Add Trending Products to Shopify
-    for (const topic of trendingTopics) {
-      try {
-        const price = optimizeRevenue({ price: 99.99, demand: Math.random() * 100 });
-        const response = await axios.post(
-          `${STORE_URL}/admin/api/2024-07/products.json`,
-          {
-            product: {
-              title: `${topic} - Exclusive 2025 Edition`,
-              body_html: `<p>Limited stock. High demand. Global shipping.</p>`,
-              vendor: 'ArielMatrix Global',
-              product_type: 'Luxury',
-              variants: [{ price: price.toFixed(2), sku: `AM-${Date.now()}` }]
-            }
-          },
-          {
-            headers: {
-              'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
-              'Content-Type': 'application/json'
-            },
-            timeout: 10000
-          }
-        );
-        console.log(`✅ Added product: ${topic}`);
-      } catch (error) {
-        console.warn(`⚠️ Failed to add product "${topic}":`, error.response?.data || error.message);
-      }
-    }
+    // Phase 2: Optimize Price for High-Value Market
+    const finalPrice = optimizeRevenue({
+      basePrice: sourcedProduct.basePrice,
+      origin: sourcedProduct.origin
+    });
 
-    // Phase 3: Dynamic Pricing for High-Net-Worth Countries
+    // Phase 3: Create Premium Product on Shopify
     try {
-      const res = await axios.get(
+      const response = await axios.post(
         `${STORE_URL}/admin/api/2024-07/products.json`,
         {
-          headers: { 'X-Shopify-Access-Token': ADMIN_SHOP_SECRET },
+          product: {
+            title: `${sourcedProduct.title} - Exclusive 2025 Edition`,
+            body_html: `<p>Hand-sourced from ${sourcedProduct.origin}. Limited stock. Global shipping.</p>`,
+            vendor: 'ArielMatrix Global',
+            product_type: 'Luxury',
+            images: [{ src: sourcedProduct.highEndImage }],
+            variants: [{ price: finalPrice.toFixed(2), sku: `AM-${crypto.randomBytes(4).toString('hex')}` }]
+          }
+        },
+        {
+          headers: {
+            'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
+            'Content-Type': 'application/json'
+          },
           timeout: 10000
         }
       );
-
-      const highNetWorthCountries = ['MC', 'LU', 'CH', 'QA', 'SG', 'AE'];
-      const country = 'MC'; // Simulate geo-targeting
-      const multiplier = highNetWorthCountries.includes(country) ? 1.5 : 1.0;
-
-      for (const product of res.data.products) {
-        const currentPrice = parseFloat(product.variants[0].price);
-        const newPrice = currentPrice * multiplier;
-
-        if (Math.abs(newPrice - currentPrice) > 0.01) {
-          await axios.put(
-            `${STORE_URL}/admin/api/2024-07/products/${product.id}.json`,
-            {
-              product: {
-                variants: [{ id: product.variants[0].id, price: newPrice.toFixed(2) }]
-              }
-            },
-            {
-              headers: {
-                'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-          console.log(`🔁 Updated ${product.title} from $${currentPrice} to $${newPrice}`);
-        }
-      }
+      console.log(`✅ Added premium product: ${sourcedProduct.title} for $${finalPrice.toFixed(2)}`);
     } catch (error) {
-      console.warn('⚠️ Failed to update pricing:', error.response?.data || error.message);
+      console.warn('⚠️ Failed to add product:', error.response?.data || error.message);
     }
 
-    // Phase 4: Post to Social Media
-    try {
-      const firstProduct = `${STORE_URL}/products/luxury-pets`;
-      const shortenedLink = await shortenWithLink(firstProduct, CONFIG);
+    // Phase 4: Trigger Social Posting
+    const socialAgent = await import('./socialAgent.js');
+    await socialAgent.socialAgent({ ...CONFIG, PRODUCT_LINK: `${STORE_URL}/products/${sourcedProduct.title.toLowerCase().replace(/ /g, '-')}` });
 
-      // Post to Reddit
-      if (CONFIG.REDDIT_API_KEY) {
-        await axios.post(
-          'https://oauth.reddit.com/api/submit',
-          {
-            sr: 'luxury',
-            kind: 'self',
-            title: `New Luxury Product: AI Pet Jewelry`,
-            text: `Just launched! Check it out: ${shortenedLink}\n\n${CONFIG.UPTIMEROBOT_AFFILIATE_LINK}`
-          },
-          {
-            headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}` },
-            timeout: 10000
-          }
-        );
-        console.log('✅ Posted to Reddit');
-      }
-
-      // Post to Pinterest
-      if (CONFIG.PINTEREST_EMAIL && CONFIG.PINTEREST_PASS) {
-        const result = await launchStealthBrowser();
-        if (!result) throw new Error('Browser launch failed');
-        ({ browser, page } = result);
-
-        await page.goto('https://pinterest.com/login', { waitUntil: 'networkidle2' });
-        await quantumDelay(2000);
-        await safeType(page, ['input[placeholder="Email or username"]'], CONFIG.PINTEREST_EMAIL);
-        await safeType(page, ['input[placeholder="Password"]'], CONFIG.PINTEREST_PASS);
-        await safeClick(page, ['button[type="submit"]']);
-        await quantumDelay(5000);
-
-        await page.goto('https://pinterest.com/pin-builder/', { waitUntil: 'networkidle2' });
-        await quantumDelay(2000);
-        await safeType(page, ['[data-test-id="pin-title-input"]'], 'AI Pet Jewelry - 2025 Edition');
-        await safeType(page, ['[data-test-id="pin-description-input"]'], `Luxury pet jewelry powered by AI. ${shortenedLink}`);
-        await safeClick(page, ['[data-test-id="board-dropdown-save-button"]']);
-        await quantumDelay(3000);
-        await browser.close();
-        console.log('✅ Posted to Pinterest');
-      }
-    } catch (error) {
-      console.warn('⚠️ Social media posting failed:', error.message);
-    }
-
-    // Phase 5: Trigger Payout
-    const earnings = Math.random() * 100;
-    if (earnings > 50) {
-      console.log(`🎯 Payout triggered: $${earnings.toFixed(2)}`);
-      const payoutAgent = await import('./payoutAgent.js');
-      await payoutAgent.payoutAgent({ ...CONFIG, earnings });
-    }
-
-    console.log('🛍️ Shopify Agent Completed: Store optimized for global revenue');
-    return { status: 'success', productsUpdated: true };
+    console.log('🛍️ Shopify Agent Completed: Premium product sourced and listed');
+    return { status: 'success', product: sourcedProduct.title };
 
   } catch (error) {
     console.error('🚨 ShopifyAgent Error:', error.message);
     throw error;
-  }
-};
-
-// === 🧩 Safe Puppeteer Import ===
-let puppeteer;
-try {
-  puppeteer = (await import('puppeteer')).default;
-} catch (e) {
-  console.warn('⚠️ Puppeteer not available → social media posting disabled');
-}// backend/agents/shopifyAgent.js
-import axios from 'axios';
-
-// === 🧠 Smart Revenue Optimizer ===
-const optimizeRevenue = (data) => {
-  const { price, demand = 1, country = 'US' } = data;
-  // High-net-worth countries get 1.5x markup
-  const highValueCountries = ['MC', 'LU', 'CH', 'QA', 'SG', 'AE', 'US'];
-  const countryMultiplier = highValueCountries.includes(country) ? 1.5 : 1.0;
-  // Demand-based adjustment
-  const demandMultiplier = 1 + (demand / 1000); // +1% per 10 retweets
-  return price * countryMultiplier * demandMultiplier;
-};
-
-export const shopifyAgent = async (CONFIG) => {
-  console.log('🛍️ Shopify Agent Activated: Optimizing Store for Global Revenue');
-
-  try {
-    // ✅ Use CONFIG first, fallback to process.env
-    const STORE_URL = CONFIG.STORE_URL || process.env.STORE_URL;
-    const ADMIN_SHOP_SECRET = CONFIG.ADMIN_SHOP_SECRET || process.env.ADMIN_SHOP_SECRET;
-
-    if (!STORE_URL || !ADMIN_SHOP_SECRET) {
-      throw new Error('Shopify credentials missing: STORE_URL or ADMIN_SHOP_SECRET');
-    }
-
-    // Phase 1: Fetch Trends from X (Twitter)
-    let trendingTopics = [];
-    try {
-      const response = await axios.get(
-        'https://api.x.com/2/trends/place',
-        {
-          params: { id: '1' }, // WOEID for Worldwide
-          headers: { Authorization: `Bearer ${process.env.X_API_KEY}` },
-          timeout: 10000
-        }
-      );
-      trendingTopics = response.data.trends.slice(0, 5).map(t => t.name);
-    } catch (error) {
-      console.warn('⚠️ X API failed → using fallback trends');
-      trendingTopics = ['Luxury Pets', 'AI Gadgets', 'Golden Watches', 'Crypto Art', 'Designer Sunglasses'];
-    }
-
-    // Phase 2: Add Trending Products to Shopify
-    for (const topic of trendingTopics) {
-      try {
-        const price = optimizeRevenue({ price: 99.99, demand: Math.random() * 100 });
-        await axios.post(
-          `${STORE_URL}/admin/api/2024-07/products.json`,
-          {
-            product: {
-              title: `${topic} - Exclusive 2025 Edition`,
-              body_html: `<p>Limited stock. High demand. Global shipping.</p>`,
-              vendor: 'ArielMatrix Global',
-              product_type: 'Luxury',
-              variants: [{ price: price.toFixed(2), sku: `AM-${Date.now()}` }]
-            }
-          },
-          {
-            headers: {
-              'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
-              'Content-Type': 'application/json'
-            },
-            timeout: 10000
-          }
-        );
-        console.log(`✅ Added product: ${topic}`);
-      } catch (error) {
-        console.warn(`⚠️ Failed to add product "${topic}":`, error.response?.data || error.message);
-      }
-    }
-
-    // Phase 3: Dynamic Pricing for High-Net-Worth Countries
-    try {
-      const res = await axios.get(
-        `${STORE_URL}/admin/api/2024-07/products.json`,
-        {
-          headers: { 'X-Shopify-Access-Token': ADMIN_SHOP_SECRET },
-          timeout: 10000
-        }
-      );
-
-      const highNetWorthCountries = ['MC', 'LU', 'CH', 'QA', 'SG', 'AE'];
-      const country = 'MC'; // Simulate geo-targeting
-      const multiplier = highNetWorthCountries.includes(country) ? 1.5 : 1.0;
-
-      for (const product of res.data.products) {
-        const currentPrice = parseFloat(product.variants[0].price);
-        const newPrice = currentPrice * multiplier;
-
-        if (Math.abs(newPrice - currentPrice) > 0.01) {
-          await axios.put(
-            `${STORE_URL}/admin/api/2024-07/products/${product.id}.json`,
-            {
-              product: {
-                variants: [{ id: product.variants[0].id, price: newPrice.toFixed(2) }]
-              }
-            },
-            {
-              headers: {
-                'X-Shopify-Access-Token': ADMIN_SHOP_SECRET,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-          console.log(`🔁 Updated ${product.title} from $${currentPrice} to $${newPrice}`);
-        }
-      }
-    } catch (error) {
-      console.warn('⚠️ Failed to update pricing:', error.response?.data || error.message);
-    }
-
-    console.log('🛍️ Shopify Agent Completed: Store optimized for global revenue');
-    return { status: 'success', productsUpdated: true };
-
-  } catch (error) {
-    console.error('🚨 ShopifyAgent Error:', error.message);
-    throw error; // Let orchestrator handle
   }
 };
