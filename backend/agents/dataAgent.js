@@ -12,12 +12,39 @@ const quantumDelay = (ms) => new Promise(resolve => {
     setTimeout(resolve, ms + jitter);
 });
 
-// === 📊 Data Agent (Revenue-Optimized) ===
+// === 📊 Data Agent (Revenue-Optimized with Zero-Cost Considerations) ===
 /**
  * @function dataAgent
  * @description Gathers market data from news and weather APIs, generates signals,
  * and distributes them via various platforms after shortening the link.
  * Integrates with browserManager for Linkvertise interaction and a global logger.
+ *
+ * Cost Considerations:
+ * - News API (newsapi.org): Offers a free developer tier (e.g., 500 requests/day).
+ * For high volume or commercial use, a paid plan is required.
+ * Zero-cost alternative: Implement web scraping for news headlines from public,
+ * reputable news websites using browserManager. This is more complex and brittle.
+ * - OpenWeatherMap API: Offers a free tier (e.g., 1,000,000 calls/month).
+ * For very high usage, a paid plan is required.
+ * Zero-cost alternative: Implement web scraping for weather data from a public
+ * weather website (e.g., national weather service) using browserManager.
+ * - Link Shorteners (Short.io, AdFly, Linkvertise):
+ * - Short.io & AdFly: Typically have free tiers or operate on a revenue-sharing model.
+ * - Linkvertise: Generates revenue for the user by serving ads, so it's a "cost"
+ * to the user's audience (ad exposure) but a revenue source for the user,
+ * and the automation itself is free (just compute).
+ * The agent is designed to fall back to the original long URL if shortening fails,
+ * ensuring functionality even if preferred shorteners are unavailable or costly.
+ * - Reddit API: Generally free for standard use within reasonable rate limits.
+ * - Axios/Crypto: Free, open-source Node.js libraries.
+ * - Redis: Can be run locally for free, or accessed via paid cloud services.
+ * To keep this agent's operation truly zero-cost on the infrastructure side,
+ * consider self-hosting Redis or using a free tier provided by cloud providers.
+ * - Browser Automation (Puppeteer via browserManager): The act of running a browser
+ * for automation consumes local compute resources (CPU, RAM) but does not incur
+ * direct API costs for the automation itself, making it a "zero-cost" method
+ * for interacting with websites that lack free APIs.
+ *
  * @param {object} CONFIG - The global configuration object, including API keys and URLs.
  * @param {object} logger - The global logger instance for consistent logging.
  * @param {object} [redisClient=null] - Optional Redis client for caching data.
@@ -38,14 +65,14 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
             axios.get('https://newsapi.org/v2/top-headlines', {
                 params: { country: 'us', category: 'business', pageSize: 20 },
                 headers: { 'Authorization': `Bearer ${CONFIG.NEWS_API_KEY}` },
-                timeout: 10000
+                timeout: 10000 // Timeout for API call
             }).catch(error => {
                 logger.warn(`⚠️ News API fetch failed: ${error.message}. Continuing without news data.`);
                 return { data: { articles: [] } }; // Return empty articles on error
             }),
             axios.get('https://api.openweathermap.org/data/2.5/weather', {
                 params: { q: CONFIG.WEATHER_LOCATION || 'London', appid: CONFIG.WEATHER_API_KEY, units: 'metric' }, // Added configurable location, units
-                timeout: 10000
+                timeout: 10000 // Timeout for API call
             }).catch(error => {
                 logger.warn(`⚠️ Weather API fetch failed: ${error.message}. Continuing without weather data.`);
                 return { data: {} }; // Return empty object on error
@@ -56,8 +83,8 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         const sentimentScores = newsRes.data.articles.map(article => {
             const title = (article.title || '').toLowerCase();
             const desc = (article.description || '').toLowerCase();
-            const positive = ['rises', 'growth', 'bullish', 'strong', 'increase', 'surge', 'gain', 'positive', 'boom'];
-            const negative = ['falls', 'crash', 'bearish', 'decline', 'drop', 'plunge', 'loss', 'negative', 'slump'];
+            const positive = ['rises', 'growth', 'bullish', 'strong', 'increase', 'surge', 'gain', 'positive', 'boom', 'up', 'recovery'];
+            const negative = ['falls', 'crash', 'bearish', 'decline', 'drop', 'plunge', 'loss', 'negative', 'slump', 'down', 'recession'];
             const pos = positive.filter(w => title.includes(w) || desc.includes(w)).length;
             const neg = negative.filter(w => title.includes(w) || desc.includes(w)).length;
             return { title, score: (pos - neg) / (pos + neg + 1) };
@@ -99,6 +126,7 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         let finalLink = baseSignalLink;
 
         // === PRIMARY: Short.io API ===
+        // Cost: Free tier available, but usage limits apply. High usage may incur cost.
         if (CONFIG.SHORTIO_API_KEY && CONFIG.SHORTIO_USER_ID) {
             try {
                 const response = await axios.post(
@@ -127,6 +155,7 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         }
 
         // === SECONDARY: AdFly API ===
+        // Cost: Free to use, revenue-sharing model.
         if (finalLink === baseSignalLink && CONFIG.ADFLY_API_KEY && CONFIG.ADFLY_USER_ID) {
             try {
                 const response = await axios.get(CONFIG.ADFLY_URL || 'https://api.adf.ly/api.php', {
@@ -149,6 +178,7 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         }
 
         // === TERTIARY: Linkvertise (via Browser Automation) ===
+        // Cost: No direct API cost, only compute for running the browser. Generates revenue for the user.
         if (finalLink === baseSignalLink) {
             let page = null;
             try {
@@ -211,6 +241,7 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         }
 
         // === 📌 Post to Reddit (if API key available) ===
+        // Cost: Generally free for standard API usage within rate limits.
         if (CONFIG.REDDIT_API_KEY) {
             const topSignals = signals.map(s => `📊 ${s.type} | ${s.value} | Confidence: ${s.confidence}`).join('\n');
             const postTitle = `AI Market Signals: Daily Update for ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -226,7 +257,7 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
                     },
                     {
                         headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}`, 'User-Agent': 'ArielMatrixDataAgent/1.0' },
-                        timeout: 15000
+                        timeout: 15000 // Timeout for API call
                     }
                 );
                 logger.success('✅ Posted market signals to Reddit.');
@@ -241,7 +272,7 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         }
 
         // === 💸 Trigger Payout ===
-        // Simulate earnings based on signal generation and link shortening success
+        // Cost: This triggers your internal payout mechanism, not an external service cost.
         const earnings = signals.length > 0 && finalLink !== baseSignalLink ? Math.random() * 15 + 3 : 0; // Adjusted earnings potential
         if (earnings > 0) {
             logger.info(`🎯 Payout triggered: $${earnings.toFixed(2)}`);
@@ -252,11 +283,12 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         }
 
         // === 🗄️ Save to Redis ===
+        // Cost: Can be run locally for free. Cloud services may incur cost.
         if (redisClient) {
             try {
-                await redisClient.set('data:news', JSON.stringify(newsRes.data), { EX: 3600 });
-                await redisClient.set('data:weather', JSON.stringify(weatherRes.data), { EX: 3600 });
-                await redisClient.set('data:signals', JSON.stringify(signals), { EX: 3600 });
+                await redisClient.set('data:news', JSON.stringify(newsRes.data), { EX: 3600 }); // Expires in 1 hour
+                await redisClient.set('data:weather', JSON.stringify(weatherRes.data), { EX: 3600 }); // Expires in 1 hour
+                await redisClient.set('data:signals', JSON.stringify(signals), { EX: 3600 }); // Expires in 1 hour
                 logger.info('✅ Saved data and signals to Redis.');
             } catch (redisError) {
                 logger.error(`🚨 Failed to save to Redis: ${redisError.message}`);
