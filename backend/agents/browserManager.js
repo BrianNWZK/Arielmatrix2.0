@@ -2,6 +2,15 @@
 import puppeteer from 'puppeteer';
 import { chromium as playwrightChromium } from 'playwright';
 
+// Generate simple UUID without additional dependencies
+function simpleUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // Global browser instances and page pools
 let puppeteerBrowser = null;
 let playwrightBrowser = null;
@@ -17,242 +26,251 @@ const AUTONOMY_LEVELS = {
 };
 
 /**
- * Enhanced stealth injection with evolutionary adaptation
+ * Enhanced stealth injection without external plugins
  */
-const injectPuppeteerStealthScripts = async (page, logger, stealthProfile = 0) => {
-    const stealthVariants = [
-        async () => {
-            await page.evaluateOnNewDocument(() => {
-                // Base stealth profile (original implementation)
-                Object.defineProperty(navigator, 'webdriver', { get: () => false });
-                
-                // ... [rest of original stealth implementation] ...
-            });
-        },
-        async () => {
-            await page.evaluateOnNewDocument(() => {
-                // Alternative profile 1 - different property order and timing
-                delete window.navigator.__proto__.webdriver;
-                window.navigator = new Proxy(navigator, {
-                    get: (target, prop) => prop === 'webdriver' ? false : target[prop]
-                });
-                
-                // ... [alternative stealth implementations] ...
-            });
-        }
-    ];
+const injectPuppeteerStealthScripts = async (page, logger) => {
+  try {
+    await page.evaluateOnNewDocument(() => {
+      // Basic webdriver concealment
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+        configurable: true
+      });
 
-    try {
-        await stealthVariants[stealthProfile % stealthVariants.length]();
-        logger.debug(`Injected stealth profile ${stealthProfile} into new document context.`);
-    } catch (error) {
-        logger.warn(`⚠️ Failed to inject stealth scripts: ${error.message}`);
-    }
+      // Chrome detection evasion
+      if (window.chrome === undefined) {
+        window.chrome = {};
+      }
+      if (window.chrome.runtime === undefined) {
+        window.chrome.runtime = {};
+      }
+
+      // Plugins and mimeTypes
+      const originalPlugins = navigator.plugins;
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => originalPlugins || [{
+          name: 'Chrome PDF Plugin',
+          filename: 'internal-pdf-viewer',
+          description: 'Portable Document Format'
+        }],
+        configurable: true
+      });
+
+      // Screen properties
+      const screenProps = ['width', 'height', 'availWidth', 'availHeight', 'colorDepth', 'pixelDepth'];
+      screenProps.forEach(prop => {
+        Object.defineProperty(window.screen, prop, {
+          get: () => prop.includes('Height') ? 1080 : 1920,
+          configurable: true
+        });
+      });
+
+      // Notification permission
+      Object.defineProperty(Notification, 'permission', {
+        get: () => 'denied',
+        configurable: true
+      });
+    });
+    logger.debug('Injected stealth scripts successfully');
+  } catch (error) {
+    logger.warn(`Stealth injection failed: ${error.message}`);
+  }
 };
 
 /**
- * Autonomous Browser Manager with cognitive capabilities
+ * Autonomous Browser Manager
  */
 const browserManager = {
-    _config: null,
-    _logger: null,
-    _browserDriver: 'puppeteer',
-    _autonomyLevel: AUTONOMY_LEVELS.BASIC,
-    _learningModel: null,
+  _config: null,
+  _logger: null,
+  _browserDriver: 'puppeteer',
+  _autonomyLevel: AUTONOMY_LEVELS.BASIC,
+  _operationHistory: new Map(),
 
-    // Cognitive layer for autonomous decision making
-    _cognitiveLayer: {
-        operationRegistry: new Map(),
-        environmentMetrics: {
-            resourceUsage: {},
-            successRates: {},
-            threatLevel: 0
-        },
-        
-        async analyzeOperation(outcome, metadata) {
-            const opType = metadata.operationType || 'unknown';
-            if (!this.operationRegistry.has(opType)) {
-                this.operationRegistry.set(opType, []);
-            }
-            
-            this.operationRegistry.get(opType).push({
-                timestamp: Date.now(),
-                outcome,
-                metadata
-            });
-            
-            this._updateEnvironmentMetrics(outcome, metadata);
-        },
-        
-        _updateEnvironmentMetrics(outcome, metadata) {
-            // Update success rates
-            const opType = metadata.operationType || 'unknown';
-            if (!this.environmentMetrics.successRates[opType]) {
-                this.environmentMetrics.successRates[opType] = { successes: 0, failures: 0 };
-            }
-            
-            if (outcome.success) {
-                this.environmentMetrics.successRates[opType].successes++;
-            } else {
-                this.environmentMetrics.successRates[opType].failures++;
-            }
-            
-            // Update resource usage patterns
-            if (metadata.resources) {
-                this.environmentMetrics.resourceUsage[Date.now()] = metadata.resources;
-            }
-        },
-        
-        getOptimalStrategy(operationType) {
-            // Analyze historical data to determine best approach
-            const history = this.operationRegistry.get(operationType) || [];
-            const successRate = this.environmentMetrics.successRates[operationType] || { successes: 0, failures: 0 };
-            
-            return {
-                preferredDriver: history.length > 10 && 
-                    (successRate.successes / (successRate.successes + successRate.failures)) > 0.8 ? 
-                    this._browserDriver : 'puppeteer',
-                stealthProfile: Math.floor(Math.random() * 2), // Rotate between profiles
-                timeout: 60000 // Default timeout
-            };
+  /**
+   * Initialize with configuration
+   */
+  async init(config, logger) {
+    this._config = {
+      ...config,
+      autonomy: {
+        enabled: config.autonomyEnabled || false,
+        level: Math.min(config.autonomyLevel || AUTONOMY_LEVELS.BASIC, AUTONOMY_LEVELS.AUTONOMOUS)
+      }
+    };
+    this._logger = logger;
+    this._browserDriver = config.browserDriver || 'puppeteer';
+
+    const launchOptions = {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--window-size=1920,1080'
+      ]
+    };
+
+    if (this._browserDriver === 'puppeteer') {
+      puppeteerBrowser = await puppeteer.launch({
+        ...launchOptions,
+        ignoreDefaultArgs: ['--enable-automation']
+      });
+    } else {
+      playwrightBrowser = await playwrightChromium.launch(launchOptions);
+    }
+  },
+
+  /**
+   * Get a new page with autonomous features
+   */
+  async getNewPage() {
+    if (!puppeteerBrowser && !playwrightBrowser) {
+      throw new Error('Browser not initialized');
+    }
+
+    let page;
+    if (this._browserDriver === 'puppeteer') {
+      page = puppeteerPagePool.pop() || await puppeteerBrowser.newPage();
+      await page.setViewport({ width: 1920, height: 1080 });
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      await injectPuppeteerStealthScripts(page, this._logger);
+    } else {
+      const context = await playwrightBrowser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1920, height: 1080 }
+      });
+      page = await context.newPage();
+    }
+
+    this._trackOperation('page_creation', true);
+    return page;
+  },
+
+  /**
+   * Close page and manage resources
+   */
+  async closePage(page) {
+    if (!page || page.isClosed()) return;
+
+    try {
+      if (this._browserDriver === 'puppeteer') {
+        if (puppeteerPagePool.length < MAX_PAGES) {
+          await page.goto('about:blank');
+          puppeteerPagePool.push(page);
+        } else {
+          await page.close();
         }
-    },
+      } else {
+        await page.context().close();
+      }
+      this._trackOperation('page_close', true);
+    } catch (error) {
+      this._trackOperation('page_close', false, error.message);
+      this._logger.warn(`Page close failed: ${error.message}`);
+    }
+  },
 
-    /**
-     * Enhanced initialization with autonomy support
-     */
-    async init(config, logger) {
-        this._config = {
-            ...config,
-            autonomySettings: {
-                enabled: config.autonomyEnabled || false,
-                maxSelfModificationLevel: config.maxSelfModification || 1,
-                learningRate: config.learningRate || 0.1
-            }
-        };
-        
-        this._logger = logger;
-        this._browserDriver = config.browserDriver || 'puppeteer';
-        this._autonomyLevel = config.autonomyLevel || AUTONOMY_LEVELS.BASIC;
-        
-        // Initialize cognitive layer if autonomy is enabled
-        if (this._autonomyLevel > AUTONOMY_LEVELS.BASIC) {
-            this._initCognitiveLayer();
-        }
-
-        // ... [rest of original init implementation] ...
-    },
-
-    _initCognitiveLayer() {
-        this._logger.info('Initializing cognitive layer for autonomous operation');
-        // Load any saved learning models or state
-        // Initialize continuous learning processes
-    },
-
-    /**
-     * Enhanced page acquisition with autonomous decision making
-     */
-    async getNewPage() {
-        if (this._autonomyLevel >= AUTONOMY_LEVELS.ADAPTIVE) {
-            const environment = await this._evaluateEnvironment();
-            if (environment.threatLevel > 5) {
-                this._logger.warn('High threat environment detected. Adjusting strategy.');
-                await this._rotateStealthProfile();
-            }
-        }
-
-        // ... [rest of original getNewPage implementation] ...
-    },
-
-    async _evaluateEnvironment() {
-        return {
-            resourceAvailability: this._assessResources(),
-            threatLevel: this._evaluateSecurityPosture(),
-            operationalCapacity: this._checkHealthStatus()
-        };
-    },
-
-    async _rotateStealthProfile() {
-        // Implement stealth profile rotation logic
-        this._currentStealthProfile = (this._currentStealthProfile + 1) % 2;
-    },
-
-    /**
-     * Enhanced interaction methods with autonomous learning
-     */
-    async safeClick(page, selectors) {
-        const operationId = `click_${selectors.join('_').substring(0, 20)}`;
-        const startTime = Date.now();
-        
+  /**
+   * Autonomous interaction methods
+   */
+  async safeClick(page, selectors) {
+    const operationId = simpleUUID();
+    try {
+      for (const selector of selectors) {
         try {
-            // ... [original safeClick implementation] ...
-            
-            // Log successful operation
-            this._cognitiveLayer.analyzeOperation(
-                { success: true, duration: Date.now() - startTime },
-                { operationType: 'click', selectors, resources: await this._getResourceUsage() }
-            );
-            
-            return true;
+          await page.waitForSelector(selector, { timeout: 8000 });
+          await page.click(selector);
+          this._trackOperation('click', true, { selector });
+          return true;
         } catch (error) {
-            // Log failed operation
-            this._cognitiveLayer.analyzeOperation(
-                { success: false, error: error.message, duration: Date.now() - startTime },
-                { operationType: 'click', selectors, resources: await this._getResourceUsage() }
-            );
-            
-            if (this._autonomyLevel >= AUTONOMY_LEVELS.ADAPTIVE) {
-                this._logger.info('Attempting autonomous recovery...');
-                return this._autonomousRecovery(page, 'click', selectors);
-            }
-            
-            throw error;
+          continue;
         }
-    },
+      }
+      throw new Error('All click selectors failed');
+    } catch (error) {
+      this._trackOperation('click', false, { error: error.message });
+      if (this._autonomyLevel >= AUTONOMY_LEVELS.ADAPTIVE) {
+        return this._attemptRecovery(page, 'click', selectors);
+      }
+      throw error;
+    }
+  },
 
-    async _autonomousRecovery(page, operationType, ...args) {
-        const strategy = this._cognitiveLayer.getOptimalStrategy(operationType);
-        
-        switch(operationType) {
-            case 'click':
-                return this._attemptAlternativeClick(page, args[0], strategy);
-            case 'type':
-                return this._attemptAlternativeType(page, args[0], args[1], strategy);
-            default:
-                throw new Error(`Unsupported operation for autonomous recovery: ${operationType}`);
+  async safeType(page, selectors, text) {
+    const operationId = simpleUUID();
+    try {
+      for (const selector of selectors) {
+        try {
+          await page.type(selector, text, { delay: 30 + Math.random() * 30 });
+          this._trackOperation('type', true, { selector, length: text.length });
+          return true;
+        } catch (error) {
+          continue;
         }
-    },
+      }
+      throw new Error('All type selectors failed');
+    } catch (error) {
+      this._trackOperation('type', false, { error: error.message });
+      throw error;
+    }
+  },
 
-    async _attemptAlternativeClick(page, selectors, strategy) {
-        // Implement alternative click strategies based on cognitive analysis
-        // Could include:
-        // - Different selector prioritization
-        // - Alternative interaction methods
-        // - Environment adjustments
-    },
-
-    /**
-     * Self-healing capabilities
-     */
-    async _selfHeal() {
-        if (this._autonomyLevel < AUTONOMY_LEVELS.ADAPTIVE) return;
-        
-        const healthStatus = await this._checkHealthStatus();
-        if (healthStatus.score < 0.7) {
-            this._logger.warn('Initiating self-healing procedure...');
-            await this._performSelfRepair();
+  /**
+   * Autonomous recovery system
+   */
+  async _attemptRecovery(page, operationType, ...args) {
+    const recoveryStrategies = {
+      click: async (p, selectors) => {
+        for (const selector of selectors) {
+          try {
+            await p.evaluate(s => {
+              const el = document.querySelector(s);
+              if (el) el.click();
+            }, selector);
+            return true;
+          } catch (error) {
+            continue;
+          }
         }
-    },
+        return false;
+      }
+    };
 
-    async _performSelfRepair() {
-        // Implement autonomous repair procedures:
-        // 1. Resource reallocation
-        // 2. Configuration adjustments
-        // 3. Fallback strategies
-        // 4. Environment reset if needed
-    },
+    if (recoveryStrategies[operationType]) {
+      return recoveryStrategies[operationType](page, ...args);
+    }
+    return false;
+  },
 
-    // ... [rest of original methods with autonomous enhancements] ...
+  /**
+   * Operation tracking for autonomy
+   */
+  _trackOperation(type, success, metadata = {}) {
+    if (!this._operationHistory.has(type)) {
+      this._operationHistory.set(type, []);
+    }
+    this._operationHistory.get(type).push({
+      timestamp: Date.now(),
+      success,
+      metadata
+    });
+  },
+
+  /**
+   * Cleanup
+   */
+  async shutdown() {
+    if (puppeteerBrowser) await puppeteerBrowser.close();
+    if (playwrightBrowser) await playwrightBrowser.close();
+  }
 };
 
+// Named exports
+export const getNewPage = browserManager.getNewPage.bind(browserManager);
+export const closePage = browserManager.closePage.bind(browserManager);
+export const safeClick = browserManager.safeClick.bind(browserManager);
+export const safeType = browserManager.safeType.bind(browserManager);
+
+// Default export
 export default browserManager;
