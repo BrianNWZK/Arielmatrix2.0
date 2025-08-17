@@ -9,8 +9,9 @@ import { initializeApp } from 'firebase/app'; // Firebase SDK
 import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, query, getDocs } from 'firebase/firestore';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
 
-// Import the API Scout Agent (assuming its path)
-import { apiScoutAgent, _updateRenderEnvWithKeys as persistRenderEnvKeys } from './backend/agents/apiScoutAgent.js';
+// === 🔐 Fix the import path ===
+// The agents are in './agents/', not './backend/agents/'
+import { apiScoutAgent, _updateRenderEnvWithKeys as persistRenderEnvKeys } from './agents/apiScoutAgent.js';
 
 // --- Global Variables (Canvas Specific) ---
 // These are provided by the Canvas environment.
@@ -735,4 +736,3 @@ app.listen(PORT, async () => {
     // Initialize Firebase once the server starts, before any scheduled or manual runs
     await initializeFirebase(logger);
 });
-
