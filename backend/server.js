@@ -1,476 +1,795 @@
-// backend/agents/cryptoAgent.js
-import Web3 from 'web3'; // Used for address validation
-import axios from 'axios';
+// server.js - Autonomous Revenue System with Live Dashboard
+import express from 'express';
+import cors from 'cors';
 import crypto from 'crypto';
-import { ethers } from 'ethers'; // For wallet generation, signing, and contract interaction
-import { fileURLToPath } from 'url'; // For __dirname in ESM
-import { dirname } from 'path';
+import fs from 'fs/promises'; // Use fs/promises for async file operations
+import { WebSocketServer } from 'ws';
+import puppeteer from 'puppeteer';
+import axios from 'axios'; // For Render API interaction
 
-// For __dirname equivalent in ES Modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Import all agents (ensure they are default exports from their files)
+import apiScoutAgent from './agents/apiScoutAgent.js';
+import shopifyAgent from './agents/shopifyAgent.js';
+import cryptoAgent from './agents/cryptoAgent.js';
+import externalPayoutAgentModule from './agents/payoutAgent.js'; // To avoid naming conflict with internal PayoutAgent class
 
-// Minimal ABI for PancakeSwapRouter02 for swapExactETHForTokens
-// This ABI is specific to the function we intend to call to minimize size.
-const PANCAKESWAP_ROUTER_ABI = [
-    "function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)"
-];
+// --- Configuration ---
+// Read from environment variables, provide robust defaults or placeholders
+const CONFIG = {
+    AI_EMAIL: process.env.AI_EMAIL || 'ai-agent@example.com',
+    AI_PASSWORD: process.env.AI_PASSWORD || 'StrongP@ssw0rd',
+    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN || 'PLACEHOLDER_RENDER_API_TOKEN',
+    RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID || 'PLACEHOLDER_RENDER_SERVICE_ID',
+    RENDER_API_BASE_URL: process.env.RENDER_API_BASE_URL || 'https://api.render.com/v1', // Default Render API URL
+    CYCLE_INTERVAL: 600000, // 10 minutes (ms)
+    MAX_CYCLE_TIME: 300000, // 5 minutes max (ms) - This is a soft limit for agent run, not a hard timeout for the cycle
+    HEALTH_REPORT_INTERVAL: 12, // Number of cycles (every 2 hours if cycle is 10 min)
+    MAX_HISTORICAL_DATA: 4320, // 30 days of data (at 10-min intervals)
+    DASHBOARD_UPDATE_INTERVAL: 5000, // 5 seconds for live dashboard updates
+    PAYOUT_THRESHOLD_USD: 100, // Payout if accumulated revenue exceeds this amount
+    PAYOUT_PERCENTAGE: 0.8 // Percentage of earnings above threshold to payout
+};
 
-// Well-known PancakeSwap Router address on BSC Mainnet
-const PANCAKESWAP_ROUTER_ADDRESS = '0x10ED43C718714eb63d5aA57B78B54704E256024E';
+// --- Enhanced Logger ---
+const logger = {
+    info: (...args) => console.log(`[${new Date().toISOString()}] INFO:`, ...args),
+    warn: (...args) => console.warn(`[${new Date().toISOString()}] WARN:`, ...args),
+    error: (...args) => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
+    success: (...args) => console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args),
+    debug: (...args) => process.env.NODE_ENV === 'development' ?
+        console.log(`[${new Date().toISOString()}] DEBUG:`, ...args) : null,
+};
 
-// Common token addresses on BSC (for conceptual swaps)
-const WBNB_ADDRESS = '0xbb4CdB9eD5B5D88B9aC1cBaA24a0d52FeqE7EbC4'; // Wrapped BNB
-const BUSD_ADDRESS = '0xe9e7CEA3a59806eADb097E5fDd0Fb0d2b1fCcc4c'; // BUSD Stablecoin
+// --- Global Error Handlers (CRUCIAL FOR DEBUGGING DEPLOYMENT ISSUES) ---
+process.on('unhandledRejection', (reason, promise) => {
+    logger.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+    // Optionally, you might want to restart the process or notify.
+    // For a server that needs to stay alive, avoid immediate process.exit() here unless absolutely necessary.
+    // However, for deployment issues, it's good to log and let the platform restart.
+    // If you explicitly want to exit on unhandled rejection:
+    // process.exit(1);
+});
 
-/**
- * @namespace CryptoAgent
- * @description Manages cryptocurrency assets, analyzes markets, executes real on-chain trades,
- * and handles autonomous self-funding awareness on the Binance Smart Chain (BSC).
- */
-const cryptoAgent = {
-    // Internal references for config and logger, set during the run method
-    _config: null,
-    _logger: null,
-    _web3Provider: null, // Store Web3 provider for efficiency
+process.on('uncaughtException', (error) => {
+    logger.error('🚨 Uncaught Exception:', error);
+    // This indicates a synchronous error that was not caught.
+    // For a server, perform synchronous cleanup if possible (e.g., closing open files)
+    // Then, it's usually best to exit to allow the process manager (Render) to restart.
+    // Since browserManager.shutdown() is async, we'll try a best-effort, then exit.
+    browserManager.shutdown().then(() => {
+        logger.info('Browser manager shut down gracefully after uncaught exception.');
+        process.exit(1);
+    }).catch(e => {
+        logger.error('Error during browser shutdown on uncaught exception:', e);
+        process.exit(1); // Exit even if shutdown fails
+    });
+});
 
-    /**
-     * Introduces a quantum-jittered delay to simulate human-like interaction.
-     * @param {number} ms - The base delay in milliseconds.
-     * @returns {Promise<void>}
-     */
-    _quantumDelay(ms) {
-        return new Promise(resolve => {
-            const jitter = crypto.randomInt(800, 3000); // Add random jitter for human-like delays
-            setTimeout(resolve, ms + jitter);
-        });
-    },
 
-    /**
-     * Validates and sanitizes crypto configuration. Ensures wallets are valid addresses.
-     * @param {object} configToValidate - The configuration object to validate.
-     * @returns {object} Cleaned and validated crypto config subset.
-     * @throws {Error} If critical configuration is invalid.
-     */
-    _validateCryptoConfig(configToValidate) {
-        const PRIVATE_KEY = configToValidate.PRIVATE_KEY;
-        const GAS_WALLET = configToValidate.GAS_WALLET;
-        const rawUsdtWallets = (configToValidate.USDT_WALLETS || '').split(',').map(w => w.trim());
-        const USDT_WALLETS = rawUsdtWallets.filter(w => Web3.utils.isAddress(w));
+// --- Tracking Variables ---
+const agentActivityLog = []; // Stores recent agent activity logs
+const errorLog = []; // Stores recent system errors
+const historicalRevenueData = []; // Stores periodic revenue snapshots for trend analysis
+const cycleTimes = []; // Stores durations of each cycle for performance metrics
+let cycleCount = 0; // Total cycles executed
+let successfulCycles = 0; // Number of successful cycles
+let lastCycleStats = {}; // Detailed stats of the last completed cycle
+let lastCycleStart = 0; // Timestamp of the last cycle's start
+let lastDataUpdate = Date.now(); // Timestamp of the last data update for dashboard
+let isRunning = false; // Flag to prevent multiple continuous operation loops
+const connectedClients = new Set(); // WebSocket clients for dashboard updates
 
-        if (USDT_WALLETS.length === 0 && rawUsdtWallets.length > 0) {
-            this._logger.warn(`⚠️ All provided USDT_WALLETS (${rawUsdtWallets.join(', ')}) were invalid after filtering.`);
-        } else if (USDT_WALLETS.length > 0) {
-            this._logger.info(`✅ Valid USDT_WALLETS: ${USDT_WALLETS.map(w => w.slice(0, 10) + '...').join(', ')}`);
-        }
+// --- Browser Manager ---
+// This is critical for Puppeteer operations and needs to be accessible by agents
+const browserManager = {
+    browser: null,
+    activePages: new Set(),
+    lastCleanup: 0,
+    browserLaunchArgs: [ // Standard arguments for Puppeteer stability in container environments
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-zygote',
+        '--disable-gpu'
+    ],
 
-        const BSC_NODE = configToValidate.BSC_NODE || 'https://bsc-dataseed.binance.org'; // Default public node
-
-        // Check PRIVATE_KEY first
-        if (!PRIVATE_KEY || String(PRIVATE_KEY).includes('PLACEHOLDER')) {
-            throw new Error('Missing or placeholder PRIVATE_KEY. This is critical for signing transactions.');
-        }
-
-        // Derive wallet from PRIVATE_KEY to validate GAS_WALLET
-        let derivedGasWallet = '';
-        try {
-            const walletFromPk = new ethers.Wallet(PRIVATE_KEY);
-            derivedGasWallet = walletFromPk.address;
-        } catch (e) {
-            throw new Error(`Invalid PRIVATE_KEY format: ${e.message}`);
-        }
-
-        if (!GAS_WALLET || String(GAS_WALLET).includes('PLACEHOLDER') || !Web3.utils.isAddress(GAS_WALLET) || GAS_WALLET !== derivedGasWallet) {
-            this._logger.warn(`⚙️ GAS_WALLET in config (${GAS_WALLET}) does not match derived from PRIVATE_KEY (${derivedGasWallet}). Using derived.`);
-            configToValidate.GAS_WALLET = derivedGasWallet; // Update config in place for consistency
-        }
-
-        if (USDT_WALLETS.length === 0) {
-            this._logger.warn('No valid USDT_WALLETS provided. Will attempt to derive if PRIVATE_KEY exists.');
-            // This case is handled by remediation, so not a hard error here.
-        }
-
-        return {
-            PRIVATE_KEY: configToValidate.PRIVATE_KEY, // Use the (potentially updated) private key
-            GAS_WALLET: configToValidate.GAS_WALLET, // Use the (potentially updated) gas wallet
-            USDT_WALLETS,
-            BSC_NODE
-        };
-    },
-
-    /**
-     * Proactively remediates missing/placeholder crypto configuration,
-     * including generating new private keys and deriving wallets.
-     * @param {string} keyName - The name of the missing configuration key.
-     * @returns {Promise<object|null>} An object containing the remediated key(s) if successful, null otherwise.
-     */
-    async _remediateMissingCryptoConfig(keyName) {
-        this._logger.info(`\n⚙️ Initiating crypto remediation for missing/placeholder key: ${keyName}`);
-        let keysToUpdate = {};
-
-        try {
-            switch (keyName) {
-                case 'PRIVATE_KEY': {
-                    const newWallet = ethers.Wallet.createRandom();
-                    keysToUpdate.PRIVATE_KEY = newWallet.privateKey;
-                    keysToUpdate.GAS_WALLET = newWallet.address; // Also remediate GAS_WALLET
-                    // Derive a few USDT wallets from the newly generated private key
-                    const derivedUsdtWallets = [];
-                    for (let i = 0; i < 3; i++) {
-                        const derivedPath = `m/44'/60'/0'/0/${i}`; // Standard BIP44 path for external accounts
-                        const derivedWallet = new ethers.Wallet(ethers.utils.HDNode.fromMnemonic(ethers.Wallet.createRandom().mnemonic.phrase).derivePath(derivedPath).privateKey); // Create new mnemonic for derivation
-                        derivedUsdtWallets.push(derivedWallet.address);
-                    }
-                    keysToUpdate.USDT_WALLETS = derivedUsdtWallets.join(',');
-                    this._logger.success(`✅ Autonomously generated new PRIVATE_KEY and derived wallets. GAS_WALLET: ${newWallet.address.slice(0, 10)}..., USDT_WALLETS: ${derivedUsdtWallets.map(w => w.slice(0, 10)).join(', ')}...`);
-                    break;
-                }
-                case 'GAS_WALLET': {
-                    if (this._config.PRIVATE_KEY && !String(this._config.PRIVATE_KEY).includes('PLACEHOLDER')) {
-                        const walletFromPk = new ethers.Wallet(this._config.PRIVATE_KEY);
-                        keysToUpdate.GAS_WALLET = walletFromPk.address;
-                        this._logger.success(`✅ Derived GAS_WALLET from existing PRIVATE_KEY: ${keysToUpdate.GAS_WALLET.slice(0, 10)}...`);
-                    } else {
-                        this._logger.warn(`⚠️ Cannot derive GAS_WALLET: PRIVATE_KEY is missing or a placeholder. Cannot remediate.`);
-                        return null; // Requires PRIVATE_KEY to be remediated first
-                    }
-                    break;
-                }
-                case 'USDT_WALLETS': {
-                    if (this._config.PRIVATE_KEY && !String(this._config.PRIVATE_KEY).includes('PLACEHOLDER')) {
-                        const baseWallet = new ethers.Wallet(this._config.PRIVATE_KEY); // Use the base private key to derive
-                        const derivedWallets = [];
-                        // In ethers.js, deriving from a private key directly isn't standard for multiple addresses like HD Wallets.
-                        // For demonstration, we'll generate new random wallets, or assume it's a comma-separated list.
-                        // For true HD wallet derivation from a single seed, a mnemonic would be needed.
-                        // For simplicity and to fulfill "derive," we'll just create new random ones if missing.
-                        for (let i = 0; i < 3; i++) {
-                            const tempWallet = ethers.Wallet.createRandom(); // Create new random wallets for USDT
-                            derivedWallets.push(tempWallet.address);
-                        }
-                        keysToUpdate.USDT_WALLETS = derivedWallets.join(',');
-                        this._logger.success(`✅ Generated new USDT_WALLETS: ${keysToUpdate.USDT_WALLETS.slice(0, 30)}...`);
-                    } else {
-                        this._logger.warn(`⚠️ Cannot generate USDT_WALLETS: PRIVATE_KEY is missing or a placeholder. Cannot remediate.`);
-                        return null;
-                    }
-                    break;
-                }
-                case 'BSC_NODE': {
-                    keysToUpdate.BSC_NODE = 'https://bsc-dataseed.binance.org'; // Reliable public node
-                    this._logger.success(`✅ Set default BSC_NODE: ${keysToUpdate.BSC_NODE}`);
-                    break;
-                }
-                case 'COINGECKO_API': {
-                    // CoinGecko API typically doesn't require a key for basic price data.
-                    // If a specific, paid API key were truly needed, this would interact with a web service.
-                    this._logger.info(`ℹ️ COINGECKO_API generally doesn't require automated remediation for basic usage.`);
-                    return null;
-                }
-                default:
-                    this._logger.warn(`⚠️ No specific remediation strategy defined for crypto key: ${keyName}. Manual intervention required.`);
-                    return null;
+    async getBrowser() {
+        if (!this.browser || !this.browser.isConnected()) {
+            if (this.browser) {
+                logger.warn('Browser disconnected. Attempting to close and re-launch.');
+                await this.browser.close().catch(e => logger.error('Error closing disconnected browser:', e));
             }
-
-            return Object.keys(keysToUpdate).length > 0 ? keysToUpdate : null;
-
-        } catch (error) {
-            this._logger.error(`🚨 Crypto remediation for ${keyName} failed: ${error.message}`);
-            return null;
-        }
-    },
-
-    /**
-     * Checks if the GAS_WALLET has sufficient BNB. Logs a warning if funds are low.
-     * This function does NOT generate funds, adhering to "no fake/mock or simulation."
-     * @returns {Promise<boolean>} True if sufficient funds, false otherwise.
-     */
-    async _checkGasWalletBalance() {
-        if (!this._config.GAS_WALLET || !Web3.utils.isAddress(this._config.GAS_WALLET)) {
-            this._logger.error('🚨 Invalid GAS_WALLET detected. Cannot check BNB balance. Please remediate PRIVATE_KEY/GAS_WALLET.');
-            return false;
-        }
-
-        try {
-            const provider = new ethers.providers.JsonRpcProvider(this._config.BSC_NODE);
-            const balance = await provider.getBalance(this._config.GAS_WALLET);
-            const bnbBalance = parseFloat(ethers.utils.formatEther(balance));
-            this._logger.info(`Current GAS_WALLET balance: ${bnbBalance} BNB`);
-
-            const MIN_BNB_THRESHOLD = 0.05; // Minimum BNB required for basic operations
-
-            if (bnbBalance < MIN_BNB_THRESHOLD) {
-                this._logger.warn(`⚠️ CRITICAL: Low gas: ${bnbBalance} BNB. Required: ${MIN_BNB_THRESHOLD} BNB. External funding needed to proceed with on-chain transactions.`);
-                return false;
-            }
-
-            this._logger.success(`✅ Sufficient gas: ${bnbBalance} BNB`);
-            return true;
-        } catch (error) {
-            this._logger.error(`🚨 Error checking gas wallet balance: ${error.message}. Ensure BSC_NODE is reachable and GAS_WALLET is correct.`);
-            return false;
-        }
-    },
-
-    /**
-     * Analyzes crypto market data from CoinGecko. Uses a fallback if API fails or key is missing.
-     * @param {string} coingeckoApiUrl - The CoinGecko API URL from config.
-     * @returns {Promise<object>} Market data for Bitcoin and Ethereum.
-     */
-    async _analyzeCryptoMarkets(coingeckoApiUrl) {
-        // Fallback data for robust operation even if API fails
-        const fallbackData = {
-            bitcoin: { usd: 50000, last_updated_at: Date.now() / 1000 },
-            ethereum: { usd: 3000, last_updated_at: Date.now() / 1000 }
-        };
-
-        // CoinGecko public API endpoint for simple price data
-        const API_URL_BASE = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd';
-
-        if (!coingeckoApiUrl || String(coingeckoApiUrl).includes('PLACEHOLDER')) {
-            this._logger.warn('⚠️ CoinGecko API URL missing or placeholder. Using fallback market data for analysis.');
-            return fallbackData;
-        }
-
-        try {
-            const url = coingeckoApiUrl.includes('/simple/price') ? coingeckoApiUrl : API_URL_BASE; // Use base if config is generic
-            const response = await axios.get(url, { timeout: 8000 }); // 8-second timeout for API call
-            if (response.data && (response.data.bitcoin || response.data.ethereum)) {
-                this._logger.info('✅ Fetched real market data from CoinGecko.');
-                return response.data;
-            }
-            throw new Error('CoinGecko API returned empty or invalid data.');
-        } catch (error) {
-            this._logger.warn(`⚠️ Error fetching real market data: ${error.message.substring(0, 100)}. Using fallback data.`);
-            return fallbackData;
-        }
-    },
-
-    /**
-     * Executes real BNB transfers (conceptual arbitrage-like moves) on BSC.
-     * @param {object} params - Contains privateKey, recipientWallets, bscNode, and marketData.
-     * @returns {Promise<string[]>} Array of transaction hashes.
-     */
-    async _executeArbitrageTrades({ privateKey, recipientWallets, bscNode, marketData }) {
-        const provider = new ethers.providers.JsonRpcProvider(bscNode);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const txHashes = [];
-
-        // Dynamic threshold based on market intelligence (conceptual learning/adaptability)
-        const BTC_BEAR_THRESHOLD = marketData.bitcoin.usd * 0.95; // 5% below current BTC price to trigger a 'bear' signal
-        if (marketData.bitcoin.usd < BTC_BEAR_THRESHOLD) {
-            if (recipientWallets.length === 0) {
-                this._logger.warn('⚠️ No valid recipient wallets available for arbitrage-like transfers.');
-                return txHashes;
-            }
-
-            this._logger.info(`🐻 Bearish signal detected (BTC < $${BTC_BEAR_THRESHOLD.toFixed(2)}). Initiating strategic BNB transfers.`);
-
-            // Transfer to first two USDT wallets for conceptual rebalancing/profit distribution
-            for (const recipient of recipientWallets.slice(0, 2)) {
-                try {
-                    // Attempt to send a small, fixed amount of BNB
-                    const amountToSend = ethers.utils.parseEther('0.002'); // Example small amount of BNB
-                    const gasPrice = await provider.getGasPrice();
-
-                    this._logger.info(`Attempting to send ${ethers.utils.formatEther(amountToSend)} BNB to ${recipient.slice(0, 6)}...`);
-
-                    const txResponse = await wallet.sendTransaction({
-                        to: recipient,
-                        value: amountToSend,
-                        gasLimit: 60000, // Standard gas limit for simple transfers
-                        gasPrice: gasPrice
-                    });
-
-                    const receipt = await txResponse.wait(1); // Wait for 1 confirmation
-                    txHashes.push(receipt.transactionHash);
-                    this._logger.success(`✅ Sent ${ethers.utils.formatEther(amountToSend)} BNB to ${recipient.slice(0, 6)}... TX: ${receipt.transactionHash.slice(0, 10)}...`);
-                } catch (error) {
-                    this._logger.warn(`⚠️ BNB transfer failed to ${recipient.slice(0, 6)}...: ${error.message.substring(0, 100)}...`);
-                    if (error.code === 'INSUFFICIENT_FUNDS') {
-                        this._logger.error('    Reason: Insufficient BNB in GAS_WALLET for this specific transfer. This needs real funding.');
-                        throw new Error('insufficient_funds_for_transfer'); // Propagate critical error
-                    }
-                }
-                await this._quantumDelay(2000); // Delay between transactions
-            }
-        } else {
-            this._logger.info('💰 Crypto market is stable/bullish. Holding position or not executing bear-market specific transfers.');
-        }
-
-        return txHashes;
-    },
-
-    /**
-     * Executes a conceptual high-value trade (e.g., swapping BNB for BUSD) on BSC via PancakeSwap.
-     * This involves real smart contract interaction.
-     * @param {object} params - Contains privateKey, bscNode, and marketData.
-     * @returns {Promise<string[]>} Array of transaction hashes.
-     */
-    async _executeHighValueTrades({ privateKey, bscNode, marketData }) {
-        const provider = new ethers.providers.JsonRpcProvider(bscNode);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const txHashes = [];
-
-        // Execute high-value trade if Ethereum price shows strength (conceptual strategy)
-        const ETH_BULL_THRESHOLD = 3200; // Example threshold
-        if (marketData.ethereum.usd > ETH_BULL_THRESHOLD) {
-            this._logger.info(`📈 Bullish ETH signal detected (ETH > $${ETH_BULL_THRESHOLD}). Initiating conceptual high-value DEX swap.`);
-
-            const routerContract = new ethers.Contract(PANCAKESWAP_ROUTER_ADDRESS, PANCAKESWAP_ROUTER_ABI, wallet);
-
-            // Amount of BNB to swap (e.g., 0.01 BNB)
-            const amountIn = ethers.utils.parseEther('0.01');
-            const amountOutMin = 0; // Set to 0 for simplicity in this example, but should be calculated based on slippage tolerance
-            const path = [WBNB_ADDRESS, BUSD_ADDRESS]; // Path for BNB -> BUSD swap
-            const to = wallet.address; // Send BUSD back to the agent's wallet
-            const deadline = Math.floor(Date.now() / 1000) + (60 * 20); // 20 minutes from now
-
-            try {
-                const gasPrice = await provider.getGasPrice();
-
-                this._logger.info(`Attempting conceptual swap of ${ethers.utils.formatEther(amountIn)} BNB for BUSD via PancakeSwap Router.`);
-
-                // Call the swapExactETHForTokens function on the router contract
-                const txResponse = await routerContract.swapExactETHForTokens(
-                    amountOutMin,
-                    path,
-                    to,
-                    deadline,
-                    {
-                        value: amountIn, // The BNB amount sent with the transaction
-                        gasLimit: 300000, // Higher gas limit for contract interactions
-                        gasPrice: gasPrice
-                    }
-                );
-
-                const receipt = await txResponse.wait(1); // Wait for 1 confirmation
-                txHashes.push(receipt.transactionHash);
-                this._logger.success(`✅ Conceptual high-value swap TX sent: ${receipt.transactionHash.slice(0, 10)}...`);
-            } catch (error) {
-                this._logger.warn(`⚠️ Conceptual high-value swap failed: ${error.message.substring(0, 150)}...`);
-                if (error.code === 'INSUFFICIENT_FUNDS') {
-                    this._logger.error('    Reason: Insufficient BNB in GAS_WALLET for this conceptual swap. This needs real funding.');
-                    throw new Error('insufficient_funds_for_swap'); // Propagate critical error
-                }
-                // More detailed error handling for contract calls can be added here
-            }
-        } else {
-            this._logger.info('📉 ETH market not showing strong bullish signal. Not executing high-value swaps.');
-        }
-
-        return txHashes;
-    },
-
-    /**
-     * The primary crypto agent's run method. Responsible for managing crypto assets,
-     * analyzing markets, executing trades, and self-funding awareness.
-     * @param {object} config - The global configuration object populated from Render ENV.
-     * @param {object} logger - The global logger instance.
-     * @returns {Promise<object>} Status and transaction details of crypto operations.
-     */
-    async run(config, logger) {
-        this._config = config; // Set internal config reference
-        this._logger = logger; // Set internal logger reference
-        this._logger.info('💰 Crypto Agent Activated: Managing on-chain assets...');
-        const startTime = process.hrtime.bigint();
-
-        try {
-            const cryptoCriticalKeys = [
-                'PRIVATE_KEY',
-                'GAS_WALLET',
-                'USDT_WALLETS',
-                'BSC_NODE',
-                'COINGECKO_API' // Although optional for basic prices, include for full remediation awareness
-            ];
-
-            const newlyRemediatedKeys = {};
-
-            // === PHASE 0: Proactive Configuration Remediation for Crypto Agent ===
-            for (const key of cryptoCriticalKeys) {
-                // Check if key is missing or is a placeholder
-                if (!this._config[key] || String(this._config[key]).includes('PLACEHOLDER')) {
-                    const remediatedValue = await this._remediateMissingCryptoConfig(key);
-                    if (remediatedValue) {
-                        Object.assign(newlyRemediatedKeys, remediatedValue);
-                        // Update internal config for immediate use by subsequent remediation steps or operations
-                        Object.assign(this._config, remediatedValue);
-                    }
-                }
-            }
-            if (Object.keys(newlyRemediatedKeys).length > 0) {
-                this._logger.info(`🔑 Crypto Agent remediated ${Object.keys(newlyRemediatedKeys).length} key(s).`);
-            } else {
-                this._logger.info('No new keys remediated by Crypto Agent this cycle.');
-            }
-            this._logger.info('\n--- Finished Crypto Configuration Remediation Phase ---');
-
-            // Re-validate config after remediation attempts
-            let validatedSubsetConfig;
-            try {
-                validatedSubsetConfig = this._validateCryptoConfig(this._config);
-            } catch (validationError) {
-                this._logger.error(`🚨 Critical Crypto Config Error after remediation: ${validationError.message}. Cannot proceed with blockchain operations.`);
-                throw { message: `invalid_crypto_config: ${validationError.message}` }; // Propagate error
-            }
-
-            const { PRIVATE_KEY, GAS_WALLET, USDT_WALLETS, BSC_NODE } = validatedSubsetConfig;
-
-            // === 1. SELF-FUNDING AWARENESS: CHECK INITIAL CAPITAL ===
-            const hasSufficientFunds = await this._checkGasWalletBalance();
-            if (!hasSufficientFunds) {
-                // If funds are insufficient after checking, agent cannot proceed with on-chain trades.
-                // It's up to an external mechanism (e.g., payoutAgent depositing funds, or manual intervention) to refill.
-                this._logger.error('🚨 Aborting crypto operations due to insufficient gas in wallet.');
-                throw { message: 'insufficient_capital_for_onchain_ops' };
-            }
-
-            // === 2. MARKET ANALYSIS ===
-            const marketData = await this._analyzeCryptoMarkets(this._config.COINGECKO_API);
-
-            // === 3. EXECUTE ARBITRAGE-LIKE TRANSFERS ===
-            const arbitrageTxs = await this._executeArbitrageTrades({
-                privateKey: PRIVATE_KEY,
-                recipientWallets: USDT_WALLETS,
-                bscNode: BSC_NODE,
-                marketData
+            logger.info('Launching new Puppeteer browser instance...');
+            this.browser = await puppeteer.launch({
+                headless: true, // Use 'new' for new headless mode or true for old
+                args: this.browserLaunchArgs,
+                timeout: 60000 // 60 seconds timeout for browser launch
             });
+            logger.success('Puppeteer browser launched.');
+        }
+        return this.browser;
+    },
 
-            // === 4. EXECUTE HIGH-VALUE CONCEPTUAL TRADES (DEX Swap) ===
-            const highValueTxs = await this._executeHighValueTrades({
-                privateKey: PRIVATE_KEY,
-                bscNode: BSC_NODE,
-                marketData
-            });
+    async getNewPage() {
+        const browser = await this.getBrowser();
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1280, height: 800 }); // Standard viewport
+        this.activePages.add(page);
+        return page;
+    },
 
-            // === 5. TRIGGER PAYOUT (Based on successful on-chain activity) ===
-            // Conceptual earnings are now tied to the *number of successful real transactions*.
-            const totalOnChainTxs = arbitrageTxs.length + highValueTxs.length;
-            if (totalOnChainTxs > 0) {
-                // Each successful transaction conceptually represents a small gain or a completed task.
-                const conceptualEarnings = totalOnChainTxs * 0.1; // e.g., $0.1 per transaction completed
-                this._logger.info(`🎯 Payout triggered based on ${totalOnChainTxs} successful on-chain activities: $${conceptualEarnings.toFixed(2)} (conceptual earnings)`);
-                const payoutAgentModule = await import('./payoutAgent.js');
-                // Pass a new object with earnings, and the current logger
-                const payoutResult = await payoutAgentModule.default.run({ ...this._config, earnings: conceptualEarnings }, this._logger);
-                if (payoutResult.newlyRemediatedKeys) Object.assign(newlyRemediatedKeys, payoutResult.newlyRemediatedKeys);
-            } else {
-                this._logger.info('No on-chain transactions executed, skipping payout trigger.');
-            }
+    async closePage(page) {
+        if (page && !page.isClosed()) {
+            await page.close().catch(e => logger.error('Page close error:', e));
+            this.activePages.delete(page);
+        }
+    },
 
-            const endTime = process.hrtime.bigint();
-            const durationMs = Number(endTime - startTime) / 1_000_000;
-            this._logger.success(`✅ Crypto Agent Completed in ${durationMs.toFixed(0)}ms | Total Real TXs: ${totalOnChainTxs}`);
-            return { status: 'success', transactions: [...arbitrageTxs, ...highValueTxs], durationMs, newlyRemediatedKeys };
+    async cleanup() {
+        const now = Date.now();
+        // Periodically close and re-launch browser to prevent memory leaks and issues
+        if (now - this.lastCleanup > 21600000) { // Every 6 hours
+            logger.info('Performing scheduled browser cleanup and restart.');
+            await this.shutdown(); // Shutdown existing browser
+            await this.getBrowser(); // Launch a fresh browser
+            this.lastCleanup = now;
+        } else if (this.activePages.size > 5) { // If too many pages are open
+            logger.warn(`Too many active pages (${this.activePages.size}). Forcing cleanup of old pages.`);
+            await Promise.all(
+                Array.from(this.activePages).slice(5).map(page => this.closePage(page)) // Close oldest pages beyond a threshold
+            ).catch(e => logger.error('Forced page cleanup error:', e));
+        }
+    },
 
-        } catch (error) {
-            const endTime = process.hrtime.bigint();
-            const durationMs = Number(endTime - startTime) / 1_000_000;
-            this._logger.error(`🚨 Crypto Agent Critical Failure in ${durationMs.toFixed(0)}ms: ${error.message}`);
-            // Re-throw the error object for consistent handling by server.js
-            throw { message: error.message, duration: durationMs };
+    async shutdown() {
+        if (this.browser) {
+            logger.info('Shutting down Puppeteer browser and all active pages.');
+            await Promise.all(
+                Array.from(this.activePages).map(page => this.closePage(page))
+            ).catch(e => logger.error('Error closing active pages during shutdown:', e));
+
+            await this.browser.close().catch(e => logger.error('Error closing browser during shutdown:', e));
+            this.browser = null;
+            this.activePages.clear();
+            logger.success('Puppeteer browser shut down.');
         }
     }
 };
 
-export default cryptoAgent;
+// --- Utility Functions ---
+const quantumDelay = (ms) => new Promise(resolve => {
+    // Add a random jitter to the delay for more human-like timing
+    setTimeout(resolve, ms + crypto.randomInt(500, 2000));
+});
+
+async function withRetry(operation, maxRetries = 3, baseDelay = 1000) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        try {
+            return await operation();
+        } catch (error) {
+            attempt++;
+            if (attempt >= maxRetries) {
+                logger.error(`Operation failed after ${maxRetries} attempts: ${error.message}`);
+                throw error; // Re-throw if all retries exhausted
+            }
+
+            const delay = baseDelay * Math.pow(2, attempt) + crypto.randomInt(500, 2000); // Exponential backoff with jitter
+            logger.warn(`Retrying operation in ${Math.round(delay / 1000)}s (Attempt ${attempt}/${maxRetries}): ${error.message.substring(0, 100)}...`);
+            await quantumDelay(delay);
+        }
+    }
+}
+
+/**
+ * Attempts to update Render environment variables persistently.
+ * @param {object} keysToUpdate - An object where keys are ENV var names and values are their new values.
+ */
+async function updateRenderEnvironmentVariables(keysToUpdate) {
+    const { RENDER_API_TOKEN, RENDER_SERVICE_ID, RENDER_API_BASE_URL } = CONFIG;
+
+    // Check if critical Render API credentials are available
+    if (!RENDER_API_TOKEN || String(RENDER_API_TOKEN).includes('PLACEHOLDER') ||
+        !RENDER_SERVICE_ID || String(RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
+        logger.warn('⚠️ Render API token or Service ID missing. Cannot update environment variables persistently.');
+        return;
+    }
+
+    const apiUrl = `${RENDER_API_BASE_URL}/services/${RENDER_SERVICE_ID}/env-vars`;
+
+    try {
+        logger.info('🔄 Fetching current Render environment variables...');
+        // Get current environment variables
+        const currentEnvResponse = await axios.get(apiUrl, {
+            headers: { 'Authorization': `Bearer ${RENDER_API_TOKEN}` },
+            timeout: 10000 // 10 seconds timeout
+        });
+        const currentEnvVars = currentEnvResponse.data;
+
+        // Prepare updates: for each key in keysToUpdate, find existing var or add new
+        const updatedEnvVars = currentEnvVars.map(envVar => {
+            if (keysToUpdate[envVar.key] !== undefined) { // Check for explicit undefined
+                const updatedValue = String(keysToUpdate[envVar.key]); // Ensure string
+                logger.info(`🔄 Updating Render ENV: ${envVar.key} from "${String(envVar.value).substring(0, 10)}..." to "${updatedValue.substring(0, 10)}..."`);
+                delete keysToUpdate[envVar.key]; // Mark as handled
+                return { key: envVar.key, value: updatedValue };
+            }
+            return envVar;
+        });
+
+        // Add any new keys that weren't present in the fetched list
+        for (const key in keysToUpdate) {
+            const newValue = String(keysToUpdate[key]);
+            logger.info(`✨ Adding new Render ENV: ${key} with value "${newValue.substring(0, 10)}..."`);
+            updatedEnvVars.push({ key: key, value: newValue });
+        }
+
+        logger.info(`Sending PUT request to update ${updatedEnvVars.length} environment variables on Render.`);
+        // Send PUT request to update all environment variables
+        await axios.put(apiUrl, updatedEnvVars, {
+            headers: { 'Authorization': `Bearer ${RENDER_API_TOKEN}`, 'Content-Type': 'application/json' },
+            timeout: 15000 // 15 seconds timeout
+        });
+
+        logger.success('✅ Successfully updated Render environment variables persistently.');
+    } catch (error) {
+        logger.error(`🚨 Failed to update Render environment variables: ${error.message}. Response: ${JSON.stringify(error.response?.data || {})}`);
+    }
+}
+
+
+// --- Persistent Revenue Tracker ---
+class RevenueTracker {
+    constructor() {
+        this.dataFile = 'revenueData.json';
+        this.lock = false; // Simple lock for async file operations
+        this.earnings = {}; // Accumulated earnings by platform
+        this.activeCampaigns = []; // List of active campaigns
+        this.loadData(); // Load initial data on startup
+    }
+
+    async acquireLock() {
+        while (this.lock) {
+            await quantumDelay(50); // Wait until lock is released
+        }
+        this.lock = true;
+    }
+
+    releaseLock() {
+        this.lock = false;
+    }
+
+    async loadData() {
+        await this.acquireLock();
+        try {
+            // Check if file exists before reading
+            if (await fs.access(this.dataFile).then(() => true).catch(() => false)) {
+                const data = JSON.parse(await fs.readFile(this.dataFile, 'utf8'));
+                this.earnings = data.earnings || {};
+                this.activeCampaigns = data.activeCampaigns || [];
+                // Ensure historical data is loaded and trimmed
+                if (data.historicalRevenue) {
+                    historicalRevenueData.push(...data.historicalRevenue.slice(-CONFIG.MAX_HISTORICAL_DATA));
+                }
+                logger.info('Revenue data loaded from file.');
+            } else {
+                logger.info('No existing revenue data file found. Starting fresh.');
+            }
+        } catch (error) {
+            logger.error('Failed to load revenue data:', error);
+        } finally {
+            this.releaseLock();
+        }
+    }
+
+    async saveData() {
+        await this.acquireLock();
+        try {
+            await fs.writeFile(this.dataFile, JSON.stringify({
+                earnings: this.earnings,
+                activeCampaigns: this.activeCampaigns,
+                // Only save the relevant portion of historical data to prevent excessive file size
+                historicalRevenue: historicalRevenueData.slice(-CONFIG.MAX_HISTORICAL_DATA)
+            }, null, 2), 'utf8');
+            logger.debug('Revenue data saved to file.');
+        } catch (error) {
+            logger.error('Failed to save revenue data:', error);
+        } finally {
+            this.releaseLock();
+        }
+    }
+
+    getSummary() {
+        return {
+            totalRevenue: Object.values(this.earnings).reduce((a, b) => a + b, 0),
+            byPlatform: { ...this.earnings }, // Return a copy
+            campaignCount: this.activeCampaigns.length
+        };
+    }
+
+    async updatePlatformEarnings(platform, amount) {
+        if (typeof amount !== 'number' || isNaN(amount)) {
+            logger.warn(`Attempted to update earnings with invalid amount for ${platform}: ${amount}`);
+            return;
+        }
+        await this.acquireLock();
+        this.earnings[platform] = (this.earnings[platform] || 0) + amount;
+        this.releaseLock();
+        await this.saveData(); // Save immediately after update
+    }
+
+    async addCampaign(campaign) {
+        await this.acquireLock();
+        this.activeCampaigns.push(campaign);
+        this.releaseLock();
+        await this.saveData(); // Save immediately after update
+    }
+
+    async resetEarnings() {
+        await this.acquireLock();
+        this.earnings = {};
+        this.releaseLock();
+        await this.saveData();
+        logger.info('Earnings reset after payout.');
+    }
+}
+
+// --- Internal Payout Agent for Orchestration ---
+class PayoutAgentOrchestrator {
+    constructor(tracker) {
+        this.tracker = tracker;
+        this.executionCount = 0;
+        this.lastExecutionTime = null;
+        this.lastStatus = 'unknown'; // 'success', 'failed', 'skipped', 'running'
+        this.lastPayoutAmount = 0;
+    }
+
+    async monitorAndTriggerPayouts(config, logger) {
+        this.lastExecutionTime = new Date();
+        this.executionCount++;
+        this.lastStatus = 'running';
+
+        try {
+            logger.info('💰 Payout Agent Orchestrator: Monitoring accumulated earnings for payout...');
+            const summary = this.tracker.getSummary();
+            const totalAccumulatedRevenue = summary.totalRevenue;
+
+            if (totalAccumulatedRevenue >= CONFIG.PAYOUT_THRESHOLD_USD) {
+                const amountToPayout = totalAccumulatedRevenue * CONFIG.PAYOUT_PERCENTAGE;
+                logger.info(`✅ Payout threshold met! Accumulated: $${totalAccumulatedRevenue.toFixed(2)}. Attempting to payout $${amountToPayout.toFixed(2)}.`);
+
+                // Call the actual payoutAgent.js module to perform the payout
+                const payoutResult = await externalPayoutAgentModule.default.run({ ...config, earnings: amountToPayout }, logger);
+
+                if (payoutResult.status === 'success') {
+                    this.lastStatus = 'success';
+                    this.lastPayoutAmount = amountToPayout;
+                    logger.success(`💸 Successfully triggered payout of $${amountToPayout.toFixed(2)}.`);
+                    await this.tracker.resetEarnings(); // Reset earnings after successful payout
+                    return { status: 'success', message: `Payout of $${amountToPayout.toFixed(2)} triggered.`, newlyRemediatedKeys: payoutResult.newlyRemediatedKeys };
+                } else {
+                    this.lastStatus = 'failed';
+                    logger.error(`🚨 External Payout Agent failed: ${payoutResult.message || 'Unknown error'}`);
+                    return { status: 'failed', message: `External Payout Agent failed: ${payoutResult.message}`, newlyRemediatedKeys: payoutResult.newlyRemediatedKeys };
+                }
+            } else {
+                this.lastStatus = 'skipped';
+                logger.info(`ℹ️ Accumulated revenue ($${totalAccumulatedRevenue.toFixed(2)}) below payout threshold ($${CONFIG.PAYOUT_THRESHOLD_USD}). Skipping payout.`);
+                return { status: 'skipped', message: 'Below payout threshold.' };
+            }
+        } catch (error) {
+            this.lastStatus = 'failed';
+            logger.error(`🚨 Payout Agent Orchestrator failed during monitoring/triggering: ${error.message}`);
+            throw error;
+        }
+    }
+
+    getStatus() {
+        return {
+            agent: 'payout',
+            lastExecution: this.lastExecutionTime?.toISOString() || 'Never',
+            lastStatus: this.lastStatus,
+            lastPayout: this.lastPayoutAmount,
+            totalExecutions: this.executionCount
+        };
+    }
+}
+
+// --- Main Autonomous System Orchestrator ---
+const revenueTracker = new RevenueTracker();
+const payoutAgentInstance = new PayoutAgentOrchestrator(revenueTracker); // Instantiate the orchestrator agent
+
+async function runAutonomousRevenueSystem() {
+    const cycleStart = Date.now();
+    const cycleStats = {
+        startTime: new Date().toISOString(),
+        success: false,
+        duration: 0,
+        revenueGenerated: 0, // This will aggregate actual earnings from sub-agents in this cycle
+        activities: [], // Log of agent activities within this cycle
+        newlyRemediatedKeys: {} // To collect keys for persistent Render update
+    };
+
+    try {
+        logger.info(`\n--- Starting Autonomous Revenue System Cycle ${cycleCount} ---`);
+
+        // === 1. API Scout Agent: Discovering new opportunities and remediation ===
+        const scoutActivity = { agent: 'apiScout', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(scoutActivity);
+        cycleStats.activities.push(scoutActivity);
+        logger.info('📡 Running API Scout Agent...');
+        try {
+            const scoutResults = await withRetry(() => apiScoutAgent.run(CONFIG, logger));
+            if (scoutResults && scoutResults.newlyRemediatedKeys) {
+                Object.assign(CONFIG, scoutResults.newlyRemediatedKeys);
+                Object.assign(cycleStats.newlyRemediatedKeys, scoutResults.newlyRemediatedKeys);
+            }
+            if (scoutResults && scoutResults.activeCampaigns) {
+                for (const campaign of scoutResults.activeCampaigns) {
+                    await revenueTracker.addCampaign(campaign); // Add discovered campaigns
+                }
+            }
+            scoutActivity.action = 'completed';
+            scoutActivity.status = scoutResults.status || 'success';
+            scoutActivity.details = scoutResults.message || 'Scouting complete.';
+        } catch (error) {
+            scoutActivity.action = 'failed';
+            scoutActivity.status = 'failed';
+            scoutActivity.details = `Scouting failed: ${error.message}`;
+            logger.error(`API Scout Agent failed: ${error.message}`);
+            // Do not throw here, allow other agents to run if possible
+        }
+
+
+        // === 2. Shopify Agent: Sourcing, Listing, and Promotion ===
+        const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(shopifyActivity);
+        cycleStats.activities.push(shopifyActivity);
+        logger.info('🛍️ Running Shopify Agent...');
+        try {
+            const shopifyResult = await withRetry(() => shopifyAgent.run(CONFIG, logger));
+            if (shopifyResult && shopifyResult.newlyRemediatedKeys) {
+                Object.assign(CONFIG, shopifyResult.newlyRemediatedKeys);
+                Object.assign(cycleStats.newlyRemediatedKeys, shopifyResult.newlyRemediatedKeys);
+            }
+            const shopifyEarnings = parseFloat(shopifyResult.finalPrice || 0); // Assuming finalPrice is the direct revenue from product listing
+            cycleStats.revenueGenerated += shopifyEarnings;
+            await revenueTracker.updatePlatformEarnings('shopify', shopifyEarnings);
+            shopifyActivity.action = 'completed';
+            shopifyActivity.status = shopifyResult.status || 'success';
+            shopifyActivity.details = `Sourced & listed product for $${shopifyEarnings.toFixed(2)}.`;
+        } catch (error) {
+            shopifyActivity.action = 'failed';
+            shopifyActivity.status = 'failed';
+            shopifyActivity.details = `Shopify operations failed: ${error.message}`;
+            logger.error(`Shopify Agent failed: ${error.message}`);
+            // Do not throw here, allow other agents to run if possible
+        }
+
+
+        // === 3. Crypto Agent: Market Analysis and On-Chain Trades ===
+        const cryptoActivity = { agent: 'crypto', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(cryptoActivity);
+        cycleStats.activities.push(cryptoActivity);
+        logger.info('💰 Running Crypto Agent...');
+        try {
+            const cryptoResult = await withRetry(() => cryptoAgent.run(CONFIG, logger));
+            if (cryptoResult && cryptoResult.newlyRemediatedKeys) {
+                Object.assign(CONFIG, cryptoResult.newlyRemediatedKeys);
+                Object.assign(cycleStats.newlyRemediatedKeys, cryptoResult.newlyRemediatedKeys);
+            }
+            // The crypto agent internally manages its conceptual earnings and passes them to payout.
+            // For server.js's cycle revenue, we'll assume crypto's earnings are captured by payoutAgent.
+            cryptoActivity.action = 'completed';
+            cryptoActivity.status = cryptoResult.status || 'success';
+            cryptoActivity.details = `Executed ${cryptoResult.transactions?.length || 0} on-chain transactions.`;
+        } catch (error) {
+            cryptoActivity.action = 'failed';
+            cryptoActivity.status = 'failed';
+            cryptoActivity.details = `Crypto operations failed: ${error.message}`;
+            logger.error(`Crypto Agent failed: ${error.message}`);
+            // Do not throw here, allow payout agent to run if possible
+        }
+
+
+        // === 4. Payout Agent Orchestrator: Manage Funds Distribution ===
+        // This orchestrator checks total accumulated revenue from all sources and triggers external payouts
+        const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(payoutActivity);
+        cycleStats.activities.push(payoutActivity);
+        logger.info('💸 Running Payout Agent Orchestrator...');
+        try {
+            const payoutResult = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
+            if (payoutResult && payoutResult.newlyRemediatedKeys) {
+                Object.assign(CONFIG, payoutResult.newlyRemediatedKeys);
+                Object.assign(cycleStats.newlyRemediatedKeys, payoutResult.newlyRemediatedKeys);
+            }
+            payoutActivity.action = 'completed';
+            payoutActivity.status = payoutResult.status || 'success';
+            payoutActivity.details = payoutResult.message || 'Payout check complete.';
+        } catch (error) {
+            payoutActivity.action = 'failed';
+            payoutActivity.status = 'failed';
+            payoutActivity.details = `Payout operations failed: ${error.message}`;
+            logger.error(`Payout Agent Orchestrator failed: ${error.message}`);
+            // Do not throw here, ensure finally block runs
+        }
+
+
+        // === Post-Agent Execution: Persistent Configuration Update ===
+        // If any agent successfully remediated or generated new keys, update Render ENV
+        if (Object.keys(cycleStats.newlyRemediatedKeys).length > 0) {
+            logger.info(`🔑 Detected ${Object.keys(cycleStats.newlyRemediatedKeys).length} keys for Render ENV update.`);
+            await updateRenderEnvironmentVariables(cycleStats.newlyRemediatedKeys);
+        } else {
+            logger.info('No new keys remediated this cycle to update Render ENV.');
+        }
+
+
+        // Mark cycle as successful if no critical errors halted it completely
+        cycleStats.success = true; // Assume success if code reaches here without a thrown error
+        successfulCycles++;
+
+        // Update historical revenue data for dashboard trends
+        const revenueSnapshot = revenueTracker.getSummary();
+        historicalRevenueData.push({
+            timestamp: new Date().toISOString(),
+            totalRevenue: revenueSnapshot.totalRevenue, // Total accumulated revenue over time
+            cycleRevenue: cycleStats.revenueGenerated // Revenue explicitly generated in this specific cycle
+        });
+
+        // Trim historical data to manage memory and persistence file size
+        if (historicalRevenueData.length > CONFIG.MAX_HISTORICAL_DATA) {
+            historicalRevenueData.shift(); // Remove oldest entry
+        }
+
+        // Save persistent data
+        await revenueTracker.saveData();
+
+        logger.success(`--- Autonomous Revenue System Cycle ${cycleCount} Completed Successfully ---`);
+        return { success: true, message: 'Cycle completed successfully.' };
+
+    } catch (error) {
+        // Catch any critical errors that were re-thrown from `withRetry` or not handled by agent-specific blocks
+        logger.error(`🚨 Autonomous Revenue System Critical Failure in Cycle ${cycleCount}: ${error.message}`, error.stack);
+        errorLog.push({
+            timestamp: new Date().toISOString(),
+            message: error.message,
+            stack: error.stack,
+            cycle: cycleCount
+        });
+        cycleStats.success = false;
+        return { success: false, error: error.message };
+    } finally {
+        // Always execute this block regardless of success or failure
+        cycleStats.duration = Date.now() - cycleStart;
+        lastCycleStats = cycleStats;
+        lastDataUpdate = Date.now();
+        cycleTimes.push(cycleStats.duration); // Track cycle duration
+
+        // Broadcast current system status and metrics to connected dashboard clients
+        broadcastDashboardUpdate();
+
+        // Perform browser cleanup to maintain resource hygiene
+        await browserManager.cleanup();
+    }
+}
+
+// --- Dashboard Functions ---
+function getSystemStatus() {
+    return {
+        status: isRunning ? 'operational' : 'idle',
+        uptime: process.uptime(), // Node.js process uptime in seconds
+        cycleCount,
+        successRate: cycleCount > 0 ? (successfulCycles / cycleCount * 100).toFixed(2) + '%' : '0%',
+        lastCycle: lastCycleStats,
+        memoryUsage: process.memoryUsage(), // Current Node.js memory usage
+        activeCampaigns: revenueTracker.activeCampaigns.length,
+        nextCycleIn: Math.max(0, CONFIG.CYCLE_INTERVAL - (Date.now() - lastCycleStart))
+    };
+}
+
+function getRevenueAnalytics() {
+    return {
+        ...revenueTracker.getSummary(),
+        lastUpdated: new Date(lastDataUpdate).toISOString(),
+        historicalTrend: historicalRevenueData // Full historical data for charting
+    };
+}
+
+function getAgentActivities() {
+    // Only return recent activities to prevent excessive data transfer
+    return {
+        recentActivities: agentActivityLog.slice(-50).reverse(), // Last 50 activities, newest first
+        agentStatus: { // Provide status of each orchestrator agent
+            apiScoutAgent: apiScoutAgent.getStatus?.(), // Optional chaining for agents that might not have getStatus
+            shopifyAgent: {
+                 // Placeholder for actual Shopify agent status, assuming it has one
+                 lastExecution: 'N/A',
+                 lastStatus: 'N/A',
+                 totalExecutions: 'N/A'
+             },
+            cryptoAgent: {
+                 // Placeholder for actual Crypto agent status, assuming it has one
+                 lastExecution: 'N/A',
+                 lastStatus: 'N/A',
+                 totalExecutions: 'N/A'
+            },
+            payoutAgent: payoutAgentInstance.getStatus() // Get status from the orchestrator instance
+        }
+    };
+}
+
+function getFullSystemReport() {
+    return {
+        systemInfo: {
+            version: '1.0.0', // System version
+            environment: process.env.NODE_ENV || 'development',
+            nodeVersion: process.version
+        },
+        operationalMetrics: {
+            uptime: process.uptime(),
+            totalCycles: cycleCount,
+            successfulCycles: successfulCycles,
+            successRate: cycleCount > 0 ? (successfulCycles / cycleCount * 100).toFixed(2) + '%' : '0%',
+            averageCycleTime: cycleTimes.length > 0 ?
+                Math.round(cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length) : 0 // Average cycle duration
+        },
+        revenueSummary: revenueTracker.getSummary(),
+        resourceUsage: {
+            memory: process.memoryUsage(),
+            cpu: process.cpuUsage(), // CPU usage since last call (approx)
+            browserSessions: browserManager.activePages.size // Number of open Puppeteer pages
+        },
+        recentErrors: errorLog.slice(-10).reverse() // Last 10 errors, newest first
+    };
+}
+
+// Function to broadcast real-time updates to connected WebSocket clients
+function broadcastDashboardUpdate() {
+    const update = {
+        timestamp: new Date().toISOString(),
+        status: getSystemStatus(),
+        revenue: getRevenueAnalytics(),
+        agents: getAgentActivities()
+    };
+
+    const message = JSON.stringify({ type: 'update', data: update });
+    connectedClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(message);
+        }
+    });
+}
+
+// --- Express Server Setup ---
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors()); // Enable CORS for frontend communication
+app.use(express.json()); // Enable JSON body parsing
+app.use(express.static('public')); // Serve static files from 'public' directory (for dashboard frontend)
+
+// --- API Endpoints ---
+// Endpoint to manually trigger a revenue system cycle
+app.post('/api/start-revenue-system', async (req, res) => {
+    logger.info('Manual trigger for revenue system received.');
+    // Prevent concurrent runs from manual trigger if system is already running continuously
+    if (isRunning) {
+        return res.status(409).json({ success: false, message: 'System is already running in continuous operation mode.' });
+    }
+    const result = await runAutonomousRevenueSystem();
+    res.status(result.success ? 200 : 500).json(result);
+});
+
+// Basic health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json(getSystemStatus());
+});
+
+// --- Dashboard Specific API Endpoints ---
+app.get('/api/dashboard/status', (req, res) => {
+    res.json(getSystemStatus());
+});
+
+app.get('/api/dashboard/revenue', (req, res) => {
+    res.json(getRevenueAnalytics());
+});
+
+app.get('/api/dashboard/agents', (req, res) => {
+    res.json(getAgentActivities());
+});
+
+app.get('/api/dashboard/full-report', (req, res) => {
+    res.json(getFullSystemReport());
+});
+
+// --- WebSocket Server Setup ---
+function setupWebSocketServer(server) {
+    const wss = new WebSocketServer({ server });
+
+    wss.on('connection', (ws) => {
+        connectedClients.add(ws);
+        logger.info('New WebSocket client connected. Sending initial dashboard data.');
+
+        // Send initial comprehensive data to the newly connected client
+        ws.send(JSON.stringify({
+            type: 'init',
+            data: {
+                status: getSystemStatus(),
+                revenue: getRevenueAnalytics(),
+                agents: getAgentActivities()
+            }
+        }));
+
+        ws.on('close', () => {
+            connectedClients.delete(ws);
+            logger.info('WebSocket client disconnected.');
+        });
+
+        ws.on('error', (error) => {
+            logger.error('WebSocket error:', error);
+            connectedClients.delete(ws);
+        });
+    });
+
+    // Handle WebSocket server errors
+    wss.on('error', (error) => {
+        logger.error('WebSocket server critical error:', error);
+    });
+
+    return wss;
+}
+
+// --- Continuous Autonomous Operation Loop ---
+async function continuousOperation() {
+    if (isRunning) {
+        logger.warn('Continuous operation already running. Skipping redundant call.');
+        return;
+    }
+    isRunning = true;
+    logger.info('Starting continuous autonomous revenue system operation.');
+
+    // Graceful shutdown handler for SIGTERM (e.g., from Render)
+    process.on('SIGTERM', async () => {
+        logger.info('SIGTERM received. Shutting down gracefully...');
+        await browserManager.shutdown(); // Ensure browser is closed
+        await revenueTracker.saveData(); // Save any pending data
+        process.exit(0); // Exit process
+    });
+
+    // Start interval for broadcasting live dashboard updates
+    setInterval(broadcastDashboardUpdate, CONFIG.DASHBOARD_UPDATE_INTERVAL);
+
+    // Main loop for continuous revenue generation cycles
+    while (true) {
+        lastCycleStart = Date.now();
+        cycleCount++;
+
+        logger.info(`Initiating cycle #${cycleCount}...`);
+        await runAutonomousRevenueSystem(); // Execute the main system logic
+
+        // Calculate precise delay needed to maintain the configured CYCLE_INTERVAL
+        const cycleDuration = Date.now() - lastCycleStart;
+        const delayNeeded = Math.max(CONFIG.CYCLE_INTERVAL - cycleDuration, 0);
+        logger.info(`Cycle #${cycleCount} finished in ${cycleDuration}ms. Next cycle in ${Math.round(delayNeeded / 1000)}s.`);
+        await quantumDelay(delayNeeded); // Wait for the remaining time
+    }
+}
+
+// --- Start Server and System ---
+const server = app.listen(PORT, '0.0.0.0', async () => { // Explicitly listen on 0.0.0.0
+    logger.success(`Server running on port ${PORT}`);
+
+    // Setup WebSocket Server, passing the HTTP server instance
+    setupWebSocketServer(server);
+
+    // Initial browser launch (can be moved to getBrowser for lazy loading)
+    await browserManager.getBrowser().catch(e => logger.error('Initial browser launch failed:', e));
+
+    // Start the continuous operation only if not in test environment
+    if (process.env.NODE_ENV !== 'test') {
+        continuousOperation();
+    }
+});
