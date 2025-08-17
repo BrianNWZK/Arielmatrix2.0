@@ -4,11 +4,61 @@ import fs from 'fs/promises';
 import path from 'path';
 import { TwitterApi } from 'twitter-api-v2';
 import cron from 'node-cron';
-import { getNewPage, closePage } from './browserManager.js'; // Import from browserManager
+import puppeteer from 'puppeteer'; // Using puppeteer directly (from latest version)
 import Web3 from 'web3';
 import { ethers } from 'ethers';
 import crypto from 'crypto';
 import * as os from 'os';
+
+// === Browser Management (from latest version) ===
+let browserInstance = null;
+const activePages = new Set();
+
+// Initialize browser
+async function initBrowser() {
+    if (!browserInstance) {
+        browserInstance = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-zygote',
+                '--disable-gpu'
+            ]
+        });
+    }
+    return browserInstance;
+}
+
+// Get new page
+async function getNewPage() {
+    const browser = await initBrowser();
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    activePages.add(page);
+    return page;
+}
+
+// Close page
+async function closePage(page) {
+    if (page && !page.isClosed()) {
+        await page.close().catch(e => console.error('Page close error:', e));
+        activePages.delete(page);
+    }
+}
+
+// Cleanup browser
+async function cleanupBrowser() {
+    if (browserInstance) {
+        await Promise.all(
+            Array.from(activePages).map(page => closePage(page))
+        );
+        await browserInstance.close();
+        browserInstance = null;
+    }
+}
 
 // Fix for __dirname in ES6 modules
 const __filename = new URL(import.meta.url).pathname;
@@ -165,7 +215,6 @@ export async function _updateRenderEnvWithKeys(keysToSave, currentConfig, curren
         currentLogger.warn('    This is CRITICAL for persistent learning and autonomous evolution. Please fix manually.');
     }
 }
-
 
 // === 🔗 API Endpoint Catalog (REAL and Dynamic) ===
 const API_CATALOG = {
@@ -325,7 +374,6 @@ async function shortenUrl(longUrl, currentConfig, currentLogger) {
     }
 }
 
-
 // === 🌍 Global Explorer Agent ===
 export const apiScoutAgent = {
     /**
@@ -352,7 +400,6 @@ export const apiScoutAgent = {
                     currentLogger.warn(`⚠️ Missing CONFIG.${key} for API Scout. This might limit functionality.`);
                 }
             }
-
 
             const AI_EMAIL = currentConfig.AI_EMAIL;
             const AI_PASSWORD = currentConfig.AI_PASSWORD;
@@ -529,7 +576,6 @@ async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
     });
 }
 
-
 // === 🚀 Activate Campaigns (Real Signups & Key Extraction) ===
 /**
  * Attempts to register/log in and extract API keys from various sites using Puppeteer.
@@ -617,7 +663,6 @@ async function activateCampaigns(sites, email, password, currentConfig, currentL
                 } else {
                     currentLogger.warn(`No submit button found or form filling failed for ${site}.`);
                 }
-
 
                 // --- Key Extraction Logic ---
                 currentLogger.info(`Attempting to extract API key from ${site}... Current URL: ${page.url()}`);
@@ -934,7 +979,6 @@ async function validateAPIKey(siteUrl, apiKey, currentConfig, currentLogger) {
     }
 }
 
-
 // --- Placeholder for external functions (defined elsewhere in the system) ---
 // The original prompt did not provide these, but they are called in `run`.
 // I will provide simple, non-functional placeholders to ensure the code structure is valid.
@@ -1005,3 +1049,8 @@ async function generateStrategicInsights(revenueReport, discoveredOpportunities,
 
     return insights;
 }
+
+// Add cleanup handler
+process.on('exit', cleanupBrowser);
+process.on('SIGINT', cleanupBrowser);
+process.on('SIGTERM', cleanupBrowser);
