@@ -1,197 +1,208 @@
 // backend/agents/payoutAgent.js
-import Web3 from 'web3'; // For blockchain interaction and address validation
-import { ethers } from 'ethers'; // For wallet signing and transaction building
-import crypto from 'crypto'; // For random numbers if needed, and secure operations (used in other agents, included for completeness)
+import browserManager from '../browserManager.js';
+import crypto from 'crypto';
+
+// === 🌀 Quantum Jitter (Anti-Robot) ===
+const quantumDelay = (ms) => new Promise(resolve => {
+    const jitter = crypto.randomInt(500, 2000); // Jitter between 0.5 to 2 seconds
+    setTimeout(resolve, ms + jitter);
+});
 
 /**
- * @namespace PayoutAgent
- * @description Responsible for distributing generated revenue (conceptually in crypto)
- * to designated wallets on the Binance Smart Chain (BSC). Focuses on real, on-chain
- * transfers with minimal transaction costs (gas fees) and a "conceptual flex gas" mechanism.
+ * @function configurePaymentMethod
+ * @description Conceptually automates the *initiation* of payment configuration on ad platforms.
+ * Due to security and KYC, full, unattended automation is often impossible for sensitive steps.
+ * This function uses browser automation to navigate and pre-fill details, guiding human intervention
+ * where necessary for sensitive information or verification.
+ *
+ * @param {object} CONFIG - The global configuration object with platform credentials.
+ * @param {object} logger - The global logger instance.
+ * @param {string} platformName - The name of the ad platform (e.g., 'AdFly', 'Linkvertise').
+ * @param {object} paymentDetails - An object containing details like { paypalEmail: 'your@email.com', payoneerID: 'XYZ' }.
+ * @returns {Promise<object>} Status of the payment setup attempt.
  */
-const payoutAgent = {
-    // Internal references for config and logger, set during the run method
-    _config: null,
-    _logger: null,
+const configurePaymentMethod = async (CONFIG, logger, platformName, paymentDetails) => {
+    logger.info(`⚙️ Starting payment setup for ${platformName} (conceptual automation)...`);
+    let page = null;
+    try {
+        page = await browserManager.getNewPage();
+        if (!page) throw new Error('Failed to acquire browser page for payment setup.');
+
+        // --- Platform-Specific Logic ---
+        if (platformName === 'AdFly') {
+            const adflyLoginUrl = 'https://adf.ly/publisher/login'; // Confirm current URL
+            const adflyPayoutSettingsUrl = 'https://adf.ly/publisher/account-settings/withdraw'; // Confirm current URL
+
+            logger.info('   - Navigating to AdFly login page...');
+            await page.goto(adflyLoginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await quantumDelay(1000);
+
+            if (CONFIG.ADFLY_USERNAME && CONFIG.ADFLY_PASSWORD) {
+                await browserManager.safeType(page, 'input[name="email"]', CONFIG.ADFLY_USERNAME);
+                await browserManager.safeType(page, 'input[name="password"]', CONFIG.ADFLY_PASSWORD);
+                await browserManager.safeClick(page, 'button[type="submit"]');
+                await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                logger.info('   - Logged into AdFly. Navigating to payout settings...');
+                await quantumDelay(2000);
+
+                await page.goto(adflyPayoutSettingsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                await quantumDelay(1500);
+
+                if (paymentDetails.paypalEmail) {
+                    logger.info('   - Attempting to configure PayPal details...');
+                    // This part requires specific element selectors which can change.
+                    // You might need to inspect the AdFly payout page manually to get the correct selectors.
+                    // Example: Select PayPal option in a dropdown or radio button
+                    // await page.select('select[name="withdraw_method"]', 'paypal');
+                    // await browserManager.safeType(page, 'input[name="paypal_email"]', paymentDetails.paypalEmail);
+                    logger.warn('⚠️ Manual intervention required: Please verify and confirm PayPal email on AdFly\'s payout settings page. The agent has navigated you there.');
+                }
+                // Placeholder for other payment methods like Payoneer
+                if (paymentDetails.payoneerID) {
+                    logger.info('   - Attempting to configure Payoneer details...');
+                    logger.warn('⚠️ Manual intervention required: Please input and verify Payoneer details on AdFly\'s payout settings page.');
+                }
+                // await browserManager.safeClick(page, 'button[type="submit"]'); // Example save button
+                logger.success('✅ AdFly payment setup initiated. Please complete any final verification steps manually.');
+            } else {
+                logger.warn('⚠️ AdFly login credentials not provided in CONFIG. Cannot automate AdFly payment setup.');
+            }
+        } else if (platformName === 'Linkvertise') {
+            // --- Linkvertise Specific Logic (Conceptual) ---
+            const linkvertiseLoginUrl = 'https://linkvertise.com/login';
+            const linkvertisePayoutSettingsUrl = 'https://linkvertise.com/user/payouts'; // Example URL
+
+            logger.info('   - Navigating to Linkvertise login page...');
+            await page.goto(linkvertiseLoginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await quantumDelay(1000);
+
+            if (CONFIG.LINKVERTISE_USERNAME && CONFIG.LINKVERTISE_PASSWORD) {
+                await browserManager.safeType(page, 'input[name="email"]', CONFIG.LINKVERTISE_USERNAME);
+                await browserManager.safeType(page, 'input[name="password"]', CONFIG.LINKVERTISE_PASSWORD);
+                await browserManager.safeClick(page, 'button[type="submit"]');
+                await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                logger.info('   - Logged into Linkvertise. Navigating to payout settings...');
+                await quantumDelay(2000);
+
+                await page.goto(linkvertisePayoutSettingsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                await quantumDelay(1500);
+
+                if (paymentDetails.bankTransferDetails) {
+                    logger.info('   - Attempting to configure Bank Transfer details...');
+                    // Linkvertise typically offers Bank Transfer, Paysafecard, Amazon coupon.
+                    logger.warn('⚠️ Manual intervention required: Please enter and confirm Bank Transfer details on Linkvertise\'s payout page. Agent has navigated you there.');
+                }
+                logger.success('✅ Linkvertise payment setup initiated. Please complete any final verification steps manually.');
+            } else {
+                logger.warn('⚠️ Linkvertise login credentials not provided in CONFIG. Cannot automate Linkvertise payment setup.');
+            }
+        } else if (platformName === 'ouo.io') {
+            // --- ouo.io Specific Logic (Conceptual) ---
+            const ouoLoginUrl = 'https://ouo.io/login';
+            const ouoPayoutSettingsUrl = 'https://ouo.io/settings/withdraw'; // Example URL
+
+            logger.info('   - Navigating to ouo.io login page...');
+            await page.goto(ouoLoginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await quantumDelay(1000);
+
+            if (CONFIG.OUO_USERNAME && CONFIG.OUO_PASSWORD) {
+                await browserManager.safeType(page, 'input[name="email"]', CONFIG.OUO_USERNAME);
+                await browserManager.safeType(page, 'input[name="password"]', CONFIG.OUO_PASSWORD);
+                await browserManager.safeClick(page, 'button[type="submit"]');
+                await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                logger.info('   - Logged into ouo.io. Navigating to payout settings...');
+                await quantumDelay(2000);
+
+                await page.goto(ouoPayoutSettingsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                await quantumDelay(1500);
+
+                if (paymentDetails.paypalEmail) {
+                    logger.info('   - Attempting to configure PayPal details...');
+                    logger.warn('⚠️ Manual intervention required: Please enter and confirm PayPal details on ouo.io\'s payout page. Agent has navigated you there.');
+                }
+                logger.success('✅ ouo.io payment setup initiated. Please complete any final verification steps manually.');
+            } else {
+                logger.warn('⚠️ ouo.io login credentials not provided in CONFIG. Cannot automate ouo.io payment setup.');
+            }
+        }
+         else {
+            logger.warn(`Platform ${platformName} not supported for automated payment setup.`);
+        }
+
+        return { success: true, message: `Payment setup initiated for ${platformName}. Review your account.` };
+    } catch (error) {
+        logger.error(`🚨 Error during payment setup for ${platformName}: ${error.message}`);
+        return { success: false, error: error.message };
+    } finally {
+        if (page) await browserManager.closePage(page);
+    }
+};
+
+/**
+ * @class PayoutAgent
+ * @description Manages payout monitoring and configuration for ad revenue platforms.
+ */
+class PayoutAgent {
+    constructor(CONFIG, logger) {
+        this.CONFIG = CONFIG;
+        this.logger = logger;
+    }
 
     /**
-     * Main run method for the Payout Agent.
-     * @param {object} config - The global configuration object containing blockchain credentials and earnings.
-     * @param {number} config.earnings - The conceptual total earnings to be distributed.
-     * @param {boolean} [config.useFlexGas=true] - Option to enable conceptual flex gas deduction.
-     * @param {object} logger - The global logger instance.
-     * @returns {Promise<object>} Status of the payout operation.
+     * @method monitorAndTriggerPayouts
+     * @description Monitors earnings on various platforms and triggers a conceptual payout when thresholds are met.
+     * This method would involve web scraping or API calls to get current earnings.
+     * @returns {Promise<void>}
      */
-    async run(config, logger) {
-        this._config = config; // Set internal config reference
-        this._logger = logger; // Set internal logger reference
-        this._logger.info('🔍 Payout Agent Activated: Initiating Autonomous On-Chain Crypto Distribution...');
-        const startTime = process.hrtime.bigint();
+    async monitorAndTriggerPayouts() {
+        this.logger.info('💰 PayoutAgent: Monitoring earnings across platforms...');
+        // This is where you'd implement logic to:
+        // 1. Log into each platform (AdFly, Linkvertise, ouo.io, etc.)
+        // 2. Scrape/check current earnings.
+        // 3. Compare with payout thresholds.
+        // 4. If threshold met, initiate a conceptual "payout request" (which on real platforms is often automatic once threshold is met).
 
-        try {
-            const { PRIVATE_KEY, GAS_WALLET, BSC_NODE, USDT_WALLETS } = this._config;
-            const useFlexGas = this._config.useFlexGas !== false; // Default to true
-
-            // --- 1. Critical Configuration Validation ---
-            if (!PRIVATE_KEY || String(PRIVATE_KEY).includes('PLACEHOLDER')) {
-                this._logger.error('🚨 Payout Agent Failed: PRIVATE_KEY is missing or a placeholder. Cannot sign transactions.');
-                throw new Error('private_key_missing');
-            }
-            if (!GAS_WALLET || !Web3.utils.isAddress(GAS_WALLET)) {
-                this._logger.error('🚨 Payout Agent Failed: GAS_WALLET is invalid or missing.');
-                throw new Error('invalid_gas_wallet');
-            }
-            if (!BSC_NODE || String(BSC_NODE).includes('PLACEHOLDER')) {
-                this._logger.error('🚨 Payout Agent Failed: BSC_NODE is missing or a placeholder. Cannot connect to blockchain.');
-                throw new Error('bsc_node_missing');
-            }
-
-            // Ensure USDT_WALLETS is an array of valid addresses
-            const validUsdtWallets = (Array.isArray(USDT_WALLETS) ? USDT_WALLETS : (typeof USDT_WALLETS === 'string' ? USDT_WALLETS.split(',').map(w => w.trim()) : []))
-                .filter(w => Web3.utils.isAddress(w));
-
-            if (validUsdtWallets.length === 0) {
-                this._logger.warn('⚠️ No valid USDT_WALLETS configured for distribution. Skipping on-chain payout.');
-                return { status: 'skipped', reason: 'no_valid_usdt_wallets' };
-            }
-            this._logger.info(`✅ Payout configuration validated. Distributing to ${validUsdtWallets.length} wallets.`);
-
-            const provider = new ethers.providers.JsonRpcProvider(BSC_NODE);
-            const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-
-            // Verify that the GAS_WALLET address derived from PRIVATE_KEY matches this._config.GAS_WALLET
-            if (wallet.address.toLowerCase() !== GAS_WALLET.toLowerCase()) {
-                this._logger.error(`🚨 Payout Agent Critical Error: Mismatch between derived wallet address (${wallet.address}) and configured GAS_WALLET (${GAS_WALLET}). Ensure PRIVATE_KEY corresponds to GAS_WALLET.`);
-                throw new Error('private_key_gas_wallet_mismatch');
-            }
-            this._logger.info(`Connected to BSC node: ${BSC_NODE} with wallet: ${wallet.address.slice(0, 10)}...`);
-
-            // --- 2. Determine Conceptual Earnings ---
-            let earnings = this._config.earnings || 0; // Get conceptual earnings from this._config, default to 0
-            this._logger.info(`Initial Conceptual Earnings for Distribution: $${earnings.toFixed(2)}`);
-
-            if (earnings <= 0) {
-                this._logger.info('💸 No positive conceptual earnings to distribute. Skipping on-chain payout.');
-                return { status: 'skipped', reason: 'zero_earnings' };
-            }
-
-            // --- 3. Conceptual "Flex Gas" Deduction (Novelty) ---
-            const estimatedGasLimit = 60000; // Standard gas limit for a simple BNB transfer
-            const gasPrice = await provider.getGasPrice();
-            const costPerTxBNB_Wei = gasPrice.mul(estimatedGasLimit);
-            const costPerTxBNB = parseFloat(ethers.utils.formatEther(costPerTxBNB_Wei));
-            this._logger.info(`Estimated cost per transaction: ${costPerTxBNB.toFixed(8)} BNB`);
-
-            // Convert BNB cost to conceptual USD (assuming 1 BNB = $300 for estimation)
-            const BNB_USD_RATE_ESTIMATE = 300;
-            const conceptualGasCostUSD_PerTx = costPerTxBNB * BNB_USD_RATE_ESTIMATE;
-
-            let totalConceptualGasCostUSD = 0;
-            if (useFlexGas) {
-                totalConceptualGasCostUSD = conceptualGasCostUSD_PerTx * validUsdtWallets.length;
-                this._logger.info(`Conceptual total gas cost for ${validUsdtWallets.length} transactions: $${totalConceptualGasCostUSD.toFixed(4)}`);
-
-                earnings = Math.max(0, earnings - totalConceptualGasCostUSD);
-                this._logger.info(`Earnings after conceptual flex gas deduction: $${earnings.toFixed(2)}`);
-            } else {
-                this._logger.info('Conceptual flex gas deduction is disabled.');
-            }
-
-            if (earnings <= 0) {
-                this._logger.warn('⚠️ Earnings became zero or negative after conceptual gas deduction. Skipping actual payouts.');
-                return { status: 'skipped', reason: 'earnings_insufficient_after_gas_deduction' };
-            }
-
-            // --- 4. Determine BNB Distribution Amount per Wallet ---
-            const ACTUAL_BNB_TRANSFER_AMOUNT = ethers.utils.parseEther('0.0001'); // Fixed 0.0001 BNB per wallet
-
-            // --- 5. Check Actual BNB Balance for Gas ---
-            const gasWalletBalanceWei = await provider.getBalance(GAS_WALLET);
-            const gasWalletBalanceBNB = parseFloat(ethers.utils.formatEther(gasWalletBalanceWei));
-            this._logger.info(`Current GAS_WALLET BNB balance: ${gasWalletBalanceBNB.toFixed(6)} BNB`);
-
-            const totalActualBNBNeeded = ACTUAL_BNB_TRANSFER_AMOUNT.mul(validUsdtWallets.length).add(costPerTxBNB_Wei.mul(validUsdtWallets.length));
-            const totalActualBNBNeeded_Float = parseFloat(ethers.utils.formatEther(totalActualBNBNeeded));
-
-            if (gasWalletBalanceBNB < totalActualBNBNeeded_Float) {
-                this._logger.error(`🚨 Insufficient ACTUAL BNB in GAS_WALLET for distributing to all ${validUsdtWallets.length} wallets. Required: ~${totalActualBNBNeeded_Float.toFixed(6)} BNB.`);
-                throw new Error('insufficient_bnb_for_actual_txs');
-            }
-
-            // --- 6. Execute On-Chain Distribution ---
-            const txReceipts = [];
-            let actualBNBDistributedTotal = 0;
-
-            for (const recipientWallet of validUsdtWallets) {
-                try {
-                    this._logger.info(`Attempting to send ${ethers.utils.formatEther(ACTUAL_BNB_TRANSFER_AMOUNT)} BNB to ${recipientWallet.slice(0, 10)}...`);
-
-                    const tx = {
-                        to: recipientWallet,
-                        value: ACTUAL_BNB_TRANSFER_AMOUNT,
-                        gasLimit: estimatedGasLimit,
-                        gasPrice: gasPrice
-                    };
-
-                    const transactionResponse = await wallet.sendTransaction(tx);
-                    this._logger.info(`TX Hash: ${transactionResponse.hash.slice(0, 10)}... Waiting for confirmation...`);
-
-                    const receipt = await transactionResponse.wait(1); // Wait for 1 confirmation
-                    txReceipts.push(receipt.transactionHash);
-                    this._logger.success(`✅ Distributed ${ethers.utils.formatEther(ACTUAL_BNB_TRANSFER_AMOUNT)} BNB to ${recipientWallet.slice(0, 10)}... Confirmed in block ${receipt.blockNumber}.`);
-                    actualBNBDistributedTotal += parseFloat(ethers.utils.formatEther(ACTUAL_BNB_TRANSFER_AMOUNT));
-                } catch (txError) {
-                    this._logger.warn(`⚠️ Failed to distribute to ${recipientWallet.slice(0, 10)}...: ${txError.message.substring(0, 100)}...`);
-                    if (txError.code === 'INSUFFICIENT_FUNDS') {
-                        this._logger.error('    Reason: Gas wallet has insufficient funds for this specific transaction.');
-                    }
-                    // Continue to next wallet even if one transaction fails
-                }
-            }
-
-            const endTime = process.hrtime.bigint();
-            const durationMs = Number(endTime - startTime) / 1_000_000;
-            this._logger.success(`✅ Payout Agent completed in ${durationMs.toFixed(0)}ms. Total Actual BNB Distributed: ${actualBNBDistributedTotal.toFixed(6)} BNB.`);
-            return {
-                status: 'success',
-                conceptualEarningsHandled: this._config.earnings,
-                conceptualGasDeductedUSD: useFlexGas ? totalConceptualGasCostUSD.toFixed(4) : 'N/A',
-                totalActualBNBDistributed: actualBNBDistributedTotal.toFixed(6),
-                transactionCount: txReceipts.length,
-                transactionHashes: txReceipts,
-                distributedTo: validUsdtWallets,
-                durationMs
-            };
-
-        } catch (error) {
-            const endTime = process.hrtime.bigint();
-            const durationMs = Number(endTime - startTime) / 1_000_000;
-            this._logger.error(`🚨 Payout Agent Critical Failure in ${durationMs.toFixed(0)}ms: ${error.message}`);
-            // Re-throw the error object for consistent handling by server.js
-            throw { message: error.message, duration: durationMs };
+        // Example: Conceptual check for AdFly
+        const adflyCurrentEarnings = 6.50; // This would come from actual scraping/API
+        const adflyThreshold = 5.00;
+        if (adflyCurrentEarnings >= adflyThreshold) {
+            this.logger.success(`🎉 PayoutAgent: AdFly threshold met! Current earnings: $${adflyCurrentEarnings}.`);
+            // In a real scenario, the platform automatically pays out if configured.
+            // Here, we might just log that it's ready for payout.
+        } else {
+            this.logger.info(`AdFly earnings ($${adflyCurrentEarnings}) below threshold ($${adflyThreshold}).`);
         }
-    }
-};
 
-// === 🎨 Mint Revenue NFT (Optional) ===
-/**
- * A conceptual function for minting an NFT based on revenue.
- * It does NOT use Puppeteer.
- * @param {number} amount - The revenue amount.
- * @returns {Promise<object>} Status of the conceptual NFT minting.
-*/
-export const mintRevenueNFT = async (amount) => {
-    // Note: This function is kept separate and does not use `this._logger`
-    // as it's a standalone conceptual utility. If it needed access to
-    // the main agent's config/logger, it would need to be a method of payoutAgent
-    // or receive them as arguments.
-    if (amount >= 50) {
-        console.log(`🎨 Conceptual: Minting NFT for $${amount} revenue (threshold $50)...`);
-        return { status: 'mint_initiated', amount };
-    } else {
-        console.log(`ℹ️ Conceptual: Skipping NFT minting. Revenue $${amount} below threshold $50.`);
-        return { status: 'skipped', reason: 'amount_below_threshold' };
-    }
-};
+        // Add similar logic for other platforms
+        const linkvertiseCurrentEarnings = 12.00;
+        const linkvertiseThreshold = 10.00; // Linkvertise often has $10 minimum for some methods
+        if (linkvertiseCurrentEarnings >= linkvertiseThreshold) {
+            this.logger.success(`🎉 PayoutAgent: Linkvertise threshold met! Current earnings: $${linkvertiseCurrentEarnings}.`);
+        } else {
+            this.logger.info(`Linkvertise earnings ($${linkvertiseCurrentEarnings}) below threshold ($${linkvertiseThreshold}).`);
+        }
 
-export default payoutAgent;
+        const ouoioCurrentEarnings = 4.00;
+        const ouoioThreshold = 5.00;
+        if (ouoioCurrentEarnings >= ouoioThreshold) {
+            this.logger.success(`🎉 PayoutAgent: ouo.io threshold met! Current earnings: $${ouoioCurrentEarnings}.`);
+        } else {
+            this.logger.info(`ouo.io earnings ($${ouoioCurrentEarnings}) below threshold ($${ouoioThreshold}).`);
+        }
+
+        this.logger.info('💰 PayoutAgent: Earnings monitoring complete.');
+    }
+
+    /**
+     * @method initiatePaymentMethodSetup
+     * @description Calls the internal function to configure payment details on a specified platform.
+     * @param {string} platformName - The name of the ad platform.
+     * @param {object} paymentDetails - The payment details for the platform.
+     * @returns {Promise<object>} Status of the payment setup.
+     */
+    async initiatePaymentMethodSetup(platformName, paymentDetails) {
+        return await configurePaymentMethod(this.CONFIG, this.logger, platformName, paymentDetails);
+    }
+}
+
+export default PayoutAgent;
