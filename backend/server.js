@@ -1,4 +1,4 @@
-// server.js - Autonomous Revenue System with Built-in WebSocket
+// server.js - Autonomous Revenue System with BrowserManager Integration
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -14,6 +14,7 @@ import apiScoutAgent from './agents/apiScoutAgent.js';
 import shopifyAgent from './agents/shopifyAgent.js';
 import cryptoAgent from './agents/cryptoAgent.js';
 import externalPayoutAgentModule from './agents/payoutAgent.js';
+import { BrowserManager, shutdown as shutdownBrowser } from './agents/browserManager.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -28,7 +29,10 @@ const CONFIG = {
     MAX_HISTORICAL_DATA: 4320, // 30 days
     DASHBOARD_UPDATE_INTERVAL: 5000, // 5 seconds
     PAYOUT_THRESHOLD_USD: 100,
-    PAYOUT_PERCENTAGE: 0.8
+    PAYOUT_PERCENTAGE: 0.8,
+    BROWSER_CONCURRENCY: 3, // Number of concurrent browser instances
+    BROWSER_TIMEOUT: 30000, // 30 seconds timeout for browser operations
+    BROWSER_RETRIES: 2 // Number of retries for browser operations
 };
 
 // --- Enhanced Logger ---
@@ -49,7 +53,8 @@ function broadcastDashboardUpdate() {
         timestamp: new Date().toISOString(),
         status: getSystemStatus(),
         revenue: getRevenueAnalytics(),
-        agents: getAgentActivities()
+        agents: getAgentActivities(),
+        browserStats: BrowserManager.getStats() // Add browser stats to dashboard
     };
 
     const message = JSON.stringify({ type: 'update', data: update });
@@ -280,6 +285,13 @@ class PayoutAgentOrchestrator {
 const revenueTracker = new RevenueTracker();
 const payoutAgentInstance = new PayoutAgentOrchestrator(revenueTracker);
 
+// Initialize BrowserManager with config
+BrowserManager.init({
+    maxInstances: CONFIG.BROWSER_CONCURRENCY,
+    timeout: CONFIG.BROWSER_TIMEOUT,
+    retries: CONFIG.BROWSER_RETRIES
+});
+
 async function runAutonomousRevenueSystem() {
     const cycleStart = Date.now();
     const cycleStats = {
@@ -288,7 +300,8 @@ async function runAutonomousRevenueSystem() {
         duration: 0,
         revenueGenerated: 0,
         activities: [],
-        newlyRemediatedKeys: {}
+        newlyRemediatedKeys: {},
+        browserUsage: {}
     };
 
     try {
@@ -305,34 +318,52 @@ async function runAutonomousRevenueSystem() {
         scoutActivity.action = 'completed';
         scoutActivity.status = scoutResults?.status || 'success';
 
-        // Run Shopify Agent
+        // Run Shopify Agent with browser support
         const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(shopifyActivity);
         cycleStats.activities.push(shopifyActivity);
         
-        const shopifyResult = await withRetry(() => shopifyAgent.run(CONFIG, logger));
-        if (shopifyResult?.newlyRemediatedKeys) {
-            Object.assign(CONFIG, shopifyResult.newlyRemediatedKeys);
-            Object.assign(cycleStats.newlyRemediatedKeys, shopifyResult.newlyRemediatedKeys);
+        const browserContext = await BrowserManager.acquireContext();
+        try {
+            const shopifyResult = await withRetry(() => 
+                shopifyAgent.run({ ...CONFIG, browserContext }, logger)
+            );
+            
+            if (shopifyResult?.newlyRemediatedKeys) {
+                Object.assign(CONFIG, shopifyResult.newlyRemediatedKeys);
+                Object.assign(cycleStats.newlyRemediatedKeys, shopifyResult.newlyRemediatedKeys);
+            }
+            const shopifyEarnings = parseFloat(shopifyResult?.finalPrice || 0);
+            cycleStats.revenueGenerated += shopifyEarnings;
+            await revenueTracker.updatePlatformEarnings('shopify', shopifyEarnings);
+            shopifyActivity.action = 'completed';
+            shopifyActivity.status = shopifyResult?.status || 'success';
+            cycleStats.browserUsage.shopify = BrowserManager.getLastUsageStats();
+        } finally {
+            await BrowserManager.releaseContext(browserContext);
         }
-        const shopifyEarnings = parseFloat(shopifyResult?.finalPrice || 0);
-        cycleStats.revenueGenerated += shopifyEarnings;
-        await revenueTracker.updatePlatformEarnings('shopify', shopifyEarnings);
-        shopifyActivity.action = 'completed';
-        shopifyActivity.status = shopifyResult?.status || 'success';
 
-        // Run Crypto Agent
+        // Run Crypto Agent with browser support
         const cryptoActivity = { agent: 'crypto', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(cryptoActivity);
         cycleStats.activities.push(cryptoActivity);
         
-        const cryptoResult = await withRetry(() => cryptoAgent.run(CONFIG, logger));
-        if (cryptoResult?.newlyRemediatedKeys) {
-            Object.assign(CONFIG, cryptoResult.newlyRemediatedKeys);
-            Object.assign(cycleStats.newlyRemediatedKeys, cryptoResult.newlyRemediatedKeys);
+        const cryptoBrowserContext = await BrowserManager.acquireContext();
+        try {
+            const cryptoResult = await withRetry(() => 
+                cryptoAgent.run({ ...CONFIG, browserContext: cryptoBrowserContext }, logger)
+            );
+            
+            if (cryptoResult?.newlyRemediatedKeys) {
+                Object.assign(CONFIG, cryptoResult.newlyRemediatedKeys);
+                Object.assign(cycleStats.newlyRemediatedKeys, cryptoResult.newlyRemediatedKeys);
+            }
+            cryptoActivity.action = 'completed';
+            cryptoActivity.status = cryptoResult?.status || 'success';
+            cycleStats.browserUsage.crypto = BrowserManager.getLastUsageStats();
+        } finally {
+            await BrowserManager.releaseContext(cryptoBrowserContext);
         }
-        cryptoActivity.action = 'completed';
-        cryptoActivity.status = cryptoResult?.status || 'success';
 
         // Run Payout Agent
         const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
@@ -357,7 +388,8 @@ async function runAutonomousRevenueSystem() {
         historicalRevenueData.push({
             timestamp: new Date().toISOString(),
             totalRevenue: revenueSnapshot.totalRevenue,
-            cycleRevenue: cycleStats.revenueGenerated
+            cycleRevenue: cycleStats.revenueGenerated,
+            browserUsage: cycleStats.browserUsage
         });
 
         if (historicalRevenueData.length > CONFIG.MAX_HISTORICAL_DATA) {
@@ -398,7 +430,8 @@ function getSystemStatus() {
         lastCycle: lastCycleStats,
         memoryUsage: process.memoryUsage(),
         activeCampaigns: revenueTracker.activeCampaigns.length,
-        nextCycleIn: Math.max(0, CONFIG.CYCLE_INTERVAL - (Date.now() - lastCycleStart))
+        nextCycleIn: Math.max(0, CONFIG.CYCLE_INTERVAL - (Date.now() - lastCycleStart)),
+        browserStats: BrowserManager.getStats()
     };
 }
 
@@ -417,7 +450,8 @@ function getAgentActivities() {
             apiScoutAgent: apiScoutAgent.getStatus?.(),
             shopifyAgent: { lastExecution: 'N/A', lastStatus: 'N/A' },
             cryptoAgent: { lastExecution: 'N/A', lastStatus: 'N/A' },
-            payoutAgent: payoutAgentInstance.getStatus()
+            payoutAgent: payoutAgentInstance.getStatus(),
+            browserManager: BrowserManager.getStatus()
         }
     };
 }
@@ -497,10 +531,18 @@ async function continuousOperation() {
     if (isRunning) return;
     isRunning = true;
 
+    // Enhanced shutdown handler
     process.on('SIGTERM', async () => {
-        logger.info('Shutting down...');
-        await revenueTracker.saveData();
-        process.exit(0);
+        logger.info('Shutting down gracefully...');
+        try {
+            await revenueTracker.saveData();
+            await shutdownBrowser();
+            logger.success('Clean shutdown completed');
+            process.exit(0);
+        } catch (error) {
+            logger.error('Error during shutdown:', error);
+            process.exit(1);
+        }
     });
 
     while (true) {
