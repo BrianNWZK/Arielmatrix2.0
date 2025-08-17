@@ -1,4 +1,4 @@
-// server.js - Autonomous Revenue System with BrowserManager Integration
+```javascript
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -14,7 +14,7 @@ import apiScoutAgent from './agents/apiScoutAgent.js';
 import shopifyAgent from './agents/shopifyAgent.js';
 import cryptoAgent from './agents/cryptoAgent.js';
 import externalPayoutAgentModule from './agents/payoutAgent.js';
-import { BrowserManager, shutdown as shutdownBrowser } from './agents/browserManager.js';
+import BrowserManager, { shutdown as shutdownBrowser } from './agents/browserManager.js'; // Fixed import: default import for BrowserManager, named import for shutdown
 
 // --- Configuration ---
 const CONFIG = {
@@ -562,3 +562,4 @@ server.listen(PORT, '0.0.0.0', () => {
         continuousOperation();
     }
 });
+```
