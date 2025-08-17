@@ -2,283 +2,281 @@
 import axios from 'axios';
 import crypto from 'crypto';
 
+// Import the browser manager for robust and stealthy browser operations
+import browserManager from '../browserManager.js';
+
 // === 🌀 Quantum Jitter (Anti-Robot) ===
 const quantumDelay = (ms) => new Promise(resolve => {
-  const jitter = crypto.randomInt(1000, 5000);
-  setTimeout(resolve, ms + jitter);
+    // Add a random delay (jitter) between 1 to 5 seconds to the base delay
+    const jitter = crypto.randomInt(1000, 5000);
+    setTimeout(resolve, ms + jitter);
 });
 
-// === 🔍 Smart Selector with Fallback Chain ===
-const safeType = async (page, selectors, text) => {
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector.trim(), { timeout: 6000 });
-      await page.type(selector.trim(), text);
-      return true;
-    } catch (e) {
-      continue;
-    }
-  }
-  throw new Error(`All selectors failed: ${selectors[0]}`);
-};
-
-const safeClick = async (page, selectors) => {
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector.trim(), { timeout: 8000 });
-      await page.click(selector.trim());
-      return true;
-    } catch (e) {
-      continue;
-    }
-  }
-  throw new Error(`All click selectors failed`);
-};
-
-// === 🌐 Launch Stealth Browser ===
-const launchStealthBrowser = async () => {
-  const args = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-infobars',
-    '--window-position=0,0',
-    '--window-size=1366,768'
-  ];
-
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args,
-      timeout: 120000,
-      ignoreHTTPSErrors: true
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-    );
-    await page.setViewport({ width: 1366, height: 768 });
-
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
-    });
-
-    return { browser, page };
-  } catch (error) {
-    console.warn('⚠️ Browser launch failed:', error.message);
-    if (browser) await browser.close();
-    return null;
-  }
-};
-
 // === 📊 Forex Signal Agent (Revenue-Optimized) ===
-export const forexSignalAgent = async (CONFIG, redisClient = null) => {
-  try {
-    console.log('📊 Starting forexSignalAgent...');
-
-    // Validate required keys
-    if (!CONFIG.NEWS_API_KEY || !CONFIG.AI_EMAIL || !CONFIG.AI_PASSWORD) {
-      console.warn('❌ Missing NEWS_API_KEY or AI credentials. Skipping.');
-      return [];
-    }
-
-    // Fetch data with clean URLs
-    const [countriesRes, ratesRes, newsRes] = await Promise.all([
-      axios.get('https://restcountries.com/v3.1/all', { timeout: 10000 }),
-      axios.get('https://api.exchangerate.host/latest?base=USD', { timeout: 10000 }),
-      axios.get('https://newsapi.org/v2/top-headlines', {
-        params: { category: 'business', language: 'en', pageSize: 20 },
-        headers: { 'Authorization': `Bearer ${CONFIG.NEWS_API_KEY}` },
-        timeout: 10000
-      }).catch(() => ({ data: { articles: [] } }))
-    ]);
-
-    // Sentiment analysis
-    const sentimentScores = newsRes.data.articles.map(article => {
-      const title = (article.title || '').toLowerCase();
-      const desc = (article.description || '').toLowerCase();
-      const positive = ['rises', 'growth', 'bullish', 'strong', 'increase', 'surge'];
-      const negative = ['falls', 'crash', 'bearish', 'decline', 'drop', 'plunge'];
-      const pos = positive.filter(w => title.includes(w) || desc.includes(w)).length;
-      const neg = negative.filter(w => title.includes(w) || desc.includes(w)).length;
-      return { title, score: (pos - neg) / (pos + neg + 1) };
-    });
-
-    // Target high-net-worth countries
-    const HIGH_VALUE_COUNTRIES = ['MC', 'CH', 'AE', 'SG', 'LU', 'US', 'GB', 'DE'];
-    const signals = countriesRes.data
-      .filter(country => {
-        const cc = country.cca2;
-        return HIGH_VALUE_COUNTRIES.includes(cc) || country.independent;
-      })
-      .map(country => {
-        const currencyCode = Object.keys(country.currencies || {})[0];
-        if (!currencyCode) return null;
-
-        const rate = ratesRes.data.rates[currencyCode] || 1;
-        const countryName = country.name.common;
-        const countryNews = sentimentScores.filter(s => s.title.includes(countryName.toLowerCase()));
-        const avgSentiment = countryNews.length > 0
-          ? countryNews.reduce((acc, s) => acc + s.score, 0) / countryNews.length
-          : 0;
-
-        let signal = 'Hold';
-        if (avgSentiment > 0.3) signal = 'Buy';
-        else if (avgSentiment < -0.3) signal = 'Sell';
-
-        return {
-          country: countryName,
-          cca2: country.cca2,
-          currency: currencyCode,
-          rate: parseFloat(rate.toFixed(4)),
-          sentiment: parseFloat(avgSentiment.toFixed(4)),
-          signal,
-          timestamp: new Date().toISOString()
-        };
-      })
-      .filter(Boolean);
-
-    // === 🔗 Shorten link using Short.io (Primary), AdFly, Linkvertise Fallback ===
-    const baseSignalLink = `${CONFIG.STORE_URL}/forex`;
-    let finalLink = baseSignalLink;
-
-    // === PRIMARY: Short.io API ===
+/**
+ * @function forexSignalAgent
+ * @description Generates forex trading signals based on economic data, news sentiment,
+ * and distributes them via various platforms after shortening the link.
+ * Integrates with browserManager for Linkvertise interaction and a global logger.
+ * @param {object} CONFIG - The global configuration object, including API keys and URLs.
+ * @param {object} logger - The global logger instance for consistent logging.
+ * @param {object} [redisClient=null] - Optional Redis client for caching data.
+ * @returns {Promise<Array<object>>} A list of generated forex signals.
+ */
+export const forexSignalAgent = async (CONFIG, logger, redisClient = null) => {
     try {
-      const response = await axios.post(
-        `${CONFIG.SHORTIO_URL}/links/public`,
-        {
-          domain: CONFIG.SHORTIO_DOMAIN || 'qgs.gs',
-          originalURL: baseSignalLink
-        },
-        {
-          headers: {
-            'accept': 'application/json',
-            'content-type': 'application/json',
-            'authorization': CONFIG.SHORTIO_API_KEY,
-            'userId': CONFIG.SHORTIO_USER_ID
-          }
+        logger.info('📊 Starting forexSignalAgent...');
+
+        // Validate required keys
+        if (!CONFIG.NEWS_API_KEY || !CONFIG.AI_EMAIL || !CONFIG.AI_PASSWORD) {
+            logger.warn('❌ Missing NEWS_API_KEY or AI credentials. Skipping forexSignalAgent.');
+            return [];
         }
-      );
 
-      finalLink = response.data.shortURL;
-      console.log(`✅ Short.io success: ${finalLink}`);
-    } catch (error) {
-      console.warn('⚠️ Short.io failed → falling back to AdFly:', error.message);
-    }
+        // Fetch data with clean URLs
+        const [countriesRes, ratesRes, newsRes] = await Promise.all([
+            axios.get('https://restcountries.com/v3.1/all', { timeout: 10000 }),
+            axios.get('https://api.exchangerate.host/latest?base=USD', { timeout: 10000 }),
+            axios.get('https://newsapi.org/v2/top-headlines', {
+                params: { category: 'business', language: 'en', pageSize: 20 },
+                headers: { 'Authorization': `Bearer ${CONFIG.NEWS_API_KEY}` },
+                timeout: 10000
+            }).catch(error => {
+                logger.warn(`⚠️ News API fetch failed: ${error.message}. Continuing without news sentiment.`);
+                return { data: { articles: [] } }; // Return empty articles on error
+            })
+        ]);
 
-    // === SECONDARY: AdFly API ===
-    if (finalLink === baseSignalLink && CONFIG.ADFLY_API_KEY) {
-      try {
-        const response = await axios.post(CONFIG.ADFLY_URL || 'https://api.adf.ly/v1/shorten', {
-          url: baseSignalLink,
-          api_key: CONFIG.ADFLY_API_KEY,
-          user_id: CONFIG.ADFLY_USER_ID,
-          domain: 'qgs.gs',
-          advert_type: 'int'
-        }, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 5000
+        // Sentiment analysis of news articles
+        const sentimentScores = newsRes.data.articles.map(article => {
+            const title = (article.title || '').toLowerCase();
+            const desc = (article.description || '').toLowerCase();
+            const positive = ['rises', 'growth', 'bullish', 'strong', 'increase', 'surge', 'gain', 'positive'];
+            const negative = ['falls', 'crash', 'bearish', 'decline', 'drop', 'plunge', 'loss', 'negative'];
+
+            // Count positive and negative keywords
+            const pos = positive.filter(w => title.includes(w) || desc.includes(w)).length;
+            const neg = negative.filter(w => title.includes(w) || desc.includes(w)).length;
+
+            // Calculate a simple sentiment score, avoiding division by zero
+            return { title, score: (pos - neg) / (pos + neg + 1) };
         });
 
-        finalLink = response.data.short_url;
-        console.log(`✅ AdFly success: ${finalLink}`);
-      } catch (error) {
-        console.warn('⚠️ AdFly failed → falling back to Linkvertise');
-      }
-    }
+        // Target high-net-worth countries for more valuable signals
+        const HIGH_VALUE_COUNTRIES = ['MC', 'CH', 'AE', 'SG', 'LU', 'US', 'GB', 'DE', 'QA', 'IE', 'NO', 'KW', 'BN']; // Added more high-value countries
+        const signals = countriesRes.data
+            .filter(country => {
+                const cc = country.cca2;
+                // Filter for high-value countries or independent countries (broader reach)
+                return HIGH_VALUE_COUNTRIES.includes(cc) || country.independent;
+            })
+            .map(country => {
+                const currencyCode = Object.keys(country.currencies || {})[0];
+                if (!currencyCode) return null; // Skip if no currency is defined for the country
 
-    // === TERTIARY: Linkvertise ===
-    if (finalLink === baseSignalLink) {
-      let browser = null;
-      try {
-        const result = await launchStealthBrowser();
-        if (!result) throw new Error('Browser launch failed');
-        ({ browser } = result);
-        const page = await browser.newPage();
+                const rate = ratesRes.data.rates[currencyCode] || 1; // Default to 1 if rate not found
+                const countryName = country.name.common;
+                // Filter news specific to this country for sentiment
+                const countryNews = sentimentScores.filter(s =>
+                    s.title.includes(countryName.toLowerCase()) ||
+                    s.title.includes(country.cca2.toLowerCase())
+                );
+                const avgSentiment = countryNews.length > 0
+                    ? countryNews.reduce((acc, s) => acc + s.score, 0) / countryNews.length
+                    : 0; // Default sentiment to 0 if no relevant news
 
-        await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'networkidle2' });
-        await quantumDelay(2000);
+                let signal = 'Hold';
+                if (avgSentiment > 0.3) signal = 'Buy'; // Strong positive sentiment
+                else if (avgSentiment < -0.3) signal = 'Sell'; // Strong negative sentiment
 
-        await safeType(page, ['input[name="email"]'], CONFIG.AI_EMAIL);
-        await safeType(page, ['input[name="password"]'], CONFIG.AI_PASSWORD);
-        await safeClick(page, ['button[type="submit"]']);
-        await quantumDelay(5000);
+                return {
+                    country: countryName,
+                    cca2: country.cca2,
+                    currency: currencyCode,
+                    rate: parseFloat(rate.toFixed(4)),
+                    sentiment: parseFloat(avgSentiment.toFixed(4)),
+                    signal,
+                    timestamp: new Date().toISOString()
+                };
+            })
+            .filter(Boolean); // Remove any null entries (countries without currency)
 
-        await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'networkidle2' });
-        await quantumDelay(2000);
+        // === 🔗 Shorten link using Short.io (Primary), AdFly, Linkvertise Fallback ===
+        const baseSignalLink = `${CONFIG.STORE_URL || 'https://arielmatrix.io'}/forex`; // Ensure a fallback URL
+        let finalLink = baseSignalLink;
 
-        await safeType(page, ['input[name="url"]'], baseSignalLink);
-        await safeClick(page, ['button[type="submit"]']);
-        await quantumDelay(3000);
-
-        const shortLink = await page.evaluate(() => 
-          document.querySelector('input.share-link-input')?.value || null
-        );
-
-        if (shortLink) {
-          finalLink = shortLink;
-          console.log(`✅ Linkvertise success: ${finalLink}`);
+        // === PRIMARY: Short.io API ===
+        if (CONFIG.SHORTIO_API_KEY && CONFIG.SHORTIO_USER_ID) {
+            try {
+                const response = await axios.post(
+                    `${CONFIG.SHORTIO_URL}/links/public`,
+                    {
+                        domain: CONFIG.SHORTIO_DOMAIN || 'qgs.gs', // Default domain, can be configured
+                        originalURL: baseSignalLink
+                    },
+                    {
+                        headers: {
+                            'accept': 'application/json',
+                            'content-type': 'application/json',
+                            'authorization': CONFIG.SHORTIO_API_KEY,
+                            'userId': CONFIG.SHORTIO_USER_ID
+                        },
+                        timeout: 8000 // Set a reasonable timeout
+                    }
+                );
+                finalLink = response.data.shortURL;
+                logger.success(`✅ Short.io success: ${finalLink}`);
+            } catch (error) {
+                logger.warn(`⚠️ Short.io failed (${error.message?.substring(0, 50)}...) → falling back to AdFly.`);
+            }
+        } else {
+            logger.warn('⚠️ Short.io API keys missing. Skipping Short.io.');
         }
-      } catch (error) {
-        console.warn('⚠️ Linkvertise failed → using long URL');
-      } finally {
-        if (browser) await browser.close();
-      }
-    }
 
-    // === 📌 Post to Reddit ===
-    if (CONFIG.REDDIT_API_KEY) {
-      const topSignals = signals.slice(0, 3).map(s => `🌍 ${s.country} | ${s.currency} | ${s.signal}`).join('\n');
-      try {
-        await axios.post(
-          'https://oauth.reddit.com/api/submit',
-          {
-            sr: 'forex',
-            kind: 'self',
-            title: `AI Forex Signals (${new Date().toLocaleDateString()})`,
-            text: `${topSignals}\n\n🔗 ${finalLink}\n\n${CONFIG.UPTIMEROBOT_AFFILIATE_LINK}`
-          },
-          {
-            headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}` },
-            timeout: 10000
-          }
-        );
-        console.log('✅ Posted forex signals to Reddit');
-      } catch (e) {
-        console.warn('⚠️ Reddit post failed:', e.message?.substring(0, 60));
-      }
-    }
 
-    // === 💸 Trigger Payout ===
-    const earnings = Math.random() * 10;
-    if (earnings > 5) {
-      console.log(`🎯 Payout triggered: $${earnings.toFixed(2)}`);
-      const payoutAgent = await import('./payoutAgent.js');
-      await payoutAgent.payoutAgent({ ...CONFIG, earnings });
-    }
+        // === SECONDARY: AdFly API ===
+        if (finalLink === baseSignalLink && CONFIG.ADFLY_API_KEY && CONFIG.ADFLY_USER_ID) {
+            try {
+                const response = await axios.get(CONFIG.ADFLY_URL || 'https://api.adf.ly/api.php', {
+                    params: {
+                        aid: CONFIG.ADFLY_USER_ID,
+                        key: CONFIG.ADFLY_API_KEY,
+                        url: baseSignalLink,
+                        type: 'int', // Interstitial ads (higher revenue)
+                        domain: 'adf.ly' // Can be configured if custom domain is used
+                    },
+                    timeout: 8000
+                });
+                // AdFly API returns the shortened URL directly in the response data
+                finalLink = response.data;
+                logger.success(`✅ AdFly success: ${finalLink}`);
+            } catch (error) {
+                logger.warn(`⚠️ AdFly failed (${error.message?.substring(0, 50)}...) → falling back to Linkvertise.`);
+            }
+        } else {
+            logger.warn('⚠️ AdFly API keys missing. Skipping AdFly.');
+        }
 
-    // === 🗄️ Save to Redis ===
-    if (redisClient) {
-      await redisClient.set('forex:signals', JSON.stringify(signals), { EX: 3600 });
-      await redisClient.set('forex:stats', JSON.stringify({ earnings: earnings.toFixed(2) }), { EX: 300 });
-    }
+        // === TERTIARY: Linkvertise (via Browser Automation) ===
+        if (finalLink === baseSignalLink) {
+            let page = null;
+            try {
+                logger.info('Attempting Linkvertise automation via browser...');
+                // Acquire a page from the browser manager
+                page = await browserManager.getNewPage();
+                if (!page) {
+                    throw new Error('Failed to acquire a browser page from browserManager.');
+                }
 
-    console.log(`📈 Generated ${signals.length} forex signals.`);
-    return signals;
-  } catch (error) {
-    console.error('🚨 forexSignalAgent ERROR:', error.message);
-    return [];
-  }
+                // Navigate to Linkvertise login
+                await page.goto('https://linkvertise.com/auth/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
+                await quantumDelay(3000); // Simulate human-like delay
+
+                // Type email and password using safeType from browserManager
+                await browserManager.safeType(page, ['input[name="email"]', '#email', 'input[type="email"]'], CONFIG.AI_EMAIL);
+                await browserManager.safeType(page, ['input[name="password"]', '#password', 'input[type="password"]'], CONFIG.AI_PASSWORD);
+                logger.info('Typed Linkvertise credentials.');
+
+                // Click login button using safeClick from browserManager
+                await browserManager.safeClick(page, ['button[type="submit"]', '.btn-primary', 'text="Sign in"']);
+                await quantumDelay(8000); // Longer delay for login processing and page load
+
+                // Navigate to link creation page
+                await page.goto('https://linkvertise.com/dashboard/links/create', { waitUntil: 'domcontentloaded', timeout: 60000 });
+                await quantumDelay(4000); // Delay for page content to load
+
+                // Type the original URL into the link creation input
+                await browserManager.safeType(page, ['input[name="target_url"]', '#target_url', 'input[placeholder="Your target URL"]'], baseSignalLink);
+                logger.info('Typed target URL for Linkvertise.');
+
+                // Click the create link button
+                await browserManager.safeClick(page, ['button[type="submit"]', '.btn-success', 'text="Create Link"']);
+                await quantumDelay(5000); // Wait for link creation and display
+
+                // Extract the shortened link (adjust selector if needed based on Linkvertise UI)
+                const shortLink = await page.evaluate(() =>
+                    document.querySelector('input[readonly], input.share-link-input, #shortenedUrlDisplay')?.value || null
+                );
+
+                if (shortLink) {
+                    finalLink = shortLink;
+                    logger.success(`✅ Linkvertise success: ${finalLink}`);
+                } else {
+                    logger.warn('⚠️ Linkvertise automation succeeded, but could not find shortened link on page.');
+                }
+            } catch (error) {
+                logger.warn(`⚠️ Linkvertise automation failed: ${error.message?.substring(0, 80)}... → using long URL.`);
+                if (error.name === 'TimeoutError') {
+                    logger.error('Linkvertise operation timed out. This might indicate bot detection or slow page loads.');
+                }
+            } finally {
+                // Ensure the page is returned to the pool or truly closed
+                if (page) {
+                    await browserManager.closePage(page);
+                }
+            }
+        } else {
+            logger.info('Link already shortened by Short.io or AdFly. Skipping Linkvertise.');
+        }
+
+        // === 📌 Post to Reddit (if API key available) ===
+        if (CONFIG.REDDIT_API_KEY) {
+            const topSignals = signals.slice(0, 3).map(s => `🌍 ${s.country} | ${s.currency} | ${s.signal}`).join('\n');
+            const postTitle = `AI Forex Signals: Market Insights for ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+            const postBody = `Here are today's top AI-generated forex signals:\n\n${topSignals}\n\nGet more insights and start trading: 🔗 ${finalLink}\n\n${CONFIG.UPTIMEROBOT_AFFILIATE_LINK || ''}\n\n#Forex #Trading #AISignals #Crypto #Invest`;
+            try {
+                await axios.post(
+                    'https://oauth.reddit.com/api/submit',
+                    {
+                        sr: CONFIG.REDDIT_SUBREDDIT || 'forex', // Use configurable subreddit, default to 'forex'
+                        kind: 'self', // Self-post (text content)
+                        title: postTitle,
+                        text: postBody
+                    },
+                    {
+                        headers: { Authorization: `Bearer ${CONFIG.REDDIT_API_KEY}`, 'User-Agent': 'ArielMatrixForexAgent/1.0' }, // Add User-Agent
+                        timeout: 15000 // Increased timeout
+                    }
+                );
+                logger.success('✅ Posted forex signals to Reddit.');
+            } catch (e) {
+                logger.warn(`⚠️ Reddit post failed: ${e.response?.data?.message || e.message?.substring(0, 60)}`);
+                if (e.response?.status === 403) {
+                    logger.warn('Reddit API returned 403 Forbidden. Check Reddit API key and permissions.');
+                }
+            }
+        } else {
+            logger.warn('⚠️ Reddit API key not provided. Skipping Reddit post.');
+        }
+
+        // === 💸 Trigger Payout ===
+        // Simulate earnings based on signal generation success and link shortening success
+        const earnings = signals.length > 0 && finalLink !== baseSignalLink ? Math.random() * 20 + 5 : 0; // Higher potential earnings if signals are generated and link is shortened
+        if (earnings > 0) {
+            logger.info(`🎯 Payout triggered: $${earnings.toFixed(2)}`);
+            // Dynamically import payoutAgent to prevent circular dependencies if payoutAgent also imports forexSignalAgent
+            const payoutAgentModule = await import('./payoutAgent.js');
+            await payoutAgentModule.payoutAgent({ ...CONFIG, earnings }, logger); // Pass logger to payout agent
+        } else {
+            logger.info('💰 No significant earnings to trigger payout this cycle.');
+        }
+
+
+        // === 🗄️ Save to Redis ===
+        if (redisClient) {
+            try {
+                await redisClient.set('forex:signals', JSON.stringify(signals), { EX: 3600 }); // Store for 1 hour
+                await redisClient.set('forex:stats', JSON.stringify({ earnings: earnings.toFixed(2), numSignals: signals.length }), { EX: 300 }); // Store stats for 5 mins
+                logger.info('✅ Saved forex signals and stats to Redis.');
+            } catch (redisError) {
+                logger.error(`🚨 Failed to save to Redis: ${redisError.message}`);
+            }
+        }
+
+        logger.info(`📈 Generated ${signals.length} forex signals.`);
+        return signals;
+    } catch (error) {
+        logger.error(`🚨 forexSignalAgent critical ERROR: ${error.message}`);
+        return [];
+    }
 };
-
-// === 🧩 Safe Puppeteer Import ===
-let puppeteer;
-try {
-  puppeteer = (await import('puppeteer')).default;
-} catch (e) {
-  console.warn('⚠️ Puppeteer not available → Linkvertise fallback disabled');
-}
