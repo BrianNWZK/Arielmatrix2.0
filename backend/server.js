@@ -1,408 +1,511 @@
+// server.js
+
+// Import necessary modules
 import express from 'express';
-import path from 'path';
+import cors from 'cors';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
+
+// External modules from package.json that are now explicitly imported
 import axios from 'axios';
-import cron from 'node-cron';
-import { randomBytes, createHash } from 'node:crypto';
+// Uncomment and use if direct Web3.js instance is needed:
+// import Web3 from 'web3';
+// Uncomment and use if Ethers.js is used directly for specific operations:
+// import { ethers } from 'ethers';
+// Uncomment and use if Solana is directly used:
+// import { Connection, Keypair, LAMPORTS_PER_SOL, Transaction, SystemProgram, PublicKey } from '@solana/web3.js';
+// Uncomment and use if TensorFlow.js is used directly:
+// import * as tf from '@tensorflow/tfjs-node';
+// Uncomment and use if Twitter API is used directly:
+// import { TwitterApi } from 'twitter-api-v2';
+// Uncomment and use if scheduled tasks are used:
+// import cron from 'node-cron';
+// Uncomment and use if Redis is used:
+// import Redis from 'ioredis';
 
-// Import the browser manager
-import browserManager from './agents/browserManager.js';
+// Note: puppeteer and playwright are dynamically imported in BrowserManager to avoid global import issues
+// if not always used, but their presence in package.json implies they are intended for use.
 
-// Fix for __dirname in ES6 modules
+// Helper to get correct path in ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// === 📝 Global Logger Utility ===
-class Logger {
+// --- Configuration ---
+const CONFIG = {
+    PORT: process.env.PORT || 3000,
+    ENVIRONMENT: process.env.NODE_ENV || 'development',
+    // Ad platform credentials (mock for now)
+    AD_PLATFORMS: {
+        FACEBOOK_ADS: { username: 'test_fb_user', password: 'test_fb_password' },
+        GOOGLE_ADS: { username: 'test_google_user', password: 'test_google_password' },
+    },
+    // Payment method details (mock for now)
+    PAYMENT_METHODS: {
+        STRIPE: { apiKey: 'sk_test_123', secretKey: 'sec_test_abc' },
+        PAYPAL: { clientId: 'client_id_test', clientSecret: 'client_secret_test' },
+        CRYPTOCURRENCY: {
+            // Using a mock wallet for demonstration
+            walletAddress: '0xMockCryptoWalletAddress123',
+            privateKey: 'mock_private_key_do_not_use_in_prod',
+            network: 'ethereum' // Or solana, etc.
+        }
+    },
+    // Budgeting and risk management parameters
+    BUDGET: 1000, // Total budget for revenue generation operations
+    RISK_TOLERANCE: 0.1, // Max percentage of budget to risk on new strategies
+    // AI Model configuration
+    AI_MODEL: 'gemini-2.5-flash-preview-05-20', // Or imagen-3.0-generate-002 for image generation
+    AI_API_KEY: '' // Canvas will inject this if left empty
+};
+
+// --- Logger Utility ---
+const logger = {
+    info: (...args) => console.log('[INFO]', ...args),
+    warn: (...args) => console.warn('[WARN]', ...args),
+    error: (...args) => console.error('[ERROR]', ...args),
+};
+
+// --- Browser Manager Utility (Puppeteer/Playwright Abstraction) ---
+class BrowserManager {
     constructor() {
-        this.logs = []; // In-memory storage for logs
-        this.logLevel = process.env.LOG_LEVEL || 'info'; // Default to info, can be debug, warn, error
-        this.levels = {
-            debug: 0,
-            info: 1,
-            success: 2,
-            warn: 3,
-            error: 4
-        };
+        this.browser = null;
+        this.page = null;
+        this.browserType = null; // 'puppeteer' or 'playwright'
     }
 
-    _shouldLog(level) {
-        return this.levels[level] >= this.levels[this.logLevel];
-    }
-
-    _log(level, message, ...args) {
-        if (!this._shouldLog(level)) {
-            return;
-        }
-
-        const timestamp = new Date().toISOString();
-        const logEntry = { timestamp, level, message, args };
-        this.logs.push(logEntry); // Store logs in memory
-
-        let logOutput = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
-        if (args.length > 0) {
-            logOutput += ` ${args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg).join(' ')}`;
-        }
-
-        // Apply color coding for better readability in console
-        switch (level) {
-            case 'info':
-                console.info(logOutput);
-                break;
-            case 'warn':
-                console.warn(`\x1b[33m${logOutput}\x1b[0m`); // Yellow
-                break;
-            case 'error':
-                console.error(`\x1b[31m${logOutput}\x1b[0m`); // Red
-                break;
-            case 'success':
-                console.log(`\x1b[32m${logOutput}\x1b[0m`); // Green
-                break;
-            case 'debug':
-                console.debug(`\x1b[90m${logOutput}\x1b[0m`); // Grey for debug
-                break;
-            default:
-                console.log(logOutput);
+    async initialize(type = 'puppeteer') {
+        this.browserType = type;
+        try {
+            if (this.browserType === 'puppeteer') {
+                const puppeteer = await import('puppeteer');
+                this.browser = await puppeteer.launch({ headless: 'new' });
+            } else if (this.browserType === 'playwright') {
+                const { chromium } = await import('playwright');
+                this.browser = await chromium.launch({ headless: true });
+            } else {
+                throw new Error('Unsupported browser type');
+            }
+            this.page = await this.browser.newPage();
+            logger.info(`${this.browserType} browser initialized.`);
+        } catch (error) {
+            logger.error(`Failed to initialize browser: ${error.message}`);
+            throw error;
         }
     }
 
-    info(message, ...args) { this._log('info', message, ...args); }
-    warn(message, ...args) { this._log('warn', message, ...args); }
-    error(message, ...args) { this._log('error', message, ...args); }
-    success(message, ...args) { this._log('success', message, ...args); }
-    debug(message, ...args) { this._log('debug', message, ...args); }
+    async navigate(url) {
+        if (!this.page) throw new Error('Browser not initialized.');
+        logger.info(`Navigating to ${url}`);
+        await this.page.goto(url, { waitUntil: 'networkidle0' });
+    }
 
-    getLogs() {
-        return this.logs;
+    async type(selector, text) {
+        if (!this.page) throw new Error('Browser not initialized.');
+        logger.info(`Typing into ${selector}`);
+        await this.page.type(selector, text);
+    }
+
+    async click(selector) {
+        if (!this.page) throw new Error('Browser not initialized.');
+        logger.info(`Clicking ${selector}`);
+        await this.page.click(selector);
+    }
+
+    async getPageContent() {
+        if (!this.page) throw new Error('Browser not initialized.');
+        return await this.page.content();
+    }
+
+    async close() {
+        if (this.browser) {
+            await this.browser.close();
+            logger.info(`${this.browserType} browser closed.`);
+        }
     }
 }
 
-const logger = new Logger();
-
-// === 🔐 Quantum Security Core ===
-const QuantumSecurity = {
-    generateEntropy: () => {
-        const buffer = Buffer.concat([
-            randomBytes(16),
-            Buffer.from(Date.now().toString()),
-            Buffer.from(process.uptime().toString())
-        ]);
-        return createHash('sha256').update(buffer).digest('hex');
-    },
-    generateSecureKey: () => `qkey_${randomBytes(24).toString('hex')}`
-};
-
-// === 🌐 Self-Healing Config Loader & Enhanced ENV Management ===
-let CONFIG = null;
-
-const loadConfig = async () => {
-    // Return cached config if already loaded
-    if (CONFIG) return CONFIG;
-
-    logger.info('Loading configuration...');
-
-    // Load environment variables directly into a temporary object
-    // and prioritize them. Defaults are provided as fallbacks.
-    const envVars = {
-        RENDER_API_TOKEN: process.env.RENDER_API_TOKEN,
-        RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID,
-        BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
-        ADFLY_API_KEY: process.env.ADFLY_API_KEY,
-        ADFLY_USER_ID: process.env.ADFLY_USER_ID,
-        SHORTIO_API_KEY: process.env.SHORTIO_API_KEY,
-        SHORTIO_USER_ID: process.env.SHORTIO_USER_ID,
-        SHORTIO_URL: process.env.SHORTIO_URL?.trim() || 'https://api.short.io',
-        AI_EMAIL: process.env.AI_EMAIL || 'arielmatrix@atomicmail.io',
-        AI_PASSWORD: process.env.AI_PASSWORD,
-        USDT_WALLETS: process.env.USDT_WALLETS?.split(',').map(w => w.trim()).filter(w => w) || [],
-        GAS_WALLET: process.env.GAS_WALLET,
-        STORE_URL: process.env.STORE_URL,
-        ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET,
-        // New: BROWSER_DRIVER to select Puppeteer or Playwright
-        BROWSER_DRIVER: process.env.BROWSER_DRIVER?.trim() || 'puppeteer',
-    };
-
-    // Define the main CONFIG object
-    CONFIG = {
-        ...envVars, // Spread the loaded environment variables
-        WALLETS: {
-            USDT: '0x55d398326f99059fF775485246999027B3197955',
-            BNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
-        },
-        PLATFORMS: {
-            SHOPIFY: envVars.STORE_URL,
-            REDDIT: 'https://www.reddit.com/api/v1',
-            X: 'https://api.x.com/2',
-            PINTEREST: 'https://api.pinterest.com/v5'
-        },
-        PROXIES: {}, // Placeholder for future proxy management
-        LANGUAGES: {
-            'en-US': 'Hello world',
-            'ar-AE': 'مرحبا بالعالم',
-            'zh-CN': '你好世界'
-        }
-    };
-
-    // Log warnings for missing critical environment variables
-    const requiredEnv = [
-        'RENDER_API_TOKEN', 'BSCSCAN_API_KEY', 'ADFLY_API_KEY',
-        'SHORTIO_API_KEY', 'AI_PASSWORD'
-    ];
-    for (const key of requiredEnv) {
-        if (!CONFIG[key]) {
-            logger.warn(`⚠️ Warning: Environment variable '${key}' is not set. Some functionalities might be limited.`);
+// --- Payment Agent Class ---
+class PayoutAgent {
+    constructor(paymentMethod) {
+        this.paymentMethod = paymentMethod;
+        this.config = CONFIG.PAYMENT_METHODS[paymentMethod.toUpperCase()];
+        if (!this.config) {
+            logger.error(`Payment method ${paymentMethod} not configured.`);
+            throw new Error(`Payment method ${paymentMethod} not configured.`);
         }
     }
 
-    logger.info('Configuration loaded successfully.');
-    return CONFIG;
-};
-
-// === 🔁 Autonomous Agent Orchestration & Agent Status Tracking ===
-let isRunning = false;
-const agentStatuses = {
-    apiScout: { lastRun: null, success: false, error: null },
-    social: { lastRun: null, success: false, error: null },
-    shopify: { lastRun: null, success: false, error: null },
-    crypto: { lastRun: null, success: false, error: null },
-    payout: { lastRun: null, success: false, error: null },
-    renderApi: { lastRun: null, success: false, error: null },
-};
-
-const runAutonomousCycle = async () => {
-    if (isRunning) {
-        logger.warn('⏳ Autonomous cycle already running. Skipping new cycle initiation.');
-        return;
-    }
-
-    isRunning = true;
-    const startTime = Date.now();
-    logger.info(`\n⚡ [${new Date().toISOString()}] Starting Autonomous Revenue Cycle`);
-
-    try {
-        const config = await loadConfig(); // Ensure config is loaded or re-loaded if needed
-
-        // Helper to run an agent and update its status
-        const runAgent = async (agentName, agentImportPath, config, propertyToSetOnConfig = false) => {
-            const agentStart = Date.now();
-            logger.info(`  - Running ${agentName} agent...`);
-            try {
-                const agentModule = await import(agentImportPath);
-                const agentFunction = agentModule[agentName + 'Agent'];
-                if (typeof agentFunction !== 'function') {
-                    throw new Error(`Agent function '${agentName}Agent' not found in ${agentImportPath}`);
-                }
-
-                // Pass config and logger to the agent function
-                const result = await agentFunction(config, logger);
-
-                // If the agent returns values that need to be incorporated into the config (e.g., API keys)
-                if (propertyToSetOnConfig && result && typeof result === 'object') {
-                    for (const [key, value] of Object.entries(result)) {
-                        // Only add if not already in config AND is a non-empty string/array/object
-                        if (value && !config[key] && (typeof value === 'string' && value.trim() !== '') || (Array.isArray(value) && value.length > 0) || (typeof value === 'object' && Object.keys(value).length > 0)) {
-                            config[key] = value;
-                            logger.info(`    Updated config with ${key} from ${agentName}`);
-                        }
-                    }
-                }
-
-                agentStatuses[agentName].success = true;
-                agentStatuses[agentName].error = null;
-                logger.success(`  ✅ ${agentName} completed in ${Date.now() - agentStart}ms.`);
-                return result;
-            } catch (error) {
-                agentStatuses[agentName].success = false;
-                agentStatuses[agentName].error = error.message;
-                logger.error(`  🚨 ${agentName} failed in ${Date.now() - agentStart}ms: ${error.message}`);
-                // Do not re-throw if it's a non-critical agent, allow cycle to continue
-            } finally {
-                agentStatuses[agentName].lastRun = new Date().toISOString();
+    async processPayout(amount, recipientDetails) {
+        logger.info(`Processing payout of ${amount} via ${this.paymentMethod} to ${JSON.stringify(recipientDetails)}`);
+        try {
+            let result;
+            switch (this.paymentMethod.toUpperCase()) {
+                case 'STRIPE':
+                    // Mock Stripe API call
+                    result = await this.mockStripePayout(amount, recipientDetails);
+                    break;
+                case 'PAYPAL':
+                    // Mock PayPal API call
+                    result = await this.mockPayPalPayout(amount, recipientDetails);
+                    break;
+                case 'CRYPTOCURRENCY':
+                    // Mock Cryptocurrency transfer, this is where web3/ethers/solana would be used
+                    result = await this.mockCryptoTransfer(amount, recipientDetails);
+                    break;
+                default:
+                    throw new Error(`Unsupported payment method: ${this.paymentMethod}`);
             }
-        };
-
-        // Phase 0: Scout for new APIs (can update config with new keys)
-        await runAgent('apiScout', './agents/apiScoutAgent.js', config, true);
-
-        // Phase 1: Deploy & Monetize
-        await runAgent('social', './agents/socialAgent.js', config);
-        await runAgent('shopify', './agents/shopifyAgent.js', config);
-        await runAgent('crypto', './agents/cryptoAgent.js', config);
-
-        // Phase 2: Payouts
-        await runAgent('payout', './agents/payoutAgent.js', config);
-
-        // Phase 3: Self-Healing & ENV Update
-        await runAgent('renderApi', './agents/renderApiAgent.js', config);
-
-        logger.success(`✅ Autonomous Revenue Cycle completed in ${Date.now() - startTime}ms. Revenue generated.`);
-    } catch (error) {
-        logger.error(`🔥 Autonomous cycle failed critically: ${error.message}`);
-    } finally {
-        isRunning = false;
+            logger.info(`Payout successful: ${JSON.stringify(result)}`);
+            return { success: true, transactionId: result.id || 'mock_txn_id_' + Date.now() };
+        } catch (error) {
+            logger.error(`Payout failed: ${error.message}`);
+            return { success: false, error: error.message };
+        }
     }
-    logger.info(`[${new Date().toISOString()}] Autonomous Revenue Cycle Finished.`);
+
+    // Mock payment methods
+    async mockStripePayout(amount, recipientDetails) {
+        logger.info(`Stripe: Initiating transfer for $${amount} to ${recipientDetails.bankAccount}`);
+        return new Promise(resolve => setTimeout(() => resolve({ id: `stripe_txn_${Date.now()}`, amount, status: 'completed' }), 1000));
+    }
+
+    async mockPayPalPayout(amount, recipientDetails) {
+        logger.info(`PayPal: Sending $${amount} to ${recipientDetails.paypalEmail}`);
+        return new Promise(resolve => setTimeout(() => resolve({ id: `paypal_txn_${Date.now()}`, amount, status: 'processed' }), 1000));
+    }
+
+    async mockCryptoTransfer(amount, recipientDetails) {
+        logger.info(`Crypto: Transferring ${amount} to ${recipientDetails.walletAddress} on ${this.config.network}`);
+        // In a real scenario, this would involve a Web3.js or Solana Web3.js call using imported libraries
+        // Example with placeholder for Web3.js / Ethers.js
+        /*
+        if (this.config.network === 'ethereum') {
+            const provider = new ethers.JsonRpcProvider('YOUR_ETHEREUM_RPC_URL');
+            const wallet = new ethers.Wallet(this.config.privateKey, provider);
+            const tx = {
+                to: recipientDetails.walletAddress,
+                value: ethers.parseEther(amount.toString())
+            };
+            const transactionResponse = await wallet.sendTransaction(tx);
+            await transactionResponse.wait(); // Wait for transaction to be mined
+            return { id: transactionResponse.hash, amount, currency: 'ETH', to: recipientDetails.walletAddress, status: 'confirmed' };
+        } else if (this.config.network === 'solana') {
+            const connection = new Connection('YOUR_SOLANA_RPC_URL');
+            const fromWallet = Keypair.fromSecretKey(bs58.decode(this.config.privateKey)); // Assuming private key is base58 encoded
+            const toPublicKey = new PublicKey(recipientDetails.walletAddress);
+            const transaction = new Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: fromWallet.publicKey,
+                    toPubkey: toPublicKey,
+                    lamports: amount * LAMPORTS_PER_SOL,
+                })
+            );
+            const signature = await sendAndConfirmTransaction(connection, transaction, [fromWallet]);
+            return { id: signature, amount, currency: 'SOL', to: recipientDetails.walletAddress, status: 'confirmed' };
+        }
+        */
+        return new Promise(resolve => setTimeout(() => resolve({
+            id: `crypto_txn_${Date.now()}`,
+            amount,
+            currency: 'ETH', // Example
+            to: recipientDetails.walletAddress,
+            status: 'confirmed'
+        }), 1500));
+    }
+}
+
+// Global function to configure a PayoutAgent instance
+const configurePaymentMethod = (method) => {
+    try {
+        const payoutAgent = new PayoutAgent(method);
+        logger.info(`Payout agent configured for ${method}`);
+        return payoutAgent;
+    } catch (error) {
+        logger.error(`Failed to configure payment method: ${error.message}`);
+        return null;
+    }
 };
 
-// === 📊 Real-Time Revenue Endpoint ===
-const app = express();
+// --- Revenue Agent Class ---
+class RevenueAgent {
+    constructor(browserManager) {
+        this.browserManager = browserManager;
+        this.aiApiKey = CONFIG.AI_API_KEY;
+        this.aiModel = CONFIG.AI_MODEL;
+    }
 
-// Security Headers
-app.use((req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
-    res.setHeader('X-Quantum-ID', QuantumSecurity.generateEntropy().slice(0, 16));
-    next();
-});
+    async loginToAdPlatform(platform, credentials) {
+        logger.info(`Attempting to login to ${platform}`);
+        const loginUrl = {
+            FACEBOOK_ADS: 'https://facebook.com/adsmanager',
+            GOOGLE_ADS: 'https://ads.google.com/home/',
+        }[platform.toUpperCase()];
 
-// Parse JSON
-app.use(express.json({ limit: '10mb' }));
+        if (!loginUrl) {
+            throw new Error(`Unknown ad platform: ${platform}`);
+        }
 
-// Serve static frontend
-app.use(express.static(path.join(__dirname, 'public')));
+        try {
+            await this.browserManager.initialize('puppeteer'); // Or 'playwright' as per user choice
+            await this.browserManager.navigate(loginUrl);
+            await this.browserManager.type('input[type="email"], input[name*="user"], input[name*="email"]', credentials.username);
+            await this.browserManager.type('input[type="password"], input[name*="pass"]', credentials.password);
+            await this.browserManager.click('button[type="submit"], input[type="submit"]');
 
-// Real-Time Revenue Endpoint
-app.get('/revenue', async (req, res) => {
-    try {
-        const socialAgent = await import('./agents/socialAgent.js');
-        const stats = await socialAgent.getRevenueStats?.() || { clicks: 0, conversions: 0, invoices: 0 };
+            // Add a delay or wait for navigation to confirm login
+            await this.browserManager.page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 }).catch(() => {
+                logger.warn('Login navigation timeout, might still be on login page or redirected.');
+            });
 
-        const balances = await getWalletBalances();
+            const currentUrl = this.browserManager.page.url();
+            if (currentUrl.includes('adsmanager') || currentUrl.includes('ads.google.com')) {
+                logger.info(`Successfully navigated to ${platform} dashboard.`);
+                return true;
+            } else {
+                logger.error(`Login to ${platform} failed. Current URL: ${currentUrl}`);
+                return false;
+            }
+        } catch (error) {
+            logger.error(`Error during ${platform} login: ${error.message}`);
+            return false;
+        } finally {
+            // Important: Do not close browser here if subsequent actions depend on it
+            // Only close if this is the end of browser interaction for this agent instance
+            // await this.browserManager.close();
+        }
+    }
 
-        res.json({
-            revenue: {
-                adfly: parseFloat((stats.clicks * 0.02).toFixed(2)),
-                amazon: parseFloat((stats.conversions * 5.50).toFixed(2)),
-                crypto: parseFloat((stats.invoices * 0.15).toFixed(2))
-            },
-            wallets: balances,
-            timestamp: new Date().toISOString()
+    async analyzeMarketTrends(query) {
+        logger.info(`Analyzing market trends for: ${query}`);
+        try {
+            const prompt = `Analyze current market trends and potential revenue opportunities for "${query}". Provide insights on target demographics, optimal advertising channels, and content strategies.`;
+            const payload = { contents: [{ role: 'user', parts: [{ text: prompt }] }] };
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.aiModel}:generateContent?key=${this.aiApiKey}`;
+
+            // Using axios for HTTP request as it's in the dependencies
+            const response = await axios.post(apiUrl, payload, {
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const result = response.data;
+            if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                logger.info('Market trend analysis received from AI.');
+                return text;
+            } else {
+                logger.error('AI response for market trend analysis was empty or malformed.');
+                return 'No market trend analysis available.';
+            }
+        } catch (error) {
+            logger.error(`Error analyzing market trends with AI: ${error.message}`);
+            return `Error: ${error.message}`;
+        }
+    }
+
+    async identifyRevenueOpportunities(marketAnalysis) {
+        logger.info('Identifying revenue opportunities based on market analysis.');
+        try {
+            const prompt = `Based on the following market analysis, identify specific, actionable revenue opportunities and suggest concrete steps to capitalize on them:\n\n${marketAnalysis}`;
+            const payload = { contents: [{ role: 'user', parts: [{ text: prompt }] }] };
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.aiModel}:generateContent?key=${this.aiApiKey}`;
+
+            const response = await axios.post(apiUrl, payload, {
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const result = response.data;
+            if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                logger.info('Revenue opportunities identified by AI.');
+                return text;
+            } else {
+                logger.error('AI response for revenue opportunities was empty or malformed.');
+                return 'No revenue opportunities identified.';
+            }
+        } catch (error) {
+            logger.error(`Error identifying revenue opportunities with AI: ${error.message}`);
+            return `Error: ${error.message}`;
+        }
+    }
+
+    async generateAdContent(opportunityDetails) {
+        logger.info('Generating ad content based on identified opportunities.');
+        try {
+            const prompt = `Generate compelling ad content (headlines, body, call to action) for the following revenue opportunity: ${opportunityDetails}`;
+            const payload = { contents: [{ role: 'user', parts: [{ text: prompt }] }] };
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.aiModel}:generateContent?key=${this.aiApiKey}`;
+
+            const response = await axios.post(apiUrl, payload, {
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const result = response.data;
+            if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                logger.info('Ad content generated by AI.');
+                return text;
+            } else {
+                logger.error('AI response for ad content was empty or malformed.');
+                return 'No ad content generated.';
+            }
+        } catch (error) {
+            logger.error(`Error generating ad content with AI: ${error.message}`);
+            return `Error: ${error.message}`;
+        }
+    }
+
+    async deployAdCampaign(platform, adContent, targetAudience) {
+        logger.info(`Deploying ad campaign on ${platform} with content: ${adContent.substring(0, 50)}... and target: ${targetAudience}`);
+        // This would involve interacting with the ad platform's actual API or UI automation
+        return new Promise(resolve => {
+            setTimeout(() => {
+                const campaignId = `campaign_${platform}_${Date.now()}`;
+                logger.info(`Mock ad campaign ${campaignId} deployed on ${platform}.`);
+                resolve({ success: true, campaignId });
+            }, 2000);
         });
+    }
+
+    async monitorCampaignPerformance(campaignId) {
+        logger.info(`Monitoring campaign performance for ${campaignId}`);
+        // This would involve fetching metrics from the ad platform
+        return new Promise(resolve => {
+            setTimeout(() => {
+                const revenue = Math.random() * 500; // Mock revenue
+                const cost = Math.random() * 100;    // Mock cost
+                logger.info(`Mock performance for ${campaignId}: Revenue $${revenue.toFixed(2)}, Cost $${cost.toFixed(2)}`);
+                resolve({ success: true, revenue, cost });
+            }, 1500);
+        });
+    }
+
+    async optimizeCampaign(campaignId, performanceData) {
+        logger.info(`Optimizing campaign ${campaignId} based on performance data.`);
+        // This could involve AI-driven recommendations or rule-based adjustments
+        return new Promise(resolve => {
+            setTimeout(() => {
+                logger.info(`Mock optimization applied for ${campaignId}.`);
+                resolve({ success: true, message: 'Campaign optimized.' });
+            }, 1000);
+        });
+    }
+}
+
+// --- Autonomous Revenue System Orchestration ---
+const runAutonomousRevenueSystem = async (topic) => {
+    logger.info(`Starting autonomous revenue system for topic: "${topic}"`);
+
+    const browserManager = new BrowserManager();
+    const revenueAgent = new RevenueAgent(browserManager);
+
+    try {
+        // Step 1: Market Trend Analysis
+        logger.info('Step 1: Analyzing market trends...');
+        const marketAnalysis = await revenueAgent.analyzeMarketTrends(topic);
+        logger.info('Market Analysis Complete:\n', marketAnalysis);
+
+        // Step 2: Identify Revenue Opportunities
+        logger.info('Step 2: Identifying revenue opportunities...');
+        const revenueOpportunities = await revenueAgent.identifyRevenueOpportunities(marketAnalysis);
+        logger.info('Revenue Opportunities Identified:\n', revenueOpportunities);
+
+        // Step 3: Login to Ad Platform (Example: Google Ads)
+        logger.info('Step 3: Logging into an ad platform (Google Ads)...');
+        const googleAdsCredentials = CONFIG.AD_PLATFORMS.GOOGLE_ADS;
+        const loggedIn = await revenueAgent.loginToAdPlatform('GOOGLE_ADS', googleAdsCredentials);
+
+        if (!loggedIn) {
+            logger.error('Failed to log in to Google Ads. Aborting revenue generation.');
+            return { success: false, message: 'Ad platform login failed.' };
+        }
+
+        // Step 4: Generate Ad Content
+        logger.info('Step 4: Generating ad content...');
+        const adContent = await revenueAgent.generateAdContent(revenueOpportunities);
+        logger.info('Ad Content Generated:\n', adContent);
+
+        // Step 5: Deploy Ad Campaign
+        logger.info('Step 5: Deploying ad campaign...');
+        const targetAudience = 'Young adults interested in tech'; // Example targeting
+        const deploymentResult = await revenueAgent.deployAdCampaign('GOOGLE_ADS', adContent, targetAudience);
+
+        if (!deploymentResult.success) {
+            logger.error('Ad campaign deployment failed. Aborting revenue generation.');
+            return { success: false, message: 'Ad campaign deployment failed.' };
+        }
+        const { campaignId } = deploymentResult;
+        logger.info(`Ad campaign ${campaignId} deployed.`);
+
+        // Step 6: Monitor Campaign Performance
+        logger.info('Step 6: Monitoring campaign performance...');
+        const performance = await revenueAgent.monitorCampaignPerformance(campaignId);
+        logger.info('Campaign Performance:\n', performance);
+
+        // Step 7: Optimize Campaign
+        logger.info('Step 7: Optimizing campaign...');
+        const optimizationResult = await revenueAgent.optimizeCampaign(campaignId, performance);
+        logger.info('Campaign Optimization Result:\n', optimizationResult);
+
+        // Step 8: Payout (Example: Stripe)
+        logger.info('Step 8: Processing payout (Stripe)...');
+        const payoutAgent = configurePaymentMethod('Stripe');
+        if (payoutAgent) {
+            const payoutAmount = performance.revenue * 0.8; // Example: 80% of revenue
+            const recipientDetails = { bankAccount: 'US123456789', name: 'Ariel Matrix Inc.' };
+            const payoutResult = await payoutAgent.processPayout(payoutAmount, recipientDetails);
+            logger.info('Payout Result:', payoutResult);
+        }
+
+        logger.info('Autonomous revenue system run completed successfully!');
+        return { success: true, message: 'Revenue generation process completed.' };
+
     } catch (error) {
-        logger.error('🚨 Failed to fetch revenue:', error.message);
-        res.status(500).json({ error: 'Failed to fetch revenue', details: error.message });
+        logger.error(`Autonomous revenue system failed: ${error.message}`);
+        return { success: false, message: `Revenue generation failed: ${error.message}` };
+    } finally {
+        if (browserManager) {
+            await browserManager.close();
+        }
     }
-});
-
-// === 💰 Wallet Balance Fix (Correct BSCScan API Usage) ===
-const getWalletBalances = async () => {
-    const config = await loadConfig();
-    const bscscanUrl = 'https://api.bscscan.com/api';
-
-    // Ensure BSCSCAN_API_KEY is available before making API calls
-    if (!config.BSCSCAN_API_KEY) {
-        logger.warn('⚠️ BSCSCAN_API_KEY is missing. Cannot fetch wallet balances.');
-        return Object.entries(config.WALLETS).map(([coin, address]) => ({ coin, address, balance: 'N/A', error: 'API Key missing' }));
-    }
-
-    return await Promise.all(
-        Object.entries(config.WALLETS).map(async ([coin, address]) => {
-            try {
-                const response = await axios.get(bscscanUrl, {
-                    params: {
-                        module: 'account',
-                        action: 'balance',
-                        address: address,
-                        tag: 'latest',
-                        apikey: config.BSCSCAN_API_KEY
-                    }
-                });
-                const balance = parseInt(response.data.result || '0') / 1e18;
-                return { coin, address, balance: balance.toFixed(4) };
-            } catch (error) {
-                logger.error(`🚨 Error fetching balance for ${coin} (${address}):`, error.message);
-                return { coin, address, balance: '0.0000', error: error.message };
-            }
-        })
-    );
 };
 
-// === 🚀 Health & Init ===
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'active',
-        quantumId: QuantumSecurity.generateEntropy().slice(0, 12),
-        timestamp: new Date().toISOString(),
-        cycleRunning: isRunning,
-        agents: Object.keys(agentStatuses),
-        agentStatuses: agentStatuses
-    });
+// --- Express App Setup ---
+const expressApp = express();
+expressApp.use(express.json()); // Enable JSON body parsing
+
+// Enable CORS for all origins (for development)
+// In production, you'd typically restrict this to specific origins:
+// expressApp.use(cors({ origin: 'https://your-frontend-domain.com' }));
+expressApp.use(cors());
+
+// Serve static files (optional, if you have a frontend build)
+expressApp.use(express.static(join(__dirname, 'public')));
+
+// Root endpoint
+expressApp.get('/', (req, res) => {
+    res.send('Ariel Matrix 2.0 Backend is running without Firebase!');
 });
 
-// Root route
-app.get('/', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>ArielMatrix 2.0</title>
-            <style>
-                body { font-family: 'Inter', sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; text-align: center; }
-                .container { background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1); padding: 40px; max-width: 600px; margin: 50px auto; }
-                h1 { color: #2c3e50; font-size: 2.5em; margin-bottom: 15px; }
-                p { font-size: 1.1em; line-height: 1.6; margin-bottom: 20px; }
-                ul { list-style: none; padding: 0; margin-bottom: 30px; }
-                li { margin-bottom: 10px; }
-                a { color: #3498db; text-decoration: none; font-weight: bold; transition: color 0.3s ease; }
-                a:hover { color: #2980b9; text-decoration: underline; }
-                .quantum-id { font-family: 'Courier New', monospace; background-color: #e8e8e8; padding: 8px 12px; border-radius: 6px; display: inline-block; margin-top: 15px; color: #555; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🚀 ArielMatrix 2.0</h1>
-                <p><strong>Autonomous Revenue Engine Active</strong></p>
-                <ul>
-                    <li>🔧 <a href="/revenue">Revenue Dashboard</a></li>
-                    <li>🟢 <a href="/health">Health Check</a></li>
-                </ul>
-                <p class="quantum-id">Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}</p>
-            </div>
-        </body>
-        </html>
-    `);
+// Endpoint to trigger the autonomous revenue system
+expressApp.post('/run-revenue-system', async (req, res) => {
+    const { topic } = req.body;
+    if (!topic) {
+        return res.status(400).json({ success: false, message: 'Topic is required.' });
+    }
+
+    try {
+        const result = await runAutonomousRevenueSystem(topic);
+        res.json(result);
+    } catch (error) {
+        logger.error(`API Error: ${error.message}`);
+        res.status(500).json({ success: false, message: 'Internal server error during revenue system run.' });
+    }
 });
 
-// Start server
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', async () => {
-    logger.success(`🚀 Autonomous Revenue Engine Live | Quantum ID: ${QuantumSecurity.generateEntropy().slice(0, 8)}`);
-    // Load config initially
-    const initialConfig = await loadConfig();
-    // Initialize browserManager with the loaded config and logger
-    await browserManager.init(initialConfig, logger);
+// Removed Firebase-dependent /user-id endpoint
 
-    // Delay first cycle slightly to ensure server is fully up
-    setTimeout(runAutonomousCycle, 1000);
+// Start the server
+expressApp.listen(CONFIG.PORT, () => {
+    logger.info(`Server running on http://localhost:${CONFIG.PORT}`);
+    logger.info(`Environment: ${CONFIG.ENVIRONMENT}`);
 });
-
-// === ⏱️ Scheduled Execution ===
-// Runs the autonomous cycle every 4 hours
-cron.schedule('0 */4 * * *', runAutonomousCycle);
-
-// Daily scaling log (example of another scheduled task)
-cron.schedule('0 0 * * *', () => { // Every day at midnight UTC
-    logger.info('🌍 Scaling to 195 countries... [Placeholder]');
-    // Add geo-scaling logic here, or trigger another agent
-});
-
-// === ♻️ Graceful Shutdown ===
-// Ensures browser instance is closed when the server receives termination signals
-process.on('SIGINT', async () => {
-    logger.info('Received SIGINT. Shutting down gracefully...');
-    await browserManager.closeGlobalBrowserInstance();
-    process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-    logger.info('Received SIGTERM. Shutting down gracefully...');
-    await browserManager.closeGlobalBrowserInstance();
-    process.exit(0);
-});
-
-export { runAutonomousCycle, loadConfig };
