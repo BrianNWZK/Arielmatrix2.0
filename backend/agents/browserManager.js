@@ -1,7 +1,10 @@
-// backend/browserManager.js
+// backend/agents/browserManager.js
 import puppeteer from 'puppeteer';
-import { chromium as playwrightChromium } from 'playwright';
+// Playwright import is commented out as it's not explicitly used in the provided logic for getNewPage/closePage,
+// but keep it if you intend to use Playwright elsewhere in your browser manager.
+// import { chromium as playwrightChromium } from 'playwright';
 
+// === 🌀 Quantum Jitter (Anti-Robot) ===
 // Generate simple UUID without additional dependencies
 function simpleUUID() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -13,9 +16,9 @@ function simpleUUID() {
 
 // Global browser instances and page pools
 let puppeteerBrowser = null;
-let playwrightBrowser = null;
+// let playwrightBrowser = null; // Not actively used without playwright import
 const puppeteerPagePool = [];
-const playwrightPagePool = [];
+// const playwrightPagePool = []; // Not actively used without playwright import
 const MAX_PAGES = 5;
 
 // Autonomy configuration
@@ -83,7 +86,7 @@ const injectPuppeteerStealthScripts = async (page, logger) => {
 const browserManager = {
     _config: null,
     _logger: null,
-    _browserDriver: 'puppeteer',
+    _browserDriver: 'puppeteer', // Default to puppeteer
     _autonomyLevel: AUTONOMY_LEVELS.BASIC,
     _operationHistory: new Map(),
 
@@ -99,6 +102,7 @@ const browserManager = {
             }
         };
         this._logger = logger;
+        // Use config.browserDriver or default to 'puppeteer'
         this._browserDriver = config.browserDriver || 'puppeteer';
 
         const launchOptions = {
@@ -116,8 +120,18 @@ const browserManager = {
                 ...launchOptions,
                 ignoreDefaultArgs: ['--enable-automation']
             });
+            this._logger.info('Puppeteer browser launched.');
         } else {
-            playwrightBrowser = await playwrightChromium.launch(launchOptions);
+            // If Playwright is intended, it needs to be imported and handled.
+            // For now, this path is not fully supported without the import and setup.
+            this._logger.warn(`Browser driver '${this._browserDriver}' not fully supported or configured. Defaulting to Puppeteer if possible.`);
+            if (!puppeteerBrowser || !puppeteerBrowser.isConnected()) {
+                 puppeteerBrowser = await puppeteer.launch({
+                    ...launchOptions,
+                    ignoreDefaultArgs: ['--enable-automation']
+                });
+                this._logger.info('Defaulted to Puppeteer browser launch.');
+            }
         }
         this._logger.info(`Browser manager initialized with ${this._browserDriver}.`);
     },
@@ -126,8 +140,12 @@ const browserManager = {
      * Get a new page with autonomous features
      */
     async getNewPage() {
-        if (!puppeteerBrowser && !playwrightBrowser) {
-            throw new Error('Browser not initialized. Call browserManager.init() first.');
+        if (!puppeteerBrowser || !puppeteerBrowser.isConnected()) {
+            this._logger.warn('Puppeteer browser not connected. Attempting to re-initialize.');
+            await this.init(this._config, this._logger); // Re-initialize if disconnected
+            if (!puppeteerBrowser || !puppeteerBrowser.isConnected()) {
+                 throw new Error('Failed to acquire browser: Puppeteer not initialized or connected.');
+            }
         }
 
         let page;
@@ -137,11 +155,8 @@ const browserManager = {
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
             await injectPuppeteerStealthScripts(page, this._logger);
         } else {
-            const context = await playwrightBrowser.newContext({
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport: { width: 1920, height: 1080 }
-            });
-            page = await context.newPage();
+            // This block would need Playwright context/page creation if playwrightBrowser was active
+            throw new Error('Unsupported browser driver. Only Puppeteer is configured for getNewPage currently.');
         }
 
         this._trackOperation('page_creation', true);
@@ -157,13 +172,17 @@ const browserManager = {
         try {
             if (this._browserDriver === 'puppeteer') {
                 if (puppeteerPagePool.length < MAX_PAGES) {
-                    await page.goto('about:blank');
+                    await page.goto('about:blank').catch(e => this._logger.warn('Error navigating page to blank before pooling:', e.message)); // Navigate to about:blank to clear state
                     puppeteerPagePool.push(page);
+                    this._logger.debug('Page returned to pool.');
                 } else {
                     await page.close();
+                    this._logger.debug('Page closed (pool full).');
                 }
             } else {
-                await page.context().close();
+                // If Playwright was active, this would close its context.
+                // await page.context().close();
+                this._logger.warn('Unsupported browser driver for closePage. Only Puppeteer is configured.');
             }
             this._trackOperation('page_close', true);
         } catch (error) {
@@ -176,7 +195,6 @@ const browserManager = {
      * Autonomous interaction methods
      */
     async safeClick(page, selectors) {
-        const operationId = simpleUUID();
         try {
             for (const selector of selectors) {
                 try {
@@ -185,13 +203,14 @@ const browserManager = {
                     this._trackOperation('click', true, { selector });
                     return true;
                 } catch (error) {
-                    continue;
+                    continue; // Try next selector
                 }
             }
             throw new Error('All click selectors failed');
         } catch (error) {
             this._trackOperation('click', false, { error: error.message });
             if (this._autonomyLevel >= AUTONOMY_LEVELS.ADAPTIVE) {
+                this._logger.info('Attempting click recovery...');
                 return this._attemptRecovery(page, 'click', selectors);
             }
             throw error;
@@ -199,7 +218,6 @@ const browserManager = {
     },
 
     async safeType(page, selectors, text) {
-        const operationId = simpleUUID();
         try {
             for (const selector of selectors) {
                 try {
@@ -207,12 +225,17 @@ const browserManager = {
                     this._trackOperation('type', true, { selector, length: text.length });
                     return true;
                 } catch (error) {
-                    continue;
+                    continue; // Try next selector
                 }
             }
             throw new Error('All type selectors failed');
         } catch (error) {
             this._trackOperation('type', false, { error: error.message });
+            if (this._autonomyLevel >= AUTONOMY_LEVELS.ADAPTIVE) {
+                this._logger.info('Attempting type recovery...');
+                // You might add a 'type' specific recovery strategy here,
+                // e.g., using page.evaluate to set value directly.
+            }
             throw error;
         }
     },
@@ -225,17 +248,21 @@ const browserManager = {
             click: async (p, selectors) => {
                 for (const selector of selectors) {
                     try {
+                        // Use evaluate for a more forceful click
                         await p.evaluate(s => {
                             const el = document.querySelector(s);
                             if (el) el.click();
                         }, selector);
+                        this._logger.info(`Recovery click successful for selector: ${selector}`);
                         return true;
                     } catch (error) {
+                        this._logger.warn(`Recovery click failed for ${selector}: ${error.message}`);
                         continue;
                     }
                 }
                 return false;
             }
+            // Add other recovery strategies for 'type', 'navigation', etc.
         };
 
         if (recoveryStrategies[operationType]) {
@@ -259,30 +286,45 @@ const browserManager = {
     },
 
     /**
-     * Cleanup
+     * Cleanup and shutdown methods
      */
     async shutdown() {
         if (puppeteerBrowser) {
             this._logger.info('Shutting down Puppeteer browser...');
+            // Close all active pages first
+            const allPages = await puppeteerBrowser.pages();
+            await Promise.all(allPages.map(page => page.close().catch(e => this._logger.warn('Error closing browser page during shutdown:', e.message))));
             await puppeteerBrowser.close().catch(e => this._logger.error('Error closing puppeteer browser:', e));
         }
-        if (playwrightBrowser) {
-            this._logger.info('Shutting down Playwright browser...');
-            await playwrightBrowser.close().catch(e => this._logger.error('Error closing playwright browser:', e));
-        }
+        // If Playwright was active, its shutdown logic would be here
+        // if (playwrightBrowser) await playwrightBrowser.close();
+
         puppeteerBrowser = null;
-        playwrightBrowser = null;
+        // playwrightBrowser = null;
         puppeteerPagePool.length = 0; // Clear pools
-        playwrightPagePool.length = 0;
+        // playwrightPagePool.length = 0;
         this._logger.info('All browsers shut down.');
     },
 
-    // Add a cleanup method that can be called periodically
+    // A more active cleanup, rather than just shutdown/re-init
     async cleanup() {
         // Implement periodic browser restarts or page management here
-        // For now, it delegates to shutdown and re-init if needed.
-        // This is a placeholder for more advanced autonomous resource management.
-        this._logger.debug('Browser manager cleanup invoked. (Currently a placeholder for advanced logic).');
+        // For example, if browser memory gets too high, restart it.
+        // Or if there are too many pages in the pool, close some.
+        const browser = puppeteerBrowser;
+        if (browser && browser.isConnected()) {
+            const pages = await browser.pages();
+            this._logger.debug(`Browser cleanup: ${pages.length} total pages, ${puppeteerPagePool.length} pooled.`);
+            // Example: Close pages that are not in the pool and are old
+            // (Requires tracking page creation time within browserManager.getNewPage)
+
+            // Example: If browser has been running too long, restart it
+            // if (Date.now() - this._lastBrowserLaunchTime > someThreshold) {
+            //   this._logger.info('Scheduled browser restart for cleanup.');
+            //   await this.shutdown();
+            //   await this.init(this._config, this._logger);
+            // }
+        }
     }
 };
 
