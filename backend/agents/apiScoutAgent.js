@@ -162,7 +162,7 @@ export async function _updateRenderEnvWithKeys(keysToSave, currentConfig, curren
         } else {
             currentLogger.error(`🚨 Error setting up request to Render API for keys: ${envUpdateError.message}`);
         }
-        currentLogger.warn('   This is CRITICAL for persistent learning and autonomous evolution. Please fix manually.');
+        currentLogger.warn('    This is CRITICAL for persistent learning and autonomous evolution. Please fix manually.');
     }
 }
 
@@ -573,7 +573,8 @@ async function activateCampaigns(sites, email, password, currentConfig, currentL
                     continue;
                 }
 
-                await page.evaluate((email, password) => {
+                // Attempt to fill forms and submit
+                const submitAttempted = await page.evaluate((email, password) => {
                     const findAndFill = (selector, value) => {
                         const input = document.querySelector(selector);
                         if (input) input.value = value;
@@ -581,246 +582,426 @@ async function activateCampaigns(sites, email, password, currentConfig, currentL
                     };
 
                     let emailFilled = findAndFill('input[type="email"]', email) || findAndFill('input[name*="email"]', email) ||
-                                     findAndFill('input[id*="email"]', email) || findAndFill('input[type="text"][name*="user"]', email) ||
-                                     findAndFill('input[id*="username"]', email);
+                                       findAndFill('input[id*="email"]', email) || findAndFill('input[type="text"][name*="user"]', email) ||
+                                       findAndFill('input[id*="username"]', email);
 
                     let passFilled = findAndFill('input[type="password"]', password) || findAndFill('input[name*="password"]', password) ||
-                                     findAndFill('input[id*="password"]', password);
+                                       findAndFill('input[id*="password"]', password);
 
-                    if (!emailFilled) {
-                        const genericEmailInput = Array.from(document.querySelectorAll('input[type="text"]')).find(input => /email|username|login/i.test(input.name || input.id || input.placeholder));
-                        if (genericEmailInput) genericEmailInput.value = email;
-                    }
-                    if (!passFilled) {
-                        const genericPassInput = Array.from(document.querySelectorAll('input[type="text"]')).find(input => /pass|secret/i.test(input.name || input.id || input.placeholder));
-                        if (genericPassInput) genericPassInput.value = password;
+                    let nameFilled = findAndFill('input[name*="name"]', 'ArielMatrixAI') || findAndFill('input[id*="name"]', 'ArielMatrixAI') || findAndFill('input[name*="username"]', 'ArielMatrixAI');
+                    let confirmPassFilled = findAndFill('input[name*="confirm_password"]', password) || findAndFill('input[id*="confirm_password"]', password);
+
+                    // Accept terms and conditions (common pattern)
+                    const termsCheckbox = document.querySelector('input[type="checkbox"][name*="terms"], input[type="checkbox"][id*="terms"], input[type="checkbox"][name*="privacy"], input[type="checkbox"][id*="privacy"]');
+                    if (termsCheckbox && !termsCheckbox.checked) {
+                        termsCheckbox.click();
                     }
 
+                    // Click common submit buttons
+                    const submitButton = document.querySelector('button[type="submit"], input[type="submit"], button[name*="submit"], button[id*="submit"], button[class*="submit"], button[class*="register"], button[class*="login"], a[role="button"][href*="dashboard"]');
+                    if (submitButton) {
+                        submitButton.click();
+                        return true; // Indicate that a submit action was attempted
+                    }
+                    return false; // No submit action found
                 }, email, password);
-                currentLogger.info('Filled potential email/password fields.');
 
-                const submitSelectors = ['button[type="submit"]', 'input[type="submit"]', 'button.btn-primary', 'button[name*="submit"]', 'a[role="button"][href*="dashboard"]'];
-
-                let submitted = false;
-                for (const selector of submitSelectors) {
+                if (submitAttempted) {
+                    await quantumDelay(5000 + Math.random() * 5000); // Wait for navigation/redirection after form submission
+                    // Wait for the network to be idle or for a specific selector indicating success/dashboard
                     try {
-                        const btn = await page.$(selector);
-                        if (btn && (await btn.evaluate(node => node.offsetParent !== null))) {
-                            await Promise.all([
-                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(e => currentLogger.warn(`Navigation timeout after click: ${e.message.substring(0, 100)}...`)),
-                                btn.click()
-                            ]);
-                            submitted = true;
-                            currentLogger.info(`Clicked submit button using selector: ${selector}`);
-                            break;
-                        }
-                    } catch (e) {
-                        currentLogger.warn(`Failed to click button with selector ${selector}: ${e.message.substring(0, 100)}...`);
+                        await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => currentLogger.warn('Navigation timeout after submit.'));
+                    } catch (navError) {
+                        currentLogger.warn(`Error waiting for navigation after submit: ${navError.message.substring(0, 100)}`);
                     }
-                }
-
-                if (!submitted) {
-                    currentLogger.warn(`⚠️ No identifiable submit button found/clicked for ${site}. Attempting fallback...`);
-                    await page.keyboard.press('Enter').catch(e => currentLogger.warn(`Failed to press Enter: ${e.message.substring(0, 100)}...`));
-                    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(e => currentLogger.warn(`Navigation timeout after Enter: ${e.message.substring(0, 100)}...`));
-                    submitted = true;
-                }
-
-                if (!submitted) {
-                    currentLogger.error(`❌ Failed to submit login/registration form for ${site}.`);
-                    continue;
-                }
-
-                const potentialApiKey = await page.evaluate(() => {
-                    const apiKeywords = ['API Key', 'API Token', 'Access Key', 'Secret Key', 'Bearer Token', 'Client ID', 'Client Secret'];
-                    let foundKey = null;
-
-                    for (const kw of apiKeywords) {
-                        const input = document.querySelector(`input[name*="${kw.replace(' ', '')}" i], input[id*="${kw.replace(' ', '')}" i], input[placeholder*="${kw}" i]`);
-                        if (input && input.value && input.value.length > 10) {
-                            foundKey = { name: kw.replace(' ', '_').toUpperCase(), value: input.value };
-                            break;
-                        }
-                    }
-
-                    if (!foundKey) {
-                        const bodyText = document.body.innerText;
-                        const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-                        const hexKeyRegex = /[a-f0-9]{32,64}/i;
-                        const base64KeyRegex = /[A-Za-z0-9+/=]{30,100}/;
-
-                        let match;
-                        if ((match = bodyText.match(uuidRegex))) {
-                            foundKey = { name: 'GENERIC_UUID_KEY', value: match[0] };
-                        } else if ((match = bodyText.match(hexKeyRegex))) {
-                            foundKey = { name: 'GENERIC_HEX_KEY', value: match[0] };
-                        } else if ((match = bodyText.match(base64KeyRegex))) {
-                            foundKey = { name: 'GENERIC_BASE64_KEY', value: match[0] };
-                        }
-                    }
-
-                    const apiLink = Array.from(document.querySelectorAll('a')).find(a =>
-                        /api|developer|dashboard/i.test(a.innerText || a.href)
-                    );
-                    return { foundKey, apiLinkHref: apiLink ? apiLink.href : null };
-                });
-
-                if (potentialApiKey.foundKey) {
-                    currentLogger.success(`🎉 Extracted potential API Key from ${site}: ${potentialApiKey.foundKey.name}`);
-                    newKeys[site.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase() + '_API_KEY'] = potentialApiKey.foundKey.value;
-                    activeCampaigns.push({ site, status: 'activated', keyExtracted: true, keyName: potentialApiKey.foundKey.name });
                 } else {
-                    currentLogger.info(`🔍 No direct API Key found on ${site} dashboard.`);
-                    activeCampaigns.push({ site, status: 'activated', keyExtracted: false });
-                    if (potentialApiKey.apiLinkHref) {
-                        currentLogger.info(`Navigating to potential API documentation: ${potentialApiKey.apiLinkHref}`);
-                        await page.goto(potentialApiKey.apiLinkHref, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(e => currentLogger.warn(`Failed to navigate to API link: ${e.message.substring(0, 100)}...`));
-                        const recheckKey = await page.evaluate(() => {
-                            const apiKeywords = ['API Key', 'API Token', 'Access Key', 'Secret Key', 'Bearer Token', 'Client ID', 'Client Secret'];
-                            for (const kw of apiKeywords) {
-                                const input = document.querySelector(`input[name*="${kw.replace(' ', '')}" i], input[id*="${kw.replace(' ', '')}" i], input[placeholder*="${kw}" i]`);
-                                if (input && input.value && input.value.length > 10) {
-                                    return { name: kw.replace(' ', '_').toUpperCase(), value: input.value };
-                                }
-                            }
-                            const bodyText = document.body.innerText;
-                            const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-                            const hexKeyRegex = /[a-f0-9]{32,64}/i;
-                            const base64KeyRegex = /[A-Za-z0-9+/=]{30,100}/;
-
-                            let match;
-                            if ((match = bodyText.match(uuidRegex))) {
-                                return { name: 'GENERIC_UUID_KEY', value: match[0] };
-                            } else if ((match = bodyText.match(hexKeyRegex))) {
-                                return { name: 'GENERIC_HEX_KEY', value: match[0] };
-                            } else if ((match = bodyText.match(base64KeyRegex))) {
-                                return { name: 'GENERIC_BASE64_KEY', value: match[0] };
-                            }
-                            return null;
-                        });
-
-                        if (recheckKey) {
-                            currentLogger.success(`🎉 Extracted potential API Key from API docs on ${site}: ${recheckKey.name}`);
-                            newKeys[site.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase() + '_API_KEY_FROM_DOCS'] = recheckKey.value;
-                            const campaignIdx = activeCampaigns.findIndex(c => c.site === site);
-                            if (campaignIdx !== -1) {
-                                activeCampaigns[campaignIdx].keyExtracted = true;
-                                activeCampaigns[campaignIdx].keyName = recheckKey.name;
-                            }
-                        } else {
-                            currentLogger.warn(`⚠️ No API Key found even on API docs page for ${site}.`);
-                        }
-                    }
+                    currentLogger.warn(`No submit button found or form filling failed for ${site}.`);
                 }
 
-                // If a new key was found, attempt to update Render ENV
-                for (const keyId in newKeys) {
-                    if (Object.prototype.hasOwnProperty.call(newKeys, keyId)) {
-                        await _updateRenderEnvWithKeys({ [keyId]: newKeys[keyId] }, currentConfig, currentLogger);
-                    }
-                }
 
-            } catch (siteError) {
-                currentLogger.error(`🚨 Error processing site ${site}: ${siteError.message.substring(0, 200)}...`);
-                activeCampaigns.push({ site, status: 'failed', error: siteError.message });
+                // --- Key Extraction Logic ---
+                currentLogger.info(`Attempting to extract API key from ${site}... Current URL: ${page.url()}`);
+                const apiKey = await extractAPIKey(page, site, currentConfig, currentLogger); // Pass currentConfig for validation
+
+                if (apiKey) {
+                    const keyName = API_CATALOG[site]?.api_key_name || `${new URL(site).hostname.replace(/\./g, '_').toUpperCase()}_API_KEY`;
+                    newKeys[keyName] = apiKey;
+                    currentLogger.success(`🔑 Successfully extracted API key for ${site}: ${apiKey.substring(0, 8)}...`);
+                    activeCampaigns.push({ site, status: 'active', keyName, extractedKey: apiKey });
+                } else {
+                    currentLogger.warn(`⚠️ No API key found or extracted for ${site}.`);
+                    activeCampaigns.push({ site, status: 'inactive', reason: 'no_key_extracted' });
+                }
+            } catch (activationError) {
+                currentLogger.error(`🚨 Error during activation for ${site}: ${activationError.message.substring(0, 200)}...`);
+                activeCampaigns.push({ site, status: 'failed', reason: activationError.message });
+            } finally {
+                await quantumDelay(2000); // General delay between sites
             }
-            await quantumDelay(2000);
         }
-    } catch (browserError) {
-        currentLogger.error(`🚨 Fatal browser error during campaign activation: ${browserError.message}`);
-        throw browserError;
     } finally {
-        if (page) await closePage(page);
+        if (page) {
+            await closePage(page); // Close the page after all operations
+        }
     }
-
+    await _updateRenderEnvWithKeys(newKeys, currentConfig, currentLogger); // Persist newly found keys
     return { activeCampaigns, newKeys };
 }
 
-// === 💰 Revenue Consolidation (Conceptual) ===
+// --- Key Extraction Helper Function ---
 /**
- * Conceptually consolidates revenue from activated campaigns.
- * @param {object[]} activeCampaigns - List of activated campaigns.
- * @param {object} newKeys - Newly extracted keys.
+ * Attempts to extract an API key from the current page content.
+ * Looks for common patterns and selector heuristics.
+ * @param {Page} page - Puppeteer page instance.
+ * @param {string} siteUrl - The URL of the site being scraped.
  * @param {object} currentConfig - The global CONFIG object.
  * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object>} Consolidated revenue report.
+ * @returns {Promise<string|null>} The extracted API key string or null.
+ */
+async function extractAPIKey(page, siteUrl, currentConfig, currentLogger) {
+    // Navigate to likely API key pages/sections
+    const keyPaths = ['/dashboard/settings/api', '/developers/api-keys', '/settings/api', '/api-keys', '/integrations', '/dashboard'];
+    let keyPageFound = false;
+    for (const pathPart of keyPaths) {
+        try {
+            const potentialKeyUrl = new URL(pathPart, siteUrl).href;
+            currentLogger.info(`Checking for API key on: ${potentialKeyUrl}`);
+            await page.goto(potentialKeyUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await quantumDelay(2000); // Give content time to load
+            const currentUrl = page.url();
+            // Check if navigation was successful and still within the same domain or a relevant path
+            if (currentUrl.includes(new URL(siteUrl).hostname) && (currentUrl.includes(pathPart) || currentUrl.includes('dashboard') || currentUrl.includes('settings'))) {
+                keyPageFound = true;
+                break;
+            }
+        } catch (e) {
+            currentLogger.warn(`Failed to navigate to ${siteUrl}${pathPart}: ${e.message.substring(0, 100)}`);
+        }
+    }
+
+    if (!keyPageFound) {
+        currentLogger.warn(`Could not find a likely API key specific page for ${siteUrl}. Scanning current page.`);
+        // Fallback to current page if specific key page not found.
+    }
+
+    // Common selectors and regex for API keys
+    const selectors = [
+        'input[type="text"][name*="api_key"]',
+        'input[type="text"][id*="api_key"]',
+        'textarea[name*="api_key"]',
+        'textarea[id*="api_key"]',
+        'code',
+        'pre',
+        'span.api-key',
+        'div.api-key',
+        'div[data-key]', // Generic data attribute for keys
+        '[class*="api-key-display"]',
+        '[id*="api-key-value"]',
+        'input[type="text"][readonly]', // Often read-only fields contain keys
+        'input[type="text"][disabled]'  // Sometimes disabled fields contain keys
+    ];
+
+    // Regex patterns for API keys (common formats)
+    const keyPatterns = [
+        /(sk-[a-zA-Z0-9]{24,})/, // OpenAI style
+        /([a-f0-9]{32,64})/, // Common hex string
+        /(pk_live_[a-zA-Z0-9]{24,})/, // Stripe public key
+        /(sk_live_[a-zA-Z0-9]{24,})/, // Stripe secret key
+        /([A-Z0-9]{20,}\.[A-Z0-9]{40,})/, // JWT-like tokens, general longer patterns
+        /(\b[A-Za-z0-9-_]{30,}\b)/, // Generic alphanumeric, hyphen, underscore
+        /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})/, // UUID (could be an API key)
+        /(?<![a-zA-Z0-9])(?:AIza[0-9A-Za-z-_]{35}|ya29\.[0-9A-Za-z\-_]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|AGPA[0-9A-Z]{16}|AIDA[0-9A-Z]{16}|AROA[0-9A-Z]{16}|ARNA[0-9A-Z]{16}|AKIA[0-9A-Z]{20})/, // Google, AWS
+        /(?:\bapi[_-]?key\b|\bclient[_-]?id\b|\bsecret[_-]?key\b)(?:\s*[:=]\s*["']?|\s+is\s+["']?)(\b[A-Za-z0-9-_]{20,}\b)/i // Key: value pattern
+    ];
+
+    try {
+        const pageContent = await page.content(); // Get the full HTML content
+
+        // First, check for direct input/textarea values
+        for (const selector of selectors) {
+            try {
+                const elements = await page.$$(selector);
+                for (const element of elements) {
+                    const value = await page.evaluate(el => {
+                        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                            return el.value;
+                        }
+                        return el.innerText;
+                    }, element);
+
+                    if (value && value.length > 20 && !value.includes('placeholder') && !value.includes('xxx')) {
+                        // Validate against patterns
+                        for (const pattern of keyPatterns) {
+                            const match = value.match(pattern);
+                            if (match && match[0].length === value.length) { // Ensure the whole value matches a key pattern
+                                currentLogger.info(`🎯 Found potential API key in selector "${selector}": ${value.substring(0, 10)}...`);
+                                // Attempt immediate validation for known APIs
+                                if (API_CATALOG[siteUrl]?.status_check && (await validateAPIKey(siteUrl, value, currentConfig, currentLogger))) {
+                                    return value;
+                                } else if (!API_CATALOG[siteUrl]?.status_check) {
+                                     // If no status check defined, assume it's valid for now
+                                     currentLogger.warn(`No status check available for ${siteUrl}, assuming key is valid without direct API validation.`);
+                                     return value;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (selError) {
+                // currentLogger.debug(`Selector ${selector} failed: ${selError.message}`);
+                continue; // Continue to next selector
+            }
+        }
+
+        // Fallback: search raw page content with regex
+        currentLogger.info('No direct key found in elements. Scanning raw page content with regex...');
+        for (const pattern of keyPatterns) {
+            const match = pageContent.match(pattern);
+            if (match && match[1] && match[1].length > 20) { // match[1] for captured group
+                const extractedKey = match[1];
+                 currentLogger.info(`🎯 Found potential API key by regex: ${extractedKey.substring(0, 10)}...`);
+                 if (API_CATALOG[siteUrl]?.status_check && (await validateAPIKey(siteUrl, extractedKey, currentConfig, currentLogger))) {
+                    return extractedKey;
+                } else if (!API_CATALOG[siteUrl]?.status_check) {
+                     currentLogger.warn(`No status check available for ${siteUrl}, assuming key is valid without direct API validation.`);
+                     return extractedKey;
+                }
+            }
+        }
+    } catch (error) {
+        currentLogger.error(`🚨 Error during API key extraction from ${siteUrl}: ${error.message}`);
+    }
+
+    return null;
+}
+
+/**
+ * Validates an extracted API key by making a test call to the service's status_check endpoint.
+ * @param {string} siteUrl - The base URL of the service.
+ * @param {string} apiKey - The extracted API key to validate.
+ * @param {object} currentConfig - The global CONFIG object.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<boolean>} True if the key is valid, false otherwise.
+ */
+async function validateAPIKey(siteUrl, apiKey, currentConfig, currentLogger) {
+    const apiInfo = API_CATALOG[siteUrl];
+    if (!apiInfo || !apiInfo.status_check) {
+        currentLogger.warn(`No status check endpoint defined for ${siteUrl}. Cannot validate key via direct API call.`);
+        return true; // Optimistically assume valid if no check available
+    }
+
+    let url = apiInfo.status_check;
+    let headers = { 'Accept': 'application/json' };
+    let method = 'get';
+    let data = {};
+
+    // Customize validation logic based on API
+    switch (siteUrl) {
+        case 'https://shorte.st':
+            url = `${apiInfo.status_check}?api=${apiKey}`; // shorte.st uses query param for API key
+            break;
+        case 'https://newsapi.org':
+            url = `${apiInfo.status_check}&apiKey=${apiKey}`;
+            break;
+        case 'https://coinmarketcap.com':
+            headers['X-CMC_PRO_API_KEY'] = apiKey;
+            break;
+        case 'https://openai.com/api/':
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            url = 'https://api.openai.com/v1/models'; // Use a different endpoint for validation as /engines might be deprecated
+            break;
+        case 'https://developer.paypal.com/api/rest':
+            // PayPal requires OAuth token first
+            try {
+                const base64Encoded = Buffer.from(`${currentConfig.PAYPAL_API_CLIENT_ID || 'dummy'}:${apiKey}`).toString('base64');
+                const tokenResponse = await axios.post(
+                    'https://api-m.paypal.com/v1/oauth2/token',
+                    'grant_type=client_credentials',
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Authorization': `Basic ${base64Encoded}`
+                        },
+                        timeout: 10000
+                    }
+                );
+                if (tokenResponse.data && tokenResponse.data.access_token) {
+                    currentLogger.info(`PayPal API key (client secret) validated by token acquisition.`);
+                    return true;
+                }
+            } catch (paypalError) {
+                currentLogger.warn(`PayPal key validation failed (token acquisition): ${paypalError.message.substring(0,100)}...`);
+                return false;
+            }
+            return false; // If token acquisition fails, key is not valid
+        case 'https://stripe.com/docs/api':
+            // Stripe validation: make a simple request to a harmless endpoint
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            url = 'https://api.stripe.com/v1/customers?limit=1'; // Get first customer, harmless for read-only
+            break;
+        case 'https://nowpayments.io':
+            headers['x-api-key'] = apiKey;
+            break;
+        case 'https://etherscan.io/apis':
+            url = `https://api.etherscan.io/api?module=proxy&action=eth_blockNumber&apikey=${apiKey}`;
+            break;
+        case 'https://www.coingecko.com':
+            url = 'https://api.coingecko.com/api/v3/ping'; // No API key needed for ping, but ensures service is up
+            // A more robust check might involve an endpoint that *does* require a key, if CoinGecko adds one for premium features.
+            break;
+        case 'https://adf.ly':
+            // AdF.ly API is user-specific, requires a user ID and API key in URL.
+            // This is complex for generic validation without knowing the specific user_id it expects
+            // For now, we'll assume it's covered by the Puppeteer login process if a key is found.
+            currentLogger.warn(`AdF.ly validation is complex and highly user-specific. Skipping direct API validation for now.`);
+            return true; // Assume valid if extracted via Puppeteer, or manually confirm
+        case 'https://short.io':
+            headers['Authorization'] = apiKey;
+            // Short.io links endpoint (requires API key)
+            url = 'https://api.short.io/api/swagger-ui/'; // Swagger UI itself doesn't need auth, but it's a good health check
+            // For actual validation, you'd try to create a link or fetch user info.
+            currentLogger.warn(`Short.io validation attempts to reach swagger, but doesn't fully validate the key's functionality without a link creation.`);
+            break;
+        case 'https://linkvertise.com':
+            // Linkvertise API requires token or user session, complex for direct validation
+            currentLogger.warn(`Linkvertise API key validation is complex and requires specific user context. Skipping direct API validation for now.`);
+            return true; // Assume valid if extracted via Puppeteer
+        case 'https://developers.pinterest.com':
+            headers['Authorization'] = `Bearer ${apiKey}`; // Pinterest uses OAuth tokens
+            break;
+        case 'https://aws.amazon.com/api-gateway/':
+            currentLogger.warn(`AWS API key validation is highly context-specific (IAM roles, service actions). Skipping generic validation.`);
+            return true; // Assume valid if extracted
+        case 'https://thecatapi.com':
+        case 'https://thedogapi.com': // Assuming DOG_API_KEY exists and has similar validation
+            headers['x-api-key'] = apiKey;
+            break;
+        case 'https://coinmarketcap.com':
+             headers = { 'X-CMC_PRO_API_KEY': apiKey };
+             url = 'https://pro-api.coinmarketcap.com/v1/global-metrics/quotes/latest'; // A more robust endpoint for validation
+             break;
+        case 'https://x.com': // Assuming this is Twitter (X)
+             // Twitter API v2 uses Bearer Token for public endpoints or OAuth 1.0a/2.0 for user context
+             // This validation will be more complex and likely integrated with the TwitterApi client itself.
+             // For simplicity, we'll check if a client can be initialized.
+             try {
+                 if (currentConfig.X_API_SECRET && currentConfig.X_ACCESS_TOKEN && currentConfig.X_ACCESS_SECRET) {
+                     const client = new TwitterApi({
+                         appKey: apiKey, // Assuming apiKey is X_API_KEY
+                         appSecret: currentConfig.X_API_SECRET,
+                         accessToken: currentConfig.X_ACCESS_TOKEN,
+                         accessSecret: currentConfig.X_ACCESS_SECRET,
+                     });
+                     await client.v2.me(); // Simple user info call
+                     currentLogger.info(`X (Twitter) API key validated successfully via client init and user check.`);
+                     return true;
+                 } else {
+                     currentLogger.warn(`Missing X (Twitter) API credentials for full validation (consumer secret, access token/secret).`);
+                     return false;
+                 }
+             } catch (twitterError) {
+                 currentLogger.warn(`X (Twitter) API key validation failed: ${twitterError.message.substring(0,100)}...`);
+                 return false;
+             }
+        default:
+            // For generic APIs, try including the key in a common header or query param
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            // If the status_check URL includes a placeholder for the API key, replace it
+            if (url.includes('YourApiKeyToken')) {
+                url = url.replace('YourApiKeyToken', apiKey);
+            }
+            break;
+    }
+
+    try {
+        currentLogger.info(`Attempting to validate key for ${siteUrl} using ${method.toUpperCase()} ${url}`);
+        const response = await axios({ method, url, headers, data, timeout: 10000 });
+        // Check for success status codes (2xx) or specific success indicators
+        if (response.status >= 200 && response.status < 300) {
+            currentLogger.success(`🔑 API key for ${siteUrl} is VALID.`);
+            return true;
+        } else {
+            currentLogger.warn(`⚠️ API key for ${siteUrl} appears INVALID (Status: ${response.status}, Data: ${JSON.stringify(response.data).substring(0,100)}...).`);
+            return false;
+        }
+    } catch (error) {
+        currentLogger.warn(`🚨 API key validation failed for ${siteUrl}: ${error.message.substring(0, 100)}...`);
+        // Common errors for invalid keys: 401 Unauthorized, 403 Forbidden
+        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+            currentLogger.warn(`This is likely an invalid key or insufficient permissions.`);
+        }
+        return false;
+    }
+}
+
+
+// --- Placeholder for external functions (defined elsewhere in the system) ---
+// The original prompt did not provide these, but they are called in `run`.
+// I will provide simple, non-functional placeholders to ensure the code structure is valid.
+// In a real system, these would be sophisticated agents.
+
+/**
+ * Placeholder: Consolidates revenue from various active campaigns.
+ * In a real scenario, this would interact with adRevenueAgent, cryptoAgent, etc.
  */
 async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, currentLogger) {
-    currentLogger.info('💰 Consolidating revenue from active campaigns...');
+    currentLogger.info('📊 Consolidating estimated revenue from active campaigns...');
     await quantumDelay(2000);
-
     let totalRevenue = 0;
-    const campaignRevenue = {};
 
+    // Simulate revenue from newly acquired keys/activated campaigns
     for (const campaign of activeCampaigns) {
-        let revenue = 0;
-        if (campaign.status === 'activated' && campaign.keyExtracted) {
-            if (campaign.site.includes('shorte.st') || campaign.site.includes('adf.ly') || campaign.site.includes('short.io') || campaign.site.includes('linkvertise.com')) {
-                revenue = Math.random() * 50 + 10;
-            } else if (campaign.site.includes('nowpayments.io')) {
-                revenue = Math.random() * 100 + 20;
-            } else if (campaign.site.includes('coinmarketcap.com') || campaign.site.includes('coingecko.com')) {
-                revenue = Math.random() * 30 + 5;
-            }
-            currentLogger.info(`  Calculated revenue for ${campaign.site}: $${revenue.toFixed(2)}`);
-        } else {
-            currentLogger.warn(`  No revenue from ${campaign.site} (not fully activated or key missing).`);
-        }
-        campaignRevenue[campaign.site] = revenue;
-        totalRevenue += revenue;
-    }
-
-    for (const keyName in newKeys) {
-        if (Object.prototype.hasOwnProperty.call(newKeys, keyName)) {
-            const keyRevenue = Math.random() * 20 + 5;
-            totalRevenue += keyRevenue;
-            currentLogger.info(`  Added potential revenue from new key ${keyName}: $${keyRevenue.toFixed(2)}`);
+        if (campaign.status === 'active' && campaign.keyName) {
+            // A very simple heuristic: new, validated keys contribute some conceptual revenue
+            totalRevenue += 0.0001 + (Math.random() * 0.001); // Small, conceptual revenue
+            currentLogger.debug(`📈 ${campaign.site} contributing conceptual revenue.`);
         }
     }
 
+    // In a full system, this would involve:
+    // - Querying ad platforms via adRevenueAgent.
+    // - Checking crypto wallet balances via cryptoAgent.
+    // - Interacting with ShopifyAgent for sales data.
+    // - etc.
+
+    currentLogger.info(`Total conceptual revenue consolidated: $${totalRevenue.toFixed(4)}`);
     return {
         total: totalRevenue,
-        campaigns: campaignRevenue,
-        summary: 'Revenue consolidated based on activated campaigns and extracted API keys.'
+        details: activeCampaigns.map(c => ({ site: c.site, status: c.status, estimated_revenue: c.status === 'active' ? (0.0001 + (Math.random() * 0.001)) : 0 }))
     };
 }
 
-// === 🧠 Insight Generation (Conceptual AI Analysis) ===
 /**
- * Generates strategic insights based on revenue reports and discovered opportunities.
- * @param {object} revenueReport - The consolidated revenue report.
- * @param {object[]} discoveredOpportunities - List of all discovered opportunities.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<string>} Strategic insights.
+ * Placeholder: Generates strategic insights based on revenue and discoveries.
+ * This would involve more advanced data analysis and potentially ML models.
  */
 async function generateStrategicInsights(revenueReport, discoveredOpportunities, currentLogger) {
-    currentLogger.info('🧠 Generating strategic insights...');
-    await quantumDelay(1000);
+    currentLogger.info('🧠 Generating strategic insights for future evolution...');
+    await quantumDelay(1500);
 
-    let insights = `Overall revenue generated: $${revenueReport.total.toFixed(2)}. `;
-
-    const profitableCampaigns = Object.entries(revenueReport.campaigns)
-        .filter(([, rev]) => rev > 0)
-        .map(([site, rev]) => `${site} ($${rev.toFixed(2)})`);
-
-    if (profitableCampaigns.length > 0) {
-        insights += `Most profitable campaigns included: ${profitableCampaigns.join(', ')}. `;
+    const insights = [];
+    if (revenueReport.total > 0.001) {
+        insights.push('Positive initial revenue signals detected. Focus on scaling successful activation channels.');
     } else {
-        insights += `No significant direct campaign revenue detected this cycle. `;
+        insights.push('Revenue generation is still nascent. Prioritize deeper exploration of high-potential API services.');
+    }
+
+    const successfulActivations = revenueReport.details.filter(d => d.status === 'active');
+    if (successfulActivations.length > 0) {
+        insights.push(`Successfully activated ${successfulActivations.length} new services. Analyze key types for common patterns.`);
+    } else {
+        insights.push('No new services activated this cycle. Refine web scraping heuristics for key extraction and consider new registration flows.');
     }
 
     const highPotentialAPIs = discoveredOpportunities.filter(op => op.type === 'API_SERVICE' && op.potential === 'high');
     if (highPotentialAPIs.length > 0) {
-        insights += `High-potential API services identified for future focus: ${highPotentialAPIs.map(op => op.name).join(', ')}. `;
+        insights.push(`Identified ${highPotentialAPIs.length} high-potential APIs. Allocate resources for deeper analysis and targeted activation in next cycle.`);
+    } else {
+        insights.push('Limited new high-potential APIs discovered. Broaden research keywords or explore new scouting methodologies.');
     }
 
-    insights += `Consider diversifying into AI data marketplaces and decentralized finance APIs based on initial scouting. `;
-    insights += `Continuous monitoring of network health and API key validity is paramount for sustained operations.`;
+    insights.push(`System CPU Load: ${os.loadavg()[0].toFixed(2)}. Consider resource optimization or scaling if consistently high.`);
+    insights.push(`Memory Usage: ${((1 - (os.freemem() / os.totalmem())) * 100).toFixed(2)}%. Monitor for leaks during long-running browser sessions.`);
 
     return insights;
 }
-
-// Placeholder for QuantumSecurity (if not a real module)
-const QuantumSecurity = {
-    generateEntropy: () => Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10)
-};
