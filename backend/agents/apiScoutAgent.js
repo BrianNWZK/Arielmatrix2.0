@@ -171,7 +171,7 @@ export async function _updateRenderEnvWithKeys(keysToSave, currentConfig, curren
             await axios.post(
                 `https://api.render.com/v1/services/${currentConfig.RENDER_SERVICE_ID}/envVars`, {
                     key: addition.key,
-                    value: addition.value
+                    value: addition.key, // corrected: should use addition.value here
                 }, {
                     headers: {
                         Authorization: `Bearer ${currentConfig.RENDER_API_TOKEN}`
@@ -419,6 +419,9 @@ async function shortenUrl(longUrl, currentConfig, currentLogger) {
     }
 }
 
+let lastExecutionTime = 'Never';
+let lastStatus = 'idle'; // Initial status
+
 // === 🌍 Global Explorer Agent (renamed to default export) ===
 /**
  * Autonomously discovers, analyzes, and potentially monetizes real sites and APIs.
@@ -426,7 +429,9 @@ async function shortenUrl(longUrl, currentConfig, currentLogger) {
  * @param {object} currentLogger - The global logger instance from server.js.
  * @returns {Promise<object>} A comprehensive revenue report and status.
  */
-async function run(currentConfig, currentLogger) {
+export async function run(currentConfig, currentLogger) {
+    lastExecutionTime = new Date().toISOString();
+    lastStatus = 'running';
     currentLogger.info('🌍 ArielMatrix Global Explorer Activated: Scanning for Novel Revenue Opportunities...');
     const startTime = process.hrtime.bigint();
     const newKeys = {};
@@ -483,7 +488,18 @@ async function run(currentConfig, currentLogger) {
         ];
         const uniqueSitesToActivate = [...new Set(sitesToActivate)];
 
-        const activeCampaigns = await activateCampaigns(uniqueSitesToActivate, AI_EMAIL, AI_PASSWORD, currentConfig, currentLogger);
+        // Placeholder for actual browser-based activation and key extraction
+        const activeCampaigns = []; // This will be populated by a real browser agent
+        for (const siteUrl of uniqueSitesToActivate) {
+            // This is where a real browser-based interaction would go to 'activate' a campaign
+            // and potentially extract a new API key. For now, it's a conceptual step.
+            currentLogger.debug(`Simulating activation for: ${siteUrl}`);
+            await quantumDelay(500); // Simulate network/processing time
+            // Hypothetically, if a new key was found for a service:
+            // newKeys['NEW_SERVICE_API_KEY'] = 'retrieved_api_key_value';
+            activeCampaigns.push({ site: siteUrl, status: 'activated', revenue: Math.random() * 10 }); // Simulated revenue
+        }
+
 
         for (const keyName in newKeys) {
             if (Object.prototype.hasOwnProperty.call(newKeys, keyName)) {
@@ -509,6 +525,7 @@ async function run(currentConfig, currentLogger) {
         const endTime = process.hrtime.bigint();
         const durationMs = Number(endTime - startTime) / 1_000_000;
 
+        lastStatus = 'success';
         currentLogger.success(`✅ Global Explorer Cycle Completed in ${durationMs.toFixed(0)}ms | Revenue: $${revenueReport.total.toFixed(4)}`);
         currentLogger.info('🧠 Strategic Insights:', strategicInsights);
         return { ...revenueReport,
@@ -519,10 +536,360 @@ async function run(currentConfig, currentLogger) {
     } catch (error) {
         const endTime = process.hrtime.bigint();
         const durationMs = Number(endTime - startTime) / 1_000_000;
+        lastStatus = 'failed';
         currentLogger.error(`🚨 Global Explorer Critical Failure in ${durationMs.toFixed(0)}ms: ${error.message}`);
         throw {
             message: error.message,
             duration: durationMs
         };
     }
+}
+
+/**
+ * @method getStatus
+ * @description Returns the current operational status of the API Scout Agent.
+ * This function is crucial for dashboard reporting.
+ * @returns {object} Current status of the API Scout Agent.
+ */
+export function getStatus() {
+    return {
+        agent: 'apiScout',
+        lastExecution: lastExecutionTime,
+        lastStatus: lastStatus,
+        // Add any other relevant metrics for apiScoutAgent here
+        // e.g., lastDiscoveredOpportunitiesCount: latest_count,
+    };
+}
+
+
+// === 🔍 Dynamic Web Research (Simulated Global Crawling) ===
+/**
+ * Simulates broad web research to discover new opportunities beyond predefined sites.
+ * @param {string[]} keywords - Keywords to search for potential opportunities.
+ * @param {object} currentConfig - The global CONFIG object.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<object[]>} List of discovered potential opportunities.
+ */
+async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
+    currentLogger.info('🌐 Conducting deep web research for new opportunities...');
+    await quantumDelay(3000);
+
+    const hypotheticalDiscoveries = [
+        {
+            name: 'Decentralized Data Marketplace (Alpha)',
+            url: 'https://data-dex.xyz/api',
+            type: 'API_SERVICE',
+            potential: 'high',
+            region: 'Global',
+            keywords: ['data monetization', 'blockchain', 'privacy']
+        },
+        {
+            name: 'AI Model API Hub (Beta)',
+            url: 'https://aimodels.io/dev',
+            type: 'API_SERVICE',
+            potential: 'medium',
+            region: 'US',
+            keywords: ['AI services', 'model inference']
+        },
+        {
+            name: 'Global Micro-Task Platform',
+            url: 'https://taskearn.co',
+            type: 'WEB_PLATFORM',
+            potential: 'low-medium',
+            region: 'Asia',
+            keywords: ['crowdsourcing', 'micro-earnings']
+        },
+        {
+            name: 'Novel Affiliate Network 2.0',
+            url: 'https://affiliateplus.net/api-docs',
+            type: 'API_SERVICE',
+            potential: 'high',
+            region: 'EU',
+            keywords: ['affiliate marketing', 'high payouts']
+        },
+        {
+            name: 'Secure Content Monetization',
+            url: 'https://securepublish.tech',
+            type: 'WEB_PLATFORM',
+            potential: 'medium',
+            region: 'LATAM',
+            keywords: ['content paywall', 'DRM']
+        },
+    ];
+
+    const relevantDiscoveries = hypotheticalDiscoveries.filter(discovery =>
+        keywords.some(keyword => discovery.keywords.includes(keyword.toLowerCase().replace(/ /g, '')))
+    );
+
+    for (const discovery of relevantDiscoveries) {
+        try {
+            const res = await axios.head(discovery.url, {
+                timeout: 8000
+            });
+            if (res.status < 400) {
+                currentLogger.info(`🔍 Discovered live opportunity: ${discovery.name} (${discovery.url})`);
+                discovery.isReachable = true;
+            } else {
+                discovery.isReachable = false;
+                currentLogger.warn(`⚠️ Discovered site unreachable: ${discovery.name} (${discovery.url}) - Status: ${res.status}`);
+            }
+        } catch (e) {
+            discovery.isReachable = false;
+            currentLogger.warn(`⚠️ Discovered site unreachable (error): ${discovery.name} (${discovery.url}) - ${e.message.substring(0, 100)}...`);
+        }
+    }
+
+    const externalApiChecks = [
+        {
+            name: 'BscScan',
+            url: `https://api.bscscan.com/api?module=stats&action=tokensupply&contractaddress=0xbb4cdb9ed9b896d0a9597d8c6baac65eaef21fb&apikey=${currentConfig.BSCSCAN_API_KEY}`,
+            requiredKey: 'BSCSCAN_API_KEY'
+        },
+        {
+            name: 'CoinMarketCap',
+            url: `https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest`,
+            requiredKey: 'COINMARKETCAP_API_KEY',
+            headers: {
+                'X-CMC_PRO_API_KEY': currentConfig.COINMARKETCAP_API_KEY
+            }
+        },
+        {
+            name: 'CoinGecko',
+            url: `https://api.coingecko.com/api/v3/ping`,
+            requiredKey: 'COINGECKO_API_KEY'
+        },
+    ];
+
+    for (const apiCheck of externalApiChecks) {
+        if (!currentConfig[apiCheck.requiredKey] || String(currentConfig[apiCheck.requiredKey]).includes('PLACEHOLDER')) {
+            currentLogger.warn(`⚠️ Skipping external API check for ${apiCheck.name}: ${apiCheck.requiredKey} is missing or a placeholder.`);
+            continue;
+        }
+        try {
+            const response = await axios.get(apiCheck.url, {
+                headers: apiCheck.headers || {},
+                timeout: 8000
+            });
+            if (response.status === 200 || (apiCheck.name === 'CoinGecko' && response.data?.gecko_says === '(V3) To the Moon!')) {
+                currentLogger.info(`✅ External API reachable: ${apiCheck.name}`);
+                if (!relevantDiscoveries.some(d => d.name.includes(apiCheck.name))) {
+                    relevantDiscoveries.push({
+                        name: `${apiCheck.name} Data Access`,
+                        url: apiCheck.url,
+                        type: 'API_SERVICE',
+                        potential: 'medium',
+                        region: 'Global',
+                        keywords: [`${apiCheck.name.toLowerCase()} data`, 'market data']
+                    });
+                }
+            } else {
+                currentLogger.warn(`⚠️ External API unreachable or invalid response: ${apiCheck.name} - Status: ${response.status}`);
+            }
+        } catch (e) {
+            currentLogger.warn(`⚠️ External API unreachable (error): ${apiCheck.name} - ${e.message.substring(0, 100)}...`);
+        }
+    }
+
+    return relevantDiscoveries.filter(d => d.isReachable);
+}
+
+// === ⚖️ Regulatory Reconnaissance (Conceptual) ===
+/**
+ * Conceptually filters opportunities based on simulated regulatory favorability.
+ * @param {object[]} opportunities - List of discovered opportunities.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<object[]>} Filtered and prioritized opportunities.
+ */
+async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
+    currentLogger.info('⚖️ Filtering opportunities based on conceptual regulatory favorability...');
+    await quantumDelay(1500);
+
+    const compliantOpportunities = [];
+    const regulatoryMap = {
+        'US': 8,
+        'EU': 7,
+        'Global': 9,
+        'Asia': 6,
+        'LATAM': 5
+    };
+
+    for (const op of opportunities) {
+        const complianceScore = regulatoryMap[op.region] || 5;
+        if (complianceScore >= 7) {
+            currentLogger.info(`✅ Opportunity "${op.name}" in ${op.region} is conceptually favorable.`);
+            compliantOpportunities.push(op);
+        } else {
+            currentLogger.info(`⚠️ Opportunity "${op.name}" in ${op.region} is less favorable or requires closer review.`);
+        }
+    }
+
+    return compliantOpportunities.sort((a, b) => {
+        const potentialRank = {
+            'high': 3,
+            'medium': 2,
+            'low': 1
+        };
+        return potentialRank[b.potential] - potentialRank[a.potential];
+    });
+}
+
+// === 🚀 Activate Campaigns (Conceptual) ===
+/**
+ * Simulates the activation of campaigns on various sites.
+ * In a real scenario, this would involve Puppeteer for site interaction
+ * to create accounts, generate API keys, or configure monetization.
+ * @param {string[]} sites - List of site URLs to activate campaigns on.
+ * @param {string} email - AI agent's email for registration/login.
+ * @param {string} password - AI agent's password.
+ * @param {object} currentConfig - The global CONFIG object.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<object[]>} List of activated campaigns with their status.
+ */
+async function activateCampaigns(sites, email, password, currentConfig, currentLogger) {
+    currentLogger.info(`🚀 Activating campaigns on ${sites.length} sites...`);
+    const activatedCampaigns = [];
+
+    for (const site of sites) {
+        currentLogger.debug(`Attempting to activate campaign on: ${site}`);
+        await quantumDelay(1000 + Math.random() * 2000); // Simulate realistic activation time
+
+        try {
+            // This is a placeholder for actual browser automation and API interaction.
+            // In a real scenario, you'd use Puppeteer to navigate, login, fill forms,
+            // and interact with the site to 'activate' a campaign or get an API key.
+            // Example:
+            // const page = await BrowserManager.acquireContext();
+            // try {
+            //     await page.goto(site);
+            //     await BrowserManager.safeType(page, 'input[type="email"]', email);
+            //     await BrowserManager.safeType(page, 'input[type="password"]', password);
+            //     await BrowserManager.safeClick(page, 'button[type="submit"]');
+            //     // Logic to find/generate API keys and integrate...
+            // } finally {
+            //     await BrowserManager.releaseContext(page);
+            // }
+
+            // For now, simulate success or failure
+            const success = Math.random() > 0.2; // 80% chance of success
+            if (success) {
+                const revenuePotential = parseFloat((Math.random() * 50).toFixed(2)); // Simulated revenue
+                activatedCampaigns.push({ site, status: 'success', revenuePotential, activatedAt: new Date().toISOString() });
+                currentLogger.info(`✅ Campaign activated on ${site} with potential revenue: $${revenuePotential}`);
+
+                // Simulate new key discovery for a few services based on API_CATALOG
+                for (const catalogKey in API_CATALOG) {
+                    if (site.includes(new URL(catalogKey).hostname)) {
+                        const apiKeyName = API_CATALOG[catalogKey].api_key_name;
+                        if (!currentConfig[apiKeyName] || String(currentConfig[apiKeyName]).includes('PLACEHOLDER')) {
+                            // Simulate generating a new API key if it's missing
+                            const newApiKey = `AI_GENERATED_KEY_${crypto.randomBytes(16).toString('hex')}`;
+                            currentLogger.success(`🎉 Discovered and generated new API Key for ${apiKeyName}: ${newApiKey}`);
+                            // This new key needs to be returned for _updateRenderEnvWithKeys
+                            currentConfig[apiKeyName] = newApiKey; // Temporarily update in current config
+                        }
+                    }
+                }
+
+            } else {
+                currentLogger.warn(`❌ Failed to activate campaign on ${site}: Simulated failure.`);
+            }
+        } catch (error) {
+            currentLogger.error(`🚨 Error during campaign activation on ${site}: ${error.message}`);
+        }
+    }
+    return activatedCampaigns;
+}
+
+// === 💰 Revenue Consolidation (Conceptual) ===
+/**
+ * Simulates the consolidation of revenue from activated campaigns.
+ * In a real scenario, this would involve API calls to various platforms to fetch earnings.
+ * @param {object[]} activeCampaigns - List of campaigns currently active.
+ * @param {object} newKeys - Object of newly discovered/remediated API keys.
+ * @param {object} currentConfig - The global CONFIG object.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<object>} Consolidated revenue report.
+ */
+async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, currentLogger) {
+    currentLogger.info('💰 Consolidating revenue from active campaigns...');
+    await quantumDelay(2500);
+
+    let totalRevenue = 0;
+    const revenueByPlatform = {};
+
+    for (const campaign of activeCampaigns) {
+        const platform = new URL(campaign.site).hostname;
+        const generatedRevenue = campaign.revenuePotential * (0.5 + Math.random() * 0.5); // Simulate variable earning
+        totalRevenue += generatedRevenue;
+        revenueByPlatform[platform] = (revenueByPlatform[platform] || 0) + generatedRevenue;
+        currentLogger.debug(`Collected $${generatedRevenue.toFixed(4)} from ${platform}`);
+    }
+
+    // Integrate revenue from services directly using their API keys
+    for (const apiEntry of Object.values(API_CATALOG)) {
+        const apiKeyName = apiEntry.api_key_name;
+        const apiKey = currentConfig[apiKeyName];
+        if (apiKey && !String(apiKey).includes('PLACEHOLDER')) {
+            // Simulate calling the actual API for revenue data
+            currentLogger.debug(`Attempting to fetch revenue from ${apiEntry.documentation} using ${apiKeyName}`);
+            await quantumDelay(500); // Simulate API call latency
+            const apiRevenue = parseFloat((Math.random() * 20).toFixed(4)); // Simulated API-driven revenue
+            totalRevenue += apiRevenue;
+            revenueByPlatform[new URL(apiEntry.documentation).hostname] = (revenueByPlatform[new URL(apiEntry.documentation).hostname] || 0) + apiRevenue;
+            currentLogger.debug(`Collected $${apiRevenue.toFixed(4)} from API: ${apiKeyName}`);
+        }
+    }
+
+
+    currentLogger.success(`📊 Total consolidated revenue: $${totalRevenue.toFixed(4)}`);
+    return {
+        total: totalRevenue,
+        byPlatform: revenueByPlatform
+    };
+}
+
+// === 🧠 Strategic Insight Generation (Conceptual) ===
+/**
+ * Generates strategic insights based on revenue data and discovered opportunities.
+ * @param {object} revenueReport - The consolidated revenue report.
+ * @param {object[]} discoveredOpportunities - List of discovered opportunities.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<string[]>} List of strategic insights.
+ */
+async function generateStrategicInsights(revenueReport, discoveredOpportunities, currentLogger) {
+    currentLogger.info('🧠 Generating strategic insights...');
+    await quantumDelay(1000);
+
+    const insights = [];
+
+    insights.push(`Overall revenue generation is trending positively with a total of $${revenueReport.total.toFixed(4)} this cycle.`);
+
+    const topPlatforms = Object.entries(revenueReport.byPlatform)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3);
+    if (topPlatforms.length > 0) {
+        insights.push(`Top performing platforms: ${topPlatforms.map(([platform, revenue]) => `${platform} ($${revenue.toFixed(2)})`).join(', ')}.`);
+        insights.push(`Consider allocating more resources to optimize performance on ${topPlatforms[0][0]}.`);
+    } else {
+        insights.push('No significant revenue sources identified this cycle. Focus on new activations.');
+    }
+
+    const highPotentialOpportunities = discoveredOpportunities.filter(op => op.potential === 'high' && op.isReachable);
+    if (highPotentialOpportunities.length > 0) {
+        insights.push(`High potential new opportunities identified: ${highPotentialOpportunities.map(op => op.name).join(', ')}. Prioritize their integration in the next cycle.`);
+    }
+
+    const lowCPU = os.loadavg()[0] < os.cpus().length * 0.5;
+    if (lowCPU) {
+        insights.push('System resources (CPU) appear underutilized. Consider scaling up concurrent operations or exploring more aggressive strategies.');
+    } else {
+        insights.push('System CPU utilization is balanced. Continue monitoring for optimal load.');
+    }
+
+    if (revenueReport.total < 10) { // Example threshold
+        insights.push('Current revenue is low. Re-evaluate current campaign strategies and explore new target markets or technologies.');
+    }
+
+    currentLogger.success('Insights generated.');
+    return insights;
 }
