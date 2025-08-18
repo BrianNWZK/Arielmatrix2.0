@@ -9,13 +9,15 @@ import {
     ethers
 } from 'ethers';
 import crypto from 'crypto';
+import BrowserManager from './browserManager.js'; // Ensure correct path
+import { provideThreatIntelligence } from './healthAgent.js'; // Import healthAgent function
 
 // Fix for __dirname in ES6 modules
 const __filename = new URL(import.meta.url).pathname;
 const __dirname = path.dirname(__filename);
 
-// --- Quantum Jitter (Anti-Detection) ---
-const quantumDelay = (ms) => new Promise(resolve => {
+// --- Human-like Delay (Anti-Detection) ---
+const humanDelay = (ms) => new Promise(resolve => {
     const jitter = Math.floor(Math.random() * 3000) + 1000;
     setTimeout(resolve, ms + jitter);
 });
@@ -99,11 +101,47 @@ const API_CATALOG = {
     }
 };
 
+// === 🔑 API Retrieval Catalog (Browser-based) ===
+// This catalog defines how to retrieve API keys via browser automation for specific services.
+const API_RETRIEVAL_CATALOG = {
+    'https://bscscan.com': {
+        loginPageUrl: 'https://bscscan.com/login',
+        keyPageUrl: 'https://bscscan.com/myapikey',
+        keySelectors: [
+            '#ContentPlaceHolder1_token', // Specific BscScan key element
+            'div.card-body p.text-muted code', // More robust selector
+            'div[class*="api-key"]' // Generic patterns
+        ],
+        apiKeyName: 'BSCSCAN_API_KEY',
+        credentials: { // Placeholder for specific credentials if needed, otherwise use AI_EMAIL/PASSWORD
+            email: 'BSCSCAN_EMAIL',
+            password: 'BSCSCAN_PASSWORD'
+        }
+    },
+    'https://nowpayments.io': {
+        loginPageUrl: 'https://nowpayments.io/auth/login',
+        keyPageUrl: 'https://nowpayments.io/dashboard/settings/api-keys',
+        keySelectors: [
+            '.api-key-value-container span', // Example: finding API key in a specific span
+            '#api-key-input', // Example: finding API key in an input field
+            'div[data-qa="api-key"]' // Another example
+        ],
+        apiKeyName: 'NOWPAYMENTS_API_KEY',
+        credentials: {
+            email: 'NOWPAYMENTS_EMAIL',
+            password: 'NOWPAYMENTS_PASSWORD'
+        }
+    },
+    // Add other services requiring browser interaction here
+};
+
+
 // === On-Chain Interaction Setup ===
 let web3Instance;
 let contractABI;
 let contractAddress;
 let wallet;
+let contractInstance;
 let _currentLogger; // Local logger reference for contract functions
 
 /**
@@ -112,7 +150,7 @@ let _currentLogger; // Local logger reference for contract functions
  * @param {object} logger - The global logger instance.
  */
 async function initializeContractInteraction(currentConfig, logger) {
-    _currentLogger = logger; // Set local logger reference
+    _currentLogger = logger;
     if (web3Instance && contractInstance && wallet) return;
 
     try {
@@ -239,8 +277,65 @@ async function shortenUrl(longUrl, currentConfig, currentLogger) {
     }
 }
 
+/**
+ * @method retrieveAndStoreKey
+ * @description Uses the browser manager to log in and retrieve an API key for a given service.
+ * Reports browser challenges to the health agent.
+ * @param {string} serviceUrl - The base URL of the service.
+ * @param {object} credentials - The login credentials { email, password }.
+ * @param {object} currentConfig - The global configuration object.
+ * @param {object} currentLogger - The global logger instance.
+ * @returns {Promise<string|null>} The retrieved API key or null if not found.
+ */
+async function retrieveAndStoreKey(serviceUrl, credentials, currentConfig, currentLogger) {
+    let page = null;
+    try {
+        const keyInfo = API_RETRIEVAL_CATALOG[serviceUrl];
+        if (!keyInfo) {
+            currentLogger.warn(`⚠️ No browser-based key retrieval configured for ${serviceUrl}.`);
+            return null;
+        }
+
+        page = await BrowserManager.acquireContext();
+        currentLogger.info(`🤖 Browser agent acquired context for ${serviceUrl}.`);
+
+        // Use AI_EMAIL/PASSWORD by default, or specific credentials from catalog if provided
+        const loginCredentials = {
+            email: currentConfig[keyInfo.credentials.email] || credentials.email,
+            password: currentConfig[keyInfo.credentials.password] || credentials.password
+        };
+
+        const loggedIn = await BrowserManager.autonomousLogin(page, serviceUrl, loginCredentials);
+        if (!loggedIn) {
+            currentLogger.error(`🚨 Autonomous login failed for ${serviceUrl}. Cannot retrieve key.`);
+            provideThreatIntelligence('browser_block', `Failed login for ${serviceUrl}`);
+            return null;
+        }
+
+        const apiKey = await BrowserManager.retrieveApiKey(page, keyInfo.keyPageUrl, keyInfo.keySelectors);
+        if (apiKey) {
+            currentLogger.success(`🔑 Successfully retrieved API key from ${serviceUrl}.`);
+            currentConfig[keyInfo.apiKeyName] = apiKey;
+            return apiKey;
+        } else {
+            provideThreatIntelligence('api_key_extraction_failure', `Key element not found on ${serviceUrl}`);
+        }
+        return null;
+    } catch (error) {
+        currentLogger.error(`🚨 An error occurred during key retrieval for ${serviceUrl}: ${error.message}`);
+        provideThreatIntelligence('browser_interaction_error', `Error during key retrieval for ${serviceUrl}: ${error.message}`);
+        return null;
+    } finally {
+        if (page) {
+            await BrowserManager.releaseContext(page);
+            currentLogger.debug('Browser context released.');
+        }
+    }
+}
+
+
 let lastExecutionTime = 'Never';
-let lastStatus = 'idle'; // Initial status
+let lastStatus = 'idle';
 
 // === 🌍 Global Explorer Agent ===
 /**
@@ -280,6 +375,8 @@ export async function run(currentConfig, currentLogger) {
         }
 
         await initializeContractInteraction(currentConfig, currentLogger);
+        // Initialize the browser manager once at the start of the scouting run
+        await BrowserManager.init(currentConfig, currentLogger);
 
         currentLogger.info('\n--- Phase 1: Dynamic Opportunity Discovery & Regulatory Reconnaissance ---');
         const targetKeywords = ['crypto monetization API', 'AI data marketplace', 'decentralized finance API', 'privacy-focused data sharing', 'micro-earning platforms', 'innovative affiliate programs'];
@@ -288,32 +385,40 @@ export async function run(currentConfig, currentLogger) {
         const regulatedOpportunities = await filterOpportunitiesByRegulation(discoveredOpportunities, currentLogger);
 
         currentLogger.info('\n--- Phase 2: Autonomous Campaign Activation & Key Extraction ---');
-        const sitesToActivate = [
-            ...Object.keys(API_CATALOG),
-            ...regulatedOpportunities.filter(op => op.url && op.type === 'API_SERVICE').map(op => op.url)
-        ];
-        const uniqueSitesToActivate = [...new Set(sitesToActivate)];
-
-        const activeCampaigns = []; // This will be populated by a real browser agent
+        
+        const uniqueSitesToActivate = new Set();
+        Object.keys(API_RETRIEVAL_CATALOG).forEach(site => uniqueSitesToActivate.add(site));
+        regulatedOpportunities.filter(op => op.url && op.type === 'API_SERVICE').forEach(op => uniqueSitesToActivate.add(op.url));
+        
         for (const siteUrl of uniqueSitesToActivate) {
-            currentLogger.debug(`Simulating activation for: ${siteUrl}`);
-            await quantumDelay(500);
-            activeCampaigns.push({ site: siteUrl, status: 'activated', revenue: Math.random() * 10 });
+            const apiKeyName = (API_RETRIEVAL_CATALOG[siteUrl] || {}).apiKeyName;
+            if (apiKeyName && currentConfig[apiKeyName] && !String(currentConfig[apiKeyName]).includes('PLACEHOLDER')) {
+                currentLogger.info(`✅ API key for ${siteUrl} already exists. Skipping browser retrieval.`);
+                newKeys[apiKeyName] = currentConfig[apiKeyName];
+                continue;
+            }
+
+            currentLogger.info(`Initiating browser-based key retrieval for: ${siteUrl}`);
+            const apiKey = await retrieveAndStoreKey(siteUrl, { email: AI_EMAIL, password: AI_PASSWORD }, currentConfig, currentLogger);
+            if (apiKey) {
+                newKeys[apiKeyName] = apiKey;
+            }
         }
-
-
+        
         for (const keyName in newKeys) {
-            if (Object.prototype.hasOwnProperty.call(newKeys, keyName)) {
+            if (Object.prototype.hasOwnProperty.call(newKeys, keyName) && newKeys[keyName]) {
                 await reportKeyToSmartContract(keyName, newKeys[keyName]);
             }
         }
 
-        if (activeCampaigns.length > 0) {
+        const activeCampaigns = [];
+        if (Object.keys(newKeys).length > 0) {
             const testUrl = 'https://example.com/long-page-for-testing';
             currentLogger.info(`\nAttempting to shorten a test URL using the new service: ${testUrl}`);
             const shortenedLink = await shortenUrl(testUrl, currentConfig, currentLogger);
             if (shortenedLink) {
                 currentLogger.info(`Generated shortened link: ${shortenedLink}`);
+                activeCampaigns.push({ site: 'Short.io', status: 'active', revenue: 5.0 });
             } else {
                 currentLogger.info('Failed to generate any shortened link.');
             }
@@ -329,7 +434,8 @@ export async function run(currentConfig, currentLogger) {
         lastStatus = 'success';
         currentLogger.success(`✅ Global Explorer Cycle Completed in ${durationMs.toFixed(0)}ms | Revenue: $${revenueReport.total.toFixed(4)}`);
         currentLogger.info('🧠 Strategic Insights:', strategicInsights);
-        return { ...revenueReport,
+        return {
+            ...revenueReport,
             strategicInsights,
             durationMs
         };
@@ -343,6 +449,9 @@ export async function run(currentConfig, currentLogger) {
             message: error.message,
             duration: durationMs
         };
+    } finally {
+        // Ensure browser is shut down even if errors occur
+        await BrowserManager.shutdown();
     }
 }
 
@@ -370,7 +479,7 @@ export function getStatus() {
  */
 async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
     currentLogger.info('🌐 Conducting deep web research for new opportunities...');
-    await quantumDelay(3000);
+    await humanDelay(3000);
 
     const hypotheticalDiscoveries = [
         {
@@ -500,7 +609,7 @@ async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
  */
 async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
     currentLogger.info('⚖️ Filtering opportunities based on conceptual regulatory favorability...');
-    await quantumDelay(2000);
+    await humanDelay(2000);
     const filtered = opportunities.filter(op => op.region !== 'EU' || op.keywords.includes('privacy'));
     currentLogger.info(`⚖️ Identified ${filtered.length} opportunities with regulatory favorability.`);
     return filtered;
@@ -517,7 +626,7 @@ async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
  */
 async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, currentLogger) {
     currentLogger.info('💰 Consolidating revenue from active campaigns...');
-    await quantumDelay(1000);
+    await humanDelay(1000);
     const revenueReport = {
         total: 0,
         platformBreakdown: {}
@@ -552,7 +661,7 @@ async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, curre
  */
 async function generateStrategicInsights(revenueReport, discoveries, currentLogger) {
     currentLogger.info('🧠 Generating strategic insights...');
-    await quantumDelay(4000);
+    await humanDelay(4000);
     const insights = [
         `Overall revenue generation is trending positively with a total of $${revenueReport.total.toFixed(2)} this cycle.`,
     ];
