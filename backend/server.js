@@ -14,7 +14,7 @@ import apiScoutAgent from './agents/apiScoutAgent.js';
 import shopifyAgent from './agents/shopifyAgent.js';
 import cryptoAgent from './agents/cryptoAgent.js';
 import externalPayoutAgentModule from './agents/payoutAgent.js';
-import BrowserManager, { shutdown as shutdownBrowser } from './agents/browserManager.js'; // Fixed import: default import for BrowserManager, named import for shutdown
+import BrowserManager, { shutdown as shutdownBrowser } from './agents/browserManager.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -41,8 +41,11 @@ const logger = {
     warn: (...args) => console.warn(`[${new Date().toISOString()}] WARN:`, ...args),
     error: (...args) => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
     success: (...args) => console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args),
-    debug: (...args) => process.env.NODE_ENV === 'development' && 
-        console.log(`[${new Date().toISOString()}] DEBUG:`, ...args),
+    debug: (...args) => {
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`[${new Date().toISOString()}] DEBUG:`, ...args);
+        }
+    },
 };
 
 // --- WebSocket Setup ---
