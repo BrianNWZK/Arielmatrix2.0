@@ -8,11 +8,11 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import cron from 'node-cron';
 
-// Import all agents
-import apiScoutAgent from './agents/apiScoutAgent.js';
-import shopifyAgent from './agents/shopifyAgent.js';
-import cryptoAgent from './agents/cryptoAgent.js';
-import externalPayoutAgentModule from './agents/payoutAgent.js';
+// Import all agents with the correct syntax
+import * as apiScoutAgent from './agents/apiScoutAgent.js';
+import * as shopifyAgent from './agents/shopifyAgent.js';
+import * as cryptoAgent from './agents/cryptoAgent.js';
+import * as externalPayoutAgentModule from './agents/payoutAgent.js';
 import BrowserManager from './agents/browserManager.js';
 import { shutdown as shutdownBrowser } from './agents/browserManager.js';
 
@@ -88,7 +88,7 @@ process.on('uncaughtException', (error) => {
 
 // --- Tracking Variables ---
 const agentActivityLog = [];
-const errorLog = []; 
+const errorLog = [];
 const historicalRevenueData = [];
 const cycleTimes = [];
 let cycleCount = 0;
@@ -122,7 +122,7 @@ async function withRetry(operation, maxRetries = 3, baseDelay = 1000) {
 
 async function updateRenderEnvironmentVariables(keysToUpdate) {
     const { RENDER_API_TOKEN, RENDER_SERVICE_ID, RENDER_API_BASE_URL } = CONFIG;
-    
+
     if (!RENDER_API_TOKEN || RENDER_API_TOKEN.includes('PLACEHOLDER') ||
         !RENDER_SERVICE_ID || RENDER_SERVICE_ID.includes('PLACEHOLDER')) {
         logger.warn('Render API credentials missing');
@@ -135,7 +135,7 @@ async function updateRenderEnvironmentVariables(keysToUpdate) {
             headers: { 'Authorization': `Bearer ${RENDER_API_TOKEN}` },
             timeout: 10000
         });
-        
+
         const updatedEnvVars = currentEnvResponse.data.map(envVar => {
             if (keysToUpdate[envVar.key] !== undefined) {
                 const updatedValue = String(keysToUpdate[envVar.key]);
@@ -150,7 +150,7 @@ async function updateRenderEnvironmentVariables(keysToUpdate) {
         }
 
         await axios.put(apiUrl, updatedEnvVars, {
-            headers: { 
+            headers: {
                 'Authorization': `Bearer ${RENDER_API_TOKEN}`,
                 'Content-Type': 'application/json'
             },
@@ -178,8 +178,8 @@ class RevenueTracker {
         this.lock = true;
     }
 
-    releaseLock() { 
-        this.lock = false; 
+    releaseLock() {
+        this.lock = false;
     }
 
     async loadData() {
@@ -262,8 +262,8 @@ class PayoutAgentOrchestrator {
 
             if (totalAccumulatedRevenue >= config.PAYOUT_THRESHOLD_USD) {
                 const amountToPayout = totalAccumulatedRevenue * config.PAYOUT_PERCENTAGE;
-                const payoutResult = await withRetry(() => 
-                    externalPayoutAgentModule.default.run({ ...config, earnings: amountToPayout }, logger)
+                const payoutResult = await withRetry(() =>
+                    externalPayoutAgentModule.run({ ...config, earnings: amountToPayout }, logger)
                 );
 
                 if (payoutResult.status === 'success') {
@@ -324,7 +324,7 @@ async function runAutonomousRevenueSystem() {
         const scoutActivity = { agent: 'apiScout', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(scoutActivity);
         cycleStats.activities.push(scoutActivity);
-        
+
         const scoutResults = await withRetry(() => apiScoutAgent.run(CONFIG, logger));
         if (scoutResults?.newlyRemediatedKeys) {
             Object.assign(CONFIG, scoutResults.newlyRemediatedKeys);
@@ -337,13 +337,13 @@ async function runAutonomousRevenueSystem() {
         const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(shopifyActivity);
         cycleStats.activities.push(shopifyActivity);
-        
+
         const browserContext = await BrowserManager.acquireContext();
         try {
-            const shopifyResult = await withRetry(() => 
+            const shopifyResult = await withRetry(() =>
                 shopifyAgent.run({ ...CONFIG, browserContext }, logger)
             );
-            
+
             if (shopifyResult?.newlyRemediatedKeys) {
                 Object.assign(CONFIG, shopifyResult.newlyRemediatedKeys);
                 Object.assign(cycleStats.newlyRemediatedKeys, shopifyResult.newlyRemediatedKeys);
@@ -362,13 +362,13 @@ async function runAutonomousRevenueSystem() {
         const cryptoActivity = { agent: 'crypto', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(cryptoActivity);
         cycleStats.activities.push(cryptoActivity);
-        
+
         const cryptoBrowserContext = await BrowserManager.acquireContext();
         try {
-            const cryptoResult = await withRetry(() => 
+            const cryptoResult = await withRetry(() =>
                 cryptoAgent.run({ ...CONFIG, browserContext: cryptoBrowserContext }, logger)
             );
-            
+
             if (cryptoResult?.newlyRemediatedKeys) {
                 Object.assign(CONFIG, cryptoResult.newlyRemediatedKeys);
                 Object.assign(cycleStats.newlyRemediatedKeys, cryptoResult.newlyRemediatedKeys);
@@ -384,7 +384,7 @@ async function runAutonomousRevenueSystem() {
         const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(payoutActivity);
         cycleStats.activities.push(payoutActivity);
-        
+
         const payoutResult = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
         if (payoutResult?.newlyRemediatedKeys) {
             Object.assign(CONFIG, payoutResult.newlyRemediatedKeys);
@@ -481,7 +481,7 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
     connectedClients.add(ws);
-    
+
     ws.send(JSON.stringify({
         type: 'init',
         data: {
@@ -570,7 +570,7 @@ async function continuousOperation() {
 // Start Server
 server.listen(PORT, '0.0.0.0', () => {
     logger.success(`Server running on port ${PORT} with WebSocket support`);
-    
+
     if (process.env.NODE_ENV !== 'test') {
         continuousOperation();
     }
