@@ -9,20 +9,16 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
-// New: ES module compatible way to get __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const execPromise = util.promisify(exec);
 
-// Novel Solution: Stateful variable to track persistent issues
 let persistentIssues = {
     highCpu: 0
 };
-// Allow up to 3 consecutive high CPU readings before marking as degraded
 const CPU_TOLERANCE_COUNT = 3;
 
-// --- File Integrity Monitoring (FIM) Configuration ---
 const MONITORED_FILES = [
     path.resolve(__dirname, 'apiScoutAgent.js'),
     path.resolve(__dirname, 'browserManager.js'),
@@ -30,10 +26,8 @@ const MONITORED_FILES = [
     path.resolve(__dirname, 'configAgent.js'),
 ];
 
-// Store baseline hashes for file integrity monitoring
-const fileBaselines = new Map(); // Map<filePath, hash>
+const fileBaselines = new Map();
 
-// --- Dynamic Defense Postures ---
 const DEFENSE_POSTURES = {
     LOW_RISK: {
         fimScanInterval: 60000,
@@ -89,7 +83,6 @@ async function initializeFileIntegrityMonitoring(logger) {
         if (hash) {
             fileBaselines.set(filePath, hash);
             logger.info(`✅ FIM Baseline set for ${path.basename(filePath)}: ${hash.substring(0, 10)}...`);
-
             fs.watch(filePath, async (eventType, filename) => {
                 await new Promise(resolve => setTimeout(resolve, 500));
                 if (eventType === 'change' || eventType === 'rename') {
@@ -132,13 +125,6 @@ async function _checkExternalThreats(logger) {
     return simulatedThreat;
 }
 
-/**
- * @function _assessThreatLevel
- * @description Assesses the overall threat level.
- * @param {object} healthReport - The current internal health report.
- * @param {string} externalThreatLevel - The simulated external threat level.
- * @returns {string} The aggregated threat level ('low', 'medium', 'high').
- */
 function _assessThreatLevel(healthReport, externalThreatLevel, logger) {
     let aggregatedThreat = 'low';
 
@@ -250,12 +236,12 @@ export async function run(config, logger) {
             logger.warn(`⚠️ High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%. System might be stressed.`);
         }
 
-        if (config.RENDER_API_TOKEN && config.RENDER_SERVICE_ID &&
-            !String(config.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
-            !String(config.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
+        if (CONFIG.RENDER_API_TOKEN && CONFIG.RENDER_SERVICE_ID &&
+            !String(CONFIG.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
+            !String(CONFIG.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
             try {
-                await axios.get(`https://api.render.com/v1/services/${config.RENDER_SERVICE_ID}`, {
-                    headers: { 'Authorization': `Bearer ${config.RENDER_API_TOKEN}` },
+                await axios.get(`https://api.render.com/v1/services/${CONFIG.RENDER_SERVICE_ID}`, {
+                    headers: { 'Authorization': `Bearer ${CONFIG.RENDER_API_TOKEN}` },
                     timeout: 5000
                 });
                 currentHealthReport.networkActive = true;
@@ -315,7 +301,6 @@ export async function run(config, logger) {
             const logContent = await fs.readFile(logFilePath, 'utf8').catch(() => '');
             const recentLogLines = logContent.split('\n').slice(-100).join('\n');
             const sensitiveDataPattern = /(PRIVATE_KEY|RENDER_API_TOKEN|SECRET|PASSWORD|0x[a-fA-F0-9]{40,})/g;
-
             if (sensitiveDataPattern.test(recentLogLines)) {
                 currentHealthReport.logsClean = false;
                 currentIssues.push('Sensitive data detected in logs. Security risk.');
