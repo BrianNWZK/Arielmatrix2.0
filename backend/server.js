@@ -8,13 +8,14 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import cron from 'node-cron';
 
-// Import all agents with the correct syntax
+// Import all agents
 import * as apiScoutAgent from './agents/apiScoutAgent.js';
 import * as shopifyAgent from './agents/shopifyAgent.js';
 import * as cryptoAgent from './agents/cryptoAgent.js';
 import * as externalPayoutAgentModule from './agents/payoutAgent.js';
 import BrowserManager from './agents/browserManager.js';
-import { shutdown as shutdownBrowser } from './agents/browserManager.js';
+// The problematic import has been removed:
+// import { shutdown as shutdownBrowser } from './agents/browserManager.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -549,7 +550,9 @@ async function continuousOperation() {
         logger.info('Shutting down gracefully...');
         try {
             await revenueTracker.saveData();
-            await shutdownBrowser();
+            // The shutdownBrowser function is now called directly from the BrowserManager class
+            // which is a named export from the module.
+            await BrowserManager.shutdown();
             logger.success('Clean shutdown completed');
             process.exit(0);
         } catch (error) {
