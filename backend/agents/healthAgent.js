@@ -23,11 +23,12 @@ let persistentIssues = {
 const CPU_TOLERANCE_COUNT = 3;
 
 // --- File Integrity Monitoring (FIM) Configuration ---
+// CORRECTED: 'configAgent.js' is in the same directory, so it doesn't need '../'.
 const MONITORED_FILES = [
     path.resolve(__dirname, 'apiScoutAgent.js'),
     path.resolve(__dirname, 'browserManager.js'),
     path.resolve(__dirname, 'healthAgent.js'),
-    path.resolve(__dirname, '../config.js'),
+    path.resolve(__dirname, 'configAgent.js'),
 ];
 
 // Store baseline hashes for file integrity monitoring
@@ -412,8 +413,8 @@ export async function run(config, logger) {
         }
 
         const allChecksPass = currentHealthReport.cpuReady && currentHealthReport.memoryReady &&
-                               currentHealthReport.networkActive && currentHealthReport.nodeVersionOk &&
-                               currentHealthReport.dependenciesOk && currentHealthReport.logsClean;
+                             currentHealthReport.networkActive && currentHealthReport.nodeVersionOk &&
+                             currentHealthReport.dependenciesOk && currentHealthReport.logsClean;
 
         if (allChecksPass && currentIssues.length === 0) {
             finalReport = {
@@ -461,3 +462,10 @@ export function provideThreatIntelligence(type, message, logger) {
         setDefensePosture(DEFENSE_POSTURES.MEDIUM_RISK, logger); // Or 'high' if very severe
     }
 }
+
+export default {
+    run,
+    setDefensePosture,
+    provideThreatIntelligence,
+    DEFENSE_POSTURES
+};
