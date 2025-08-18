@@ -15,6 +15,10 @@ import * as cryptoAgent from './agents/cryptoAgent.js';
 import * as externalPayoutAgentModule from './agents/payoutAgent.js';
 import BrowserManager from './agents/browserManager.js';
 
+// Import the new and refactored agents
+import * as healthAgent from './agents/healthAgent.js';
+import * as configAgent from './agents/configAgent.js';
+
 // --- Configuration ---
 const CONFIG = {
     AI_EMAIL: process.env.AI_EMAIL || 'ai-agent@example.com',
@@ -116,49 +120,6 @@ async function withRetry(operation, maxRetries = 3, baseDelay = 1000) {
             logger.warn(`Retrying in ${Math.round(delay/1000)}s (${attempt}/${maxRetries}): ${error.message}`);
             await quantumDelay(delay);
         }
-    }
-}
-
-async function updateRenderEnvironmentVariables(keysToUpdate) {
-    const { RENDER_API_TOKEN, RENDER_SERVICE_ID, RENDER_API_BASE_URL } = CONFIG;
-
-    if (!RENDER_API_TOKEN || RENDER_API_TOKEN.includes('PLACEHOLDER') ||
-        !RENDER_SERVICE_ID || RENDER_SERVICE_ID.includes('PLACEHOLDER')) {
-        logger.warn('Render API credentials missing');
-        return;
-    }
-
-    try {
-        const apiUrl = `${RENDER_API_BASE_URL}/services/${RENDER_SERVICE_ID}/env-vars`;
-        const currentEnvResponse = await axios.get(apiUrl, {
-            headers: { 'Authorization': `Bearer ${RENDER_API_TOKEN}` },
-            timeout: 10000
-        });
-
-        const updatedEnvVars = currentEnvResponse.data.map(envVar => {
-            if (keysToUpdate[envVar.key] !== undefined) {
-                const updatedValue = String(keysToUpdate[envVar.key]);
-                delete keysToUpdate[envVar.key];
-                return { key: envVar.key, value: updatedValue };
-            }
-            return envVar;
-        });
-
-        for (const key in keysToUpdate) {
-            updatedEnvVars.push({ key, value: String(keysToUpdate[key]) });
-        }
-
-        await axios.put(apiUrl, updatedEnvVars, {
-            headers: {
-                'Authorization': `Bearer ${RENDER_API_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 15000
-        });
-
-        logger.success('Updated Render environment variables');
-    } catch (error) {
-        logger.error('Failed to update Render environment:', error);
     }
 }
 
@@ -299,11 +260,12 @@ class PayoutAgentOrchestrator {
 const revenueTracker = new RevenueTracker();
 const payoutAgentInstance = new PayoutAgentOrchestrator(revenueTracker);
 
-// Initialize BrowserManager with config
+// Initialize BrowserManager with the logger to prevent the TypeError
 BrowserManager.init({
     maxInstances: CONFIG.BROWSER_CONCURRENCY,
     timeout: CONFIG.BROWSER_TIMEOUT,
-    retries: CONFIG.BROWSER_RETRIES
+    retries: CONFIG.BROWSER_RETRIES,
+    logger: logger // This is the critical fix
 });
 
 async function runAutonomousRevenueSystem() {
@@ -319,19 +281,32 @@ async function runAutonomousRevenueSystem() {
     };
 
     try {
+        // --- Novelty: Health Check Orchestration ---
+        const healthActivity = { agent: 'health', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(healthActivity);
+        cycleStats.activities.push(healthActivity);
+
+        const healthResult = await withRetry(() => healthAgent.run(CONFIG, logger));
+        healthActivity.action = 'completed';
+        healthActivity.status = healthResult.status;
+
+        if (healthResult.status !== 'optimal') {
+            logger.error(`🚨 System health check failed. Skipping autonomous cycle.`);
+            cycleStats.success = false;
+            // Throwing an error here ensures the catch block is executed
+            throw new Error('System health check failed. Cycle aborted.');
+        }
+        logger.success('✅ System health is optimal. Proceeding with the cycle.');
+
         // Run API Scout Agent
         const scoutActivity = { agent: 'apiScout', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(scoutActivity);
         cycleStats.activities.push(scoutActivity);
-
-        // Corrected agent call: use `apiScoutAgent.run`
         const scoutResults = await withRetry(() => apiScoutAgent.run(CONFIG, logger));
-        if (scoutResults?.newlyRemediatedKeys) {
-            Object.assign(CONFIG, scoutResults.newlyRemediatedKeys);
-            Object.assign(cycleStats.newlyRemediatedKeys, scoutResults.newlyRemediatedKeys);
-        }
         scoutActivity.action = 'completed';
         scoutActivity.status = scoutResults?.status || 'success';
+        
+        // No longer expecting keys from apiScout, that's now configAgent's job.
 
         // Run Shopify Agent with browser support
         const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
@@ -340,13 +315,11 @@ async function runAutonomousRevenueSystem() {
 
         const browserContext = await BrowserManager.acquireContext();
         try {
-            // Corrected agent call: use `shopifyAgent.run`
             const shopifyResult = await withRetry(() =>
                 shopifyAgent.run({ ...CONFIG, browserContext }, logger)
             );
 
             if (shopifyResult?.newlyRemediatedKeys) {
-                Object.assign(CONFIG, shopifyResult.newlyRemediatedKeys);
                 Object.assign(cycleStats.newlyRemediatedKeys, shopifyResult.newlyRemediatedKeys);
             }
             const shopifyEarnings = parseFloat(shopifyResult?.finalPrice || 0);
@@ -366,13 +339,11 @@ async function runAutonomousRevenueSystem() {
 
         const cryptoBrowserContext = await BrowserManager.acquireContext();
         try {
-            // Corrected agent call: use `cryptoAgent.run`
             const cryptoResult = await withRetry(() =>
                 cryptoAgent.run({ ...CONFIG, browserContext: cryptoBrowserContext }, logger)
             );
 
             if (cryptoResult?.newlyRemediatedKeys) {
-                Object.assign(CONFIG, cryptoResult.newlyRemediatedKeys);
                 Object.assign(cycleStats.newlyRemediatedKeys, cryptoResult.newlyRemediatedKeys);
             }
             cryptoActivity.action = 'completed';
@@ -382,24 +353,30 @@ async function runAutonomousRevenueSystem() {
             await BrowserManager.releaseContext(cryptoBrowserContext);
         }
 
+        // --- Novelty: Configuration Management Orchestration ---
+        if (Object.keys(cycleStats.newlyRemediatedKeys).length > 0) {
+            const configActivity = { agent: 'config', action: 'start', timestamp: new Date().toISOString() };
+            agentActivityLog.push(configActivity);
+            cycleStats.activities.push(configActivity);
+            const configResult = await withRetry(() => configAgent.run(CONFIG, logger, cycleStats.newlyRemediatedKeys));
+            configActivity.action = 'completed';
+            configActivity.status = configResult?.status || 'success';
+            // Update the global CONFIG object from the result of the config agent
+            if (configResult?.updatedConfig) {
+                Object.assign(CONFIG, configResult.updatedConfig);
+            }
+        } else {
+            logger.info('⚙️ No new keys to save this cycle.');
+        }
+
         // Run Payout Agent
         const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(payoutActivity);
         cycleStats.activities.push(payoutActivity);
 
-        // Corrected agent call: use `payoutAgentInstance.monitorAndTriggerPayouts`
         const payoutResult = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
-        if (payoutResult?.newlyRemediatedKeys) {
-            Object.assign(CONFIG, payoutResult.newlyRemediatedKeys);
-            Object.assign(cycleStats.newlyRemediatedKeys, payoutResult.newlyRemediatedKeys);
-        }
         payoutActivity.action = 'completed';
         payoutActivity.status = payoutResult?.status || 'success';
-
-        // Update environment if needed
-        if (Object.keys(cycleStats.newlyRemediatedKeys).length > 0) {
-            await updateRenderEnvironmentVariables(cycleStats.newlyRemediatedKeys);
-        }
 
         // Update historical data
         const revenueSnapshot = revenueTracker.getSummary();
@@ -449,7 +426,6 @@ function getSystemStatus() {
         memoryUsage: process.memoryUsage(),
         activeCampaigns: revenueTracker.activeCampaigns.length,
         nextCycleIn: Math.max(0, CONFIG.CYCLE_INTERVAL - (Date.now() - lastCycleStart)),
-        // Corrected call to the static method
         browserStats: BrowserManager.getStats()
     };
 }
@@ -467,10 +443,11 @@ function getAgentActivities() {
         recentActivities: agentActivityLog.slice(-50).reverse(),
         agentStatus: {
             apiScoutAgent: apiScoutAgent.getStatus?.(),
-            shopifyAgent: shopifyAgent.getStatus?.(), // Added optional chaining
-            cryptoAgent: cryptoAgent.getStatus?.(), // Added optional chaining
+            shopifyAgent: shopifyAgent.getStatus?.(),
+            cryptoAgent: cryptoAgent.getStatus?.(),
             payoutAgent: payoutAgentInstance.getStatus(),
-            // Corrected call to the static method
+            healthAgent: healthAgent.getStatus?.(),
+            configAgent: configAgent.getStatus?.(),
             browserManager: BrowserManager.getStatus()
         }
     };
@@ -479,7 +456,7 @@ function getAgentActivities() {
 // --- Express Server Setup ---
 const app = express();
 const server = createServer(app);
-const PORT = process.env.PORT || 10000; // Changed default port to 10000 for Render
+const PORT = process.env.PORT || 10000;
 
 // Create WebSocket server
 const wss = new WebSocketServer({ server });
@@ -554,7 +531,6 @@ async function continuousOperation() {
         logger.info('Shutting down gracefully...');
         try {
             await revenueTracker.saveData();
-            // Corrected call to the static method
             await BrowserManager.shutdown();
             logger.success('Clean shutdown completed');
             process.exit(0);
