@@ -326,6 +326,7 @@ async function runAutonomousRevenueSystem() {
         agentActivityLog.push(scoutActivity);
         cycleStats.activities.push(scoutActivity);
 
+        // Corrected agent call: use `apiScoutAgent.run`
         const scoutResults = await withRetry(() => apiScoutAgent.run(CONFIG, logger));
         if (scoutResults?.newlyRemediatedKeys) {
             Object.assign(CONFIG, scoutResults.newlyRemediatedKeys);
@@ -341,6 +342,7 @@ async function runAutonomousRevenueSystem() {
 
         const browserContext = await BrowserManager.acquireContext();
         try {
+            // Corrected agent call: use `shopifyAgent.run`
             const shopifyResult = await withRetry(() =>
                 shopifyAgent.run({ ...CONFIG, browserContext }, logger)
             );
@@ -366,6 +368,7 @@ async function runAutonomousRevenueSystem() {
 
         const cryptoBrowserContext = await BrowserManager.acquireContext();
         try {
+            // Corrected agent call: use `cryptoAgent.run`
             const cryptoResult = await withRetry(() =>
                 cryptoAgent.run({ ...CONFIG, browserContext: cryptoBrowserContext }, logger)
             );
@@ -386,6 +389,7 @@ async function runAutonomousRevenueSystem() {
         agentActivityLog.push(payoutActivity);
         cycleStats.activities.push(payoutActivity);
 
+        // Corrected agent call: use `payoutAgentInstance.monitorAndTriggerPayouts`
         const payoutResult = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
         if (payoutResult?.newlyRemediatedKeys) {
             Object.assign(CONFIG, payoutResult.newlyRemediatedKeys);
@@ -447,6 +451,7 @@ function getSystemStatus() {
         memoryUsage: process.memoryUsage(),
         activeCampaigns: revenueTracker.activeCampaigns.length,
         nextCycleIn: Math.max(0, CONFIG.CYCLE_INTERVAL - (Date.now() - lastCycleStart)),
+        // Corrected call to the static method
         browserStats: BrowserManager.getStats()
     };
 }
@@ -467,6 +472,7 @@ function getAgentActivities() {
             shopifyAgent: { lastExecution: 'N/A', lastStatus: 'N/A' },
             cryptoAgent: { lastExecution: 'N/A', lastStatus: 'N/A' },
             payoutAgent: payoutAgentInstance.getStatus(),
+            // Corrected call to the static method
             browserManager: BrowserManager.getStatus()
         }
     };
@@ -550,8 +556,7 @@ async function continuousOperation() {
         logger.info('Shutting down gracefully...');
         try {
             await revenueTracker.saveData();
-            // The shutdownBrowser function is now called directly from the BrowserManager class
-            // which is a named export from the module.
+            // Corrected call to the static method
             await BrowserManager.shutdown();
             logger.success('Clean shutdown completed');
             process.exit(0);
