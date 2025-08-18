@@ -1,3 +1,5 @@
+// backend/server.js
+
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -7,17 +9,20 @@ import fs from 'fs/promises';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import cron from 'node-cron';
+import { Mutex } from 'async-mutex';
 
 // Import all agents
 import * as apiScoutAgent from './agents/apiScoutAgent.js';
 import * as shopifyAgent from './agents/shopifyAgent.js';
 import * as cryptoAgent from './agents/cryptoAgent.js';
 import * as externalPayoutAgentModule from './agents/payoutAgent.js';
-import BrowserManager from './agents/browserManager.js';
 
 // Import the new and refactored agents
 import * as healthAgent from './agents/healthAgent.js';
 import * as configAgent from './agents/configAgent.js';
+
+// NEW: Use named imports for the new browserManager API
+import { ensureBrowserReady, scheduleTask } from './agents/browserManager.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -33,9 +38,9 @@ const CONFIG = {
     DASHBOARD_UPDATE_INTERVAL: 5000, // 5 seconds
     PAYOUT_THRESHOLD_USD: 100,
     PAYOUT_PERCENTAGE: 0.8,
-    BROWSER_CONCURRENCY: 3, // Number of concurrent browser instances
-    BROWSER_TIMEOUT: 30000, // 30 seconds timeout for browser operations
-    BROWSER_RETRIES: 2 // Number of retries for browser operations
+    BROWSER_CONCURRENCY: 3,
+    BROWSER_TIMEOUT: 30000,
+    BROWSER_RETRIES: 2
 };
 
 // --- Enhanced Logger ---
@@ -67,10 +72,8 @@ function broadcastDashboardUpdate() {
         timestamp: new Date().toISOString(),
         status: getSystemStatus(),
         revenue: getRevenueAnalytics(),
-        agents: getAgentActivities(),
-        browserStats: BrowserManager.getStats()
+        agents: getAgentActivities()
     };
-
     const message = JSON.stringify({ type: 'update', data: update });
     connectedClients.forEach(client => {
         if (client.readyState === 1) {
@@ -100,6 +103,7 @@ let lastCycleStats = {};
 let lastCycleStart = 0;
 let lastDataUpdate = Date.now();
 let isRunning = false;
+const cycleMutex = new Mutex();
 
 // --- Utility Functions ---
 function quantumDelay(ms) {
@@ -127,48 +131,41 @@ async function withRetry(operation, maxRetries = 3, baseDelay = 1000) {
 class RevenueTracker {
     constructor() {
         this.dataFile = 'revenueData.json';
-        this.lock = false;
+        this.lock = new Mutex();
         this.earnings = {};
         this.activeCampaigns = [];
         this.loadData();
     }
 
-    async acquireLock() {
-        while (this.lock) await quantumDelay(50);
-        this.lock = true;
-    }
-
-    releaseLock() {
-        this.lock = false;
-    }
-
     async loadData() {
-        await this.acquireLock();
-        try {
-            if (await fs.access(this.dataFile).then(() => true).catch(() => false)) {
-                const data = JSON.parse(await fs.readFile(this.dataFile, 'utf8'));
-                this.earnings = data.earnings || {};
-                this.activeCampaigns = data.activeCampaigns || [];
-                if (data.historicalRevenue) {
-                    historicalRevenueData.push(...data.historicalRevenue.slice(-CONFIG.MAX_HISTORICAL_DATA));
+        await this.lock.runExclusive(async () => {
+            try {
+                if (await fs.access(this.dataFile).then(() => true).catch(() => false)) {
+                    const data = JSON.parse(await fs.readFile(this.dataFile, 'utf8'));
+                    this.earnings = data.earnings || {};
+                    this.activeCampaigns = data.activeCampaigns || [];
+                    if (data.historicalRevenue) {
+                        historicalRevenueData.push(...data.historicalRevenue.slice(-CONFIG.MAX_HISTORICAL_DATA));
+                    }
                 }
+            } catch (error) {
+                logger.error('Failed to load revenue data:', error);
             }
-        } finally {
-            this.releaseLock();
-        }
+        });
     }
 
     async saveData() {
-        await this.acquireLock();
-        try {
-            await fs.writeFile(this.dataFile, JSON.stringify({
-                earnings: this.earnings,
-                activeCampaigns: this.activeCampaigns,
-                historicalRevenue: historicalRevenueData.slice(-CONFIG.MAX_HISTORICAL_DATA)
-            }, null, 2));
-        } finally {
-            this.releaseLock();
-        }
+        await this.lock.runExclusive(async () => {
+            try {
+                await fs.writeFile(this.dataFile, JSON.stringify({
+                    earnings: this.earnings,
+                    activeCampaigns: this.activeCampaigns,
+                    historicalRevenue: historicalRevenueData.slice(-CONFIG.MAX_HISTORICAL_DATA)
+                }, null, 2));
+            } catch (error) {
+                logger.error('Failed to save revenue data:', error);
+            }
+        });
     }
 
     getSummary() {
@@ -180,23 +177,23 @@ class RevenueTracker {
     }
 
     async updatePlatformEarnings(platform, amount) {
-        await this.acquireLock();
-        this.earnings[platform] = (this.earnings[platform] || 0) + amount;
-        this.releaseLock();
+        await this.lock.runExclusive(async () => {
+            this.earnings[platform] = (this.earnings[platform] || 0) + amount;
+        });
         await this.saveData();
     }
 
     async addCampaign(campaign) {
-        await this.acquireLock();
-        this.activeCampaigns.push(campaign);
-        this.releaseLock();
+        await this.lock.runExclusive(async () => {
+            this.activeCampaigns.push(campaign);
+        });
         await this.saveData();
     }
 
     async resetEarnings() {
-        await this.acquireLock();
-        this.earnings = {};
-        this.releaseLock();
+        await this.lock.runExclusive(async () => {
+            this.earnings = {};
+        });
         await this.saveData();
     }
 }
@@ -260,65 +257,53 @@ class PayoutAgentOrchestrator {
 const revenueTracker = new RevenueTracker();
 const payoutAgentInstance = new PayoutAgentOrchestrator(revenueTracker);
 
-// Initialize BrowserManager with the logger to prevent the TypeError
-BrowserManager.init({
-    maxInstances: CONFIG.BROWSER_CONCURRENCY,
-    timeout: CONFIG.BROWSER_TIMEOUT,
-    retries: CONFIG.BROWSER_RETRIES,
-    logger: logger // This is the critical fix
-});
-
 async function runAutonomousRevenueSystem() {
-    const cycleStart = Date.now();
-    const cycleStats = {
-        startTime: new Date().toISOString(),
-        success: false,
-        duration: 0,
-        revenueGenerated: 0,
-        activities: [],
-        newlyRemediatedKeys: {},
-        browserUsage: {}
-    };
+    // Ensure only one cycle can run at a time
+    if (cycleMutex.isLocked()) {
+        logger.warn('Cycle already in progress. Skipping this scheduled run.');
+        return;
+    }
 
-    try {
-        // --- Novelty: Health Check Orchestration ---
-        const healthActivity = { agent: 'health', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(healthActivity);
-        cycleStats.activities.push(healthActivity);
+    await cycleMutex.runExclusive(async () => {
+        const cycleStart = Date.now();
+        const cycleStats = {
+            startTime: new Date().toISOString(),
+            success: false,
+            duration: 0,
+            revenueGenerated: 0,
+            activities: [],
+            newlyRemediatedKeys: {}
+        };
 
-        const healthResult = await withRetry(() => healthAgent.run(CONFIG, logger));
-        healthActivity.action = 'completed';
-        healthActivity.status = healthResult.status;
-
-        if (healthResult.status !== 'optimal') {
-            logger.error(`🚨 System health check failed. Skipping autonomous cycle.`);
-            cycleStats.success = false;
-            // Throwing an error here ensures the catch block is executed
-            throw new Error('System health check failed. Cycle aborted.');
-        }
-        logger.success('✅ System health is optimal. Proceeding with the cycle.');
-
-        // Run API Scout Agent
-        const scoutActivity = { agent: 'apiScout', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(scoutActivity);
-        cycleStats.activities.push(scoutActivity);
-        const scoutResults = await withRetry(() => apiScoutAgent.run(CONFIG, logger));
-        scoutActivity.action = 'completed';
-        scoutActivity.status = scoutResults?.status || 'success';
-        
-        // No longer expecting keys from apiScout, that's now configAgent's job.
-
-        // Run Shopify Agent with browser support
-        const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(shopifyActivity);
-        cycleStats.activities.push(shopifyActivity);
-
-        const browserContext = await BrowserManager.acquireContext();
         try {
-            const shopifyResult = await withRetry(() =>
-                shopifyAgent.run({ ...CONFIG, browserContext }, logger)
-            );
+            const healthActivity = { agent: 'health', action: 'start', timestamp: new Date().toISOString() };
+            agentActivityLog.push(healthActivity);
+            cycleStats.activities.push(healthActivity);
+            const healthResult = await withRetry(() => healthAgent.run(CONFIG, logger));
+            healthActivity.action = 'completed';
+            healthActivity.status = healthResult.status;
 
+            if (healthResult.status !== 'optimal') {
+                logger.error(`🚨 System health check failed. Skipping autonomous cycle.`);
+                throw new Error('System health check failed. Cycle aborted.');
+            }
+            logger.success('✅ System health is optimal. Proceeding with the cycle.');
+
+            await ensureBrowserReady(logger);
+
+            // Run API Scout Agent - NOW SCHEDULED
+            const scoutActivity = { agent: 'apiScout', action: 'start', timestamp: new Date().toISOString() };
+            agentActivityLog.push(scoutActivity);
+            cycleStats.activities.push(scoutActivity);
+            const scoutResults = await withRetry(() => scheduleTask(() => apiScoutAgent.run(CONFIG, logger)));
+            scoutActivity.action = 'completed';
+            scoutActivity.status = scoutResults?.status || 'success';
+
+            // Run Shopify Agent - NOW SCHEDULED
+            const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
+            agentActivityLog.push(shopifyActivity);
+            cycleStats.activities.push(shopifyActivity);
+            const shopifyResult = await withRetry(() => scheduleTask(() => shopifyAgent.run(CONFIG, logger)));
             if (shopifyResult?.newlyRemediatedKeys) {
                 Object.assign(cycleStats.newlyRemediatedKeys, shopifyResult.newlyRemediatedKeys);
             }
@@ -327,98 +312,79 @@ async function runAutonomousRevenueSystem() {
             await revenueTracker.updatePlatformEarnings('shopify', shopifyEarnings);
             shopifyActivity.action = 'completed';
             shopifyActivity.status = shopifyResult?.status || 'success';
-            cycleStats.browserUsage.shopify = BrowserManager.getLastUsageStats();
-        } finally {
-            await BrowserManager.releaseContext(browserContext);
-        }
 
-        // Run Crypto Agent with browser support
-        const cryptoActivity = { agent: 'crypto', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(cryptoActivity);
-        cycleStats.activities.push(cryptoActivity);
-
-        const cryptoBrowserContext = await BrowserManager.acquireContext();
-        try {
-            const cryptoResult = await withRetry(() =>
-                cryptoAgent.run({ ...CONFIG, browserContext: cryptoBrowserContext }, logger)
-            );
-
+            // Run Crypto Agent - NOW SCHEDULED
+            const cryptoActivity = { agent: 'crypto', action: 'start', timestamp: new Date().toISOString() };
+            agentActivityLog.push(cryptoActivity);
+            cycleStats.activities.push(cryptoActivity);
+            const cryptoResult = await withRetry(() => scheduleTask(() => cryptoAgent.run(CONFIG, logger)));
             if (cryptoResult?.newlyRemediatedKeys) {
                 Object.assign(cycleStats.newlyRemediatedKeys, cryptoResult.newlyRemediatedKeys);
             }
             cryptoActivity.action = 'completed';
             cryptoActivity.status = cryptoResult?.status || 'success';
-            cycleStats.browserUsage.crypto = BrowserManager.getLastUsageStats();
-        } finally {
-            await BrowserManager.releaseContext(cryptoBrowserContext);
-        }
 
-        // --- Novelty: Configuration Management Orchestration ---
-        if (Object.keys(cycleStats.newlyRemediatedKeys).length > 0) {
-            const configActivity = { agent: 'config', action: 'start', timestamp: new Date().toISOString() };
-            agentActivityLog.push(configActivity);
-            cycleStats.activities.push(configActivity);
-            const configResult = await withRetry(() => configAgent.run(CONFIG, logger, cycleStats.newlyRemediatedKeys));
-            configActivity.action = 'completed';
-            configActivity.status = configResult?.status || 'success';
-            // Update the global CONFIG object from the result of the config agent
-            if (configResult?.updatedConfig) {
-                Object.assign(CONFIG, configResult.updatedConfig);
+            if (Object.keys(cycleStats.newlyRemediatedKeys).length > 0) {
+                const configActivity = { agent: 'config', action: 'start', timestamp: new Date().toISOString() };
+                agentActivityLog.push(configActivity);
+                cycleStats.activities.push(configActivity);
+                const configResult = await withRetry(() => configAgent.run(CONFIG, logger, cycleStats.newlyRemediatedKeys));
+                configActivity.action = 'completed';
+                configActivity.status = configResult?.status || 'success';
+                if (configResult?.updatedConfig) {
+                    Object.assign(CONFIG, configResult.updatedConfig);
+                }
+            } else {
+                logger.info('⚙️ No new keys to save this cycle.');
             }
-        } else {
-            logger.info('⚙️ No new keys to save this cycle.');
+
+            const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
+            agentActivityLog.push(payoutActivity);
+            cycleStats.activities.push(payoutActivity);
+            const payoutResult = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
+            payoutActivity.action = 'completed';
+            payoutActivity.status = payoutResult?.status || 'success';
+
+            const revenueSnapshot = revenueTracker.getSummary();
+            historicalRevenueData.push({
+                timestamp: new Date().toISOString(),
+                totalRevenue: revenueSnapshot.totalRevenue,
+                cycleRevenue: cycleStats.revenueGenerated
+            });
+
+            if (historicalRevenueData.length > CONFIG.MAX_HISTORICAL_DATA) {
+                historicalRevenueData.shift();
+            }
+
+            await revenueTracker.saveData();
+            cycleStats.success = true;
+            successfulCycles++;
+            return { success: true, message: 'Cycle completed' };
+
+        } catch (error) {
+            errorLog.push({
+                timestamp: new Date().toISOString(),
+                message: error.message,
+                stack: error.stack,
+                cycle: cycleCount
+            });
+            cycleStats.success = false;
+            logger.error('Error during autonomous revenue cycle:', error);
+            return { success: false, error: error.message };
+        } finally {
+            cycleStats.duration = Date.now() - cycleStart;
+            lastCycleStats = cycleStats;
+            lastDataUpdate = Date.now();
+            cycleTimes.push(cycleStats.duration);
+            broadcastDashboardUpdate();
         }
-
-        // Run Payout Agent
-        const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(payoutActivity);
-        cycleStats.activities.push(payoutActivity);
-
-        const payoutResult = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
-        payoutActivity.action = 'completed';
-        payoutActivity.status = payoutResult?.status || 'success';
-
-        // Update historical data
-        const revenueSnapshot = revenueTracker.getSummary();
-        historicalRevenueData.push({
-            timestamp: new Date().toISOString(),
-            totalRevenue: revenueSnapshot.totalRevenue,
-            cycleRevenue: cycleStats.revenueGenerated,
-            browserUsage: cycleStats.browserUsage
-        });
-
-        if (historicalRevenueData.length > CONFIG.MAX_HISTORICAL_DATA) {
-            historicalRevenueData.shift();
-        }
-
-        await revenueTracker.saveData();
-        cycleStats.success = true;
-        successfulCycles++;
-
-        return { success: true, message: 'Cycle completed' };
-
-    } catch (error) {
-        errorLog.push({
-            timestamp: new Date().toISOString(),
-            message: error.message,
-            stack: error.stack,
-            cycle: cycleCount
-        });
-        cycleStats.success = false;
-        return { success: false, error: error.message };
-    } finally {
-        cycleStats.duration = Date.now() - cycleStart;
-        lastCycleStats = cycleStats;
-        lastDataUpdate = Date.now();
-        cycleTimes.push(cycleStats.duration);
-        broadcastDashboardUpdate();
-    }
+    });
 }
 
 // --- Dashboard Functions ---
 function getSystemStatus() {
     return {
-        status: isRunning ? 'operational' : 'idle',
+        status: cycleMutex.isLocked() ? 'operational' : 'idle',
         uptime: process.uptime(),
         cycleCount,
         successRate: cycleCount > 0 ? (successfulCycles / cycleCount * 100).toFixed(2) + '%' : '0%',
@@ -426,7 +392,10 @@ function getSystemStatus() {
         memoryUsage: process.memoryUsage(),
         activeCampaigns: revenueTracker.activeCampaigns.length,
         nextCycleIn: Math.max(0, CONFIG.CYCLE_INTERVAL - (Date.now() - lastCycleStart)),
-        browserStats: BrowserManager.getStats()
+        browserStats: {
+            instances: "Managed by task queue",
+            tasksPending: "Managed by task queue"
+        }
     };
 }
 
@@ -448,7 +417,6 @@ function getAgentActivities() {
             payoutAgent: payoutAgentInstance.getStatus(),
             healthAgent: healthAgent.getStatus?.(),
             configAgent: configAgent.getStatus?.(),
-            browserManager: BrowserManager.getStatus()
         }
     };
 }
@@ -463,7 +431,6 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
     connectedClients.add(ws);
-
     ws.send(JSON.stringify({
         type: 'init',
         data: {
@@ -472,11 +439,9 @@ wss.on('connection', (ws) => {
             agents: getAgentActivities()
         }
     }));
-
     ws.on('close', () => {
         connectedClients.delete(ws);
     });
-
     ws.on('error', (error) => {
         logger.error('WebSocket error:', error);
         connectedClients.delete(ws);
@@ -490,11 +455,29 @@ app.use(express.static('public'));
 
 // API Endpoints
 app.post('/api/start-revenue-system', async (req, res) => {
-    if (isRunning) {
+    if (cycleMutex.isLocked()) {
         return res.status(409).json({ success: false, message: 'System already running' });
     }
     const result = await runAutonomousRevenueSystem();
     res.status(result.success ? 200 : 500).json(result);
+});
+
+// NEW: Endpoint to manually trigger a payout
+app.post('/api/trigger-payout', async (req, res) => {
+    logger.info('Manual payout trigger requested.');
+    try {
+        const result = await withRetry(() => payoutAgentInstance.monitorAndTriggerPayouts(CONFIG, logger));
+        if (result.status === 'success') {
+            res.status(200).json({ success: true, message: 'Payout process initiated successfully.' });
+        } else {
+            res.status(400).json({ success: false, message: 'Payout trigger failed.', details: result.message });
+        }
+    } catch (error) {
+        logger.error('Manual payout failed:', error);
+        res.status(500).json({ success: false, message: 'An internal error occurred during the payout process.', error: error.message });
+    } finally {
+        broadcastDashboardUpdate();
+    }
 });
 
 app.get('/api/health', (req, res) => {
@@ -515,23 +498,19 @@ app.get('/api/dashboard/agents', (req, res) => {
 
 // Schedule periodic operations using node-cron
 cron.schedule('*/10 * * * *', () => {
-    if (!isRunning) {
-        runAutonomousRevenueSystem().catch(err => {
-            logger.error('Scheduled operation failed:', err);
-        });
-    }
+    runAutonomousRevenueSystem().catch(err => {
+        logger.error('Scheduled operation failed:', err);
+    });
 });
 
 // Continuous Operation
 async function continuousOperation() {
     if (isRunning) return;
     isRunning = true;
-
     process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         try {
             await revenueTracker.saveData();
-            await BrowserManager.shutdown();
             logger.success('Clean shutdown completed');
             process.exit(0);
         } catch (error) {
@@ -550,9 +529,8 @@ async function continuousOperation() {
 }
 
 // Start Server
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.00', () => {
     logger.success(`Server running on port ${PORT} with WebSocket support`);
-
     if (process.env.NODE_ENV !== 'test') {
         continuousOperation();
     }
