@@ -23,7 +23,6 @@ let persistentIssues = {
 const CPU_TOLERANCE_COUNT = 3;
 
 // --- File Integrity Monitoring (FIM) Configuration ---
-// CORRECTED: 'configAgent.js' is in the same directory, so it doesn't need '../'.
 const MONITORED_FILES = [
     path.resolve(__dirname, 'apiScoutAgent.js'),
     path.resolve(__dirname, 'browserManager.js'),
@@ -35,31 +34,29 @@ const MONITORED_FILES = [
 const fileBaselines = new Map(); // Map<filePath, hash>
 
 // --- Dynamic Defense Postures ---
-// These define different states the defense system can adopt.
 const DEFENSE_POSTURES = {
     LOW_RISK: {
-        fimScanInterval: 60000, // Every 1 minute
+        fimScanInterval: 60000,
         logScanStrictness: 'normal',
-        apiScoutThrottle: 0, // No throttling
+        apiScoutThrottle: 0,
         alertLevel: 'info'
     },
     MEDIUM_RISK: {
-        fimScanInterval: 30000, // Every 30 seconds
+        fimScanInterval: 30000,
         logScanStrictness: 'strict',
-        apiScoutThrottle: 5000, // 5-second delay between browser ops
+        apiScoutThrottle: 5000,
         alertLevel: 'warn'
     },
     HIGH_RISK: {
-        fimScanInterval: 10000, // Every 10 seconds
+        fimScanInterval: 10000,
         logScanStrictness: 'critical',
-        apiScoutThrottle: 15000, // 15-second delay, or pause ops
+        apiScoutThrottle: 15000,
         alertLevel: 'error'
     }
 };
 
-let currentDefensePosture = DEFENSE_POSTURES.LOW_RISK; // Initial state
+let currentDefensePosture = DEFENSE_POSTURES.LOW_RISK;
 
-// Novel Solution: A simple, reliable "Dumb" System check for dependency presence
 async function checkDependency(depName) {
     try {
         const { stdout } = await execPromise(`npm ls ${depName} --json`);
@@ -73,12 +70,6 @@ async function checkDependency(depName) {
     return false;
 }
 
-/**
- * Calculates the SHA256 hash of a file's content.
- * @param {string} filePath - The path to the file.
- * @param {object} logger - The logger instance.
- * @returns {Promise<string|null>} The SHA256 hash or null if an error occurs.
- */
 async function calculateFileHash(filePath, logger) {
     try {
         const fileBuffer = await fs.readFile(filePath);
@@ -91,11 +82,6 @@ async function calculateFileHash(filePath, logger) {
     }
 }
 
-/**
- * Initializes file integrity monitoring for configured files.
- * This sets the initial baseline hashes and starts watching for changes.
- * @param {object} logger - The logger instance.
- */
 async function initializeFileIntegrityMonitoring(logger) {
     logger.info("🛡️ Initializing File Integrity Monitoring (FIM)...");
     for (const filePath of MONITORED_FILES) {
@@ -116,12 +102,6 @@ async function initializeFileIntegrityMonitoring(logger) {
     logger.success("🛡️ File Integrity Monitoring initialized and watching critical files.");
 }
 
-/**
- * Checks the integrity of a specific file against its stored baseline.
- * If a mismatch is found, it logs a critical alert.
- * @param {string} filePath - The path to the file.
- * @param {object} logger - The logger instance.
- */
 async function checkFileIntegrity(filePath, logger) {
     const currentHash = await calculateFileHash(filePath, logger);
     const baselineHash = fileBaselines.get(filePath);
@@ -137,26 +117,15 @@ async function checkFileIntegrity(filePath, logger) {
         logger.error(`   Old Hash: ${baselineHash}`);
         logger.error(`   New Hash: ${currentHash}`);
         logger.error(`   Action: A critical file has been altered. Immediate investigation required.`);
-        // Autonomous Response: Alert, log, consider shutting down sensitive ops.
-        // The defense system can now conceptually "rewrite" its approach
-        // by switching to a HIGH_RISK posture.
-        // Make sure to call the function correctly with the logger argument
         setDefensePosture(DEFENSE_POSTURES.HIGH_RISK, logger);
     } else {
         logger.info(`✅ Integrity check passed for ${path.basename(filePath)}.`);
     }
 }
 
-/**
- * @function _checkExternalThreats
- * @description Simulates fetching external threat intelligence.
- * In a real system, this would integrate with a threat intelligence platform.
- * @returns {Promise<string>} A simulated threat level ('low', 'medium', 'high').
- */
 async function _checkExternalThreats(logger) {
     logger.info("📡 Checking external threat intelligence feeds...");
-    await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate network call
-    // Simulate dynamic threat level based on external factors (e.g., time of day, historical patterns)
+    await new Promise(resolve => setTimeout(resolve, 1500));
     const threatLevels = ['low', 'medium', 'high'];
     const simulatedThreat = threatLevels[Math.floor(Math.random() * threatLevels.length)];
     logger.info(`📡 Simulated external threat level: ${simulatedThreat}`);
@@ -165,7 +134,7 @@ async function _checkExternalThreats(logger) {
 
 /**
  * @function _assessThreatLevel
- * @description Assesses the overall threat level based on internal health issues and external intelligence.
+ * @description Assesses the overall threat level.
  * @param {object} healthReport - The current internal health report.
  * @param {string} externalThreatLevel - The simulated external threat level.
  * @returns {string} The aggregated threat level ('low', 'medium', 'high').
@@ -173,18 +142,19 @@ async function _checkExternalThreats(logger) {
 function _assessThreatLevel(healthReport, externalThreatLevel, logger) {
     let aggregatedThreat = 'low';
 
-    // Internal health issues contribute to threat level
-    if (!healthReport.cpuReady || !healthReport.memoryReady || !healthReport.networkActive || !healthReport.nodeVersionOk || !healthReport.dependenciesOk || !healthReport.logsClean) {
+    // FIX: Add a defensive check to ensure `healthReport` and `healthReport.issues` are not undefined.
+    const internalIssuesPresent = healthReport && healthReport.issues && healthReport.issues.some(issue => issue.includes('Critical: High CPU load persisted') || issue.includes('INTEGRITY BREACH DETECTED'));
+
+    if (!healthReport || !healthReport.cpuReady || !healthReport.memoryReady || !healthReport.networkActive || !healthReport.nodeVersionOk || !healthReport.dependenciesOk || !healthReport.logsClean) {
         logger.warn("Internal health issues detected, increasing perceived threat.");
         aggregatedThreat = 'medium';
     }
 
-    if (healthReport.issues.some(issue => issue.includes('Critical: High CPU load persisted') || issue.includes('INTEGRITY BREACH DETECTED'))) {
+    if (internalIssuesPresent) {
         logger.error("Critical internal issue detected, elevating threat to high.");
         aggregatedThreat = 'high';
     }
 
-    // External threat intelligence can elevate the threat level
     if (externalThreatLevel === 'medium' && aggregatedThreat === 'low') {
         aggregatedThreat = 'medium';
     } else if (externalThreatLevel === 'high') {
@@ -195,13 +165,6 @@ function _assessThreatLevel(healthReport, externalThreatLevel, logger) {
     return aggregatedThreat;
 }
 
-/**
- * @function _adaptDefensePolicy
- * @description Adapts the system's defense mechanisms based on the assessed threat level.
- * This is the "self-rewriting" aspect, dynamically adjusting operational parameters.
- * @param {string} threatLevel - The current aggregated threat level.
- * @param {object} logger - The logger instance.
- */
 function _adaptDefensePolicy(threatLevel, logger) {
     let newPosture;
     switch (threatLevel) {
@@ -214,8 +177,6 @@ function _adaptDefensePolicy(threatLevel, logger) {
         case 'high':
             newPosture = DEFENSE_POSTURES.HIGH_RISK;
             logger.error("🚨 Activating HIGH_RISK defense posture: Increased vigilance and potential operational limitations.");
-            // Example: Here, you might send an immediate alert via another agent (e.g., communicationAgent)
-            // communicationAgent.sendAlert('CRITICAL_THREAT_DETECTED', 'System operating in HIGH_RISK posture.');
             break;
         default:
             newPosture = DEFENSE_POSTURES.LOW_RISK;
@@ -224,43 +185,18 @@ function _adaptDefensePolicy(threatLevel, logger) {
     if (currentDefensePosture !== newPosture) {
         logger.warn(`🛡️ Adapting defense posture from ${currentDefensePosture.alertLevel.toUpperCase()} to ${newPosture.alertLevel.toUpperCase()}.`);
         currentDefensePosture = newPosture;
-        // Apply the new posture's settings
-        // For FIM, you'd adjust the interval of the next scheduled scan if you had a scheduler.
-        // For browser agent, you'd pass this to its configuration or a setter method.
-        // Example: BrowserManager.setThrottleDelay(currentDefensePosture.apiScoutThrottle);
-        // This is where 'self-rewriting' translates to runtime configuration adjustment.
     } else {
         logger.info(`🛡️ Defense posture remains ${currentDefensePosture.alertLevel.toUpperCase()}.`);
     }
 }
 
-
-/**
- * @function setDefensePosture
- * @description A setter function to allow other parts of the system to programmatically set the defense posture.
- * This is useful for providing threat intelligence from other agents.
- * @param {object} newPosture - The new defense posture object to set.
- * @param {object} logger - The logger instance.
- */
 export function setDefensePosture(newPosture, logger) {
     _adaptDefensePolicy(newPosture.alertLevel.toLowerCase(), logger);
 }
 
-
-/**
- * @function run
- * @description Performs a comprehensive health check, including self-healing for
- * missing dependencies, re-evaluating the system state after a fix, and now
- * integrating File Integrity Monitoring. It applies dynamic tolerance for transient
- * resource issues like high CPU load, and implements self-awareness to adapt defense policies.
- * @param {object} config - The global configuration object.
- * @param {object} logger - The global logger instance.
- * @returns {Promise<object>} Health status including CPU, memory, network, Node.js, and log checks.
- */
 export async function run(config, logger) {
     logger.info('❤️ HealthAgent: Performing comprehensive system and network health check...');
 
-    // Initialize File Integrity Monitoring at the start of the health check cycle
     await initializeFileIntegrityMonitoring(logger);
 
     let attempts = 0;
@@ -280,7 +216,6 @@ export async function run(config, logger) {
         };
         let currentIssues = [];
 
-        // --- 1. System Resource Check (CPU & Memory) ---
         const cpuInfo = os.loadavg();
         const cpuLoad = cpuInfo[0];
         const cpuCount = os.cpus().length;
@@ -293,7 +228,6 @@ export async function run(config, logger) {
             persistentIssues.highCpu++;
             currentIssues.push(`High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed. Attempt ${persistentIssues.highCpu}/${CPU_TOLERANCE_COUNT}.`);
             logger.warn(`⚠️ High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed. Attempt ${persistentIssues.highCpu}/${CPU_TOLERANCE_COUNT}.`);
-
             if (persistentIssues.highCpu >= CPU_TOLERANCE_COUNT) {
                 currentHealthReport.cpuReady = false;
                 currentIssues.push(`Critical: High CPU load persisted for ${persistentIssues.highCpu} cycles. Aborting cycle.`);
@@ -316,7 +250,6 @@ export async function run(config, logger) {
             logger.warn(`⚠️ High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%. System might be stressed.`);
         }
 
-        // --- 2. Network Connectivity Check ---
         if (config.RENDER_API_TOKEN && config.RENDER_SERVICE_ID &&
             !String(config.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
             !String(config.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
@@ -336,7 +269,6 @@ export async function run(config, logger) {
             currentHealthReport.networkActive = true;
         }
 
-        // --- 3. Node.js Version Check ---
         try {
             const { stdout: nodeVersion } = await execPromise('node -v');
             if (nodeVersion.includes('v22.16.0')) {
@@ -351,7 +283,6 @@ export async function run(config, logger) {
             logger.error(`🚨 Failed to check Node.js version: ${error.message}`);
         }
 
-        // --- 4. Critical Dependency Check and Self-Healing Installation ---
         const criticalDependencies = ['terser', 'puppeteer'];
         let dependenciesNeeded = [];
 
@@ -365,7 +296,6 @@ export async function run(config, logger) {
         if (dependenciesNeeded.length > 0) {
             currentIssues.push(`Missing critical dependencies: ${dependenciesNeeded.join(', ')}. Attempting to install.`);
             logger.warn(`⚠️ Missing critical dependencies: ${dependenciesNeeded.join(', ')}. Attempting to install...`);
-            
             for (const dep of dependenciesNeeded) {
                 try {
                     await execPromise(`npm install ${dep}`);
@@ -380,12 +310,11 @@ export async function run(config, logger) {
         }
         currentHealthReport.dependenciesOk = true;
 
-        // --- 5. Log Monitoring for Sensitive Data and Errors ---
         const logFilePath = '/var/log/app.log';
         try {
             const logContent = await fs.readFile(logFilePath, 'utf8').catch(() => '');
             const recentLogLines = logContent.split('\n').slice(-100).join('\n');
-            const sensitiveDataPattern = /(PRIVATE_KEY|RENDER_API_TOKEN|SECRET|PASSWORD|0x[a-fA-F0-9]{40,})/g; 
+            const sensitiveDataPattern = /(PRIVATE_KEY|RENDER_API_TOKEN|SECRET|PASSWORD|0x[a-fA-F0-9]{40,})/g;
 
             if (sensitiveDataPattern.test(recentLogLines)) {
                 currentHealthReport.logsClean = false;
@@ -393,12 +322,12 @@ export async function run(config, logger) {
                 logger.error('🚨 Sensitive data detected in logs. Security risk!');
             }
             if (currentDefensePosture.logScanStrictness === 'strict' && recentLogLines.toLowerCase().includes('warn')) {
-                 currentHealthReport.logsClean = false; // More strict: warnings also count
+                 currentHealthReport.logsClean = false;
                  currentIssues.push('Warning detected in recent logs (strict scan).');
                  logger.warn('⚠️ Detected "warn" keyword in recent logs (strict scan).');
             }
             if (currentDefensePosture.logScanStrictness === 'critical' && (recentLogLines.toLowerCase().includes('warn') || recentLogLines.toLowerCase().includes('info'))) {
-                 currentHealthReport.logsClean = false; // Most strict: infos also count
+                 currentHealthReport.logsClean = false;
                  currentIssues.push('Info or warning detected in recent logs (critical scan).');
                  logger.warn('⚠️ Detected "info" or "warn" keyword in recent logs (critical scan).');
             }
@@ -436,7 +365,6 @@ export async function run(config, logger) {
         attempts++;
     }
 
-    // --- Self-Awareness and Adaptive Defense ---
     const externalThreatLevel = await _checkExternalThreats(logger);
     const aggregatedThreatLevel = _assessThreatLevel(finalReport.details, externalThreatLevel, logger);
     _adaptDefensePolicy(aggregatedThreatLevel, logger);
@@ -445,21 +373,11 @@ export async function run(config, logger) {
     return finalReport;
 }
 
-// Allow external agents to provide threat intelligence or observations
-/**
- * @function provideThreatIntelligence
- * @description Allows other agents (e.g., apiScout) to provide threat intelligence.
- * @param {string} type - Type of intelligence (e.g., 'browser_block', 'api_rejection').
- * @param {string} message - A descriptive message.
- * @param {object} logger - The logger instance.
- */
 export function provideThreatIntelligence(type, message, logger) {
     logger.warn(`Threat Intelligence Received (${type}): ${message}`);
-    // This is where healthAgent would analyze incoming threat data.
-    // For now, it could temporarily elevate the threat posture if a severe alert comes in.
     if (type === 'browser_block' || type === 'api_rejection') {
         logger.warn("Received browser/API rejection intel. Temporarily elevating perceived threat.");
-        setDefensePosture(DEFENSE_POSTURES.MEDIUM_RISK, logger); // Or 'high' if very severe
+        setDefensePosture(DEFENSE_POSTURES.MEDIUM_RISK, logger);
     }
 }
 
