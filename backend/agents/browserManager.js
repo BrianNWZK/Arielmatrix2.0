@@ -49,28 +49,31 @@ class BrowserManager {
 
         if (!this.browserInstance || !this.browserInstance.isConnected()) {
             try {
-                this._logger.info('Launching new browser instance...');
+                // Defensive logging check: ensure logger exists before using it
+                if (this._logger) {
+                    this._logger.info('Launching new browser instance...');
+                }
+
                 this.browserInstance = await puppeteer.launch({
                     headless: true, // Run in headless mode (no UI)
                     args: [
-                        '--no-sandbox', // Required for some environments like Docker/Render
-                        '--disable-setuid-sandbox', // Recommended security flag
-                        '--disable-dev-shm-usage', // Overcomes limited /dev/shm size in some environments
-                        '--disable-accelerated-2d-canvas', // Disables hardware acceleration for 2D canvas
-                        '--no-zygote', // Disables zygote process (relevant for Linux)
-                        '--disable-gpu', // Disables GPU hardware acceleration
-                        // Add more args for improved performance/stability on Render if needed
-                        // '--single-process' // Might help with memory on small instances
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-zygote',
+                        '--disable-gpu',
                     ],
-                    ignoreDefaultArgs: ['--enable-automation'], // Helps prevent detection as an automated browser
-                    timeout: 0, // Set timeout to 0 for infinite wait on launch, preventing deployment timeouts
-                    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, // Use path from env var if available
+                    ignoreDefaultArgs: ['--enable-automation'],
+                    timeout: 0,
+                    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
                 });
                 this.usageStats.launchTime = Date.now();
-                this._logger.success('Browser instance initialized successfully.');
+                if (this._logger) {
+                    this._logger.success('Browser instance initialized successfully.');
+                }
             } catch (error) {
-                // Defensive logging: ensure _logger exists before using it
-                if (this._logger && typeof this._logger.error === 'function') {
+                if (this._logger) {
                     this._logger.error('Failed to launch browser:', error.message, error.stack);
                 } else {
                     console.error('CRITICAL ERROR: Failed to launch browser and logger is unavailable or misconfigured.', error);
@@ -297,8 +300,6 @@ class BrowserManager {
                 // Chrome detection spoofing
                 window.chrome = {
                     runtime: {},
-                    // Add other chrome properties as needed by common detection scripts
-                    // e.g., app, csi, loadTimes etc.
                 };
 
                 // Plugin spoofing to appear more like a regular browser
@@ -322,7 +323,7 @@ class BrowserManager {
                 Object.defineProperty(window.screen, 'width', { get: () => 1920 });
                 Object.defineProperty(window.screen, 'height', { get: () => 1080 });
                 Object.defineProperty(window.screen, 'availWidth', { get: () => 1920 });
-                Object.defineProperty(window.screen, 'availHeight', { get: () => 1040 }); // Typical for taskbar
+                Object.defineProperty(window.screen, 'availHeight', { get: () => 1040 });
                 Object.defineProperty(window.screen, 'colorDepth', { get: () => 24 });
                 Object.defineProperty(window.screen, 'pixelDepth', { get: () => 24 });
             });
