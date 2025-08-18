@@ -8,10 +8,18 @@ import fs from 'fs/promises';
 
 const execPromise = util.promisify(exec);
 
+// Novel Solution: Stateful variable to track persistent issues
+let persistentIssues = {
+    highCpu: 0
+};
+// Allow up to 3 consecutive high CPU readings before marking as degraded
+const CPU_TOLERANCE_COUNT = 3; 
+
 /**
  * @function run
  * @description Performs a comprehensive health check, including self-healing for
  * missing dependencies and re-evaluating the system state after a fix.
+ * It now applies dynamic tolerance for transient resource issues like high CPU load.
  * @param {object} config - The global configuration object.
  * @param {object} logger - The global logger instance.
  * @returns {Promise<object>} Health status including CPU, memory, network, Node.js, and log checks.
@@ -19,53 +27,59 @@ const execPromise = util.promisify(exec);
 export async function run(config, logger) {
     logger.info('❤️ HealthAgent: Performing comprehensive system and network health check...');
 
-    // This is the novel self-correction loop
+    // Self-correction loop for dependencies (maxAttempts for re-evaluation after fixes)
     let attempts = 0;
-    const maxAttempts = 2;
-    let finalReport = { status: 'degraded', issues: [] };
+    const maxAttempts = 2; // Allows one re-check after potential dependency installs
+    let finalReport = { status: 'degraded', issues: [] }; // Default to degraded, will become optimal if all checks pass
 
     while (attempts < maxAttempts) {
-        let healthReport = {
-            status: 'optimal',
-            issues: [],
-            details: {
-                cpuReady: false,
-                memoryReady: false,
-                networkActive: false,
-                nodeVersionOk: false,
-                dependenciesOk: false,
-                logsClean: true,
-                rawMemory: {},
-                rawCpu: {}
-            }
+        let currentHealthReport = {
+            cpuReady: false,
+            memoryReady: false,
+            networkActive: false,
+            nodeVersionOk: false,
+            dependenciesOk: false,
+            logsClean: true,
+            rawMemory: {},
+            rawCpu: {}
         };
+        let currentIssues = []; // Collect issues for this specific iteration
 
         // --- 1. System Resource Check (CPU & Memory) ---
         const cpuInfo = os.loadavg();
         const cpuLoad = cpuInfo[0];
         const cpuCount = os.cpus().length;
-        healthReport.details.rawCpu = { count: cpuCount, load: cpuInfo };
+        currentHealthReport.rawCpu = { count: cpuCount, load: cpuInfo };
 
         if (cpuLoad < cpuCount * 0.8) {
-            healthReport.details.cpuReady = true;
+            currentHealthReport.cpuReady = true;
+            persistentIssues.highCpu = 0; // Reset counter if CPU is normal
         } else {
-            healthReport.status = 'degraded';
-            healthReport.issues.push(`High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed.`);
-            logger.warn(`⚠️ High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed.`);
+            persistentIssues.highCpu++;
+            currentIssues.push(`High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed. Attempt ${persistentIssues.highCpu}/${CPU_TOLERANCE_COUNT}.`);
+            logger.warn(`⚠️ High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed. Attempt ${persistentIssues.highCpu}/${CPU_TOLERANCE_COUNT}.`);
+
+            if (persistentIssues.highCpu >= CPU_TOLERANCE_COUNT) {
+                // Only mark as NOT ready if high CPU persists beyond tolerance
+                currentHealthReport.cpuReady = false; 
+                currentIssues.push(`Critical: High CPU load persisted for ${persistentIssues.highCpu} cycles. Aborting cycle.`);
+                logger.error(`🚨 High CPU load persisted: ${cpuLoad.toFixed(2)}. Aborting cycle.`);
+            } else {
+                currentHealthReport.cpuReady = true; // Still considered ready, but with a warning
+            }
         }
 
         const totalMemory = os.totalmem();
         const freeMemory = os.freemem();
         const memoryUsagePercentage = (1 - (freeMemory / totalMemory)) * 100;
         const mem = process.memoryUsage();
-        healthReport.details.rawMemory = { ...mem };
+        currentHealthReport.rawMemory = { ...mem };
 
         if (memoryUsagePercentage < 85) {
-            healthReport.details.memoryReady = true;
+            currentHealthReport.memoryReady = true;
         } else {
-            healthReport.status = 'degraded';
-            healthReport.issues.push(`High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%.`);
-            logger.warn(`⚠️ High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%.`);
+            currentIssues.push(`High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%. System might be stressed.`);
+            logger.warn(`⚠️ High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%. System might be stressed.`);
         }
 
         // --- 2. Network Connectivity Check ---
@@ -77,32 +91,29 @@ export async function run(config, logger) {
                     headers: { 'Authorization': `Bearer ${config.RENDER_API_TOKEN}` },
                     timeout: 5000
                 });
-                healthReport.details.networkActive = true;
+                currentHealthReport.networkActive = true;
                 logger.info('✅ Network health check to Render API successful.');
             } catch (error) {
-                healthReport.status = 'degraded';
-                healthReport.issues.push(`Network health check to Render API failed: ${error.message}`);
+                currentIssues.push(`Network health check to Render API failed: ${error.message}`);
                 logger.warn(`⚠️ Network health check to Render API failed: ${error.message}`);
             }
         } else {
             logger.warn('⚠️ Render API credentials missing. Optimistically assuming network is active.');
-            healthReport.details.networkActive = true;
+            currentHealthReport.networkActive = true;
         }
 
         // --- 3. Node.js Version Check ---
         try {
             const { stdout: nodeVersion } = await execPromise('node -v');
             if (nodeVersion.includes('v22.16.0')) {
-                healthReport.details.nodeVersionOk = true;
+                currentHealthReport.nodeVersionOk = true;
                 logger.info(`✅ Node.js version ${nodeVersion.trim()} is optimal.`);
             } else {
-                healthReport.status = 'degraded';
-                healthReport.issues.push(`Incorrect Node.js version detected: ${nodeVersion.trim()}. Expected v22.16.0.`);
+                currentIssues.push(`Incorrect Node.js version detected: ${nodeVersion.trim()}. Expected v22.16.0.`);
                 logger.error(`❌ Incorrect Node.js version: ${nodeVersion.trim()}.`);
             }
         } catch (error) {
-            healthReport.status = 'degraded';
-            healthReport.issues.push(`Failed to check Node.js version: ${error.message}`);
+            currentIssues.push(`Failed to check Node.js version: ${error.message}`);
             logger.error(`🚨 Failed to check Node.js version: ${error.message}`);
         }
 
@@ -112,75 +123,78 @@ export async function run(config, logger) {
 
         for (const dep of criticalDependencies) {
             try {
-                // Check if the dependency is importable
-                await import(dep);
+                // Attempt to import to check if it's available in the current runtime context
+                require(dep); 
             } catch {
                 dependenciesNeeded.push(dep);
             }
         }
 
-        // Only attempt to install if dependencies are needed
         if (dependenciesNeeded.length > 0) {
+            currentIssues.push(`Missing critical dependencies: ${dependenciesNeeded.join(', ')}. Attempting to install.`);
             logger.warn(`⚠️ Missing critical dependencies: ${dependenciesNeeded.join(', ')}. Attempting to install...`);
-            healthReport.status = 'degraded'; // Set to degraded if a fix is needed
+            
             for (const dep of dependenciesNeeded) {
                 try {
                     await execPromise(`npm install ${dep}`);
                     logger.success(`✅ Successfully installed missing dependency: '${dep}'.`);
                 } catch (installError) {
-                    healthReport.issues.push(`Failed to install dependency '${dep}': ${installError.message}`);
+                    currentIssues.push(`Failed to install dependency '${dep}': ${installError.message}`);
                     logger.error(`🚨 Failed to install dependency '${dep}': ${installError.message}`);
                 }
             }
-            // After attempting to fix, we break the loop to re-run the entire health check.
-            finalReport = healthReport;
+            // After attempting to fix, we continue to the next loop iteration (re-run the check)
+            // This is key for the self-correction loop to re-evaluate the system state
             attempts++;
-            continue; // Continue to the next loop iteration (re-run the check)
+            continue; 
         }
-
-        healthReport.details.dependenciesOk = true;
+        currentHealthReport.dependenciesOk = true;
 
         // --- 5. Log Monitoring for Sensitive Data and Errors ---
-        const logFilePath = '/var/log/app.log';
+        const logFilePath = '/var/log/app.log'; // Adjust path if needed for Render's logging
         try {
             const logContent = await fs.readFile(logFilePath, 'utf8').catch(() => '');
             const recentLogLines = logContent.split('\n').slice(-100).join('\n');
             const sensitiveDataPattern = /(PRIVATE_KEY|RENDER_API_TOKEN|SECRET|PASSWORD|0x[a-fA-F0-9]{40,})/g;
 
             if (sensitiveDataPattern.test(recentLogLines)) {
-                healthReport.status = 'degraded';
-                healthReport.details.logsClean = false;
-                healthReport.issues.push('Sensitive data detected in logs. Security risk.');
+                currentHealthReport.logsClean = false;
+                currentIssues.push('Sensitive data detected in logs. Security risk.');
                 logger.error('🚨 Sensitive data detected in logs. Security risk!');
             }
             if (recentLogLines.toLowerCase().includes('error')) {
-                healthReport.status = 'degraded';
-                healthReport.details.logsClean = false;
-                healthReport.issues.push('Error detected in recent logs.');
+                currentHealthReport.logsClean = false;
+                currentIssues.push('Error detected in recent logs.');
                 logger.warn('⚠️ Detected "error" keyword in recent logs.');
             }
         } catch (error) {
-            healthReport.issues.push(`Failed to access logs at ${logFilePath}: ${error.message}`);
+            currentIssues.push(`Failed to access logs at ${logFilePath}: ${error.message}`);
             logger.warn(`⚠️ Failed to access logs at ${logFilePath}: ${error.message}`);
         }
 
-        // Check if all conditions are met for 'optimal' status
-        if (healthReport.details.cpuReady && healthReport.details.memoryReady &&
-            healthReport.details.networkActive && healthReport.details.nodeVersionOk &&
-            healthReport.details.dependenciesOk && healthReport.details.logsClean) {
-            healthReport.status = 'optimal';
-            healthReport.message = 'System health is optimal.';
+        // Final determination of overall status for this iteration
+        const allChecksPass = currentHealthReport.cpuReady && currentHealthReport.memoryReady &&
+                             currentHealthReport.networkActive && currentHealthReport.nodeVersionOk &&
+                             currentHealthReport.dependenciesOk && currentHealthReport.logsClean;
+
+        if (allChecksPass && currentIssues.length === 0) { // All critical and non-critical checks must pass
+            finalReport = {
+                status: 'optimal',
+                message: 'System health is optimal.',
+                details: currentHealthReport,
+                issues: currentIssues
+            };
+            break; // Break the loop if everything is optimal
         } else {
-            healthReport.status = 'degraded';
-            healthReport.message = 'System preconditions not met. See issues for details.';
+            // If any check failed or there are unresolved issues, it's degraded
+            finalReport = {
+                status: 'degraded',
+                message: 'System preconditions not met. See issues for details.',
+                details: currentHealthReport,
+                issues: currentIssues
+            };
         }
-
-        // If we reach here and the status is optimal, we can break the loop.
-        finalReport = healthReport;
-        if (finalReport.status === 'optimal') {
-            break;
-        }
-
+        
         attempts++;
     }
 
