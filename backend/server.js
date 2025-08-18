@@ -1,4 +1,3 @@
-```javascript
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -14,7 +13,8 @@ import apiScoutAgent from './agents/apiScoutAgent.js';
 import shopifyAgent from './agents/shopifyAgent.js';
 import cryptoAgent from './agents/cryptoAgent.js';
 import externalPayoutAgentModule from './agents/payoutAgent.js';
-import BrowserManager, { shutdown as shutdownBrowser } from './agents/browserManager.js';
+import BrowserManager from './agents/browserManager.js';
+import { shutdown as shutdownBrowser } from './agents/browserManager.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -37,15 +37,23 @@ const CONFIG = {
 
 // --- Enhanced Logger ---
 const logger = {
-    info: (...args) => console.log(`[${new Date().toISOString()}] INFO:`, ...args),
-    warn: (...args) => console.warn(`[${new Date().toISOString()}] WARN:`, ...args),
-    error: (...args) => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
-    success: (...args) => console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args),
-    debug: (...args) => {
+    info: function(...args) {
+        console.log(`[${new Date().toISOString()}] INFO:`, ...args);
+    },
+    warn: function(...args) {
+        console.warn(`[${new Date().toISOString()}] WARN:`, ...args);
+    },
+    error: function(...args) {
+        console.error(`[${new Date().toISOString()}] ERROR:`, ...args);
+    },
+    success: function(...args) {
+        console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args);
+    },
+    debug: function(...args) {
         if (process.env.NODE_ENV === 'development') {
             console.log(`[${new Date().toISOString()}] DEBUG:`, ...args);
         }
-    },
+    }
 };
 
 // --- WebSocket Setup ---
@@ -57,12 +65,12 @@ function broadcastDashboardUpdate() {
         status: getSystemStatus(),
         revenue: getRevenueAnalytics(),
         agents: getAgentActivities(),
-        browserStats: BrowserManager.getStats() // Add browser stats to dashboard
+        browserStats: BrowserManager.getStats()
     };
 
     const message = JSON.stringify({ type: 'update', data: update });
     connectedClients.forEach(client => {
-        if (client.readyState === 1) { // 1 = OPEN
+        if (client.readyState === 1) {
             client.send(message);
         }
     });
@@ -91,9 +99,11 @@ let lastDataUpdate = Date.now();
 let isRunning = false;
 
 // --- Utility Functions ---
-const quantumDelay = (ms) => new Promise(resolve => {
-    setTimeout(resolve, ms + crypto.randomInt(500, 2000));
-});
+function quantumDelay(ms) {
+    return new Promise(resolve => {
+        setTimeout(resolve, ms + crypto.randomInt(500, 2000));
+    });
+}
 
 async function withRetry(operation, maxRetries = 3, baseDelay = 1000) {
     let attempt = 0;
@@ -168,7 +178,9 @@ class RevenueTracker {
         this.lock = true;
     }
 
-    releaseLock() { this.lock = false; }
+    releaseLock() { 
+        this.lock = false; 
+    }
 
     async loadData() {
         await this.acquireLock();
@@ -248,8 +260,8 @@ class PayoutAgentOrchestrator {
             const summary = this.tracker.getSummary();
             const totalAccumulatedRevenue = summary.totalRevenue;
 
-            if (totalAccumulatedRevenue >= CONFIG.PAYOUT_THRESHOLD_USD) {
-                const amountToPayout = totalAccumulatedRevenue * CONFIG.PAYOUT_PERCENTAGE;
+            if (totalAccumulatedRevenue >= config.PAYOUT_THRESHOLD_USD) {
+                const amountToPayout = totalAccumulatedRevenue * config.PAYOUT_PERCENTAGE;
                 const payoutResult = await withRetry(() => 
                     externalPayoutAgentModule.default.run({ ...config, earnings: amountToPayout }, logger)
                 );
@@ -419,7 +431,7 @@ async function runAutonomousRevenueSystem() {
         lastCycleStats = cycleStats;
         lastDataUpdate = Date.now();
         cycleTimes.push(cycleStats.duration);
-        broadcastDashboardUpdate(); // Send update to all connected clients
+        broadcastDashboardUpdate();
     }
 }
 
@@ -470,7 +482,6 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
     connectedClients.add(ws);
     
-    // Send initial data on connection
     ws.send(JSON.stringify({
         type: 'init',
         data: {
@@ -521,7 +532,7 @@ app.get('/api/dashboard/agents', (req, res) => {
 });
 
 // Schedule periodic operations using node-cron
-cron.schedule('*/10 * * * *', () => { // Every 10 minutes
+cron.schedule('*/10 * * * *', () => {
     if (!isRunning) {
         runAutonomousRevenueSystem().catch(err => {
             logger.error('Scheduled operation failed:', err);
@@ -534,7 +545,6 @@ async function continuousOperation() {
     if (isRunning) return;
     isRunning = true;
 
-    // Enhanced shutdown handler
     process.on('SIGTERM', async () => {
         logger.info('Shutting down gracefully...');
         try {
@@ -565,4 +575,3 @@ server.listen(PORT, '0.0.0.0', () => {
         continuousOperation();
     }
 });
-```
