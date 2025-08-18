@@ -7,6 +7,11 @@ import util from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+// New: ES module compatible way to get __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const execPromise = util.promisify(exec);
 
@@ -134,7 +139,8 @@ async function checkFileIntegrity(filePath, logger) {
         // Autonomous Response: Alert, log, consider shutting down sensitive ops.
         // The defense system can now conceptually "rewrite" its approach
         // by switching to a HIGH_RISK posture.
-        HealthAgent.setDefensePosture(DEFENSE_POSTURES.HIGH_RISK, logger);
+        // Make sure to call the function correctly with the logger argument
+        setDefensePosture(DEFENSE_POSTURES.HIGH_RISK, logger);
     } else {
         logger.info(`✅ Integrity check passed for ${path.basename(filePath)}.`);
     }
@@ -225,6 +231,18 @@ function _adaptDefensePolicy(threatLevel, logger) {
     } else {
         logger.info(`🛡️ Defense posture remains ${currentDefensePosture.alertLevel.toUpperCase()}.`);
     }
+}
+
+
+/**
+ * @function setDefensePosture
+ * @description A setter function to allow other parts of the system to programmatically set the defense posture.
+ * This is useful for providing threat intelligence from other agents.
+ * @param {object} newPosture - The new defense posture object to set.
+ * @param {object} logger - The logger instance.
+ */
+export function setDefensePosture(newPosture, logger) {
+    _adaptDefensePolicy(newPosture.alertLevel.toLowerCase(), logger);
 }
 
 
@@ -440,6 +458,6 @@ export function provideThreatIntelligence(type, message, logger) {
     // For now, it could temporarily elevate the threat posture if a severe alert comes in.
     if (type === 'browser_block' || type === 'api_rejection') {
         logger.warn("Received browser/API rejection intel. Temporarily elevating perceived threat.");
-        _adaptDefensePolicy('medium', logger); // Or 'high' if very severe
+        setDefensePosture(DEFENSE_POSTURES.MEDIUM_RISK, logger); // Or 'high' if very severe
     }
 }
