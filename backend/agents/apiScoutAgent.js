@@ -1,22 +1,14 @@
-// backend/agents/apiScoutAgent.js
-
 import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import {
     TwitterApi
 } from 'twitter-api-v2';
-import cron from 'node-cron';
 import Web3 from 'web3';
 import {
     ethers
 } from 'ethers';
 import crypto from 'crypto';
-import * as os from 'os';
-
-// --- Note: Direct Puppeteer imports and local browser management have been removed. ---
-// This agent now uses the BrowserManager provided by the main server.
-// The `browserContext` object is passed in the `run` method's config.
 
 // Fix for __dirname in ES6 modules
 const __filename = new URL(import.meta.url).pathname;
@@ -27,176 +19,6 @@ const quantumDelay = (ms) => new Promise(resolve => {
     const jitter = Math.floor(Math.random() * 3000) + 1000;
     setTimeout(resolve, ms + jitter);
 });
-
-// === 🌐 Autonomous Network & System Health Checker ===
-/**
- * Performs a health check on critical external services and the local system.
- * @param {object} currentConfig - The global configuration object.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object>} Health status including CPU, memory, and network checks.
- */
-const healthCheck = async (currentConfig, currentLogger) => {
-    let stable = true;
-    let cpuReady = false;
-    let networkActive = false;
-
-    const cpuInfo = os.loadavg();
-    const cpuLoad = cpuInfo[0];
-    if (cpuLoad < os.cpus().length * 0.8) {
-        cpuReady = true;
-    } else {
-        stable = false;
-        currentLogger.warn(`⚠️ High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed.`);
-    }
-
-    const totalMemory = os.totalmem();
-    const freeMemory = os.freemem();
-    const memoryUsagePercentage = (1 - (freeMemory / totalMemory)) * 100;
-    if (memoryUsagePercentage < 85) {
-        // memoryReady = true;
-    } else {
-        stable = false;
-        currentLogger.warn(`⚠️ High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%. System might be stressed.`);
-    }
-
-    if (currentConfig.RENDER_API_TOKEN && currentConfig.RENDER_SERVICE_ID &&
-        !String(currentConfig.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
-        !String(currentConfig.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
-        try {
-            await axios.get(`https://api.render.com/v1/services/${currentConfig.RENDER_SERVICE_ID}`, {
-                headers: {
-                    'Authorization': `Bearer ${currentConfig.RENDER_API_TOKEN}`
-                },
-                timeout: 5000
-            });
-            networkActive = true;
-            currentLogger.info('✅ Network health check to Render API successful.');
-        } catch (error) {
-            currentLogger.warn(`⚠️ Network health check to Render API failed: ${error.message}`);
-            stable = false;
-        }
-    } else {
-        currentLogger.warn('⚠️ Render API credentials missing for comprehensive network health check.');
-        networkActive = true; // Optimistically assume true if no specific check is possible
-    }
-
-    const mem = process.memoryUsage();
-    return {
-        stable,
-        cpuReady,
-        networkActive,
-        rawMemory: {
-            rss: mem.rss,
-            heapTotal: mem.heapTotal,
-            heapUsed: mem.heapUsed,
-            external: mem.external,
-            arrayBuffers: mem.arrayBuffers
-        },
-        rawCpu: {
-            count: os.cpus().length,
-            load: os.loadavg()
-        }
-    };
-};
-
-// === 🔑 Quantum Key Management & Remediation (MERGED from renderApiAgent) ===
-/**
- * Dynamically updates Render environment variables with new/remediated API keys.
- * This function was previously in renderApiAgent.js and is now integrated here.
- * It is exported so server.js can call it for persisting crypto keys.
- * @param {object} keysToSave - Object containing key-value pairs of environment variables to update.
- * @param {object} currentConfig - The global configuration object.
- * @param {object} currentLogger - The global logger instance.
- */
-export async function _updateRenderEnvWithKeys(keysToSave, currentConfig, currentLogger) {
-    if (Object.keys(keysToSave).length === 0) return;
-
-    if (!currentConfig.RENDER_API_TOKEN || String(currentConfig.RENDER_API_TOKEN).includes('PLACEHOLDER')) {
-        currentLogger.warn('Skipping Render ENV update: RENDER_API_TOKEN is missing or a placeholder. Key persistence is disabled.');
-        return;
-    }
-    if (!currentConfig.RENDER_SERVICE_ID || String(currentConfig.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
-        currentLogger.warn('Skipping Render ENV update: RENDER_SERVICE_ID is missing or a placeholder. Key persistence is disabled.');
-        return;
-    }
-
-    currentLogger.info(`Attempting to sync ${Object.keys(keysToSave).length} keys to Render environment variables...`);
-    try {
-        const currentEnvResponse = await axios.get(
-            `https://api.render.com/v1/services/${currentConfig.RENDER_SERVICE_ID}/envVars`, {
-                headers: {
-                    Authorization: `Bearer ${currentConfig.RENDER_API_TOKEN}`
-                },
-                timeout: 15000
-            }
-        );
-        const existingEnvVars = currentEnvResponse.data;
-
-        const updates = [];
-        const additions = [];
-
-        Object.entries(keysToSave).forEach(([key, value]) => {
-            if (!String(value).includes('PLACEHOLDER')) {
-                const existingVar = existingEnvVars.find(envVar => envVar.key === key);
-                if (existingVar) {
-                    updates.push({
-                        id: existingVar.id,
-                        key: key,
-                        value: value
-                    });
-                } else {
-                    additions.push({
-                        key: key,
-                        value: value
-                    });
-                }
-            }
-        });
-
-        for (const update of updates) {
-            await axios.patch(
-                `https://api.render.com/v1/services/${currentConfig.RENDER_SERVICE_ID}/envVars/${update.id}`, {
-                    value: update.value
-                }, {
-                    headers: {
-                        Authorization: `Bearer ${currentConfig.RENDER_API_TOKEN}`
-                    },
-                    timeout: 10000
-                }
-            );
-            currentLogger.info(`🔄 Updated Render ENV var: ${update.key}`);
-        }
-
-        for (const addition of additions) {
-            await axios.post(
-                `https://api.render.com/v1/services/${currentConfig.RENDER_SERVICE_ID}/envVars`, {
-                    key: addition.key,
-                    value: addition.key, // corrected: should use addition.value here
-                }, {
-                    headers: {
-                        Authorization: `Bearer ${currentConfig.RENDER_API_TOKEN}`
-                    },
-                    timeout: 10000
-                }
-            );
-            currentLogger.info(`➕ Added Render ENV var: ${addition.key}`);
-        }
-
-        currentLogger.success(`🔄 Successfully synced ${updates.length + additions.length} new/updated keys to Render ENV.`);
-    } catch (envUpdateError) {
-        if (envUpdateError.response) {
-            currentLogger.error(`🚨 Failed to set Render ENV var: Status ${envUpdateError.response.status}, Data: ${JSON.stringify(envUpdateError.response.data)}`);
-            if (envUpdateError.response.status === 400 || envUpdateError.response.status === 401 || envUpdateError.response.status === 403) {
-                currentLogger.error('⚠️ Ensure RENDER_API_TOKEN has write permissions for environment variables and is valid. Also verify RENDER_SERVICE_ID is correct.');
-            }
-        } else if (envUpdateError.request) {
-            currentLogger.error(`🚨 No response received when attempting to update Render ENV for keys. Check network connectivity.`);
-        } else {
-            currentLogger.error(`🚨 Error setting up request to Render API for keys: ${envUpdateError.message}`);
-        }
-        currentLogger.warn('    This is CRITICAL for persistent learning and autonomous evolution. Please fix manually.');
-    }
-}
 
 // === 🔗 API Endpoint Catalog (REAL and Dynamic) ===
 const API_CATALOG = {
@@ -281,7 +103,6 @@ const API_CATALOG = {
 let web3Instance;
 let contractABI;
 let contractAddress;
-let contractInstance;
 let wallet;
 let _currentLogger; // Local logger reference for contract functions
 
@@ -377,7 +198,6 @@ async function reportKeyToSmartContract(serviceId, rawKey) {
 
 /**
  * Shortens a URL using Short.io or another configured service.
- * This function was previously in utils/urlShortenerService.js.
  * @param {string} longUrl - The URL to shorten.
  * @param {object} currentConfig - The global configuration.
  * @param {object} currentLogger - The global logger instance.
@@ -422,7 +242,7 @@ async function shortenUrl(longUrl, currentConfig, currentLogger) {
 let lastExecutionTime = 'Never';
 let lastStatus = 'idle'; // Initial status
 
-// === 🌍 Global Explorer Agent (renamed to default export) ===
+// === 🌍 Global Explorer Agent ===
 /**
  * Autonomously discovers, analyzes, and potentially monetizes real sites and APIs.
  * @param {object} currentConfig - The global configuration object from server.js.
@@ -461,20 +281,6 @@ export async function run(currentConfig, currentLogger) {
 
         await initializeContractInteraction(currentConfig, currentLogger);
 
-        const health = await healthCheck(currentConfig, currentLogger);
-        if (!health.stable) {
-            currentLogger.warn('⚠️ System preconditions not met (low stability or network issues). Operating in degraded mode. Details:', health);
-            const keysToRemediateForSystem = {
-                QUANTUM_MODE: health.stable ? 'OPTIMAL' : 'DEGRADED',
-                AUTONOMOUS_ENGINE_STATUS: health.cpuReady && health.networkActive ? 'ACTIVE' : 'PASSIVE',
-                DEPLOYMENT_ID: currentConfig.RENDER_SERVICE_ID,
-                QUANTUM_ACCESS_KEY: 'QAK-' + crypto.randomBytes(16).toString('hex')
-            };
-            await _updateRenderEnvWithKeys(keysToRemediateForSystem, currentConfig, currentLogger);
-        } else {
-            currentLogger.info('✅ System health is optimal. Proceeding with full capabilities.');
-        }
-
         currentLogger.info('\n--- Phase 1: Dynamic Opportunity Discovery & Regulatory Reconnaissance ---');
         const targetKeywords = ['crypto monetization API', 'AI data marketplace', 'decentralized finance API', 'privacy-focused data sharing', 'micro-earning platforms', 'innovative affiliate programs'];
         const discoveredOpportunities = await dynamicWebResearch(targetKeywords, currentConfig, currentLogger);
@@ -488,16 +294,11 @@ export async function run(currentConfig, currentLogger) {
         ];
         const uniqueSitesToActivate = [...new Set(sitesToActivate)];
 
-        // Placeholder for actual browser-based activation and key extraction
         const activeCampaigns = []; // This will be populated by a real browser agent
         for (const siteUrl of uniqueSitesToActivate) {
-            // This is where a real browser-based interaction would go to 'activate' a campaign
-            // and potentially extract a new API key. For now, it's a conceptual step.
             currentLogger.debug(`Simulating activation for: ${siteUrl}`);
-            await quantumDelay(500); // Simulate network/processing time
-            // Hypothetically, if a new key was found for a service:
-            // newKeys['NEW_SERVICE_API_KEY'] = 'retrieved_api_key_value';
-            activeCampaigns.push({ site: siteUrl, status: 'activated', revenue: Math.random() * 10 }); // Simulated revenue
+            await quantumDelay(500);
+            activeCampaigns.push({ site: siteUrl, status: 'activated', revenue: Math.random() * 10 });
         }
 
 
@@ -548,7 +349,6 @@ export async function run(currentConfig, currentLogger) {
 /**
  * @method getStatus
  * @description Returns the current operational status of the API Scout Agent.
- * This function is crucial for dashboard reporting.
  * @returns {object} Current status of the API Scout Agent.
  */
 export function getStatus() {
@@ -556,8 +356,6 @@ export function getStatus() {
         agent: 'apiScout',
         lastExecution: lastExecutionTime,
         lastStatus: lastStatus,
-        // Add any other relevant metrics for apiScoutAgent here
-        // e.g., lastDiscoveredOpportunitiesCount: latest_count,
     };
 }
 
@@ -693,203 +491,84 @@ async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
     return relevantDiscoveries.filter(d => d.isReachable);
 }
 
-// === ⚖️ Regulatory Reconnaissance (Conceptual) ===
+// === ⚖️ Regulatory Reconnaissance (Simulated) ===
 /**
- * Conceptually filters opportunities based on simulated regulatory favorability.
- * @param {object[]} opportunities - List of discovered opportunities.
+ * Filters opportunities based on conceptual regulatory favorability.
+ * @param {object[]} opportunities - A list of discovered opportunities.
  * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object[]>} Filtered and prioritized opportunities.
+ * @returns {Promise<object[]>} A list of opportunities deemed favorable.
  */
 async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
     currentLogger.info('⚖️ Filtering opportunities based on conceptual regulatory favorability...');
-    await quantumDelay(1500);
-
-    const compliantOpportunities = [];
-    const regulatoryMap = {
-        'US': 8,
-        'EU': 7,
-        'Global': 9,
-        'Asia': 6,
-        'LATAM': 5
-    };
-
-    for (const op of opportunities) {
-        const complianceScore = regulatoryMap[op.region] || 5;
-        if (complianceScore >= 7) {
-            currentLogger.info(`✅ Opportunity "${op.name}" in ${op.region} is conceptually favorable.`);
-            compliantOpportunities.push(op);
-        } else {
-            currentLogger.info(`⚠️ Opportunity "${op.name}" in ${op.region} is less favorable or requires closer review.`);
-        }
-    }
-
-    return compliantOpportunities.sort((a, b) => {
-        const potentialRank = {
-            'high': 3,
-            'medium': 2,
-            'low': 1
-        };
-        return potentialRank[b.potential] - potentialRank[a.potential];
-    });
+    await quantumDelay(2000);
+    const filtered = opportunities.filter(op => op.region !== 'EU' || op.keywords.includes('privacy'));
+    currentLogger.info(`⚖️ Identified ${filtered.length} opportunities with regulatory favorability.`);
+    return filtered;
 }
 
-// === 🚀 Activate Campaigns (Conceptual) ===
+// === 💰 Revenue Consolidation (Simulated) ===
 /**
- * Simulates the activation of campaigns on various sites.
- * In a real scenario, this would involve Puppeteer for site interaction
- * to create accounts, generate API keys, or configure monetization.
- * @param {string[]} sites - List of site URLs to activate campaigns on.
- * @param {string} email - AI agent's email for registration/login.
- * @param {string} password - AI agent's password.
+ * Consolidates revenue from active campaigns.
+ * @param {object[]} activeCampaigns - List of active campaigns.
+ * @param {object} newKeys - Object of newly generated keys.
  * @param {object} currentConfig - The global CONFIG object.
  * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object[]>} List of activated campaigns with their status.
- */
-async function activateCampaigns(sites, email, password, currentConfig, currentLogger) {
-    currentLogger.info(`🚀 Activating campaigns on ${sites.length} sites...`);
-    const activatedCampaigns = [];
-
-    for (const site of sites) {
-        currentLogger.debug(`Attempting to activate campaign on: ${site}`);
-        await quantumDelay(1000 + Math.random() * 2000); // Simulate realistic activation time
-
-        try {
-            // This is a placeholder for actual browser automation and API interaction.
-            // In a real scenario, you'd use Puppeteer to navigate, login, fill forms,
-            // and interact with the site to 'activate' a campaign or get an API key.
-            // Example:
-            // const page = await BrowserManager.acquireContext();
-            // try {
-            //     await page.goto(site);
-            //     await BrowserManager.safeType(page, 'input[type="email"]', email);
-            //     await BrowserManager.safeType(page, 'input[type="password"]', password);
-            //     await BrowserManager.safeClick(page, 'button[type="submit"]');
-            //     // Logic to find/generate API keys and integrate...
-            // } finally {
-            //     await BrowserManager.releaseContext(page);
-            // }
-
-            // For now, simulate success or failure
-            const success = Math.random() > 0.2; // 80% chance of success
-            if (success) {
-                const revenuePotential = parseFloat((Math.random() * 50).toFixed(2)); // Simulated revenue
-                activatedCampaigns.push({ site, status: 'success', revenuePotential, activatedAt: new Date().toISOString() });
-                currentLogger.info(`✅ Campaign activated on ${site} with potential revenue: $${revenuePotential}`);
-
-                // Simulate new key discovery for a few services based on API_CATALOG
-                for (const catalogKey in API_CATALOG) {
-                    if (site.includes(new URL(catalogKey).hostname)) {
-                        const apiKeyName = API_CATALOG[catalogKey].api_key_name;
-                        if (!currentConfig[apiKeyName] || String(currentConfig[apiKeyName]).includes('PLACEHOLDER')) {
-                            // Simulate generating a new API key if it's missing
-                            const newApiKey = `AI_GENERATED_KEY_${crypto.randomBytes(16).toString('hex')}`;
-                            currentLogger.success(`🎉 Discovered and generated new API Key for ${apiKeyName}: ${newApiKey}`);
-                            // This new key needs to be returned for _updateRenderEnvWithKeys
-                            currentConfig[apiKeyName] = newApiKey; // Temporarily update in current config
-                        }
-                    }
-                }
-
-            } else {
-                currentLogger.warn(`❌ Failed to activate campaign on ${site}: Simulated failure.`);
-            }
-        } catch (error) {
-            currentLogger.error(`🚨 Error during campaign activation on ${site}: ${error.message}`);
-        }
-    }
-    return activatedCampaigns;
-}
-
-// === 💰 Revenue Consolidation (Conceptual) ===
-/**
- * Simulates the consolidation of revenue from activated campaigns.
- * In a real scenario, this would involve API calls to various platforms to fetch earnings.
- * @param {object[]} activeCampaigns - List of campaigns currently active.
- * @param {object} newKeys - Object of newly discovered/remediated API keys.
- * @param {object} currentConfig - The global CONFIG object.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object>} Consolidated revenue report.
+ * @returns {Promise<object>} A report of consolidated revenue.
  */
 async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, currentLogger) {
     currentLogger.info('💰 Consolidating revenue from active campaigns...');
-    await quantumDelay(2500);
+    await quantumDelay(1000);
+    const revenueReport = {
+        total: 0,
+        platformBreakdown: {}
+    };
 
-    let totalRevenue = 0;
-    const revenueByPlatform = {};
+    activeCampaigns.forEach(campaign => {
+        const platformName = new URL(campaign.site).hostname;
+        const revenue = campaign.revenue;
+        revenueReport.total += revenue;
+        revenueReport.platformBreakdown[platformName] = (revenueReport.platformBreakdown[platformName] || 0) + revenue;
+    });
 
-    for (const campaign of activeCampaigns) {
-        const platform = new URL(campaign.site).hostname;
-        const generatedRevenue = campaign.revenuePotential * (0.5 + Math.random() * 0.5); // Simulate variable earning
-        totalRevenue += generatedRevenue;
-        revenueByPlatform[platform] = (revenueByPlatform[platform] || 0) + generatedRevenue;
-        currentLogger.debug(`Collected $${generatedRevenue.toFixed(4)} from ${platform}`);
-    }
-
-    // Integrate revenue from services directly using their API keys
-    for (const apiEntry of Object.values(API_CATALOG)) {
-        const apiKeyName = apiEntry.api_key_name;
-        const apiKey = currentConfig[apiKeyName];
-        if (apiKey && !String(apiKey).includes('PLACEHOLDER')) {
-            // Simulate calling the actual API for revenue data
-            currentLogger.debug(`Attempting to fetch revenue from ${apiEntry.documentation} using ${apiKeyName}`);
-            await quantumDelay(500); // Simulate API call latency
-            const apiRevenue = parseFloat((Math.random() * 20).toFixed(4)); // Simulated API-driven revenue
-            totalRevenue += apiRevenue;
-            revenueByPlatform[new URL(apiEntry.documentation).hostname] = (revenueByPlatform[new URL(apiEntry.documentation).hostname] || 0) + apiRevenue;
-            currentLogger.debug(`Collected $${apiRevenue.toFixed(4)} from API: ${apiKeyName}`);
+    for (const key in newKeys) {
+        if (newKeys[key] && !String(newKeys[key]).includes('PLACEHOLDER')) {
+            const revenue = Math.random() * 5;
+            revenueReport.total += revenue;
+            revenueReport.platformBreakdown[key] = (revenueReport.platformBreakdown[key] || 0) + revenue;
         }
     }
 
-
-    currentLogger.success(`📊 Total consolidated revenue: $${totalRevenue.toFixed(4)}`);
-    return {
-        total: totalRevenue,
-        byPlatform: revenueByPlatform
-    };
+    currentLogger.success(`📊 Total consolidated revenue: $${revenueReport.total.toFixed(2)}`);
+    return revenueReport;
 }
 
-// === 🧠 Strategic Insight Generation (Conceptual) ===
+// === 🧠 Strategic Insights Generation (Simulated) ===
 /**
- * Generates strategic insights based on revenue data and discovered opportunities.
+ * Generates strategic insights based on revenue and discoveries.
  * @param {object} revenueReport - The consolidated revenue report.
- * @param {object[]} discoveredOpportunities - List of discovered opportunities.
+ * @param {object[]} discoveries - The list of discovered opportunities.
  * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<string[]>} List of strategic insights.
+ * @returns {Promise<string[]>} A list of strategic insights.
  */
-async function generateStrategicInsights(revenueReport, discoveredOpportunities, currentLogger) {
+async function generateStrategicInsights(revenueReport, discoveries, currentLogger) {
     currentLogger.info('🧠 Generating strategic insights...');
-    await quantumDelay(1000);
-
-    const insights = [];
-
-    insights.push(`Overall revenue generation is trending positively with a total of $${revenueReport.total.toFixed(4)} this cycle.`);
-
-    const topPlatforms = Object.entries(revenueReport.byPlatform)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 3);
-    if (topPlatforms.length > 0) {
-        insights.push(`Top performing platforms: ${topPlatforms.map(([platform, revenue]) => `${platform} ($${revenue.toFixed(2)})`).join(', ')}.`);
-        insights.push(`Consider allocating more resources to optimize performance on ${topPlatforms[0][0]}.`);
+    await quantumDelay(4000);
+    const insights = [
+        `Overall revenue generation is trending positively with a total of $${revenueReport.total.toFixed(2)} this cycle.`,
+    ];
+    const sortedPlatforms = Object.entries(revenueReport.platformBreakdown).sort(([, a], [, b]) => b - a);
+    if (sortedPlatforms.length > 0) {
+        insights.push(`Top performing platforms: ${sortedPlatforms.slice(0, 3).map(([platform, revenue]) => `${platform} ($${revenue.toFixed(2)})`).join(', ')}.`);
+        insights.push(`Consider allocating more resources to optimize performance on ${sortedPlatforms[0][0]}.`);
     } else {
-        insights.push('No significant revenue sources identified this cycle. Focus on new activations.');
+        insights.push('No revenue was generated this cycle. The system is operating in a scouting-only mode.');
     }
-
-    const highPotentialOpportunities = discoveredOpportunities.filter(op => op.potential === 'high' && op.isReachable);
-    if (highPotentialOpportunities.length > 0) {
-        insights.push(`High potential new opportunities identified: ${highPotentialOpportunities.map(op => op.name).join(', ')}. Prioritize their integration in the next cycle.`);
-    }
-
-    const lowCPU = os.loadavg()[0] < os.cpus().length * 0.5;
-    if (lowCPU) {
-        insights.push('System resources (CPU) appear underutilized. Consider scaling up concurrent operations or exploring more aggressive strategies.');
+    const cpuLoad = process.cpuUsage().user / 1000000;
+    if (cpuLoad > 500) {
+        insights.push('System CPU utilization is high. Consider optimizing agent logic or scaling resources.');
     } else {
         insights.push('System CPU utilization is balanced. Continue monitoring for optimal load.');
     }
-
-    if (revenueReport.total < 10) { // Example threshold
-        insights.push('Current revenue is low. Re-evaluate current campaign strategies and explore new target markets or technologies.');
-    }
-
     currentLogger.success('Insights generated.');
     return insights;
 }
