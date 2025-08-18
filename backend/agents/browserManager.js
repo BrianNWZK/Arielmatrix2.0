@@ -21,9 +21,10 @@ class BrowserManager {
         totalAcquired: 0,
         totalReleased: 0,
         activeContexts: 0,
-        queueSize: 0,
+        queueSize: 0, // Placeholder for future queueing logic
         launchTime: null,
-        lastOperationTime: null
+        lastOperationTime: null,
+        lastPageUsage: {} // Stores per-page usage stats for getLastUsageStats
     };
 
     // --- Autonomy Levels ---
@@ -48,6 +49,7 @@ class BrowserManager {
 
         if (!this.browserInstance || !this.browserInstance.isConnected()) {
             try {
+                this._logger.info('Launching new browser instance...');
                 this.browserInstance = await puppeteer.launch({
                     headless: true, // Run in headless mode (no UI)
                     args: [
@@ -56,79 +58,89 @@ class BrowserManager {
                         '--disable-dev-shm-usage', // Overcomes limited /dev/shm size in some environments
                         '--disable-accelerated-2d-canvas', // Disables hardware acceleration for 2D canvas
                         '--no-zygote', // Disables zygote process (relevant for Linux)
-                        '--disable-gpu' // Disables GPU hardware acceleration
+                        '--disable-gpu', // Disables GPU hardware acceleration
+                        // Add more args for improved performance/stability on Render if needed
+                        // '--single-process' // Might help with memory on small instances
                     ],
                     ignoreDefaultArgs: ['--enable-automation'], // Helps prevent detection as an automated browser
                     timeout: 0, // Set timeout to 0 for infinite wait on launch, preventing deployment timeouts
                     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, // Use path from env var if available
                 });
-                this._logger.info('Browser instance initialized');
+                this.usageStats.launchTime = Date.now();
+                this._logger.success('Browser instance initialized successfully.');
             } catch (error) {
-                this._logger.error('Failed to launch browser:', error);
-                throw error;
+                // Defensive logging: ensure _logger exists before using it
+                if (this._logger && typeof this._logger.error === 'function') {
+                    this._logger.error('Failed to launch browser:', error.message, error.stack);
+                } else {
+                    console.error('CRITICAL ERROR: Failed to launch browser and logger is unavailable or misconfigured.', error);
+                }
+                throw error; // Re-throw to propagate the initialization failure
             }
         }
     }
 
     /**
-     * @method getNewPage
-     * @description Retrieves a new browser page. It prioritizes reusing a page from the pool
-     * to reduce overhead, otherwise creates a new one. It also applies anti-detection
-     * measures to the new page.
-     * @returns {Promise<puppeteer.Page>} A new or reused Puppeteer page.
-     * @throws {Error} If the browser instance is not initialized.
+     * @method acquireContext
+     * @description Acquires a new Puppeteer Page from the pool or creates a new one.
+     * This is the method agents should call to get a browser page.
+     * @returns {Promise<puppeteer.Page>} An active Puppeteer Page.
      */
-    static async getNewPage() {
-        if (!this.browserInstance) {
-            throw new Error('Browser not initialized. Call init() first.');
+    static async acquireContext() {
+        if (!this.browserInstance || !this.browserInstance.isConnected()) {
+            this._logger.warn('Browser instance disconnected or not initialized. Attempting re-initialization...');
+            await this.init(this._config, this._logger); // Re-initialize if disconnected
+            if (!this.browserInstance || !this.browserInstance.isConnected()) {
+                throw new Error('Failed to acquire browser context: Browser could not be initialized or reconnected.');
+            }
         }
 
         let page;
-        // Try to reuse from pool first
         if (this.pagePool.length > 0) {
             page = this.pagePool.pop();
-            await page.goto('about:blank').catch(e => this._logger.warn(`Failed to reset pooled page: ${e.message}`)); // Clean previous state
-            this._logger.debug('Reused page from pool');
+            this._logger.debug('Reused page from pool.');
         } else {
             page = await this.browserInstance.newPage();
+            this._logger.debug('Created new page.');
         }
 
-        // Apply anti-detection configuration to the page
-        await page.setViewport({
-            width: 1280,
-            height: 800
-        });
+        // Apply anti-detection configuration
+        await page.setViewport({ width: 1280, height: 800 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-        // Inject stealth scripts
         await this._injectStealth(page);
 
         this.activePages.add(page);
         this.usageStats.activeContexts = this.activePages.size;
         this.usageStats.totalAcquired++;
         this.usageStats.lastOperationTime = Date.now();
+        this.usageStats.lastPageUsage = { timestamp: Date.now(), pageId: page.url() }; // Store last used page info
         return page;
     }
 
     /**
-     * @method closePage
-     * @description Closes a given page or returns it to the page pool if the pool is not full.
-     * @param {puppeteer.Page} page - The Puppeteer page to close or return to the pool.
+     * @method releaseContext
+     * @description Releases a Puppeteer Page back to the pool or closes it if the pool is full.
+     * Agents should call this after finishing their browser operations.
+     * @param {puppeteer.Page} page - The Puppeteer Page to release.
      * @returns {Promise<void>}
      */
-    static async closePage(page) {
-        if (!page || page.isClosed()) return;
+    static async releaseContext(page) {
+        if (!page || page.isClosed()) {
+            this._logger.debug('Attempted to release an invalid or already closed page.');
+            return;
+        }
 
         try {
             if (this.pagePool.length < this.MAX_POOL_SIZE) {
-                await page.goto('about:blank').catch(e => null); // Clean page before pooling
+                await page.goto('about:blank').catch(e => this._logger.warn(`Failed to reset page before pooling: ${e.message}`)); // Clean state
                 this.pagePool.push(page);
-                this._logger.debug('Page returned to pool');
+                this._logger.debug('Page released to pool.');
             } else {
                 await page.close();
+                this._logger.debug('Page closed (pool full).');
             }
         } catch (error) {
-            this._logger.warn(`Page close/pool failed: ${error.message}`);
+            this._logger.warn(`Error releasing page: ${error.message}`);
         } finally {
             this.activePages.delete(page);
             this.usageStats.activeContexts = this.activePages.size;
@@ -152,12 +164,9 @@ class BrowserManager {
 
         for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
             try {
-                await page.waitForSelector(selector, {
-                    timeout
-                });
-                await page.click(selector, {
-                    delay
-                });
+                await page.waitForSelector(selector, { timeout });
+                await page.click(selector, { delay });
+                this._logger.debug(`Clicked selector: ${selector}`);
                 return true;
             } catch (error) {
                 this._logger.debug(`Click attempt failed for selector "${selector}": ${error.message}`);
@@ -184,12 +193,9 @@ class BrowserManager {
 
         for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
             try {
-                await page.waitForSelector(selector, {
-                    timeout
-                });
-                await page.type(selector, text, {
-                    delay
-                });
+                await page.waitForSelector(selector, { timeout });
+                await page.type(selector, text, { delay });
+                this._logger.debug(`Typed into selector: ${selector}`);
                 return true;
             } catch (error) {
                 this._logger.debug(`Type attempt failed for selector "${selector}": ${error.message}`);
@@ -221,13 +227,15 @@ class BrowserManager {
             // Close the main browser instance
             await this.browserInstance.close();
             this.browserInstance = null;
+            this.usageStats.launchTime = null; // Reset launch time on shutdown
             this._logger.info('Browser manager shutdown complete.');
         }
     }
 
     /**
      * @method getStats
-     * @description Retrieves current usage statistics for the browser manager.
+     * @description Retrieves current global usage statistics for the browser manager.
+     * This is the method `server.js` calls for dashboard updates.
      * @returns {object} Browser usage statistics.
      */
     static getStats() {
@@ -236,9 +244,37 @@ class BrowserManager {
             totalReleased: this.usageStats.totalReleased,
             activeContexts: this.activePages.size, // Current number of pages in use
             poolSize: this.pagePool.length, // Current number of pages in the pool
-            launchTime: this.usageStats.launchTime,
-            lastOperationTime: this.usageStats.lastOperationTime
+            maxPoolSize: this.MAX_POOL_SIZE,
+            launchTime: this.usageStats.launchTime ? new Date(this.usageStats.launchTime).toISOString() : 'N/A',
+            lastOperationTime: this.usageStats.lastOperationTime ? new Date(this.usageStats.lastOperationTime).toISOString() : 'N/A',
+            status: this.browserInstance && this.browserInstance.isConnected() ? 'connected' : 'disconnected',
+            pagesInUse: Array.from(this.activePages).map(p => p.url()) // List URLs of active pages
         };
+    }
+
+    /**
+     * @method getStatus
+     * @description Provides a simplified status object suitable for agent reporting.
+     * This directly addresses the `TypeError: BrowserManager.getStatus is not a function` error.
+     * @returns {object} Simplified browser manager status.
+     */
+    static getStatus() {
+        return {
+            agent: 'browserManager',
+            lastExecution: this.usageStats.lastOperationTime ? new Date(this.usageStats.lastOperationTime).toISOString() : 'Never',
+            lastStatus: this.browserInstance && this.browserInstance.isConnected() ? 'operational' : 'disconnected',
+            activePages: this.activePages.size,
+            pooledPages: this.pagePool.length
+        };
+    }
+
+    /**
+     * @method getLastUsageStats
+     * @description Returns statistics about the last page acquired, useful for agent-specific reporting.
+     * @returns {object} Last page usage statistics.
+     */
+    static getLastUsageStats() {
+        return { ...this.usageStats.lastPageUsage };
     }
 
     // === Internal Methods (static, prefixed with underscore) ===
