@@ -5,6 +5,7 @@ import * as os from 'os';
 import { exec } from 'child_process';
 import util from 'util';
 import fs from 'fs/promises';
+import path from 'path';
 
 const execPromise = util.promisify(exec);
 
@@ -13,7 +14,24 @@ let persistentIssues = {
     highCpu: 0
 };
 // Allow up to 3 consecutive high CPU readings before marking as degraded
-const CPU_TOLERANCE_COUNT = 3; 
+const CPU_TOLERANCE_COUNT = 3;
+
+// Novel Solution: A simple, reliable "Dumb" System check for dependency presence
+async function checkDependency(depName) {
+    try {
+        // Use `npm ls` to check the dependency tree without a process restart
+        const { stdout } = await execPromise(`npm ls ${depName} --json`);
+        const result = JSON.parse(stdout);
+        // The check should pass if the dependency is listed
+        if (result.dependencies && result.dependencies[depName]) {
+            return true;
+        }
+    } catch (e) {
+        // `npm ls` throws an error if the package is not found
+        return false;
+    }
+    return false;
+}
 
 /**
  * @function run
@@ -60,12 +78,11 @@ export async function run(config, logger) {
             logger.warn(`⚠️ High CPU load detected: ${cpuLoad.toFixed(2)} (1-min average). System might be stressed. Attempt ${persistentIssues.highCpu}/${CPU_TOLERANCE_COUNT}.`);
 
             if (persistentIssues.highCpu >= CPU_TOLERANCE_COUNT) {
-                // Only mark as NOT ready if high CPU persists beyond tolerance
-                currentHealthReport.cpuReady = false; 
+                currentHealthReport.cpuReady = false;
                 currentIssues.push(`Critical: High CPU load persisted for ${persistentIssues.highCpu} cycles. Aborting cycle.`);
                 logger.error(`🚨 High CPU load persisted: ${cpuLoad.toFixed(2)}. Aborting cycle.`);
             } else {
-                currentHealthReport.cpuReady = true; // Still considered ready, but with a warning
+                currentHealthReport.cpuReady = true;
             }
         }
 
@@ -122,10 +139,9 @@ export async function run(config, logger) {
         let dependenciesNeeded = [];
 
         for (const dep of criticalDependencies) {
-            try {
-                // Attempt to import to check if it's available in the current runtime context
-                require(dep); 
-            } catch {
+            // Using the new, robust check
+            const isInstalled = await checkDependency(dep);
+            if (!isInstalled) {
                 dependenciesNeeded.push(dep);
             }
         }
@@ -144,14 +160,13 @@ export async function run(config, logger) {
                 }
             }
             // After attempting to fix, we continue to the next loop iteration (re-run the check)
-            // This is key for the self-correction loop to re-evaluate the system state
             attempts++;
-            continue; 
+            continue;
         }
         currentHealthReport.dependenciesOk = true;
 
         // --- 5. Log Monitoring for Sensitive Data and Errors ---
-        const logFilePath = '/var/log/app.log'; // Adjust path if needed for Render's logging
+        const logFilePath = '/var/log/app.log';
         try {
             const logContent = await fs.readFile(logFilePath, 'utf8').catch(() => '');
             const recentLogLines = logContent.split('\n').slice(-100).join('\n');
@@ -172,21 +187,19 @@ export async function run(config, logger) {
             logger.warn(`⚠️ Failed to access logs at ${logFilePath}: ${error.message}`);
         }
 
-        // Final determination of overall status for this iteration
         const allChecksPass = currentHealthReport.cpuReady && currentHealthReport.memoryReady &&
                              currentHealthReport.networkActive && currentHealthReport.nodeVersionOk &&
                              currentHealthReport.dependenciesOk && currentHealthReport.logsClean;
 
-        if (allChecksPass && currentIssues.length === 0) { // All critical and non-critical checks must pass
+        if (allChecksPass && currentIssues.length === 0) {
             finalReport = {
                 status: 'optimal',
                 message: 'System health is optimal.',
                 details: currentHealthReport,
                 issues: currentIssues
             };
-            break; // Break the loop if everything is optimal
+            break;
         } else {
-            // If any check failed or there are unresolved issues, it's degraded
             finalReport = {
                 status: 'degraded',
                 message: 'System preconditions not met. See issues for details.',
