@@ -14,8 +14,6 @@ import * as shopifyAgent from './agents/shopifyAgent.js';
 import * as cryptoAgent from './agents/cryptoAgent.js';
 import * as externalPayoutAgentModule from './agents/payoutAgent.js';
 import BrowserManager from './agents/browserManager.js';
-// The problematic import has been removed:
-// import { shutdown as shutdownBrowser } from './agents/browserManager.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -469,8 +467,8 @@ function getAgentActivities() {
         recentActivities: agentActivityLog.slice(-50).reverse(),
         agentStatus: {
             apiScoutAgent: apiScoutAgent.getStatus?.(),
-            shopifyAgent: { lastExecution: 'N/A', lastStatus: 'N/A' },
-            cryptoAgent: { lastExecution: 'N/A', lastStatus: 'N/A' },
+            shopifyAgent: shopifyAgent.getStatus?.(), // Added optional chaining
+            cryptoAgent: cryptoAgent.getStatus?.(), // Added optional chaining
             payoutAgent: payoutAgentInstance.getStatus(),
             // Corrected call to the static method
             browserManager: BrowserManager.getStatus()
@@ -481,7 +479,7 @@ function getAgentActivities() {
 // --- Express Server Setup ---
 const app = express();
 const server = createServer(app);
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Changed default port to 10000 for Render
 
 // Create WebSocket server
 const wss = new WebSocketServer({ server });
