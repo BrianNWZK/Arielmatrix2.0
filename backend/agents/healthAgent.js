@@ -1,5 +1,7 @@
 // backend/agents/healthAgent.js
 
+import { CONFIG } from '../server.js'; // This is the new import statement
+
 import axios from 'axios';
 import * as os from 'os';
 import { exec } from 'child_process';
