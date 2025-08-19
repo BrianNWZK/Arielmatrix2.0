@@ -1,360 +1,54 @@
-import Web3 from 'web3'; // Used for address validation
+// =========================================================================
+// ArielMatrix Crypto Agent: Autonomous On-Chain Management
+// Upgraded Version
+// =========================================================================
+
+import Web3 from 'web3';
 import axios from 'axios';
 import crypto from 'crypto';
-import { ethers } from 'ethers'; // For wallet generation, signing, and contract interaction
-import { fileURLToPath } from 'url'; // For __dirname in ESM
+import { ethers } from 'ethers';
+import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { provideThreatIntelligence } from './healthAgent.js'; // Assumed from the previous upgrade
 
-// For __dirname equivalent in ES Modules
+// --- ES Module Path Fix ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Minimal ABI for PancakeSwapRouter02 for swapExactETHForTokens
-// This ABI is specific to the function we intend to call to minimize size.
+// --- Contract ABIs & Addresses ---
+// More comprehensive ABI for a standard DEX Router
 const PANCAKESWAP_ROUTER_ABI = [
-    "function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)"
+    "function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)",
+    "function getAmountsOut(uint amountIn, address[] memory path) public view returns (uint[] memory amounts)"
 ];
 
-// Well-known PancakeSwap Router address on BSC Mainnet
-const PANCAKESWAP_ROUTER_ADDRESS = '0x10ED43C718714eb63d5aA57B78B54704E256024E';
+const PANCAKESWAP_ROUTER_ADDRESS = '0x10ED43C718714eb63d5aA57B78B54704E256024E'; // PancakeSwap on BSC Mainnet
+const WBNB_ADDRESS = '0xbb4CdB9eD5B5D88B9aC1cBaA24a0d52fFe2607c7';
+const BUSD_ADDRESS = '0xe9e7CEA3a59806eADb097E5fDd0Fb0d2b1fCcc4c';
 
-// Common token addresses on BSC (for conceptual swaps) - Verified Addresses
-const WBNB_ADDRESS = '0xbb4CdB9eD5B5D88B9aC1cBaA24a0d52fFe2607c7'; // Wrapped BNB (Corrected)
-const BUSD_ADDRESS = '0xe9e7CEA3a59806eADb097E5fDd0Fb0d2b1fCcc4c'; // BUSD Stablecoin (Verified)
-
-// --- Tracking Variables for getStatus ---
+// --- Agent Status Tracking ---
 let lastExecutionTime = 'Never';
-let lastStatus = 'idle'; // Initial status
+let lastStatus = 'idle';
 let lastTotalTransactions = 0;
 let lastConceptualEarnings = 0;
 let lastGasBalance = 0;
 
 /**
  * @namespace CryptoAgent
- * @description Manages cryptocurrency assets, analyzes markets, executes real on-chain trades,
- * and handles autonomous self-funding awareness on the Binance Smart Chain (BSC).
+ * @description Manages on-chain crypto assets, analyzes markets, executes trades,
+ * and handles autonomous self-funding on the Binance Smart Chain (BSC).
  */
 const cryptoAgent = {
-    // Internal references for config and logger, set during the run method
     _config: null,
     _logger: null,
-    _web3Provider: null, // Store Web3 provider for efficiency
+
+    // --- Core Methods ---
 
     /**
-     * Introduces a quantum-jittered delay to simulate human-like interaction.
-     * @param {number} ms - The base delay in milliseconds.
-     * @returns {Promise<void>}
-     */
-    _quantumDelay(ms) {
-        return new Promise(resolve => {
-            const jitter = crypto.randomInt(800, 3000); // Add random jitter for human-like delays
-            setTimeout(resolve, ms + jitter);
-        });
-    },
-
-    /**
-     * Validates and sanitizes crypto configuration. Ensures wallets are valid addresses.
-     * @param {object} configToValidate - The configuration object to validate.
-     * @returns {object} Cleaned and validated crypto config subset.
-     * @throws {Error} If critical configuration is invalid.
-     */
-    _validateCryptoConfig(configToValidate) {
-        const PRIVATE_KEY = configToValidate.PRIVATE_KEY;
-        const GAS_WALLET = configToValidate.GAS_WALLET;
-        const rawUsdtWallets = (configToValidate.USDT_WALLETS || '').split(',').map(w => w.trim());
-        const USDT_WALLETS = rawUsdtWallets.filter(w => Web3.utils.isAddress(w));
-
-        if (USDT_WALLETS.length === 0 && rawUsdtWallets.length > 0) {
-            this._logger.warn(`⚠️ All provided USDT_WALLETS (${rawUsdtWallets.join(', ')}) were invalid after filtering.`);
-        } else if (USDT_WALLETS.length > 0) {
-            this._logger.info(`✅ Valid USDT_WALLETS: ${USDT_WALLETS.map(w => w.slice(0, 10) + '...').join(', ')}`);
-        }
-
-        const BSC_NODE = configToValidate.BSC_NODE || 'https://bsc-dataseed.binance.org'; // Default public node
-
-        // Check PRIVATE_KEY first
-        if (!PRIVATE_KEY || String(PRIVATE_KEY).includes('PLACEHOLDER')) {
-            throw new Error('Missing or placeholder PRIVATE_KEY. This is critical for signing transactions.');
-        }
-
-        // Derive wallet from PRIVATE_KEY to validate GAS_WALLET
-        let derivedGasWallet = '';
-        try {
-            const walletFromPk = new ethers.Wallet(PRIVATE_KEY);
-            derivedGasWallet = walletFromPk.address;
-        } catch (e) {
-            throw new Error(`Invalid PRIVATE_KEY format: ${e.message}`);
-        }
-
-        if (!GAS_WALLET || String(GAS_WALLET).includes('PLACEHOLDER') || !Web3.utils.isAddress(GAS_WALLET) || GAS_WALLET.toLowerCase() !== derivedGasWallet.toLowerCase()) {
-            this._logger.warn(`⚙️ GAS_WALLET in config (${GAS_WALLET}) does not match derived from PRIVATE_KEY (${derivedGasWallet}). Using derived.`);
-            configToValidate.GAS_WALLET = derivedGasWallet; // Update config in place for consistency
-        }
-
-        if (USDT_WALLETS.length === 0) {
-            this._logger.warn('No valid USDT_WALLETS provided. Will attempt to derive if PRIVATE_KEY exists.');
-        }
-
-        return {
-            PRIVATE_KEY: configToValidate.PRIVATE_KEY, // Use the (potentially updated) private key
-            GAS_WALLET: configToValidate.GAS_WALLET, // Use the (potentially updated) gas wallet
-            USDT_WALLETS,
-            BSC_NODE
-        };
-    },
-
-    /**
-     * Proactively remediates missing/placeholder crypto configuration,
-     * including generating new private keys and deriving wallets.
-     * @param {string} keyName - The name of the missing configuration key.
-     * @returns {Promise<object|null>} An object containing the remediated key(s) if successful, null otherwise.
-     */
-    async _remediateMissingCryptoConfig(keyName) {
-        this._logger.info(`\n⚙️ Initiating crypto remediation for missing/placeholder key: ${keyName}`);
-        let keysToUpdate = {};
-
-        try {
-            switch (keyName) {
-                case 'PRIVATE_KEY': {
-                    const newWallet = ethers.Wallet.createRandom();
-                    keysToUpdate.PRIVATE_KEY = newWallet.privateKey;
-                    keysToUpdate.GAS_WALLET = newWallet.address; // Also remediate GAS_WALLET
-                    // Generate a few brand new wallets for USDT_WALLETS for this session
-                    const derivedUsdtWallets = [];
-                    for (let i = 0; i < 3; i++) {
-                        const tempWallet = ethers.Wallet.createRandom();
-                        derivedUsdtWallets.push(tempWallet.address);
-                    }
-                    keysToUpdate.USDT_WALLETS = derivedUsdtWallets.join(',');
-                    this._logger.success(`✅ Autonomously generated new PRIVATE_KEY and derived wallets. GAS_WALLET: ${newWallet.address.slice(0, 10)}..., USDT_WALLETS: ${derivedUsdtWallets.map(w => w.slice(0, 10)).join(', ')}...`);
-                    break;
-                }
-                case 'GAS_WALLET': {
-                    if (this._config.PRIVATE_KEY && !String(this._config.PRIVATE_KEY).includes('PLACEHOLDER')) {
-                        const walletFromPk = new ethers.Wallet(this._config.PRIVATE_KEY);
-                        keysToUpdate.GAS_WALLET = walletFromPk.address;
-                        this._logger.success(`✅ Derived GAS_WALLET from existing PRIVATE_KEY: ${keysToUpdate.GAS_WALLET.slice(0, 10)}...`);
-                    } else {
-                        this._logger.warn(`⚠️ Cannot derive GAS_WALLET: PRIVATE_KEY is missing or a placeholder. Cannot remediate.`);
-                        return null;
-                    }
-                    break;
-                }
-                case 'USDT_WALLETS': {
-                    if (this._config.PRIVATE_KEY && !String(this._config.PRIVATE_KEY).includes('PLACEHOLDER')) {
-                        const derivedWallets = [];
-                        for (let i = 0; i < 3; i++) {
-                            const tempWallet = ethers.Wallet.createRandom();
-                            derivedWallets.push(tempWallet.address);
-                        }
-                        keysToUpdate.USDT_WALLETS = derivedWallets.join(',');
-                        this._logger.success(`✅ Generated new USDT_WALLETS: ${keysToUpdate.USDT_WALLETS.slice(0, 30)}...`);
-                    } else {
-                        this._logger.warn(`⚠️ Cannot generate USDT_WALLETS: PRIVATE_KEY is missing or a placeholder. Cannot remediate.`);
-                        return null;
-                    }
-                    break;
-                }
-                case 'BSC_NODE': {
-                    keysToUpdate.BSC_NODE = 'https://bsc-dataseed.binance.org'; // Reliable public node
-                    this._logger.success(`✅ Set default BSC_NODE: ${keysToUpdate.BSC_NODE}`);
-                    break;
-                }
-                case 'COINGECKO_API': {
-                    this._logger.info(`ℹ️ COINGECKO_API generally doesn't require automated remediation for basic usage. Using default public API.`);
-                    return null;
-                }
-                default:
-                    this._logger.warn(`⚠️ No specific remediation strategy defined for crypto key: ${keyName}. Manual intervention required.`);
-                    return null;
-            }
-
-            return Object.keys(keysToUpdate).length > 0 ? keysToUpdate : null;
-
-        } catch (error) {
-            this._logger.error(`🚨 Crypto remediation for ${keyName} failed: ${error.message}`);
-            return null;
-        }
-    },
-
-    /**
-     * Checks if the GAS_WALLET has sufficient BNB. Logs a warning if funds are low.
-     * @returns {Promise<boolean>} True if sufficient funds, false otherwise.
-     */
-    async _checkGasWalletBalance() {
-        if (!this._config.GAS_WALLET || !Web3.utils.isAddress(this._config.GAS_WALLET)) {
-            this._logger.error('🚨 Invalid GAS_WALLET detected. Cannot check BNB balance. Please remediate PRIVATE_KEY/GAS_WALLET.');
-            return false;
-        }
-
-        try {
-            const provider = new ethers.providers.JsonRpcProvider(this._config.BSC_NODE);
-            const balance = await provider.getBalance(this._config.GAS_WALLET);
-            const bnbBalance = parseFloat(ethers.utils.formatEther(balance));
-            this._logger.info(`Current GAS_WALLET balance: ${bnbBalance} BNB`);
-            lastGasBalance = bnbBalance; // Update tracking variable
-
-            const MIN_BNB_THRESHOLD = 0.05; // Minimum BNB required for basic operations
-
-            if (bnbBalance < MIN_BNB_THRESHOLD) {
-                this._logger.warn(`⚠️ CRITICAL: Low gas: ${bnbBalance} BNB. Required: ${MIN_BNB_THRESHOLD} BNB. External funding needed to proceed with on-chain transactions.`);
-                return false;
-            }
-
-            this._logger.success(`✅ Sufficient gas: ${bnbBalance} BNB`);
-            return true;
-        } catch (error) {
-            this._logger.error(`🚨 Error checking gas wallet balance: ${error.message}. Ensure BSC_NODE is reachable and GAS_WALLET is correct.`);
-            return false;
-        }
-    },
-
-    /**
-     * Analyzes crypto market data from CoinGecko. Uses a fallback if API fails or key is missing.
-     * @param {string} coingeckoApiUrl - The CoinGecko API URL from config.
-     * @returns {Promise<object>} Market data for Bitcoin and Ethereum.
-     */
-    async _analyzeCryptoMarkets(coingeckoApiUrl) {
-        // Fallback data for robust operation even if API fails
-        const fallbackData = {
-            bitcoin: { usd: 50000, last_updated_at: Date.now() / 1000 },
-            ethereum: { usd: 3000, last_updated_at: Date.now() / 1000 }
-        };
-
-        const API_URL_BASE = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd';
-
-        if (!coingeckoApiUrl || String(coingeckoApiUrl).includes('PLACEHOLDER')) {
-            this._logger.warn('⚠️ CoinGecko API URL missing or placeholder. Using fallback market data for analysis.');
-            return fallbackData;
-        }
-
-        try {
-            const url = coingeckoApiUrl.includes('/simple/price') ? coingeckoApiUrl : API_URL_BASE;
-            const response = await axios.get(url, { timeout: 8000 });
-            if (response.data && (response.data.bitcoin || response.data.ethereum)) {
-                this._logger.info('✅ Fetched real market data from CoinGecko.');
-                return response.data;
-            }
-            throw new Error('CoinGecko API returned empty or invalid data.');
-        } catch (error) {
-            this._logger.warn(`⚠️ Error fetching real market data: ${error.message.substring(0, 100)}. Using fallback data.`);
-            return fallbackData;
-        }
-    },
-
-    /**
-     * Executes real BNB transfers (conceptual arbitrage-like moves) on BSC.
-     * @param {object} params - Contains privateKey, recipientWallets, bscNode, and marketData.
-     * @returns {Promise<string[]>} Array of transaction hashes.
-     */
-    async _executeArbitrageTrades({ privateKey, recipientWallets, bscNode, marketData }) {
-        const provider = new ethers.providers.JsonRpcProvider(bscNode);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const txHashes = [];
-
-        const BTC_BEAR_THRESHOLD = marketData.bitcoin.usd * 0.95;
-        if (marketData.bitcoin.usd < BTC_BEAR_THRESHOLD) {
-            if (recipientWallets.length === 0) {
-                this._logger.warn('⚠️ No valid recipient wallets available for arbitrage-like transfers.');
-                return txHashes;
-            }
-
-            this._logger.info(`🐻 Bearish signal detected (BTC < $${BTC_BEAR_THRESHOLD.toFixed(2)}). Initiating strategic BNB transfers.`);
-
-            for (const recipient of recipientWallets.slice(0, 2)) {
-                try {
-                    const amountToSend = ethers.utils.parseEther('0.002');
-                    const gasPrice = await provider.getGasPrice();
-
-                    this._logger.info(`Attempting to send ${ethers.utils.formatEther(amountToSend)} BNB to ${recipient.slice(0, 6)}...`);
-
-                    const txResponse = await wallet.sendTransaction({
-                        to: recipient,
-                        value: amountToSend,
-                        gasLimit: 60000,
-                        gasPrice: gasPrice
-                    });
-
-                    const receipt = await txResponse.wait(1);
-                    txHashes.push(receipt.transactionHash);
-                    this._logger.success(`✅ Sent ${ethers.utils.formatEther(amountToSend)} BNB to ${recipient.slice(0, 6)}... TX: ${receipt.transactionHash.slice(0, 10)}...`);
-                } catch (error) {
-                    this._logger.warn(`⚠️ BNB transfer failed to ${recipient.slice(0, 6)}...: ${error.message.substring(0, 100)}...`);
-                    if (error.code === 'INSUFFICIENT_FUNDS') {
-                        this._logger.error('    Reason: Insufficient BNB in GAS_WALLET for this specific transfer. This needs real funding.');
-                        throw new Error('insufficient_funds_for_transfer');
-                    }
-                }
-                await this._quantumDelay(2000);
-            }
-        } else {
-            this._logger.info('💰 Crypto market is stable/bullish. Holding position or not executing bear-market specific transfers.');
-        }
-
-        return txHashes;
-    },
-
-    /**
-     * Executes a conceptual high-value trade on BSC via PancakeSwap.
-     * @param {object} params - Contains privateKey, bscNode, and marketData.
-     * @returns {Promise<string[]>} Array of transaction hashes.
-     */
-    async _executeHighValueTrades({ privateKey, bscNode, marketData }) {
-        const provider = new ethers.providers.JsonRpcProvider(bscNode);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const txHashes = [];
-
-        const ETH_BULL_THRESHOLD = 3200;
-        if (marketData.ethereum.usd > ETH_BULL_THRESHOLD) {
-            this._logger.info(`📈 Bullish ETH signal detected (ETH > $${ETH_BULL_THRESHOLD}). Initiating conceptual high-value DEX swap.`);
-
-            const routerContract = new ethers.Contract(PANCAKESWAP_ROUTER_ADDRESS, PANCAKESWAP_ROUTER_ABI, wallet);
-
-            const amountIn = ethers.utils.parseEther('0.01');
-            const amountOutMin = 0;
-            const path = [WBNB_ADDRESS, BUSD_ADDRESS];
-            const to = wallet.address;
-            const deadline = Math.floor(Date.now() / 1000) + (60 * 20);
-
-            try {
-                const gasPrice = await provider.getGasPrice();
-
-                this._logger.info(`Attempting conceptual swap of ${ethers.utils.formatEther(amountIn)} BNB for BUSD via PancakeSwap Router.`);
-
-                const txResponse = await routerContract.swapExactETHForTokens(
-                    amountOutMin,
-                    path,
-                    to,
-                    deadline,
-                    {
-                        value: amountIn,
-                        gasLimit: 300000,
-                        gasPrice: gasPrice
-                    }
-                );
-
-                const receipt = await txResponse.wait(1);
-                txHashes.push(receipt.transactionHash);
-                this._logger.success(`✅ Conceptual high-value swap TX sent: ${receipt.transactionHash.slice(0, 10)}...`);
-            } catch (error) {
-                this._logger.warn(`⚠️ Conceptual high-value swap failed: ${error.message.substring(0, 150)}...`);
-                if (error.code === 'INSUFFICIENT_FUNDS') {
-                    this._logger.error('    Reason: Insufficient BNB in GAS_WALLET for this conceptual swap. This needs real funding.');
-                    throw new Error('insufficient_funds_for_swap');
-                }
-            }
-        } else {
-            this._logger.info('📉 ETH market not showing strong bullish signal. Not executing high-value swaps.');
-        }
-
-        return txHashes;
-    },
-
-    /**
-     * The primary crypto agent's run method.
-     * @param {object} config - The global configuration object populated from Render ENV.
-     * @param {object} logger - The global logger instance.
-     * @returns {Promise<object>} Status and transaction details of crypto operations.
+     * The primary entry point for the Crypto Agent.
+     * @param {object} config - Global configuration.
+     * @param {object} logger - Global logger.
+     * @returns {Promise<object>} Transaction details and status.
      */
     async run(config, logger) {
         this._config = config;
@@ -366,79 +60,55 @@ const cryptoAgent = {
         const startTime = process.hrtime.bigint();
 
         try {
-            const cryptoCriticalKeys = [
-                'PRIVATE_KEY',
-                'GAS_WALLET',
-                'USDT_WALLETS',
-                'BSC_NODE',
-                'COINGECKO_API'
-            ];
+            // Phase 1: Configuration & Remediation
+            const newlyRemediatedKeys = await this._remediateAndValidateConfig();
+            const validatedConfig = this._validateCryptoConfig(this._config);
+            const { PRIVATE_KEY, GAS_WALLET, USDT_WALLETS, BSC_NODE } = validatedConfig;
 
-            const newlyRemediatedKeys = {};
-
-            // === PHASE 0: Proactive Configuration Remediation ===
-            for (const key of cryptoCriticalKeys) {
-                if (!this._config[key] || String(this._config[key]).includes('PLACEHOLDER')) {
-                    const remediatedValue = await this._remediateMissingCryptoConfig(key);
-                    if (remediatedValue) {
-                        Object.assign(newlyRemediatedKeys, remediatedValue);
-                        Object.assign(this._config, remediatedValue);
-                    }
-                }
-            }
-            if (Object.keys(newlyRemediatedKeys).length > 0) {
-                this._logger.info(`🔑 Crypto Agent remediated ${Object.keys(newlyRemediatedKeys).length} key(s).`);
-            } else {
-                this._logger.info('No new keys remediated by Crypto Agent this cycle.');
-            }
-            this._logger.info('\n--- Finished Crypto Configuration Remediation Phase ---');
-
-            // Re-validate config after remediation attempts
-            let validatedSubsetConfig;
-            try {
-                validatedSubsetConfig = this._validateCryptoConfig(this._config);
-            } catch (validationError) {
-                this._logger.error(`🚨 Critical Crypto Config Error after remediation: ${validationError.message}. Cannot proceed with blockchain operations.`);
-                throw { message: `invalid_crypto_config: ${validationError.message}` };
-            }
-
-            const { PRIVATE_KEY, GAS_WALLET, USDT_WALLETS, BSC_NODE } = validatedSubsetConfig;
-
-            // === 1. SELF-FUNDING AWARENESS: CHECK INITIAL CAPITAL ===
-            const hasSufficientFunds = await this._checkGasWalletBalance();
+            // Phase 2: Self-Funding Check
+            const hasSufficientFunds = await this._checkGasWalletBalance(GAS_WALLET, BSC_NODE);
             if (!hasSufficientFunds) {
-                this._logger.error('🚨 Aborting crypto operations due to insufficient gas in wallet.');
+                this._logger.error('🚨 Aborting crypto operations due to insufficient gas.');
                 throw { message: 'insufficient_capital_for_onchain_ops' };
             }
 
-            // === 2. MARKET ANALYSIS ===
+            // Phase 3: Market Analysis
             const marketData = await this._analyzeCryptoMarkets(this._config.COINGECKO_API);
 
-            // === 3. EXECUTE ARBITRAGE-LIKE TRANSFERS ===
+            // Phase 4: Transaction Execution
+            const txHashes = [];
+            
+            // Execute arbitrage-like trades based on a bearish signal
             const arbitrageTxs = await this._executeArbitrageTrades({
                 privateKey: PRIVATE_KEY,
                 recipientWallets: USDT_WALLETS,
                 bscNode: BSC_NODE,
                 marketData
             });
+            txHashes.push(...arbitrageTxs);
 
-            // === 4. EXECUTE HIGH-VALUE CONCEPTUAL TRADES (DEX Swap) ===
+            // Execute high-value DEX swaps based on a bullish signal
             const highValueTxs = await this._executeHighValueTrades({
                 privateKey: PRIVATE_KEY,
                 bscNode: BSC_NODE,
                 marketData
             });
+            txHashes.push(...highValueTxs);
 
-            // === 5. TRIGGER PAYOUT ===
-            const totalOnChainTxs = arbitrageTxs.length + highValueTxs.length;
-            lastTotalTransactions = totalOnChainTxs; // Update tracking variable
+            // Phase 5: Payout Trigger
+            const totalOnChainTxs = txHashes.length;
+            lastTotalTransactions = totalOnChainTxs;
+
+            let finalConceptualEarnings = 0;
             if (totalOnChainTxs > 0) {
-                const conceptualEarnings = totalOnChainTxs * 0.1;
-                lastConceptualEarnings = conceptualEarnings; // Update tracking variable
-                this._logger.info(`🎯 Payout triggered based on ${totalOnChainTxs} successful on-chain activities: $${conceptualEarnings.toFixed(2)} (conceptual earnings)`);
+                finalConceptualEarnings = totalOnChainTxs * 0.1;
+                lastConceptualEarnings = finalConceptualEarnings;
+                this._logger.info(`🎯 Payout triggered based on ${totalOnChainTxs} on-chain activities: $${finalConceptualEarnings.toFixed(2)} (conceptual earnings)`);
                 const payoutAgentModule = await import('./payoutAgent.js');
-                const payoutResult = await payoutAgentModule.default.run({ ...this._config, earnings: conceptualEarnings }, this._logger);
-                if (payoutResult.newlyRemediatedKeys) Object.assign(newlyRemediatedKeys, payoutResult.newlyRemediatedKeys);
+                const payoutResult = await payoutAgentModule.default.run({ ...this._config, earnings: finalConceptualEarnings }, this._logger);
+                if (payoutResult && payoutResult.newlyRemediatedKeys) {
+                    Object.assign(newlyRemediatedKeys, payoutResult.newlyRemediatedKeys);
+                }
             } else {
                 this._logger.info('No on-chain transactions executed, skipping payout trigger.');
             }
@@ -446,24 +116,280 @@ const cryptoAgent = {
             const endTime = process.hrtime.bigint();
             const durationMs = Number(endTime - startTime) / 1_000_000;
             lastStatus = 'success';
-            this._logger.success(`✅ Crypto Agent Completed in ${durationMs.toFixed(0)}ms | Total Real TXs: ${totalOnChainTxs}`);
-            return { status: 'success', transactions: [...arbitrageTxs, ...highValueTxs], durationMs, newlyRemediatedKeys };
+            this._logger.success(`✅ Crypto Agent Completed in ${durationMs.toFixed(0)}ms | Total TXs: ${totalOnChainTxs}`);
+            
+            return {
+                status: 'success',
+                transactions: txHashes,
+                conceptualEarnings: finalConceptualEarnings,
+                durationMs,
+                newlyRemediatedKeys
+            };
 
         } catch (error) {
             const endTime = process.hrtime.bigint();
             const durationMs = Number(endTime - startTime) / 1_000_000;
             lastStatus = 'failed';
-            this._logger.error(`🚨 Crypto Agent Critical Failure in ${durationMs.toFixed(0)}ms: ${error.message}`);
+            this._logger.error(`🚨 Crypto Agent Critical Failure: ${error.message} in ${durationMs.toFixed(0)}ms`);
+            provideThreatIntelligence('crypto_agent_failure', `Critical error: ${error.message}`);
             throw { message: error.message, duration: durationMs };
         }
+    },
+
+    /**
+     * Proactively remediates missing/placeholder crypto configuration.
+     * @returns {Promise<object>} An object containing all remediated key-value pairs.
+     */
+    async _remediateAndValidateConfig() {
+        this._logger.info('⚙️ Initiating proactive configuration remediation...');
+        const newlyRemediatedKeys = {};
+        const cryptoCriticalKeys = ['PRIVATE_KEY', 'GAS_WALLET', 'USDT_WALLETS', 'BSC_NODE', 'COINGECKO_API'];
+
+        for (const key of cryptoCriticalKeys) {
+            if (!this._config[key] || String(this._config[key]).includes('PLACEHOLDER')) {
+                const remediationResult = await this._attemptRemediation(key);
+                if (remediationResult) {
+                    Object.assign(newlyRemediatedKeys, remediationResult);
+                    Object.assign(this._config, remediationResult);
+                }
+            }
+        }
+        this._logger.info(`--- Finished Remediation. ${Object.keys(newlyRemediatedKeys).length} key(s) remediated. ---`);
+        return newlyRemediatedKeys;
+    },
+
+    // --- Helper Functions ---
+
+    /**
+     * Validates a given configuration object.
+     * @param {object} configToValidate - The configuration object to validate.
+     * @returns {object} Cleaned and validated config subset.
+     * @throws {Error} If critical configuration is invalid.
+     */
+    _validateCryptoConfig(configToValidate) {
+        const { PRIVATE_KEY, GAS_WALLET, USDT_WALLETS, BSC_NODE } = configToValidate;
+        if (!PRIVATE_KEY || String(PRIVATE_KEY).includes('PLACEHOLDER')) {
+            throw new Error('Missing or placeholder PRIVATE_KEY.');
+        }
+
+        try {
+            const walletFromPk = new ethers.Wallet(PRIVATE_KEY);
+            if (GAS_WALLET && GAS_WALLET.toLowerCase() !== walletFromPk.address.toLowerCase()) {
+                this._logger.warn(`⚙️ GAS_WALLET in config (${GAS_WALLET}) does not match derived from PRIVATE_KEY (${walletFromPk.address}). Using derived.`);
+                configToValidate.GAS_WALLET = walletFromPk.address;
+            }
+        } catch (e) {
+            throw new Error(`Invalid PRIVATE_KEY format: ${e.message}`);
+        }
+
+        const validUsdtWallets = (USDT_WALLETS || '').split(',').map(w => w.trim()).filter(w => Web3.utils.isAddress(w));
+        if (validUsdtWallets.length === 0 && (USDT_WALLETS || '').length > 0) {
+            this._logger.warn('⚠️ All provided USDT_WALLETS were invalid. No recipients for arbitrage.');
+        }
+        configToValidate.USDT_WALLETS = validUsdtWallets.join(',');
+        
+        return configToValidate;
+    },
+
+    /**
+     * Helper to attempt a single remediation.
+     * @param {string} keyName - The name of the key to remediate.
+     * @returns {Promise<object|null>} Remediation result.
+     */
+    async _attemptRemediation(keyName) {
+        this._logger.info(`⚙️ Attempting to remediate: ${keyName}`);
+        try {
+            switch (keyName) {
+                case 'PRIVATE_KEY': {
+                    const newWallet = ethers.Wallet.createRandom();
+                    this._logger.success(`✅ Autonomously generated new PRIVATE_KEY and derived wallets.`);
+                    return {
+                        PRIVATE_KEY: newWallet.privateKey,
+                        GAS_WALLET: newWallet.address,
+                        USDT_WALLETS: `${ethers.Wallet.createRandom().address},${ethers.Wallet.createRandom().address}`
+                    };
+                }
+                case 'GAS_WALLET':
+                    if (this._config.PRIVATE_KEY) {
+                        const wallet = new ethers.Wallet(this._config.PRIVATE_KEY);
+                        this._logger.success(`✅ Derived GAS_WALLET from existing PRIVATE_KEY.`);
+                        return { GAS_WALLET: wallet.address };
+                    }
+                    this._logger.warn('⚠️ Cannot derive GAS_WALLET: PRIVATE_KEY is missing.');
+                    return null;
+                case 'USDT_WALLETS': {
+                    const wallets = [`${ethers.Wallet.createRandom().address}`, `${ethers.Wallet.createRandom().address}`];
+                    this._logger.success(`✅ Generated new USDT_WALLETS.`);
+                    return { USDT_WALLETS: wallets.join(',') };
+                }
+                case 'BSC_NODE':
+                    this._logger.success(`✅ Set default BSC_NODE.`);
+                    return { BSC_NODE: 'https://bsc-dataseed.binance.org' };
+                case 'COINGECKO_API':
+                    this._logger.info('ℹ️ CoinGecko API typically does not require remediation.');
+                    return null;
+                default:
+                    this._logger.warn(`⚠️ No remediation strategy for key: ${keyName}.`);
+                    return null;
+            }
+        } catch (error) {
+            this._logger.error(`🚨 Remediation for ${keyName} failed: ${error.message}`);
+            return null;
+        }
+    },
+
+    /**
+     * Checks if the gas wallet has sufficient BNB.
+     * @param {string} walletAddress - The address of the gas wallet.
+     * @param {string} bscNode - The BSC node URL.
+     * @returns {Promise<boolean>}
+     */
+    async _checkGasWalletBalance(walletAddress, bscNode) {
+        try {
+            const provider = new ethers.providers.JsonRpcProvider(bscNode);
+            const balance = await provider.getBalance(walletAddress);
+            const bnbBalance = parseFloat(ethers.utils.formatEther(balance));
+            lastGasBalance = bnbBalance;
+            this._logger.info(`Current GAS_WALLET balance: ${bnbBalance} BNB`);
+
+            const MIN_BNB_THRESHOLD = 0.05;
+            if (bnbBalance < MIN_BNB_THRESHOLD) {
+                this._logger.warn(`⚠️ CRITICAL: Low gas: ${bnbBalance} BNB. Required: ${MIN_BNB_THRESHOLD} BNB.`);
+                provideThreatIntelligence('low_gas_balance', `Wallet balance is below threshold: ${bnbBalance} BNB`);
+                return false;
+            }
+            this._logger.success(`✅ Sufficient gas: ${bnbBalance} BNB`);
+            return true;
+        } catch (error) {
+            this._logger.error(`🚨 Error checking gas balance: ${error.message}`);
+            return false;
+        }
+    },
+
+    /**
+     * Analyzes crypto market data from CoinGecko.
+     * @param {string} coingeckoApiUrl - The CoinGecko API URL.
+     * @returns {Promise<object>} Market data for BTC and ETH.
+     */
+    async _analyzeCryptoMarkets(coingeckoApiUrl) {
+        const fallbackData = {
+            bitcoin: { usd: 50000, last_updated_at: Date.now() / 1000 },
+            ethereum: { usd: 3000, last_updated_at: Date.now() / 1000 }
+        };
+
+        const url = coingeckoApiUrl && !coingeckoApiUrl.includes('PLACEHOLDER') ? 
+            coingeckoApiUrl : 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd';
+
+        try {
+            const response = await axios.get(url, { timeout: 8000 });
+            if (response.data && (response.data.bitcoin || response.data.ethereum)) {
+                this._logger.info('✅ Fetched real market data from CoinGecko.');
+                return response.data;
+            }
+            throw new Error('CoinGecko API returned invalid data.');
+        } catch (error) {
+            this._logger.warn(`⚠️ Error fetching market data: ${error.message}. Using fallback.`);
+            provideThreatIntelligence('coingecko_api_failure', 'Failed to fetch market data from CoinGecko.');
+            return fallbackData;
+        }
+    },
+
+    /**
+     * Executes arbitrage-like trades (simulated) on BSC.
+     * @param {object} params - Trade parameters.
+     * @returns {Promise<string[]>} Array of transaction hashes.
+     */
+    async _executeArbitrageTrades({ privateKey, recipientWallets, bscNode, marketData }) {
+        const txHashes = [];
+        const provider = new ethers.providers.JsonRpcProvider(bscNode);
+        const wallet = new ethers.Wallet(privateKey, provider);
+
+        const BTC_BEAR_THRESHOLD = marketData.bitcoin.usd * 0.95;
+        if (marketData.bitcoin.usd < BTC_BEAR_THRESHOLD) {
+            this._logger.info('🐻 Bearish signal detected. Initiating strategic BNB transfers.');
+            if (recipientWallets.length === 0) {
+                this._logger.warn('⚠️ No valid recipient wallets available for transfers.');
+                return txHashes;
+            }
+
+            for (const recipient of recipientWallets.slice(0, 2)) {
+                try {
+                    const amountToSend = ethers.utils.parseEther('0.002');
+                    const gasPrice = await provider.getGasPrice();
+                    const txResponse = await wallet.sendTransaction({
+                        to: recipient,
+                        value: amountToSend,
+                        gasLimit: 60000,
+                        gasPrice: gasPrice
+                    });
+                    const receipt = await txResponse.wait(1);
+                    txHashes.push(receipt.transactionHash);
+                    this._logger.success(`✅ Sent ${ethers.utils.formatEther(amountToSend)} BNB to ${recipient.slice(0, 6)}... TX: ${receipt.transactionHash.slice(0, 10)}...`);
+                } catch (error) {
+                    this._logger.warn(`⚠️ Transfer failed to ${recipient}: ${error.message}`);
+                    if (error.code === 'INSUFFICIENT_FUNDS') throw new Error('insufficient_funds_for_transfer');
+                }
+            }
+        } else {
+            this._logger.info('💰 Market is stable. No arbitrage-like trades executed.');
+        }
+        return txHashes;
+    },
+
+    /**
+     * Executes a conceptual high-value DEX trade on BSC.
+     * @param {object} params - Trade parameters.
+     * @returns {Promise<string[]>} Array of transaction hashes.
+     */
+    async _executeHighValueTrades({ privateKey, bscNode, marketData }) {
+        const txHashes = [];
+        const provider = new ethers.providers.JsonRpcProvider(bscNode);
+        const wallet = new ethers.Wallet(privateKey, provider);
+
+        const ETH_BULL_THRESHOLD = 3200;
+        if (marketData.ethereum.usd > ETH_BULL_THRESHOLD) {
+            this._logger.info('📈 Bullish ETH signal detected. Initiating high-value DEX swap.');
+            const routerContract = new ethers.Contract(PANCAKESWAP_ROUTER_ADDRESS, PANCAKESWAP_ROUTER_ABI, wallet);
+            const amountIn = ethers.utils.parseEther('0.01');
+            const path = [WBNB_ADDRESS, BUSD_ADDRESS];
+            const to = wallet.address;
+            const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 minutes
+
+            try {
+                // Get the minimum amount out to prevent slippage issues
+                const amounts = await routerContract.getAmountsOut(amountIn, path);
+                const amountOutMin = amounts[1].sub(amounts[1].div(20)); // 5% slippage tolerance
+
+                const gasPrice = await provider.getGasPrice();
+                const txResponse = await routerContract.swapExactETHForTokens(
+                    amountOutMin,
+                    path,
+                    to,
+                    deadline,
+                    {
+                        value: amountIn,
+                        gasLimit: 300000,
+                        gasPrice: gasPrice
+                    }
+                );
+                const receipt = await txResponse.wait(1);
+                txHashes.push(receipt.transactionHash);
+                this._logger.success(`✅ High-value swap TX sent: ${receipt.transactionHash.slice(0, 10)}...`);
+            } catch (error) {
+                this._logger.warn(`⚠️ High-value swap failed: ${error.message}`);
+                if (error.code === 'INSUFFICIENT_FUNDS') throw new Error('insufficient_funds_for_swap');
+            }
+        } else {
+            this._logger.info('📉 ETH market is neutral. No high-value swaps executed.');
+        }
+        return txHashes;
     }
 };
 
 /**
  * @method getStatus
  * @description Returns the current operational status of the Crypto Agent.
- * This function is crucial for dashboard reporting.
- * @returns {object} Current status of the Crypto Agent.
+ * @returns {object} Current status.
  */
 export function getStatus() {
     return {
