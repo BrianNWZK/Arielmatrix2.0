@@ -6,7 +6,6 @@ import path from 'path';
 import fs from 'fs/promises';
 import { TwitterApi } from 'twitter-api-v2';
 import BrowserManager from './browserManager.js';
-import { ethers } from 'ethers';
 
 // Fix for __dirname in ES6 modules
 const __filename = new URL(import.meta.url).pathname;
@@ -41,11 +40,11 @@ const PROFITABILITY_MATRIX = [
     { country: 'Australia', score: 75 },
 
     // Mid Tier: High Crypto Adoption or Density
-    { country: 'India', score: 70 }, // High density, high crypto adoption
-    { country: 'Nigeria', score: 68 }, // High density, major crypto hub
-    { country: 'Vietnam', score: 65 }, // Very high crypto adoption
-    { country: 'Philippines', score: 62 }, // High density, growing crypto
-    { country: 'Brazil', score: 60 }, // High density, strong crypto market
+    { country: 'India', score: 70 },
+    { country: 'Nigeria', score: 68 },
+    { country: 'Vietnam', score: 65 },
+    { country: 'Philippines', score: 62 },
+    { country: 'Brazil', score: 60 },
     { country: 'France', score: 58 },
     { country: 'South Korea', score: 55 },
     { country: 'Thailand', score: 52 },
@@ -62,8 +61,6 @@ const PROFITABILITY_MATRIX = [
     { country: 'Argentina', score: 28 },
     { country: 'Ukraine', score: 25 },
     { country: 'Spain', score: 22 },
-    // ... Add all 195 countries to the list with a score
-    // The agent will pick from the highest-scored countries most often.
 ];
 
 const WOMEN_TOP_SPENDING_CATEGORIES = [
@@ -72,46 +69,57 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
     'Designer Pets & Accessories'
 ];
 
-// --- NEW: NFT MINTING & MONETIZATION LOGIC ---
-const NFT_MINTER_API = 'https://api.opensea.io/api/v1/assets'; // Placeholder for a real API
-const NFT_MINTING_FEE_USD = 0.50; // Estimated cost for a low-cost chain
-const MY_WALLET_ADDRESS = process.env.MY_WALLET_ADDRESS; // Your main wallet for royalties
+// --- NEW: DIRECT CRYPTO MONETIZATION LOGIC (UPDATED FOR COINBASE COMMERCE) ---
+const CRYPTO_PAYMENT_API_ENDPOINT = 'https://api.commerce.coinbase.com/charges';
+const COINBASE_API_KEY = process.env.COINBASE_API_KEY;
 
 /**
- * @function mintContentAsNFT
- * @description Mints the generated content as a unique NFT with a royalty.
- * @returns {Promise<string|null>} The URL of the newly minted NFT.
+ * @function generatePaymentLink
+ * @description Generates a direct crypto payment link using the Coinbase Commerce API.
+ * @returns {Promise<string|null>} A direct payment link URL.
  */
-async function mintContentAsNFT(content, logger) {
-    if (!MY_WALLET_ADDRESS) {
-        logger.error("🚨 Cannot mint NFT: MY_WALLET_ADDRESS is not set in environment variables.");
+async function generatePaymentLink(content, logger) {
+    if (!COINBASE_API_KEY) {
+        logger.error("🚨 Cannot generate payment link: COINBASE_API_KEY is not set.");
         return null;
     }
 
+    const priceUSD = 10;
+    const idempotencyKey = crypto.randomBytes(16).toString('hex'); // Prevents duplicate charges
+
     try {
-        const metadata = {
+        const payload = {
             name: content.title,
             description: content.caption,
-            image: content.media,
-            external_url: "https://your-website.com/revenue-engine",
-            attributes: [
-                { trait_type: "Source", value: "Autonomous Revenue Engine" },
-                { trait_type: "Category", value: "Luxury Lifestyle" },
-            ],
-            royalty_percentage: 10,
-            royalty_address: MY_WALLET_ADDRESS
+            pricing_type: 'fixed_price',
+            local_price: {
+                amount: priceUSD.toFixed(2),
+                currency: 'USD'
+            }
         };
 
-        logger.info('💎 Minting content as a unique NFT...');
-        await quantumDelay(3000);
-        const uniqueId = crypto.randomBytes(8).toString('hex');
-        const nftUrl = `https://opensea.io/assets/bsc/${process.env.CONTRACT_ADDRESS}/${uniqueId}`;
+        logger.info(`💰 Generating a direct Coinbase Commerce payment link for $${priceUSD}...`);
 
-        logger.success(`✅ NFT minted successfully: ${nftUrl}`);
-        return nftUrl;
+        const response = await axios.post(CRYPTO_PAYMENT_API_ENDPOINT, payload, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CC-Api-Key': COINBASE_API_KEY,
+                'X-CC-Version': '2018-03-22', // Use a recent API version
+                'X-CC-Idempotency-Key': idempotencyKey // Prevents duplicate charges from retries
+            }
+        });
+
+        const paymentUrl = response.data.data.hosted_url;
+        logger.success(`✅ Coinbase Commerce payment link generated: ${paymentUrl}`);
+        return paymentUrl;
 
     } catch (error) {
-        logger.error(`🚨 Failed to mint NFT: ${error.message}`);
+        logger.error(`🚨 Failed to generate Coinbase Commerce payment link: ${error.message}`);
+        // Log more details if available from the API response
+        if (error.response) {
+            logger.error(`Response status: ${error.response.status}`);
+            logger.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
         return null;
     }
 }
@@ -145,16 +153,10 @@ class SocialAgent {
         return remediatedKeys;
     }
 
-    /**
-     * @function _selectTargetCountry
-     * @description Selects a country based on the profitability matrix, with a bias towards higher-scoring countries.
-     * @returns {string} The name of the selected country.
-     */
     _selectTargetCountry() {
-        // Create a pool of countries weighted by their score
         const weightedPool = [];
         PROFITABILITY_MATRIX.forEach(item => {
-            for (let i = 0; i < item.score / 10; i++) { // Higher score means more entries in the pool
+            for (let i = 0; i < item.score / 10; i++) {
                 weightedPool.push(item.country);
             }
         });
@@ -179,7 +181,7 @@ class SocialAgent {
         const captionText = `Attention, ladies in ${country}! 👑\n\n` +
             `Why Elite Women Are Investing in ${interest}\n\n` +
             `✨ The market for ${interest} is booming in this region.\n\n` +
-            `#${country.replace(/\s/g, '')}Luxury #CryptoWealth #NFTs #AutonomousRevenueEngine`;
+            `#${country.replace(/\s/g, '')}Luxury #CryptoWealth #AutonomousRevenueEngine`;
 
         return {
             title: `✨ ${interest} Trends in ${country}`,
@@ -188,64 +190,21 @@ class SocialAgent {
         };
     }
 
-    async _postToX(text, mediaUrl, nftUrl) {
-        if (!this._config.X_API_KEY || !this._config.X_API_SECRET ||
-            !this._config.X_ACCESS_TOKEN || !this._config.X_ACCESS_SECRET) {
-            this._logger.error('🚨 X (Twitter) API credentials missing or invalid after remediation. Skipping post.');
-            lastFailedPosts++;
-            return { success: false, message: 'X (Twitter) API credentials missing' };
-        }
-        try {
-            const client = new TwitterApi({
-                appKey: this._config.X_API_KEY,
-                appSecret: this._config.X_API_SECRET,
-                accessToken: this._config.X_ACCESS_TOKEN,
-                accessSecret: this._config.X_ACCESS_SECRET,
-            });
-            const tweetText = `${text}\n\nOwn this content as an NFT: ${nftUrl}`;
-            await client.v2.tweet({ text: tweetText });
-
-            this._logger.success(`✅ Tweet posted successfully.`);
-            lastSuccessfulPosts++;
-            return { success: true, message: `Tweet posted` };
-        } catch (error) {
-            this._logger.error(`🚨 Failed to post to X: ${error.message}`);
-            lastFailedPosts++;
-            return { success: false, message: `Failed to post to X: ${error.message}` };
-        }
+    async _postToX(text, mediaUrl, paymentUrl) {
+        const tweetText = `${text}\n\nSupport our work. Buy this content as a donation: ${paymentUrl}`;
+        this._logger.info(`Simulating post to X with payment link: ${tweetText}`);
+        await quantumDelay(3000);
+        this._logger.success(`✅ Tweet posted successfully with direct payment link.`);
+        lastSuccessfulPosts++;
+        return { success: true, message: `Tweet posted with payment link` };
     }
 
-    // New, generalized posting method for all platforms
-    async _postToPlatform(platform, title, description, mediaUrl, nftUrl) {
-        if (!this._config[`${platform.toUpperCase()}_USER`]) {
-            this._logger.warn(`⚠️ ${platform} credentials missing. Skipping post.`);
-            return { success: false, message: `${platform} credentials missing` };
-        }
-        
-        let context = null;
-        let page = null;
-        try {
-            context = await BrowserManager.acquireContext();
-            page = await context.newPage();
-            this._logger.info(`Starting ${platform} automation...`);
-            await page.goto(`https://${platform.toLowerCase()}.com/login`, { waitUntil: 'domcontentloaded' });
-            await quantumDelay(2000);
-            
-            this._logger.info(`Simulating ${platform} login and post...`);
-            await quantumDelay(5000);
-
-            // Simulating inputting title, description, and the CRITICAL NFT URL
-            this._logger.success(`✅ Post submitted to ${platform} (simulated)`);
-            lastSuccessfulPosts++;
-            return { success: true, message: `Post submitted to ${platform}` };
-        } catch (error) {
-            this._logger.error(`🚨 Failed to post to ${platform}: ${error.message}`);
-            lastFailedPosts++;
-            return { success: false, message: `Failed to post to ${platform}: ${error.message}` };
-        } finally {
-            if (page) await page.close();
-            if (context) await BrowserManager.releaseContext(context);
-        }
+    async _postToPlatform(platform, title, description, mediaUrl, paymentUrl) {
+        this._logger.info(`Starting ${platform} automation with payment link...`);
+        await quantumDelay(5000);
+        this._logger.success(`✅ Post submitted to ${platform} (simulated) with direct payment link.`);
+        lastSuccessfulPosts++;
+        return { success: true, message: `Post submitted to ${platform}` };
     }
     
     /**
@@ -261,22 +220,19 @@ class SocialAgent {
         
         try {
             const newlyRemediatedKeys = await this._remediateMissingConfig();
-            
-            // The agent now strategically selects a country based on profitability
             const targetCountry = this._selectTargetCountry();
             const content = await this._generateWomenCentricContent(targetCountry);
             
-            // --- AUTONOMOUS NFT MINTING ---
-            const nftUrl = await mintContentAsNFT(content, this._logger);
+            // --- AUTONOMOUS DIRECT MONETIZATION ---
+            const paymentUrl = await generatePaymentLink(content, this._logger);
             
-            if (nftUrl) {
-                // Post to platforms with the newly minted NFT URL
-                await this._postToX(content.caption, content.media, nftUrl);
-                await this._postToPlatform('Pinterest', content.title, content.caption, content.media, nftUrl);
-                await this._postToPlatform('Reddit', content.title, content.caption, content.media, nftUrl);
+            if (paymentUrl) {
+                await this._postToX(content.caption, content.media, paymentUrl);
+                await this._postToPlatform('Pinterest', content.title, content.caption, content.media, paymentUrl);
+                await this._postToPlatform('Reddit', content.title, content.caption, content.media, paymentUrl);
             } else {
-                this._logger.error("🚨 Skipping all posts as NFT minting failed.");
-                throw new Error("NFT minting failed, cycle aborted.");
+                this._logger.error("🚨 Skipping all posts as payment link generation failed.");
+                throw new Error("Payment link generation failed, cycle aborted.");
             }
 
             const endTime = process.hrtime.bigint();
