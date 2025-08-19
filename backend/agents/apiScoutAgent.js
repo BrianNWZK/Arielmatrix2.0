@@ -1,14 +1,9 @@
+// apiScoutAgent.js
+
 import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
-import {
-    TwitterApi
-} from 'twitter-api-v2';
-import Web3 from 'web3';
-import {
-    ethers
-} from 'ethers';
-import crypto from 'crypto';
+import { ethers, keccak256, toUtf8Bytes } from 'ethers';
 import BrowserManager from './browserManager.js'; // Ensure correct path
 import { provideThreatIntelligence } from './healthAgent.js'; // Import healthAgent function
 
@@ -102,18 +97,17 @@ const API_CATALOG = {
 };
 
 // === 🔑 API Retrieval Catalog (Browser-based) ===
-// This catalog defines how to retrieve API keys via browser automation for specific services.
 const API_RETRIEVAL_CATALOG = {
     'https://bscscan.com': {
         loginPageUrl: 'https://bscscan.com/login',
         keyPageUrl: 'https://bscscan.com/myapikey',
         keySelectors: [
-            '#ContentPlaceHolder1_token', // Specific BscScan key element
-            'div.card-body p.text-muted code', // More robust selector
-            'div[class*="api-key"]' // Generic patterns
+            '#ContentPlaceHolder1_token',
+            'div.card-body p.text-muted code',
+            'div[class*="api-key"]'
         ],
         apiKeyName: 'BSCSCAN_API_KEY',
-        credentials: { // Placeholder for specific credentials if needed, otherwise use AI_EMAIL/PASSWORD
+        credentials: {
             email: 'BSCSCAN_EMAIL',
             password: 'BSCSCAN_PASSWORD'
         }
@@ -122,9 +116,9 @@ const API_RETRIEVAL_CATALOG = {
         loginPageUrl: 'https://nowpayments.io/auth/login',
         keyPageUrl: 'https://nowpayments.io/dashboard/settings/api-keys',
         keySelectors: [
-            '.api-key-value-container span', // Example: finding API key in a specific span
-            '#api-key-input', // Example: finding API key in an input field
-            'div[data-qa="api-key"]' // Another example
+            '.api-key-value-container span',
+            '#api-key-input',
+            'div[data-qa="api-key"]'
         ],
         apiKeyName: 'NOWPAYMENTS_API_KEY',
         credentials: {
@@ -132,17 +126,14 @@ const API_RETRIEVAL_CATALOG = {
             password: 'NOWPAYMENTS_PASSWORD'
         }
     },
-    // Add other services requiring browser interaction here
 };
 
-
 // === On-Chain Interaction Setup ===
-let web3Instance;
 let contractABI;
 let contractAddress;
 let wallet;
 let contractInstance;
-let _currentLogger; // Local logger reference for contract functions
+let _currentLogger;
 
 /**
  * Initializes Web3 and the smart contract instance for reporting.
@@ -151,7 +142,7 @@ let _currentLogger; // Local logger reference for contract functions
  */
 async function initializeContractInteraction(currentConfig, logger) {
     _currentLogger = logger;
-    if (web3Instance && contractInstance && wallet) return;
+    if (contractInstance && wallet) return;
 
     try {
         if (!currentConfig.PRIVATE_KEY || String(currentConfig.PRIVATE_KEY).includes('PLACEHOLDER')) {
@@ -159,10 +150,9 @@ async function initializeContractInteraction(currentConfig, logger) {
             return;
         }
 
-        web3Instance = new Web3(currentConfig.BSC_NODE || 'https://bsc-dataseed.binance.org');
         const provider = new ethers.JsonRpcProvider(currentConfig.BSC_NODE);
         wallet = new ethers.Wallet(currentConfig.PRIVATE_KEY, provider);
-        _currentLogger.info(`Web3 and wallet initialized for contract interaction. Agent Address: ${wallet.address}`);
+        _currentLogger.info(`Ethers.js wallet initialized for contract interaction. Agent Address: ${wallet.address}`);
 
         const artifactPath = path.resolve(__dirname, '../../artifacts/contracts/APIKeyGenerator.sol/TrustedOracleAPIKeyManager.json');
         try {
@@ -184,17 +174,16 @@ async function initializeContractInteraction(currentConfig, logger) {
             return;
         }
 
-        if (!deployedContracts || !Web3.utils.isAddress(deployedContracts)) {
+        if (!deployedContracts || !ethers.isAddress(deployedContracts)) {
             _currentLogger.error('🚨 TrustedOracleAPIKeyManager contract address not found or invalid in contracts.json. Deploy it first!');
             throw new Error('TrustedOracleAPIKeyManager contract address not found or invalid.');
         }
         contractAddress = deployedContracts;
-
-        contractInstance = new web3Instance.eth.Contract(contractABI, contractAddress);
+        
+        contractInstance = new ethers.Contract(contractAddress, contractABI, wallet);
         _currentLogger.success(`✅ TrustedOracleAPIKeyManager contract loaded at ${contractAddress}`);
     } catch (error) {
         _currentLogger.error('🚨 Failed to initialize contract interaction for API Scout:', error.message);
-        web3Instance = null;
         contractInstance = null;
         wallet = null;
     }
@@ -212,21 +201,10 @@ async function reportKeyToSmartContract(serviceId, rawKey) {
     }
 
     try {
-        const keyHash = ethers.keccak256(ethers.toUtf8Bytes(rawKey));
-        const data = contractInstance.methods.reportAPIKeyDiscovery(serviceId, keyHash).encodeABI();
-
-        const tx = {
-            to: contractAddress,
-            data: data,
-            gasLimit: await wallet.estimateGas({
-                to: contractAddress,
-                data: data
-            }),
-            gasPrice: await wallet.provider.getGasPrice(),
-        };
-
-        const signedTx = await wallet.sendTransaction(tx);
-        const receipt = await signedTx.wait();
+        // Use ethers' native hash function for consistency
+        const keyHash = keccak256(toUtf8Bytes(rawKey));
+        const tx = await contractInstance.reportAPIKeyDiscovery(serviceId, keyHash);
+        const receipt = await tx.wait();
 
         _currentLogger.success(`✅ Reported API key for ${serviceId} (hash: ${keyHash.substring(0, 10)}...) to contract. Tx Hash: ${receipt.hash}`);
     } catch (error) {
@@ -299,7 +277,6 @@ async function retrieveAndStoreKey(serviceUrl, credentials, currentConfig, curre
         page = await BrowserManager.acquireContext();
         currentLogger.info(`🤖 Browser agent acquired context for ${serviceUrl}.`);
 
-        // Use AI_EMAIL/PASSWORD by default, or specific credentials from catalog if provided
         const loginCredentials = {
             email: currentConfig[keyInfo.credentials.email] || credentials.email,
             password: currentConfig[keyInfo.credentials.password] || credentials.password
@@ -353,11 +330,11 @@ export async function run(currentConfig, currentLogger) {
 
     try {
         const requiredConfigKeys = [
-            'AI_EMAIL', 'AI_PASSWORD', 'LINKVERTISE_EMAIL', 'LINKVERTISE_PASSWORD',
-            'SHORTIO_API_KEY', 'SHORTIO_PASSWORD', 'SHORTIO_USER_ID', 'SHORTIO_URL',
-            'ADFLY_API_KEY', 'ADFLY_USER_ID', 'ADFLY_PASS',
-            'NOWPAYMENTS_EMAIL', 'NOWPAYMENTS_PASSWORD', 'NOWPAYMENTS_API_KEY',
-            'NEWS_API_KEY', 'CAT_API_KEY', 'DOG_API_KEY', 'X_API_KEY',
+            'AI_EMAIL', 'AI_PASSWORD', 'LINKVERTISE_API_KEY',
+            'SHORTIO_API_KEY', 'SHORTIO_URL',
+            'ADFLY_API_KEY',
+            'NOWPAYMENTS_API_KEY',
+            'NEWS_API_KEY', 'CAT_API_KEY', 'X_API_KEY',
             'PRIVATE_KEY', 'BSC_NODE', 'RENDER_API_TOKEN', 'RENDER_SERVICE_ID'
         ];
         for (const key of requiredConfigKeys) {
@@ -375,13 +352,11 @@ export async function run(currentConfig, currentLogger) {
         }
 
         await initializeContractInteraction(currentConfig, currentLogger);
-        // Initialize the browser manager once at the start of the scouting run
         await BrowserManager.init(currentConfig, currentLogger);
 
         currentLogger.info('\n--- Phase 1: Dynamic Opportunity Discovery & Regulatory Reconnaissance ---');
         const targetKeywords = ['crypto monetization API', 'AI data marketplace', 'decentralized finance API', 'privacy-focused data sharing', 'micro-earning platforms', 'innovative affiliate programs'];
         const discoveredOpportunities = await dynamicWebResearch(targetKeywords, currentConfig, currentLogger);
-
         const regulatedOpportunities = await filterOpportunitiesByRegulation(discoveredOpportunities, currentLogger);
 
         currentLogger.info('\n--- Phase 2: Autonomous Campaign Activation & Key Extraction ---');
@@ -418,7 +393,7 @@ export async function run(currentConfig, currentLogger) {
             const shortenedLink = await shortenUrl(testUrl, currentConfig, currentLogger);
             if (shortenedLink) {
                 currentLogger.info(`Generated shortened link: ${shortenedLink}`);
-                activeCampaigns.push({ site: 'Short.io', status: 'active', revenue: 5.0 });
+                activeCampaigns.push({ site: 'https://short.io', status: 'active', revenue: 5.0 });
             } else {
                 currentLogger.info('Failed to generate any shortened link.');
             }
@@ -450,7 +425,6 @@ export async function run(currentConfig, currentLogger) {
             duration: durationMs
         };
     } finally {
-        // Ensure browser is shut down even if errors occur
         await BrowserManager.shutdown();
     }
 }
@@ -470,13 +444,6 @@ export function getStatus() {
 
 
 // === 🔍 Dynamic Web Research (Simulated Global Crawling) ===
-/**
- * Simulates broad web research to discover new opportunities beyond predefined sites.
- * @param {string[]} keywords - Keywords to search for potential opportunities.
- * @param {object} currentConfig - The global CONFIG object.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object[]>} List of discovered potential opportunities.
- */
 async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
     currentLogger.info('🌐 Conducting deep web research for new opportunities...');
     await humanDelay(3000);
@@ -601,12 +568,6 @@ async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
 }
 
 // === ⚖️ Regulatory Reconnaissance (Simulated) ===
-/**
- * Filters opportunities based on conceptual regulatory favorability.
- * @param {object[]} opportunities - A list of discovered opportunities.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object[]>} A list of opportunities deemed favorable.
- */
 async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
     currentLogger.info('⚖️ Filtering opportunities based on conceptual regulatory favorability...');
     await humanDelay(2000);
@@ -616,14 +577,6 @@ async function filterOpportunitiesByRegulation(opportunities, currentLogger) {
 }
 
 // === 💰 Revenue Consolidation (Simulated) ===
-/**
- * Consolidates revenue from active campaigns.
- * @param {object[]} activeCampaigns - List of active campaigns.
- * @param {object} newKeys - Object of newly generated keys.
- * @param {object} currentConfig - The global CONFIG object.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<object>} A report of consolidated revenue.
- */
 async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, currentLogger) {
     currentLogger.info('💰 Consolidating revenue from active campaigns...');
     await humanDelay(1000);
@@ -631,6 +584,16 @@ async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, curre
         total: 0,
         platformBreakdown: {}
     };
+
+    // Placeholder for fetching real revenue from services like NOWPayments, Short.io, etc.
+    // Example:
+    // try {
+    //    const nowPaymentsRevenue = await fetchNowPaymentsRevenue(currentConfig.NOWPAYMENTS_API_KEY);
+    //    revenueReport.total += nowPaymentsRevenue;
+    //    revenueReport.platformBreakdown['nowpayments.io'] = (revenueReport.platformBreakdown['nowpayments.io'] || 0) + nowPaymentsRevenue;
+    // } catch (e) {
+    //    currentLogger.warn('Failed to fetch real revenue from NowPayments.');
+    // }
 
     activeCampaigns.forEach(campaign => {
         const platformName = new URL(campaign.site).hostname;
@@ -652,13 +615,6 @@ async function consolidateRevenue(activeCampaigns, newKeys, currentConfig, curre
 }
 
 // === 🧠 Strategic Insights Generation (Simulated) ===
-/**
- * Generates strategic insights based on revenue and discoveries.
- * @param {object} revenueReport - The consolidated revenue report.
- * @param {object[]} discoveries - The list of discovered opportunities.
- * @param {object} currentLogger - The global logger instance.
- * @returns {Promise<string[]>} A list of strategic insights.
- */
 async function generateStrategicInsights(revenueReport, discoveries, currentLogger) {
     currentLogger.info('🧠 Generating strategic insights...');
     await humanDelay(4000);
