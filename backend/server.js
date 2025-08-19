@@ -9,7 +9,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import { ethers } from 'ethers';
 import cron from 'node-cron';
-import Mutex from 'async-mutex'; // FIX: Changed to default import
+// Mutex dependency removed, replaced with custom lock
 import 'dotenv/config';
 
 // --- Import all agents ---
@@ -47,7 +47,6 @@ function broadcastDashboardUpdate() {
     const update = {
         timestamp: new Date().toISOString(),
         status: getSystemStatus(),
-        // Removed local revenue tracking
         agents: getAgentActivities(),
     };
     const message = JSON.stringify({ type: 'update', data: update });
@@ -73,84 +72,78 @@ const agentActivityLog = [];
 let lastCycleStats = {};
 let lastCycleStart = 0;
 let isRunning = false;
-const cycleMutex = new Mutex();
+// Replaced Mutex with a simple flag
+let isCycleLocked = false; 
 
 // --- Payout Agent Initialization (The new one-key system) ---
 const payoutAgentInstance = new PayoutAgent(CONFIG, logger);
 
 // --- Main System ---
 async function runAutonomousRevenueSystem() {
-    if (cycleMutex.isLocked()) {
+    // Check the custom lock flag
+    if (isCycleLocked) {
         logger.warn('Cycle already in progress. Skipping this scheduled run.');
         return;
     }
 
-    await cycleMutex.runExclusive(async () => {
-        const cycleStart = Date.now();
-        const cycleStats = {
-            startTime: new Date().toISOString(),
-            success: false,
-            duration: 0,
-            activities: [],
-        };
+    // Set the lock flag before starting the critical section
+    isCycleLocked = true;
+    const cycleStart = Date.now();
+    const cycleStats = {
+        startTime: new Date().toISOString(),
+        success: false,
+        duration: 0,
+        activities: [],
+    };
 
-        try {
-            // Health Agent Check
-            const healthActivity = { agent: 'health', action: 'start', timestamp: new Date().toISOString() };
-            agentActivityLog.push(healthActivity);
-            cycleStats.activities.push(healthActivity);
-            const healthResult = await healthAgent.run(CONFIG, logger);
-            healthActivity.action = 'completed';
-            healthActivity.status = healthResult.status;
+    try {
+        // Health Agent Check
+        const healthActivity = { agent: 'health', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(healthActivity);
+        cycleStats.activities.push(healthActivity);
+        const healthResult = await healthAgent.run(CONFIG, logger);
+        healthActivity.action = 'completed';
+        healthActivity.status = healthResult.status;
 
-            if (healthResult.status !== 'optimal') {
-                logger.error(`🚨 System health check failed. Skipping autonomous cycle.`);
-                throw new Error('System health check failed. Cycle aborted.');
-            }
-            logger.success('✅ System health is optimal. Proceeding with the cycle.');
-
-            // --- DECENTRALIZED REVENUE COLLECTION (API-DRIVEN) ---
-            // This is where you would call each platform-specific agent to get revenue
-            // and have them call the `reportRevenue()` function on your smart contract.
-            // Example:
-            // const shopifyResult = await shopifyAgent.run(CONFIG, logger);
-            // ... then your agent would handle calling the smart contract.
-            // The result would be a boolean or tx hash, not a monetary value to be stored locally.
-
-            // Run Payout Agent (The core of the system)
-            const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
-            agentActivityLog.push(payoutActivity);
-            cycleStats.activities.push(payoutActivity);
-            
-            // Initialize the payout agent with the master key.
-            if (!payoutAgentInstance.wallet) {
-                await payoutAgentInstance.init();
-            }
-
-            // Run the payout agent to check the smart contract and distribute funds if the threshold is met.
-            const payoutResult = await payoutAgentInstance.run();
-            payoutActivity.action = 'completed';
-            payoutActivity.status = payoutResult?.status || 'success';
-            
-            cycleStats.success = true;
-            return { success: true, message: 'Cycle completed' };
-
-        } catch (error) {
-            cycleStats.success = false;
-            logger.error('Error during autonomous revenue cycle:', error);
-            return { success: false, error: error.message };
-        } finally {
-            cycleStats.duration = Date.now() - cycleStart;
-            lastCycleStats = cycleStats;
-            broadcastDashboardUpdate();
+        if (healthResult.status !== 'optimal') {
+            logger.error(`🚨 System health check failed. Skipping autonomous cycle.`);
+            throw new Error('System health check failed. Cycle aborted.');
         }
-    });
+        logger.success('✅ System health is optimal. Proceeding with the cycle.');
+
+        // Run Payout Agent
+        const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
+        agentActivityLog.push(payoutActivity);
+        cycleStats.activities.push(payoutActivity);
+        
+        if (!payoutAgentInstance.wallet) {
+            await payoutAgentInstance.init();
+        }
+
+        const payoutResult = await payoutAgentInstance.run();
+        payoutActivity.action = 'completed';
+        payoutActivity.status = payoutResult?.status || 'success';
+        
+        cycleStats.success = true;
+        return { success: true, message: 'Cycle completed' };
+
+    } catch (error) {
+        cycleStats.success = false;
+        logger.error('Error during autonomous revenue cycle:', error);
+        return { success: false, error: error.message };
+    } finally {
+        // Always release the lock, even if an error occurs
+        isCycleLocked = false;
+        cycleStats.duration = Date.now() - cycleStart;
+        lastCycleStats = cycleStats;
+        broadcastDashboardUpdate();
+    }
 }
 
 // --- Dashboard Functions ---
 function getSystemStatus() {
     return {
-        status: cycleMutex.isLocked() ? 'operational' : 'idle',
+        status: isCycleLocked ? 'operational' : 'idle', // Updated status check
         uptime: process.uptime(),
         lastCycle: lastCycleStats,
         memoryUsage: process.memoryUsage(),
@@ -161,11 +154,9 @@ function getAgentActivities() {
     return {
         recentActivities: agentActivityLog.slice(-50).reverse(),
         agentStatus: {
-            // Updated to reflect the new, simplified agents
             payoutAgent: payoutAgentInstance.getStatus?.(),
             healthAgent: healthAgent.getStatus?.(),
             configAgent: configAgent.getStatus?.(),
-            // Other agents would be listed here
         }
     };
 }
@@ -201,7 +192,7 @@ app.use(express.static('public'));
 
 // API Endpoints
 app.post('/api/start-revenue-system', async (req, res) => {
-    if (cycleMutex.isLocked()) {
+    if (isCycleLocked) { // Check custom lock
         return res.status(409).json({ success: false, message: 'System already running' });
     }
     const result = await runAutonomousRevenueSystem();
@@ -211,9 +202,15 @@ app.post('/api/start-revenue-system', async (req, res) => {
 // NEW: Endpoint to manually trigger a payout
 app.post('/api/trigger-payout', async (req, res) => {
     logger.info('Manual payout trigger requested.');
+    if (isCycleLocked) { // Check custom lock
+        return res.status(409).json({ success: false, message: 'System already busy' });
+    }
     if (!payoutAgentInstance.wallet) {
         await payoutAgentInstance.init();
     }
+
+    // Use the custom lock for this critical operation as well
+    isCycleLocked = true;
     try {
         const result = await payoutAgentInstance.run();
         if (result.status === 'success') {
@@ -225,6 +222,7 @@ app.post('/api/trigger-payout', async (req, res) => {
         logger.error('Manual payout failed:', error);
         res.status(500).json({ success: false, message: 'An internal error occurred during the payout process.', error: error.message });
     } finally {
+        isCycleLocked = false;
         broadcastDashboardUpdate();
     }
 });
