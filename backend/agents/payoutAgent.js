@@ -1,96 +1,88 @@
 // backend/agents/payoutAgent.js
-import BrowserManager from './browserManager.js'; // Correct relative path
+import { ethers } from 'ethers';
 import crypto from 'crypto';
 
-// === 🌀 Quantum Jitter (Anti-Robot) ===
+// --- A small utility to add human-like delay between actions ---
 const quantumDelay = (ms) => new Promise(resolve => {
     const jitter = crypto.randomInt(500, 2000); // Jitter between 0.5 to 2 seconds
     setTimeout(resolve, ms + jitter);
 });
 
 /**
- * @function configurePaymentMethod
- * @description Automates payment configuration on ad platforms using browser automation
- */
-const configurePaymentMethod = async (CONFIG, logger, platformName, paymentDetails) => {
-    logger.info(`⚙️ Starting payment setup for ${platformName}...`);
-    let context = null;
-    let page = null;
-    
-    try {
-        // Acquire browser context from BrowserManager
-        context = await BrowserManager.acquireContext();
-        page = await context.newPage();
-
-        // --- Platform-Specific Logic ---
-        if (platformName === 'AdFly') {
-            const adflyLoginUrl = 'https://adf.ly/publisher/login';
-            const adflyPayoutSettingsUrl = 'https://adf.ly/publisher/account-settings/withdraw';
-
-            logger.info('Navigating to AdFly login page...');
-            await page.goto(adflyLoginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await quantumDelay(1000);
-
-            if (CONFIG.ADFLY_USERNAME && CONFIG.ADFLY_PASSWORD) {
-                await page.type('input[name="email"]', CONFIG.ADFLY_USERNAME);
-                await page.type('input[name="password"]', CONFIG.ADFLY_PASSWORD);
-                await page.click('button[type="submit"]');
-                await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
-                
-                logger.info('Logged into AdFly. Navigating to payout settings...');
-                await page.goto(adflyPayoutSettingsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-                
-                if (paymentDetails.paypalEmail) {
-                    logger.info('Attempting to configure PayPal details...');
-                    // Implementation would go here
-                }
-            }
-        }
-        // ... (other platform implementations remain similar)
-
-        return { success: true, message: `Payment setup initiated for ${platformName}` };
-    } catch (error) {
-        logger.error(`Error during payment setup: ${error.message}`);
-        return { success: false, error: error.message };
-    } finally {
-        if (page) await page.close();
-        if (context) await BrowserManager.releaseContext(context);
-    }
-};
-
-/**
  * @class PayoutAgent
- * @description Manages payout monitoring and configuration
+ * @description The master agent that manages and executes payouts
+ * by interacting with the secure RevenueDistributor smart contract.
  */
 class PayoutAgent {
     constructor(CONFIG, logger) {
         this.CONFIG = CONFIG;
         this.logger = logger;
+        this.wallet = null;
+        this.contract = null;
     }
 
-    async run(config, logger) {
-        this.logger.info('💰 PayoutAgent: Executing payout assessment...');
+    async init() {
         try {
-            const totalEarnings = config.earnings || 0;
+            const privateKey = this.CONFIG.MASTER_PRIVATE_KEY;
+            const contractAddress = this.CONFIG.SMART_CONTRACT_ADDRESS;
+            const contractABI = this.CONFIG.REVENUE_DISTRIBUTOR_ABI; // ABI from your deployed contract
+            const rpcUrl = this.CONFIG.RPC_URL;
 
-            if (totalEarnings >= config.PAYOUT_THRESHOLD_USD) {
-                const amountToPayout = totalEarnings * config.PAYOUT_PERCENTAGE;
-                this.logger.success(`Triggering payout of $${amountToPayout.toFixed(2)}`);
-                await quantumDelay(3000); // Simulate processing
-                return { status: 'success', message: 'Payout successful' };
-            } else {
-                this.logger.info(`Earnings $${totalEarnings.toFixed(2)} below threshold`);
-                return { status: 'skipped', message: 'Below payout threshold' };
-            }
+            // Connect to the blockchain
+            const provider = new ethers.JsonRpcProvider(rpcUrl);
+            this.wallet = new ethers.Wallet(privateKey, provider);
+            
+            // Connect to the deployed smart contract
+            this.contract = new ethers.Contract(contractAddress, contractABI, this.wallet);
+
+            this.logger.success(`✅ PayoutAgent initialized with wallet: ${this.wallet.address}`);
+            return true;
         } catch (error) {
-            this.logger.error(`PayoutAgent failed: ${error.message}`);
-            return { status: 'failed', error: error.message };
+            this.logger.error(`🚨 PayoutAgent initialization failed: ${error.message}`);
+            return false;
         }
     }
 
-    async initiatePaymentMethodSetup(platformName, paymentDetails) {
-        return await configurePaymentMethod(this.CONFIG, this.logger, platformName, paymentDetails);
+    /**
+     * @description The main execution loop of the PayoutAgent.
+     * It checks for a payout threshold and triggers a distribution.
+     */
+    async run() {
+        this.logger.info('💰 PayoutAgent: Executing payout assessment...');
+        
+        if (!this.wallet || !this.contract) {
+            this.logger.error('🚨 PayoutAgent not initialized. Please call init() first.');
+            return { status: 'failed', error: 'Agent not initialized' };
+        }
+
+        try {
+            // Get the total reported revenue from the smart contract
+            const totalReportedRevenue = await this.contract.totalReportedRevenue();
+            const revenueInUsdt = ethers.formatUnits(totalReportedRevenue, 6); // USDT has 6 decimal places
+
+            this.logger.info(`Total reported revenue in contract: $${revenueInUsdt}`);
+
+            if (parseFloat(revenueInUsdt) >= parseFloat(this.CONFIG.PAYOUT_THRESHOLD_USD)) {
+                this.logger.success('🔥 Payout threshold met. Triggering distribution...');
+                await quantumDelay(2000); // Simulate a brief wait
+                
+                // Call the secure, owner-only distribute() function
+                const tx = await this.contract.distribute();
+                
+                this.logger.info(`⏳ Distribution transaction sent. Tx Hash: ${tx.hash}`);
+                await tx.wait(); // Wait for transaction confirmation
+                this.logger.success('✅ Payout successful. Transaction confirmed on the blockchain.');
+
+                return { status: 'success', message: 'Payout successful', txHash: tx.hash };
+            } else {
+                this.logger.info(`Earnings $${revenueInUsdt} below threshold of $${this.CONFIG.PAYOUT_THRESHOLD_USD}.`);
+                return { status: 'skipped', message: 'Below payout threshold' };
+            }
+        } catch (error) {
+            this.logger.error(`🚨 PayoutAgent failed: ${error.message}`);
+            return { status: 'failed', error: error.message };
+        }
     }
 }
 
-export default new PayoutAgent();
+export default PayoutAgent;
