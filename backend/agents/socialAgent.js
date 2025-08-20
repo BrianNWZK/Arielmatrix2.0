@@ -1,14 +1,12 @@
 // backend/agents/socialAgent.js
 
-import crypto from 'crypto'; // Used for generating unique identifiers/hashes
-import { TwitterApi } from 'twitter-api-v2'; // The real Twitter (X) API client
-import axios from 'axios'; // Necessary for fetching media (e.g., images) from URLs for posting
-import { Mutex } from 'async-mutex'; // For ensuring exclusive access to shared resources (if needed within a worker)
-import { Worker, isMainThread, parentPort, workerData } from 'worker_threads'; // For multi-threading
+import crypto from 'crypto';
+import { TwitterApi } from 'twitter-api-v2';
+import axios from 'axios';
+import { Mutex } from 'async-mutex';
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 
 // --- Real-Time Analytics Integration Placeholder ---
-// This is where a real analytics SDK (e.g., Segment, Mixpanel, Google Analytics) would be imported and initialized.
-// For now, MockAnalytics demonstrates the *structure* of analytics calls.
 class MockAnalytics {
     constructor(writeKey) {
         this.writeKey = writeKey;
@@ -17,25 +15,25 @@ class MockAnalytics {
         }
     }
     track(eventData) {
-        // In a real scenario, this sends data to an analytics platform API.
         console.log(`📊 Analytics Tracked (Key: ${this.writeKey ? '***' : 'MISSING'}):`, eventData);
     }
     identify(userData) {
-        // In a real scenario, this identifies users (or agents) for analytics.
         console.log(`👤 Analytics Identified (Key: ${this.writeKey ? '***' : 'MISSING'}):`, userData);
     }
 }
 
-// Global logger for main thread and workers (simplified for this example)
-const globalLogger = {
+// Global logger reference (can be set by main thread or worker)
+let currentLogger = {
     info: (...args) => console.log(`[INFO]`, ...args),
     warn: (...args) => console.warn(`[WARN]`, ...args),
     error: (...args) => console.error(`[ERROR]`, ...args),
     success: (...args) => console.log(`[SUCCESS]`, ...args),
+    debug: (...args) => console.debug(`[DEBUG]`, ...args),
 };
 
-// --- State and Metrics for getStatus() (Main Thread Aggregates) ---
-const mainThreadState = {
+// --- State and Metrics for getStatus() ---
+// This state needs to be globally accessible if getStatus() is a global export
+const socialAgentStatus = {
     lastStatus: 'idle',
     lastExecutionTime: 'Never',
     totalSuccessfulPosts: 0,
@@ -46,15 +44,11 @@ const mainThreadState = {
 
 const mutex = new Mutex();
 
-// --- Quantum Jitter (Anti-Detection) ---
-// Adds a small random delay to operations to mimic real-world network
-// latency and avoid predictable patterns that could trigger bot detection.
 const quantumDelay = (ms) => new Promise(resolve => {
     const jitter = Math.floor(Math.random() * 3000) + 1000;
     setTimeout(resolve, ms + jitter);
 });
 
-// --- Core Data Matrices ---
 const PROFITABILITY_MATRIX = [
     { country: 'United States', score: 100 }, { country: 'Singapore', score: 98 },
     { country: 'Switzerland', score: 95 }, { country: 'United Arab Emirates', score: 92 },
@@ -414,7 +408,6 @@ class SocialAgent {
         return mutex.runExclusive(async () => {
             this._logger.info('🚀 Social Agent Instance Activated...');
 
-            // Dynamically check which API clients are initialized to only try active platforms.
             const activePlatforms = Object.keys(this.platformClients);
             if (activePlatforms.length === 0) {
                 this._logger.error("🚨 No social media API clients initialized. Skipping cycle. Ensure API Scout provides credentials.");
@@ -423,16 +416,13 @@ class SocialAgent {
 
             try {
                 const targetCountry = this._selectTargetCountry();
-                // This call will attempt real AI image generation and potentially LLM content generation.
                 const content = await this._generateAdvancedContent(targetCountry);
 
-                // Simulate demand and supply for dynamic pricing (still relies on external analytics for real data)
                 const simulatedDemand = Math.floor(Math.random() * 100) + 50;
                 const simulatedSupply = Math.floor(Math.random() * 80) + 30;
                 const monetizedPrice = getDynamicPrice(simulatedDemand, simulatedSupply);
                 this._logger.info(`💲 Dynamic price set: $${monetizedPrice} (Simulated Demand: ${simulatedDemand}, Simulated Supply: ${simulatedSupply})`);
 
-                // Retrieve the Revenue Distributor Contract Address
                 const revenueDistributorAddress = getRevenueDistributorPaymentInfo(
                     this._config.REVENUE_DISTRIBUTOR_CONTRACT_ADDRESS,
                     this._logger
@@ -452,7 +442,6 @@ class SocialAgent {
                         monetizedPrice
                     );
 
-                    // --- Real-Time Analytics Tracking for each platform ---
                     this._analytics.track({
                         event: 'Social Content Posted',
                         userId: `social_agent_worker_${workerData ? workerData.workerId : 'main'}`,
@@ -462,8 +451,8 @@ class SocialAgent {
                             interest: content.title.replace('✨ Elite ', '').replace(' Insights in ' + targetCountry, ''),
                             monetizedPriceUSD: monetizedPrice,
                             postSuccess: postResult.success,
-                            simulatedDemand: simulatedDemand, // For analysis of pricing strategy
-                            simulatedSupply: simulatedSupply, // For analysis of pricing strategy
+                            simulatedDemand: simulatedDemand,
+                            simulatedSupply: simulatedSupply,
                             contractAddress: revenueDistributorAddress
                         },
                     });
@@ -487,11 +476,9 @@ class SocialAgent {
                     await quantumDelay(1000); // Small delay between platform posts
                 }
                 
-                state.lastStatus = cycleSuccess ? 'success' : 'failed (partial)';
-                this._logger.success(`✅ Social Agent Instance Cycle Completed. Status: ${state.lastStatus}`);
-                return { status: state.lastStatus, newlyRemediatedKeys: {} };
+                // Return directly
+                return { status: cycleSuccess ? 'success' : 'failed (partial)', newlyRemediatedKeys: {} };
             } catch (error) {
-                state.lastStatus = 'failed';
                 this._logger.error(`🚨 Social Agent Instance Critical Failure: ${error.message}`);
                 if (!isMainThread) {
                     parentPort.postMessage({ type: 'postStatus', success: false });
@@ -600,20 +587,25 @@ if (isMainThread) {
     }
     mainThreadState.lastExecutionTime = new Date().toISOString();
     mainThreadState.lastStatus = 'running_multi-threaded';
+}
 
-    export function getStatus() {
-        return {
-            agent: 'socialAgent',
-            lastExecution: mainThreadState.lastExecutionTime,
-            lastStatus: mainThreadState.lastStatus,
-            totalSuccessfulPosts: mainThreadState.totalSuccessfulPosts,
-            totalFailedPosts: mainThreadState.totalFailedPosts,
-            activeWorkers: mainThreadState.activeWorkers,
-            workerStatuses: mainThreadState.workerStatuses,
-        };
-    }
-    export default new SocialAgent(config, globalLogger, mainAnalytics);
+// --- Exports from SocialAgent.js ---
+// These MUST be at the top-level of the module.
+export function getStatus() {
+    return {
+        agent: 'socialAgent',
+        lastExecution: socialAgentStatus.lastExecutionTime,
+        lastStatus: socialAgentStatus.lastStatus,
+        totalSuccessfulPosts: socialAgentStatus.totalSuccessfulPosts,
+        totalFailedPosts: socialAgentStatus.totalFailedPosts,
+        activeWorkers: socialAgentStatus.activeWorkers,
+        workerStatuses: socialAgentStatus.workerStatuses,
+    };
+}
+// Export the SocialAgent class as the default export.
+export default SocialAgent;
 
-} else {
+// This part runs ONLY if this file is executed as a worker thread (e.g., via `new Worker(__filename, ...)`)
+if (!isMainThread) {
     workerThreadFunction();
 }
