@@ -1,5 +1,3 @@
-// backend/agents/socialAgent.js
-
 import crypto from 'crypto';
 import { TwitterApi } from 'twitter-api-v2';
 import axios from 'axios';
@@ -33,6 +31,7 @@ let currentLogger = {
 
 // --- State and Metrics for getStatus() ---
 // This state needs to be globally accessible if getStatus() is a global export
+// All main thread updates to the social agent's status should modify this object.
 const socialAgentStatus = {
     lastStatus: 'idle',
     lastExecutionTime: 'Never',
@@ -158,36 +157,36 @@ class SocialAgent {
 
         // Example for Meta (Facebook/Instagram) - requires a Meta SDK (e.g., 'facebook-nodejs-sdk')
         // if (this._config.META_APP_ID && this._config.META_APP_SECRET && this._config.FACEBOOK_PAGE_ACCESS_TOKEN) {
-        //     try {
-        //         // Assumes a hypothetical 'MetaApiClient' that takes app credentials and a page token
-        //         this.platformClients.meta = new MetaApiClient({
-        //             appId: this._config.META_APP_ID,
-        //             appSecret: this._config.META_APP_SECRET,
-        //             pageAccessToken: this._config.FACEBOOK_PAGE_ACCESS_TOKEN
-        //         });
-        //         this._logger.info("🔗 Meta (Facebook/Instagram) API client initialized.");
-        //     } catch (e) {
-        //         this._logger.error(`🚨 Failed to initialize Meta API client: ${e.message}.`);
-        //     }
+        //    try {
+        //        // Assumes a hypothetical 'MetaApiClient' that takes app credentials and a page token
+        //        this.platformClients.meta = new MetaApiClient({
+        //            appId: this._config.META_APP_ID,
+        //            appSecret: this._config.META_APP_SECRET,
+        //            pageAccessToken: this._config.FACEBOOK_PAGE_ACCESS_TOKEN
+        //        });
+        //        this._logger.info("🔗 Meta (Facebook/Instagram) API client initialized.");
+        //    } catch (e) {
+        //        this._logger.error(`🚨 Failed to initialize Meta API client: ${e.message}.`);
+        //    }
         // } else {
-        //     this._logger.warn("⚠️ Meta (Facebook/Instagram) API credentials missing. Meta posts will be skipped. Ensure API Scout provides these.");
+        //    this._logger.warn("⚠️ Meta (Facebook/Instagram) API credentials missing. Meta posts will be skipped. Ensure API Scout provides these.");
         // }
 
         // Example for LinkedIn - requires a LinkedIn API client (e.g., 'linkedin-api-oauth2')
         // if (this._config.LINKEDIN_CLIENT_ID && this._config.LINKEDIN_CLIENT_SECRET && this._config.LINKEDIN_ACCESS_TOKEN) {
-        //     try {
-        //         // Assumes a hypothetical 'LinkedInApiClient'
-        //         this.platformClients.linkedin = new LinkedInApiClient({
-        //             clientId: this._config.LINKEDIN_CLIENT_ID,
-        //             clientSecret: this._config.LINKEDIN_CLIENT_SECRET,
-        //             accessToken: this._config.LINKEDIN_ACCESS_TOKEN
-        //         });
-        //         this._logger.info("🔗 LinkedIn API client initialized.");
-        //     } catch (e) {
-        //         this._logger.error(`🚨 Failed to initialize LinkedIn API client: ${e.message}.`);
-        //     }
+        //    try {
+        //        // Assumes a hypothetical 'LinkedInApiClient'
+        //        this.platformClients.linkedin = new LinkedInApiClient({
+        //            clientId: this._config.LINKEDIN_CLIENT_ID,
+        //            clientSecret: this._config.LINKEDIN_CLIENT_SECRET,
+        //            accessToken: this._config.LINKEDIN_ACCESS_TOKEN
+        //        });
+        //        this._logger.info("🔗 LinkedIn API client initialized.");
+        //    } catch (e) {
+        //        this._logger.error(`🚨 Failed to initialize LinkedIn API client: ${e.message}.`);
+        //    }
         // } else {
-        //     this._logger.warn("⚠️ LinkedIn API credentials missing. LinkedIn posts will be skipped. Ensure API Scout provides these.");
+        //    this._logger.warn("⚠️ LinkedIn API credentials missing. LinkedIn posts will be skipped. Ensure API Scout provides these.");
         // }
     }
 
@@ -222,7 +221,7 @@ class SocialAgent {
             const aiResponse = await axios.post(this._config.AI_IMAGE_GEN_API_ENDPOINT, {
                 prompt: prompt,
                 // Assuming API Key is sent in body or headers depending on the service
-                apiKey: this._config.AI_IMAGE_GEN_API_KEY 
+                apiKey: this._config.AI_IMAGE_GEN_API_KEY
             }, {
                 headers: {
                     // Example for services that require API key in header
@@ -258,7 +257,7 @@ class SocialAgent {
     async _generateAdvancedContent(country, specificInterest = null) {
         const interest = specificInterest || WOMEN_TOP_SPENDING_CATEGORIES[Math.floor(Math.random() * WOMEN_TOP_SPENDING_CATEGORIES.length)];
         const imagePrompt = `A highly detailed, aesthetically pleasing image of a woman in an upscale setting in ${country}, interacting with or showcasing ${interest}. Focus on elegance and aspirational quality.`;
-        
+
         const mediaUrl = await this._generateAIImage(imagePrompt); // Call the real AI image generation
 
         let captionText = '';
@@ -274,7 +273,7 @@ class SocialAgent {
                 const llmResponse = await axios.post(this._config.LLM_API_ENDPOINT, {
                     // This payload structure depends on the specific LLM API (e.g., Gemini, OpenAI)
                     prompt: `Write a compelling social media caption for an image depicting a stylish woman in a cafe in ${country}, holding a ${interest}. Emphasize luxury, investment, and exclusivity. Include relevant hashtags. Max 250 characters.`,
-                    apiKey: this._config.LLM_API_KEY 
+                    apiKey: this._config.LLM_API_KEY
                 }, {
                     headers: {
                         // Example for services that require API key in header
@@ -294,7 +293,7 @@ class SocialAgent {
                     `Join the movement! #EliteInvestments #${country.replace(/\s/g, '')}Wealth #LuxuryLifestyle #AIArt`;
             }
         }
-        
+
         this._logger.info(`📝 Content generated for ${country} on ${interest}.`);
         return {
             title: `✨ Elite ${interest} Insights in ${country}`,
@@ -316,8 +315,8 @@ class SocialAgent {
      */
     async _postToPlatform(platform, text, mediaUrl, paymentTargetAddress, monetizedPriceUSD) {
         const paymentInstruction = `Unlock exclusive insights! Send ~$${monetizedPriceUSD} USD equivalent in ETH directly to our contract. 🚀\n` +
-                                   `Contract Address: ${paymentTargetAddress}\n` +
-                                   `Network: Sepolia Testnet (ETH)`;
+            `Contract Address: ${paymentTargetAddress}\n` +
+            `Network: Sepolia Testnet (ETH)`;
 
         const fullPostText = `${text}\n\n${paymentInstruction}`;
         this._logger.info(`Attempting to post to ${platform}: "${fullPostText.substring(0, 50)}..."`);
@@ -325,11 +324,11 @@ class SocialAgent {
         try {
             // Fetch the image buffer from the media URL for platforms that require upload
             const imageBuffer = await axios.get(mediaUrl, { responseType: 'arraybuffer' })
-                                         .then(response => Buffer.from(response.data))
-                                         .catch(error => {
-                                             this._logger.error(`🚨 Failed to fetch image from ${mediaUrl}: ${error.message}`);
-                                             throw new Error('Image fetch failed. Cannot post.');
-                                         });
+                                           .then(response => Buffer.from(response.data))
+                                           .catch(error => {
+                                               this._logger.error(`🚨 Failed to fetch image from ${mediaUrl}: ${error.message}`);
+                                               throw new Error('Image fetch failed. Cannot post.');
+                                           });
 
             switch (platform) {
                 case 'x':
@@ -345,49 +344,49 @@ class SocialAgent {
                     return { success: true, message: `Post submitted to X` };
 
                 // case 'facebook':
-                //     if (!this.platformClients.meta) { 
-                //         this._logger.error(`🚨 Meta client not initialized. Cannot post to Facebook.`);
-                //         return { success: false, message: "Meta client not initialized" };
-                //     }
-                //     // Implement real Facebook Graph API logic here
-                //     // Requires: Page Access Token, posting to a page, likely first uploading photo
-                //     // Example:
-                //     // const facebookPageId = this._config.FACEBOOK_PAGE_ID; // Must be provided via config
-                //     // const photoUploadResponse = await this.platformClients.meta.uploadPhoto(facebookPageId, imageBuffer, { caption: fullPostText });
-                //     // For now, simulate to prevent errors if not fully implemented:
-                //     // await quantumDelay(3000);
-                //     this._logger.success(`✅ Post submitted to Facebook.`);
-                //     return { success: true, message: `Post submitted to Facebook` };
+                //    if (!this.platformClients.meta) {
+                //        this._logger.error(`🚨 Meta client not initialized. Cannot post to Facebook.`);
+                //        return { success: false, message: "Meta client not initialized" };
+                //    }
+                //    // Implement real Facebook Graph API logic here
+                //    // Requires: Page Access Token, posting to a page, likely first uploading photo
+                //    // Example:
+                //    // const facebookPageId = this._config.FACEBOOK_PAGE_ID; // Must be provided via config
+                //    // const photoUploadResponse = await this.platformClients.meta.uploadPhoto(facebookPageId, imageBuffer, { caption: fullPostText });
+                //    // For now, simulate to prevent errors if not fully implemented:
+                //    // await quantumDelay(3000);
+                //    this._logger.success(`✅ Post submitted to Facebook.`);
+                //    return { success: true, message: `Post submitted to Facebook` };
 
                 // case 'instagram':
-                //     if (!this.platformClients.meta) {
-                //         this._logger.error(`🚨 Meta client not initialized. Cannot post to Instagram.`);
-                //         return { success: false, message: "Meta client not initialized" };
-                //     }
-                //     // Implement real Instagram Graph API logic here
-                //     // Requires: Instagram Business Account ID, creating media container, publishing
-                //     // Example:
-                //     // const instagramBusinessId = this._config.INSTAGRAM_BUSINESS_ACCOUNT_ID; // Must be provided
-                //     // const containerId = await this.platformClients.meta.createMediaContainer(instagramBusinessId, imageBuffer, { caption: fullPostText });
-                //     // await this.platformClients.meta.publishMedia(instagramBusinessId, containerId);
-                //     // For now, simulate:
-                //     // await quantumDelay(3500);
-                //     this._logger.success(`✅ Post submitted to Instagram.`);
-                //     return { success: true, message: `Post submitted to Instagram` };
+                //    if (!this.platformClients.meta) {
+                //        this._logger.error(`🚨 Meta client not initialized. Cannot post to Instagram.`);
+                //        return { success: false, message: "Meta client not initialized" };
+                //    }
+                //    // Implement real Instagram Graph API logic here
+                //    // Requires: Instagram Business Account ID, creating media container, publishing
+                //    // Example:
+                //    // const instagramBusinessId = this._config.INSTAGRAM_BUSINESS_ACCOUNT_ID; // Must be provided
+                //    // const containerId = await this.platformClients.meta.createMediaContainer(instagramBusinessId, imageBuffer, { caption: fullPostText });
+                //    // await this.platformClients.meta.publishMedia(instagramBusinessId, containerId);
+                //    // For now, simulate:
+                //    // await quantumDelay(3500);
+                //    this._logger.success(`✅ Post submitted to Instagram.`);
+                //    return { success: true, message: `Post submitted to Instagram` };
 
                 // case 'linkedin':
-                //     if (!this.platformClients.linkedin) { 
-                //         this._logger.error(`🚨 LinkedIn client not initialized. Cannot post to LinkedIn.`);
-                //         return { success: false, message: "LinkedIn client not initialized" };
-                //     }
-                //     // Implement real LinkedIn API logic here
-                //     // Requires: Share API, potentially image upload
-                //     // Example:
-                //     // await this.platformClients.linkedin.share({ text: fullPostText, imageUrl: mediaUrl });
-                //     // For now, simulate:
-                //     // await quantumDelay(2500);
-                //     this._logger.success(`✅ Post submitted to LinkedIn.`);
-                //     return { success: true, message: `Post submitted to LinkedIn` };
+                //    if (!this.platformClients.linkedin) {
+                //        this._logger.error(`🚨 LinkedIn client not initialized. Cannot post to LinkedIn.`);
+                //        return { success: false, message: "LinkedIn client not initialized" };
+                //    }
+                //    // Implement real LinkedIn API logic here
+                //    // Requires: Share API, potentially image upload
+                //    // Example:
+                //    // await this.platformClients.linkedin.share({ text: fullPostText, imageUrl: mediaUrl });
+                //    // For now, simulate:
+                //    // await quantumDelay(2500);
+                //    this._logger.success(`✅ Post submitted to LinkedIn.`);
+                //    return { success: true, message: `Post submitted to LinkedIn` };
 
                 default:
                     this._logger.warn(`⚠️ Posting to unsupported platform: ${platform}`);
@@ -475,7 +474,7 @@ class SocialAgent {
                     }
                     await quantumDelay(1000); // Small delay between platform posts
                 }
-                
+
                 // Return directly
                 return { status: cycleSuccess ? 'success' : 'failed (partial)', newlyRemediatedKeys: {} };
             } catch (error) {
@@ -511,7 +510,7 @@ async function workerThreadFunction() {
 // --- Main Thread Orchestration Logic ---
 if (isMainThread) {
     const numThreads = process.env.SOCIAL_AGENT_THREADS ? parseInt(process.env.SOCIAL_AGENT_THREADS, 10) : 3;
-    
+
     // Configuration object for SocialAgent, populated from environment variables.
     // In a system with an "API Scout," this config would be dynamically populated
     // with fresh or generated API keys/tokens.
@@ -521,10 +520,10 @@ if (isMainThread) {
         X_API_SECRET: process.env.X_API_SECRET,
         X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN,
         X_ACCESS_SECRET: process.env.X_ACCESS_SECRET,
-        
+
         // Revenue Distributor Contract Address - Must be a real, deployed contract address
         REVENUE_DISTRIBUTOR_CONTRACT_ADDRESS: process.env.REVENUE_DISTRIBUTOR_CONTRACT_ADDRESS,
-        
+
         // Analytics Write Key - Real key for actual analytics platform
         ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
 
@@ -545,48 +544,51 @@ if (isMainThread) {
     };
     const mainAnalytics = new MockAnalytics(config.ANALYTICS_WRITE_KEY);
 
-    mainThreadState.activeWorkers = numThreads;
-    globalLogger.info(`Starting Social Agent with ${numThreads} worker threads...`);
+    // Correctly update the globally defined socialAgentStatus object
+    socialAgentStatus.activeWorkers = numThreads;
+    currentLogger.info(`Starting Social Agent with ${numThreads} worker threads...`); // Use currentLogger
 
     for (let i = 0; i < numThreads; i++) {
         const worker = new Worker(__filename, {
             workerData: { workerId: i + 1, config: config }
         });
 
-        mainThreadState.workerStatuses[`worker-${i + 1}`] = 'initializing';
+        // Correctly update the globally defined socialAgentStatus object
+        socialAgentStatus.workerStatuses[`worker-${i + 1}`] = 'initializing';
 
         worker.on('message', (msg) => {
             if (msg.type === 'postStatus') {
                 if (msg.success) {
-                    mainThreadState.totalSuccessfulPosts++;
+                    socialAgentStatus.totalSuccessfulPosts++; // Corrected
                 } else {
-                    mainThreadState.totalFailedPosts++;
+                    socialAgentStatus.totalFailedPosts++;     // Corrected
                 }
             }
         });
 
         worker.on('online', () => {
-            mainThreadState.workerStatuses[`worker-${i + 1}`] = 'online';
-            globalLogger.info(`Worker ${i + 1} is online.`);
+            socialAgentStatus.workerStatuses[`worker-${i + 1}`] = 'online'; // Corrected
+            currentLogger.info(`Worker ${i + 1} is online.`); // Use currentLogger
         });
 
         worker.on('error', (err) => {
-            mainThreadState.workerStatuses[`worker-${i + 1}`] = `error: ${err.message}`;
-            globalLogger.error(`Worker ${i + 1} encountered an error: ${err.message}`);
-            mainThreadState.activeWorkers--;
+            socialAgentStatus.workerStatuses[`worker-${i + 1}`] = `error: ${err.message}`; // Corrected
+            currentLogger.error(`Worker ${i + 1} encountered an error: ${err.message}`); // Use currentLogger
+            socialAgentStatus.activeWorkers--; // Corrected
         });
 
         worker.on('exit', (code) => {
-            mainThreadState.workerStatuses[`worker-${i + 1}`] = `exited with code ${code}`;
-            globalLogger.warn(`Worker ${i + 1} exited with code ${code}`);
-            mainThreadState.activeWorkers--;
+            socialAgentStatus.workerStatuses[`worker-${i + 1}`] = `exited with code ${code}`; // Corrected
+            currentLogger.warn(`Worker ${i + 1} exited with code ${code}`); // Use currentLogger
+            socialAgentStatus.activeWorkers--; // Corrected
             if (code !== 0) {
-                globalLogger.error(`Worker ${i + 1} exited with non-zero code. Consider restarting.`);
+                currentLogger.error(`Worker ${i + 1} exited with non-zero code. Consider restarting.`); // Use currentLogger
             }
         });
     }
-    mainThreadState.lastExecutionTime = new Date().toISOString();
-    mainThreadState.lastStatus = 'running_multi-threaded';
+    // Correctly update the globally defined socialAgentStatus object
+    socialAgentStatus.lastExecutionTime = new Date().toISOString();
+    socialAgentStatus.lastStatus = 'running_multi-threaded';
 }
 
 // --- Exports from SocialAgent.js ---
