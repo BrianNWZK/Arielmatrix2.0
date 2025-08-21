@@ -3,6 +3,13 @@ import { TwitterApi } from 'twitter-api-v2';
 import axios from 'axios';
 import { Mutex } from 'async-mutex';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+import { fileURLToPath } from 'url'; // Import fileURLToPath
+import path from 'path'; // Import path module
+
+// Get __filename equivalent in ES Module scope
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 // --- Real-Time Analytics Integration Placeholder ---
 class MockAnalytics {
@@ -415,7 +422,9 @@ class SocialAgent {
 
             try {
                 const targetCountry = this._selectTargetCountry();
+                // RE-ENABLED AI image generation
                 const content = await this._generateAdvancedContent(targetCountry);
+
 
                 const simulatedDemand = Math.floor(Math.random() * 100) + 50;
                 const simulatedSupply = Math.floor(Math.random() * 80) + 30;
