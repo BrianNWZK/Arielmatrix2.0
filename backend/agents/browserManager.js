@@ -1,639 +1,982 @@
 // =========================================================================
-// ArielMatrix Browser Manager: Autonomous Web Interaction Engine
-// Upgraded Version for Enhanced Stealth and Adaptability
+// Quantum Browser Manager: Advanced Autonomous Web Interaction Engine
+// Enhanced with Advanced Security Protocols & Reliability Engineering
 // =========================================================================
 
-import puppeteer from 'puppeteer';
-import crypto from 'crypto';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import RecaptchaPlugin from 'puppeteer-extra-plugin-recaptcha';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-// Assuming provideThreatIntelligence exists for reporting browser blocks
-// import { provideThreatIntelligence } from './healthAgent.js'; 
+import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import { execSync } from 'child_process';
+
+// Apply stealth plugins
+puppeteer.use(StealthPlugin());
+puppeteer.use(RecaptchaPlugin({
+  provider: {
+    id: '2captcha',
+    token: process.env.TWOCAPTCHA_API_KEY || 'demo'
+  },
+  visualFeedback: true
+}));
 
 // --- ES Module Path Fix ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * @class BrowserManager
- * @description Manages Puppeteer browser instances and pages for autonomous operations,
- * providing a centralized, reusable pool of browser resources with enhanced anti-detection measures.
+ * @class QuantumBrowserManager
+ * @description Advanced browser management system with military-grade security protocols,
+ * fault tolerance, and zero-cost optimization for API operations
  */
-class BrowserManager {
-    // --- Static Properties for Global State ---
-    static _config = null;
-    static _logger = null;
-    static _autonomyLevel = null; // Defined in config (e.g., BASIC, ADAPTIVE, FULL)
-    static browserInstance = null;
-    static activePages = new Set();
-    static pagePool = [];
-    static MAX_POOL_SIZE = 3; // Reduced pool size for efficiency, adjust as needed
-    static usageStats = {
-        totalAcquired: 0,
-        totalReleased: 0,
-        activeContexts: 0,
-        poolSize: 0,
-        launchTime: null,
-        lastOperationTime: null,
-        lastPageUsage: {}
-    };
+class QuantumBrowserManager {
+  // --- Static Properties for Global State ---
+  static _config = null;
+  static _logger = null;
+  static _securityLevel = 'TOP_SECRET'; // Top Secret security level
+  static browserInstance = null;
+  static activePages = new Map();
+  static pagePool = [];
+  static MAX_POOL_SIZE = 5;
+  static CRITICAL_FAILURE_THRESHOLD = 3;
+  static failureCount = 0;
+  
+  // Advanced usage statistics with telemetry
+  static usageStats = {
+    totalOperations: 0,
+    successfulOperations: 0,
+    failedOperations: 0,
+    totalAcquired: 0,
+    totalReleased: 0,
+    activeContexts: 0,
+    poolSize: 0,
+    launchTime: null,
+    lastOperationTime: null,
+    lastSuccessfulOperation: null,
+    uptime: 0,
+    performanceMetrics: {
+      avgPageLoadTime: 0,
+      avgOperationTime: 0,
+      successRate: 100
+    }
+  };
 
-    // A mapping of service URLs to their specific login form selectors
-    // Can be extended or dynamically updated by other agents/modules
-    static loginSelectors = {
-        'https://bscscan.com': {
-            loginPageUrl: 'https://bscscan.com/login',
-            email: ['#email', 'input[name="email"]', 'input[type="email"]'],
-            password: ['#password', 'input[name="password"]', 'input[type="password"]'],
-            submit: ['#btnSubmit', 'button[type="submit"]', 'button[name="login"]'],
-            postLoginCheck: '/dashboard'
-        },
-        'https://nowpayments.io': {
-            loginPageUrl: 'https://nowpayments.io/auth/login',
-            email: ['#email-input', 'input[name="email"]'],
-            password: ['#password-input', 'input[name="password"]'],
-            submit: ['.login-button', 'button[type="submit"]'],
-            postLoginCheck: '/dashboard'
-        }
-        // Add more services as needed
-    };
+  // Advanced service configuration with multi-layered fallbacks
+  static serviceConfigurations = {
+    'bscscan.com': {
+      loginPageUrl: 'https://bscscan.com/login',
+      credentials: {
+        email: process.env.BSCSCAN_EMAIL,
+        password: process.env.BSCSCAN_PASSWORD
+      },
+      selectors: {
+        email: ['#email', 'input[name="email"]', 'input[type="email"]'],
+        password: ['#password', 'input[name="password"]', 'input[type="password"]'],
+        submit: ['#btnSubmit', 'button[type="submit"]', 'button[name="login"]'],
+        apiKey: ['.api-key-container', '#apiKeyValue', '[data-testid="api-key"]'],
+        dashboard: '.dashboard-container'
+      },
+      security: {
+        requires2FA: true,
+        captchaType: 'reCAPTCHA',
+        timeout: 45000
+      }
+    },
+    'nowpayments.io': {
+      loginPageUrl: 'https://nowpayments.io/auth/login',
+      credentials: {
+        email: process.env.NOWPAYMENTS_EMAIL,
+        password: process.env.NOWPAYMENTS_PASSWORD
+      },
+      selectors: {
+        email: ['#email-input', 'input[name="email"]'],
+        password: ['#password-input', 'input[name="password"]'],
+        submit: ['.login-button', 'button[type="submit"]'],
+        apiKey: ['.api-key-field', '[data-api-key]', '.secret-key'],
+        dashboard: '.dashboard-view'
+      },
+      security: {
+        requires2FA: false,
+        captchaType: 'hCaptcha',
+        timeout: 30000
+      }
+    },
+    'reddit.com': {
+      loginPageUrl: 'https://www.reddit.com/login',
+      credentials: {
+        email: process.env.REDDIT_EMAIL,
+        password: process.env.REDDIT_PASSWORD
+      },
+      selectors: {
+        email: ['#loginUsername', 'input[name="username"]'],
+        password: ['#loginPassword', 'input[name="password"]'],
+        submit: ['button[type="submit"]', '.login-button'],
+        apiKey: ['#app_prefs_app_tokens', '.token-value'],
+        dashboard: '.user-dashboard'
+      }
+    }
+  };
 
-    // --- Autonomy Levels for Adaptive Behavior ---
-    static AUTONOMY_LEVELS = {
-        BASIC: 1,    // Basic interactions, simple selectors, minimal error handling
-        ADAPTIVE: 2, // Smarter retries, dynamic selector search, basic anti-detection
-        FULL: 3      // Advanced anti-detection, CAPTCHA integration, deeper error analysis, network interception
-    };
+  // Advanced API key patterns for intelligence gathering
+  static apiKeyPatterns = {
+    standard: /(?:api[_-]?key|token|access[_-]?token|secret|x-api-key|bearer|authorization)(?:[\s"']?[:=][\s"']?)([a-zA-Z0-9_-]{30,})/gi,
+    stripe: /(sk|pk)_(test|live)_[a-zA-Z0-9]{24}/gi,
+    aws: /(AKIA|ASIA)[A-Z0-9]{16}/gi,
+    github: /ghp_[a-zA-Z0-9]{36}/gi,
+    twilio: /SK[0-9a-f]{32}/gi,
+    sendgrid: /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/gi,
+    mailchimp: /[0-9a-f]{32}-us[0-9]{1,2}/gi
+  };
 
-    /**
-     * @method init
-     * @description Initializes the browser manager, launching a new Puppeteer browser instance
-     * if one isn't already connected. Ensures the browser is launched with stealth arguments.
-     * @param {object} config - Global configuration object.
-     * @param {object} logger - Logger instance.
-     * @returns {Promise<void>}
-     */
-    static async init(config, logger) {
-        this._config = config;
-        this._logger = logger;
-        this._autonomyLevel = config.autonomyLevel || this.AUTONOMY_LEVELS.ADAPTIVE; // Default to ADAPTIVE
+  // Fault tolerance levels
+  static FAULT_TOLERANCE_LEVELS = {
+    MINIMAL: 1,
+    STANDARD: 2,
+    MISSION_CRITICAL: 3,
+    ZERO_FAILURE: 4
+  };
 
-        if (this.browserInstance && this.browserInstance.isConnected()) {
-            this._logger.debug('Browser instance already connected. Skipping initialization.');
-            return;
-        }
+  /**
+   * @method init
+   * @description Initializes the quantum browser manager with advanced security protocols
+   */
+  static async init(config, logger) {
+    this._config = config;
+    this._logger = logger;
+    this._faultTolerance = config.faultTolerance || this.FAULT_TOLERANCE_LEVELS.MISSION_CRITICAL;
 
-        try {
-            this._logger.info('Launching new Puppeteer browser instance...');
-            this.browserInstance = await puppeteer.launch({
-                headless: true, // true for production, 'new' for new headless mode (more features)
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-zygote',
-                    '--disable-gpu',
-                    '--single-process', // Reduces memory footprint, good for resource-constrained environments
-                    '--disable-web-security', // Use with caution, only if necessary for specific cross-origin scenarios
-                    '--disable-site-isolation-trials',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ],
-                ignoreDefaultArgs: ['--enable-automation'], // Crucial for anti-detection
-                timeout: 0, // No timeout for browser launch itself
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined, // Use default if env var not set
-            });
-            this.usageStats.launchTime = Date.now();
-            this._logger.success('Browser instance initialized successfully.');
+    try {
+      // Check if browser is already connected with enhanced validation
+      if (this.browserInstance && await this._validateBrowserConnection()) {
+        this._logger.debug('Quantum browser instance already operational');
+        return;
+      }
 
-        } catch (error) {
-            this._logger.error(`🚨 Failed to launch browser: ${error.message}`, error.stack);
-            // provideThreatIntelligence('browser_launch_failure', `Failed to launch browser: ${error.message}`);
-            throw error; // Re-throw to indicate a critical failure
-        }
+      this._logger.info('🚀 Launching Quantum Browser with advanced security protocols...');
+      
+      // Advanced browser configuration with security
+      this.browserInstance = await puppeteer.launch({
+        headless: 'new',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+          '--single-process',
+          '--disable-web-security',
+          '--disable-site-isolation-trials',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-infobars',
+          '--window-size=1920,1080',
+          '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ],
+        ignoreDefaultArgs: ['--enable-automation', '--disable-extensions'],
+        timeout: 120000,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        userDataDir: './browser_profiles/quantum_profile'
+      });
+
+      this.usageStats.launchTime = Date.now();
+      this._logger.success('✅ Quantum Browser initialized successfully with advanced protocols');
+      
+      // Start uptime monitoring
+      this._startUptimeMonitoring();
+
+    } catch (error) {
+      this._logger.error(`🚨 Critical failure in Quantum Browser initialization: ${error.message}`);
+      this.failureCount++;
+      
+      if (this.failureCount >= this.CRITICAL_FAILURE_THRESHOLD) {
+        this._logger.emergency('🛑 CRITICAL: Quantum Browser failed multiple initialization attempts');
+        await this._executeEmergencyProtocol(error);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @method acquireContext
+   * @description Acquires browser context with advanced security measures
+   */
+  static async acquireContext(operationType = 'standard') {
+    if (!await this._validateBrowserConnection()) {
+      await this.init(this._config, this._logger);
     }
 
-    /**
-     * @method acquireContext
-     * @description Acquires a new Puppeteer Page from the pool or creates a new one.
-     * Applies advanced anti-detection measures and cleans the page.
-     * @returns {Promise<puppeteer.Page>} An active Puppeteer Page.
-     */
-    static async acquireContext() {
-        if (!this.browserInstance || !this.browserInstance.isConnected()) {
-            this._logger.warn('Browser instance disconnected or not initialized. Attempting re-initialization...');
-            await this.init(this._config, this._logger);
-            if (!this.browserInstance || !this.browserInstance.isConnected()) {
-                throw new Error('Failed to acquire browser context: Browser could not be initialized or reconnected.');
-            }
-        }
+    let page;
+    const contextId = crypto.randomBytes(16).toString('hex');
+    
+    try {
+      if (this.pagePool.length > 0) {
+        page = this.pagePool.pop();
+        this._logger.debug(`Reused page from pool for operation: ${operationType}`);
+      } else {
+        page = await this.browserInstance.newPage();
+        this._logger.debug(`Created new quantum page for operation: ${operationType}`);
+      }
 
-        let page;
-        if (this.pagePool.length > 0) {
-            page = this.pagePool.pop();
-            this._logger.debug('Reused page from pool.');
-        } else {
-            page = await this.browserInstance.newPage();
-            this._logger.debug('Created new page.');
-        }
+      // Apply advanced security protocols based on operation type
+      await this._applySecurityProtocols(page, operationType);
+      
+      // Store page metadata for advanced monitoring
+      this.activePages.set(contextId, {
+        page,
+        operationType,
+        acquisitionTime: Date.now(),
+        contextId
+      });
 
-        // --- Page Cleaning & Anti-Detection Setup ---
-        await page.setCacheEnabled(false); // Disable cache for fresh sessions
-        await page.setViewport({ width: 1920, height: 1080 }); // Standard desktop resolution
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      this.usageStats.totalAcquired++;
+      this.usageStats.activeContexts = this.activePages.size;
+      this.usageStats.lastOperationTime = Date.now();
+
+      return { page, contextId };
+
+    } catch (error) {
+      this._logger.error(`Failed to acquire quantum context: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * @method retrieveApiKeys
+   * @description Advanced API key retrieval with multi-layered intelligence gathering
+   */
+  static async retrieveApiKeys(serviceName, options = {}) {
+    const { contextId } = await this.acquireContext('api_key_retrieval');
+    const page = this.activePages.get(contextId).page;
+    
+    try {
+      const serviceConfig = this.serviceConfigurations[serviceName];
+      if (!serviceConfig) {
+        throw new Error(`Service configuration not found for: ${serviceName}`);
+      }
+
+      this._logger.info(`🔍 Beginning advanced API key retrieval for ${serviceName}`);
+      
+      // Multi-phase retrieval strategy
+      const retrievedKeys = {
+        primary: null,
+        secondary: null,
+        networkIntercepted: null,
+        memoryDump: null
+      };
+
+      // Phase 1: Direct extraction from UI
+      retrievedKeys.primary = await this._extractKeyFromUI(page, serviceConfig);
+      
+      // Phase 2: Network interception (if enabled)
+      if (options.enableNetworkInterception) {
+        retrievedKeys.networkIntercepted = await this._interceptNetworkTraffic(page, serviceConfig);
+      }
+
+      // Phase 3: Memory analysis (advanced)
+      if (options.enableMemoryAnalysis && this._securityLevel === 'TOP_SECRET') {
+        retrievedKeys.memoryDump = await this._analyzeMemory(page, serviceConfig);
+      }
+
+      // Phase 4: DOM comprehensive scan
+      retrievedKeys.secondary = await this._comprehensiveDomScan(page, serviceConfig);
+
+      // Validate and return the most likely valid key
+      const validKey = this._validateApiKeys(retrievedKeys);
+      
+      if (validKey) {
+        this._logger.success(`✅ Successfully retrieved valid API key for ${serviceName}`);
+        this.usageStats.successfulOperations++;
+        return validKey;
+      } else {
+        throw new Error(`Failed to retrieve valid API key from ${serviceName}`);
+      }
+
+    } catch (error) {
+      this._logger.error(`API key retrieval failed: ${error.message}`);
+      this.usageStats.failedOperations++;
+      throw error;
+    } finally {
+      await this.releaseContext(contextId);
+    }
+  }
+
+  /**
+   * @method executeAutomatedLogin
+   * @description Advanced automated login with adaptive security challenge handling
+   */
+  static async executeAutomatedLogin(serviceName, credentials = null) {
+    const { contextId } = await this.acquireContext('automated_login');
+    const page = this.activePages.get(contextId).page;
+    
+    try {
+      const serviceConfig = this.serviceConfigurations[serviceName];
+      const loginCredentials = credentials || serviceConfig.credentials;
+
+      if (!loginCredentials.email || !loginCredentials.password) {
+        throw new Error(`Incomplete credentials for ${serviceName}`);
+      }
+
+      this._logger.info(`🔐 Attempting automated login to ${serviceName}`);
+      
+      // Navigate to login page with stealth
+      await page.goto(serviceConfig.loginPageUrl, {
+        waitUntil: 'networkidle2',
+        timeout: serviceConfig.security?.timeout || 30000
+      });
+
+      // Advanced detection evasion
+      await this._evadeDetection(page);
+
+      // Execute login sequence
+      await this.safeType(page, serviceConfig.selectors.email, loginCredentials.email);
+      await this._humanDelay(800, 1500);
+      
+      await this.safeType(page, serviceConfig.selectors.password, loginCredentials.password);
+      await this._humanDelay(1200, 2000);
+
+      // Handle potential CAPTCHA
+      if (await this._detectCaptcha(page)) {
+        this._logger.warn('⚠️ CAPTCHA detected, attempting automated solution');
+        await this._solveCaptcha(page);
+      }
+
+      await this.safeClick(page, serviceConfig.selectors.submit);
+      
+      // Wait for navigation with adaptive timeout
+      await page.waitForNavigation({
+        waitUntil: 'networkidle0',
+        timeout: 45000
+      });
+
+      // Verify login success
+      if (await this._verifyLoginSuccess(page, serviceConfig)) {
+        this._logger.success(`✅ Login successful to ${serviceName}`);
+        return true;
+      } else {
+        throw new Error('Login verification failed');
+      }
+
+    } catch (error) {
+      this._logger.error(`Automated login failed: ${error.message}`);
+      throw error;
+    } finally {
+      await this.releaseContext(contextId);
+    }
+  }
+
+  /**
+   * @method comprehensiveDomScan
+   * @description Advanced DOM scanning for hidden API keys and secrets
+   */
+  static async _comprehensiveDomScan(page, serviceConfig) {
+    this._logger.info('🔍 Executing comprehensive DOM scan for API keys');
+    
+    try {
+      // Scan multiple DOM aspects for hidden keys
+      const scanResults = await page.evaluate((patterns) => {
+        const results = {};
         
-        // Block resource types commonly used for tracking or unnecessary for scraping
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            const blockedTypes = ['image', 'stylesheet', 'font', 'media']; // Consider blocking others like 'script' carefully
-            const blockedHosts = ['google-analytics.com', 'tracking.com', 'doubleclick.net']; // Add more tracking domains
+        // Scan text content
+        results.textContent = document.body.innerText;
+        
+        // Scan input values
+        results.inputValues = Array.from(document.querySelectorAll('input'))
+          .map(input => input.value)
+          .filter(value => value.length > 20);
+        
+        // Scan data attributes
+        results.dataAttributes = Array.from(document.querySelectorAll('[data-*]'))
+          .map(el => Array.from(el.attributes)
+          .flat()
+          .filter(attr => attr.name.startsWith('data-'))
+          .map(attr => attr.value);
+        
+        // Scan meta tags
+        results.metaTags = Array.from(document.querySelectorAll('meta[name*="key"], meta[name*="token"], meta[name*="secret"]'))
+          .map(meta => meta.content);
+        
+        return results;
+      }, this.apiKeyPatterns);
 
-            if (blockedTypes.includes(req.resourceType()) || blockedHosts.some(host => req.url().includes(host))) {
-                req.abort();
-            } else {
-                req.continue();
+      // Process scan results with pattern matching
+      const foundKeys = [];
+      
+      for (const [scanType, content] of Object.entries(scanResults)) {
+        if (Array.isArray(content)) {
+          content.forEach(item => {
+            for (const [patternName, pattern] of Object.entries(this.apiKeyPatterns)) {
+              const matches = item.match(pattern);
+              if (matches) foundKeys.push(...matches);
             }
+          });
+        } else if (typeof content === 'string') {
+          for (const [patternName, pattern] of Object.entries(this.apiKeyPatterns)) {
+            const matches = content.match(pattern);
+            if (matches) foundKeys.push(...matches);
+          }
+        }
+      }
+
+      return foundKeys.length > 0 ? foundKeys[0] : null;
+
+    } catch (error) {
+      this._logger.warn(`DOM scan failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * @method _applySecurityProtocols
+   * @description Applies advanced security protocols to browser pages
+   */
+  static async _applySecurityProtocols(page, operationType) {
+    try {
+      // Advanced stealth injection
+      await page.evaluateOnNewDocument(() => {
+        // Advanced navigator spoofing
+        const originalNavigator = window.navigator;
+        window.navigator = new Proxy(originalNavigator, {
+          get: (target, prop) => {
+            switch (prop) {
+              case 'webdriver':
+                return false;
+              case 'languages':
+                return ['en-US', 'en'];
+              case 'platform':
+                return 'Win32';
+              case 'hardwareConcurrency':
+                return 8;
+              case 'deviceMemory':
+                return 8;
+              default:
+                return target[prop];
+            }
+          }
         });
+
+        // Advanced plugin spoofing
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3].map(() => ({
+            name: 'Chrome PDF Plugin',
+            filename: 'internal-pdf-viewer',
+            description: 'Portable Document Format'
+          }))
+        });
+
+        // Timezone spoofing
+        Object.defineProperty(Intl.DateTimeFormat.prototype, 'resolvedOptions', {
+          value: function() {
+            const result = Reflect.apply(Intl.DateTimeFormat.prototype.resolvedOptions, this, arguments);
+            result.timeZone = 'America/New_York';
+            return result;
+          }
+        });
+
+        // WebGL spoofing
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+          if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+          if (parameter === 37446) return 'ANGLE (NVIDIA GeForce RTX 3080)';
+          return getParameter.call(this, parameter);
+        };
+      });
+
+      // Set advanced viewport and emulation
+      await page.setViewport({
+        width: 1920,
+        height: 1080,
+        deviceScaleFactor: 1,
+        hasTouch: false,
+        isLandscape: true
+      });
+
+      // Enable request interception for advanced filtering
+      await page.setRequestInterception(true);
+      page.on('request', (request) => {
+        const blockPatterns = [
+          'google-analytics',
+          'doubleclick',
+          'facebook',
+          'twitter',
+          'linkedin',
+          'tracking',
+          'analytics',
+          'beacon'
+        ];
+
+        if (blockPatterns.some(pattern => request.url().includes(pattern))) {
+          request.abort();
+        } else {
+          request.continue();
+        }
+      });
+
+    } catch (error) {
+      this._logger.warn(`Security protocol application failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * @method _validateApiKeys
+   * @description Validates retrieved API keys using multiple verification methods
+   */
+  static _validateApiKeys(keyObject) {
+    const keys = Object.values(keyObject).filter(key => key !== null);
+    
+    for (const key of keys) {
+      // Length validation
+      if (key.length < 20) continue;
+      
+      // Pattern validation
+      let isValid = false;
+      for (const pattern of Object.values(this.apiKeyPatterns)) {
+        if (pattern.test(key)) {
+          isValid = true;
+          break;
+        }
+      }
+      
+      // Entropy validation (simple)
+      const entropy = this._calculateEntropy(key);
+      if (entropy < 3.5) continue;
+      
+      if (isValid) return key;
+    }
+    
+    return null;
+  }
+
+  /**
+   * @method _calculateEntropy
+   * @description Calculates Shannon entropy of a string for validation
+   */
+  static _calculateEntropy(str) {
+    const len = str.length;
+    const frequencies = Array.from(str).reduce((freq, c) => {
+      freq[c] = (freq[c] || 0) + 1;
+      return freq;
+    }, {});
+    
+    return Object.values(frequencies).reduce((sum, f) => {
+      const p = f / len;
+      return sum - p * Math.log2(p);
+    }, 0);
+  }
+
+  /**
+   * @method _startUptimeMonitoring
+   * @description Starts advanced uptime monitoring with telemetry
+   */
+  static _startUptimeMonitoring() {
+    setInterval(() => {
+      this.usageStats.uptime = Date.now() - this.usageStats.launchTime;
+      
+      // Calculate performance metrics
+      if (this.usageStats.totalOperations > 0) {
+        this.usageStats.performanceMetrics.successRate = 
+          (this.usageStats.successfulOperations / this.usageStats.totalOperations) * 100;
+      }
+      
+      // Health reporting
+      if (this.usageStats.performanceMetrics.successRate < 90) {
+        this._logger.warn('⚠️ Performance degradation detected');
+      }
+      
+    }, 60000);
+  }
+
+  /**
+   * @method _executeEmergencyProtocol
+   * @description Executes emergency protocols for critical failures
+   */
+  static async _executeEmergencyProtocol(error) {
+    this._logger.emergency('🚨 EXECUTING EMERGENCY PROTOCOL QBM-117');
+    
+    try {
+      // 1. Attempt graceful shutdown
+      await this.shutdown();
+      
+      // 2. Clear cached profiles
+      if (fs.existsSync('./browser_profiles')) {
+        fs.rmSync('./browser_profiles', { recursive: true, force: true });
+      }
+      
+      // 3. System diagnostics
+      const diagnostics = {
+        timestamp: new Date().toISOString(),
+        platform: os.platform(),
+        arch: os.arch(),
+        memory: os.freemem() / os.totalmem(),
+        uptime: os.uptime(),
+        error: error.message
+      };
+      
+      this._logger.debug(`System diagnostics: ${JSON.stringify(diagnostics)}`);
+      
+      // 4. Wait for system stabilization
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // 5. Attempt reinitialization
+      await this.init(this._config, this._logger);
+      
+    } catch (recoveryError) {
+      this._logger.emergency(`🛑 EMERGENCY PROTOCOL FAILED: ${recoveryError.message}`);
+      throw new Error('Quantum Browser unrecoverable failure');
+    }
+  }
+
+  /**
+   * @method _validateBrowserConnection
+   * @description Validates browser connection with enhanced checks
+   */
+  static async _validateBrowserConnection() {
+    try {
+      if (!this.browserInstance) return false;
+      
+      // Check if browser is still connected
+      const isConnected = this.browserInstance.isConnected();
+      if (!isConnected) return false;
+      
+      // Additional validation by checking browser version
+      const version = await this.browserInstance.version();
+      return !!version;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * @method releaseContext
+   * @description Releases browser context with cleanup
+   */
+  static async releaseContext(contextId) {
+    try {
+      const context = this.activePages.get(contextId);
+      if (!context) return;
+
+      const { page } = context;
+      
+      // Clear cookies and storage for security
+      await page.deleteCookie();
+      await page.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+      });
+      
+      // Reset page interception
+      await page.setRequestInterception(false);
+      
+      // Return page to pool if not at max size
+      if (this.pagePool.length < this.MAX_POOL_SIZE) {
+        this.pagePool.push(page);
+        this._logger.debug(`Page returned to pool, current size: ${this.pagePool.length}`);
+      } else {
+        await page.close();
+        this._logger.debug('Page closed (pool full)');
+      }
+      
+      // Remove from active pages
+      this.activePages.delete(contextId);
+      
+      this.usageStats.totalReleased++;
+      this.usageStats.activeContexts = this.activePages.size;
+      this.usageStats.poolSize = this.pagePool.length;
+      
+    } catch (error) {
+      this._logger.warn(`Error releasing context: ${error.message}`);
+    }
+  }
+
+  /**
+   * @method shutdown
+   * @description Gracefully shuts down the browser instance
+   */
+  static async shutdown() {
+    try {
+      // Close all active pages
+      for (const [contextId, context] of this.activePages) {
+        await context.page.close().catch(() => {});
+        this.activePages.delete(contextId);
+      }
+      
+      // Clear page pool
+      for (const page of this.pagePool) {
+        await page.close().catch(() => {});
+      }
+      this.pagePool = [];
+      
+      // Close browser
+      if (this.browserInstance) {
+        await this.browserInstance.close();
+        this.browserInstance = null;
+      }
+      
+      this._logger.info('Quantum Browser successfully shut down');
+      
+    } catch (error) {
+      this._logger.error(`Error during shutdown: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * @method safeClick
+   * @description Enhanced click with adaptive timing and error handling
+   */
+  static async safeClick(page, selectors, options = {}) {
+    const timeout = options.timeout || 30000;
+    const delay = options.delay || this._humanDelay(500, 1500);
+    
+    for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
+      try {
+        await page.waitForSelector(selector, { timeout, visible: true });
+        await delay;
+        await page.click(selector, { delay: this._randomInt(50, 150) });
+        return true;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    throw new Error(`All selectors failed for click: ${selectors.join(', ')}`);
+  }
+
+  /**
+   * @method safeType
+   * @description Enhanced typing with behavioral analysis and error handling
+   */
+  static async safeType(page, selectors, text, options = {}) {
+    const timeout = options.timeout || 30000;
+    const delay = options.delay || this._humanDelay(100, 300);
+    
+    for (const selector of Array.isArray(selectors) ? selectors : [selectors]) {
+      try {
+        await page.waitForSelector(selector, { timeout, visible: true });
+        await delay;
         
-        await this._injectStealth(page); // Inject stealth scripts
-
-        this.activePages.add(page);
-        this.usageStats.activeContexts = this.activePages.size;
-        this.usageStats.totalAcquired++;
-        this.usageStats.lastOperationTime = Date.now();
-        this.usageStats.lastPageUsage = { timestamp: Date.now(), pageId: page.url() }; // Track last used page's URL
-        return page;
-    }
-
-    /**
-     * @method releaseContext
-     * @description Releases a Puppeteer Page back to the pool or closes it if the pool is full.
-     * Cleans up the page before returning it to the pool.
-     * @param {puppeteer.Page} page - The Puppeteer Page to release.
-     * @returns {Promise<void>}
-     */
-    static async releaseContext(page) {
-        if (!page || page.isClosed()) {
-            this._logger.debug('Attempted to release an invalid or already closed page.');
-            return;
+        // Clear field first
+        await page.click(selector, { clickCount: 3 });
+        await page.keyboard.press('Backspace');
+        
+        // Type with human-like delays
+        for (const char of text) {
+          await page.type(selector, char, { delay: this._randomInt(50, 150) });
         }
+        
+        return true;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    throw new Error(`All selectors failed for typing: ${selectors.join(', ')}`);
+  }
 
+  /**
+   * @method _humanDelay
+   * @description Advanced timing with randomness
+   */
+  static _humanDelay(min, max) {
+    const jitter = crypto.randomInt(min, max);
+    return new Promise(resolve => setTimeout(resolve, jitter));
+  }
+
+  /**
+   * @method _randomInt
+   * @description Generates random integer between min and max
+   */
+  static _randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  /**
+   * @method _extractKeyFromUI
+   * @description Extracts API key from UI elements
+   */
+  static async _extractKeyFromUI(page, serviceConfig) {
+    try {
+      for (const selector of serviceConfig.selectors.apiKey) {
         try {
-            // Reset page state before pooling
-            await page.evaluate(() => {
-                localStorage.clear();
-                sessionStorage.clear();
-            }).catch(e => this._logger.warn(`Failed to clear storage on page: ${e.message}`));
-            await page.deleteCookie().catch(e => this._logger.warn(`Failed to clear cookies on page: ${e.message}`));
-            await page.goto('about:blank', { waitUntil: 'domcontentloaded' }).catch(e => this._logger.warn(`Failed to reset page URL: ${e.message}`));
-
-            if (this.pagePool.length < this.MAX_POOL_SIZE) {
-                this.pagePool.push(page);
-                this._logger.debug('Page released to pool and reset.');
-            } else {
-                await page.close();
-                this._logger.debug('Page closed (pool full).');
-            }
+          await page.waitForSelector(selector, { timeout: 10000 });
+          const key = await page.$eval(selector, el => el.textContent || el.value);
+          if (key && key.length > 20) return key.trim();
         } catch (error) {
-            this._logger.warn(`Error releasing page: ${error.message}`);
-        } finally {
-            this.activePages.delete(page);
-            this.usageStats.activeContexts = this.activePages.size;
-            this.usageStats.totalReleased++;
+          continue;
         }
+      }
+      return null;
+    } catch (error) {
+      this._logger.warn(`UI extraction failed: ${error.message}`);
+      return null;
     }
+  }
 
-    /**
-     * @method shutdown
-     * @description Closes the main browser instance and all active/pooled pages, releasing all resources.
-     * @returns {Promise<void>}
-     */
-    static async shutdown() {
-        if (this.browserInstance) {
-            this._logger.info('Initiating browser manager shutdown...');
-            // Close all active pages
-            await Promise.allSettled(
-                Array.from(this.activePages).map(p => p.close().catch(e => this._logger.warn(`Failed to close active page during shutdown: ${e.message}`)))
-            );
-            // Close all pooled pages
-            await Promise.allSettled(
-                this.pagePool.map(p => p.close().catch(e => this._logger.warn(`Failed to close pooled page during shutdown: ${e.message}`)))
-            );
-            this.pagePool.length = 0;
-            this.activePages.clear();
-
-            await this.browserInstance.close();
-            this.browserInstance = null;
-            this.usageStats.launchTime = null;
-            this._logger.info('Browser manager shutdown complete.');
-        }
-    }
-
-    /**
-     * @method autonomousLogin
-     * @description Attempts to log in to a web service using provided credentials and selectors.
-     * Includes adaptive retry logic and anti-detection measures.
-     * @param {puppeteer.Page} page - The Puppeteer page instance.
-     * @param {string} serviceBaseUrl - The base URL of the service (e.g., 'https://bscscan.com').
-     * @param {object} credentials - The login credentials { email, password }.
-     * @returns {Promise<boolean>} True if login is successful, false otherwise.
-     */
-    static async autonomousLogin(page, serviceBaseUrl, credentials) {
-        const serviceConfig = this.loginSelectors[serviceBaseUrl];
-        if (!serviceConfig) {
-            this._logger.error(`🚨 No login selectors configured for ${serviceBaseUrl}.`);
-            return false;
-        }
-
-        const { loginPageUrl, email: emailSelectors, password: passwordSelectors, submit: submitSelectors, postLoginCheck } = serviceConfig;
-        const maxLoginRetries = 3;
-
-        for (let attempt = 1; attempt <= maxLoginRetries; attempt++) {
-            this._logger.info(`Attempting autonomous login to ${serviceBaseUrl} (Attempt ${attempt}/${maxLoginRetries})...`);
-            try {
-                await page.goto(loginPageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }); // Longer timeout
-                await this._humanDelay(2000, 5000); // Wait for page to load content
-
-                // Adaptive CAPTCHA detection and handling (conceptual)
-                const captchaDetected = await page.$eval('img[alt*="captcha"], #captcha, .g-recaptcha, .h-captcha', el => true).catch(() => false);
-                if (captchaDetected) {
-                    this._logger.warn(`⚠️ CAPTCHA detected on ${serviceBaseUrl}. Automated login will likely fail without a solving service.`);
-                    // if (this._autonomyLevel === this.AUTONOMY_LEVELS.FULL) {
-                    //    // Integrate with a CAPTCHA solving service here (e.g., 2Captcha, Anti-Captcha)
-                    //    // await this._solveCaptcha(page);
-                    // }
-                    // provideThreatIntelligence('browser_block', `CAPTCHA detected on ${serviceBaseUrl}`);
-                }
-
-                // Attempt to type into email and password fields using multiple selectors
-                await this.safeType(page, emailSelectors, credentials.email, { timeout: 20000 });
-                await this._humanDelay(500, 1500);
-                await this.safeType(page, passwordSelectors, credentials.password, { timeout: 20000 });
-                await this._humanDelay(1000, 3000);
-
-                await this.safeClick(page, submitSelectors, { timeout: 20000 });
-                await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 }); // Wait for navigation after submit
-
-                // Post-login check
-                const newUrl = page.url();
-                if (newUrl.includes(postLoginCheck) || newUrl.startsWith(serviceBaseUrl)) {
-                    this._logger.success(`✅ Login successful for ${serviceBaseUrl}. Current URL: ${newUrl}`);
-                    return true;
-                } else {
-                    const pageContent = await page.content();
-                    // More specific error message detection
-                    if (pageContent.includes('Incorrect username or password') || pageContent.includes('Invalid credentials')) {
-                        this._logger.error('🚨 Invalid credentials provided. Stopping login attempts.');
-                        return false;
-                    }
-                    this._logger.warn(`Login failed or redirected unexpectedly. Current URL: ${newUrl}. Retrying...`);
-                    await this._humanDelay(5000 * attempt, 10000 * attempt); // Exponential backoff
-                }
-            } catch (error) {
-                this._logger.error(`🚨 Error during login to ${serviceBaseUrl} (Attempt ${attempt}): ${error.message}`);
-                // if (error.name === 'TimeoutError' && attempt < maxLoginRetries) {
-                //     this._logger.warn(`Timeout during login for ${serviceBaseUrl}. Retrying...`);
-                //     await this._humanDelay(5000 * attempt, 10000 * attempt);
-                // } else {
-                //     provideThreatIntelligence('browser_interaction_error', `Login failure on ${serviceBaseUrl}: ${error.message}`);
-                //     return false;
-                // }
-            }
-        }
-        this._logger.error(`🚫 All ${maxLoginRetries} login attempts failed for ${serviceBaseUrl}.`);
-        return false;
-    }
-
-    /**
-     * @method retrieveApiKey
-     * @description Navigates to a specific page and extracts an API key from the page's content.
-     * Includes advanced extraction logic and pattern matching.
-     * @param {puppeteer.Page} page - The Puppeteer page instance.
-     * @param {string} keyPageUrl - The URL of the page containing the API key.
-     * @param {string|string[]} keySelectors - CSS selectors for the element containing the key.
-     * @returns {Promise<string|null>} The retrieved API key string or null if not found.
-     */
-    static async retrieveApiKey(page, keyPageUrl, keySelectors) {
+  /**
+   * @method _interceptNetworkTraffic
+   * @description Intercepts network traffic to find API keys
+   */
+  static async _interceptNetworkTraffic(page, serviceConfig) {
+    return new Promise((resolve) => {
+      let foundKey = null;
+      
+      const responseHandler = async (response) => {
         try {
-            this._logger.info(`Navigating to ${keyPageUrl} to retrieve API key...`);
-            await page.goto(keyPageUrl, { waitUntil: 'networkidle0', timeout: 60000 }); // Increased timeout
-            await this._humanDelay(3000, 6000);
-
-            // Attempt to find the key using provided selectors
-            for (const selector of Array.isArray(keySelectors) ? keySelectors : [keySelectors]) {
-                const keyElement = await page.$(selector);
-                if (keyElement) {
-                    const apiKey = await page.evaluate(el => el.textContent.trim() || el.value, keyElement); // Check both textContent and value
-                    if (apiKey && apiKey.length > 20 && !/placeholder|loading|example/i.test(apiKey)) {
-                        this._logger.success(`🔑 Successfully retrieved API key from selector "${selector}".`);
-                        return apiKey;
-                    } else {
-                        this._logger.warn(`⚠️ Found element with selector "${selector}" but content looks like a placeholder, too short, or example.`);
-                    }
-                }
-            }
-
-            // Fallback 1: Search the entire page for common API key patterns
-            if (this._autonomyLevel >= this.AUTONOMY_LEVELS.ADAPTIVE) {
-                this._logger.info("Attempting advanced key extraction: scanning page for common patterns...");
-                const pageText = await page.evaluate(() => document.body.innerText);
-                const apiKeyRegex = /(?:api_?key|token|access_?token|secret|x-api-key|bearer|authorization)(?:[\s"']?[:=][\s"']?)([a-zA-Z0-9_-]{30,}|sk-[a-zA-Z0-9]{20,}|pk-[a-zA-Z0-9]{20,})/gi;
-                const matches = pageText.match(apiKeyRegex);
-
+          const url = response.url();
+          const status = response.status();
+          
+          if (status >= 200 && status < 300) {
+            try {
+              const text = await response.text();
+              
+              // Check for API keys in response
+              for (const pattern of Object.values(this.apiKeyPatterns)) {
+                const matches = text.match(pattern);
                 if (matches && matches.length > 0) {
-                    for (const match of matches) {
-                        const rawKeyMatch = match.split(/[:=]/).pop().trim().replace(/['"]/g, '');
-                        if (rawKeyMatch.length > 30 && !/placeholder|loading|example/i.test(rawKeyMatch)) {
-                            this._logger.success(`🔍 Found potential API key via pattern matching: ${rawKeyMatch.substring(0, 15)}...`);
-                            return rawKeyMatch;
-                        }
-                    }
+                  foundKey = matches[0];
+                  page.off('response', responseHandler);
+                  resolve(foundKey);
+                  return;
                 }
+              }
+            } catch (error) {
+              // Response body might not be text
             }
-
-            // Fallback 2 (Advanced): Intercept network requests if FULL autonomy
-            // This is complex and requires careful implementation to avoid infinite loops or blocking
-            // if (this._autonomyLevel === this.AUTONOMY_LEVELS.FULL) {
-            //     this._logger.info("Attempting advanced key extraction: monitoring network requests...");
-            //     const interceptedKey = await this._monitorNetworkForApiKey(page);
-            //     if (interceptedKey) {
-            //         this._logger.success('🔑 Found API key by monitoring network requests.');
-            //         return interceptedKey;
-            //     }
-            // }
-
-            this._logger.warn(`⚠️ Could not find API key using any methods on ${keyPageUrl}.`);
-            // provideThreatIntelligence('api_key_extraction_failure', `Failed to extract key from ${keyPageUrl}`);
-            return null;
+          }
         } catch (error) {
-            this._logger.error(`🚨 Error during API key retrieval: ${error.message}`);
-            // provideThreatIntelligence('api_key_extraction_failure', `Error extracting key from ${keyPageUrl}: ${error.message}`);
-            return null;
+          // Continue processing other responses
         }
-    }
-
-    /**
-     * @method safeClick
-     * @description Attempts to click an element identified by one of the provided selectors.
-     * Includes a timeout, a random delay, and robust error handling.
-     * @param {puppeteer.Page} page - The Puppeteer page instance.
-     * @param {string|string[]} selectors - One or more CSS selectors for the element.
-     * @param {object} [options={}] - Options for the click operation (e.g., `timeout`, `delay`).
-     * @returns {Promise<boolean>} True if click was successful, false otherwise.
-     * @throws {Error} If all click attempts fail.
-     */
-    static async safeClick(page, selectors, options = {}) {
-        const timeout = options.timeout || 10000;
-        const delay = options.delay || 150 + Math.random() * 250;
-
-        const effectiveSelectors = Array.isArray(selectors) ? selectors : [selectors];
-
-        for (const selector of effectiveSelectors) {
-            try {
-                await page.waitForSelector(selector, { visible: true, timeout });
-                await this._humanDelay(delay, delay + 100); // Small pre-click delay
-                await page.click(selector, { delay });
-                this._logger.debug(`Clicked selector: ${selector}`);
-                return true;
-            } catch (error) {
-                this._logger.debug(`Click attempt failed for selector "${selector}": ${error.message}`);
-                // if (this._autonomyLevel >= this.AUTONOMY_LEVELS.ADAPTIVE) {
-                //    // Add more sophisticated retry logic or alternative actions
-                // }
-                continue;
-            }
+      };
+      
+      page.on('response', responseHandler);
+      
+      // Set timeout for network interception
+      setTimeout(() => {
+        if (!foundKey) {
+          page.off('response', responseHandler);
+          resolve(null);
         }
-        throw new Error(`All click attempts failed for selectors: ${effectiveSelectors.join(', ')}`);
+      }, 30000);
+    });
+  }
+
+  /**
+   * @method _analyzeMemory
+   * @description Advanced memory analysis for finding API keys
+   */
+  static async _analyzeMemory(page, serviceConfig) {
+    // This is a placeholder for advanced memory analysis techniques
+    // In a real implementation, this would use browser debugging protocols
+    // to analyze memory structures for sensitive data
+    
+    this._logger.warn('Memory analysis not fully implemented in this version');
+    return null;
+  }
+
+  /**
+   * @method _detectCaptcha
+   * @description Detects CAPTCHA challenges on the page
+   */
+  static async _detectCaptcha(page) {
+    try {
+      // Check for reCAPTCHA
+      const recaptcha = await page.$('iframe[src*="google.com/recaptcha"]');
+      if (recaptcha) return true;
+      
+      // Check for hCaptcha
+      const hcaptcha = await page.$('iframe[src*="hcaptcha.com"]');
+      if (hcaptcha) return true;
+      
+      // Check for CAPTCHA images
+      const captchaImages = await page.$$('img[src*="captcha"], img[alt*="captcha"]');
+      if (captchaImages.length > 0) return true;
+      
+      return false;
+    } catch (error) {
+      return false;
     }
+  }
 
-    /**
-     * @method safeType
-     * @description Attempts to type text into an input element identified by one of the provided selectors.
-     * Includes a timeout and a random delay for more human-like typing.
-     * @param {puppeteer.Page} page - The Puppeteer page instance.
-     * @param {string|string[]} selectors - One or more CSS selectors for the input element.
-     * @param {string} text - The text to type.
-     * @param {object} [options={}] - Options for the typing operation (e.g., `timeout`, `delay`).
-     * @returns {Promise<boolean>} True if typing was successful, false otherwise.
-     * @throws {Error} If all type attempts fail.
-     */
-    static async safeType(page, selectors, text, options = {}) {
-        const timeout = options.timeout || 10000;
-        const delay = options.delay || 50 + Math.random() * 100;
-
-        const effectiveSelectors = Array.isArray(selectors) ? selectors : [selectors];
-
-        for (const selector of effectiveSelectors) {
-            try {
-                await page.waitForSelector(selector, { visible: true, timeout });
-                await page.focus(selector); // Focus the element first
-                await this._humanDelay(delay / 2, delay); // Small pre-type delay
-                await page.type(selector, text, { delay }); // Type char by char
-                this._logger.debug(`Typed into selector: ${selector}`);
-                return true;
-            } catch (error) {
-                this._logger.debug(`Type attempt failed for selector "${selector}": ${error.message}`);
-                // if (this._autonomyLevel >= this.AUTONOMY_LEVELS.ADAPTIVE) {
-                //    // Add more sophisticated retry logic or alternative actions
-                // }
-                continue;
-            }
-        }
-        throw new Error(`All type attempts failed for selectors: ${effectiveSelectors.join(', ')}`);
+  /**
+   * @method _solveCaptcha
+   * @description Attempts to solve CAPTCHA challenges
+   */
+  static async _solveCaptcha(page) {
+    try {
+      // Use puppeteer-extra recaptcha plugin
+      await page.solveRecaptchas();
+      
+      // Wait for potential redirects or UI updates
+      await this._humanDelay(2000, 4000);
+      
+      return true;
+    } catch (error) {
+      this._logger.warn(`CAPTCHA solving failed: ${error.message}`);
+      return false;
     }
+  }
 
-    // --- Monitoring & Statistics ---
-
-    /**
-     * @method getStats
-     * @description Retrieves current global usage statistics for the browser manager.
-     * @returns {object} Browser usage statistics.
-     */
-    static getStats() {
-        return {
-            totalAcquired: this.usageStats.totalAcquired,
-            totalReleased: this.usageStats.totalReleased,
-            activeContexts: this.activePages.size,
-            poolSize: this.pagePool.length,
-            maxPoolSize: this.MAX_POOL_SIZE,
-            launchTime: this.usageStats.launchTime ? new Date(this.usageStats.launchTime).toISOString() : 'N/A',
-            lastOperationTime: this.usageStats.lastOperationTime ? new Date(this.usageStats.lastOperationTime).toISOString() : 'N/A',
-            status: this.browserInstance && this.browserInstance.isConnected() ? 'connected' : 'disconnected',
-            pagesInUse: Array.from(this.activePages).map(p => p.url())
-        };
-    }
-
-    /**
-     * @method getStatus
-     * @description Provides a simplified status object suitable for agent reporting.
-     * @returns {object} Simplified browser manager status.
-     */
-    static getStatus() {
-        return {
-            agent: 'browserManager',
-            lastExecution: this.usageStats.lastOperationTime ? new Date(this.usageStats.lastOperationTime).toISOString() : 'Never',
-            lastStatus: this.browserInstance && this.browserInstance.isConnected() ? 'operational' : 'disconnected',
-            activePages: this.activePages.size,
-            pooledPages: this.pagePool.length
-        };
-    }
-
-    /**
-     * @method getLastUsageStats
-     * @description Returns statistics about the last page acquired, useful for agent-specific reporting.
-     * @returns {object} Last page usage statistics.
-     */
-    static getLastUsageStats() {
-        return { ...this.usageStats.lastPageUsage };
-    }
-
-    // --- Internal Methods for Stealth & Human-like Behavior ---
-
-    /**
-     * @method _injectStealth
-     * @description Injects JavaScript into the page's context to apply advanced anti-detection measures.
-     * This runs before any scripts on the page, making the browser appear more human.
-     * @param {puppeteer.Page} page - The Puppeteer page instance to inject scripts into.
-     * @returns {Promise<void>}
-     */
-    static async _injectStealth(page) {
+  /**
+   * @method _verifyLoginSuccess
+   * @description Verifies if login was successful
+   */
+  static async _verifyLoginSuccess(page, serviceConfig) {
+    try {
+      // Check for dashboard elements
+      for (const selector of Array.isArray(serviceConfig.selectors.dashboard) 
+           ? serviceConfig.selectors.dashboard 
+           : [serviceConfig.selectors.dashboard]) {
         try {
-            await page.evaluateOnNewDocument(() => {
-                // Bypass navigator.webdriver detection
-                Object.defineProperty(navigator, 'webdriver', { get: () => false });
-
-                // Mimic Chrome object
-                window.chrome = {
-                    runtime: {},
-                    loadTimes: () => ({}),
-                    csi: () => ({})
-                };
-
-                // Mimic plugins (important for common browser fingerprinting)
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => ([
-                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbgclgcebalkgkjmrkdvm', description: 'Portable Document Format' }
-                    ])
-                });
-
-                // Mimic languages (consistency with User-Agent)
-                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                // Mimic platform
-                Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-
-                // Spoof WebGL fingerprinting
-                const getParameter = WebGLRenderingContext.prototype.getParameter;
-                WebGLRenderingContext.prototype.getParameter = function (parameter) {
-                    if (parameter === 37445) { // UNMASKED_VENDOR_WEBGL
-                        return 'Google Inc. (NVIDIA)'; // Common vendor
-                    }
-                    if (parameter === 37446) { // UNMASKED_RENDERER_WEBGL
-                        return 'ANGLE (NVIDIA GeForce GTX 1060)'; // Common renderer
-                    }
-                    return getParameter.call(this, parameter);
-                };
-
-                // Spoof MediaDevices to hide real device info (microphone, camera)
-                Object.defineProperty(navigator, 'mediaDevices', {
-                    get: () => ({
-                        enumerateDevices: async () => ([
-                            { kind: 'audioinput', label: 'Default - Microphone', deviceId: 'default', groupId: 'default' },
-                            { kind: 'videoinput', label: 'Default - Camera', deviceId: 'default', groupId: 'default' }
-                        ]),
-                        getUserMedia: () => Promise.reject(new Error('Permission denied by user')), // Simulate user denying permission
-                        getDisplayMedia: () => Promise.reject(new Error('Permission denied by user'))
-                    })
-                });
-
-                // Spoof permissions.query to prevent sites from detecting notification/geolocation permissions
-                const originalQuery = navigator.permissions.query;
-                navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                        Promise.resolve({ state: Notification.permission }) :
-                        originalQuery(parameters)
-                );
-
-                // Disable some console properties that can be used for detection
-                const originalDebug = console.debug;
-                console.debug = function(...args) {
-                    if (args.some(arg => typeof arg === 'string' && arg.includes('puppeteer'))) {
-                        return; // Suppress Puppeteer-specific debug messages
-                    }
-                    originalDebug.apply(this, args);
-                };
-
-                // Override timezone (optional, can be passed from config)
-                Object.defineProperty(Intl.DateTimeFormat.prototype, 'resolvedOptions', {
-                    value: () => ({ timeZone: 'America/New_York' }) // Consistent timezone
-                });
-
-            });
+          await page.waitForSelector(selector, { timeout: 10000 });
+          return true;
         } catch (error) {
-            this._logger.warn(`Stealth injection failed for page: ${error.message}`);
-            // provideThreatIntelligence('stealth_injection_failure', `Stealth script failed: ${error.message}`);
+          continue;
         }
+      }
+      
+      // Check URL changes indicating successful login
+      const currentUrl = page.url();
+      if (!currentUrl.includes('login') && !currentUrl.includes('signin')) {
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      return false;
     }
+  }
 
-    /**
-     * @method _humanDelay
-     * @description Generates a promise that resolves after a base delay plus a random jitter.
-     * @param {number} min - The minimum milliseconds for the delay.
-     * @param {number} max - The maximum milliseconds for the delay.
-     * @returns {Promise<void>} A promise that resolves after the calculated delay.
-     */
-    static _humanDelay(min, max) {
-        const jitter = crypto.randomInt(min, max);
-        return new Promise(resolve => setTimeout(resolve, jitter));
+  /**
+   * @method _evadeDetection
+   * @description Implements advanced techniques to evade detection
+   */
+  static async _evadeDetection(page) {
+    try {
+      // Random mouse movements
+      await page.mouse.move(
+        this._randomInt(0, 500),
+        this._randomInt(0, 500),
+        { steps: this._randomInt(5, 15) }
+      );
+      
+      // Random scrolling
+      await page.evaluate(() => {
+        window.scrollBy(0, Math.random() * 500);
+      });
+      
+      // Add random delays between actions
+      await this._humanDelay(500, 2000);
+      
+    } catch (error) {
+      // Continue execution even if evasion techniques fail
     }
-
-    // --- Future Advanced Features (Conceptual) ---
-
-    // /**
-    //  * @method _solveCaptcha (Conceptual)
-    //  * @description Integrates with a third-party CAPTCHA solving service.
-    //  * @param {puppeteer.Page} page - The Puppeteer page instance.
-    //  * @returns {Promise<boolean>} True if CAPTCHA was solved, false otherwise.
-    //  */
-    // static async _solveCaptcha(page) {
-    //     this._logger.info('Attempting to solve CAPTCHA...');
-    //     // This is where you'd send the CAPTCHA image/sitekey to a service
-    //     // e.g., using axios to a 2Captcha or Anti-Captcha API
-    //     await this._humanDelay(10000, 20000); // Simulate CAPTCHA solving time
-    //     this._logger.warn('CAPTCHA solving service integration is conceptual. Manual intervention needed.');
-    //     return false; // For now, always fail
-    // }
-
-    // /**
-    //  * @method _monitorNetworkForApiKey (Conceptual)
-    //  * @description Intercepts network requests to find API keys in headers or payloads.
-    //  * For FULL autonomy level.
-    //  * @param {puppeteer.Page} page - The Puppeteer page instance.
-    //  * @returns {Promise<string|null>} Discovered API key or null.
-    //  */
-    // static async _monitorNetworkForApiKey(page) {
-    //     let foundKey = null;
-    //     page.on('response', async (response) => {
-    //         if (response.request().resourceType() === 'xhr' || response.request().resourceType() === 'fetch') {
-    //             try {
-    //                 const text = await response.text();
-    //                 // Search for patterns in response body
-    //                 const match = text.match(/(?:api_?key|token|access_?token|secret)["':=\s]*([a-zA-Z0-9_-]{30,})/);
-    //                 if (match && match[1]) {
-    //                     foundKey = match[1];
-    //                     this._logger.debug(`Found key in network response: ${foundKey.substring(0, 10)}...`);
-    //                     // Consider stopping further requests if key found
-    //                 }
-    //             } catch (e) {
-    //                 // Ignore error if response is not text (e.g., image)
-    //             }
-    //         }
-    //     });
-    //     // You might need to trigger some action on the page that makes an API call
-    //     // Example: await page.click('#some-button-that-fetches-data');
-    //     await this._humanDelay(5000, 10000); // Wait for potential network activity
-    //     return foundKey;
-    // }
+  }
 }
 
-export default BrowserManager;
+export default QuantumBrowserManager;
