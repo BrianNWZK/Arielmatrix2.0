@@ -4,6 +4,7 @@ import path from 'path';
 import { ethers } from 'ethers';
 import BrowserManager from './browserManager.js';
 import { provideThreatIntelligence } from './healthAgent.js';
+import crypto from 'crypto'; // Correct, top-level import for Node.js crypto module
 
 // Enhanced configuration with proper ES modules
 const __filename = new URL(import.meta.url).pathname;
@@ -11,7 +12,7 @@ const __dirname = path.dirname(__filename);
 
 // Advanced delay with quantum-resistant randomness
 const quantumDelay = (baseMs = 1000) => {
-    const crypto = globalThis.crypto || require('crypto');
+    // Now directly using the imported 'crypto'
     const jitter = crypto.randomInt(500, 3000);
     return new Promise(resolve => setTimeout(resolve, baseMs + jitter));
 };
@@ -68,7 +69,7 @@ class QuantumKeyVault {
     }
 
     generateQuantumKey() {
-        const crypto = globalThis.crypto || require('crypto');
+        // Now directly using the imported 'crypto'
         return crypto.randomBytes(32).toString('hex');
     }
 
