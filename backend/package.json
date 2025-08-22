@@ -19,7 +19,7 @@
     "puppeteer": "^24.16.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "puppeteer-extra-plugin-recaptcha": "^2.11.2",
+    "puppeteer-extra-plugin-recaptcha": "^3.6.8",
     "playwright": "^1.48.2",
     "hardhat": "^2.22.12",
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
