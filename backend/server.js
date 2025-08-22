@@ -25,12 +25,19 @@ import * as apiScoutAgent from './agents/apiScoutAgent.js';
 import * as browserManager from './agents/browserManager.js'; // Utility, not standalone agent
 import * as complianceAgent from './agents/complianceAgent.js';
 import * as contractDeployAgent from './agents/contractDeployAgent.js';
-import * => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
 import * as cryptoAgent from './agents/cryptoAgent.js';
 import * as dataAgent from './agents/dataAgent.js';
 import * as forexSignalAgent from './agents/forexSignalAgent.js';
 import * as socialAgent from './agents/socialAgent.js';
 
+// --- Enhanced Logger ---
+const logger = {
+    info: (...args) => console.log(`[${new Date().toISOString()}] INFO:`, ...args),
+    warn: (...args) => console.warn(`[${new Date().toISOString()}] WARN:`, ...args),
+    error: (...args) => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
+    success: (...args) => console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args),
+    debug: (...args) => { if (process.env.NODE_ENV === 'development') console.log(`[${new Date().toISOString()}] DEBUG:`, ...args); }
+};
 
 // --- Configuration ---
 // CONFIG now contains ONLY hardcoded constants and critical environment variables
@@ -75,15 +82,6 @@ export const CONFIG = {
     CYCLE_INTERVAL: 600000, // 10 minutes
     HEALTH_REPORT_INTERVAL: 12, // Hours
     DASHBOARD_UPDATE_INTERVAL: 5000, // Milliseconds
-};
-
-// --- Enhanced Logger ---
-const logger = {
-    info: (...args) => console.log(`[${new Date().toISOString()}] INFO:`, ...args),
-    warn: (...args) => console.warn(`[${new Date().toISOString()}] WARN:`, ...args),
-    error: (...args) => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
-    success: (...args) => console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args),
-    debug: (...args) => { if (process.env.NODE_ENV === 'development') console.log(`[${new Date().toISOString()}] DEBUG:`, ...args); }
 };
 
 // --- WebSocket Setup ---
