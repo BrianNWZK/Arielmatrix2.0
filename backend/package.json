@@ -35,5 +35,5 @@
     "eslint-plugin-n": "^17.9.0" 
   },
   "license": "MIT",
-  "private": 
+  "private"
 }
