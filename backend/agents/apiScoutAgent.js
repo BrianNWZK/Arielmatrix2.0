@@ -10,7 +10,7 @@ const __filename = new URL(import.meta.url).pathname;
 const __dirname = path.dirname(__filename);
 
 // Advanced delay with quantum-resistant randomness
-const quantumDelay = (baseMs) => {
+const quantumDelay = (baseMs = 1000) => {
     const crypto = globalThis.crypto || require('crypto');
     const jitter = crypto.randomInt(500, 3000);
     return new Promise(resolve => setTimeout(resolve, baseMs + jitter));
@@ -32,8 +32,8 @@ const API_CATALOG = {
         status_check: 'https://api.kraken.com/0/public/SystemStatus',
         api_key_name: 'KRAKEN_API_KEY',
         documentation: 'https://docs.kraken.com/rest/'
-    },
-    // ... keep your existing API catalog entries
+    }
+    // Add more API catalog entries as needed
 };
 
 // Enhanced API Retrieval Catalog with advanced techniques
@@ -56,8 +56,8 @@ const API_RETRIEVAL_CATALOG = {
             captchaType: 'none',
             timeout: 30000
         }
-    },
-    // ... enhanced entries for other services
+    }
+    // Add more retrieval catalog entries as needed
 };
 
 // Quantum-resistant key storage
@@ -209,7 +209,7 @@ async function retrieveAndStoreKey(serviceUrl, credentials, currentConfig, curre
         }
 
         context = await BrowserManager.acquireContext('api_retrieval');
-        const page = context.page;
+        const page = context;
 
         // Advanced login sequence
         const loginSuccess = await BrowserManager.executeAutomatedLogin(
@@ -261,7 +261,7 @@ async function retrieveAndStoreKey(serviceUrl, credentials, currentConfig, curre
         return null;
     } finally {
         if (context) {
-            await BrowserManager.releaseContext(context.contextId);
+            await BrowserManager.releaseContext(context);
         }
     }
 }
@@ -318,7 +318,7 @@ async function dynamicWebResearch(keywords, currentConfig, currentLogger) {
 }
 
 // Main enhanced function
-export async function run(currentConfig, currentLogger) {
+async function run(currentConfig, currentLogger) {
     lastExecutionTime = new Date().toISOString();
     lastStatus = 'running';
     
@@ -382,7 +382,7 @@ async function generateRevenue(keys, currentConfig, currentLogger) {
     return totalRevenue;
 }
 
-export function getStatus() {
+function getStatus() {
     return {
         agent: 'apiScout',
         lastExecution: lastExecutionTime,
@@ -392,10 +392,28 @@ export function getStatus() {
 }
 
 // Health monitoring
-export function getHealth() {
+function getHealth() {
     return {
         memory: process.memoryUsage(),
         cpu: process.cpuUsage(),
         uptime: process.uptime()
     };
 }
+
+// Add the missing function that adRevenueAgent expects
+export async function _updateRenderEnvWithKeys(remediatedKeys, config, logger) {
+    logger.info(`🔄 Would update Render environment with keys: ${Object.keys(remediatedKeys).join(', ')}`);
+    // In a real implementation, this would make an API call to update Render's environment variables
+    // For now, we'll just log and update the local config
+    Object.assign(config, remediatedKeys);
+    return { success: true, message: 'Environment update simulated' };
+}
+
+// Export all functions properly
+export {
+    run,
+    getStatus,
+    getHealth
+};
+
+export default run;
