@@ -3,7 +3,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 
 // Import the browser manager for robust and stealthy browser operations
-import browserManager from '../browserManager.js';
+import browserManager from './browserManager.js'; // Fixed path - browserManager is in the agents directory
 
 // === 🌀 Quantum Jitter (Anti-Robot) ===
 const quantumDelay = (ms) => new Promise(resolve => {
@@ -183,8 +183,15 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
             let page = null;
             try {
                 logger.info('Attempting Linkvertise automation via browser...');
+                // Initialize browser manager if not already initialized
+                if (!browserManager.isInitialized()) {
+                    await browserManager.init(CONFIG, logger);
+                }
+                
                 // Acquire a page from the browser manager
-                page = await browserManager.getNewPage();
+                const context = await browserManager.acquireContext('linkvertise_automation');
+                page = context.page;
+                
                 if (!page) {
                     throw new Error('Failed to acquire a browser page from browserManager.');
                 }
@@ -231,9 +238,9 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
                     logger.error('Linkvertise operation timed out. This might indicate bot detection or slow page loads.');
                 }
             } finally {
-                // Ensure the page is returned to the pool or truly closed
+                // Ensure the page is returned to the pool
                 if (page) {
-                    await browserManager.closePage(page);
+                    await browserManager.releaseContext(page.contextId);
                 }
             }
         } else {
@@ -276,8 +283,12 @@ export const dataAgent = async (CONFIG, logger, redisClient = null) => {
         const earnings = signals.length > 0 && finalLink !== baseSignalLink ? Math.random() * 15 + 3 : 0; // Adjusted earnings potential
         if (earnings > 0) {
             logger.info(`🎯 Payout triggered: $${earnings.toFixed(2)}`);
-            const payoutAgentModule = await import('./payoutAgent.js');
-            await payoutAgentModule.payoutAgent({ ...CONFIG, earnings }, logger);
+            try {
+                const payoutAgentModule = await import('./payoutAgent.js');
+                await payoutAgentModule.payoutAgent({ ...CONFIG, earnings }, logger);
+            } catch (error) {
+                logger.warn(`⚠️ Payout agent failed: ${error.message}`);
+            }
         } else {
             logger.info('💰 No significant earnings to trigger payout this cycle.');
         }
