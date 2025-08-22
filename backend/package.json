@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "precommit": "node scripts/precommit.js"
+    "precommit": "node scripts/precommit.js",
+    "test": "jest" // Add a test script
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -31,8 +32,8 @@
   "devDependencies": {
     "nodemon": "^3.1.4",
     "eslint": "^9.12.0",
-    "eslint-plugin-node": "^11.1.0"
+    "eslint-plugin-n": "^17.9.0" // Update eslint-plugin-node to eslint-plugin-n
   },
   "license": "MIT",
-  "private": true
+  "private": true
 }
