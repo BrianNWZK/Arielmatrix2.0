@@ -17,7 +17,71 @@ import 'dotenv/config'; // Loads environment variables from .env file (for local
 // trusting ConfigAgent to have populated them.
 import PayoutAgent from './agents/payoutAgent.js';
 import * as healthAgent from './agents/healthAgent.js';
+import * as configAgent from './agents/configAgent.js';
+import * as shopifyAgent from './agents/shopifyAgent.js';
+import * as adRevenueAgent from './agents/adRevenueAgent.js';
+import * as adsenseApi from './agents/adsenseApi.js'; // Utility, not standalone agent
+import * as apiScoutAgent from './agents/apiScoutAgent.js';
+import * as browserManager from './agents/browserManager.js'; // Utility, not standalone agent
+import * as complianceAgent from './agents/complianceAgent.js';
+import * as contractDeployAgent from './agents/contractDeployAgent.js';
 import * => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
+import * as cryptoAgent from './agents/cryptoAgent.js';
+import * as dataAgent from './agents/dataAgent.js';
+import * as forexSignalAgent from './agents/forexSignalAgent.js';
+import * as socialAgent from './agents/socialAgent.js';
+
+
+// --- Configuration ---
+// CONFIG now contains ONLY hardcoded constants and critical environment variables
+// that enable the ConfigAgent and core blockchain functionality.
+// All other agent-specific keys are expected to be present in process.env
+// because ConfigAgent is responsible for sourcing and rendering them.
+export const CONFIG = {
+    // --- Core System & Payout Agent Foundational Config ---
+    // These are critical for the system's operation and are expected to be
+    // manually set as environment variables in Render for security and initial setup.
+    PAYOUT_THRESHOLD_USD: process.env.PAYOUT_THRESHOLD_USD || 500, // Default for testing, but should be set in Render
+    MASTER_PRIVATE_KEY: process.env.MASTER_PRIVATE_KEY, // ABSOLUTELY CRITICAL: Manually set in Render
+
+    // Hardcoded RPC URLs for various tokens/networks.
+    // These are fundamental blockchain connection points.
+    // IMPORTANT: Replace placeholder values (e.g., "YOUR_INFURA_PROJECT_ID")
+    // with actual working RPC URLs for your deployment.
+    RPC_URLS_BY_TOKEN: {
+        "ETH": "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID", // Ethereum Mainnet
+        "MATIC": "https://polygon-mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID", // Polygon Mainnet
+        "BNB": "https://bsc-dataseed.binance.org/", // Binance Smart Chain Mainnet
+        "ARB": "https://arb1.arbitrum.io/rpc", // Arbitrum One Mainnet
+        "OP": "https://mainnet.optimism.io", // Optimism Mainnet
+        // Add more as needed for any tokens your system will interact with
+    },
+
+    // REVENUE_DISTRIBUTOR_ABI is crucial for PayoutAgent to interact with the contract.
+    // This should be manually set as an environment variable in Render.
+    REVENUE_DISTRIBUTOR_ABI: JSON.parse(process.env.REVENUE_DISTRIBUTOR_ABI || '[]'),
+
+    // CONTRACT_DEPLOY_GAS_LIMIT is for ContractDeployAgent.
+    // This should be manually set as an environment variable in Render.
+    CONTRACT_DEPLOY_GAS_LIMIT: process.env.CONTRACT_DEPLOY_GAS_LIMIT || '5000000',
+
+    // --- Config Agent Specific (needed for ConfigAgent to update Render env) ---
+    // These are essential for ConfigAgent to perform its duty.
+    // Manually set as environment variables in Render.
+    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN || process.env.RENDER_API_KEY, // Use RENDER_API_KEY as fallback
+    RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID, // Manually set in Render
+
+    // --- System Cycle Intervals (hardcoded constants) ---
+    CYCLE_INTERVAL: 600000, // 10 minutes
+    HEALTH_REPORT_INTERVAL: 12, // Hours
+    DASHBOARD_UPDATE_INTERVAL: 5000, // Milliseconds
+};
+
+// --- Enhanced Logger ---
+const logger = {
+    info: (...args) => console.log(`[${new Date().toISOString()}] INFO:`, ...args),
+    warn: (...args) => console.warn(`[${new Date().toISOString()}] WARN:`, ...args),
+    error: (...args) => console.error(`[${new Date().toISOString()}] ERROR:`, ...args),
     success: (...args) => console.log(`[${new Date().toISOString()}] SUCCESS:`, ...args),
     debug: (...args) => { if (process.env.NODE_ENV === 'development') console.log(`[${new Date().toISOString()}] DEBUG:`, ...args); }
 };
@@ -95,17 +159,12 @@ async function runAutonomousRevenueSystem() {
         // 2. Config Agent: Ensure configurations are up-to-date in Render environment
         // ConfigAgent's crucial role: source dynamic keys (via ApiScoutAgent/BrowserManager)
         // and then use its RENDER_API_TOKEN and RENDER_SERVICE_ID from CONFIG to update Render's process.env.
-        // It *must* ensure all required keys for other agents are in place.
         const configActivity = { agent: 'config', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(configActivity);
         cycleStats.activities.push(configActivity);
         const configResult = await configAgent.run(CONFIG, logger);
         configActivity.action = 'completed';
         configActivity.status = configResult.status;
-        if (configResult.status !== 'success') {
-             logger.error(`❌ Config Agent failed to ensure all parameters. Cycle aborted.`);
-             throw new Error('Config Agent failed to ensure all parameters. Cycle aborted.');
-        }
         logger.info(`Config Agent Result: ${configResult.message}`);
 
 
