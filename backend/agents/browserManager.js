@@ -393,7 +393,7 @@ class QuantumBrowserManager {
         
         // Scan data attributes
         results.dataAttributes = Array.from(document.querySelectorAll('[data-*]'))
-          .map(el => Array.from(el.attributes)
+          .map(el => Array.from(el.attributes))
           .flat()
           .filter(attr => attr.name.startsWith('data-'))
           .map(attr => attr.value);
