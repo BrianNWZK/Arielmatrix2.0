@@ -252,8 +252,7 @@ class QuantumBrowserManager {
    * @description Advanced API key retrieval with multi-layered intelligence gathering
    */
   static async retrieveApiKeys(serviceName, options = {}) {
-    const { contextId } = await this.acquireContext('api_key_retrieval');
-    const page = this.activePages.get(contextId).page;
+    const { page, contextId } = await this.acquireContext('api_key_retrieval');
     
     try {
       const serviceConfig = this.serviceConfigurations[serviceName];
@@ -312,8 +311,7 @@ class QuantumBrowserManager {
    * @description Advanced automated login with adaptive security challenge handling
    */
   static async executeAutomatedLogin(serviceName, credentials = null) {
-    const { contextId } = await this.acquireContext('automated_login');
-    const page = this.activePages.get(contextId).page;
+    const { page, contextId } = await this.acquireContext('automated_login');
     
     try {
       const serviceConfig = this.serviceConfigurations[serviceName];
@@ -372,7 +370,7 @@ class QuantumBrowserManager {
   }
 
   /**
-   * @method comprehensiveDomScan
+   * @method _comprehensiveDomScan
    * @description Advanced DOM scanning for hidden API keys and secrets
    */
   static async _comprehensiveDomScan(page, serviceConfig) {
