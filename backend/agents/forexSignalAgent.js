@@ -3,7 +3,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 
 // Import the browser manager for robust and stealthy browser operations
-import browserManager from '../browserManager.js';
+import browserManager from './browserManager.js'; // Changed to ./ since it's in the same folder
 
 // === 🌀 Quantum Jitter (Anti-Robot) ===
 const quantumDelay = (ms) => new Promise(resolve => {
