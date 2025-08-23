@@ -1,8 +1,4 @@
-// =========================================================================
-// Quantum Browser Manager: Advanced Autonomous Web Interaction Engine
-// Enhanced with Advanced Security Protocols & Reliability Engineering
-// =========================================================================
-
+// backend/agents/browserManager.js
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import RecaptchaPlugin from 'puppeteer-extra-plugin-recaptcha';
@@ -12,6 +8,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import { execSync } from 'child_process';
+import { Redis } from 'ioredis';
+import { Mutex } from 'async-mutex';
 
 // Apply stealth plugins
 puppeteer.use(StealthPlugin());
@@ -33,133 +31,139 @@ const __dirname = dirname(__filename);
  * fault tolerance, and zero-cost optimization for API operations
  */
 class QuantumBrowserManager {
-  // --- Static Properties for Global State ---
-  static _config = null;
-  static _logger = null;
-  static _securityLevel = 'TOP_SECRET'; // Top Secret security level
-  static browserInstance = null;
-  static activePages = new Map();
-  static pagePool = [];
-  static MAX_POOL_SIZE = 5;
-  static CRITICAL_FAILURE_THRESHOLD = 3;
-  static failureCount = 0;
-  
-  // Advanced usage statistics with telemetry
-  static usageStats = {
-    totalOperations: 0,
-    successfulOperations: 0,
-    failedOperations: 0,
-    totalAcquired: 0,
-    totalReleased: 0,
-    activeContexts: 0,
-    poolSize: 0,
-    launchTime: null,
-    lastOperationTime: null,
-    lastSuccessfulOperation: null,
-    uptime: 0,
-    performanceMetrics: {
-      avgPageLoadTime: 0,
-      avgOperationTime: 0,
-      successRate: 100
-    }
-  };
-
-  // Advanced service configuration with multi-layered fallbacks
-  static serviceConfigurations = {
-    'bscscan.com': {
-      loginPageUrl: 'https://bscscan.com/login',
-      credentials: {
-        email: process.env.BSCSCAN_EMAIL,
-        password: process.env.BSCSCAN_PASSWORD
-      },
-      selectors: {
-        email: ['#email', 'input[name="email"]', 'input[type="email"]'],
-        password: ['#password', 'input[name="password"]', 'input[type="password"]'],
-        submit: ['#btnSubmit', 'button[type="submit"]', 'button[name="login"]'],
-        apiKey: ['.api-key-container', '#apiKeyValue', '[data-testid="api-key"]'],
-        dashboard: '.dashboard-container'
-      },
-      security: {
-        requires2FA: true,
-        captchaType: 'reCAPTCHA',
-        timeout: 45000
+  constructor(config, logger, redisClient = null) {
+    this.config = config;
+    this.logger = logger;
+    this.redis = redisClient || new Redis(config.REDIS_URL);
+    this.browser = null;
+    this.contexts = new Map();
+    this.mutex = new Mutex();
+    this.proxyRotationIndex = 0;
+    this.pagePool = [];
+    
+    // Quantum properties
+    this._securityLevel = 'TOP_SECRET';
+    this.failureCount = 0;
+    this.CRITICAL_FAILURE_THRESHOLD = 3;
+    this.MAX_POOL_SIZE = 5;
+    
+    // Advanced usage statistics with telemetry
+    this.usageStats = {
+      totalOperations: 0,
+      successfulOperations: 0,
+      failedOperations: 0,
+      totalAcquired: 0,
+      totalReleased: 0,
+      activeContexts: 0,
+      poolSize: 0,
+      launchTime: null,
+      lastOperationTime: null,
+      lastSuccessfulOperation: null,
+      uptime: 0,
+      performanceMetrics: {
+        avgPageLoadTime: 0,
+        avgOperationTime: 0,
+        successRate: 100
       }
-    },
-    'nowpayments.io': {
-      loginPageUrl: 'https://nowpayments.io/auth/login',
-      credentials: {
-        email: process.env.NOWPAYMENTS_EMAIL,
-        password: process.env.NOWPAYMENTS_PASSWORD
-      },
-      selectors: {
-        email: ['#email-input', 'input[name="email"]'],
-        password: ['#password-input', 'input[name="password"]'],
-        submit: ['.login-button', 'button[type="submit"]'],
-        apiKey: ['.api-key-field', '[data-api-key]', '.secret-key'],
-        dashboard: '.dashboard-view'
-      },
-      security: {
-        requires2FA: false,
-        captchaType: 'hCaptcha',
-        timeout: 30000
-      }
-    },
-    'reddit.com': {
-      loginPageUrl: 'https://www.reddit.com/login',
-      credentials: {
-        email: process.env.REDDIT_EMAIL,
-        password: process.env.REDDIT_PASSWORD
-      },
-      selectors: {
-        email: ['#loginUsername', 'input[name="username"]'],
-        password: ['#loginPassword', 'input[name="password"]'],
-        submit: ['button[type="submit"]', '.login-button'],
-        apiKey: ['#app_prefs_app_tokens', '.token-value'],
-        dashboard: '.user-dashboard'
-      }
-    }
-  };
+    };
 
-  // Advanced API key patterns for intelligence gathering
-  static apiKeyPatterns = {
-    standard: /(?:api[_-]?key|token|access[_-]?token|secret|x-api-key|bearer|authorization)(?:[\s"']?[:=][\s"']?)([a-zA-Z0-9_-]{30,})/gi,
-    stripe: /(sk|pk)_(test|live)_[a-zA-Z0-9]{24}/gi,
-    aws: /(AKIA|ASIA)[A-Z0-9]{16}/gi,
-    github: /ghp_[a-zA-Z0-9]{36}/gi,
-    twilio: /SK[0-9a-f]{32}/gi,
-    sendgrid: /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/gi,
-    mailchimp: /[0-9a-f]{32}-us[0-9]{1,2}/gi
-  };
+    // Advanced service configuration with multi-layered fallbacks
+    this.serviceConfigurations = {
+      'bscscan.com': {
+        loginPageUrl: 'https://bscscan.com/login',
+        credentials: {
+          email: process.env.BSCSCAN_EMAIL,
+          password: process.env.BSCSCAN_PASSWORD
+        },
+        selectors: {
+          email: ['#email', 'input[name="email"]', 'input[type="email"]'],
+          password: ['#password', 'input[name="password"]', 'input[type="password"]'],
+          submit: ['#btnSubmit', 'button[type="submit"]', 'button[name="login"]'],
+          apiKey: ['.api-key-container', '#apiKeyValue', '[data-testid="api-key"]'],
+          dashboard: '.dashboard-container'
+        },
+        security: {
+          requires2FA: true,
+          captchaType: 'reCAPTCHA',
+          timeout: 45000
+        }
+      },
+      'nowpayments.io': {
+        loginPageUrl: 'https://nowpayments.io/auth/login',
+        credentials: {
+          email: process.env.NOWPAYMENTS_EMAIL,
+          password: process.env.NOWPAYMENTS_PASSWORD
+        },
+        selectors: {
+          email: ['#email-input', 'input[name="email"]'],
+          password: ['#password-input', 'input[name="password"]'],
+          submit: ['.login-button', 'button[type="submit"]'],
+          apiKey: ['.api-key-field', '[data-api-key]', '.secret-key'],
+          dashboard: '.dashboard-view'
+        },
+        security: {
+          requires2FA: false,
+          captchaType: 'hCaptcha',
+          timeout: 30000
+        }
+      },
+      'reddit.com': {
+        loginPageUrl: 'https://www.reddit.com/login',
+        credentials: {
+          email: process.env.REDDIT_EMAIL,
+          password: process.env.REDDIT_PASSWORD
+        },
+        selectors: {
+          email: ['#loginUsername', 'input[name="username"]'],
+          password: ['#loginPassword', 'input[name="password"]'],
+          submit: ['button[type="submit"]', '.login-button'],
+          apiKey: ['#app_prefs_app_tokens', '.token-value'],
+          dashboard: '.user-dashboard'
+        }
+      }
+    };
 
-  // Fault tolerance levels
-  static FAULT_TOLERANCE_LEVELS = {
-    MINIMAL: 1,
-    STANDARD: 2,
-    MISSION_CRITICAL: 3,
-    ZERO_FAILURE: 4
-  };
+    // Advanced API key patterns for intelligence gathering
+    this.apiKeyPatterns = {
+      standard: /(?:api[_-]?key|token|access[_-]?token|secret|x-api-key|bearer|authorization)(?:[\s"']?[:=][\s"']?)([a-zA-Z0-9_-]{30,})/gi,
+      stripe: /(sk|pk)_(test|live)_[a-zA-Z0-9]{24}/gi,
+      aws: /(AKIA|ASIA)[A-Z0-9]{16}/gi,
+      github: /ghp_[a-zA-Z0-9]{36}/gi,
+      twilio: /SK[0-9a-f]{32}/gi,
+      sendgrid: /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/gi,
+      mailchimp: /[0-9a-f]{32}-us[0-9]{1,2}/gi
+    };
+
+    // Fault tolerance levels
+    this.FAULT_TOLERANCE_LEVELS = {
+      MINIMAL: 1,
+      STANDARD: 2,
+      MISSION_CRITICAL: 3,
+      ZERO_FAILURE: 4
+    };
+  }
 
   /**
-   * @method init
+   * @method initialize
    * @description Initializes the quantum browser manager with advanced security protocols
    */
-  static async init(config, logger) {
-    this._config = config;
-    this._logger = logger;
-    this._faultTolerance = config.faultTolerance || this.FAULT_TOLERANCE_LEVELS.MISSION_CRITICAL;
+  async initialize() {
+    if (this.browser && await this._validateBrowserConnection()) {
+      this.logger.debug('Quantum browser instance already operational');
+      return;
+    }
 
+    const release = await this.mutex.acquire();
     try {
-      // Check if browser is already connected with enhanced validation
-      if (this.browserInstance && await this._validateBrowserConnection()) {
-        this._logger.debug('Quantum browser instance already operational');
+      if (this.browser && await this._validateBrowserConnection()) {
         return;
       }
 
-      this._logger.info('🚀 Launching Quantum Browser with advanced security protocols...');
+      this.logger.info('🚀 Launching Quantum Browser with advanced security protocols...');
       
       // Advanced browser configuration with security
-      this.browserInstance = await puppeteer.launch({
-        headless: 'new',
+      const launchOptions = {
+        headless: this.config.BROWSER_HEADLESS !== 'false',
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -177,29 +181,61 @@ class QuantumBrowserManager {
           '--disable-renderer-backgrounding',
           '--disable-infobars',
           '--window-size=1920,1080',
+          `--proxy-server=${this._getNextProxy()}`,
           '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ],
         ignoreDefaultArgs: ['--enable-automation', '--disable-extensions'],
         timeout: 120000,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         userDataDir: './browser_profiles/quantum_profile'
-      });
+      };
 
+      this.browser = await puppeteer.launch(launchOptions);
       this.usageStats.launchTime = Date.now();
-      this._logger.success('✅ Quantum Browser initialized successfully with advanced protocols');
+      this.logger.success('✅ Quantum Browser initialized successfully with advanced protocols');
+      
+      // Setup proxy rotation interval
+      setInterval(() => this._rotateProxy(), 5 * 60 * 1000);
       
       // Start uptime monitoring
       this._startUptimeMonitoring();
 
     } catch (error) {
-      this._logger.error(`🚨 Critical failure in Quantum Browser initialization: ${error.message}`);
+      this.logger.error(`🚨 Critical failure in Quantum Browser initialization: ${error.message}`);
       this.failureCount++;
       
       if (this.failureCount >= this.CRITICAL_FAILURE_THRESHOLD) {
-        this._logger.emergency('🛑 CRITICAL: Quantum Browser failed multiple initialization attempts');
+        this.logger.emergency('🛑 CRITICAL: Quantum Browser failed multiple initialization attempts');
         await this._executeEmergencyProtocol(error);
       }
       throw error;
+    } finally {
+      release();
+    }
+  }
+
+  _getNextProxy() {
+    const proxies = this.config.PROXY_LIST ? this.config.PROXY_LIST.split(',') : [];
+    if (proxies.length === 0) return 'direct://';
+    
+    this.proxyRotationIndex = (this.proxyRotationIndex + 1) % proxies.length;
+    return proxies[this.proxyRotationIndex];
+  }
+
+  async _rotateProxy() {
+    if (this.browser && this.contexts.size > 0) {
+      this.logger.info('🔄 Rotating proxies for all contexts');
+      
+      for (const [contextId, context] of this.contexts) {
+        try {
+          await context.authenticate({
+            username: this.config.PROXY_USERNAME,
+            password: this.config.PROXY_PASSWORD
+          });
+        } catch (error) {
+          this.logger.warn('Failed to authenticate proxy:', error.message);
+        }
+      }
     }
   }
 
@@ -207,9 +243,9 @@ class QuantumBrowserManager {
    * @method acquireContext
    * @description Acquires browser context with advanced security measures
    */
-  static async acquireContext(operationType = 'standard') {
+  async acquireContext(operationType = 'standard') {
     if (!await this._validateBrowserConnection()) {
-      await this.init(this._config, this._logger);
+      await this.initialize();
     }
 
     let page;
@@ -218,17 +254,17 @@ class QuantumBrowserManager {
     try {
       if (this.pagePool.length > 0) {
         page = this.pagePool.pop();
-        this._logger.debug(`Reused page from pool for operation: ${operationType}`);
+        this.logger.debug(`Reused page from pool for operation: ${operationType}`);
       } else {
-        page = await this.browserInstance.newPage();
-        this._logger.debug(`Created new quantum page for operation: ${operationType}`);
+        page = await this.browser.newPage();
+        this.logger.debug(`Created new quantum page for operation: ${operationType}`);
       }
 
       // Apply advanced security protocols based on operation type
       await this._applySecurityProtocols(page, operationType);
       
       // Store page metadata for advanced monitoring
-      this.activePages.set(contextId, {
+      this.contexts.set(contextId, {
         page,
         operationType,
         acquisitionTime: Date.now(),
@@ -236,13 +272,13 @@ class QuantumBrowserManager {
       });
 
       this.usageStats.totalAcquired++;
-      this.usageStats.activeContexts = this.activePages.size;
+      this.usageStats.activeContexts = this.contexts.size;
       this.usageStats.lastOperationTime = Date.now();
 
       return { page, contextId };
 
     } catch (error) {
-      this._logger.error(`Failed to acquire quantum context: ${error.message}`);
+      this.logger.error(`Failed to acquire quantum context: ${error.message}`);
       throw error;
     }
   }
@@ -251,7 +287,7 @@ class QuantumBrowserManager {
    * @method retrieveApiKeys
    * @description Advanced API key retrieval with multi-layered intelligence gathering
    */
-  static async retrieveApiKeys(serviceName, options = {}) {
+  async retrieveApiKeys(serviceName, options = {}) {
     const { page, contextId } = await this.acquireContext('api_key_retrieval');
     
     try {
@@ -260,7 +296,7 @@ class QuantumBrowserManager {
         throw new Error(`Service configuration not found for: ${serviceName}`);
       }
 
-      this._logger.info(`🔍 Beginning advanced API key retrieval for ${serviceName}`);
+      this.logger.info(`🔍 Beginning advanced API key retrieval for ${serviceName}`);
       
       // Multi-phase retrieval strategy
       const retrievedKeys = {
@@ -290,7 +326,7 @@ class QuantumBrowserManager {
       const validKey = this._validateApiKeys(retrievedKeys);
       
       if (validKey) {
-        this._logger.success(`✅ Successfully retrieved valid API key for ${serviceName}`);
+        this.logger.success(`✅ Successfully retrieved valid API key for ${serviceName}`);
         this.usageStats.successfulOperations++;
         return validKey;
       } else {
@@ -298,7 +334,7 @@ class QuantumBrowserManager {
       }
 
     } catch (error) {
-      this._logger.error(`API key retrieval failed: ${error.message}`);
+      this.logger.error(`API key retrieval failed: ${error.message}`);
       this.usageStats.failedOperations++;
       throw error;
     } finally {
@@ -310,7 +346,7 @@ class QuantumBrowserManager {
    * @method executeAutomatedLogin
    * @description Advanced automated login with adaptive security challenge handling
    */
-  static async executeAutomatedLogin(serviceName, credentials = null) {
+  async executeAutomatedLogin(serviceName, credentials = null) {
     const { page, contextId } = await this.acquireContext('automated_login');
     
     try {
@@ -321,7 +357,7 @@ class QuantumBrowserManager {
         throw new Error(`Incomplete credentials for ${serviceName}`);
       }
 
-      this._logger.info(`🔐 Attempting automated login to ${serviceName}`);
+      this.logger.info(`🔐 Attempting automated login to ${serviceName}`);
       
       // Navigate to login page with stealth
       await page.goto(serviceConfig.loginPageUrl, {
@@ -341,7 +377,7 @@ class QuantumBrowserManager {
 
       // Handle potential CAPTCHA
       if (await this._detectCaptcha(page)) {
-        this._logger.warn('⚠️ CAPTCHA detected, attempting automated solution');
+        this.logger.warn('⚠️ CAPTCHA detected, attempting automated solution');
         await this._solveCaptcha(page);
       }
 
@@ -355,14 +391,14 @@ class QuantumBrowserManager {
 
       // Verify login success
       if (await this._verifyLoginSuccess(page, serviceConfig)) {
-        this._logger.success(`✅ Login successful to ${serviceName}`);
+        this.logger.success(`✅ Login successful to ${serviceName}`);
         return true;
       } else {
         throw new Error('Login verification failed');
       }
 
     } catch (error) {
-      this._logger.error(`Automated login failed: ${error.message}`);
+      this.logger.error(`Automated login failed: ${error.message}`);
       throw error;
     } finally {
       await this.releaseContext(contextId);
@@ -373,8 +409,8 @@ class QuantumBrowserManager {
    * @method _comprehensiveDomScan
    * @description Advanced DOM scanning for hidden API keys and secrets
    */
-  static async _comprehensiveDomScan(page, serviceConfig) {
-    this._logger.info('🔍 Executing comprehensive DOM scan for API keys');
+  async _comprehensiveDomScan(page, serviceConfig) {
+    this.logger.info('🔍 Executing comprehensive DOM scan for API keys');
     
     try {
       // Scan multiple DOM aspects for hidden keys
@@ -425,7 +461,7 @@ class QuantumBrowserManager {
       return foundKeys.length > 0 ? foundKeys[0] : null;
 
     } catch (error) {
-      this._logger.warn(`DOM scan failed: ${error.message}`);
+      this.logger.warn(`DOM scan failed: ${error.message}`);
       return null;
     }
   }
@@ -434,7 +470,7 @@ class QuantumBrowserManager {
    * @method _applySecurityProtocols
    * @description Applies advanced security protocols to browser pages
    */
-  static async _applySecurityProtocols(page, operationType) {
+  async _applySecurityProtocols(page, operationType) {
     try {
       // Advanced stealth injection
       await page.evaluateOnNewDocument(() => {
@@ -517,7 +553,7 @@ class QuantumBrowserManager {
       });
 
     } catch (error) {
-      this._logger.warn(`Security protocol application failed: ${error.message}`);
+      this.logger.warn(`Security protocol application failed: ${error.message}`);
     }
   }
 
@@ -525,7 +561,7 @@ class QuantumBrowserManager {
    * @method _validateApiKeys
    * @description Validates retrieved API keys using multiple verification methods
    */
-  static _validateApiKeys(keyObject) {
+  _validateApiKeys(keyObject) {
     const keys = Object.values(keyObject).filter(key => key !== null);
     
     for (const key of keys) {
@@ -555,7 +591,7 @@ class QuantumBrowserManager {
    * @method _calculateEntropy
    * @description Calculates Shannon entropy of a string for validation
    */
-  static _calculateEntropy(str) {
+  _calculateEntropy(str) {
     const len = str.length;
     const frequencies = Array.from(str).reduce((freq, c) => {
       freq[c] = (freq[c] || 0) + 1;
@@ -572,7 +608,7 @@ class QuantumBrowserManager {
    * @method _startUptimeMonitoring
    * @description Starts advanced uptime monitoring with telemetry
    */
-  static _startUptimeMonitoring() {
+  _startUptimeMonitoring() {
     setInterval(() => {
       this.usageStats.uptime = Date.now() - this.usageStats.launchTime;
       
@@ -584,7 +620,7 @@ class QuantumBrowserManager {
       
       // Health reporting
       if (this.usageStats.performanceMetrics.successRate < 90) {
-        this._logger.warn('⚠️ Performance degradation detected');
+        this.logger.warn('⚠️ Performance degradation detected');
       }
       
     }, 60000);
@@ -594,8 +630,8 @@ class QuantumBrowserManager {
    * @method _executeEmergencyProtocol
    * @description Executes emergency protocols for critical failures
    */
-  static async _executeEmergencyProtocol(error) {
-    this._logger.emergency('🚨 EXECUTING EMERGENCY PROTOCOL QBM-117');
+  async _executeEmergencyProtocol(error) {
+    this.logger.emergency('🚨 EXECUTING EMERGENCY PROTOCOL QBM-117');
     
     try {
       // 1. Attempt graceful shutdown
@@ -616,16 +652,16 @@ class QuantumBrowserManager {
         error: error.message
       };
       
-      this._logger.debug(`System diagnostics: ${JSON.stringify(diagnostics)}`);
+      this.logger.debug(`System diagnostics: ${JSON.stringify(diagnostics)}`);
       
       // 4. Wait for system stabilization
       await new Promise(resolve => setTimeout(resolve, 5000));
       
       // 5. Attempt reinitialization
-      await this.init(this._config, this._logger);
+      await this.initialize();
       
     } catch (recoveryError) {
-      this._logger.emergency(`🛑 EMERGENCY PROTOCOL FAILED: ${recoveryError.message}`);
+      this.logger.emergency(`🛑 EMERGENCY PROTOCOL FAILED: ${recoveryError.message}`);
       throw new Error('Quantum Browser unrecoverable failure');
     }
   }
@@ -634,16 +670,16 @@ class QuantumBrowserManager {
    * @method _validateBrowserConnection
    * @description Validates browser connection with enhanced checks
    */
-  static async _validateBrowserConnection() {
+  async _validateBrowserConnection() {
     try {
-      if (!this.browserInstance) return false;
+      if (!this.browser) return false;
       
       // Check if browser is still connected
-      const isConnected = this.browserInstance.isConnected();
+      const isConnected = this.browser.isConnected();
       if (!isConnected) return false;
       
       // Additional validation by checking browser version
-      const version = await this.browserInstance.version();
+      const version = await this.browser.version();
       return !!version;
     } catch (error) {
       return false;
@@ -654,9 +690,9 @@ class QuantumBrowserManager {
    * @method releaseContext
    * @description Releases browser context with cleanup
    */
-  static async releaseContext(contextId) {
+  async releaseContext(contextId) {
     try {
-      const context = this.activePages.get(contextId);
+      const context = this.contexts.get(contextId);
       if (!context) return;
 
       const { page } = context;
@@ -674,21 +710,21 @@ class QuantumBrowserManager {
       // Return page to pool if not at max size
       if (this.pagePool.length < this.MAX_POOL_SIZE) {
         this.pagePool.push(page);
-        this._logger.debug(`Page returned to pool, current size: ${this.pagePool.length}`);
+        this.logger.debug(`Page returned to pool, current size: ${this.pagePool.length}`);
       } else {
         await page.close();
-        this._logger.debug('Page closed (pool full)');
+        this.logger.debug('Page closed (pool full)');
       }
       
       // Remove from active pages
-      this.activePages.delete(contextId);
+      this.contexts.delete(contextId);
       
       this.usageStats.totalReleased++;
-      this.usageStats.activeContexts = this.activePages.size;
+      this.usageStats.activeContexts = this.contexts.size;
       this.usageStats.poolSize = this.pagePool.length;
       
     } catch (error) {
-      this._logger.warn(`Error releasing context: ${error.message}`);
+      this.logger.warn(`Error releasing context: ${error.message}`);
     }
   }
 
@@ -696,12 +732,12 @@ class QuantumBrowserManager {
    * @method shutdown
    * @description Gracefully shuts down the browser instance
    */
-  static async shutdown() {
+  async shutdown() {
     try {
       // Close all active pages
-      for (const [contextId, context] of this.activePages) {
+      for (const [contextId, context] of this.contexts) {
         await context.page.close().catch(() => {});
-        this.activePages.delete(contextId);
+        this.contexts.delete(contextId);
       }
       
       // Clear page pool
@@ -711,15 +747,15 @@ class QuantumBrowserManager {
       this.pagePool = [];
       
       // Close browser
-      if (this.browserInstance) {
-        await this.browserInstance.close();
-        this.browserInstance = null;
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
       }
       
-      this._logger.info('Quantum Browser successfully shut down');
+      this.logger.info('Quantum Browser successfully shut down');
       
     } catch (error) {
-      this._logger.error(`Error during shutdown: ${error.message}`);
+      this.logger.error(`Error during shutdown: ${error.message}`);
       throw error;
     }
   }
@@ -728,7 +764,7 @@ class QuantumBrowserManager {
    * @method safeClick
    * @description Enhanced click with adaptive timing and error handling
    */
-  static async safeClick(page, selectors, options = {}) {
+  async safeClick(page, selectors, options = {}) {
     const timeout = options.timeout || 30000;
     const delay = options.delay || this._humanDelay(500, 1500);
     
@@ -750,7 +786,7 @@ class QuantumBrowserManager {
    * @method safeType
    * @description Enhanced typing with behavioral analysis and error handling
    */
-  static async safeType(page, selectors, text, options = {}) {
+  async safeType(page, selectors, text, options = {}) {
     const timeout = options.timeout || 30000;
     const delay = options.delay || this._humanDelay(100, 300);
     
@@ -781,7 +817,7 @@ class QuantumBrowserManager {
    * @method _humanDelay
    * @description Advanced timing with randomness
    */
-  static _humanDelay(min, max) {
+  _humanDelay(min, max) {
     const jitter = crypto.randomInt(min, max);
     return new Promise(resolve => setTimeout(resolve, jitter));
   }
@@ -790,7 +826,7 @@ class QuantumBrowserManager {
    * @method _randomInt
    * @description Generates random integer between min and max
    */
-  static _randomInt(min, max) {
+  _randomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
@@ -798,7 +834,7 @@ class QuantumBrowserManager {
    * @method _extractKeyFromUI
    * @description Extracts API key from UI elements
    */
-  static async _extractKeyFromUI(page, serviceConfig) {
+  async _extractKeyFromUI(page, serviceConfig) {
     try {
       for (const selector of serviceConfig.selectors.apiKey) {
         try {
@@ -811,7 +847,7 @@ class QuantumBrowserManager {
       }
       return null;
     } catch (error) {
-      this._logger.warn(`UI extraction failed: ${error.message}`);
+      this.logger.warn(`UI extraction failed: ${error.message}`);
       return null;
     }
   }
@@ -820,7 +856,7 @@ class QuantumBrowserManager {
    * @method _interceptNetworkTraffic
    * @description Intercepts network traffic to find API keys
    */
-  static async _interceptNetworkTraffic(page, serviceConfig) {
+  async _interceptNetworkTraffic(page, serviceConfig) {
     return new Promise((resolve) => {
       let foundKey = null;
       
@@ -868,12 +904,12 @@ class QuantumBrowserManager {
    * @method _analyzeMemory
    * @description Advanced memory analysis for finding API keys
    */
-  static async _analyzeMemory(page, serviceConfig) {
+  async _analyzeMemory(page, serviceConfig) {
     // This is a placeholder for advanced memory analysis techniques
     // In a real implementation, this would use browser debugging protocols
     // to analyze memory structures for sensitive data
     
-    this._logger.warn('Memory analysis not fully implemented in this version');
+    this.logger.warn('Memory analysis not fully implemented in this version');
     return null;
   }
 
@@ -881,7 +917,7 @@ class QuantumBrowserManager {
    * @method _detectCaptcha
    * @description Detects CAPTCHA challenges on the page
    */
-  static async _detectCaptcha(page) {
+  async _detectCaptcha(page) {
     try {
       // Check for reCAPTCHA
       const recaptcha = await page.$('iframe[src*="google.com/recaptcha"]');
@@ -905,7 +941,7 @@ class QuantumBrowserManager {
    * @method _solveCaptcha
    * @description Attempts to solve CAPTCHA challenges
    */
-  static async _solveCaptcha(page) {
+  async _solveCaptcha(page) {
     try {
       // Use puppeteer-extra recaptcha plugin
       await page.solveRecaptchas();
@@ -915,7 +951,7 @@ class QuantumBrowserManager {
       
       return true;
     } catch (error) {
-      this._logger.warn(`CAPTCHA solving failed: ${error.message}`);
+      this.logger.warn(`CAPTCHA solving failed: ${error.message}`);
       return false;
     }
   }
@@ -924,7 +960,7 @@ class QuantumBrowserManager {
    * @method _verifyLoginSuccess
    * @description Verifies if login was successful
    */
-  static async _verifyLoginSuccess(page, serviceConfig) {
+  async _verifyLoginSuccess(page, serviceConfig) {
     try {
       // Check for dashboard elements
       for (const selector of Array.isArray(serviceConfig.selectors.dashboard) 
@@ -954,7 +990,7 @@ class QuantumBrowserManager {
    * @method _evadeDetection
    * @description Implements advanced techniques to evade detection
    */
-  static async _evadeDetection(page) {
+  async _evadeDetection(page) {
     try {
       // Random mouse movements
       await page.mouse.move(
@@ -973,6 +1009,148 @@ class QuantumBrowserManager {
       
     } catch (error) {
       // Continue execution even if evasion techniques fail
+    }
+  }
+
+  /**
+   * @method executeWithRetry
+   * @description Executes operation with retry logic and proxy rotation
+   */
+  async executeWithRetry(operation, maxRetries = 3, delay = 1000) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(`Attempt ${attempt}/${maxRetries} failed:`, error.message);
+        
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, delay * attempt));
+          // Rotate proxy for next attempt
+          this._rotateProxy();
+        }
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
+   * @method scrapeWithStealth
+   * @description Advanced stealth scraping with evasion techniques
+   */
+  async scrapeWithStealth(url, extractFunction, options = {}) {
+    const context = await this.acquireContext();
+    const page = await context.newPage();
+    
+    try {
+      // Apply stealth techniques
+      await page.setJavaScriptEnabled(true);
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      
+      // Random delays to mimic human behavior
+      await page.setViewport({ width: 1920, height: 1080 });
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      });
+      
+      await this.executeWithRetry(async () => {
+        await page.goto(url, { 
+          waitUntil: options.waitUntil || 'networkidle2',
+          timeout: options.timeout || 30000
+        });
+      });
+      
+      // Additional random behavior
+      await page.mouse.move(
+        Math.random() * 500,
+        Math.random() * 500
+      );
+      
+      await page.waitForTimeout(1000 + Math.random() * 2000);
+      
+      const result = await page.evaluate(extractFunction);
+      return result;
+    } catch (error) {
+      this.logger.error('Stealth scraping failed:', error);
+      throw error;
+    } finally {
+      await page.close();
+      await this.releaseContext(context);
+    }
+  }
+
+  /**
+   * @method automateFormSubmission
+   * @description Automated form submission with human-like behavior
+   */
+  async automateFormSubmission(url, formData, submitSelector = 'button[type="submit"]') {
+    const context = await this.acquireContext();
+    const page = await context.newPage();
+    
+    try {
+      await page.goto(url, { waitUntil: 'networkidle2' });
+      
+      // Fill form fields
+      for (const [field, value] of Object.entries(formData)) {
+        await page.type(`[name="${field}"]`, value, { delay: 50 + Math.random() * 100 });
+      }
+      
+      // Random mouse movements
+      const submitButton = await page.$(submitSelector);
+      const box = await submitButton.boundingBox();
+      
+      await page.mouse.move(
+        box.x + Math.random() * box.width,
+        box.y + Math.random() * box.height,
+        { steps: 10 }
+      );
+      
+      await page.waitForTimeout(500 + Math.random() * 1000);
+      await submitButton.click();
+      
+      await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      
+      return { success: true, url: page.url() };
+    } catch (error) {
+      this.logger.error('Form automation failed:', error);
+      return { success: false, error: error.message };
+    } finally {
+      await page.close();
+      await this.releaseContext(context);
+    }
+  }
+
+  /**
+   * @method cleanup
+   * @description Comprehensive cleanup of browser resources
+   */
+  async cleanup() {
+    const release = await this.mutex.acquire();
+    try {
+      for (const [contextId, context] of this.contexts) {
+        await context.close();
+        this.contexts.delete(contextId);
+      }
+      
+      // Clear page pool
+      for (const page of this.pagePool) {
+        await page.close().catch(() => {});
+      }
+      this.pagePool = [];
+      
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
+      }
+      
+      this.logger.info('🧹 Browser manager cleaned up');
+    } catch (error) {
+      this.logger.warn('Error during cleanup:', error.message);
+    } finally {
+      release();
     }
   }
 }
