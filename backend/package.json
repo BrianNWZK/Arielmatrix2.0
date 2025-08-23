@@ -31,16 +31,12 @@
     "cors": "^2.8.5",
     "async-mutex": "^0.4.1",
     "dotenv": "^16.4.5",
-    
-    // BrianNwaezikeChain Specific Dependencies
     "ariel-sqlite-engine": "^1.0.0",
     "quantum-resistant-crypto": "^1.0.0",
     "ai-security-module": "^1.0.0",
     "omnichain-interoperability": "^1.0.0",
     "infinite-scalability-engine": "^1.0.0",
     "carbon-negative-consensus": "^1.0.0",
-    
-    // WebSocket support (if not already included)
     "ws": "^8.14.2"
   },
   "devDependencies": {
