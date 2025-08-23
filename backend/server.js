@@ -1,5 +1,5 @@
 // =========================================================================
-// ArielMatrix Server: Core Autonomous Revenue System (Updated)
+// ArielMatrix Server: Core Autonomous Revenue System (Optimized for BrianNwaezikeChain)
 // =========================================================================
 
 import express from 'express';
@@ -7,28 +7,13 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import cors from 'cors';
 import crypto from 'crypto';
-import { ethers } from 'ethers';
 import cron from 'node-cron';
-import 'dotenv/config'; // Loads environment variables from .env file (for local development)
+import 'dotenv/config';
 
-// --- Import ALL agents ---
-// Note: Agents are imported here but their configuration access is now decentralized.
-// Each agent will access process.env directly for its specific needs,
-// trusting ConfigAgent to have populated them.
+// --- Import CORE agents only (removed unnecessary dependencies) ---
 import PayoutAgent from './agents/payoutAgent.js';
 import * as healthAgent from './agents/healthAgent.js';
 import * as configAgent from './agents/configAgent.js';
-import * as shopifyAgent from './agents/shopifyAgent.js';
-import * as adRevenueAgent from './agents/adRevenueAgent.js';
-import * as adsenseApi from './agents/adsenseApi.js'; // Utility, not standalone agent
-import * as apiScoutAgent from './agents/apiScoutAgent.js';
-import * as browserManager from './agents/browserManager.js'; // Utility, not standalone agent
-import * as complianceAgent from './agents/complianceAgent.js';
-import * as contractDeployAgent from './agents/contractDeployAgent.js';
-import * as cryptoAgent from './agents/cryptoAgent.js';
-import * as dataAgent from './agents/dataAgent.js';
-import * as forexSignalAgent from './agents/forexSignalAgent.js';
-import * as socialAgent from './agents/socialAgent.js';
 
 // --- Enhanced Logger ---
 const logger = {
@@ -39,45 +24,19 @@ const logger = {
     debug: (...args) => { if (process.env.NODE_ENV === 'development') console.log(`[${new Date().toISOString()}] DEBUG:`, ...args); }
 };
 
-// --- Configuration ---
-// CONFIG now contains ONLY hardcoded constants and critical environment variables
-// that enable the ConfigAgent and core blockchain functionality.
-// All other agent-specific keys are expected to be present in process.env
-// because ConfigAgent is responsible for sourcing and rendering them.
+// --- Simplified Configuration for BrianNwaezikeChain ---
 export const CONFIG = {
     // --- Core System & Payout Agent Foundational Config ---
-    // These are critical for the system's operation and are expected to be
-    // manually set as environment variables in Render for security and initial setup.
-    PAYOUT_THRESHOLD_USD: process.env.PAYOUT_THRESHOLD_USD || 500, // Default for testing, but should be set in Render
-    MASTER_PRIVATE_KEY: process.env.MASTER_PRIVATE_KEY, // ABSOLUTELY CRITICAL: Manually set in Render
-
-    // Hardcoded RPC URLs for various tokens/networks.
-    // These are fundamental blockchain connection points.
-    // IMPORTANT: Replace placeholder values (e.g., "YOUR_INFURA_PROJECT_ID")
-    // with actual working RPC URLs for your deployment.
-    RPC_URLS_BY_TOKEN: {
-        "ETH": "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID", // Ethereum Mainnet
-        "MATIC": "https://polygon-mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID", // Polygon Mainnet
-        "BNB": "https://bsc-dataseed.binance.org/", // Binance Smart Chain Mainnet
-        "ARB": "https://arb1.arbitrum.io/rpc", // Arbitrum One Mainnet
-        "OP": "https://mainnet.optimism.io", // Optimism Mainnet
-        // Add more as needed for any tokens your system will interact with
-    },
-
-    // REVENUE_DISTRIBUTOR_ABI is crucial for PayoutAgent to interact with the contract.
-    // This should be manually set as an environment variable in Render.
-    REVENUE_DISTRIBUTOR_ABI: JSON.parse(process.env.REVENUE_DISTRIBUTOR_ABI || '[]'),
-
-    // CONTRACT_DEPLOY_GAS_LIMIT is for ContractDeployAgent.
-    // This should be manually set as an environment variable in Render.
-    CONTRACT_DEPLOY_GAS_LIMIT: process.env.CONTRACT_DEPLOY_GAS_LIMIT || '5000000',
-
-    // --- Config Agent Specific (needed for ConfigAgent to update Render env) ---
-    // These are essential for ConfigAgent to perform its duty.
-    // Manually set as environment variables in Render.
-    RENDER_API_TOKEN: process.env.RENDER_API_TOKEN || process.env.RENDER_API_KEY, // Use RENDER_API_KEY as fallback
-    RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID, // Manually set in Render
-
+    PAYOUT_THRESHOLD_USD: process.env.PAYOUT_THRESHOLD_USD || 500,
+    
+    // BrianNwaezikeChain Specific Configuration
+    COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
+    COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY,
+    USE_FALLBACK_PAYOUT: process.env.USE_FALLBACK_PAYOUT || 'false',
+    
+    // Removed all RPC URLs and blockchain dependencies
+    // BrianNwaezikeChain handles everything internally
+    
     // --- System Cycle Intervals (hardcoded constants) ---
     CYCLE_INTERVAL: 600000, // 10 minutes
     HEALTH_REPORT_INTERVAL: 12, // Hours
@@ -113,10 +72,10 @@ process.on('uncaughtException', (error) => {
 // --- Tracking Variables ---
 const agentActivityLog = [];
 let lastCycleStats = {};
-let isRunning = false; // This variable is not currently used to control the cycle, but could be for a global system state.
-let isCycleLocked = false; // Controls if a cycle is already running to prevent overlaps.
+let isRunning = false;
+let isCycleLocked = false;
 
-// --- Payout Agent Initialization (using CONFIG internally, now with RPC_URLS_BY_TOKEN) ---
+// --- Payout Agent Initialization (Simplified for BrianNwaezikeChain) ---
 const payoutAgentInstance = new PayoutAgent(CONFIG, logger);
 
 // --- Main System Autonomous Revenue Generation Cycle ---
@@ -126,7 +85,7 @@ async function runAutonomousRevenueSystem() {
         return;
     }
 
-    isCycleLocked = true; // Acquire lock to prevent concurrent runs
+    isCycleLocked = true;
     const cycleStart = Date.now();
     const cycleStats = {
         startTime: new Date().toISOString(),
@@ -138,13 +97,11 @@ async function runAutonomousRevenueSystem() {
     logger.info('🚀 Autonomous Revenue Generation Cycle Initiated!');
 
     try {
-        // --- Agent Orchestration: Run all agents sequentially ---
-
         // 1. Health Agent: Critical prerequisite check
         const healthActivity = { agent: 'health', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(healthActivity);
         cycleStats.activities.push(healthActivity);
-        const healthResult = await healthAgent.run(CONFIG, logger); // Health Agent checks overall system health
+        const healthResult = await healthAgent.run(CONFIG, logger);
         healthActivity.action = 'completed';
         healthActivity.status = healthResult.status;
         if (healthResult.status !== 'optimal') {
@@ -153,10 +110,7 @@ async function runAutonomousRevenueSystem() {
         }
         logger.success('✅ System health is optimal. Proceeding with agent execution.');
 
-
-        // 2. Config Agent: Ensure configurations are up-to-date in Render environment
-        // ConfigAgent's crucial role: source dynamic keys (via ApiScoutAgent/BrowserManager)
-        // and then use its RENDER_API_TOKEN and RENDER_SERVICE_ID from CONFIG to update Render's process.env.
+        // 2. Config Agent: Ensure configurations are up-to-date
         const configActivity = { agent: 'config', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(configActivity);
         cycleStats.activities.push(configActivity);
@@ -165,114 +119,20 @@ async function runAutonomousRevenueSystem() {
         configActivity.status = configResult.status;
         logger.info(`Config Agent Result: ${configResult.message}`);
 
-
-        // From here, subsequent agents will directly access process.env for their configs,
-        // trusting that ConfigAgent has already ensured they are populated.
-
-        // 3. Shopify Agent: Generate revenue from e-commerce
-        const shopifyActivity = { agent: 'shopify', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(shopifyActivity);
-        cycleStats.activities.push(shopifyActivity);
-        const shopifyResult = await shopifyAgent.run(CONFIG, logger); // CONFIG may still pass some general logger/cycle info
-        shopifyActivity.action = 'completed';
-        shopifyActivity.status = shopifyResult?.status || 'success';
-        logger.info(`Shopify Agent Result: ${shopifyResult.message}`);
-
-
-        // 4. Ad Revenue Agent: Generate revenue from advertisements
-        const adRevenueActivity = { agent: 'adRevenue', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(adRevenueActivity);
-        cycleStats.activities.push(adRevenueActivity);
-        const adRevenueResult = await adRevenueAgent.run(CONFIG, logger);
-        adRevenueActivity.action = 'completed';
-        adRevenueActivity.status = adRevenueResult?.status || 'success';
-        logger.info(`Ad Revenue Agent Result: ${adRevenueResult.message}`);
-
-
-        // 5. Data Agent: Generate revenue from data processing/sales
-        const dataActivity = { agent: 'data', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(dataActivity);
-        cycleStats.activities.push(dataActivity);
-        const dataResult = await dataAgent.run(CONFIG, logger);
-        dataActivity.action = 'completed';
-        dataActivity.status = dataResult?.status || 'success';
-        logger.info(`Data Agent Result: ${dataResult.message}`);
-
-
-        // 6. Crypto Agent: Generate revenue from cryptocurrency operations (mining, trading, staking etc.)
-        const cryptoActivity = { agent: 'crypto', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(cryptoActivity);
-        cycleStats.activities.push(cryptoActivity);
-        const cryptoResult = await cryptoAgent.run(CONFIG, logger);
-        cryptoActivity.action = 'completed';
-        cryptoActivity.status = cryptoResult?.status || 'success';
-        logger.info(`Crypto Agent Result: ${cryptoResult.message}`);
-
-
-        // 7. Social Agent: Generate revenue from social media interactions
-        const socialActivity = { agent: 'social', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(socialActivity);
-        cycleStats.activities.push(socialActivity);
-        const socialResult = await socialAgent.run(CONFIG, logger);
-        socialActivity.action = 'completed';
-        socialActivity.status = socialResult?.status || 'success';
-        logger.info(`Social Agent Result: ${socialResult.message}`);
-
-
-        // 8. API Scout Agent: Discover and leverage new API revenue opportunities
-        const apiScoutActivity = { agent: 'apiScout', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(apiScoutActivity);
-        cycleStats.activities.push(apiScoutActivity);
-        const apiScoutResult = await apiScoutAgent.run(CONFIG, logger);
-        apiScoutActivity.action = 'completed';
-        apiScoutActivity.status = apiScoutResult?.status || 'success';
-        logger.info(`API Scout Agent Result: ${apiScoutResult.message}`);
-
-
-        // 9. Forex Signal Agent: Generate revenue from forex trading signals
-        const forexSignalActivity = { agent: 'forexSignal', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(forexSignalActivity);
-        cycleStats.activities.push(forexSignalActivity);
-        const forexSignalResult = await forexSignalAgent.run(CONFIG, logger);
-        forexSignalActivity.action = 'completed';
-        forexSignalActivity.status = forexSignalResult?.status || 'success';
-        logger.info(`Forex Signal Agent Result: ${forexSignalResult.message}`);
-
-
-        // 10. Contract Deploy Agent: Manages deployment of smart contracts for revenue streams
-        const contractDeployActivity = { agent: 'contractDeploy', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(contractDeployActivity);
-        cycleStats.activities.push(contractDeployActivity);
-        const contractDeployResult = await contractDeployAgent.run(CONFIG, logger);
-        contractDeployActivity.action = 'completed';
-        contractDeployActivity.status = contractDeployResult?.status || 'success';
-        logger.info(`Contract Deploy Agent Result: ${contractDeployResult.message}`);
-
-
-        // 11. Compliance Agent: Ensures all revenue activities are compliant (non-revenue generating, but critical)
-        const complianceActivity = { agent: 'compliance', action: 'start', timestamp: new Date().toISOString() };
-        agentActivityLog.push(complianceActivity);
-        cycleStats.activities.push(complianceActivity);
-        const complianceResult = await complianceAgent.run(CONFIG, logger);
-        complianceActivity.action = 'completed';
-        complianceActivity.status = complianceResult?.status || 'success';
-        logger.info(`Compliance Agent Result: ${complianceResult.message}`);
-
-
-        // 12. Payout Agent: Distributes accumulated revenue (final revenue-related step)
+        // 3. Payout Agent: Distribute accumulated revenue using BrianNwaezikeChain
         const payoutActivity = { agent: 'payout', action: 'start', timestamp: new Date().toISOString() };
         agentActivityLog.push(payoutActivity);
         cycleStats.activities.push(payoutActivity);
-        // Ensure the payout agent is initialized before running
-        if (!payoutAgentInstance.wallet) {
-            await payoutAgentInstance.init(); // Init needs RPC_URLS_BY_TOKEN from CONFIG for provider setup
+        
+        // Initialize payout agent if needed
+        if (!payoutAgentInstance.initialized) {
+            await payoutAgentInstance.initialize();
         }
-        // PayoutAgent will now select the correct RPC from CONFIG.RPC_URLS_BY_TOKEN based on the token to payout.
-        const payoutResult = await payoutAgentInstance.run();
+        
+        const payoutResult = await payoutAgentInstance.runPayoutCycle();
         payoutActivity.action = 'completed';
         payoutActivity.status = payoutResult?.status || 'success';
         logger.info(`Payout Agent Result: ${payoutResult?.message || 'Payout cycle completed'}`);
-
 
         cycleStats.success = true;
         logger.success('🎉 Autonomous Revenue Generation Cycle Completed Successfully!');
@@ -283,10 +143,10 @@ async function runAutonomousRevenueSystem() {
         logger.error('Error during autonomous revenue cycle:', error);
         return { success: false, error: error.message };
     } finally {
-        isCycleLocked = false; // Release lock
+        isCycleLocked = false;
         cycleStats.duration = Date.now() - cycleStart;
         lastCycleStats = cycleStats;
-        broadcastDashboardUpdate(); // Update dashboard after cycle
+        broadcastDashboardUpdate();
     }
 }
 
@@ -307,16 +167,6 @@ function getAgentActivities() {
             payoutAgent: payoutAgentInstance.getStatus?.(),
             healthAgent: healthAgent.getStatus?.(),
             configAgent: configAgent.getStatus?.(),
-            shopifyAgent: shopifyAgent.getStatus?.(),
-            adRevenueAgent: adRevenueAgent.getStatus?.(),
-            apiScoutAgent: apiScoutAgent.getStatus?.(),
-            complianceAgent: complianceAgent.getStatus?.(),
-            contractDeployAgent: contractDeployAgent.getStatus?.(),
-            cryptoAgent: cryptoAgent.getStatus?.(),
-            dataAgent: dataAgent.getStatus?.(),
-            forexSignalAgent: forexSignalAgent.getStatus?.(),
-            socialAgent: socialAgent.getStatus?.(),
-            // adsenseApi and browserManager are typically helper modules, not agents with standalone status
         }
     };
 }
@@ -364,13 +214,14 @@ app.post('/api/trigger-payout', async (req, res) => {
     if (isCycleLocked) {
         return res.status(409).json({ success: false, message: 'System already busy' });
     }
-    if (!payoutAgentInstance.wallet) {
-        await payoutAgentInstance.init();
+    
+    if (!payoutAgentInstance.initialized) {
+        await payoutAgentInstance.initialize();
     }
 
-    isCycleLocked = true; // Acquire lock for manual payout
+    isCycleLocked = true;
     try {
-        const result = await payoutAgentInstance.run();
+        const result = await payoutAgentInstance.runPayoutCycle();
         if (result.status === 'success') {
             res.status(200).json({ success: true, message: 'Payout process initiated successfully.' });
         } else {
@@ -380,7 +231,7 @@ app.post('/api/trigger-payout', async (req, res) => {
         logger.error('Manual payout failed:', error);
         res.status(500).json({ success: false, message: 'An internal error occurred during the payout process.', error: error.message });
     } finally {
-        isCycleLocked = false; // Release lock
+        isCycleLocked = false;
         broadcastDashboardUpdate();
     }
 });
@@ -399,13 +250,12 @@ cron.schedule('*/10 * * * *', () => {
 // Start Server
 server.listen(PORT, () => {
     logger.success(`Server running on port ${PORT} with WebSocket support`);
-    // Initialize Payout Agent and then run the first autonomous cycle (if not in test env)
-    payoutAgentInstance.init().then(() => {
+    // Initialize Payout Agent
+    payoutAgentInstance.initialize().then(() => {
         if (process.env.NODE_ENV !== 'test') {
             runAutonomousRevenueSystem();
         }
     }).catch(err => {
         logger.error('Failed to initialize Payout Agent on startup:', err);
-        // Consider if the server should exit or continue in a degraded state here
     });
 });
