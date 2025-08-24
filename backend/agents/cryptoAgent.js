@@ -15,6 +15,7 @@ class EnhancedCryptoAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
+        this.DRY_RUN = true; // ENABLE DRY RUN MODE - NO REAL TRADING
         this.blockchain = new BrianNwaezikeChain(config);
         this.quantumShield = new QuantumShield();
         this.threatDetector = new AIThreatDetector();
@@ -81,6 +82,7 @@ class EnhancedCryptoAgent {
 
     async initialize() {
         this.logger.info('🚀 Initializing Enhanced Crypto Agent with BrianNwaezikeChain Integration...');
+        this.logger.warn('⚠️ DRY RUN MODE ENABLED - No real trades will be executed');
         
         // Initialize multiple exchanges for arbitrage opportunities
         const exchangeConfigs = [
@@ -92,15 +94,22 @@ class EnhancedCryptoAgent {
 
         for (const exchangeConfig of exchangeConfigs) {
             try {
+                // In dry run mode, we'll create simulated exchange instances
                 const exchange = new exchangeConfig.class({
-                    apiKey: this.config[`${exchangeConfig.id.toUpperCase()}_API_KEY`],
-                    secret: this.config[`${exchangeConfig.id.toUpperCase()}_API_SECRET`],
+                    apiKey: this.config[`${exchangeConfig.id.toUpperCase()}_API_KEY`] || 'dry-run-key',
+                    secret: this.config[`${exchangeConfig.id.toUpperCase()}_API_SECRET`] || 'dry-run-secret',
                     enableRateLimit: true
                 });
                 
-                await exchange.loadMarkets();
+                // For dry run, we'll simulate market data instead of loading real markets
+                if (this.DRY_RUN) {
+                    this.logger.info(`✅ ${exchangeConfig.id} exchange initialized (Simulated - Dry Run)`);
+                } else {
+                    await exchange.loadMarkets();
+                    this.logger.success(`✅ ${exchangeConfig.id} exchange initialized`);
+                }
+                
                 this.exchanges.set(exchangeConfig.id, exchange);
-                this.logger.success(`✅ ${exchangeConfig.id} exchange initialized`);
             } catch (error) {
                 this.logger.error(`Failed to initialize ${exchangeConfig.id}: ${error.message}`);
             }
@@ -116,17 +125,25 @@ class EnhancedCryptoAgent {
         this.lastStatus = 'running';
         this.lastTotalTransactions = 0;
         this.logger.info('💰 Enhanced Crypto Agent Activated: Managing on-chain assets...');
+        
+        if (this.DRY_RUN) {
+            this.logger.warn('⚠️ DRY RUN MODE - Simulating trades only');
+        }
+        
         const startTime = process.hrtime.bigint();
 
         try {
             // Phase 1: Configuration & Remediation
             const newlyRemediatedKeys = await this._remediateAndValidateConfig();
             
-            // Phase 2: Self-Funding Check
-            const hasSufficientFunds = await this._checkGasWalletBalance();
-            if (!hasSufficientFunds) {
-                this.logger.error('🚨 Aborting crypto operations due to insufficient gas.');
-                throw { message: 'insufficient_capital_for_onchain_ops' };
+            // Phase 2: Self-Funding Check (Skip in dry run for BSC)
+            let hasSufficientFunds = true;
+            if (!this.DRY_RUN) {
+                hasSufficientFunds = await this._checkGasWalletBalance();
+                if (!hasSufficientFunds) {
+                    this.logger.error('🚨 Aborting crypto operations due to insufficient gas.');
+                    throw { message: 'insufficient_capital_for_onchain_ops' };
+                }
             }
 
             // Phase 3: Market Analysis
@@ -230,6 +247,26 @@ class EnhancedCryptoAgent {
         const opportunities = [];
         const symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'BNB/USDT'];
         
+        // For dry run, use simulated price data
+        if (this.DRY_RUN) {
+            this.logger.info('🔍 Simulating arbitrage opportunity detection...');
+            
+            // Create simulated arbitrage opportunities
+            for (const symbol of symbols) {
+                opportunities.push({
+                    symbol,
+                    buyExchange: 'binance',
+                    sellExchange: 'kraken',
+                    buyPrice: 50000 * (0.998 + Math.random() * 0.004), // Random price around $50k
+                    sellPrice: 50000 * (1.002 + Math.random() * 0.004), // Slightly higher price
+                    potentialProfit: 0.5 + Math.random() * 1.5 // 0.5% to 2% potential profit
+                });
+            }
+            
+            return opportunities;
+        }
+        
+        // Real implementation (original code)
         for (const symbol of symbols) {
             const prices = new Map();
             
@@ -276,6 +313,18 @@ class EnhancedCryptoAgent {
     }
 
     async _executeArbitrageTrade(opportunity) {
+        // DRY RUN MODE: Simulate the trade and return a random profit
+        if (this.DRY_RUN) {
+            this.logger.info(`[DRY RUN] Would execute arbitrage: Buy ${opportunity.symbol} on ${opportunity.buyExchange} at $${opportunity.buyPrice.toFixed(2)}, sell on ${opportunity.sellExchange} at $${opportunity.sellPrice.toFixed(2)}`);
+            
+            // Simulate a realistic profit based on the opportunity
+            const simulatedProfit = 50 + Math.random() * 150; // $50 to $200 profit
+            this.logger.info(`[DRY RUN] Simulated profit: $${simulatedProfit.toFixed(2)}`);
+            
+            return simulatedProfit;
+        }
+
+        // REAL TRADING CODE (original implementation)
         const buyExchange = this.exchanges.get(opportunity.buyExchange);
         const sellExchange = this.exchanges.get(opportunity.sellExchange);
         
@@ -355,6 +404,13 @@ class EnhancedCryptoAgent {
     }
 
     async executeMarketMaking(symbol, spread = 0.001) {
+        // DRY RUN MODE: Simulate market making
+        if (this.DRY_RUN) {
+            this.logger.info(`[DRY RUN] Would place market making orders for ${symbol} with ${spread * 100}% spread`);
+            return { bidOrder: { id: 'dry-run-bid' }, askOrder: { id: 'dry-run-ask' } };
+        }
+
+        // REAL MARKET MAKING CODE (original implementation)
         const exchange = this.exchanges.values().next().value; // Use first exchange
         const orderBook = await exchange.fetchOrderBook(symbol);
         
@@ -424,6 +480,12 @@ class EnhancedCryptoAgent {
         
         const simulatedProfit = Math.abs(currentRatio - historicalRatio) * 100;
         
+        // In dry run mode, just log the action
+        if (this.DRY_RUN) {
+            this.logger.info(`[DRY RUN] Would execute cross-chain arbitrage with profit: $${simulatedProfit.toFixed(2)}`);
+            return simulatedProfit;
+        }
+        
         // Record on BrianNwaezikeChain
         const transaction = await this.blockchain.createTransaction(
             this.config.SYSTEM_ACCOUNT,
@@ -468,7 +530,6 @@ class EnhancedCryptoAgent {
 
     async _executeStakingStrategy() {
         // Implement staking strategy using BrianNwaezikeChain
-        // This would involve staking BWAEZI tokens to earn rewards
         
         const stakingAmount = await this.blockchain.getAccountBalance(
             this.config.SYSTEM_ACCOUNT, 
@@ -476,8 +537,14 @@ class EnhancedCryptoAgent {
         );
         
         if (stakingAmount > 100) { // Minimum staking amount
-            // Simulate staking rewards - in a real implementation, this would call staking contracts
+            // Simulate staking rewards
             const rewards = stakingAmount * 0.0001; // 0.01% daily reward
+            
+            // In dry run mode, just log the action
+            if (this.DRY_RUN) {
+                this.logger.info(`[DRY RUN] Would stake ${stakingAmount} BWAEZI for rewards: ${rewards} BWAEZI`);
+                return { staked: stakingAmount, rewards };
+            }
             
             // Record rewards on blockchain
             await this.blockchain.createTransaction(
@@ -496,7 +563,12 @@ class EnhancedCryptoAgent {
 
     async _executeLiquidityProvision() {
         // Implement liquidity provision strategy
-        // This would involve providing liquidity to DEXs and earning fees
+        
+        // For dry run, simulate liquidity provision
+        if (this.DRY_RUN) {
+            this.logger.info('[DRY RUN] Would provide liquidity to DEX pools');
+            return { provided: 1000, fees: 5.25 }; // Simulated result
+        }
         
         // For now, simulate liquidity provision returns
         const liquidityProvided = 1000; // Example amount
@@ -517,6 +589,12 @@ class EnhancedCryptoAgent {
     async convertProfitsToBWAEZI(profitAmount) {
         // Convert profits to BWAEZI tokens on the blockchain
         try {
+            // In dry run mode, just log the action
+            if (this.DRY_RUN) {
+                this.logger.info(`[DRY RUN] Would convert $${profitAmount.toFixed(2)} profits to BWAEZI tokens`);
+                return { id: 'dry-run-tx', status: 'simulated' };
+            }
+            
             const transaction = await this.blockchain.createTransaction(
                 this.config.REVENUE_ACCOUNT,
                 this.config.STAKING_CONTRACT,
@@ -630,6 +708,12 @@ class EnhancedCryptoAgent {
             ethereum: { usd: 3000, last_updated_at: Date.now() / 1000 }
         };
 
+        // In dry run mode, use fallback data to avoid API calls
+        if (this.DRY_RUN) {
+            this.logger.info('📊 Using simulated market data for dry run');
+            return fallbackData;
+        }
+
         const url = this.config.COINGECKO_API && !this.config.COINGECKO_API.includes('PLACEHOLDER') ? 
             this.config.COINGECKO_API : 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd';
 
@@ -679,7 +763,8 @@ class EnhancedCryptoAgent {
             lastStatus: this.lastStatus,
             lastTotalTransactions: this.lastTotalTransactions,
             lastConceptualEarnings: this.lastConceptualEarnings,
-            lastGasBalance: this.lastGasBalance
+            lastGasBalance: this.lastGasBalance,
+            dryRun: this.DRY_RUN
         };
     }
 }
