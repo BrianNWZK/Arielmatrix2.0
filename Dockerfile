@@ -26,7 +26,11 @@ RUN npm install --prefix ./backend
 RUN npx puppeteer browsers install chrome
 
 # Install Playwright browser
-RUN npm install playwright@1.48.2 --prefix ./backend && npx playwright install chromium --with-deps --prefix ./backend
+# Changed to navigate into the backend directory before installing browsers
+RUN npm install playwright@1.48.2 --prefix ./backend && \
+    cd ./backend && \
+    npm audit fix && \
+    npx playwright install chromium --with-deps
 
 # Copy ALL backend source files
 COPY backend/ ./backend/
