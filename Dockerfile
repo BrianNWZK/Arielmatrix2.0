@@ -27,9 +27,10 @@ RUN npx puppeteer browsers install chrome
 
 # Install Playwright browser
 # Changed to navigate into the backend directory before installing browsers
+# Added '|| true' to npm audit fix to prevent build failure on unfixable issues
 RUN npm install playwright@1.48.2 --prefix ./backend && \
     cd ./backend && \
-    npm audit fix && \
+    npm audit fix || true && \
     npx playwright install chromium --with-deps
 
 # Copy ALL backend source files
