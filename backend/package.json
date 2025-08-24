@@ -38,7 +38,7 @@
     "infinite-scalability-engine": "^1.0.0",
     "carbon-negative-consensus": "^1.0.0",
     "ws": "^8.14.2",
-    "ccxt": "^4.2.76" // ADD THIS LINE FOR CRYPTO EXCHANGE SUPPORT
+    "ccxt": "^4.2.76" 
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
