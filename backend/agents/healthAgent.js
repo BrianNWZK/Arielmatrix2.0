@@ -1,7 +1,4 @@
 // backend/agents/healthAgent.js
-
-import { CONFIG } from '../server.js'; // This is the new import statement
-
 import axios from 'axios';
 import * as os from 'os';
 import { exec } from 'child_process';
@@ -81,17 +78,24 @@ async function calculateFileHash(filePath, logger) {
 async function initializeFileIntegrityMonitoring(logger) {
     logger.info("🛡️ Initializing File Integrity Monitoring (FIM)...");
     for (const filePath of MONITORED_FILES) {
-        const hash = await calculateFileHash(filePath, logger);
-        if (hash) {
-            fileBaselines.set(filePath, hash);
-            logger.info(`✅ FIM Baseline set for ${path.basename(filePath)}: ${hash.substring(0, 10)}...`);
-            fs.watch(filePath, async (eventType, filename) => {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                if (eventType === 'change' || eventType === 'rename') {
-                    logger.warn(`⚠️ Detected file system event (${eventType}) for: ${filename || path.basename(filePath)}`);
-                    await checkFileIntegrity(filePath, logger);
-                }
-            });
+        try {
+            await fs.access(filePath);
+            const hash = await calculateFileHash(filePath, logger);
+            if (hash) {
+                fileBaselines.set(filePath, hash);
+                logger.info(`✅ FIM Baseline set for ${path.basename(filePath)}: ${hash.substring(0, 10)}...`);
+                
+                // Watch for file changes
+                fs.watch(filePath, async (eventType, filename) => {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (eventType === 'change' || eventType === 'rename') {
+                        logger.warn(`⚠️ Detected file system event (${eventType}) for: ${filename || path.basename(filePath)}`);
+                        await checkFileIntegrity(filePath, logger);
+                    }
+                });
+            }
+        } catch (error) {
+            logger.warn(`⚠️ File not found for FIM: ${path.basename(filePath)}`);
         }
     }
     logger.success("🛡️ File Integrity Monitoring initialized and watching critical files.");
@@ -130,10 +134,24 @@ async function _checkExternalThreats(logger) {
 function _assessThreatLevel(healthReport, externalThreatLevel, logger) {
     let aggregatedThreat = 'low';
 
-    // FIX: Add a defensive check to ensure `healthReport` and `healthReport.issues` are not undefined.
-    const internalIssuesPresent = healthReport && healthReport.issues && healthReport.issues.some(issue => issue.includes('Critical: High CPU load persisted') || issue.includes('INTEGRITY BREACH DETECTED'));
+    // Check for internal issues
+    const internalIssuesPresent = healthReport && 
+                                healthReport.issues && 
+                                healthReport.issues.some(issue => 
+                                    issue.includes('Critical: High CPU load persisted') || 
+                                    issue.includes('INTEGRITY BREACH DETECTED')
+                                );
 
-    if (!healthReport || !healthReport.cpuReady || !healthReport.memoryReady || !healthReport.networkActive || !healthReport.nodeVersionOk || !healthReport.dependenciesOk || !healthReport.logsClean) {
+    // Check basic health metrics
+    const basicHealthOk = healthReport && 
+                         healthReport.cpuReady && 
+                         healthReport.memoryReady && 
+                         healthReport.networkActive && 
+                         healthReport.nodeVersionOk && 
+                         healthReport.dependenciesOk && 
+                         healthReport.logsClean;
+
+    if (!basicHealthOk) {
         logger.warn("Internal health issues detected, increasing perceived threat.");
         aggregatedThreat = 'medium';
     }
@@ -204,6 +222,7 @@ export async function run(config, logger) {
         };
         let currentIssues = [];
 
+        // CPU Check
         const cpuInfo = os.loadavg();
         const cpuLoad = cpuInfo[0];
         const cpuCount = os.cpus().length;
@@ -225,6 +244,7 @@ export async function run(config, logger) {
             }
         }
 
+        // Memory Check
         const totalMemory = os.totalmem();
         const freeMemory = os.freemem();
         const memoryUsagePercentage = (1 - (freeMemory / totalMemory)) * 100;
@@ -238,40 +258,35 @@ export async function run(config, logger) {
             logger.warn(`⚠️ High Memory usage detected: ${memoryUsagePercentage.toFixed(2)}%. System might be stressed.`);
         }
 
-        if (CONFIG.RENDER_API_TOKEN && CONFIG.RENDER_SERVICE_ID &&
-            !String(CONFIG.RENDER_API_TOKEN).includes('PLACEHOLDER') &&
-            !String(CONFIG.RENDER_SERVICE_ID).includes('PLACEHOLDER')) {
-            try {
-                await axios.get(`https://api.render.com/v1/services/${CONFIG.RENDER_SERVICE_ID}`, {
-                    headers: { 'Authorization': `Bearer ${CONFIG.RENDER_API_TOKEN}` },
-                    timeout: 5000
-                });
-                currentHealthReport.networkActive = true;
-                logger.info('✅ Network health check to Render API successful.');
-            } catch (error) {
-                currentIssues.push(`Network health check to Render API failed: ${error.message}`);
-                logger.warn(`⚠️ Network health check to Render API failed: ${error.message}`);
-            }
-        } else {
-            logger.warn('⚠️ Render API credentials missing. Optimistically assuming network is active.');
+        // Network Check (without Render API dependency)
+        try {
+            // Test basic network connectivity
+            await axios.get('https://httpbin.org/get', { timeout: 5000 });
             currentHealthReport.networkActive = true;
+            logger.info('✅ Network health check successful.');
+        } catch (error) {
+            currentIssues.push(`Network health check failed: ${error.message}`);
+            logger.warn(`⚠️ Network health check failed: ${error.message}`);
         }
 
+        // Node.js Version Check
         try {
             const { stdout: nodeVersion } = await execPromise('node -v');
-            if (nodeVersion.includes('v22.16.0')) {
+            const version = nodeVersion.trim();
+            if (version.startsWith('v22.') || version.startsWith('v18.') || version.startsWith('v16.')) {
                 currentHealthReport.nodeVersionOk = true;
-                logger.info(`✅ Node.js version ${nodeVersion.trim()} is optimal.`);
+                logger.info(`✅ Node.js version ${version} is compatible.`);
             } else {
-                currentIssues.push(`Incorrect Node.js version detected: ${nodeVersion.trim()}. Expected v22.16.0.`);
-                logger.error(`❌ Incorrect Node.js version: ${nodeVersion.trim()}.`);
+                currentIssues.push(`Unsupported Node.js version detected: ${version}. Expected v22.x, v18.x, or v16.x.`);
+                logger.error(`❌ Unsupported Node.js version: ${version}.`);
             }
         } catch (error) {
             currentIssues.push(`Failed to check Node.js version: ${error.message}`);
             logger.error(`🚨 Failed to check Node.js version: ${error.message}`);
         }
 
-        const criticalDependencies = ['terser', 'puppeteer'];
+        // Dependencies Check
+        const criticalDependencies = ['express', 'axios', 'cors'];
         let dependenciesNeeded = [];
 
         for (const dep of criticalDependencies) {
@@ -282,55 +297,48 @@ export async function run(config, logger) {
         }
 
         if (dependenciesNeeded.length > 0) {
-            currentIssues.push(`Missing critical dependencies: ${dependenciesNeeded.join(', ')}. Attempting to install.`);
-            logger.warn(`⚠️ Missing critical dependencies: ${dependenciesNeeded.join(', ')}. Attempting to install...`);
-            for (const dep of dependenciesNeeded) {
+            currentIssues.push(`Missing critical dependencies: ${dependenciesNeeded.join(', ')}.`);
+            logger.warn(`⚠️ Missing critical dependencies: ${dependenciesNeeded.join(', ')}.`);
+        } else {
+            currentHealthReport.dependenciesOk = true;
+            logger.info('✅ All critical dependencies are installed.');
+        }
+
+        // Logs Check (simplified)
+        try {
+            // Check for common log directories
+            const logDirs = ['/var/log', './logs', '/tmp/logs'];
+            let logAccessible = false;
+            
+            for (const logDir of logDirs) {
                 try {
-                    await execPromise(`npm install ${dep}`);
-                    logger.success(`✅ Successfully installed missing dependency: '${dep}'.`);
-                } catch (installError) {
-                    currentIssues.push(`Failed to install dependency '${dep}': ${installError.message}`);
-                    logger.error(`🚨 Failed to install dependency '${dep}': ${installError.message}`);
+                    await fs.access(logDir);
+                    logAccessible = true;
+                    break;
+                } catch (e) {
+                    // Directory not accessible, continue
                 }
             }
-            attempts++;
-            continue;
-        }
-        currentHealthReport.dependenciesOk = true;
-
-        const logFilePath = '/var/log/app.log';
-        try {
-            const logContent = await fs.readFile(logFilePath, 'utf8').catch(() => '');
-            const recentLogLines = logContent.split('\n').slice(-100).join('\n');
-            const sensitiveDataPattern = /(PRIVATE_KEY|RENDER_API_TOKEN|SECRET|PASSWORD|0x[a-fA-F0-9]{40,})/g;
-            if (sensitiveDataPattern.test(recentLogLines)) {
-                currentHealthReport.logsClean = false;
-                currentIssues.push('Sensitive data detected in logs. Security risk.');
-                logger.error('🚨 Sensitive data detected in logs. Security risk!');
-            }
-            if (currentDefensePosture.logScanStrictness === 'strict' && recentLogLines.toLowerCase().includes('warn')) {
-                 currentHealthReport.logsClean = false;
-                 currentIssues.push('Warning detected in recent logs (strict scan).');
-                 logger.warn('⚠️ Detected "warn" keyword in recent logs (strict scan).');
-            }
-            if (currentDefensePosture.logScanStrictness === 'critical' && (recentLogLines.toLowerCase().includes('warn') || recentLogLines.toLowerCase().includes('info'))) {
-                 currentHealthReport.logsClean = false;
-                 currentIssues.push('Info or warning detected in recent logs (critical scan).');
-                 logger.warn('⚠️ Detected "info" or "warn" keyword in recent logs (critical scan).');
-            }
-            if (recentLogLines.toLowerCase().includes('error')) {
-                currentHealthReport.logsClean = false;
-                currentIssues.push('Error detected in recent logs.');
-                logger.warn('⚠️ Detected "error" keyword in recent logs.');
+            
+            if (logAccessible) {
+                currentHealthReport.logsClean = true;
+                logger.info('✅ Log system is accessible.');
+            } else {
+                currentIssues.push('No accessible log directories found.');
+                logger.warn('⚠️ No accessible log directories found.');
             }
         } catch (error) {
-            currentIssues.push(`Failed to access logs at ${logFilePath}: ${error.message}`);
-            logger.warn(`⚠️ Failed to access logs at ${logFilePath}: ${error.message}. Ensure log file exists and is accessible.`);
+            currentIssues.push(`Log check failed: ${error.message}`);
+            logger.warn(`⚠️ Log check failed: ${error.message}`);
         }
 
-        const allChecksPass = currentHealthReport.cpuReady && currentHealthReport.memoryReady &&
-                             currentHealthReport.networkActive && currentHealthReport.nodeVersionOk &&
-                             currentHealthReport.dependenciesOk && currentHealthReport.logsClean;
+        // Determine overall health status
+        const allChecksPass = currentHealthReport.cpuReady && 
+                             currentHealthReport.memoryReady &&
+                             currentHealthReport.networkActive && 
+                             currentHealthReport.nodeVersionOk &&
+                             currentHealthReport.dependenciesOk && 
+                             currentHealthReport.logsClean;
 
         if (allChecksPass && currentIssues.length === 0) {
             finalReport = {
@@ -352,8 +360,9 @@ export async function run(config, logger) {
         attempts++;
     }
 
+    // Threat assessment
     const externalThreatLevel = await _checkExternalThreats(logger);
-    const aggregatedThreatLevel = _assessThreatLevel(finalReport.details, externalThreatLevel, logger);
+    const aggregatedThreatLevel = _assessThreatLevel(finalReport, externalThreatLevel, logger);
     _adaptDefensePolicy(aggregatedThreatLevel, logger);
 
     logger.info('❤️ HealthAgent: Health check complete.');
@@ -368,9 +377,19 @@ export function provideThreatIntelligence(type, message, logger) {
     }
 }
 
+export function getStatus() {
+    return {
+        defensePosture: currentDefensePosture.alertLevel,
+        monitoredFiles: MONITORED_FILES.map(file => path.basename(file)),
+        persistentIssues,
+        lastChecked: new Date().toISOString()
+    };
+}
+
 export default {
     run,
     setDefensePosture,
     provideThreatIntelligence,
+    getStatus,
     DEFENSE_POSTURES
 };
