@@ -1,48 +1,86 @@
+# =======================
+# .dockerignore
+# =======================
+# Purpose: Exclude unnecessary files from Docker build context
+# Note: This file itself should NOT be ignored
+# =======================
+
 # -----------------------
 # Node.js & Build Systems
 # -----------------------
 node_modules/
-npm-debug.log
+npm-debug.log*
 yarn-error.log
 yarn-debug.log
 .pnpm-debug.log
 .npm/
 .yarn/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
 .pnpm/
+.pnpm-store/
 
 # -----------------------
 # Lockfiles & Packages
 # -----------------------
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# Keep only one package manager's lockfile in your repo
+# Uncomment the ones you don't use:
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
 npm-shrinkwrap.json
 
 # -----------------------
 # Environment & Secrets
 # -----------------------
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-.env.example
+.env.ci
+.env.staging
+secrets/
+config/secrets.*
+*.env
 
 # -----------------------
-# Git & IDE
+# Git & Version Control
 # -----------------------
 .git/
 .gitignore
 .gitmodules
-*.sublime-project
-*.sublime-workspace
+.gitattributes
+.gitkeep
+.github/
+.gitlab-ci.yml
+.bitbucket/
+.hg/
+.svn/
+CVS/
+
+# -----------------------
+# IDE & Editor Files
+# -----------------------
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.settings/
+.classpath
+*.tmproj
+*.sublime-project
+*.sublime-workspace
+nbproject/
 
 # -----------------------
-# OS Generated
+# OS Generated Files
 # -----------------------
 .DS_Store
 .DS_Store?
@@ -52,17 +90,23 @@ npm-shrinkwrap.json
 ehthumbs.db
 Thumbs.db
 desktop.ini
+$RECYCLE.BIN/
 
 # -----------------------
-# Logs & Dumps
+# Logs & Runtime Files
 # -----------------------
 *.log
 *.log.*
 *.out
 *.pid
 logs/
+var/log/
 temp/
 tmp/
+*.tmp
+*.temp
+dump.rdb
+redis.dump
 
 # -----------------------
 # Coverage & Testing
@@ -70,45 +114,64 @@ tmp/
 coverage/
 .nyc_output/
 test-results/
-*.coverage.json
+*.coverage
+*.lcov
+junit.xml
+jest-test-results.json
+cypress/screenshots/
+cypress/videos/
+playwright-report/
+playwright/.cache/
 
 # -----------------------
 # Frontend Build Artifacts
 # -----------------------
-# Keep commented out - Docker needs to build these
-# frontend/dist/
-# frontend/build/
-# frontend/out/
+# These are built during Docker build, exclude source maps if needed
+frontend/dist/*.map
+frontend/build/*.map
+frontend/out/*.map
+frontend/.next/
+frontend/.nuxt/
+frontend/.svelte-kit/
+frontend/.astro/
 
 # -----------------------
-# Backend Public (Auto-generated)
+# Backend Build Artifacts
 # -----------------------
-# Keep commented out - Docker needs to copy these
-# backend/public/
-# backend/dist/
+backend/dist/
+backend/build/
+backend/coverage/
+backend/.nyc_output/
 
 # -----------------------
-# Hardhat & Blockchain
+# Hardhat & Blockchain Development
 # -----------------------
 artifacts/
 cache/
 deployments/
+typechain/
 hardhat.config.js.backup
 slither/
 foundry.toml
+forge.toml
+broadcast/
+ignition/deployments/
 
 # -----------------------
-# Caches
+# Browser Caches (Development)
 # -----------------------
-# Keep commented out - Docker uses these for browser binaries
-# .puppeteer_cache/
-# .puppeteer/
-# .cache/puppeteer/
-# .cache/ms-playwright/
-# .chromium/
+# Development caches, Docker will install fresh versions
+.puppeteer_cache/
+.puppeteer/
+.cache/puppeteer/
+.cache/ms-playwright/
+.chromium/
+.edge/
+.firefox/
+.webkit/
 
 # -----------------------
-# Sensitive Files
+# Sensitive Files & Credentials
 # -----------------------
 secrets.json
 private-key.json
@@ -119,15 +182,122 @@ keys.json
 *.pem
 *.cer
 *.crt
-api-keys.json          # ✅ Add this — never commit API keys
+*.pfx
+*.p12
+api-keys.json
+credentials.json
+service-account.json
+firebase-key.json
+config/production.json
+config/staging.json
+config/development.json
+
+# -----------------------
+# Documentation & Misc
+# -----------------------
+README.md
+LICENSE
+CHANGELOG.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+# -----------------------
+# Archives & Packages
+# -----------------------
+*.tgz
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.deb
+*.rpm
+*.msi
+
+# -----------------------
+# Docker Specific
+# -----------------------
+.docker/
+docker-compose.override.yml
+docker-compose.dev.yml
+docker-compose.test.yml
 
 # -----------------------
 # Development Tools
 # -----------------------
-*.tgz
-.DS_Store
+.eslintcache
+.stylelintcache
+.prettierignore
+.tern-project
+.babelrc
+.babelrc.js
+.eslintrc.js
+.stylelintrc.js
+.prettierrc.js
+tsconfig.tsbuildinfo
 
 # -----------------------
-# DO NOT IGNORE: .dockerignore itself
+# Temporary & Backup Files
+# -----------------------
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.save
+*~
+
+# -----------------------
+# Python (if any)
+# -----------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# -----------------------
+# Ruby (if any)
+# -----------------------
+*.gem
+.bundle/
+.ruby-version
+.ruby-gemset
+
+# -----------------------
+# DO NOT IGNORE: Essential files that should be included
 # -----------------------
 !.dockerignore
+!Dockerfile
+!docker-compose.yml
+!package.json
+!package-lock.json  # Or your preferred package manager lockfile
+!.env.example
+!README.md
+!LICENSE
+
+# -----------------------
+# Allow specific necessary files
+# -----------------------
+!backend/package.json
+!backend/package-lock.json
+!frontend/package.json
+!frontend/package-lock.json
+!backend/src/**
+!frontend/src/**
+!backend/public/robots.txt
+!backend/public/favicon.ico
+!backend/public/index.html
