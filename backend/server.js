@@ -11,7 +11,7 @@ import cron from 'node-cron';
 import 'dotenv/config';
 
 // --- Import CORE agents only (removed unnecessary dependencies) ---
-import PayoutAgent from './agents/payoutAgent.js';
+import { PayoutAgent } from './agents/payoutAgent.js'; // Changed to named import
 import * as healthAgent from './agents/healthAgent.js';
 import * as configAgent from './agents/configAgent.js';
 
@@ -33,9 +33,6 @@ export const CONFIG = {
     COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
     COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY,
     USE_FALLBACK_PAYOUT: process.env.USE_FALLBACK_PAYOUT || 'false',
-    
-    // Removed all RPC URLs and blockchain dependencies
-    // BrianNwaezikeChain handles everything internally
     
     // --- System Cycle Intervals (hardcoded constants) ---
     CYCLE_INTERVAL: 600000, // 10 minutes
@@ -164,9 +161,9 @@ function getAgentActivities() {
     return {
         recentActivities: agentActivityLog.slice(-50).reverse(),
         agentStatus: {
-            payoutAgent: payoutAgentInstance.getStatus?.(),
-            healthAgent: healthAgent.getStatus?.(),
-            configAgent: configAgent.getStatus?.(),
+            payoutAgent: payoutAgentInstance.getStatus ? payoutAgentInstance.getStatus() : { error: 'Not available' },
+            healthAgent: healthAgent.getStatus ? healthAgent.getStatus() : { error: 'Not available' },
+            configAgent: configAgent.getStatus ? configAgent.getStatus() : { error: 'Not available' },
         }
     };
 }
