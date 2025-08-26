@@ -2,6 +2,8 @@ import axios from 'axios';
 import crypto from 'crypto';
 import { createDatabase } from '../database/yourSQLite.js';
 import browserManager from './browserManager.js';
+import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
+import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
 
 // Quantum jitter for anti-detection
 const quantumDelay = (ms) => new Promise(resolve => {
@@ -33,6 +35,8 @@ class DataAgent {
         this.qualityMultipliers = QUALITY_MULTIPLIERS;
         this.initialized = false;
         this.mediumAuthorId = null;
+        this.blockchainInitialized = false;
+        this.paymentProcessor = null;
     }
 
     async initialize() {
@@ -41,13 +45,30 @@ class DataAgent {
         try {
             await this.db.connect();
             await this._initializeDataTables();
+            
+            // Initialize blockchain components
+            await this._initializeBlockchain();
+            
             if (this.config.MEDIUM_ACCESS_TOKEN) {
                 this.mediumAuthorId = await this.getMediumAuthorId();
             }
+            
             this.initialized = true;
-            this.logger.success('✅ Data Agent fully initialized with SQLite database');
+            this.logger.success('✅ Data Agent fully initialized with SQLite database and blockchain');
         } catch (error) {
             this.logger.error('Failed to initialize Data Agent:', error);
+            throw error;
+        }
+    }
+
+    async _initializeBlockchain() {
+        try {
+            this.paymentProcessor = new EnterprisePaymentProcessor(this.config);
+            await this.paymentProcessor.initialize();
+            this.blockchainInitialized = true;
+            this.logger.success('✅ BrianNwaezikeChain payment processor initialized');
+        } catch (error) {
+            this.logger.error('Failed to initialize blockchain:', error);
             throw error;
         }
     }
@@ -66,6 +87,19 @@ class DataAgent {
     async _initializeDataTables() {
         // Additional tables for enhanced data operations
         const additionalTables = [
+            `CREATE TABLE IF NOT EXISTS blockchain_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_hash TEXT UNIQUE,
+                amount REAL NOT NULL,
+                currency TEXT DEFAULT 'USD',
+                from_address TEXT,
+                to_address TEXT,
+                type TEXT,
+                status TEXT DEFAULT 'pending',
+                block_number INTEGER,
+                gas_used REAL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`,
             `CREATE TABLE IF NOT EXISTS content_distribution (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 platform TEXT NOT NULL,
@@ -74,6 +108,7 @@ class DataAgent {
                 impressions INTEGER DEFAULT 0,
                 clicks INTEGER DEFAULT 0,
                 revenue_generated REAL DEFAULT 0,
+                blockchain_tx_hash TEXT,
                 status TEXT DEFAULT 'published',
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
@@ -97,9 +132,11 @@ class DataAgent {
                 estimated_rpm REAL,
                 actual_rpm REAL,
                 revenue_generated REAL DEFAULT 0,
+                blockchain_tx_hash TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (content_id) REFERENCES ai_generated_content (id)
             )`,
+            `CREATE INDEX IF NOT EXISTS idx_blockchain_tx_hash ON blockchain_transactions(transaction_hash)`,
             `CREATE INDEX IF NOT EXISTS idx_content_category ON ai_generated_content(category)`,
             `CREATE INDEX IF NOT EXISTS idx_distribution_platform ON content_distribution(platform)`,
             `CREATE INDEX IF NOT EXISTS idx_ad_content ON ad_placements(content_id)`
@@ -124,37 +161,93 @@ class DataAgent {
                 marketDemand: await this.getDataMarketDemand(dataPackage.type)
             });
 
+            // Process blockchain payout
+            const payoutResult = await this.processBlockchainPayout(
+                userId,
+                finalReward,
+                'data_contribution_reward',
+                {
+                    data_points: dataPackage.dataPoints,
+                    data_type: dataPackage.type,
+                    data_quality: dataPackage.quality,
+                    operation_id: `op_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+                }
+            );
+
             // Save to database with transaction tracking
             const result = await this.db.run(
                 `INSERT INTO user_data_operations 
                  (user_id, data_points, data_type, data_quality, base_reward, final_reward, status, transaction_id)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [userId, dataPackage.dataPoints, dataPackage.type, dataPackage.quality, 
-                 baseReward, finalReward, 'completed', `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`]
+                 baseReward, finalReward, payoutResult.success ? 'completed' : 'failed', 
+                 payoutResult.transactionHash || `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`]
             );
 
-            // Record revenue transaction
-            if (finalReward > 0) {
+            if (payoutResult.success && finalReward > 0) {
+                // Record blockchain transaction
                 await this.db.run(
-                    `INSERT INTO revenue_transactions (amount, source, campaign_id, status)
-                     VALUES (?, 'user_data_contribution', ?, 'completed')`,
-                    [finalReward, `user_${userId}_${result.id}`]
+                    `INSERT INTO blockchain_transactions 
+                     (transaction_hash, amount, currency, from_address, to_address, type, status, block_number, gas_used)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [payoutResult.transactionHash, finalReward, 'USD', 
+                     this.config.COMPANY_WALLET_ADDRESS, userId, 'data_reward', 
+                     'confirmed', payoutResult.blockNumber, payoutResult.gasUsed]
+                );
+
+                // Record revenue transaction
+                await this.db.run(
+                    `INSERT INTO revenue_transactions (amount, source, campaign_id, blockchain_tx_hash, status)
+                     VALUES (?, 'user_data_contribution', ?, ?, 'completed')`,
+                    [finalReward, `user_${userId}_${result.id}`, payoutResult.transactionHash]
                 );
             }
 
             this.logger.success(`✅ Processed ${dataPackage.dataPoints} data points for user ${userId}. Reward: $${finalReward.toFixed(6)}`);
 
             return {
-                success: true,
+                success: payoutResult.success,
                 userId,
                 dataPoints: dataPackage.dataPoints,
                 reward: finalReward,
                 transactionId: result.id,
+                blockchainTxHash: payoutResult.transactionHash,
                 timestamp: new Date().toISOString()
             };
 
         } catch (error) {
             this.logger.error('Data processing reward failed:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async processBlockchainPayout(userId, amount, payoutType, metadata = {}) {
+        try {
+            if (!this.blockchainInitialized) {
+                throw new Error('Blockchain not initialized');
+            }
+
+            const payoutResult = await this.paymentProcessor.processRevenuePayout(
+                userId,
+                amount,
+                'USD',
+                JSON.stringify({
+                    type: payoutType,
+                    timestamp: new Date().toISOString(),
+                    ...metadata
+                })
+            );
+
+            return {
+                success: payoutResult.success,
+                transactionHash: payoutResult.transactionHash,
+                blockNumber: payoutResult.blockNumber,
+                gasUsed: payoutResult.gasUsed,
+                timestamp: new Date().toISOString()
+            };
+
+        } catch (error) {
+            this.logger.error('Blockchain payout failed:', error);
             return { success: false, error: error.message };
         }
     }
@@ -171,13 +264,11 @@ class DataAgent {
     }
 
     async calculateRelevanceScore(dataType) {
-        // Calculate relevance based on current market trends
         const trendScore = await this.getMarketTrendScore(dataType);
-        return 0.8 + (trendScore * 0.2); // Base 0.8 + trend influence
+        return 0.8 + (trendScore * 0.2);
     }
 
     async getMarketTrendScore(dataType) {
-        // Analyze recent market signals for this data type
         const recentSignals = await this.db.all(
             `SELECT confidence, value FROM market_signals 
              WHERE type LIKE ? AND timestamp > datetime('now', '-7 days')
@@ -248,26 +339,22 @@ class DataAgent {
 
             this.logger.info('📊 Starting comprehensive market data collection...');
 
-            // Enhanced data collection from multiple sources
             const [newsData, weatherData, socialTrends] = await Promise.all([
                 this.fetchNewsData(),
                 this.fetchWeatherData(),
                 this.fetchSocialTrends()
             ]);
 
-            // Generate AI content based on collected data
             const aiContent = await this.generateAIContent(newsData, weatherData, socialTrends);
-            
-            // Analyze and generate trading signals
             const signals = await this.generateMarketSignals(newsData, weatherData, socialTrends, aiContent);
-            
-            // Distribute content and generate revenue
             const distributionResults = await this.distributeContent(aiContent, signals);
-            
-            // Calculate total revenue from all sources
             const totalRevenue = await this.calculateTotalRevenue(distributionResults);
-            
-            // Save all data to SQLite with enhanced analytics
+
+            // Process blockchain settlement for total revenue
+            if (totalRevenue > 0) {
+                await this.processRevenueSettlement(totalRevenue, 'market_data_collection');
+            }
+
             await this.saveComprehensiveMarketData(newsData, weatherData, socialTrends, aiContent, signals, distributionResults, totalRevenue);
 
             this.logger.success(`✅ Market data collection completed. Total Revenue: $${totalRevenue.toFixed(2)}`);
@@ -283,6 +370,41 @@ class DataAgent {
         } catch (error) {
             this.logger.error('Market data collection failed:', error);
             return { success: false, error: error.message };
+        }
+    }
+
+    async processRevenueSettlement(amount, source) {
+        try {
+            const settlementResult = await this.paymentProcessor.processRevenuePayout(
+                this.config.COMPANY_WALLET_ADDRESS,
+                amount,
+                'USD',
+                JSON.stringify({
+                    source: source,
+                    type: 'revenue_settlement',
+                    timestamp: new Date().toISOString()
+                })
+            );
+
+            if (settlementResult.success) {
+                await this.db.run(
+                    `INSERT INTO blockchain_transactions 
+                     (transaction_hash, amount, currency, from_address, to_address, type, status, block_number, gas_used)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [settlementResult.transactionHash, amount, 'USD', 
+                     'revenue_pool', this.config.COMPANY_WALLET_ADDRESS, 
+                     'revenue_settlement', 'confirmed', 
+                     settlementResult.blockNumber, settlementResult.gasUsed]
+                );
+
+                this.logger.success(`✅ Revenue settlement processed: $${amount} USD`);
+            }
+
+            return settlementResult;
+
+        } catch (error) {
+            this.logger.error('Revenue settlement failed:', error);
+            throw error;
         }
     }
 
@@ -313,11 +435,10 @@ class DataAgent {
                 })
             ]);
 
-            // Combine and deduplicate articles
             const allArticles = responses.flatMap(response => response.data.articles || []);
             const uniqueArticles = this.deduplicateArticles(allArticles);
 
-            return uniqueArticles.slice(0, 20); // Return top 20 articles
+            return uniqueArticles.slice(0, 20);
 
         } catch (error) {
             this.logger.error('News API fetch failed:', error);
@@ -341,7 +462,6 @@ class DataAgent {
         }
 
         try {
-            // Multiple global locations for comprehensive weather analysis
             const locations = ['New York', 'London', 'Tokyo', 'Singapore', 'Frankfurt', 'Sydney', 'Mumbai', 'Berlin', 'Sao Paulo', 'Dubai'];
             const weatherPromises = locations.map(location =>
                 axios.get('https://api.openweathermap.org/data/2.5/weather', {
@@ -390,26 +510,35 @@ class DataAgent {
         if (!this.config.TWITTER_API_KEY) {
             return { trending_topics: [], sentiment: 0 };
         }
-        const response = await axios.get('https://api.twitter.com/1.1/trends/place.json', {
-            params: { id: 1 }, // Worldwide
-            headers: { Authorization: `Bearer ${this.config.TWITTER_API_KEY}` }
-        });
-        const trends = response.data[0].trends.map(t => t.name);
-        const sentiment = this.analyzeTrendsSentiment(trends);
-        return { trending_topics: trends, sentiment };
+        try {
+            const response = await axios.get('https://api.twitter.com/2/trends/place/1', {
+                headers: { Authorization: `Bearer ${this.config.TWITTER_API_KEY}` }
+            });
+            const trends = response.data[0]?.trends?.map(t => t.name) || [];
+            const sentiment = this.analyzeTrendsSentiment(trends);
+            return { trending_topics: trends, sentiment };
+        } catch (error) {
+            this.logger.warn('Twitter trends fetch failed:', error.message);
+            return { trending_topics: [], sentiment: 0 };
+        }
     }
 
     async fetchRedditTrends() {
         if (!this.config.REDDIT_API_KEY) {
             return { popular_posts: [], sentiment: 0 };
         }
-        const response = await axios.get('https://oauth.reddit.com/r/all/hot.json', {
-            params: { limit: 10 },
-            headers: { Authorization: `Bearer ${this.config.REDDIT_API_KEY}` }
-        });
-        const posts = response.data.data.children.map(c => c.data.title);
-        const sentiment = this.analyzeTrendsSentiment(posts);
-        return { popular_posts: posts, sentiment };
+        try {
+            const response = await axios.get('https://oauth.reddit.com/r/all/hot', {
+                params: { limit: 10 },
+                headers: { Authorization: `Bearer ${this.config.REDDIT_API_KEY}` }
+            });
+            const posts = response.data.data.children.map(c => c.data.title);
+            const sentiment = this.analyzeTrendsSentiment(posts);
+            return { popular_posts: posts, sentiment };
+        } catch (error) {
+            this.logger.warn('Reddit trends fetch failed:', error.message);
+            return { popular_posts: [], sentiment: 0 };
+        }
     }
 
     analyzeTrendsSentiment(items) {
@@ -425,7 +554,7 @@ class DataAgent {
 
     async generateAIContent(newsData, weatherData, socialTrends) {
         const content = [];
-        const baseCount = 3 + Math.floor(Math.random() * 3); // 3-5 pieces of content, keep for variety but not simulation
+        const baseCount = 3;
 
         for (let i = 0; i < baseCount; i++) {
             const category = CONTENT_CATEGORIES[Math.floor(Math.random() * CONTENT_CATEGORIES.length)];
@@ -439,7 +568,6 @@ class DataAgent {
     async createContentPiece(category, newsData, weatherData) {
         const contentId = `content_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
         
-        // Analyze relevant news for this category
         const relevantNews = newsData.filter(article => 
             article.title?.toLowerCase().includes(category) || 
             article.description?.toLowerCase().includes(category)
@@ -449,7 +577,6 @@ class DataAgent {
         const content = this.generateContentBody(category, relevantNews, weatherData);
         const sentiment = this.analyzeContentSentiment(content);
 
-        // Save to database
         const result = await this.db.run(
             `INSERT INTO ai_generated_content (title, content, category, tags, sentiment_score, revenue_potential)
              VALUES (?, ?, ?, ?, ?, ?)`,
@@ -468,19 +595,10 @@ class DataAgent {
     }
 
     generateContentTitle(category, relevantNews) {
-        const prefixes = [
-            'Latest', 'Breaking', 'Expert', 'Insider', 'Market',
-            'Strategic', 'Professional', 'Advanced', 'Premium'
-        ];
-        
-        const suffixes = [
-            'Analysis', 'Insights', 'Report', 'Update', 'Overview',
-            'Perspective', 'Outlook', 'Forecast', 'Intelligence'
-        ];
-
+        const prefixes = ['Latest', 'Breaking', 'Expert', 'Market', 'Strategic'];
+        const suffixes = ['Analysis', 'Insights', 'Report', 'Update', 'Forecast'];
         const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
         const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-        
         return `${prefix} ${category.charAt(0).toUpperCase() + category.slice(1)} ${suffix}`;
     }
 
@@ -496,20 +614,20 @@ class DataAgent {
         }
 
         body += "## Market Implications:\n";
-        body += `Current market conditions suggest ${Math.random() > 0.5 ? 'positive' : 'cautious'} outlook for ${category} sectors.\n\n`; // keep for variety, but replace if needed
+        body += `Current analysis indicates measured outlook for ${category} sectors.\n\n`;
 
-        body += "## Investment Recommendations:\n";
-        body += "- Consider diversified exposure\n";
-        body += "- Monitor emerging trends\n";
-        body += "- Evaluate risk tolerance\n";
+        body += "## Strategic Recommendations:\n";
+        body += "- Maintain diversified exposure\n";
+        body += "- Monitor sector developments\n";
+        body += "- Assess risk parameters regularly\n";
 
         return body;
     }
 
     analyzeContentSentiment(content) {
         const text = content.toLowerCase();
-        const positive = text.match(/\b(positive|bullish|growth|opportunity|strong|recovery|gain|profit)\b/g) || [];
-        const negative = text.match(/\b(negative|bearish|decline|risk|weak|drop|loss|volatility)\b/g) || [];
+        const positive = text.match(/\b(positive|growth|opportunity|strong|recovery|gain|progress)\b/g) || [];
+        const negative = text.match(/\b(negative|decline|risk|weak|challenge|uncertainty)\b/g) || [];
         return (positive.length - negative.length) / (positive.length + negative.length + 1);
     }
 
@@ -522,7 +640,6 @@ class DataAgent {
             health: 1.2,
             default: 1.0
         };
-        
         return basePotential * (categoryMultipliers[category] || categoryMultipliers.default);
     }
 
@@ -534,7 +651,6 @@ class DataAgent {
 
         if (networks.length === 0) return placements;
 
-        // Always include display ad
         placements.push({
             type: 'display',
             position: 'header',
@@ -542,7 +658,6 @@ class DataAgent {
             estimated_rpm: 12 + (sentiment * 5)
         });
 
-        // Category-specific placements
         if (['technology', 'finance', 'crypto'].includes(category)) {
             placements.push({
                 type: 'native',
@@ -567,13 +682,10 @@ class DataAgent {
     async generateMarketSignals(newsData, weatherData, socialTrends, aiContent) {
         const signals = [];
 
-        // Enhanced sentiment analysis from multiple sources
         const newsSentiment = this.analyzeNewsSentiment(newsData);
         const weatherSignals = this.generateWeatherSignals(weatherData);
         const socialSentiment = socialTrends.overall_sentiment || 0;
-
-        // Combined sentiment score
-        const combinedSentiment = (newsSentiment * 0.5) + (socialSentiment * 0.3) + (this.calculateContentSentiment(aiContent) * 0.2);
+        const combinedSentiment = (newsSentiment * 0.5) + (socialSentiment * 0.3);
 
         signals.push({
             type: 'Market Sentiment',
@@ -583,42 +695,30 @@ class DataAgent {
             timestamp: new Date().toISOString()
         });
 
-        // Add weather signals
         signals.push(...weatherSignals);
-
-        // Add content-based signals
-        const contentSignals = this.generateContentSignals(aiContent);
-        signals.push(...contentSignals);
 
         return signals;
     }
 
     analyzeNewsSentiment(articles) {
         if (!articles || articles.length === 0) return 0;
-
         const sentimentScores = articles.map(article => {
             const title = (article.title || '').toLowerCase();
             const desc = (article.description || '').toLowerCase();
-            
-            const positive = ['rises', 'growth', 'bullish', 'strong', 'increase', 'surge', 'gain', 'positive', 'boom', 'up', 'recovery', 'opportunity'].filter(w => title.includes(w) || desc.includes(w)).length;
-            const negative = ['falls', 'crash', 'bearish', 'decline', 'drop', 'plunge', 'loss', 'negative', 'slump', 'down', 'recession', 'risk'].filter(w => title.includes(w) || desc.includes(w)).length;
-            
+            const positive = ['growth', 'bullish', 'strong', 'increase', 'surge', 'gain', 'positive', 'recovery', 'opportunity'].filter(w => title.includes(w) || desc.includes(w)).length;
+            const negative = ['decline', 'bearish', 'weak', 'drop', 'loss', 'negative', 'slump', 'recession', 'risk'].filter(w => title.includes(w) || desc.includes(w)).length;
             return (positive - negative) / (positive + negative + 1);
         });
-
         return sentimentScores.reduce((acc, score) => acc + score, 0) / sentimentScores.length;
     }
 
     generateWeatherSignals(weatherData) {
         const signals = [];
-        
         weatherData.forEach(weather => {
             const temp = weather.main?.temp || 20;
             let signal = 'Hold';
-            
             if (temp > 28) signal = 'Buy';
             else if (temp < 5) signal = 'Sell';
-
             signals.push({
                 type: `Weather Impact (${weather.name})`,
                 value: signal,
@@ -627,31 +727,6 @@ class DataAgent {
                 timestamp: new Date().toISOString()
             });
         });
-
-        return signals;
-    }
-
-    calculateContentSentiment(aiContent) {
-        if (aiContent.length === 0) return 0;
-        const totalSentiment = aiContent.reduce((sum, content) => sum + content.sentiment, 0);
-        return totalSentiment / aiContent.length;
-    }
-
-    generateContentSignals(aiContent) {
-        const signals = [];
-        
-        aiContent.forEach(content => {
-            if (Math.abs(content.sentiment) > 0.4) {
-                signals.push({
-                    type: `Content Sentiment (${content.category})`,
-                    value: content.sentiment > 0 ? 'Buy' : 'Sell',
-                    confidence: Math.abs(content.sentiment),
-                    source: 'ai_content_analysis',
-                    timestamp: new Date().toISOString()
-                });
-            }
-        });
-
         return signals;
     }
 
@@ -661,19 +736,14 @@ class DataAgent {
 
         for (const content of aiContent) {
             try {
-                // Shorten content URL
                 const baseLink = `${this.config.STORE_URL || 'https://arielmatrix.io'}/content/${content.contentId}`;
                 const shortenedLink = await this.shortenLink(baseLink);
-
-                // Distribute to platforms
                 const platformResults = await this.distributeToPlatforms(content, shortenedLink, signals);
                 distributionResults.push(...platformResults);
 
-                // Calculate content revenue
                 const contentRevenue = platformResults.reduce((sum, result) => sum + (result.revenue || 0), 0);
                 totalRevenue += contentRevenue;
 
-                // Update content with revenue
                 await this.db.run(
                     `UPDATE ai_generated_content SET revenue_potential = revenue_potential + ? WHERE id = ?`,
                     [contentRevenue, content.id]
@@ -691,7 +761,6 @@ class DataAgent {
         const results = [];
         const platforms = [];
 
-        // Add platforms based on configuration
         if (this.config.REDDIT_API_KEY) platforms.push('reddit');
         if (this.config.MEDIUM_ACCESS_TOKEN) platforms.push('medium');
         if (this.config.TWITTER_API_KEY) platforms.push('twitter');
@@ -699,7 +768,8 @@ class DataAgent {
         for (const platform of platforms) {
             try {
                 let revenue = 0;
-                
+                let blockchainTxHash = null;
+
                 switch (platform) {
                     case 'reddit':
                         revenue = await this.postToReddit(content, shortenedLink, signals);
@@ -713,16 +783,29 @@ class DataAgent {
                 }
 
                 if (revenue > 0) {
+                    // Process blockchain transaction for platform revenue
+                    const payoutResult = await this.processBlockchainPayout(
+                        this.config.COMPANY_WALLET_ADDRESS,
+                        revenue,
+                        'platform_revenue',
+                        { platform, content_id: content.contentId }
+                    );
+
+                    if (payoutResult.success) {
+                        blockchainTxHash = payoutResult.transactionHash;
+                    }
+
                     await this.db.run(
-                        `INSERT INTO content_distribution (platform, content_id, post_url, revenue_generated, status)
-                         VALUES (?, ?, ?, ?, 'published')`,
-                        [platform, content.contentId, shortenedLink, revenue]
+                        `INSERT INTO content_distribution (platform, content_id, post_url, revenue_generated, blockchain_tx_hash, status)
+                         VALUES (?, ?, ?, ?, ?, 'published')`,
+                        [platform, content.contentId, shortenedLink, revenue, blockchainTxHash]
                     );
 
                     results.push({
                         platform,
                         contentId: content.contentId,
                         revenue,
+                        blockchainTxHash,
                         success: true,
                         timestamp: new Date().toISOString()
                     });
@@ -739,7 +822,7 @@ class DataAgent {
                 });
             }
 
-            await quantumDelay(2000); // Respect rate limits
+            await quantumDelay(2000);
         }
 
         return results;
@@ -767,10 +850,7 @@ class DataAgent {
             }
         );
 
-        // Enhanced revenue calculation based on content quality and signals
-        const baseRevenue = 2 + (Math.abs(content.sentiment) * 8);
-        const signalBonus = signals.length * 0.5;
-        return baseRevenue + signalBonus;
+        return 2 + (Math.abs(content.sentiment) * 8) + (signals.length * 0.5);
     }
 
     async postToMedium(content, link) {
@@ -792,8 +872,7 @@ class DataAgent {
                 }
             }
         );
-        const baseRevenue = 5 + (Math.abs(content.sentiment) * 10);
-        return baseRevenue;
+        return 5 + (Math.abs(content.sentiment) * 10);
     }
 
     async postToTwitter(content, link) {
@@ -808,8 +887,7 @@ class DataAgent {
                 }
             }
         );
-        const baseRevenue = 1 + (Math.abs(content.sentiment) * 3);
-        return baseRevenue;
+        return 1 + (Math.abs(content.sentiment) * 3);
     }
 
     async shortenLink(originalUrl) {
@@ -833,7 +911,6 @@ class DataAgent {
 
     async shortenWithShortIO(originalUrl) {
         if (!this.config.SHORTIO_API_KEY) return null;
-
         const response = await axios.post(
             'https://api.short.io/links',
             {
@@ -848,13 +925,11 @@ class DataAgent {
                 timeout: 8000
             }
         );
-
         return response.data.shortURL;
     }
 
     async shortenWithAdFly(originalUrl) {
         if (!this.config.ADFLY_API_KEY) return null;
-
         const response = await axios.get('https://api.adf.ly/api.php', {
             params: {
                 key: this.config.ADFLY_API_KEY,
@@ -863,52 +938,40 @@ class DataAgent {
             },
             timeout: 8000
         });
-
         return response.data;
     }
 
     async shortenWithLinkvertise(originalUrl) {
         if (!this.config.AI_EMAIL || !this.config.AI_PASSWORD) return null;
-
         let page = null;
         try {
             if (!browserManager.isInitialized()) {
                 await browserManager.init(this.config, this.logger);
             }
-
             const context = await browserManager.acquireContext('linkvertise');
             page = context.page;
-
             await page.goto('https://linkvertise.com/auth/login', { 
                 waitUntil: 'domcontentloaded', 
                 timeout: 60000 
             });
             await quantumDelay(3000);
-
             await browserManager.safeType(page, ['input[name="email"]', '#email'], this.config.AI_EMAIL);
             await browserManager.safeType(page, ['input[name="password"]', '#password'], this.config.AI_PASSWORD);
             await browserManager.safeClick(page, ['button[type="submit"]', '.btn-primary']);
-
             await quantumDelay(5000);
-
             await page.goto('https://linkvertise.com/dashboard/links/create', { 
                 waitUntil: 'domcontentloaded', 
                 timeout: 60000 
             });
             await quantumDelay(3000);
-
             await browserManager.safeType(page, ['input[name="target_url"]', '#target_url'], originalUrl);
             await browserManager.safeClick(page, ['button[type="submit"]', '.btn-success']);
-
             await quantumDelay(5000);
-
             const shortLink = await page.evaluate(() => {
                 const input = document.querySelector('input[readonly], input.share-link-input');
                 return input?.value || null;
             });
-
             return shortLink;
-
         } catch (error) {
             this.logger.error('Linkvertise automation failed:', error);
             throw error;
@@ -923,7 +986,6 @@ class DataAgent {
         const successfulDistributions = distributionResults.filter(r => r.success);
         const totalRevenue = successfulDistributions.reduce((sum, result) => sum + (result.revenue || 0), 0);
         
-        // Record final revenue transaction
         if (totalRevenue > 0) {
             await this.db.run(
                 `INSERT INTO revenue_transactions (amount, source, status)
@@ -937,7 +999,6 @@ class DataAgent {
 
     async saveComprehensiveMarketData(newsData, weatherData, socialTrends, aiContent, signals, distributionResults, totalRevenue) {
         try {
-            // Save news articles
             for (const article of newsData) {
                 await this.db.run(
                     `INSERT INTO news_articles (title, description, url, published_at, source, sentiment_score)
@@ -947,7 +1008,6 @@ class DataAgent {
                 );
             }
 
-            // Save weather data
             for (const weather of weatherData) {
                 if (weather.main) {
                     await this.db.run(
@@ -959,7 +1019,6 @@ class DataAgent {
                 }
             }
 
-            // Save signals with revenue allocation
             for (const signal of signals) {
                 await this.db.run(
                     `INSERT INTO market_signals (type, value, confidence, source, revenue_generated)
@@ -968,7 +1027,6 @@ class DataAgent {
                 );
             }
 
-            // Save ad placements for content
             for (const content of aiContent) {
                 for (const placement of content.adPlacements) {
                     const actualRpm = placement.estimated_rpm;
@@ -1045,12 +1103,24 @@ class DataAgent {
                 GROUP BY platform
             `);
 
+            const blockchainMetrics = await this.db.all(`
+                SELECT 
+                    COUNT(*) as total_transactions,
+                    SUM(amount) as total_blockchain_volume,
+                    AVG(gas_used) as avg_gas_used,
+                    COUNT(DISTINCT to_address) as unique_recipients
+                FROM blockchain_transactions
+                WHERE status = 'confirmed'
+                AND ${timeFilter}
+            `);
+
             return {
                 timeframe,
                 data_operations: metrics[0] || {},
                 market_signals: signalMetrics[0] || {},
                 content_metrics: contentMetrics[0] || {},
                 distribution_metrics: distributionMetrics,
+                blockchain_metrics: blockchainMetrics[0] || {},
                 overall_revenue: (metrics[0]?.total_revenue || 0) + 
                                (signalMetrics[0]?.signal_revenue || 0) + 
                                (contentMetrics[0]?.content_revenue || 0),
@@ -1067,6 +1137,9 @@ class DataAgent {
         if (this.initialized) {
             await this.db.close();
             this.initialized = false;
+        }
+        if (this.paymentProcessor) {
+            await this.paymentProcessor.cleanup();
         }
     }
 }
