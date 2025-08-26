@@ -1,0 +1,208 @@
+/* Bwaezi Chain Theme Variables */
+:root {
+  /* Primary Colors */
+  --bwaezi-primary: #6366f1;
+  --bwaezi-primary-dark: #4f46e5;
+  --bwaezi-primary-light: #818cf8;
+  --bwaezi-secondary: #10b981;
+  --bwaezi-accent: #f59e0b;
+  
+  /* Background Colors */
+  --bwaezi-bg-dark: #1f2937;
+  --bwaezi-bg-light: #f9fafb;
+  --bwaezi-card-bg: #ffffff;
+  --bwaezi-card-border: #e5e7eb;
+  
+  /* Text Colors */
+  --bwaezi-text-primary: #1f2937;
+  --bwaezi-text-secondary: #6b7280;
+  --bwaezi-text-accent: #6366f1;
+  
+  /* Status Colors */
+  --bwaezi-success: #10b981;
+  --bwaezi-warning: #f59e0b;
+  --bwaezi-error: #ef4444;
+  --bwaezi-info: #3b82f6;
+}
+
+/* Bwaezi Dashboard Components */
+.bwaezi-dashboard {
+  background: linear-gradient(135deg, var(--bwaezi-bg-light) 0%, #f3f4f6 100%);
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.bwaezi-card {
+  background: var(--bwaezi-card-bg);
+  border: 1px solid var(--bwaezi-card-border);
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.bwaezi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px -5px rgba(99, 102, 241, 0.15);
+}
+
+.bwaezi-balance-card {
+  background: linear-gradient(135deg, var(--bwaezi-primary) 0%, var(--bwaezi-primary-dark) 100%);
+  color: white;
+  border: none;
+}
+
+.balance-amount {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin: 10px 0;
+  background: linear-gradient(135deg, #ffffff 0%, #e5e7eb 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Transaction List */
+.transaction-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 15px;
+  padding: 12px;
+  border-bottom: 1px solid var(--bwaezi-card-border);
+  align-items: center;
+}
+
+.transaction-item:last-child {
+  border-bottom: none;
+}
+
+.tx-type {
+  font-weight: 600;
+  color: var(--bwaezi-text-primary);
+}
+
+.tx-amount {
+  font-weight: bold;
+  color: var(--bwaezi-success);
+}
+
+.tx-time {
+  color: var(--bwaezi-text-secondary);
+  font-size: 0.875rem;
+}
+
+/* Bwaezi Buttons */
+.bwaezi-btn {
+  background: linear-gradient(135deg, var(--bwaezi-primary) 0%, var(--bwaezi-primary-dark) 100%);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.bwaezi-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+}
+
+.bwaezi-btn-secondary {
+  background: transparent;
+  border: 2px solid var(--bwaezi-primary);
+  color: var(--bwaezi-primary);
+}
+
+.bwaezi-btn-secondary:hover {
+  background: var(--bwaezi-primary);
+  color: white;
+}
+
+/* Stats Grid */
+.bwaezi-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 20px;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: bold;
+  color: var(--bwaezi-primary);
+  margin: 10px 0;
+}
+
+.stat-label {
+  color: var(--bwaezi-text-secondary);
+  font-size: 0.875rem;
+}
+
+/* Loading States */
+.bwaezi-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+}
+
+.bwaezi-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--bwaezi-primary-light);
+  border-top: 4px solid var(--bwaezi-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .bwaezi-dashboard {
+    padding: 10px;
+  }
+  
+  .bwaezi-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .transaction-item {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+  
+  .balance-amount {
+    font-size: 2rem;
+  }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+  .bwaezi-dashboard {
+    background: linear-gradient(135deg, var(--bwaezi-bg-dark) 0%, #374151 100%);
+  }
+  
+  .bwaezi-card {
+    background: #374151;
+    border-color: #4b5563;
+  }
+  
+  .tx-type {
+    color: #f9fafb;
+  }
+  
+  .tx-time {
+    color: #9ca3af;
+  }
+}
