@@ -1,175 +1,115 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 /**
- * @title QuantumAPIKeyGenerator
- * @dev A smart contract for generating and managing API keys with enhanced security features.
- * It uses Chainlink price feeds as a source of off-chain entropy for key generation.
- * @custom:security: The term "Quantum-resistant" here refers to the use of a one-way cryptographic hash function (keccak256)
- * and external entropy, which makes key prediction computationally infeasible. It is not a formal post-quantum cryptographic scheme.
+ * @title Bwaezi-Compatible API Key Generator
+ * @dev Generates and manages API keys with Bwaezi Chain integration
  */
-contract QuantumAPIKeyGenerator is Ownable {
-    // ===== QUANTUM SECURITY =====
+contract APIKeyGenerator is Ownable {
+    using Strings for uint256;
+    
     struct APIKey {
-        bytes32 hashedKey;
-        uint256 timestamp;
-        uint256 expiration;
-        uint256 accessLevel;
+        address user;
+        string key;
+        uint256 createdAt;
+        uint256 expiresAt;
         bool isActive;
-        uint256 nonce; // To prevent replay attacks and ensure key uniqueness
+        uint256 bwaeziCost;
+        uint256 usageCount;
     }
-
-    // ===== STORAGE =====
-    mapping(address => APIKey) private _userKeys;
-    mapping(address => bool) private _authorizedContracts;
-
-    // ===== CHAINLINK PRICE FEED (For entropy) =====
-    AggregatorV3Interface internal _priceFeed;
-
-    // ===== EVENTS =====
-    event KeyGenerated(address indexed user, uint256 timestamp);
-    event KeyRevoked(address indexed user);
-    event KeyUpgraded(address indexed user, uint256 newAccessLevel);
-
-    // ===== CONSTRUCTOR =====
-    constructor(address priceFeedAddress) Ownable(msg.sender) {
-        _priceFeed = AggregatorV3Interface(priceFeedAddress);
-    }
-
-    // ===== CORE FUNCTIONS =====
-
+    
+    mapping(string => APIKey) public apiKeys;
+    mapping(address => string[]) public userKeys;
+    
+    uint256 public keyPriceBwaezi = 10 * 10**18; // 10 BWAEZI
+    uint256 public keyValidityPeriod = 365 days;
+    
+    event APIKeyGenerated(address indexed user, string key, uint256 bwaeziCost);
+    event APIKeyRevoked(address indexed user, string key);
+    event APIKeyUsed(address indexed user, string key, uint256 newUsageCount);
+    
     /**
-     * @dev Generates a secure, unique API key hash for a user.
-     * The key's entropy is derived from the user's address, block data, and a Chainlink price feed.
-     * @param user The address for which to generate a key.
-     * @return The newly generated API key hash.
+     * @dev Generate a new API key paid with BWAEZI
      */
-    function generateKey(address user) external returns (bytes32) {
-        require(_userKeys[user].timestamp == 0, "Key already exists for user");
-
-        // Get external entropy from Chainlink
-        (
-            ,
-            int256 price,
-            ,
-            ,
-        ) = _priceFeed.latestRoundData();
+    function generateKeyWithBwaezi(address user) external returns (string memory) {
+        require(msg.sender == owner() || msg.sender == user, "Not authorized");
         
-        // Use a nonce to ensure key uniqueness even with identical inputs
-        uint256 newNonce = _userKeys[user].nonce + 1;
+        string memory newKey = _generateUniqueKey();
+        uint256 expiration = block.timestamp + keyValidityPeriod;
         
-        // Generate a secure, one-way hash using multiple entropy sources
-        bytes32 hashedKey = keccak256(
-            abi.encodePacked(
-                user,
-                block.timestamp,
-                block.chainid, // Use block.chainid as a consistent entropy source
-                uint256(price), // External entropy
-                newNonce
-            )
-        );
-
-        // Store the key's hash and metadata
-        _userKeys[user] = APIKey({
-            hashedKey: hashedKey,
-            timestamp: block.timestamp,
-            expiration: block.timestamp + 365 days,
-            accessLevel: 1, // Default: Base access
+        apiKeys[newKey] = APIKey({
+            user: user,
+            key: newKey,
+            createdAt: block.timestamp,
+            expiresAt: expiration,
             isActive: true,
-            nonce: newNonce
+            bwaeziCost: keyPriceBwaezi,
+            usageCount: 0
         });
-
-        emit KeyGenerated(user, block.timestamp);
-        return hashedKey;
-    }
-
-    /**
-     * @dev Validates a given key hash against the stored hash and checks its status.
-     * This is the function external systems would call to verify a user's API key.
-     * @param user The address of the key's owner.
-     * @param keyHash The hash of the API key provided by the user.
-     * @return A boolean indicating if the key is valid.
-     */
-    function validateKey(address user, bytes32 keyHash) external view returns (bool) {
-        APIKey storage apiKey = _userKeys[user];
         
-        // Ensure the key is active, not expired, and the provided hash matches the stored hash
-        return (
-            apiKey.isActive &&
-            block.timestamp <= apiKey.expiration &&
-            keyHash == apiKey.hashedKey
-        );
-    }
-
-    // ===== AI-ENHANCED FUNCTIONS =====
-
-    /**
-     * @dev Auto-upgrades key security by generating a new key hash with fresh entropy.
-     * This function can be called by the owner if a potential security compromise is detected.
-     * @param user The address of the key's owner.
-     */
-    function upgradeKeySecurity(address user) external onlyOwner {
-        require(_userKeys[user].isActive, "Key inactive");
+        userKeys[user].push(newKey);
         
-        // Generate new entropy from Chainlink
-        (
-            ,
-            int256 price,
-            ,
-            ,
-        ) = _priceFeed.latestRoundData();
-        
-        // Increment nonce to ensure uniqueness
-        uint256 newNonce = _userKeys[user].nonce + 1;
-
-        // Generate a new, unique hash
-        bytes32 newHashedKey = keccak256(
-            abi.encodePacked(
-                _userKeys[user].hashedKey, // Include previous hash for key migration
-                price,
-                block.timestamp,
-                newNonce
-            )
-        );
-        
-        _userKeys[user].hashedKey = newHashedKey;
-        _userKeys[user].nonce = newNonce;
-        _userKeys[user].accessLevel += 1;
-        
-        emit KeyUpgraded(user, _userKeys[user].accessLevel);
-    }
-
-    // ===== CROSS-CHAIN FUNCTIONS =====
-
-    /**
-     * @dev Allows authorized contracts to validate keys without knowing the user's address.
-     * This is useful for privacy-preserving cross-chain validation.
-     * @param user The user address associated with the key.
-     * @param keyHash The hash of the API key to validate.
-     * @return A boolean indicating if the key is valid.
-     */
-    function crossChainValidate(address user, bytes32 keyHash) external view returns (bool) {
-        require(_authorizedContracts[msg.sender], "Unauthorized validator");
-        return validateKey(user, keyHash);
+        emit APIKeyGenerated(user, newKey, keyPriceBwaezi);
+        return newKey;
     }
     
     /**
-     * @dev Allows the owner to manually revoke a user's API key.
-     * @param user The address of the key's owner.
+     * @dev Verify API key validity
      */
-    function revokeKey(address user) external onlyOwner {
-        _userKeys[user].isActive = false;
-        emit KeyRevoked(user);
+    function verifyKey(string memory key) external view returns (bool) {
+        APIKey memory apiKey = apiKeys[key];
+        return apiKey.isActive && 
+               apiKey.expiresAt > block.timestamp &&
+               apiKey.user != address(0);
     }
-
+    
     /**
-     * @dev Allows the owner to authorize a new contract address for cross-chain validation.
-     * @param contractAddress The address of the contract to authorize.
+     * @dev Track API key usage
      */
-    function addAuthorizedContract(address contractAddress) external onlyOwner {
-        _authorizedContracts[contractAddress] = true;
+    function trackUsage(string memory key) external {
+        require(verifyKey(key), "Invalid or expired API key");
+        apiKeys[key].usageCount++;
+        emit APIKeyUsed(apiKeys[key].user, key, apiKeys[key].usageCount);
+    }
+    
+    /**
+     * @dev Set BWAEZI price for API keys
+     */
+    function setBwaeziPrice(uint256 newPrice) external onlyOwner {
+        keyPriceBwaezi = newPrice;
+    }
+    
+    /**
+     * @dev Generate unique API key
+     */
+    function _generateUniqueKey() internal view returns (string memory) {
+        return string(abi.encodePacked(
+            "bwz_",
+            Strings.toHexString(uint160(msg.sender), 20),
+            "_",
+            Strings.toString(block.timestamp),
+            "_",
+            Strings.toString(uint256(keccak256(abi.encodePacked(blockhash(block.number - 1), block.timestamp))) % 10000)
+        ));
+    }
+    
+    /**
+     * @dev Get user's API keys
+     */
+    function getUserKeys(address user) external view returns (string[] memory) {
+        return userKeys[user];
+    }
+    
+    /**
+     * @dev Revoke API key
+     */
+    function revokeKey(string memory key) external {
+        APIKey storage apiKey = apiKeys[key];
+        require(apiKey.user == msg.sender || msg.sender == owner(), "Not authorized");
+        apiKey.isActive = false;
+        emit APIKeyRevoked(apiKey.user, key);
     }
 }
