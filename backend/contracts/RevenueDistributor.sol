@@ -1,95 +1,174 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
- * @title RevenueDistributor
- * @dev Manages the secure and decentralized distribution of USDT revenue.
- * The contract owner (your master key) is the only address that can initiate a payout.
- * External agents can only report revenue.
+ * @title Bwaezi Revenue Distributor
+ * @dev Autonomous revenue distribution with BWAEZI token integration
  */
-contract RevenueDistributor is Ownable {
-    // IERC20 interface for the USDT token
-    IERC20 public usdt;
-
-    // List of recipient wallets and a gas fee wallet
-    address[] public wallets;
-    address public gasWallet;
-    
-    // Total USDT that has been reported by all agents, but not yet distributed
-    uint256 public totalReportedRevenue;
-    
-    // Amount of USDT reserved for gas fees
-    uint256 public gasReserve;
-
-    // --- Constructor ---
-    constructor(
-        address[] memory _wallets,
-        address _gasWallet,
-        address _usdt
-    ) {
-        // We set the initial wallets and the gas wallet
-        wallets = _wallets;
-        gasWallet = _gasWallet;
-        usdt = IERC20(_usdt);
+contract RevenueDistributor is Ownable, ReentrancyGuard {
+    struct RevenueShare {
+        address recipient;
+        uint256 sharePercentage; // Basis points (10000 = 100%)
+        uint256 totalDistributed;
+        bool isActive;
     }
     
-    // --- External Endpoints for Revenue Agents ---
-    /**
-     * @dev Allows any revenue-generating agent to securely report their earnings.
-     * @param amount The amount of USDT to add to the contract's balance.
-     * This function is payable to receive the USDT directly.
-     */
-    function reportRevenue() external payable {
-        // Use msg.value to get the amount of native token (e.g., ETH/MATIC) sent
-        // To handle USDT, an agent would first call approve on the USDT contract, then call a deposit function here.
-        // For simplicity, we'll assume the external agent sends USDT directly via `transferFrom`.
-        // A more secure setup would be a pull-based system (a 'deposit' function).
-        totalReportedRevenue += msg.value;
+    RevenueShare[] public revenueShares;
+    uint256 public totalDistributed;
+    uint256 public totalRevenue;
+    
+    // BWAEZI token interface
+    interface IBwaeziToken {
+        function transfer(address to, uint256 amount) external returns (bool);
+        function balanceOf(address account) external view returns (uint256);
     }
-
-    // --- Owner-Only Distribution & Gas Fee Management ---
+    
+    IBwaeziToken public bwaeziToken;
+    
+    event RevenueReceived(uint256 amount, uint256 timestamp);
+    event RevenueDistributed(address indexed recipient, uint256 amount, uint256 share);
+    event ShareUpdated(address indexed recipient, uint256 newShare);
+    event BwaeziTokenSet(address tokenAddress);
+    
     /**
-     * @dev The owner (your one-key agent) calls this to distribute funds.
-     * It sends a share of the total contract balance to each wallet.
-     * Only callable by the contract owner.
+     * @dev Set BWAEZI token address
      */
-    function distribute() external onlyOwner {
-        uint256 contractBalance = usdt.balanceOf(address(this));
-        require(contractBalance > 0, "No funds to distribute");
-
-        // Calculate gas fee (5% of total contract balance) and reserve it
-        uint256 gasFee = (contractBalance * 5) / 100;
-        gasReserve += gasFee;
+    function setBwaeziToken(address tokenAddress) external onlyOwner {
+        bwaeziToken = IBwaeziToken(tokenAddress);
+        emit BwaeziTokenSet(tokenAddress);
+    }
+    
+    /**
+     * @dev Add revenue share recipient
+     */
+    function addRevenueShare(address recipient, uint256 sharePercentage) external onlyOwner {
+        require(sharePercentage > 0, "Share must be positive");
+        require(_totalShares() + sharePercentage <= 10000, "Total shares exceed 100%");
         
-        // Calculate the amount to be distributed to the wallets
-        uint256 distributableAmount = contractBalance - gasFee;
-        uint256 share = distributableAmount / wallets.length;
-
-        // Loop through each wallet and transfer their share
-        for (uint i = 0; i < wallets.length; i++) {
-            usdt.transfer(wallets[i], share);
+        revenueShares.push(RevenueShare({
+            recipient: recipient,
+            sharePercentage: sharePercentage,
+            totalDistributed: 0,
+            isActive: true
+        }));
+        
+        emit ShareUpdated(recipient, sharePercentage);
+    }
+    
+    /**
+     * @dev Receive revenue and distribute automatically
+     */
+    receive() external payable {
+        totalRevenue += msg.value;
+        emit RevenueReceived(msg.value, block.timestamp);
+        _distributeRevenue(msg.value);
+    }
+    
+    /**
+     * @dev Distribute revenue to share recipients
+     */
+    function _distributeRevenue(uint256 amount) internal nonReentrant {
+        uint256 remainingAmount = amount;
+        
+        for (uint256 i = 0; i < revenueShares.length; i++) {
+            RevenueShare storage share = revenueShares[i];
+            
+            if (share.isActive && share.sharePercentage > 0) {
+                uint256 shareAmount = (amount * share.sharePercentage) / 10000;
+                
+                if (shareAmount > 0) {
+                    (bool success, ) = share.recipient.call{value: shareAmount}("");
+                    if (success) {
+                        share.totalDistributed += shareAmount;
+                        totalDistributed += shareAmount;
+                        remainingAmount -= shareAmount;
+                        
+                        emit RevenueDistributed(share.recipient, shareAmount, share.sharePercentage);
+                    }
+                }
+            }
         }
     }
     
     /**
-     * @dev Allows the owner to withdraw the accumulated gas fees.
-     * This separates the gas fund from the distributable funds.
+     * @dev Distribute BWAEZI tokens to share recipients
      */
-    function withdrawGasFees() external onlyOwner {
-        require(gasReserve > 0, "No gas fees to withdraw");
-        uint256 gasAmount = gasReserve;
-        gasReserve = 0; // Reset the reserve before transfer
-        usdt.transfer(gasWallet, gasAmount);
+    function distributeBwaeziRevenue(uint256 amount) external onlyOwner nonReentrant {
+        require(address(bwaeziToken) != address(0), "Bwaezi token not set");
+        require(bwaeziToken.balanceOf(address(this)) >= amount, "Insufficient BWAEZI balance");
+        
+        for (uint256 i = 0; i < revenueShares.length; i++) {
+            RevenueShare storage share = revenueShares[i];
+            
+            if (share.isActive && share.sharePercentage > 0) {
+                uint256 shareAmount = (amount * share.sharePercentage) / 10000;
+                
+                if (shareAmount > 0) {
+                    bool success = bwaeziToken.transfer(share.recipient, shareAmount);
+                    if (success) {
+                        share.totalDistributed += shareAmount;
+                        totalDistributed += shareAmount;
+                    }
+                }
+            }
+        }
     }
-
+    
     /**
-     * @dev Allows the owner to add or remove recipients.
-     * This ensures the list can be updated dynamically.
+     * @dev Calculate total shares percentage
      */
-    function updateRecipients(address[] memory newWallets) external onlyOwner {
-        wallets = newWallets;
+    function _totalShares() internal view returns (uint256) {
+        uint256 total;
+        for (uint256 i = 0; i < revenueShares.length; i++) {
+            if (revenueShares[i].isActive) {
+                total += revenueShares[i].sharePercentage;
+            }
+        }
+        return total;
+    }
+    
+    /**
+     * @dev Get active recipients count
+     */
+    function getActiveRecipients() external view returns (uint256) {
+        uint256 count;
+        for (uint256 i = 0; i < revenueShares.length; i++) {
+            if (revenueShares[i].isActive) {
+                count++;
+            }
+        }
+        return count;
+    }
+    
+    /**
+     * @dev Update revenue share percentage
+     */
+    function updateShare(address recipient, uint256 newShare) external onlyOwner {
+        require(newShare > 0, "Share must be positive");
+        
+        for (uint256 i = 0; i < revenueShares.length; i++) {
+            if (revenueShares[i].recipient == recipient) {
+                revenueShares[i].sharePercentage = newShare;
+                emit ShareUpdated(recipient, newShare);
+                return;
+            }
+        }
+        revert("Recipient not found");
+    }
+    
+    /**
+     * @dev Toggle recipient activity
+     */
+    function toggleRecipient(address recipient, bool isActive) external onlyOwner {
+        for (uint256 i = 0; i < revenueShares.length; i++) {
+            if (revenueShares[i].recipient == recipient) {
+                revenueShares[i].isActive = isActive;
+                return;
+            }
+        }
+        revert("Recipient not found");
     }
 }
