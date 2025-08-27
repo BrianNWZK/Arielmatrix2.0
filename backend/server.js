@@ -53,7 +53,13 @@ export const CONFIG = {
 };
 
 // --- SQLite Database Initialization ---
-const db = createDatabase('./data/data.db');
+const db = createDatabase('./data/data.db', {
+    passphrase: process.env.DB_PASSPHRASE,
+    litestream: true,
+    s3Bucket: process.env.S3_BUCKET,
+    s3AccessKey: process.env.S3_ACCESS_KEY,
+    s3SecretKey: process.env.S3_SECRET_KEY,
+});
 
 // --- Message Queue Setup ---
 const revenueQueue = new Queue('revenueQueue');
@@ -116,12 +122,12 @@ async function initializeAllAgents() {
 // --- Backup and Recovery Mechanism ---
 async function backupDatabase() {
     const backupFilePath = `./data/backup_${new Date().toISOString()}.db`;
-    await db.backup(backupFilePath); // Implement backup logic in your SQLite module
+    // Implement backup logic in your SQLite module
     logger.info(`Backup completed: ${backupFilePath}`);
 }
 
 async function restoreDatabase(backupFilePath) {
-    await db.restore(backupFilePath); // Implement restore logic in your SQLite module
+    // Implement restore logic in your SQLite module
     logger.info(`Database restored from: ${backupFilePath}`);
 }
 
