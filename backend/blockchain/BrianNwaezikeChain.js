@@ -1,9 +1,4 @@
 // backend/blockchain/BrianNwaezikeChain.js
-/**
- * @fileoverview Backend Blockchain Implementation for Brian Nwaezike Chain
- * @path backend/blockchain/BrianNwaezikeChain.js
- */
-
 import { createDatabase } from './brianNwaezikeDatabase.js'; // Your custom database system
 import { QuantumShield } from 'quantum-resistant-crypto';
 import { AIThreatDetector } from 'ai-security-module';
