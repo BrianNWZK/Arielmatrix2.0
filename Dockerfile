@@ -1,7 +1,9 @@
 # Builder stage
+# Use a specific, stable Node.js version
 FROM node:22.16.0 as builder
 
-# Install system dependencies
+# Install system dependencies required for browser automation (Puppeteer/Playwright)
+# These are often necessary for headless browser operations for agents.
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -14,42 +16,48 @@ RUN apt-get update && apt-get install -y \
     libgbm-dev \
     libasound2 \
     fonts-noto \
+    # Clean up APT cache to reduce image size
     && rm -rf /var/lib/apt/lists/*
 
+# Set the working directory inside the container to the root of your project
 WORKDIR /app
 
-# Copy backend package.json and install dependencies
-COPY backend/package.json backend/package-lock.json* ./backend/
-RUN npm install --prefix ./backend
+# --- Install Dependencies ---
 
-# Install Puppeteer browser
-RUN npx puppeteer browsers install chrome
+# Copy the root package.json and package-lock.json first to leverage Docker's build cache
+# This is for the ArielSQL Suite backend dependencies defined in the root package.json.
+COPY package.json package-lock.json* ./
+RUN npm install
 
-# Install Playwright browser
-# Changed to navigate into the backend directory before installing browsers
-# Added '|| true' to npm audit fix to prevent build failure on unfixable issues
-RUN npm install playwright@1.48.2 --prefix ./backend && \
-    cd ./backend && \
-    npm audit fix || true && \
-    npx playwright install chromium --with-deps
-
-# Copy ALL backend source files
-COPY backend/ ./backend/
-
-# Copy frontend package.json and install dependencies
+# Copy frontend's package.json and install its dependencies separately
+# This is for the ArielMatrix2.0 frontend application.
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
 RUN npm install --prefix ./frontend
 
-# Copy ALL frontend source files
-COPY frontend/ ./frontend/
+# --- Install Browsers for Automation ---
+# Install Puppeteer's Chrome browser. This will be installed into /app/node_modules/.cache
+RUN npx puppeteer browsers install chrome
 
-# Build frontend
+# Install Playwright's Chromium browser with its dependencies
+# The `npm audit fix || true` helps prevent build failures on unfixable audit issues.
+# Playwright browsers are installed globally or in the current node_modules context.
+RUN npx playwright install chromium --with-deps
+
+# --- Copy Application Code ---
+# Copy all remaining application source files from the host to the container.
+# The .dockerignore file ensures sensitive and unnecessary files are skipped.
+COPY . .
+
+# --- Build Frontend Application ---
+# Build the frontend application. The output (e.g., to `frontend/dist`) will be used later.
 RUN npm run build --prefix ./frontend
 
-# Final stage
+# --- Final Stage for Production Deployment ---
+# Use the same base Node.js image for consistency
 FROM node:22.16.0
 
-# Install runtime deps
+# Re-install essential runtime dependencies for browsers.
+# Although some might be in the base image, explicitly installing ensures they are present.
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libx11-xcb1 \
@@ -64,33 +72,42 @@ RUN apt-get update && apt-get install -y \
     fonts-noto \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Create a non-root user for security best practices
 RUN useradd -m appuser
 
+# Set the working directory
 WORKDIR /app
 
-# Create required directories
+# Create required directories and ensure correct ownership for browser caches.
+# The caches will be copied for the non-root user.
 RUN mkdir -p \
-    /app/backend \
+    /app/arielsql_suite \
     /app/backend/public \
     /home/appuser/.cache/puppeteer \
     /home/appuser/.cache/ms-playwright \
     && chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built app and browser binaries
+# Copy the built application code and installed dependencies from the builder stage.
+# This includes the `node_modules` from both root and frontend, and the built frontend assets.
 COPY --from=builder --chown=appuser:appuser /app /app
+
+# Copy the browser cache directories from the builder's root user to the appuser's cache.
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
-# Ensure frontend assets are copied
+# Copy the built frontend assets (`frontend/dist`) to the backend's public serving directory.
+# This assumes the Express server launched by ArielSQL Suite will serve static files from `/app/backend/public`.
+# Adjust this path if your Express static serving path is different.
 RUN cp -r /app/frontend/dist/* /app/backend/public/ && \
-    echo "✅ Frontend assets copied to /backend/public"
+    echo "✅ Frontend assets copied to /app/backend/public"
 
-# Switch to non-root user
+# Switch to the non-root user
 USER appuser
 
-# Expose port
-EXPOSE 10000
+# Expose the port where the ArielSQL Suite's Express API will listen.
+# This must match the PORT environment variable (default 3000 in config).
+EXPOSE 3000
 
-# Start backend
-CMD ["node", "backend/server.js"]
+# Command to start the ArielSQL Alltimate Suite backend.
+# This executes the 'start' script defined in your root package.json.
+CMD ["npm", "start"]
