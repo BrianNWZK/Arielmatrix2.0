@@ -20,11 +20,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy backend package files and install dependencies
-COPY backend/package.json backend/package-lock.json ./backend/
+COPY backend/package.json ./backend/
 RUN npm install --prefix ./backend
 
 # Copy frontend package files and install dependencies
-COPY frontend/package.json frontend/package-lock.json ./frontend/
+COPY frontend/package.json ./frontend/
 RUN npm install --prefix ./frontend
 
 # Install browsers for automation
