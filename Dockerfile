@@ -19,13 +19,16 @@ RUN apt-get update && apt-get install -y \
 # Set working directory to the project root
 WORKDIR /app
 
-# Copy package files
+# Copy root package files
 COPY package.json package-lock.json ./
 RUN npm install
 
-# Copy and install frontend dependencies
-COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN npm install --prefix ./frontend
+# Copy frontend package.json (handle missing package-lock.json)
+COPY frontend/package.json ./frontend/
+RUN if [ -f "./frontend/package.json" ]; then \
+    cd frontend && \
+    npm install; \
+fi
 
 # Install browsers for automation
 RUN npx puppeteer browsers install chrome
@@ -34,8 +37,11 @@ RUN npx playwright install chromium --with-deps
 # Copy all source files
 COPY . .
 
-# Build frontend
-RUN npm run build --prefix ./frontend
+# Build frontend (if package.json exists)
+RUN if [ -f "./frontend/package.json" ]; then \
+    cd frontend && \
+    npm run build; \
+fi
 
 # Final stage
 FROM node:22.16.0
@@ -73,8 +79,14 @@ COPY --from=builder --chown=appuser:appuser /app /app
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
-# Copy frontend assets to backend public directory
-RUN cp -r frontend/dist/* backend/public/ 2>/dev/null || echo "No frontend assets to copy"
+# Copy frontend assets to backend public directory (if they exist)
+RUN if [ -d "frontend/dist" ]; then \
+    mkdir -p backend/public && \
+    cp -r frontend/dist/* backend/public/; \
+elif [ -d "frontend/build" ]; then \
+    mkdir -p backend/public && \
+    cp -r frontend/build/* backend/public/; \
+fi
 
 # Switch to non-root user
 USER appuser
