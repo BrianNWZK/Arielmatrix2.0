@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import BwaeziDashboard from './components/BwaeziDashboard';
-import './App.css';
+import './index.css'; // Updated to use index.css
 
 function App() {
   const [user] = useState({ id: 'user-123', name: 'Demo User' });
