@@ -19,16 +19,13 @@ RUN apt-get update && apt-get install -y \
 # Set working directory to the project root
 WORKDIR /app
 
-# Copy root package files
-COPY package.json package-lock.json ./
-RUN npm install
+# Copy backend package files and install dependencies
+COPY backend/package.json backend/package-lock.json ./backend/
+RUN npm install --prefix ./backend
 
-# Copy frontend package.json (handle missing package-lock.json)
-COPY frontend/package.json ./frontend/
-RUN if [ -f "./frontend/package.json" ]; then \
-    cd frontend && \
-    npm install; \
-fi
+# Copy frontend package files and install dependencies
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN npm install --prefix ./frontend
 
 # Install browsers for automation
 RUN npx puppeteer browsers install chrome
@@ -39,8 +36,7 @@ COPY . .
 
 # Build frontend (if package.json exists)
 RUN if [ -f "./frontend/package.json" ]; then \
-    cd frontend && \
-    npm run build; \
+    cd frontend && npm run build; \
 fi
 
 # Final stage
@@ -95,4 +91,4 @@ USER appuser
 EXPOSE 3000
 
 # Start the application
-CMD ["npm", "start"]
+CMD ["npm", "start", "--prefix", "./backend"]
