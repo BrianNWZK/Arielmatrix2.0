@@ -31,8 +31,11 @@ RUN npm install --prefix ./frontend
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Copy all source files, including the main script
-COPY arielsql_suite /app/backend/arielsql_suite
+# Copy all frontend source files
+COPY frontend ./frontend
+
+# Copy backend source files, including the main script and arielsql_suite
+COPY backend/arielsql_suite /app/backend/arielsql_suite
 
 # Build frontend (if package.json exists)
 RUN if [ -f "./frontend/package.json" ]; then \
@@ -70,16 +73,16 @@ RUN mkdir -p \
     /home/appuser/.cache/ms-playwright \
     && chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built artifacts
+# Copy built artifacts from the builder stage
 COPY --from=builder --chown=appuser:appuser /app /app
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
 # Copy frontend assets to backend public directory (if they exist)
-RUN if [ -d "frontend/dist" ]; then \
+RUN if [ -d "./frontend/dist" ]; then \
     mkdir -p backend/public && \
     cp -r frontend/dist/* backend/public/; \
-elif [ -d "frontend/build" ]; then \
+elif [ -d "./frontend/build" ]; then \
     mkdir -p backend/public && \
     cp -r frontend/build/* backend/public/; \
 fi
