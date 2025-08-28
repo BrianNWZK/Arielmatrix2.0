@@ -1,4 +1,3 @@
-```dockerfile
 # Builder stage
 FROM node:22.16.0 as builder
 
@@ -85,4 +84,3 @@ EXPOSE 3000
 
 # Start the application
 CMD ["npm", "start"]
-```
