@@ -1,447 +1,157 @@
 // backend/blockchain/BrianNwaezikeChain.js
-import { createDatabase } from './brianNwaezikeDatabase.js'; // Your custom database system
-import { QuantumShield } from 'quantum-resistant-crypto';
-import { AIThreatDetector } from 'ai-security-module';
-import { CrossChainBridge } from 'omnichain-interoperability';
-import { ShardingManager } from 'infinite-scalability-engine';
-import { EnergyEfficientConsensus } from 'carbon-negative-consensus';
-import path from 'path';
+// This file acts as an interface for ArielMatrix2.0 components (like agents)
+// to interact with the Brian Nwaezike Chain via the ArielSQL Alltimate Suite's ServiceManager.
 
-class BrianNwaezikeChain {
-    constructor(config) {
-        this.config = config;
-        this.dbPath = path.join(__dirname, '../data/brian_nwaezike_chain.db'); // Construct the database path
-        this.db = createDatabase(this.dbPath); // Initialize the Brian Nwaezike database
-        this.transactionPool = [];
-        this.validators = config.VALIDATORS || [];
-        this.consensusAlgorithm = new EnergyEfficientConsensus('ZERO_COST_DPoS');
-        this.blockTime = config.BLOCK_TIME || 100; // 0.1 seconds for ultra-fast transactions
-        this.lastBlockTimestamp = Date.now();
-        this.nativeToken = config.NATIVE_TOKEN || 'BWAEZI';
-        
-        // Enhanced security modules
-        this.quantumShield = new QuantumShield();
-        this.threatDetector = new AIThreatDetector();
-        this.crossChainBridge = new CrossChainBridge();
-        this.shardingManager = new ShardingManager();
-        
-        this.initBlockchainTables();
-        this.startBlockProduction();
-    }
-    
-    initBlockchainTables() {
-        // Create necessary tables for the blockchain
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS bwaezi_blocks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hash TEXT UNIQUE,
-                previous_hash TEXT,
-                timestamp INTEGER,
-                validator TEXT,
-                transactions TEXT,
-                nonce INTEGER,
-                shard_id INTEGER DEFAULT 0,
-                quantum_signature TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS bwaezi_transactions (
-                id TEXT PRIMARY KEY,
-                block_hash TEXT,
-                from_address TEXT,
-                to_address TEXT,
-                amount REAL,
-                currency TEXT,
-                fee REAL DEFAULT 0,
-                signature TEXT,
-                quantum_proof TEXT,
-                threat_score REAL DEFAULT 0,
-                status TEXT DEFAULT 'pending',
-                timestamp INTEGER,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        
-        // Additional tables for accounts, cross-chain bridges, and validators
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS bwaezi_accounts (
-                address TEXT PRIMARY KEY,
-                balance REAL DEFAULT 0,
-                bwaezi_balance REAL DEFAULT 0,
-                last_transaction TEXT,
-                shard_id INTEGER DEFAULT 0,
-                cross_chain_balances TEXT DEFAULT '{}',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS bwaezi_cross_chain_bridges (
-                id TEXT PRIMARY KEY,
-                source_chain TEXT,
-                target_chain TEXT,
-                source_tx TEXT,
-                target_tx TEXT,
-                amount REAL,
-                currency TEXT,
-                status TEXT,
-                quantum_proof TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS bwaezi_validators (
-                address TEXT PRIMARY KEY,
-                stake_amount REAL DEFAULT 0,
-                reputation_score REAL DEFAULT 100,
-                status TEXT DEFAULT 'active',
-                shard_id INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-    }
-    
-    generateBlockHash(blockData) {
-        return this.quantumShield.createHash(JSON.stringify(blockData));
-    }
-    
-    async createNewBlock(transactions, previousHash, shardId = 0) {
-        const timestamp = Date.now();
-        const index = await this.getBlockCount();
-        
-        const block = {
-            index,
-            timestamp,
-            transactions,
-            previousHash,
-            validator: this.config.NODE_ID || 'primary',
-            nonce: 0,
-            shardId
-        };
-        
-        block.hash = this.generateBlockHash(block);
-        block.quantumSignature = this.quantumShield.sign(block.hash);
-        
-        return block;
-    }
-    
-    async getBlockCount() {
-        try {
-            const result = await this.db.get('SELECT COUNT(*) as count FROM bwaezi_blocks');
-            return result.count || 0;
-        } catch (error) {
-            console.error('Error getting block count:', error);
-            return 0;
+// Import the ServiceManager from the ArielSQL Suite.
+// The path assumes the arielsql_suite directory is at the root of your project
+// alongside 'backend', 'config', 'frontend', etc.
+import { ServiceManager, deriveQuantumKeys } from '../../arielsql_suite/serviceManager.js';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * BrianNwaezikeChainFacade provides a simplified interface for ArielMatrix2.0
+ * components to interact with the underlying Brian Nwaezike Chain and its
+ * associated services managed by the ArielSQL Alltimate Suite.
+ * It delegates core blockchain operations to the initialized ServiceManager.
+ */
+class BrianNwaezikeChainFacade {
+    constructor() {
+        // Ensure the ServiceManager is globally accessible. In a deployed Render setup,
+        // 'arielsql_suite/main.js' would set global.arielSQLServiceManager upon startup.
+        if (typeof global.arielSQLServiceManager === 'undefined' || !global.arielSQLServiceManager) {
+            console.error("ArielSQL ServiceManager not initialized. Ensure 'arielsql_suite/main.js' has run.");
+            throw new Error("ArielSQL ServiceManager is not available. Check ArielSQL Suite deployment.");
         }
-    }
-    
-    async addTransactionToPool(transaction) {
-        if (!await this.validateTransaction(transaction)) {
-            throw new Error('Invalid transaction');
-        }
+        this.serviceManager = global.arielSQLServiceManager;
         
-        transaction.threat_score = await this.threatDetector.analyzeTransaction(transaction);
-        if (transaction.threat_score > 0.8) {
-            throw new Error('Transaction flagged as potential threat');
-        }
-        
-        transaction.quantum_proof = this.quantumShield.createProof(transaction);
-        
-        this.transactionPool.push(transaction);
-        
-        await this.db.run(`
-            INSERT INTO bwaezi_transactions (id, from_address, to_address, amount, currency, signature, quantum_proof, threat_score, timestamp, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-            [transaction.id, transaction.from, transaction.to, transaction.amount, 
-             transaction.currency, transaction.signature, transaction.quantum_proof, 
-             transaction.threat_score, transaction.timestamp]
-        );
-        
-        return transaction.id;
+        // Retrieve the actual BrianNwaezikeChain instance and other services from the ServiceManager
+        this.bwaeziCoreChain = this.serviceManager.getService('BrianNwaezikeChain');
+        this.quantumCryptoService = this.serviceManager.getService('QuantumResistantCrypto');
+        this.dbService = this.serviceManager.getService('BrianNwaezikeDB'); // Access to the integrated DB service
+        this.omnichainService = this.serviceManager.getService('OmnichainInteroperability');
+
+        this.nativeToken = this.bwaeziCoreChain.config.NATIVE_TOKEN || 'BWAEZI'; // Get native token from the core chain config
+        console.log("BrianNwaezikeChainFacade initialized, connected to ArielSQL Suite.");
     }
-    
-    async validateTransaction(transaction) {
-        return transaction && 
-               transaction.id && 
-               transaction.from && 
-               transaction.to && 
-               transaction.amount > 0 &&
-               transaction.timestamp &&
-               transaction.signature &&
-               this.quantumShield.verifyProof(transaction);
-    }
-    
-    startBlockProduction() {
-        setInterval(async () => {
-            if (this.transactionPool.length > 0) {
-                await this.produceBlock();
-            }
-        }, this.blockTime);
-    }
-    
-    async produceBlock() {
-        try {
-            const previousBlock = await this.getLatestBlock();
-            const previousHash = previousBlock ? previousBlock.hash : '0';
-            
-            const transactions = [...this.transactionPool];
-            this.transactionPool = [];
-            
-            const shardId = await this.shardingManager.determineOptimalShard(transactions);
-            
-            const newBlock = await this.createNewBlock(transactions, previousHash, shardId);
-            await this.storeBlock(newBlock);
-            
-            for (const transaction of transactions) {
-                if (transaction.currency === this.nativeToken) {
-                    await this.updateAccountBalance(transaction.to, transaction.amount, 'bwaezi');
-                    await this.updateAccountBalance(transaction.from, -transaction.amount, 'bwaezi');
-                } else {
-                    await this.updateAccountBalance(transaction.to, transaction.amount, 'balance');
-                    await this.updateAccountBalance(transaction.from, -transaction.amount, 'balance');
-                }
-                
-                await this.db.run(
-                    'UPDATE bwaezi_transactions SET status = "confirmed", block_hash = ? WHERE id = ?',
-                    [newBlock.hash, transaction.id]
-                );
-            }
-            
-            console.log(`BrianNwaezikeChain produced block #${newBlock.index} on shard ${shardId} with ${transactions.length} transactions`);
-        } catch (error) {
-            console.error('Error producing block:', error);
-        }
-    }
-    
-    async storeBlock(block) {
-        try {
-            await this.db.run(`
-                INSERT INTO bwaezi_blocks (hash, previous_hash, timestamp, validator, transactions, nonce, shard_id, quantum_signature)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [block.hash, block.previousHash, block.timestamp, block.validator, 
-                 JSON.stringify(block.transactions), block.nonce, block.shardId, block.quantumSignature]
-            );
-        } catch (error) {
-            console.error('Error storing block:', error);
-        }
-    }
-    
+
+    /**
+     * Gets the latest block from the Brian Nwaezike Chain's local replica.
+     * @returns {Promise<Object|null>} The latest block object or null if none exists.
+     */
     async getLatestBlock() {
-        try {
-            const block = await this.db.get('SELECT * FROM bwaezi_blocks ORDER BY id DESC LIMIT 1');
-            return block ? {
-                hash: block.hash,
-                previousHash: block.previous_hash,
-                timestamp: block.timestamp,
-                validator: block.validator,
-                transactions: JSON.parse(block.transactions),
-                nonce: block.nonce,
-                shardId: block.shard_id,
-                quantumSignature: block.quantum_signature
-            } : null;
-        } catch (error) {
-            console.error('Error getting latest block:', error);
-            return null;
-        }
+        return await this.bwaeziCoreChain.getLatestBlock();
     }
-    
-    async updateAccountBalance(address, amount, balanceType = 'balance') {
-        try {
-            const account = await this.db.get(
-                'SELECT * FROM bwaezi_accounts WHERE address = ?',
-                [address]
-            );
-            
-            if (account) {
-                let newBalance;
-                if (balanceType === 'bwaezi') {
-                    newBalance = account.bwaezi_balance + amount;
-                    await this.db.run(
-                        'UPDATE bwaezi_accounts SET bwaezi_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?',
-                        [newBalance, address]
-                    );
-                } else {
-                    newBalance = account.balance + amount;
-                    await this.db.run(
-                        'UPDATE bwaezi_accounts SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?',
-                        [newBalance, address]
-                    );
-                }
-                return newBalance;
-            } else {
-                const shardId = await this.shardingManager.determineOptimalShardForAddress(address);
-                
-                if (balanceType === 'bwaezi') {
-                    await this.db.run(
-                        'INSERT INTO bwaezi_accounts (address, bwaezi_balance, shard_id) VALUES (?, ?, ?)',
-                        [address, amount, shardId]
-                    );
-                } else {
-                    await this.db.run(
-                        'INSERT INTO bwaezi_accounts (address, balance, shard_id) VALUES (?, ?, ?)',
-                        [address, amount, shardId]
-                    );
-                }
-                return amount;
-            }
-        } catch (error) {
-            console.error('Error updating account balance:', error);
-            return 0;
-        }
-    }
-    
-    async getAccountBalance(address, currency = 'USD') {
-        try {
-            const account = await this.db.get(
-                'SELECT balance, bwaezi_balance, cross_chain_balances FROM bwaezi_accounts WHERE address = ?',
-                [address]
-            );
-            
-            if (!account) return 0;
-            
-            if (currency === this.nativeToken) {
-                return account.bwaezi_balance || 0;
-            } else if (currency !== 'USD') {
-                const crossChainBalances = JSON.parse(account.cross_chain_balances || '{}');
-                return crossChainBalances[currency] || 0;
-            } else {
-                return account.balance || 0;
-            }
-        } catch (error) {
-            console.error('Error getting account balance:', error);
-            return 0;
-        }
-    }
-    
-    async createTransaction(from, to, amount, currency, privateKey) {
+
+    /**
+     * Creates and adds a new transaction to the Brian Nwaezike Chain's transaction pool.
+     * This transaction will be picked up by the ArielSQL Suite's block producer.
+     * This method directly utilizes the quantumCryptoService for signing.
+     *
+     * @param {string} fromAddress - Sender's address.
+     * @param {string} toAddress - Receiver's address.
+     * @param {number} amount - Amount to transfer.
+     * @param {string} currency - Currency of the transaction (e.g., 'BWAEZI', 'USD').
+     * @param {string} privateKey - Sender's private key (hex string) for signing.
+     * @returns {Promise<Object>} The created transaction object with a unique ID.
+     */
+    async createAndAddTransaction(fromAddress, toAddress, amount, currency, privateKey) {
         const timestamp = Date.now();
-        const id = `bwaezi_tx_${this.quantumShield.randomBytes(16)}_${timestamp}`;
+        const id = uuidv4(); // Unique ID for the transaction
         
+        // Data string to be signed. Ensure consistency with how the core chain verifies.
+        const dataToSign = `${id}${fromAddress}${toAddress}${amount}${currency}${timestamp}`;
+        const signature = this.quantumCryptoService.sign(dataToSign, privateKey); // Use the quantum-crypto service for signing
+
         const transaction = {
             id,
-            from,
-            to,
+            from_address: fromAddress,
+            to_address: toAddress,
             amount,
             currency,
             timestamp,
-            fee: 0,
-            signature: this.signTransaction(id, from, to, amount, currency, timestamp, privateKey)
+            fee: 0, // Brian Nwaezike Chain is zero-cost for transactions
+            signature,
+            // threat_score and quantum_proof will be added by the core chain service
         };
         
-        await this.addTransactionToPool(transaction);
+        // Add the transaction to the core BrianNwaezikeChain service's transaction pool
+        await this.bwaeziCoreChain.addTransactionToPool(transaction);
+        console.log(`Transaction ${id.substring(0,8)}... created and added to Bwaezi pool by facade.`);
         return transaction;
     }
-    
-    signTransaction(id, from, to, amount, currency, timestamp, privateKey) {
-        const data = `${id}${from}${to}${amount}${currency}${timestamp}`;
-        return this.quantumShield.sign(data, privateKey);
+
+    /**
+     * Retrieves account balance for a given address and currency.
+     * It queries the local database replica managed by BrianNwaezikeDB.
+     * @param {string} address - The account address.
+     * @param {string} currency - The currency type (e.g., 'BWAEZI', 'USD', or cross-chain token).
+     * @returns {Promise<number>} The balance.
+     */
+    async getAccountBalance(address, currency = 'USD') {
+        const account = await this.dbService.get(
+            `SELECT balance, bwaezi_balance, cross_chain_balances FROM bwaezi_accounts WHERE address = ?`,
+            [address]
+        );
+
+        if (!account) return 0;
+        
+        if (currency === this.nativeToken) {
+            return account.bwaezi_balance || 0;
+        } else if (currency !== 'USD') {
+            const crossChainBalances = JSON.parse(account.cross_chain_balances || '{}');
+            return crossChainBalances[currency] || 0;
+        } else {
+            return account.balance || 0; // Default balance for USD or other non-native
+        }
     }
-    
-    verifyTransactionSignature(transaction, publicKey) {
-        const data = `${transaction.id}${transaction.from}${transaction.to}${transaction.amount}${transaction.currency}${transaction.timestamp}`;
-        return this.quantumShield.verify(data, transaction.signature, publicKey);
-    }
-    
+
+    /**
+     * Retrieves transaction history for a given address.
+     * @param {string} address - The account address.
+     * @param {number} limit - Maximum number of transactions to retrieve.
+     * @returns {Promise<Array<Object>>} List of transactions.
+     */
     async getTransactionHistory(address, limit = 50) {
-        try {
-            const transactions = await this.db.all(
-                `SELECT * FROM bwaezi_transactions 
-                 WHERE from_address = ? OR to_address = ? 
-                 ORDER BY timestamp DESC LIMIT ?`,
-                [address, address, limit]
-            );
-            return transactions;
-        } catch (error) {
-            console.error('Error getting transaction history:', error);
-            return [];
-        }
-    }
-    
-    async createCrossChainBridge(sourceChain, targetChain, sourceTx, amount, currency) {
-        const bridgeId = `bwaezi_bridge_${this.quantumShield.randomBytes(16)}`;
-        const quantumProof = this.quantumShield.createProof({ sourceChain, targetChain, sourceTx, amount, currency });
-        
-        await this.db.run(
-            `INSERT INTO bwaezi_cross_chain_bridges (id, source_chain, target_chain, source_tx, amount, currency, status, quantum_proof)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-            [bridgeId, sourceChain, targetChain, sourceTx, amount, currency, quantumProof]
+        return await this.dbService.all(
+            `SELECT * FROM bwaezi_transactions WHERE from_address = ? OR to_address = ? ORDER BY timestamp DESC LIMIT ?`,
+            [address, address, limit]
         );
-        
-        await this.crossChainBridge.executeTransfer(sourceChain, targetChain, sourceTx, amount, currency, bridgeId);
-        
-        return bridgeId;
     }
-    
-    async completeCrossChainBridge(bridgeId, targetTx) {
-        await this.db.run(
-            'UPDATE bwaezi_cross_chain_bridges SET target_tx = ?, status = "completed" WHERE id = ?',
-            [targetTx, bridgeId]
-        );
-        
-        return true;
+
+    /**
+     * Initiates a cross-chain bridge operation via the OmnichainInteroperabilityService.
+     * @param {string} sourceChain - The source blockchain identifier.
+     * @param {string} targetChain - The target blockchain identifier.
+     * @param {string} sourceTxHash - Transaction hash on the source chain (if applicable).
+     * @param {number} amount - Amount to bridge.
+     * @param {string} currency - Currency to bridge.
+     * @returns {Promise<Object>} Result of the bridge operation, including a bridge tracking ID.
+     */
+    async createCrossChainBridge(sourceChain, targetChain, sourceTxHash, amount, currency) {
+        return await this.omnichainService.bridgeTransaction({ 
+            id: uuidv4(), // Internal bridge tracking ID
+            sourceChain, 
+            targetChain, 
+            sourceTxHash, 
+            amount, 
+            currency 
+        }, targetChain);
     }
-    
-    async getBridgeStatus(bridgeId) {
-        const bridge = await this.db.get(
-            'SELECT * FROM bwaezi_cross_chain_bridges WHERE id = ?',
-            [bridgeId]
-        );
-        
-        return bridge;
+
+    /**
+     * Derives a quantum-resistant key pair from a passphrase using the suite's service.
+     * @param {string} passphrase - User's passphrase.
+     * @param {string|null} salt - Optional salt (hex string).
+     * @returns {Object} { pk: publicKeyHex, sk: secretKeyHex, salt: saltHex, ... }
+     */
+    deriveQuantumKeys(passphrase, salt = null) {
+        return deriveQuantumKeys(passphrase, salt); // Re-exporting from suite's utility
     }
-    
-    async registerValidator(address, stakeAmount) {
-        const shardId = await this.shardingManager.determineOptimalShardForAddress(address);
-        
-        await this.db.run(
-            'INSERT INTO bwaezi_validators (address, stake_amount, shard_id) VALUES (?, ?, ?)',
-            [address, stakeAmount, shardId]
-        );
-        
-        return true;
-    }
-    
-    async getValidators() {
-        const validators = await this.db.all(
-            'SELECT * FROM bwaezi_validators WHERE status = "active" ORDER BY reputation_score DESC, stake_amount DESC'
-        );
-        
-        return validators;
-    }
-    
-    async createNewShard() {
-        const shardId = await this.shardingManager.createNewShard();
-        await this.db.run(
-            'INSERT INTO bwaezi_shards (shard_id, capacity) VALUES (?, ?)',
-            [shardId, 1e12] // 1 trillion transactions capacity
-        );
-        
-        return shardId;
-    }
-    
-    async getShardInfo(shardId) {
-        const shard = await this.db.get(
-            'SELECT * FROM bwaezi_shards WHERE shard_id = ?',
-            [shardId]
-        );
-        
-        return shard;
-    }
-    
-    async scanForThreats() {
-        const potentialThreats = await this.threatDetector.scanBlockchain(this);
-        for (const threat of potentialThreats) {
-            console.warn(`Security threat detected: ${threat.type} at ${threat.location}`);
-            await this.threatDetector.mitigateThreat(threat, this);
-        }
-        
-        return potentialThreats;
+
+    // Helper to get raw DB access (use with caution)
+    async executeDbQuery(sql, args = []) {
+        return await this.dbService.execute(sql, args);
     }
 }
 
-// Export the Brian Nwaezike Chain class for use in other modules
-export default BrianNwaezikeChain;
+export default BrianNwaezikeChainFacade;
