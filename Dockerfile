@@ -31,8 +31,8 @@ RUN npm install --prefix ./frontend
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Copy all source files
-COPY . .
+# Copy all source files, including the main script
+COPY backend/arielsql_suite /app/backend/arielsql_suite
 
 # Build frontend (if package.json exists)
 RUN if [ -f "./frontend/package.json" ]; then \
