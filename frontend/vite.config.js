@@ -1,15 +1,14 @@
-// frontend/vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  root: '.', // Explicit root
+  root: 'frontend', // Set the root to the frontend directory
   publicDir: 'public',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    minify: 'terser', // ✅ Requires terser to be in frontend/package.json
+    minify: 'terser', // Ensure terser is included in package.json
     sourcemap: false,
     terserOptions: {
       compress: {
