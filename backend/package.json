@@ -42,25 +42,17 @@
     "carbon-negative-consensus": "^1.0.0",
     "ws": "^8.14.2",
     "ccxt": "^4.2.76",
-    
-    // New database dependencies
     "better-sqlite3": "^9.2.0",
     "litestream": "^0.3.9",
     "@aws-sdk/client-s3": "^3.535.0",
     "sqlite3": "^5.1.7",
     "uuid": "^9.0.1",
     "bcryptjs": "^2.4.3",
-    
-    // Blockchain and crypto enhancements
     "@noble/hashes": "^1.3.2",
     "ethereum-cryptography": "^2.0.0",
     "libsodium-wrappers": "^0.7.13",
-    
-    // Performance monitoring
     "prom-client": "^14.2.0",
     "node-statsd": "^0.1.1",
-    
-    // Compression and optimization
     "compression": "^1.7.4",
     "snappy": "^7.2.2"
   },
@@ -76,8 +68,6 @@
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^9.0.7",
     "@types/bcryptjs": "^2.4.6",
-    
-    // Testing utilities
     "jest-environment-node": "^29.7.0",
     "supertest": "^7.0.0",
     "mock-aws-s3": "^4.0.2",
@@ -112,9 +102,5 @@
   "homepage": "https://github.com/your-org/arielmatrix2.0-backend#readme",
   "contributors": [
     "Brian Nwaezike <brian@arielmatrix.io>"
-  ],
-  "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0"
-  }
+  ]
 }
