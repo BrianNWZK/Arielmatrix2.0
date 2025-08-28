@@ -73,9 +73,6 @@
   "optionalDependencies": {
     "litestream": "^0.3.9"
   },
-  "peerDependencies": {
-    "aws-cli": ">=2.0.0"
-  },
   "license": "MIT",
   "private": true,
   "keywords": [
