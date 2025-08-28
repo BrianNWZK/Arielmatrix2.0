@@ -19,23 +19,24 @@ RUN apt-get update && apt-get install -y \
     # Clean up APT cache to reduce image size
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory inside the container.
-# This WORKDIR /app now directly corresponds to the Render "Root Directory" (arielmatrix2.0/).
-WORKDIR /app
+# Set the working directory inside the container to the root of your project (arielmatrix2.0)
+# This assumes the Dockerfile itself is within arielmatrix2.0/, and Render's Root Directory is blank.
+WORKDIR /app/arielmatrix2.0
 
 # --- Install Dependencies ---
 
-# Copy the root package.json and package-lock.json from the build context (arielmatrix2.0/).
-# Now, we simply use relative paths from the build context.
-COPY package.json package-lock.json ./
+# Copy the root package.json and package-lock.json (located at arielmatrix2.0/package.json)
+# from the build context (which is the Git repo root) to the current WORKDIR (/app/arielmatrix2.0).
+COPY arielmatrix2.0/package.json arielmatrix2.0/package-lock.json ./
 RUN npm install
 
 # Copy frontend's package.json and install its dependencies separately.
-COPY frontend/package.json frontend/package-lock.json ./frontend/
+# Source path is relative to Git repo root, destination is relative to WORKDIR.
+COPY arielmatrix2.0/frontend/package.json arielmatrix2.0/frontend/package-lock.json ./frontend/
 RUN npm install --prefix ./frontend
 
 # --- Install Browsers for Automation ---
-# Install Puppeteer's Chrome browser. This will be installed into /app/node_modules/.cache
+# Install Puppeteer's Chrome browser. This will be installed into /app/arielmatrix2.0/node_modules/.cache
 RUN npx puppeteer browsers install chrome
 
 # Install Playwright's Chromium browser with its dependencies
@@ -43,9 +44,9 @@ RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
 # --- Copy Application Code ---
-# Copy all remaining source files from the current build context (arielmatrix2.0/)
-# to the current WORKDIR (`/app`).
-COPY . .
+# Copy all remaining source files from the 'arielmatrix2.0' subdirectory
+# of the build context (Git repo root) to the current WORKDIR (`/app/arielmatrix2.0`).
+COPY arielmatrix2.0/ .
 
 # --- Build Frontend Application ---
 # Build the frontend application. The output (e.g., to `frontend/dist`) will be used later.
@@ -73,27 +74,27 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m appuser
 
 # Set the working directory to the project root inside the container
-WORKDIR /app
+WORKDIR /app/arielmatrix2.0
 
 # Create required directories and ensure correct ownership for browser caches.
 RUN mkdir -p \
-    /app/backend/public \
+    /app/arielmatrix2.0/backend/public \
     /home/appuser/.cache/puppeteer \
     /home/appuser/.cache/ms-playwright \
     && chown -R appuser:appuser /app /home/appuser/.cache
 
 # Copy the built application code and installed dependencies from the builder stage.
-# Since the builder's WORKDIR was /app, we copy /app to /app.
-COPY --from=builder --chown=appuser:appuser /app /app
+# Since the builder's WORKDIR was /app/arielmatrix2.0, we copy that entire directory.
+COPY --from=builder --chown=appuser:appuser /app/arielmatrix2.0 /app/arielmatrix2.0
 
 # Copy the browser cache directories from the builder's root user to the appuser's cache.
 COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
 COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
 # Copy the built frontend assets (`frontend/dist`) to the backend's public serving directory.
-# This assumes the Express server launched by ArielSQL Suite will serve static files from `/app/backend/public`.
-RUN cp -r /app/frontend/dist/* /app/backend/public/ && \
-    echo "✅ Frontend assets copied to /app/backend/public"
+# This assumes the Express server launched by ArielSQL Suite will serve static files from `/app/arielmatrix2.0/backend/public`.
+RUN cp -r /app/arielmatrix2.0/frontend/dist/* /app/arielmatrix2.0/backend/public/ && \
+    echo "✅ Frontend assets copied to /app/arielmatrix2.0/backend/public"
 
 # Switch to the non-root user
 USER appuser
