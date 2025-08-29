@@ -29,9 +29,12 @@ RUN npm install --prefix ./frontend
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Copy all frontend and backend source files
+# Copy all source files for frontend and backend
 COPY frontend ./frontend
 COPY backend ./backend
+
+# Optionally, ensure index.html exists in frontend
+RUN ls -la frontend  # List files in frontend to verify
 
 # Build frontend (if package.json exists)
 RUN if [ -f "./frontend/package.json" ]; then \
