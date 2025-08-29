@@ -19,24 +19,31 @@ RUN apt-get update && apt-get install -y \
 # Set working directory to the project root
 WORKDIR /app
 
-# Copy backend and frontend package files and install dependencies
+# Copy package files for both frontend and backend
 COPY backend/package.json ./backend/
-COPY frontend/package.json ./frontend/
-RUN npm install --prefix ./backend
-RUN npm install --prefix ./frontend
+COPY package.json ./
+COPY vite.config.js ./
+COPY tailwind.config.js ./
+COPY index.html ./
+
+# Install dependencies
+RUN npm install
 
 # Install browsers for automation
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
 # Copy all source files for frontend and backend
-COPY frontend ./frontend
 COPY backend ./backend
+COPY contracts ./contracts
+COPY public ./public
+COPY src ./src
+COPY components ./components
+COPY styles ./styles
+COPY scripts ./scripts
 
 # Build frontend
-RUN if [ -f "./frontend/package.json" ]; then \
-    cd frontend && npm run build; \
-fi
+RUN npm run build
 
 # Final stage
 FROM node:22.16.0
@@ -73,9 +80,9 @@ RUN mkdir -p \
 COPY --from=builder --chown=appuser:appuser /app /app
 
 # Copy frontend assets to backend public directory (if they exist)
-RUN if [ -d "./frontend/dist" ]; then \
+RUN if [ -d "./dist" ]; then \
     mkdir -p backend/public && \
-    cp -r frontend/dist/* backend/public/; \
+    cp -r dist/* backend/public/; \
 fi
 
 # Switch to non-root user
