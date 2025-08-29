@@ -13,7 +13,6 @@ yarn-error.log*
 .pnpm-store/
 .yarn/
 .yarnrc.yml
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -202,12 +201,34 @@ frontend/.next/
 frontend/.nuxt/
 
 # ========================
+# DATABASE & DATA FILES
+# ========================
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.sqlite
+!data/ # Keep data directory but exclude database files
+
+# ========================
+# ARIELSQL ULTIMATE SPECIFIC
+# ========================
+# Exclude generated database files but keep data directory structure
+arielsql_suite/*.db
+arielsql_suite/*.sqlite
+backend/*.db
+backend/*.sqlite
+
+# ========================
 # ESSENTIAL FILES TO KEEP (WHITELIST)
 # ========================
 
-# Root level essential files
+# Root level essential files - MUST KEEP THESE
 !package.json
-!package-lock.json
+!package-lock.json # KEEP for npm ci optimization
 !server.js
 !main.js
 !serviceManager.js
@@ -218,6 +239,12 @@ frontend/.nuxt/
 !.prettierignore
 !tsconfig.json
 !jsconfig.json
+
+# ArielSQL Suite structure - YOUR MAIN APPLICATION
+!arielsql_suite/
+!arielsql_suite/**
+!arielsql_suite/*.js
+!arielsql_suite/*.mjs
 
 # Backend structure
 !backend/
@@ -258,6 +285,14 @@ frontend/.nuxt/
 !public/
 !public/**
 
+# Data directory (keep structure but exclude actual database files)
+!data/
+data/*.db
+data/*.sqlite
+data/*.db-*
+!data/migrations/
+!data/backups/
+
 # ArielMatrix 2.0 (Python project)
 !arielmatrix2.0/
 !arielmatrix2.0/**
@@ -297,3 +332,7 @@ docker-compose.local.yml
 *.css~
 *.html~
 *.ts~
+
+# Exclude Docker-specific files but keep the main ones
+Dockerfile.dockerignore
+docker-compose.override.yml
