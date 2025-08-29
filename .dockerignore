@@ -1,34 +1,18 @@
-# Node modules and package manager caches
+# Ignore unnecessary files
 node_modules/
 .pnpm/
 .yarn/
 .npm/
-
-# Logs and debug files
 npm-debug.log*
-yarn-error.log
-pnpm-debug.log
-
-# Environment files
+yarn-error.log*
 .env
 .env.*
-!.env.example
-
-# Git and version control
 .git/
 .gitignore
-
-# IDE/editor files
 .vscode/
 .idea/
-*.sublime-project
-*.sublime-workspace
-
-# OS generated files
 .DS_Store
 Thumbs.db
-
-# Coverage and test result folders
 coverage/
 *.lcov
 playwright-report/
@@ -36,13 +20,10 @@ cypress/screenshots/
 cypress/videos/
 
 # Build artifacts
+frontend/public/assets/
 frontend/dist/
-dist/
-backend/build/
 backend/dist/
-
-# Backend public folder (will be overwritten by frontend build assets)
-public/
+backend/public/
 
 # Temporary and backup files
 *.tmp
@@ -59,21 +40,13 @@ public/
 # Include essential project files
 !package.json
 !package-lock.json
-!vite.config.js
+!hardhat.config.js
 !tailwind.config.js
-!index.html
-!index.css
-!scripts/
-!src/
-!components/
-!styles/
+!vite.config.js
+!public/index.html
 !frontend/
 !backend/
 !contracts/
-!public/assets/
-
-# Include server and config files
-!server.js
-!hardhat.config.js
-!requirements.txt
+!scripts/
 !config/
+!arielmatrix2.0/
