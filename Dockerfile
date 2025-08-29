@@ -30,7 +30,9 @@ RUN mkdir -p \
     frontend/public \
     frontend/src \
     frontend/src/components \
-    frontend/src/styles
+    frontend/src/styles \
+    arielsql_suite \
+    data
 
 # Create a minimal package.json if it doesn't exist
 RUN if [ ! -f "package.json" ]; then \
@@ -38,7 +40,7 @@ RUN if [ ! -f "package.json" ]; then \
     echo "ℹ️ Created minimal package.json"; \
 fi
 
-# Copy package files if they exist
+# Copy package files first for better caching
 COPY package*.json ./
 
 # Create backend package.json if it doesn't exist
@@ -81,8 +83,25 @@ RUN if [ -f "hardhat.config.js" ] || [ -f "arielmatrix2.0/hardhat.config.js" ]; 
     npm install @nomiclabs/hardhat-waffle ethereum-waffle chai @nomiclabs/hardhat-ethers ethers; \
 fi
 
-# Copy all source files
-COPY --chown=node:node . .
+# FIX: Copy files in stages to avoid directory conflicts
+# First copy only specific file types that won't conflict with directories
+COPY --chown=node:node *.js ./
+COPY --chown=node:node *.json ./
+COPY --chown=node:node .env* ./
+
+# Then copy directories individually with proper error handling
+RUN echo "📂 Copying source files..." && \
+    for dir in config scripts contracts public frontend backend arielsql_suite arielmatrix2.0; do \
+        if [ -d "$dir" ]; then \
+            echo "📁 Copying $dir/"; \
+            cp -r "$dir" /tmp/ && \
+            rm -rf "./$dir" && \
+            mv "/tmp/$dir" ./ && \
+            chown -R node:node "./$dir"; \
+        else \
+            echo "ℹ️ Directory $dir/ not found in build context"; \
+        fi \
+    done
 
 # Frontend build process (if exists)
 RUN if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then \
@@ -118,10 +137,19 @@ RUN useradd -r -m -u 1001 appuser
 
 WORKDIR /app
 
-# Copy built artifacts from builder - FIXED: Include node_modules
+# Copy built artifacts from builder - FIXED: Copy in stages to avoid conflicts
 COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules/
 COPY --from=builder --chown=appuser:appuser /app/package*.json ./
-COPY --from=builder --chown=appuser:appuser /app ./
+
+# Copy other files and directories carefully
+RUN echo "📦 Copying application files from builder..." && \
+    mkdir -p /tmp/app && \
+    cp -r /app/* /tmp/app/ 2>/dev/null || true && \
+    cp -r /app/.* /tmp/app/ 2>/dev/null || true && \
+    rm -rf /app/* && \
+    mv /tmp/app/* /app/ && \
+    rm -rf /tmp/app && \
+    chown -R appuser:appuser /app
 
 # Move frontend build artifacts to public if they exist
 RUN if [ -d "./frontend/dist" ]; then \
@@ -155,6 +183,8 @@ CMD ["sh", "-c", \
     echo '📦 Node.js version: $(node --version)'; \
     echo '🐢 SQLite version: $(sqlite3 --version 2>/dev/null || echo \"Not available\")'; \
     echo '📦 Node modules: $(ls node_modules 2>/dev/null | wc -l) packages'; \
+    echo '📁 App structure:'; \
+    ls -la; \
     \
     if [ -f 'arielsql_suite/main.js' ]; then \
         echo '🎯 Starting main application: arielsql_suite/main.js'; \
@@ -172,8 +202,8 @@ CMD ["sh", "-c", \
         echo '🎯 Starting backend/server.js'; \
         exec node backend/server.js; \
     else \
-        echo '❌ No entry point found. Available options:'; \
-        find . -name '*.js' -type f | grep -E '(main|server|service|index|app)' | head -10; \
+        echo '❌ No entry point found. Available JavaScript files:'; \
+        find . -name '*.js' -type f | head -20; \
         echo '💤 Starting sleep to keep container alive...'; \
         exec sleep infinity; \
     fi"]
