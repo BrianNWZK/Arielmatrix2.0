@@ -32,7 +32,7 @@ RUN mkdir -p \
     frontend/src/components \
     frontend/src/styles
 
-# Create a minimal package.json if it doesn't exist (FIXED: Create before copying)
+# Create a minimal package.json if it doesn't exist
 RUN if [ ! -f "package.json" ]; then \
     echo '{"name": "arielsql-alltimate", "version": "1.0.0", "type": "module", "dependencies": {}}' > package.json; \
     echo "ℹ️ Created minimal package.json"; \
@@ -50,7 +50,7 @@ fi
 # Copy backend package files if they exist
 COPY backend/package*.json ./backend/
 
-# Install root dependencies - FIXED: Always ensure package.json exists
+# Install root dependencies
 RUN echo "📦 Installing dependencies..." && \
     if [ -f "package.json" ]; then \
         if [ -f "package-lock.json" ]; then \
@@ -81,7 +81,7 @@ RUN if [ -f "hardhat.config.js" ] || [ -f "arielmatrix2.0/hardhat.config.js" ]; 
     npm install @nomiclabs/hardhat-waffle ethereum-waffle chai @nomiclabs/hardhat-ethers ethers; \
 fi
 
-# Copy all source files
+# Copy all source files (should work now that conflicting file is deleted)
 COPY --chown=node:node . .
 
 # Frontend build process (if exists)
