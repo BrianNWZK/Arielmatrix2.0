@@ -9,9 +9,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy essential files first to utilize Docker cache effectively
+# Copy package.json and other necessary files first to leverage Docker cache
 COPY package*.json ./
 COPY hardhat.config.js ./
+
+# Ensure server.js exists in the project structure
 COPY server.js ./
 COPY config/ ./config/
 COPY scripts/ ./scripts/
