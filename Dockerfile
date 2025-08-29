@@ -1,69 +1,66 @@
-# Builder stage
-FROM node:22.16.0 AS builder
+# Ignore node_modules and package manager caches
+node_modules/
+frontend/node_modules/
+.pnpm/
+.yarn/
+.npm/
 
-# Install system dependencies for Puppeteer/Playwright
-RUN apt-get update && apt-get install -y \
-    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
-    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
-    && rm -rf /var/lib/apt/lists/*
+# Logs and debug files
+npm-debug.log*
+yarn-error.log*
+.env
+.env.*
+!.env.example
 
-WORKDIR /app
+# Git and version control
+.git/
+.gitignore
 
-# Copy package.json and other necessary files first to leverage Docker cache
-COPY package*.json ./
-COPY hardhat.config.js ./
+# IDE/editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
 
-# Ensure server.js exists in the project structure
-COPY server.js ./
-COPY config/ ./config/
-COPY scripts/ ./scripts/
-COPY backend/ ./backend/
-COPY contracts/ ./contracts/
-COPY arielmatrix2.0/ ./arielmatrix2.0/
+# OS generated files
+.DS_Store
+Thumbs.db
 
-# Install backend dependencies
-RUN npm install
+# Coverage and test result folders
+coverage/
+*.lcov
+playwright-report/
+cypress/screenshots/
+cypress/videos/
 
-# Copy frontend files and install dependencies
-COPY frontend/package*.json frontend/tailwind.config.js frontend/vite.config.js ./frontend/
-RUN npm install --prefix ./frontend
+# Build artifacts
+frontend/dist/
 
-# Copy the rest of the frontend files
-COPY frontend/ ./frontend/
+# Public folder to be overridden by frontend build output
+public/
 
-# Install browsers for Puppeteer/Playwright
-RUN npx puppeteer browsers install chrome
-RUN npx playwright install chromium --with-deps
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*.swo
 
-# Build frontend
-RUN npm run build --prefix ./frontend
+# Docker files to include
+!.dockerignore
+!Dockerfile
+!docker-compose.yml
 
-# Final stage
-FROM node:22.16.0
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
-    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -m appuser
-
-WORKDIR /app
-
-# Prepare cache and public directories with correct ownership
-RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright ./public && \
-    chown -R appuser:appuser /app /home/appuser/.cache
-
-# Copy all app files and build artifacts from the builder stage
-COPY --from=builder --chown=appuser:appuser /app /app
-
-# Switch to non-root user
-USER appuser
-
-# Expose the application port
-EXPOSE 3000
-
-# Start backend server
-CMD ["node", "server.js"]
+# Include all essential project files and folders
+!package.json
+!package-lock.json
+!server.js
+!hardhat.config.js
+!config/
+!arielmatrix2.0/
+!contracts/
+!backend/
+!frontend/
+!public/
+!scripts/
