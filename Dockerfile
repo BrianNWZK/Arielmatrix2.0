@@ -1,96 +1,68 @@
 # Builder stage
-FROM node:22.16.0 as builder
+FROM node:22.16.0 AS builder
 
-# Install system dependencies for browser automation (Puppeteer/Playwright)
+# Install system dependencies for Puppeteer/Playwright
 RUN apt-get update && apt-get install -y \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxi6 \
-    libxtst6 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    libgbm-dev \
-    libasound2 \
-    fonts-noto \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory to the project root
 WORKDIR /app
 
-# Copy package files for both frontend and backend
-COPY package.json ./
-COPY tailwind.config.js ./
-COPY vite.config.js ./
-COPY index.html ./
-COPY index.css ./
+# Copy entire project context respecting .dockerignore
+COPY . .
 
-# Install dependencies
+# Install root dependencies (frontend)
 RUN npm install
 
-# Install browsers for automation
+# Install backend dependencies if backend has its own package.json (adjust if needed)
+# Here backend is a directory with JS files but no separate package.json, so skip this
+
+# Install Puppeteer and Playwright browsers
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Copy all source files for frontend and backend
-COPY frontend ./frontend
-COPY backend ./backend
-COPY contracts ./contracts
-COPY public ./public
-COPY src ./src
-COPY components ./components
-COPY styles ./styles
-COPY scripts ./scripts
-
-# Build frontend
-RUN npm run build --prefix ./frontend
+# Build frontend project (assuming frontend is at root or in ./frontend)
+# Detect if frontend directory exists and build accordingly
+RUN if [ -d "./frontend" ] && [ -f "./frontend/package.json" ]; then \
+      npm install --prefix ./frontend && npm run build --prefix ./frontend; \
+    else \
+      npm run build; \
+    fi
 
 # Final stage
 FROM node:22.16.0
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxi6 \
-    libxtst6 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    libgbm-dev \
-    libasound2 \
-    fonts-noto \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN useradd -m appuser
 
-# Set working directory
 WORKDIR /app
 
-# Create cache directories
-RUN mkdir -p \
-    backend/public \
-    /home/appuser/.cache/puppeteer \
-    /home/appuser/.cache/ms-playwright \
-    && chown -R appuser:appuser /app /home/appuser/.cache
+# Prepare cache directories and app folder permissions
+RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright && \
+    chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy built artifacts from the builder stage
+# Copy build artifacts from builder stage
 COPY --from=builder --chown=appuser:appuser /app /app
 
-# Copy frontend assets to backend public directory (if they exist)
+# Copy frontend build output to backend public folder if exists
 RUN if [ -d "./frontend/dist" ]; then \
-    mkdir -p backend/public && \
-    cp -r frontend/dist/* backend/public/; \
-fi
+      mkdir -p ./public && cp -r frontend/dist/* public/; \
+    elif [ -d "./dist" ]; then \
+      mkdir -p ./public && cp -r dist/* public/; \
+    fi
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose application port (adjust if your backend listens on a different port)
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start", "--prefix", "./backend"]
+# Start backend server
+CMD ["node", "server.js"]
