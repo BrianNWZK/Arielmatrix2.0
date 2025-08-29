@@ -20,11 +20,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy package files for both frontend and backend
-COPY backend/package.json ./backend/
 COPY package.json ./
-COPY vite.config.js ./
 COPY tailwind.config.js ./
+COPY vite.config.js ./
 COPY index.html ./
+COPY index.css ./
 
 # Install dependencies
 RUN npm install
@@ -34,6 +34,7 @@ RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
 # Copy all source files for frontend and backend
+COPY frontend ./frontend
 COPY backend ./backend
 COPY contracts ./contracts
 COPY public ./public
@@ -43,7 +44,7 @@ COPY styles ./styles
 COPY scripts ./scripts
 
 # Build frontend
-RUN npm run build
+RUN npm run build --prefix ./frontend
 
 # Final stage
 FROM node:22.16.0
@@ -80,9 +81,9 @@ RUN mkdir -p \
 COPY --from=builder --chown=appuser:appuser /app /app
 
 # Copy frontend assets to backend public directory (if they exist)
-RUN if [ -d "./dist" ]; then \
+RUN if [ -d "./frontend/dist" ]; then \
     mkdir -p backend/public && \
-    cp -r dist/* backend/public/; \
+    cp -r frontend/dist/* backend/public/; \
 fi
 
 # Switch to non-root user
