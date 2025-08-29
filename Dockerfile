@@ -34,11 +34,19 @@ RUN mkdir -p \
 
 # Copy package files first for better caching
 COPY package*.json ./
-COPY backend/package*.json ./backend/ 2>/dev/null || echo "ℹ️ No backend package files found"
+
+# Create backend package.json if it doesn't exist (FIXED: No shell operators in COPY)
+RUN if [ ! -f "backend/package.json" ]; then \
+    echo '{"name": "arielsql-backend", "version": "1.0.0"}' > backend/package.json; \
+    echo "ℹ️ Created backend/package.json"; \
+fi
+
+# Copy backend package files if they exist
+COPY backend/package*.json ./backend/
 
 # Install root dependencies with all required build tools
 RUN echo "📦 Installing dependencies..." && \
-    npm install --prefer-offline --no-audit --progress=false --include=dev
+    npm ci --prefer-offline --no-audit --progress=false
 
 # Install Python dependencies for arielmatrix2.0 (if exists)
 RUN if [ -f "arielmatrix2.0/requirements.txt" ]; then \
