@@ -1,29 +1,50 @@
-# Ignore unnecessary files
+# Ignore node_modules and package manager caches
 node_modules/
+frontend/node_modules/
 .pnpm/
 .yarn/
 .npm/
+
+# Logs and debug files
 npm-debug.log*
-yarn-error.log*
+yarn-error.log
+pnpm-debug.log
+
+# Environment files (ignore all except example)
 .env
 .env.*
+!.env.example
+
+# Git and version control
 .git/
 .gitignore
+
+# IDE/editor files
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
 .DS_Store
 Thumbs.db
+
+# Coverage and test result folders
 coverage/
 *.lcov
 playwright-report/
 cypress/screenshots/
 cypress/videos/
 
-# Build artifacts
-frontend/public/assets/
+# Frontend build artifacts (will be rebuilt in container)
 frontend/dist/
+
+# Backend build artifacts or temporary files (if any)
 backend/dist/
-backend/public/
+backend/build/
+
+# Public folder to be overridden by frontend build output
+public/
 
 # Temporary and backup files
 *.tmp
@@ -33,20 +54,32 @@ backend/public/
 *.swp
 *.swo
 
-# Docker files that should be included
+# Docker files to include
 !.dockerignore
 !Dockerfile
+!docker-compose.yml
 
-# Include essential project files
+# Include all essential project files and folders
 !package.json
 !package-lock.json
+!server.js
 !hardhat.config.js
-!tailwind.config.js
-!vite.config.js
-!public/index.html
-!frontend/
-!backend/
-!contracts/
-!scripts/
 !config/
 !arielmatrix2.0/
+!contracts/
+!backend/
+!frontend/
+!public/
+!scripts/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/tailwind.config.js
+!frontend/vite.config.js
+!frontend/src/
+!frontend/public/
+!frontend/index.html
+!frontend/dashboard.js
+!frontend/index.css
+!frontend/main.jsx
+!frontend/src/components/
+!frontend/src/styles/
