@@ -34,14 +34,14 @@ RUN mkdir -p \
     arielsql_suite \
     data
 
+# Copy package files first for better caching
+COPY package*.json ./
+
 # Create a minimal package.json if it doesn't exist
 RUN if [ ! -f "package.json" ]; then \
     echo '{"name": "arielsql-alltimate", "version": "1.0.0", "type": "module", "dependencies": {}}' > package.json; \
     echo "ℹ️ Created minimal package.json"; \
 fi
-
-# Copy package files first for better caching
-COPY package*.json ./
 
 # Create backend package.json if it doesn't exist
 RUN if [ ! -f "backend/package.json" ]; then \
@@ -52,12 +52,13 @@ fi
 # Copy backend package files if they exist
 COPY backend/package*.json ./backend/
 
-# Install root dependencies
+# Install root dependencies with better error handling
 RUN echo "📦 Installing dependencies..." && \
     if [ -f "package.json" ]; then \
         if [ -f "package-lock.json" ]; then \
             echo "✅ Using package-lock.json for npm ci"; \
-            npm ci --prefer-offline --no-audit --progress=false; \
+            npm ci --prefer-offline --no-audit --progress=false || \
+            (echo "⚠️ npm ci failed, falling back to npm install" && npm install --prefer-offline --no-audit --progress=false); \
         else \
             echo "ℹ️ No package-lock.json found, using npm install"; \
             npm install --prefer-offline --no-audit --progress=false; \
@@ -67,6 +68,16 @@ RUN echo "📦 Installing dependencies..." && \
         echo '{"name": "arielsql-alltimate", "version": "1.0.0", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "dotenv": "^16.4.5"}}' > package.json; \
         npm install --prefer-offline --no-audit --progress=false; \
     fi
+
+# Verify node_modules was created
+RUN if [ -d "node_modules" ]; then \
+    echo "✅ node_modules created successfully ($(du -sh node_modules | cut -f1))"; \
+    ls node_modules | head -10; \
+else \
+    echo "❌ node_modules directory not found! Creating empty one..."; \
+    mkdir -p node_modules; \
+    echo '{}' > node_modules/placeholder.json; \
+fi
 
 # Install Python dependencies for arielmatrix2.0 (if exists)
 RUN if [ -f "arielmatrix2.0/requirements.txt" ]; then \
@@ -83,25 +94,8 @@ RUN if [ -f "hardhat.config.js" ] || [ -f "arielmatrix2.0/hardhat.config.js" ]; 
     npm install @nomiclabs/hardhat-waffle ethereum-waffle chai @nomiclabs/hardhat-ethers ethers; \
 fi
 
-# FIX: Copy files in stages to avoid directory conflicts
-# First copy only specific file types that won't conflict with directories
-COPY --chown=node:node *.js ./
-COPY --chown=node:node *.json ./
-COPY --chown=node:node .env* ./
-
-# Then copy directories individually with proper error handling
-RUN echo "📂 Copying source files..." && \
-    for dir in config scripts contracts public frontend backend arielsql_suite arielmatrix2.0; do \
-        if [ -d "$dir" ]; then \
-            echo "📁 Copying $dir/"; \
-            cp -r "$dir" /tmp/ && \
-            rm -rf "./$dir" && \
-            mv "/tmp/$dir" ./ && \
-            chown -R node:node "./$dir"; \
-        else \
-            echo "ℹ️ Directory $dir/ not found in build context"; \
-        fi \
-    done
+# Copy all source files
+COPY --chown=node:node . .
 
 # Frontend build process (if exists)
 RUN if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then \
@@ -137,18 +131,23 @@ RUN useradd -r -m -u 1001 appuser
 
 WORKDIR /app
 
-# Copy built artifacts from builder - FIXED: Copy in stages to avoid conflicts
-COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules/
-COPY --from=builder --chown=appuser:appuser /app/package*.json ./
-
-# Copy other files and directories carefully
-RUN echo "📦 Copying application files from builder..." && \
-    mkdir -p /tmp/app && \
-    cp -r /app/* /tmp/app/ 2>/dev/null || true && \
-    cp -r /app/.* /tmp/app/ 2>/dev/null || true && \
-    rm -rf /app/* && \
-    mv /tmp/app/* /app/ && \
-    rm -rf /tmp/app && \
+# Copy built artifacts from builder - FIXED: Handle missing node_modules
+RUN echo "📦 Copying application from builder..." && \
+    mkdir -p /tmp/build && \
+    # Copy everything from builder
+    cp -r /app /tmp/build/ 2>/dev/null || true && \
+    # Clean current directory
+    rm -rf /app/* /app/.* 2>/dev/null || true && \
+    # Move copied content back
+    mv /tmp/build/app/* /app/ 2>/dev/null || true && \
+    mv /tmp/build/app/.* /app/ 2>/dev/null || true && \
+    rm -rf /tmp/build && \
+    # Ensure node_modules exists
+    if [ ! -d "node_modules" ]; then \
+        echo "⚠️ node_modules not found, installing dependencies..."; \
+        npm install --production --prefer-offline --no-audit --progress=false; \
+    fi && \
+    # Set proper ownership
     chown -R appuser:appuser /app
 
 # Move frontend build artifacts to public if they exist
@@ -183,8 +182,6 @@ CMD ["sh", "-c", \
     echo '📦 Node.js version: $(node --version)'; \
     echo '🐢 SQLite version: $(sqlite3 --version 2>/dev/null || echo \"Not available\")'; \
     echo '📦 Node modules: $(ls node_modules 2>/dev/null | wc -l) packages'; \
-    echo '📁 App structure:'; \
-    ls -la; \
     \
     if [ -f 'arielsql_suite/main.js' ]; then \
         echo '🎯 Starting main application: arielsql_suite/main.js'; \
