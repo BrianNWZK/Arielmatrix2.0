@@ -1,5 +1,3 @@
-# Keep .dockerignore minimal and valid (no Dockerfile instructions here)
-
 # Ignore node_modules and caches
 node_modules/
 frontend/node_modules/
@@ -18,38 +16,34 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
-# VCS
+# Version control
 .git/
 
 # IDE/editor files
 .vscode/
 .idea/
 
-# OS files
+# OS generated files
 .DS_Store
 Thumbs.db
 
-# Test / coverage / reports
+# Test coverage reports
 coverage/
 *.lcov
 playwright-report/
 cypress/screenshots/
 cypress/videos/
 
-# Frontend build artifacts (we build inside container)
+# Frontend build artifacts
 frontend/dist/
 frontend/build/
 
-# Public folder - include if you want to copy static assets from host; otherwise it's safe to ignore so builder creates it
-# If you rely on host public/, remove the leading # to include it in context
-# public/
-
-# Keep docker config files in context
+# Include Docker configuration files
 !.dockerignore
 !Dockerfile
 !docker-compose.yml
 
-# Ensure essential files are included if present
+# Ensure essential files are included
 !package*.json
 !server.js
 !backend/
