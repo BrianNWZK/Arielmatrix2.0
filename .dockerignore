@@ -1,54 +1,148 @@
-# Ignore node_modules and caches
+# Node.js dependencies and caches
 node_modules/
-frontend/node_modules/
-backend/node_modules/
-.pnpm/
-.yarn/
-.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.yarnrc.yml
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Logs
-npm-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+logs
+*.log
+lerna-debug.log*
 
-# Env files (exclude all except example)
-.env
-.env.*
-!.env.example
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
 
-# Version control
-.git/
-
-# IDE/editor files
-.vscode/
-.idea/
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Test coverage reports
+# Coverage directory used by tools like istanbul
 coverage/
 *.lcov
-playwright-report/
-cypress/screenshots/
-cypress/videos/
+.nyc_output
 
-# Frontend build artifacts
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env.test
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+out
+
+# nuxt.js build output
+.nuxt
+dist
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+Dockerfile.dockerignore
+docker-compose.override.yml
+
+# Temporary folders
+tmp/
+temp/
+
+# Build outputs (we'll copy what we need explicitly)
+build/
+dist/
+*.tsbuildinfo
+
+# Only exclude non-essential frontend files but keep source
+frontend/node_modules/
 frontend/dist/
 frontend/build/
+frontend/.cache/
+frontend/.vite/
 
-# Include Docker configuration files
-!.dockerignore
-!Dockerfile
-!docker-compose.yml
-
-# Ensure essential files are included
+# Keep these directories and files for Docker build
 !package*.json
 !server.js
+!hardhat.config.js
+!.eslintrc.json
 !backend/
-!frontend/
+!frontend/src/
+!frontend/package.json
+!frontend/vite.config.js
+!frontend/tailwind.config.js
 !config/
 !scripts/
 !contracts/
+!public/
 !arielmatrix2.0/
+
+# Git (keep .gitignore for reference but exclude actual git data)
+.git/
+!.gitignore
+
+# Custom: exclude large or unnecessary files
+*.zip
+*.tar
+*.gz
+*.7z
+
+# Documentation
+README.md
+CHANGELOG.md
+LICENSE.md
