@@ -32,7 +32,13 @@ RUN mkdir -p \
     frontend/src/components \
     frontend/src/styles
 
-# Copy package files first for better caching
+# Create a minimal package.json if it doesn't exist (FIXED: Create before copying)
+RUN if [ ! -f "package.json" ]; then \
+    echo '{"name": "arielsql-alltimate", "version": "1.0.0", "type": "module", "dependencies": {}}' > package.json; \
+    echo "ℹ️ Created minimal package.json"; \
+fi
+
+# Copy package files if they exist
 COPY package*.json ./
 
 # Create backend package.json if it doesn't exist
@@ -44,13 +50,19 @@ fi
 # Copy backend package files if they exist
 COPY backend/package*.json ./backend/
 
-# Install root dependencies - FIXED: Use npm install if package-lock.json doesn't exist
+# Install root dependencies - FIXED: Always ensure package.json exists
 RUN echo "📦 Installing dependencies..." && \
-    if [ -f "package-lock.json" ]; then \
-        echo "✅ Using package-lock.json for npm ci"; \
-        npm ci --prefer-offline --no-audit --progress=false; \
+    if [ -f "package.json" ]; then \
+        if [ -f "package-lock.json" ]; then \
+            echo "✅ Using package-lock.json for npm ci"; \
+            npm ci --prefer-offline --no-audit --progress=false; \
+        else \
+            echo "ℹ️ No package-lock.json found, using npm install"; \
+            npm install --prefer-offline --no-audit --progress=false; \
+        fi \
     else \
-        echo "ℹ️ No package-lock.json found, using npm install"; \
+        echo "❌ No package.json found! Creating minimal one and installing..."; \
+        echo '{"name": "arielsql-alltimate", "version": "1.0.0", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7"}}' > package.json; \
         npm install --prefer-offline --no-audit --progress=false; \
     fi
 
