@@ -33,10 +33,7 @@ RUN npx playwright install chromium --with-deps
 COPY frontend ./frontend
 COPY backend ./backend
 
-# Optionally, ensure index.html exists in frontend
-RUN ls -la frontend  # List files in frontend to verify
-
-# Build frontend (if package.json exists)
+# Build frontend
 RUN if [ -f "./frontend/package.json" ]; then \
     cd frontend && npm run build; \
 fi
@@ -74,16 +71,11 @@ RUN mkdir -p \
 
 # Copy built artifacts from the builder stage
 COPY --from=builder --chown=appuser:appuser /app /app
-COPY --from=builder --chown=appuser:appuser /root/.cache/puppeteer /home/appuser/.cache/puppeteer
-COPY --from=builder --chown=appuser:appuser /root/.cache/ms-playwright /home/appuser/.cache/ms-playwright
 
 # Copy frontend assets to backend public directory (if they exist)
 RUN if [ -d "./frontend/dist" ]; then \
     mkdir -p backend/public && \
     cp -r frontend/dist/* backend/public/; \
-elif [ -d "./frontend/build" ]; then \
-    mkdir -p backend/public && \
-    cp -r frontend/build/* backend/public/; \
 fi
 
 # Switch to non-root user
