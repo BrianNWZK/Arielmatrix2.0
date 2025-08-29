@@ -1,66 +1,60 @@
-# Ignore node_modules and package manager caches
+# Keep .dockerignore minimal and valid (no Dockerfile instructions here)
+
+# Ignore node_modules and caches
 node_modules/
 frontend/node_modules/
+backend/node_modules/
 .pnpm/
 .yarn/
 .npm/
 
-# Logs and debug files
+# Logs
 npm-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+
+# Env files (exclude all except example)
 .env
 .env.*
 !.env.example
 
-# Git and version control
+# VCS
 .git/
-.gitignore
 
 # IDE/editor files
 .vscode/
 .idea/
-*.sublime-project
-*.sublime-workspace
 
-# OS generated files
+# OS files
 .DS_Store
 Thumbs.db
 
-# Coverage and test result folders
+# Test / coverage / reports
 coverage/
 *.lcov
 playwright-report/
 cypress/screenshots/
 cypress/videos/
 
-# Build artifacts
+# Frontend build artifacts (we build inside container)
 frontend/dist/
+frontend/build/
 
-# Public folder to be overridden by frontend build output
-public/
+# Public folder - include if you want to copy static assets from host; otherwise it's safe to ignore so builder creates it
+# If you rely on host public/, remove the leading # to include it in context
+# public/
 
-# Temporary and backup files
-*.tmp
-*.temp
-*.bak
-*.backup
-*.swp
-*.swo
-
-# Docker files to include
+# Keep docker config files in context
 !.dockerignore
 !Dockerfile
 !docker-compose.yml
 
-# Include all essential project files and folders
-!package.json
-!package-lock.json
+# Ensure essential files are included if present
+!package*.json
 !server.js
-!hardhat.config.js
-!config/
-!arielmatrix2.0/
-!contracts/
 !backend/
 !frontend/
-!public/
+!config/
 !scripts/
+!contracts/
+!arielmatrix2.0/
