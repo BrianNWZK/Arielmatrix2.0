@@ -34,8 +34,11 @@ RUN npx playwright install chromium --with-deps
 # Copy all frontend source files
 COPY frontend ./frontend
 
-# Copy backend source files, including the main script and arielsql_suite
-COPY backend/arielsql_suite /app/backend/arielsql_suite
+# Copy the entire backend directory including arielsql_suite
+COPY backend ./backend
+
+# Copy arielsql_suite directory
+COPY arielsql_suite ./arielsql_suite
 
 # Build frontend (if package.json exists)
 RUN if [ -f "./frontend/package.json" ]; then \
