@@ -11,12 +11,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy package files with explicit existence checks (FIXED)
+# Copy package files with proper error handling
 COPY package*.json ./
 RUN if [ -f "package.json" ]; then echo "Found package.json"; else echo "package.json not found" && touch package.json; fi
 
+# Handle backend package files with proper syntax
+RUN mkdir -p backend
 COPY backend/package*.json ./backend/ 2>/dev/null || \
-    (echo "backend/package*.json not found" && mkdir -p backend && touch backend/package.json)
+    (echo "backend/package*.json not found - creating empty" && touch backend/package.json)
 
 # Install backend dependencies if package.json exists
 RUN if [ -f "package.json" ] && [ -s "package.json" ]; then \
@@ -25,10 +27,10 @@ else \
     echo "No valid package.json found, skipping npm install"; \
 fi
 
-# Copy files with robust error handling (FIXED THE || true ISSUE)
+# Copy all files with proper permissions
 COPY --chown=node:node . .
 
-# Create directories if they don't exist to prevent copy errors
+# Ensure all required directories exist
 RUN mkdir -p \
     config \
     scripts \
@@ -41,18 +43,17 @@ RUN mkdir -p \
 # Frontend build process with better error handling
 RUN if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then \
     echo "Building frontend..."; \
-    npm install --prefix frontend --no-audit --no-fund --silent && \
-    npm run build --prefix frontend; \
+    cd frontend && npm install --no-audit --no-fund --silent && npm run build; \
 else \
     echo "Frontend directory or package.json not found, skipping frontend build"; \
 fi
 
 # Install Puppeteer and Playwright browsers with better error handling
-RUN npx -y puppeteer@latest install --with-deps 2>/dev/null || \
-    echo "Puppeteer installation failed or skipped"
+RUN { npx -y puppeteer@latest install --with-deps 2>/dev/null || \
+    echo "Puppeteer installation failed or skipped"; }
 
-RUN npx -y playwright@latest install chromium --with-deps 2>/dev/null || \
-    echo "Playwright installation failed or skipped"
+RUN { npx -y playwright@latest install chromium --with-deps 2>/dev/null || \
+    echo "Playwright installation failed or skipped"; }
 
 # Final stage
 FROM node:22.16.0-slim AS runtime
@@ -73,9 +74,9 @@ COPY --from=builder --chown=appuser:appuser /app /app
 
 # Move frontend build artifacts to public if they exist
 RUN if [ -d "./frontend/dist" ]; then \
-    cp -r ./frontend/dist/* ./public/ 2>/dev/null || true; \
+    mkdir -p ./public && cp -r ./frontend/dist/* ./public/; \
     elif [ -d "./frontend/build" ]; then \
-    cp -r ./frontend/build/* ./public/ 2>/dev/null || true; \
+    mkdir -p ./public && cp -r ./frontend/build/* ./public/; \
 fi
 
 # Clean up unnecessary files to reduce image size
@@ -92,19 +93,19 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" 2>/dev/null || exit 1
+    CMD curl -f http://localhost:3000/health || exit 1
 
 # Start command with multiple fallback options
 CMD ["sh", "-c", \
     "if [ -f 'server.js' ]; then \
-        node server.js; \
+        exec node server.js; \
     elif [ -f 'backend/server.js' ]; then \
-        node backend/server.js; \
+        exec node backend/server.js; \
     elif [ -f 'dist/server.js' ]; then \
-        node dist/server.js; \
+        exec node dist/server.js; \
     else \
-        echo 'No server file found. Available files:'; \
-        find . -name '*.js' -type f | head -20; \
+        echo 'No server file found. Available JavaScript files:'; \
+        find . -name '*.js' -type f | head -10; \
         echo 'Starting sleep to keep container alive...'; \
-        sleep infinity; \
+        exec sleep infinity; \
     fi"]
