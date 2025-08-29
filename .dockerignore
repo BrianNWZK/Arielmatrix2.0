@@ -1,5 +1,5 @@
 # ========================
-# NODE.JS & DEPENDENCIES
+# NODE.JS & DEPENDENCIES - CAREFUL: Don't exclude package.json here!
 # ========================
 node_modules/
 */node_modules/
@@ -223,12 +223,12 @@ backend/*.db
 backend/*.sqlite
 
 # ========================
-# ESSENTIAL FILES TO KEEP (WHITELIST)
+# ESSENTIAL FILES TO KEEP (WHITELIST) - MUST COME FIRST!
 # ========================
 
 # Root level essential files - MUST KEEP THESE
 !package.json
-!package-lock.json # KEEP for npm ci optimization
+!package-lock.json
 !server.js
 !main.js
 !serviceManager.js
