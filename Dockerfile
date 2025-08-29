@@ -31,23 +31,23 @@ RUN mkdir -p \
     frontend/src/components \
     frontend/src/styles
 
-# Create minimal package.json files upfront
-RUN echo '{"name": "arielsql-suite", "version": "1.0.0", "dependencies": {}}' > package.json
-RUN echo '{"name": "arielsql-backend", "version": "1.0.0", "dependencies": {}}' > backend/package.json
+# Create minimal package.json files upfront with essential dependencies
+RUN echo '{"name": "arielsql-suite", "version": "1.0.0", "dependencies": {"express": "^4.18.2", "cors": "^2.8.5", "dotenv": "^16.3.1", "axios": "^1.5.0", "puppeteer": "^21.0.0", "playwright": "^1.37.0"}}' > package.json
 
-# Copy package files for better caching - FIXED: No shell operators in COPY
+RUN echo '{"name": "arielsql-backend", "version": "1.0.0", "dependencies": {"express": "^4.18.2", "cors": "^2.8.5", "dotenv": "^16.3.1", "axios": "^1.5.0"}}' > backend/package.json
+
+# Copy package files for better caching
 COPY package*.json ./
-
-# Copy backend package files if they exist (using conditional copy pattern)
 COPY backend/package*.json ./backend/
 
-# Install root dependencies
+# Install root dependencies - FIXED: Use npm install instead of npm ci
 RUN echo "📦 Installing dependencies..." && \
     if [ -f "package.json" ] && [ -s "package.json" ]; then \
-        npm ci --prefer-offline --no-audit --progress=false; \
+        echo "✅ Using package.json dependencies"; \
+        npm install --prefer-offline --no-audit --progress=false; \
     else \
         echo "ℹ️ No valid package.json found, installing default dependencies" && \
-        npm install express cors dotenv axios puppeteer playwright; \
+        npm install express cors dotenv axios puppeteer playwright --no-audit --progress=false; \
     fi
 
 # Copy all source files
