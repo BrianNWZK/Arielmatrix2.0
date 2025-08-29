@@ -29,7 +29,7 @@ pids
 *.seed
 *.pid.lock
 
-# Coverage directory used by tools like istanbul
+# Coverage directory
 coverage/
 *.lcov
 .nyc_output
@@ -52,7 +52,7 @@ jspm_packages/
 # dotenv environment variables file
 .env.test
 
-# parcel-bundler cache (https://parceljs.org/)
+# parcel-bundler cache
 .cache
 .parcel-cache
 
@@ -79,7 +79,7 @@ dist
 # TernJS port file
 .tern-port
 
-# Stores VSCode versions used for testing VSCode extensions
+# VSCode test versions
 .vscode-test
 
 # MacOS
@@ -89,14 +89,14 @@ dist
 Thumbs.db
 ehthumbs.db
 
-# IDE
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Docker
+# Docker files
 Dockerfile.dockerignore
 docker-compose.override.yml
 
@@ -104,19 +104,33 @@ docker-compose.override.yml
 tmp/
 temp/
 
-# Build outputs (we'll copy what we need explicitly)
+# Build outputs
 build/
 dist/
 *.tsbuildinfo
 
-# Only exclude non-essential frontend files but keep source
+# Frontend specific exclusions
 frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.cache/
 frontend/.vite/
 
-# Keep these directories and files for Docker build
+# Git
+.git/
+
+# Large files
+*.zip
+*.tar
+*.gz
+*.7z
+
+# Documentation
+README.md
+CHANGELOG.md
+LICENSE.md
+
+# But keep these essential files for build
 !package*.json
 !server.js
 !hardhat.config.js
@@ -131,18 +145,4 @@ frontend/.vite/
 !contracts/
 !public/
 !arielmatrix2.0/
-
-# Git (keep .gitignore for reference but exclude actual git data)
-.git/
 !.gitignore
-
-# Custom: exclude large or unnecessary files
-*.zip
-*.tar
-*.gz
-*.7z
-
-# Documentation
-README.md
-CHANGELOG.md
-LICENSE.md
