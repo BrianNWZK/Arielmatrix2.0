@@ -35,9 +35,11 @@ RUN mkdir -p \
 RUN echo '{"name": "arielsql-suite", "version": "1.0.0", "dependencies": {}}' > package.json
 RUN echo '{"name": "arielsql-backend", "version": "1.0.0", "dependencies": {}}' > backend/package.json
 
-# Copy package files for better caching
+# Copy package files for better caching - FIXED: No shell operators in COPY
 COPY package*.json ./
-COPY backend/package*.json ./backend/ 2>/dev/null || true
+
+# Copy backend package files if they exist (using conditional copy pattern)
+COPY backend/package*.json ./backend/
 
 # Install root dependencies
 RUN echo "📦 Installing dependencies..." && \
