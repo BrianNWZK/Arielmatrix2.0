@@ -26,8 +26,6 @@ COPY ./contracts ./contracts 2>/dev/null || true
 COPY ./public ./public 2>/dev/null || true
 COPY ./arielmatrix2.0 ./arielmatrix2.0 2>/dev/null || true
 COPY .eslintrc.json .eslintrc.json 2>/dev/null || true
-COPY .gitignore .gitignore 2>/dev/null || true
-COPY .dockerignore .dockerignore 2>/dev/null || true
 
 # Frontend build process
 RUN if [ -d "frontend" ]; then \
