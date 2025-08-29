@@ -3,20 +3,20 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  root: './frontend', // Set the root to the frontend directory
+  root: '.', // project root, since index.html is here
   publicDir: 'public',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    minify: 'terser', // Ensure terser is included in package.json
+    minify: 'terser',
     sourcemap: false,
     terserOptions: {
       compress: {
-        drop_console: true, // Remove logs in production
+        drop_console: true,
         drop_debugger: true,
       },
       format: {
-        comments: false, // Strip comments
+        comments: false,
       },
     },
     rollupOptions: {
