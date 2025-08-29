@@ -1,5 +1,6 @@
 # Ignore node_modules and package manager caches
 node_modules/
+frontend/node_modules/
 .pnpm/
 .yarn/
 .npm/
@@ -32,12 +33,8 @@ playwright-report/
 cypress/screenshots/
 cypress/videos/
 
-# Frontend build artifacts (will be rebuilt in container)
+# Build artifacts
 frontend/dist/
-
-# Backend build artifacts or temporary files (if any)
-backend/dist/
-backend/build/
 
 # Public folder to be overridden by frontend build output
 public/
@@ -56,7 +53,8 @@ public/
 !docker-compose.yml
 
 # Include all essential project files and folders
-!package*.json
+!package.json
+!package-lock.json
 !server.js
 !hardhat.config.js
 !config/
@@ -66,9 +64,3 @@ public/
 !frontend/
 !public/
 !scripts/
-!frontend/src/
-!frontend/public/
-!frontend/index.html
-!frontend/dashboard.js
-!frontend/index.css
-!frontend/main.jsx
