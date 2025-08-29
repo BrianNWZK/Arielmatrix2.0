@@ -7,27 +7,30 @@ RUN apt-get update && apt-get install -y \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
     && rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
-# Copy entire project context respecting .dockerignore
+# Copy root package.json and other necessary files first
+COPY package.json ./
+COPY package-lock.json ./
+COPY hardhat.config.js ./
+COPY tailwind.config.js ./
+COPY vite.config.js ./
+COPY public/index.html ./public/
+
+# Now copy the rest of the project files
 COPY . .
 
-# Install root dependencies (frontend)
+# Install dependencies
 RUN npm install
 
-# Install backend dependencies if backend has its own package.json (adjust if needed)
-# Here backend is a directory with JS files but no separate package.json, so skip this
-
-# Install Puppeteer and Playwright browsers
+# Install browsers for Puppeteer and Playwright
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Build frontend project (assuming frontend is at root or in ./frontend)
-# Detect if frontend directory exists and build accordingly
-RUN if [ -d "./frontend" ] && [ -f "./frontend/package.json" ]; then \
+# Build frontend if package.json exists in the frontend directory
+RUN if [ -f "./frontend/package.json" ]; then \
       npm install --prefix ./frontend && npm run build --prefix ./frontend; \
-    else \
-      npm run build; \
     fi
 
 # Final stage
@@ -42,6 +45,7 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd -m appuser
 
+# Set working directory
 WORKDIR /app
 
 # Prepare cache directories and app folder permissions
@@ -51,17 +55,15 @@ RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright &
 # Copy build artifacts from builder stage
 COPY --from=builder --chown=appuser:appuser /app /app
 
-# Copy frontend build output to backend public folder if exists
+# Copy frontend build output to public folder if exists
 RUN if [ -d "./frontend/dist" ]; then \
       mkdir -p ./public && cp -r frontend/dist/* public/; \
-    elif [ -d "./dist" ]; then \
-      mkdir -p ./public && cp -r dist/* public/; \
     fi
 
 # Switch to non-root user
 USER appuser
 
-# Expose application port (adjust if your backend listens on a different port)
+# Expose application port
 EXPOSE 3000
 
 # Start backend server
