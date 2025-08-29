@@ -19,26 +19,19 @@ RUN apt-get update && apt-get install -y \
 # Set working directory to the project root
 WORKDIR /app
 
-# Copy backend package files and install dependencies
+# Copy backend and frontend package files and install dependencies
 COPY backend/package.json ./backend/
-RUN npm install --prefix ./backend
-
-# Copy frontend package files and install dependencies
 COPY frontend/package.json ./frontend/
+RUN npm install --prefix ./backend
 RUN npm install --prefix ./frontend
 
 # Install browsers for automation
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Copy all frontend source files
+# Copy all frontend and backend source files
 COPY frontend ./frontend
-
-# Copy the entire backend directory including arielsql_suite
 COPY backend ./backend
-
-# Copy arielsql_suite directory
-COPY arielsql_suite ./arielsql_suite
 
 # Build frontend (if package.json exists)
 RUN if [ -f "./frontend/package.json" ]; then \
