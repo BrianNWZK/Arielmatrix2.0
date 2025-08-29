@@ -62,7 +62,7 @@ RUN echo "📦 Installing dependencies..." && \
         fi \
     else \
         echo "❌ No package.json found! Creating minimal one and installing..."; \
-        echo '{"name": "arielsql-alltimate", "version": "1.0.0", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7"}}' > package.json; \
+        echo '{"name": "arielsql-alltimate", "version": "1.0.0", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "dotenv": "^16.4.5"}}' > package.json; \
         npm install --prefer-offline --no-audit --progress=false; \
     fi
 
@@ -81,7 +81,7 @@ RUN if [ -f "hardhat.config.js" ] || [ -f "arielmatrix2.0/hardhat.config.js" ]; 
     npm install @nomiclabs/hardhat-waffle ethereum-waffle chai @nomiclabs/hardhat-ethers ethers; \
 fi
 
-# Copy all source files (should work now that conflicting file is deleted)
+# Copy all source files
 COPY --chown=node:node . .
 
 # Frontend build process (if exists)
@@ -118,8 +118,10 @@ RUN useradd -r -m -u 1001 appuser
 
 WORKDIR /app
 
-# Copy built artifacts from builder
-COPY --from=builder --chown=appuser:appuser /app /app
+# Copy built artifacts from builder - FIXED: Include node_modules
+COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules/
+COPY --from=builder --chown=appuser:appuser /app/package*.json ./
+COPY --from=builder --chown=appuser:appuser /app ./
 
 # Move frontend build artifacts to public if they exist
 RUN if [ -d "./frontend/dist" ]; then \
@@ -128,7 +130,7 @@ RUN if [ -d "./frontend/dist" ]; then \
     mkdir -p ./public && cp -r ./frontend/build/* ./public/; \
 fi
 
-# Clean up unnecessary files but keep node_modules
+# Clean up unnecessary files but keep node_modules and essential files
 RUN rm -rf \
     /app/.npm \
     /app/.cache \
@@ -152,6 +154,7 @@ CMD ["sh", "-c", \
     "echo '🚀 Starting ArielSQL Ultimate Suite...'; \
     echo '📦 Node.js version: $(node --version)'; \
     echo '🐢 SQLite version: $(sqlite3 --version 2>/dev/null || echo \"Not available\")'; \
+    echo '📦 Node modules: $(ls node_modules 2>/dev/null | wc -l) packages'; \
     \
     if [ -f 'arielsql_suite/main.js' ]; then \
         echo '🎯 Starting main application: arielsql_suite/main.js'; \
