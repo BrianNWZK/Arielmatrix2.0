@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  root: 'frontend', // Set the root to the frontend directory
+  root: './frontend', // Set the root to the frontend directory
   publicDir: 'public',
   build: {
     outDir: 'dist',
