@@ -9,41 +9,37 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy root package.json and other necessary files first
+# Copy essential files first to utilize Docker cache effectively
 COPY package*.json ./
+COPY hardhat.config.js ./
+COPY server.js ./
+COPY config/ ./config/
+COPY scripts/ ./scripts/
+COPY backend/ ./backend/
+COPY contracts/ ./contracts/
+COPY arielmatrix2.0/ ./arielmatrix2.0/
 
-# Install backend dependencies (assumes root package.json is for backend)
+# Install backend dependencies
 RUN npm install
 
-# Copy rest of backend files
-COPY server.js hardhat.config.js config/ backend/ contracts/ scripts/ arielmatrix2.0/ ./
-
-# Copy frontend folder and install its dependencies
-COPY frontend/ ./frontend/
+# Copy frontend files and install dependencies
+COPY frontend/package*.json frontend/tailwind.config.js frontend/vite.config.js ./frontend/
 RUN npm install --prefix ./frontend
 
-# Copy frontend source and public files
-COPY frontend/src/ ./frontend/src/
-COPY frontend/public/ ./frontend/public/
-COPY frontend/index.html frontend/dashboard.js frontend/index.css frontend/main.jsx ./frontend/
-
-# Build frontend
-RUN npm run build --prefix ./frontend
+# Copy the rest of the frontend files
+COPY frontend/ ./frontend/
 
 # Install browsers for Puppeteer/Playwright
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Copy public/ folder
-COPY public/ ./public/
-
-# Copy remaining config and meta files
-COPY .eslintrc.json .dockerignore .gitignore ./
+# Build frontend
+RUN npm run build --prefix ./frontend
 
 # Final stage
 FROM node:22.16.0
 
-# Install runtime dependencies for Puppeteer/Playwright
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
@@ -58,20 +54,13 @@ WORKDIR /app
 RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright ./public && \
     chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy all app files and build artifacts from builder stage
+# Copy all app files and build artifacts from the builder stage
 COPY --from=builder --chown=appuser:appuser /app /app
-
-# Copy frontend build output to backend public folder
-RUN if [ -d "./frontend/dist" ]; then \
-      cp -r frontend/dist/* public/; \
-    else \
-      echo "WARNING: frontend/dist directory not found"; \
-    fi
 
 # Switch to non-root user
 USER appuser
 
-# Expose port used by backend server
+# Expose the application port
 EXPOSE 3000
 
 # Start backend server
