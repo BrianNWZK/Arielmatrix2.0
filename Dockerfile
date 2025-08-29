@@ -7,36 +7,38 @@ RUN apt-get update && apt-get install -y \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy root package.json and other necessary files first
-COPY package.json ./
-COPY package-lock.json ./
-COPY hardhat.config.js ./
-COPY tailwind.config.js ./
-COPY vite.config.js ./
-COPY public/index.html ./public/
+# Copy root backend files first (package.json, package-lock.json, server.js, backend folder, etc.)
+COPY package.json package-lock.json server.js hardhat.config.js config/ backend/ contracts/ scripts/ arielmatrix2.0/ ./
 
-# Now copy the rest of the project files
-COPY . .
-
-# Install dependencies
+# Install backend dependencies (assumes root package.json is for backend)
 RUN npm install
 
-# Install browsers for Puppeteer and Playwright
+# Copy frontend folder separately and install its dependencies
+COPY frontend/package.json frontend/package-lock.json frontend/tailwind.config.js frontend/vite.config.js frontend/ ./frontend/
+RUN npm install --prefix ./frontend
+
+# Copy rest of frontend source and public files
+COPY frontend/src/ ./frontend/src/
+COPY frontend/public/ ./frontend/public/
+COPY frontend/index.html frontend/dashboard.js frontend/index.css frontend/main.jsx frontend/dashboard.js ./frontend/
+
+# Install browsers for Puppeteer/Playwright
 RUN npx puppeteer browsers install chrome
 RUN npx playwright install chromium --with-deps
 
-# Build frontend if package.json exists in the frontend directory
-RUN if [ -f "./frontend/package.json" ]; then \
-      npm install --prefix ./frontend && npm run build --prefix ./frontend; \
-    fi
+# Build frontend
+RUN npm run build --prefix ./frontend
+
+# Copy rest of root-level files not yet copied (public/, config files, etc.)
+COPY public/ ./public/
+COPY .eslintrc.json .dockerignore .gitignore ./
 
 # Final stage
 FROM node:22.16.0
 
-# Install runtime dependencies
+# Install runtime dependencies for Puppeteer/Playwright
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
@@ -45,25 +47,26 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd -m appuser
 
-# Set working directory
 WORKDIR /app
 
-# Prepare cache directories and app folder permissions
-RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright && \
+# Prepare cache and public directories with correct ownership
+RUN mkdir -p /home/appuser/.cache/puppeteer /home/appuser/.cache/ms-playwright ./public && \
     chown -R appuser:appuser /app /home/appuser/.cache
 
-# Copy build artifacts from builder stage
+# Copy all app files and build artifacts from builder stage
 COPY --from=builder --chown=appuser:appuser /app /app
 
-# Copy frontend build output to public folder if exists
+# Copy frontend build output to backend public folder
 RUN if [ -d "./frontend/dist" ]; then \
-      mkdir -p ./public && cp -r frontend/dist/* public/; \
+      cp -r frontend/dist/* public/; \
+    else \
+      echo "WARNING: frontend/dist directory not found"; \
     fi
 
 # Switch to non-root user
 USER appuser
 
-# Expose application port
+# Expose port used by backend server (adjust if needed)
 EXPOSE 3000
 
 # Start backend server
