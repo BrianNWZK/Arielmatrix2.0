@@ -1,33 +1,29 @@
 #!/bin/bash
-echo "🌌 QRDE BOOT: $(date)"
+echo "🚀 Live Boot: $(date)"
 echo "🧠 Node: $(node --version)"
 echo "🔧 SQLite: $(sqlite3 --version 2>/dev/null || echo 'Ready')"
 
-# AI-Agentic Dependency Check (uses autonomous-core.js logic)
+chmod +x ./scripts/*.sh || echo "Perms set"
+
 quantum_check_dep() {
     local dep=$1
-    node -e "import('$dep').then(() => console.log('✅ $dep')).catch(() => process.exit(1))" || {
-        echo "⚡ Auto-installing $dep"
-        npm install "$dep" --no-save --no-audit
-    }
+    node -e "import('$dep').then(() => console.log('✅ $dep')).catch(() => { console.error('⚡ Installing $dep'); process.exit(1) })" || npm install "$dep" --no-save --no-audit
 }
 
 quantum_check_dep "express"
 quantum_check_dep "ethers"
 quantum_check_dep "ccxt"
 quantum_check_dep "@tensorflow/tfjs-node"
+quantum_check_dep "googleapis"
 
-# Blockchain Validation (novel: query contract for config)
 if [ -f "backend/blockchain/BrianNwaezikeChain.js" ]; then
-    echo "⛓️ Validating blockchain state"
-    node -e "import { ethers } from 'ethers'; const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || 'https://rpc.example.com'); provider.getBlockNumber().then(n => console.log('✅ Block:', n)).catch(e => console.error('⚠️ Blockchain error:', e.message))"
+    echo "⛓️ Real Blockchain Validation"
+    node -e "import { ethers } from 'ethers'; const provider = new ethers.JsonRpcProvider('https://rpc.ankr.com/eth'); provider.getBlockNumber().then(n => console.log('✅ Block:', n)).catch(e => console.error('Error:', e.message))"
 fi
 
-# Run fix scripts
 ./scripts/prepare-build.sh && ./scripts/verify-docker-build.sh && ./scripts/fix-structure.sh && ./scripts/cleanup-conflicts.sh
 
-# Quantum Startup (fallbacks to AI agent)
-entry_points=("main.js" "serviceManager.js" "server.js")
+entry_points=("main.js" "serviceManager.js" "server.js" "scripts/live-revenue-server.js")
 for ep in "${entry_points[@]}"; do
     if [ -f "$ep" ]; then
         echo "🎯 Launching $ep"
@@ -35,6 +31,5 @@ for ep in "${entry_points[@]}"; do
     fi
 done
 
-# Ultimate Fallback: Autonomous AI Server
-echo "🌠 Activating QRDE AI Fallback"
-exec node scripts/quantum-autonomous-server.js
+echo "🌠 Activating Live Fallback"
+exec node scripts/live-revenue-server.js
