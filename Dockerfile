@@ -12,19 +12,19 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy and install backend dependencies first
-COPY ./backend/package.json ./backend/package.json
+# Copy all project files, including both package.json files
+COPY . .
+
+# Install backend dependencies first
 WORKDIR /app/backend
 RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Copy and install frontend dependencies
+# Install frontend dependencies and build assets
 WORKDIR /app/frontend
-COPY ./frontend/package.json ./frontend/package.json
 RUN npm install --prefer-offline --no-audit && npm run build
 
-# Copy the rest of the project files
+# Switch back to the main working directory
 WORKDIR /app
-COPY . .
 
 # Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
