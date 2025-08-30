@@ -11,35 +11,31 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-RUN mkdir -p \
-    config scripts contracts public public/scripts \
-    frontend frontend/public frontend/public/assets \
-    frontend/src frontend/src/components frontend/src/styles \
-    backend backend/agents backend/blockchain backend/contracts backend/database \
-    arielsql_suite data arielmatrix2.0
-
-# Add all dependencies to package.json from the project root
-# This conditional logic ensures the build doesn't fail if package.json is in a subdirectory
-COPY package.json ./ || true
-
-# Install dependencies once in the builder stage
-RUN npm install --prefer-offline --no-audit --ignore-optional
-
-# Copy all project files, including the scripts directory
+# Copy all project files, including both package.json files
 COPY . .
 
-# Build frontend if it exists
-RUN if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then cd frontend && npm install --no-audit && npm run build && cd ..; fi
+# Install backend dependencies
+WORKDIR /app/backend
+RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Install OS dependencies for specific npm packages
-RUN npx puppeteer@24.16.0 install --with-deps || true
-RUN npx playwright@1.48.2 install chromium --with-deps || true
+# Install frontend dependencies and build assets
+WORKDIR /app/frontend
+RUN npm install --prefer-offline --no-audit && npm run build
 
-# Rebuild native modules
+# Switch back to the main working directory
+WORKDIR /app
+
+# Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
 RUN if npm list better-sqlite3 >/dev/null 2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
-# Ensure scripts are executable
+# Install Python dependencies
+RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt; fi
+
+# Configure Hardhat
+RUN if ls hardhat.config.js >/dev/null 2>&1; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
+
+# Ensure shell scripts are executable
 RUN chmod -R +x scripts/*.sh || true
 
 # Runtime stage
