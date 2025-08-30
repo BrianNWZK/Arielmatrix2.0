@@ -1,4 +1,5 @@
-# KEEP ONLY WHAT'S ESSENTIAL FOR QUANTUM OPERATION
+# Quantum Ignore: Exclude all but essentials
+*
 !package.json
 !package-lock.json
 !arielsql_suite/
@@ -7,6 +8,7 @@
 !scripts/
 !contracts/
 !public/
-
-# EXCLUDE EVERYTHING ELSE - QUANTUM SYSTEM WILL HANDLE THE REST
-*
+!data/schema.sql
+!data/init.db
+!requirements.txt
+!hardhat.config.js
