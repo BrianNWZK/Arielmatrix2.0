@@ -1,66 +1,75 @@
 # syntax=docker/dockerfile:1.4
 
-FROM node:22.16.0-slim
+# Builder stage: A robust build environment for heavy tasks.
+FROM node:22.16.0 AS arielmatrix_builder
 
-# Install system dependencies for AI, blockchain, and ad revenue
+# === SYSTEM DEPENDENCY GUARANTEE ===
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
-    python3 sqlite3 curl git build-essential \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    python3 python3-pip python3-venv build-essential sqlite3 libsqlite3-dev \
+    git curl \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
 
 WORKDIR /app
 
-# Create package.json if missing with ArielMatrix dependencies
-RUN if [ ! -f "package.json" ]; then \
-    echo '{"name": "arielmatrix", "version": "1.0.0", "type": "module", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "dotenv": "^16.4.5", "ethers": "^6.13.2", "ccxt": "^4.4.0", "sqlite3": "^5.1.7", "better-sqlite3": "^9.4.3", "puppeteer": "^24.16.0", "playwright": "^1.48.2", "cors": "^2.8.5", "@tensorflow/tfjs-node": "^4.22.0", "googleapis": "^140.0.1", "node-forge": "^1.3.1", "async-mutex": "^0.4.1", "@nomicfoundation/hardhat-toolbox": "^5.0.0", "@openzeppelin/contracts": "^5.0.2"}}' > package.json; \
-    echo "🌌 Created ArielMatrix package.json"; \
-fi
+# === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
+# Copy backend dependencies first for better caching
+COPY ./backend/package.json ./backend/
+WORKDIR /app/backend
+RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Copy package.json files
-COPY package*.json ./
-COPY frontend/package*.json ./frontend/ 2>/dev/null || echo "⚠️ No frontend package.json"
-COPY backend/package*.json ./backend/ 2>/dev/null || echo "⚠️ No backend package.json"
+# Copy frontend dependencies and build assets
+WORKDIR /app/frontend
+COPY ./frontend/package.json ./frontend/
+RUN npm install --prefer-offline --no-audit && npm run build
 
-# Install dependencies at build-time (avoids fsevents EACCES)
-RUN npm install --prefer-offline --no-audit --ignore-optional --progress=false && \
-    if [ -f "frontend/package.json" ]; then cd frontend && npm install --prefer-offline --no-audit --progress=false && cd ..; fi && \
-    if [ -f "backend/package.json" ]; then cd backend && npm install --prefer-offline --no-audit --progress=false && cd ..; fi && \
-    npm cache clean --force
-
-# Copy application
+# Switch back to the main working directory
+WORKDIR /app
+# Copy the rest of the application files
 COPY . .
 
-# Set permissions for node user
-RUN chmod -R 755 /app && \
-    find /app -name "*.sh" -exec chmod +x {} \; && \
-    find /app -name "*.js" -exec chmod 755 {} \; && \
-    mkdir -p /app/data && \
-    chown -R node:node /app && \
-    rm -rf /tmp/* /var/tmp/* /root/.npm
+# Rebuild native modules for the backend after all files are copied
+RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
+RUN if npm list better-sqlite3 >/dev/null 2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
-# Install Hardhat for blockchain
-RUN npm install -g hardhat@2.22.2
+# Install Python dependencies
+RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt; fi
 
-# Build frontend (if exists)
-RUN if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then cd frontend && npm run build && cd ..; fi
+# Configure Hardhat
+RUN if [ -f "hardhat.config.js" ]; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
 
-# Install browser dependencies
-RUN npx puppeteer@24.16.0 install --with-deps || true && \
-    npx playwright@1.48.2 install chromium --with-deps || true
+# Ensure scripts are executable
+RUN chmod -R +x scripts/*.sh || true
 
+# === Runtime stage: A lightweight container for the final application. ===
+FROM node:22.16.0-slim AS arielmatrix_runtime
+
+# === SYSTEM DEPENDENCY GUARANTEE ===
+RUN apt-get update && apt-get install -y \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
+    python3 sqlite3 curl \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+WORKDIR /app
+
+# Copy the application from the builder stage
+COPY --from=arielmatrix_builder /app /app
+
+# Ensure correct permissions
+RUN chown -R node:node /app
 USER node
 
-EXPOSE 3000
-
-# Healthcheck for port 3000
-HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
-    CMD curl -f http://localhost:3000/health || exit 1
-
-# Entrypoint
-ENTRYPOINT ["node", "scripts/quantum-entrypoint.js"]
-
+# === AUTONOMOUS AI ENVIRONMENT SETUP ===
 ENV NODE_ENV=production
 ENV AUTONOMOUS_AI=true
 ENV QUANTUM_MODE=enabled
+
+# === EXPOSE PORT & HEALTHCHECK ===
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# === QUANTUM ENTRYPOINT ===
+ENTRYPOINT ["node", "/app/scripts/quantum-entrypoint.js"]
