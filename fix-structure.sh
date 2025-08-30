@@ -41,11 +41,11 @@ mkdir -p \
 # Create essential files if missing
 echo "📝 Creating essential files..."
 
-# Main package.json
+# Main package.json with critical dependencies for agents and blockchain
 if [ ! -f "package.json" ]; then
     cat > package.json << 'EOF'
 {
-  "name": "arielsql-alltimate",
+  "name": "arielsql-suite",
   "version": "1.0.0",
   "type": "module",
   "engines": {
@@ -62,13 +62,20 @@ if [ ! -f "package.json" ]; then
   },
   "dependencies": {
     "express": "^4.21.0",
-    "axios": "^1.7.7"
+    "axios": "^1.7.7",
+    "ethers": "^5.7.2",
+    "ccxt": "^4.4.0",
+    "sqlite3": "^5.1.7",
+    "puppeteer": "^24.16.0",
+    "playwright": "^1.48.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5"
   },
   "license": "MIT",
   "private": true
 }
 EOF
-    echo "✅ Created package.json"
+    echo "✅ Created package.json with critical dependencies"
 else
     echo "✅ package.json already exists"
 fi
@@ -216,7 +223,7 @@ EOF
     echo "✅ Created server.js fallback"
 fi
 
-# Environment example
+# Environment example with blockchain/AI vars
 if [ ! -f ".env.example" ]; then
     cat > .env.example << 'EOF'
 # ArielSQL Ultimate Configuration
@@ -230,6 +237,8 @@ LITESTREAM_REPLICA_URL=
 # Blockchain Configuration
 ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/your-infura-key
 SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+REVENUE_CONTRACT_ADDRESS=0xYourContractAddress
+PAYOUT_THRESHOLD=1000000000000000000
 PRIVATE_KEY=your-private-key-here
 
 # API Keys (replace with your actual keys)
@@ -248,7 +257,28 @@ ENABLE_BLOCKCHAIN=true
 ENABLE_AI_ANALYTICS=true
 ENABLE_AUTOMATED_TRADING=false
 EOF
-    echo "✅ Created .env.example"
+    echo "✅ Created .env.example with blockchain/AI vars"
+else
+    echo "✅ .env.example already exists"
+fi
+
+# Database schema for agent_payouts_log
+if [ ! -f "data/schema.sql" ]; then
+    cat > data/schema.sql << 'EOF'
+CREATE TABLE IF NOT EXISTS agent_payouts_log (
+    payout_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    description TEXT,
+    transaction_id TEXT,
+    agent_type TEXT,
+    metadata TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+    echo "✅ Created data/schema.sql for agent_payouts_log"
+else
+    echo "✅ data/schema.sql already exists"
 fi
 
 # Generate package-lock.json for better Docker caching
@@ -258,6 +288,22 @@ if [ ! -f "package-lock.json" ]; then
     echo "✅ Created package-lock.json"
 else
     echo "✅ package-lock.json already exists"
+fi
+
+# Novel: Validate critical dependencies
+echo "🔍 Validating critical dependencies..."
+if [ -f "package.json" ]; then
+    for dep in express axios ethers ccxt sqlite3 puppeteer playwright; do
+        if ! grep -q "\"$dep\":" package.json; then
+            echo "⚠️ Adding missing dependency: $dep"
+            npm install "$dep" --save --no-audit
+        else
+            echo "✅ Dependency $dep found in package.json"
+        fi
+    done
+else
+    echo "❌ package.json missing after creation, check earlier steps"
+    exit 1
 fi
 
 # Set proper permissions
