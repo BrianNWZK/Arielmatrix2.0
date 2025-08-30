@@ -19,10 +19,10 @@ RUN mkdir -p \
     arielsql_suite data arielmatrix2.0
 
 RUN if ls package*.json >/dev/null 2>&1; then cp package*.json ./; \
-    else echo '{"name": "arielsql-qraf", "version": "1.0.0", "type": "module", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "ethers": "^5.7.2", "web3": "^4.5.0", "ccxt": "^4.4.0", "sqlite3": "^5.1.7", "better-sqlite3": "^9.4.3", "puppeteer": "^24.16.0", "playwright": "^1.48.2", "cors": "^2.8.5", "dotenv": "^16.4.5", "@tensorflow/tfjs-node": "^4.22.0", "googleapis": "^140.0.1", "node-forge": "^1.3.1"}}' > package.json; fi
+    else echo '{"name": "arielsql-qraf", "version": "1.0.0", "type": "module", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "ethers": "^5.7.2", "web3": "^4.5.0", "ccxt": "^4.4.0", "sqlite3": "^5.1.7", "better-sqlite3": "^9.4.3", "puppeteer": "^24.16.0", "playwright": "^1.48.2", "cors": "^2.8.5", "dotenv": "^16.4.5", "@tensorflow/tfjs-node": "^4.22.0", "googleapis": "^140.0.1", "node-forge": "^1.3.1", "async-mutex": "^0.4.1"}}' > package.json; fi
 
 RUN npm install --prefer-offline --no-audit && \
-    npm install express@^4.21.0 axios@^1.7.7 dotenv*^16.4.5 ethers*^5.7.2 web3*^4.5.0 ccxt*^4.4.0 better-sqlite3*^9.4.3 @tensorflow/tfjs-node*^4.22.0 puppeteer*^24.16.0 playwright*^1.48.2 googleapis*^140.0.1 node-forge*^1.3.1 --save --no-audit || true
+    npm install express@^4.21.0 axios@^1.7.7 dotenv@^16.4.5 ethers@^5.7.2 web3@^4.5.0 ccxt@^4.4.0 better-sqlite3@^9.4.3 @tensorflow/tfjs-node@^4.22.0 puppeteer@^24.16.0 playwright@^1.48.2 googleapis@^140.0.1 node-forge@^1.3.1 async-mutex@^0.4.1 --save --no-audit || true
 
 RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt; fi
 RUN if ls hardhat.config.js >/dev/null 2>&1; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
