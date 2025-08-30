@@ -13,7 +13,8 @@ class QRAFLiveCore {
         this.app = express();
         this.app.use(express.json());
         this.providers = [
-            new ethers.providers.JsonRpcProvider(`https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY}`),
+            new ethers.providers.JsonRpcProvider(`https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY || 'none'}`),
+            new ethers.providers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY || 'none'}`),
             new ethers.providers.JsonRpcProvider('https://rpc.ankr.com/eth')
         ];
         this.web3 = new Web3(process.env.INFURA_API_KEY ? `https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY}` : 'https://rpc.ankr.com/eth');
@@ -24,7 +25,7 @@ class QRAFLiveCore {
             this.wallet
         );
         this.adsense = google.adsense({ version: 'v2', auth: process.env.GOOGLE_API_KEY });
-        this.exchange = new ccxt.binance({ apiKey: process.env.BINANCE_API_KEY, secret: process.env.BINANCE_SECRET });
+        this.exchange = new ccxt.mexc({ apiKey: process.env.MEXC_API_KEY, secret: process.env.MEXC_SECRET_KEY });
         this.db = new Database('data/arielsql.db');
         this.setupDatabase();
         this.setupRoutes();
@@ -71,8 +72,8 @@ class QRAFLiveCore {
 
     async generateForexSignal() {
         try {
-            const ticker = await this.exchange.fetchTicker('EUR/USD');
-            const ohlcv = await this.exchange.fetchOHLCV('EUR/USD', '1h', undefined, 50);
+            const ticker = await this.exchange.fetchTicker('EUR/USDT');
+            const ohlcv = await this.exchange.fetchOHLCV('EUR/USDT', '1h', undefined, 50);
             const maShort = ohlcv.slice(-10).reduce((sum, candle) => sum + candle[4], 0) / 10;
             const maLong = ohlcv.slice(-50).reduce((sum, candle) => sum + candle[4], 0) / 50;
             const signal = maShort > maLong ? 'buy' : 'sell';
@@ -100,7 +101,6 @@ class QRAFLiveCore {
             console.log(`💰 Real Ad Earnings: ${earnings.totals ? earnings.totals[1] : 0}`);
         } catch (e) {
             console.error('Loop Error:', e.message);
-            // AI self-repair
             if (e.message.includes('network') && providerIndex < this.providers.length - 1) {
                 providerIndex++;
                 console.log(`🧠 Switching to provider ${providerIndex + 1}`);
