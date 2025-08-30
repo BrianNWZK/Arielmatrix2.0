@@ -1,5 +1,6 @@
 import express from 'express';
 import { ethers } from 'ethers';
+import Web3 from 'web3';
 import { google } from 'googleapis';
 import dotenv from 'dotenv';
 import ccxt from 'ccxt';
@@ -11,8 +12,12 @@ class QRAFLiveCore {
     constructor() {
         this.app = express();
         this.app.use(express.json());
-        this.provider = new ethers.providers.JsonRpcProvider('https://rpc.ankr.com/eth');
-        this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY || '0x0000000000000000000000000000000000000000000000000000000000000000', this.provider);
+        this.providers = [
+            new ethers.providers.JsonRpcProvider(`https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY}`),
+            new ethers.providers.JsonRpcProvider('https://rpc.ankr.com/eth')
+        ];
+        this.web3 = new Web3(process.env.INFURA_API_KEY ? `https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY}` : 'https://rpc.ankr.com/eth');
+        this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY || '0x0000000000000000000000000000000000000000000000000000000000000000', this.providers[0]);
         this.contract = new ethers.Contract(
             process.env.REVENUE_CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000',
             ['function getRevenue() view returns (uint256)', 'function distributeRevenue(address) external'],
@@ -80,10 +85,11 @@ class QRAFLiveCore {
     }
 
     async autonomousLoop() {
+        let providerIndex = 0;
         try {
-            const revenue = await this.contract.getRevenue();
+            const revenue = await this.contract.connect(this.providers[providerIndex]).getRevenue();
             if (revenue > ethers.utils.parseEther(process.env.PAYOUT_THRESHOLD || '0.1')) {
-                const tx = await this.contract.distributeRevenue(process.env.PAYMENT_ADDRESS);
+                const tx = await this.contract.connect(this.providers[providerIndex]).distributeRevenue(process.env.PAYMENT_ADDRESS);
                 await tx.wait();
                 this.db.prepare('INSERT INTO revenue_log (source, amount) VALUES (?, ?)').run('blockchain_payout', ethers.utils.formatEther(revenue));
                 console.log('💸 Real Payout:', tx.hash);
@@ -95,8 +101,11 @@ class QRAFLiveCore {
         } catch (e) {
             console.error('Loop Error:', e.message);
             // AI self-repair
-            if (e.message.includes('network')) {
-                console.log('🧠 Retrying after network error...');
+            if (e.message.includes('network') && providerIndex < this.providers.length - 1) {
+                providerIndex++;
+                console.log(`🧠 Switching to provider ${providerIndex + 1}`);
+            } else {
+                console.log('🧠 Retrying after error...');
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
