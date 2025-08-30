@@ -10,3 +10,7 @@
 !data/
 !requirements.txt
 !hardhat.config.js
+
+# Exclude node_modules everywhere (even if someone accidentally includes it)
+**/node_modules/
+**/.git/
