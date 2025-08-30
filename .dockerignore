@@ -7,7 +7,6 @@
 !scripts/
 !contracts/
 !public/
-!data/schema.sql
-!data/init.db
+!data/
 !requirements.txt
 !hardhat.config.js
