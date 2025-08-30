@@ -1,16 +1,3 @@
-*
-!package.json
-!package-lock.json
-!arielsql_suite/
-!backend/
-!config/
-!scripts/
-!contracts/
-!public/
-!data/
-!requirements.txt
-!hardhat.config.js
-
-# Exclude node_modules everywhere (even if someone accidentally includes it)
-**/node_modules/
-**/.git/
+node_modules/
+.git/
+.env
