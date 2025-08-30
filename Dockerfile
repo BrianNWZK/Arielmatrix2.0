@@ -28,17 +28,9 @@ RUN mkdir -p \
     backend/contracts \
     backend/database
 
-# Copy package files if they exist, or create minimal package.json
-RUN if ls package*.json >/dev/null 2>&1; then \
-        echo "📦 Copying existing package.json files..."; \
-        cp package*.json .; \
-    else \
-        echo "ℹ️ No package.json found, creating minimal one..."; \
-        echo '{"name": "arielsql-suite", "version": "1.0.0", "type": "module", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "ethers": "^5.7.2", "ccxt": "^4.4.0", "sqlite3": "^5.1.7", "puppeteer": "^24.16.0", "playwright": "^1.48.2"}}' > package.json; \
-    fi
-
-# Copy frontend package files
-COPY frontend/package*.json ./frontend/ || true
+# Copy package files first for caching
+COPY package*.json ./
+COPY frontend/package*.json ./frontend/
 
 # Novel: Create minimal backend/package.json if missing (for future sub-project isolation)
 RUN mkdir -p backend && \
@@ -57,6 +49,7 @@ RUN echo "🔍 Checking and installing missing dependencies..." && \
     echo "try { require.resolve('express'); } catch (e) { process.exit(1); }" > check_express.js && \
     if ! node check_express.js; then npm install express@^4.21.0 --save; fi && \
     rm check_express.js && \
+    # Add others based on project needs (from agents: axios for APIs, ethers for blockchain, ccxt for crypto/forex)
     npm install axios@^1.7.7 ethers@^5.7.2 ccxt@^4.4.0 sqlite3@^5.1.7 puppeteer@^24.16.0 playwright@^1.48.2 --save || true
 
 # Install Python dependencies if requirements.txt exists
