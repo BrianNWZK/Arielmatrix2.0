@@ -212,6 +212,9 @@ frontend/.nuxt/
 data/*.db
 data/*.sqlite
 !data/ # Keep data directory but exclude database files
+# Allow DB schema seeds but exclude runtime data
+!data/schema.sql
+!data/init.db
 
 # ========================
 # ARIELSQL ULTIMATE SPECIFIC
