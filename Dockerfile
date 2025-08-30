@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
-# Builder
-FROM node:22.16.0 AS builder
+# Builder stage
+FROM node:22.16.0 AS qraf_builder
 
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
@@ -19,7 +19,7 @@ RUN mkdir -p \
     arielsql_suite data arielmatrix2.0
 
 RUN if ls package*.json >/dev/null 2>&1; then cp package*.json ./; \
-    else echo '{"name": "arielsql-live", "version": "1.0.0", "type": "module", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "ethers": "^5.7.2", "ccxt": "^4.4.0", "sqlite3": "^5.1.7", "puppeteer": "^24.16.0", "playwright": "^1.48.2", "cors": "^2.8.5", "dotenv": "^16.4.5", "@tensorflow/tfjs-node": "^4.22.0", "googleapis": "^140.0.1"}}' > package.json; fi
+    else echo '{"name": "arielsql-qraf", "version": "1.0.0", "type": "module", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "ethers": "^5.7.2", "ccxt": "^4.4.0", "sqlite3": "^5.1.7", "puppeteer": "^24.16.0", "playwright": "^1.48.2", "cors": "^2.8.5", "dotenv": "^16.4.5", "@tensorflow/tfjs-node": "^4.22.0", "googleapis": "^140.0.1"}}' > package.json; fi
 
 RUN npm install --prefer-offline --no-audit && \
     npm install express@^4.21.0 axios@^1.7.7 dotenv@^16.4.5 ethers@^5.7.2 ccxt@^4.4.0 @tensorflow/tfjs-node@^4.22.0 puppeteer@^24.16.0 playwright@^1.48.2 googleapis@^140.0.1 --save --no-audit || true
@@ -36,8 +36,8 @@ RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorf
 
 RUN chmod +x scripts/*.sh
 
-# Runtime
-FROM node:22.16.0-slim AS runtime
+# Runtime stage
+FROM node:22.16.0-slim AS qraf_runtime
 
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY --from=builder /app /app
+COPY --from=qraf_builder /app /app
 
 RUN if [ -d "frontend/dist" ] || [ -d "frontend/build" ]; then mkdir -p public && cp -r frontend/dist/* public/ || cp -r frontend/build/* public/; fi
 RUN rm -rf /app/.npm /app/.cache /tmp/* /var/tmp/* /app/frontend/node_modules && mkdir -p /app/data && chown -R node:node /app/data
@@ -59,4 +59,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
     CMD curl -f http://localhost:3000/health || exit 1
 
-ENTRYPOINT ["sh", "-c", "chmod +x ./scripts/*.sh && ./scripts/quantum-entrypoint.sh"]
+ENTRYPOINT ["sh", "-c", "chmod +x ./scripts/*.sh && ./scripts/quantum-entrypoint.sh || bash -c 'source ./scripts/quantum-entrypoint.sh'"]
