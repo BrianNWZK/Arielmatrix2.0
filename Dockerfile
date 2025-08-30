@@ -3,6 +3,7 @@
 # Builder stage
 FROM node:22.16.0 AS qraf_builder
 
+# Install core build dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
@@ -11,19 +12,19 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy all project files, including both package.json files
-COPY . .
-
-# Install backend dependencies
+# Copy and install backend dependencies first
+COPY ./backend/package.json ./backend/package.json
 WORKDIR /app/backend
 RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Install frontend dependencies and build assets
+# Copy and install frontend dependencies
 WORKDIR /app/frontend
+COPY ./frontend/package.json ./frontend/package.json
 RUN npm install --prefer-offline --no-audit && npm run build
 
-# Switch back to the main working directory
+# Copy the rest of the project files
 WORKDIR /app
+COPY . .
 
 # Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
