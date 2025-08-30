@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-# Builder stage: A robust build environment for heavy tasks.
+# Builder stage: A robust build environment for all build tasks.
 FROM node:22.16.0 AS arielmatrix_builder
 
 # === SYSTEM DEPENDENCY GUARANTEE ===
@@ -13,23 +13,28 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
-# Copy backend dependencies first for better caching
-COPY ./backend/package.json ./backend/
+# === BUILD BACKEND ===
+# Copy backend-specific files first for efficient caching
+COPY ./backend/package.json ./backend/package.json
+COPY ./backend/package-lock.json ./backend/package-lock.json
 WORKDIR /app/backend
 RUN npm install --prefer-offline --no-audit --ignore-optional
+COPY ./backend/ . ./backend/
 
-# Copy frontend dependencies and build assets
+# === BUILD FRONTEND ===
 WORKDIR /app/frontend
-COPY ./frontend/package.json ./frontend/
-RUN npm install --prefer-offline --no-audit && npm run build
+# Copy frontend-specific files first for efficient caching
+COPY ./frontend/package.json ./frontend/package.json
+COPY ./frontend/package-lock.json ./frontend/package-lock.json
+RUN npm install --prefer-offline --no-audit
+COPY ./frontend/ . ./frontend/
+RUN npm run build
 
-# Switch back to the main working directory
+# === BUILD REST OF THE APP ===
 WORKDIR /app
-# Copy the rest of the application files
 COPY . .
 
-# Rebuild native modules for the backend after all files are copied
+# Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
 RUN if npm list better-sqlite3 >/dev/null 2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
@@ -54,7 +59,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy the application from the builder stage
+# Copy the built application from the builder stage
 COPY --from=arielmatrix_builder /app /app
 
 # Ensure correct permissions
