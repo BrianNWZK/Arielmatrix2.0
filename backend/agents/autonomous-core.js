@@ -1,4 +1,11 @@
-import serviceManager from '../service-manager.js';
+import { ethers } from 'ethers';
+import serviceManager from '../serviceManager.js';
+import payoutAgent from './payoutAgent.js';
+
+// Minimal ABI for RevenueDistributor.sol (assumed based on project context)
+const REVENUE_DISTRIBUTOR_ABI = [
+  "function getRevenue() external view returns (uint256)"
+];
 
 class AutonomousAgentCore {
     constructor(agentType) {
@@ -6,6 +13,13 @@ class AutonomousAgentCore {
         this.bwaeziChain = null;
         this.payoutSystem = null;
         this.agentId = `agent_${agentType}_${Math.random().toString(36).substr(2, 9)}`;
+        this.provider = new ethers.JsonRpcProvider(process.env.RPC_URL || 'https://rpc.example.com');
+        this.contract = new ethers.Contract(
+            process.env.REVENUE_CONTRACT_ADDRESS || '0xContractAddr',
+            REVENUE_DISTRIBUTOR_ABI,
+            this.provider
+        );
+        this.threshold = parseFloat(process.env.PAYOUT_THRESHOLD || '1000'); // Revenue threshold in wei
     }
 
     async initialize() {
@@ -13,6 +27,8 @@ class AutonomousAgentCore {
             this.bwaeziChain = serviceManager.getBwaeziChain();
             this.payoutSystem = serviceManager.getPayoutSystem();
         }
+        // Start autonomous loop after initialization
+        this.startAutonomousLoop();
         return true;
     }
 
@@ -80,7 +96,6 @@ class AutonomousAgentCore {
         return agentType ? result[0]?.total_earnings || 0 : result;
     }
 
-    // Autonomous decision making for payouts
     async calculateAutonomousPayout(baseAmount, factors = {}) {
         const {
             userLoyalty = 1.0,
@@ -99,6 +114,54 @@ class AutonomousAgentCore {
 
         // Ensure minimum payout
         return Math.max(0.001, calculatedAmount);
+    }
+
+    // Autonomous loop for blockchain-based revenue checks
+    async autonomousLoop() {
+        try {
+            const revenue = await this.contract.getRevenue();
+            console.log(`📊 ${this.agentType}: Current revenue: ${ethers.formatEther(revenue)} ETH`);
+            if (revenue > this.threshold) {
+                await this.triggerPayout();
+            }
+        } catch (error) {
+            console.error(`❌ ${this.agentType}: Autonomous loop error:`, error);
+            // Exponential backoff retry (max 5 attempts)
+            const retryDelay = Math.min(60000 * Math.pow(2, this.retryCount || 1), 300000);
+            this.retryCount = (this.retryCount || 0) + 1;
+            if (this.retryCount <= 5) {
+                console.log(`🔄 ${this.agentType}: Retrying in ${retryDelay / 1000}s...`);
+                setTimeout(() => this.autonomousLoop(), retryDelay);
+                return;
+            }
+            console.error(`❌ ${this.agentType}: Max retries reached, pausing loop.`);
+        }
+        // Reset retry count on success
+        this.retryCount = 0;
+        setTimeout(() => this.autonomousLoop(), 60000); // Poll every 60s
+    }
+
+    async triggerPayout() {
+        try {
+            // Example payout: adjust userId and amount as needed
+            const userId = 'system-user'; // Configurable via env or serviceManager
+            const amount = await this.calculateAutonomousPayout(0.1, {
+                userLoyalty: 1.2,
+                marketConditions: 1.1,
+                performanceMultiplier: 1.0,
+                agentPriority: 1.0
+            });
+            await payoutAgent.processPayout(userId, amount, 'Revenue-based payout', { source: 'autonomousLoop' });
+            console.log(`💸 ${this.agentType}: Triggered payout of ${amount} BWAEZI to ${userId}`);
+        } catch (error) {
+            console.error(`❌ ${this.agentType}: Payout trigger failed:`, error);
+            throw error;
+        }
+    }
+
+    startAutonomousLoop() {
+        console.log(`🚀 ${this.agentType}: Starting autonomous revenue loop...`);
+        this.autonomousLoop();
     }
 }
 
