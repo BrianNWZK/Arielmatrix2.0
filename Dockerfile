@@ -31,7 +31,13 @@ RUN mkdir -p \
 # Copy package files first for caching
 COPY package*.json ./
 COPY frontend/package*.json ./frontend/
-COPY backend/package*.json ./backend/ || true  # Fallback if backend/package.json missing
+
+# Novel: Create minimal backend/package.json if missing (for future sub-project isolation)
+RUN mkdir -p backend && \
+    if [ ! -f "backend/package.json" ]; then \
+        echo '{"name": "arielsql-backend", "version": "1.0.0", "dependencies": {}}' > backend/package.json; \
+        echo "ℹ️ Created minimal backend/package.json"; \
+    fi
 
 # Install root dependencies with fallback
 RUN echo "📦 Installing dependencies..." && \
