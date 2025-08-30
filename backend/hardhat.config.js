@@ -5,7 +5,7 @@ module.exports = {
     solidity: "0.8.20",
     networks: {
         mainnet: {
-            url: "https://rpc.ankr.com/eth",
+            url: `https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY}`,
             accounts: [process.env.PRIVATE_KEY]
         }
     }
