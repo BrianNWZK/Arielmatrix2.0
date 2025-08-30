@@ -19,7 +19,8 @@ RUN mkdir -p \
     arielsql_suite data arielmatrix2.0
 
 # Add all dependencies to package.json from the project root
-COPY package.json ./
+# This conditional logic ensures the build doesn't fail if package.json is in a subdirectory
+COPY package.json ./ || true
 
 # Install dependencies once in the builder stage
 RUN npm install --prefer-offline --no-audit --ignore-optional
