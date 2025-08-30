@@ -13,26 +13,20 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# === BUILD BACKEND ===
-# Copy backend-specific files first for efficient caching
-COPY ./backend/package.json ./backend/package.json
-COPY ./backend/package-lock.json ./backend/package-lock.json
+# === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
+# Copy all project files into the container.
+COPY . .
+
+# Build backend dependencies
 WORKDIR /app/backend
 RUN npm install --prefer-offline --no-audit --ignore-optional
-COPY ./backend/ . ./backend/
 
-# === BUILD FRONTEND ===
+# Build frontend dependencies and assets
 WORKDIR /app/frontend
-# Copy frontend-specific files first for efficient caching
-COPY ./frontend/package.json ./frontend/package.json
-COPY ./frontend/package-lock.json ./frontend/package-lock.json
-RUN npm install --prefer-offline --no-audit
-COPY ./frontend/ . ./frontend/
-RUN npm run build
+RUN npm install --prefer-offline --no-audit && npm run build
 
-# === BUILD REST OF THE APP ===
+# Switch back to the main working directory
 WORKDIR /app
-COPY . .
 
 # Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
