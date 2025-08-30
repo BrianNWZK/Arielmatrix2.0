@@ -3,7 +3,7 @@
 # Builder stage
 FROM node:22.16.0 AS builder
 
-# Install system dependencies for headless browsers, blockchain tools, and SQLite
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
@@ -14,7 +14,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Create essential directories first to avoid conflicts
+# Copy package files first for better caching
+COPY package*.json ./
+
+# Create essential directories
 RUN mkdir -p \
     config \
     scripts \
@@ -22,103 +25,26 @@ RUN mkdir -p \
     public \
     arielmatrix2.0 \
     frontend \
-    backend/agents \
-    backend/blockchain \
-    backend/database \
-    backend/contracts \
-    public/scripts \
-    frontend/public \
-    frontend/src \
-    frontend/src/components \
-    frontend/src/styles \
+    backend \
     arielsql_suite \
     data
 
-# Copy package files first for better caching
-COPY package*.json ./
-
-# Create a minimal package.json if it doesn't exist
-RUN if [ ! -f "package.json" ]; then \
-    echo '{"name": "arielsql-alltimate", "version": "1.0.0", "type": "module", "dependencies": {}}' > package.json; \
-    echo "ℹ️ Created minimal package.json"; \
-fi
-
-# Create backend package.json if it doesn't exist
-RUN if [ ! -f "backend/package.json" ]; then \
-    echo '{"name": "arielsql-backend", "version": "1.0.0"}' > backend/package.json; \
-    echo "ℹ️ Created backend/package.json"; \
-fi
-
-# Copy backend package files if they exist
-COPY backend/package*.json ./backend/
-
-# Install root dependencies with better error handling
+# Install dependencies
 RUN echo "📦 Installing dependencies..." && \
     if [ -f "package.json" ]; then \
-        if [ -f "package-lock.json" ]; then \
-            echo "✅ Using package-lock.json for npm ci"; \
-            npm ci --prefer-offline --no-audit --progress=false || \
-            (echo "⚠️ npm ci failed, falling back to npm install" && npm install --prefer-offline --no-audit --progress=false); \
-        else \
-            echo "ℹ️ No package-lock.json found, using npm install"; \
-            npm install --prefer-offline --no-audit --progress=false; \
-        fi \
-    else \
-        echo "❌ No package.json found! Creating minimal one and installing..."; \
-        echo '{"name": "arielsql-alltimate", "version": "1.0.0", "dependencies": {"express": "^4.21.0", "axios": "^1.7.7", "dotenv": "^16.4.5"}}' > package.json; \
         npm install --prefer-offline --no-audit --progress=false; \
+    else \
+        echo "❌ No package.json found!"; \
+        exit 1; \
     fi
-
-# Verify node_modules was created
-RUN if [ -d "node_modules" ]; then \
-    echo "✅ node_modules created successfully ($(du -sh node_modules | cut -f1))"; \
-    ls node_modules | head -10; \
-else \
-    echo "❌ node_modules directory not found! Creating empty one..."; \
-    mkdir -p node_modules; \
-    echo '{}' > node_modules/placeholder.json; \
-fi
-
-# Install Python dependencies for arielmatrix2.0 (if exists)
-RUN if [ -f "arielmatrix2.0/requirements.txt" ]; then \
-    echo "🐍 Installing Python dependencies..."; \
-    pip3 install -r arielmatrix2.0/requirements.txt; \
-else \
-    echo "ℹ️ No Python requirements found"; \
-fi
-
-# Install blockchain dependencies (Hardhat)
-RUN if [ -f "hardhat.config.js" ] || [ -f "arielmatrix2.0/hardhat.config.js" ]; then \
-    echo "⛓️ Installing blockchain dependencies..."; \
-    npm install -g hardhat; \
-    npm install @nomiclabs/hardhat-waffle ethereum-waffle chai @nomiclabs/hardhat-ethers ethers; \
-fi
 
 # Copy all source files
 COPY --chown=node:node . .
 
-# Frontend build process (if exists)
-RUN if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then \
-    echo "🏗️ Building frontend..."; \
-    cd frontend && npm install --no-audit --no-fund --silent && npm run build; \
-else \
-    echo "ℹ️ Frontend not found or no package.json, skipping build"; \
-fi
-
-# Install browser automation tools with specific versions matching package.json
-RUN npx puppeteer@24.16.0 install --with-deps 2>/dev/null || echo "⚠️ Puppeteer installation skipped"
-RUN npx playwright@1.48.2 install chromium --with-deps 2>/dev/null || echo "⚠️ Playwright installation skipped"
-
-# Build TensorFlow for Node.js (if needed)
-RUN if npm list @tensorflow/tfjs-node 2>/dev/null | grep -q tfjs-node; then \
-    echo "🧠 Building TensorFlow for Node.js..."; \
-    npm rebuild @tensorflow/tfjs-node --build-from-source; \
-fi
-
 # Final production stage
 FROM node:22.16.0-slim AS runtime
 
-# Install minimal runtime dependencies including SQLite
+# Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
     libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
@@ -131,42 +57,30 @@ RUN useradd -r -m -u 1001 appuser
 
 WORKDIR /app
 
-# Copy built artifacts from builder - FIXED: Handle missing node_modules
-RUN echo "📦 Copying application from builder..." && \
-    mkdir -p /tmp/build && \
-    # Copy everything from builder
-    cp -r /app /tmp/build/ 2>/dev/null || true && \
-    # Clean current directory
-    rm -rf /app/* /app/.* 2>/dev/null || true && \
-    # Move copied content back
-    mv /tmp/build/app/* /app/ 2>/dev/null || true && \
-    mv /tmp/build/app/.* /app/ 2>/dev/null || true && \
-    rm -rf /tmp/build && \
-    # Ensure node_modules exists
-    if [ ! -d "node_modules" ]; then \
-        echo "⚠️ node_modules not found, installing dependencies..."; \
-        npm install --production --prefer-offline --no-audit --progress=false; \
-    fi && \
-    # Set proper ownership
-    chown -R appuser:appuser /app
+# Copy package files
+COPY --from=builder --chown=appuser:appuser /app/package*.json ./
 
-# Move frontend build artifacts to public if they exist
-RUN if [ -d "./frontend/dist" ]; then \
-    mkdir -p ./public && cp -r ./frontend/dist/* ./public/; \
-    elif [ -d "./frontend/build" ]; then \
-    mkdir -p ./public && cp -r ./frontend/build/* ./public/; \
+# Copy only production node_modules (if they exist)
+RUN if [ -d "/app/node_modules" ]; then \
+    echo "✅ Copying node_modules from builder"; \
+    cp -r /app/node_modules .; \
+else \
+    echo "⚠️ node_modules not found in builder, installing production dependencies"; \
+    npm install --production --omit=dev --prefer-offline --no-audit --progress=false; \
 fi
 
-# Clean up unnecessary files but keep node_modules and essential files
+# Copy application source code
+COPY --from=builder --chown=appuser:appuser /app ./
+
+# Clean up development files
 RUN rm -rf \
-    /app/.npm \
-    /app/.cache \
-    /usr/local/share/.cache \
+    .npm \
+    .cache \
     /tmp/* \
     /var/tmp/*
 
-# Ensure proper permissions for SQLite databases
-RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
+# Ensure proper permissions
+RUN mkdir -p /app/data && chown -R appuser:appuser /app
 
 USER appuser
 
@@ -174,33 +88,20 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health >/dev/null 2>&1 || wget -q --spider http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:3000/health >/dev/null 2>&1 || exit 1
 
-# Start command optimized for your project structure
+# Start command
 CMD ["sh", "-c", \
     "echo '🚀 Starting ArielSQL Ultimate Suite...'; \
     echo '📦 Node.js version: $(node --version)'; \
-    echo '🐢 SQLite version: $(sqlite3 --version 2>/dev/null || echo \"Not available\")'; \
-    echo '📦 Node modules: $(ls node_modules 2>/dev/null | wc -l) packages'; \
-    \
     if [ -f 'arielsql_suite/main.js' ]; then \
-        echo '🎯 Starting main application: arielsql_suite/main.js'; \
+        echo '🎯 Starting main application'; \
         exec node arielsql_suite/main.js; \
     elif [ -f 'server.js' ]; then \
         echo '🎯 Starting server.js'; \
         exec node server.js; \
-    elif [ -f 'main.js' ]; then \
-        echo '🎯 Starting main.js'; \
-        exec node main.js; \
-    elif [ -f 'serviceManager.js' ]; then \
-        echo '🎯 Starting serviceManager.js'; \
-        exec node serviceManager.js; \
-    elif [ -f 'backend/server.js' ]; then \
-        echo '🎯 Starting backend/server.js'; \
-        exec node backend/server.js; \
     else \
-        echo '❌ No entry point found. Available JavaScript files:'; \
-        find . -name '*.js' -type f | head -20; \
+        echo '❌ No entry point found'; \
         echo '💤 Starting sleep to keep container alive...'; \
         exec sleep infinity; \
     fi"]
