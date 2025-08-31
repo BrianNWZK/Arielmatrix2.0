@@ -1,5 +1,5 @@
-// arielsql_suite/main.js
 import { ServiceManager } from './serviceManager.js';
+import http from 'http';
 
 /**
  * Main entry point for the ArielSQL Alltimate Suite.
@@ -97,7 +97,6 @@ function getDefaultConfig() {
 
 function startHealthServer() {
     try {
-        const http = require('http');
         const port = process.env.HEALTH_PORT || 8080;
         
         const server = http.createServer((req, res) => {
