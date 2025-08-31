@@ -19,13 +19,12 @@ WORKDIR /app
 # Copy all files from the current directory into the container's /app directory.
 COPY . .
 
-# Now, we install dependencies for the frontend and backend by moving into their directories.
-WORKDIR /app/frontend
-RUN npm install
-RUN npm run build
-WORKDIR /app/backend
-RUN npm install
-RUN npm run build
+# Install all dependencies from the unified package.json at the root
+RUN npm install --prefer-offline --no-audit --ignore-optional
+
+# Now, we build the frontend and backend using the scripts from the root package.json
+RUN npm run build:frontend
+RUN npm run build:backend
 WORKDIR /app
 
 # Rebuild native modules for the backend
