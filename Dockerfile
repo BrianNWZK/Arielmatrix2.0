@@ -25,8 +25,8 @@ RUN npm install --prefer-offline --no-audit --ignore-optional
 # Copy the rest of the application source code.
 COPY . .
 
-# Now, we build the frontend from the root directory.
-RUN npm run build:frontend
+# Now, we build the frontend and backend from the root directory.
+RUN npm run build
 
 # Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
