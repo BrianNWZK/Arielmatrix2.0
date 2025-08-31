@@ -1,162 +1,78 @@
-// =========================================================================
-// ArielSQL Autonomous AI Engine: The core decision-making unit for live networks.
-// =========================================================================
+# syntax=docker/dockerfile:1.4
 
-import { ethers } from 'ethers';
-import { Connection, clusterApiUrl } from '@solana/web3.js';
+# Builder stage: A robust build environment for all build tasks.
+FROM node:22.16.0 AS arielmatrix_builder
 
-/**
- * The AutonomousCore is a centralized, AI-driven agent that manages the
- * most critical real-time decisions for the ArielSQL suite.
- * Its primary function is to analyze live network conditions across
- * multiple blockchain providers and select the optimal one for transactions.
- */
-export class AutonomousCore {
-    constructor(config, logger, serviceManager) {
-        this.config = config;
-        this.logger = logger;
-        this.serviceManager = serviceManager;
-        this.networkConnections = {};
-        this.isInitialized = false;
-        this.currentProvider = null;
-        this.agentId = `agent_autonomous_core_${Math.random().toString(36).substr(2, 9)}`;
-    }
+# === SYSTEM DEPENDENCY GUARANTEE ===
+# Install all system dependencies needed for building native modules and running AI
+RUN apt-get update && apt-get install -y \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
+    python3 python3-pip python3-venv build-essential sqlite3 \
+    libsqlite3-dev git curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-    /**
-     * Initializes the AutonomousCore by establishing connections to all
-     * available blockchain networks.
-     */
-    async initialize() {
-        this.logger.info('🧠 Initializing Autonomous AI Engine...');
-        try {
-            // Establish connections to different blockchain networks
-            this.networkConnections.ethereum = new ethers.JsonRpcProvider(this.config.blockchain.ethereumRpc);
-            this.networkConnections.solana = new Connection(this.config.blockchain.solanaRpc);
-            
-            // Perform an initial selection of the best provider
-            await this.selectBlockchainProvider();
+WORKDIR /app
 
-            this.isInitialized = true;
-            this.logger.info('✅ AutonomousCore initialized successfully.');
-        } catch (error) {
-            this.logger.error('❌ Failed to initialize AutonomousCore:', error);
-            throw error;
-        }
-    }
+# === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
+# Copy only the necessary files for the initial build to leverage caching.
+COPY package*.json ./
 
-    /**
-     * Analyzes live network conditions and autonomously selects the best
-     * blockchain provider based on a set of criteria.
-     * This is the core of the AI-driven logic.
-     */
-    async selectBlockchainProvider() {
-        this.logger.info('🔍 Analyzing network conditions to select the optimal provider...');
+# Install all dependencies from the unified package.json at the root
+RUN npm install --prefer-offline --no-audit --ignore-optional
 
-        // Placeholder for the advanced AI-driven logic.
-        // In a live system, this would involve real-time data from a database
-        // or market APIs (e.g., gas fees, transaction speed, network health).
-        const providers = [
-            { name: 'Ethereum', connection: this.networkConnections.ethereum },
-            { name: 'Solana', connection: this.networkConnections.solana },
-        ];
+# Copy the rest of the application source code.
+COPY . .
 
-        let bestProvider = null;
-        let bestMetric = Infinity;
+# Build the frontend assets. This is done after copying all files to prevent cache busting.
+WORKDIR /app/frontend
+RUN npm run build
 
-        // This is a simplified, deterministic example. A real AI would
-        // use a more complex model (e.g., a neural network or a heuristic engine).
-        for (const provider of providers) {
-            try {
-                const metric = await this.getProviderHealthMetric(provider.name);
-                if (metric < bestMetric) {
-                    bestMetric = metric;
-                    bestProvider = provider;
-                }
-            } catch (error) {
-                this.logger.warn(`⚠️ Provider ${provider.name} is unhealthy or unreachable.`);
-            }
-        }
+# Rebuild native modules for the backend
+WORKDIR /app
+RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
+RUN if npm list better-sqlite3 >/dev/2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
-        if (bestProvider) {
-            this.currentProvider = bestProvider.connection;
-            this.logger.info(`✨ Selected optimal provider: ${bestProvider.name}.`);
-        } else {
-            throw new Error('No healthy blockchain providers available.');
-        }
-    }
+# Install Python dependencies
+RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt --break-system-packages; fi
 
-    /**
-     * Gets a health metric for a given provider. Lower is better.
-     * @param {string} providerName - The name of the blockchain provider.
-     * @returns {Promise<number>} A metric representing the provider's health.
-     */
-    async getProviderHealthMetric(providerName) {
-        // This is a placeholder for a real-time health check.
-        // In a live system, this would ping the network, check gas fees, etc.
-        if (providerName === 'Ethereum') {
-            const gasPrice = await this.networkConnections.ethereum.getFeeData();
-            // A simple metric: gas price in gwei
-            return parseFloat(ethers.formatUnits(gasPrice.gasPrice, 'gwei'));
-        } else if (providerName === 'Solana') {
-            const blockHeight = await this.networkConnections.solana.getSlot();
-            // A simple metric: recent block height (higher is better, so we invert)
-            return 1 / blockHeight;
-        }
-        return Infinity;
-    }
+# Configure Hardhat
+RUN if [ -f "hardhat.config.js" ]; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
 
-    /**
-     * Gets the currently selected blockchain provider instance.
-     * @returns {object} The Web3 or Solana Connection object.
-     */
-    getProvider() {
-        if (!this.isInitialized || !this.currentProvider) {
-            throw new Error('AutonomousCore not initialized or no provider selected.');
-        }
-        return this.currentProvider;
-    }
+# Ensure scripts are executable, a failsafe for the shell commands in the JS.
+RUN chmod -R +x scripts/*.sh || true
 
-    /**
-     * Processes a payout and logs it to the database using the ServiceManager.
-     * This function is now a core part of the AutonomousCore itself.
-     */
-    async processBwaeziPayout(userId, amount, description, metadata = {}) {
-        try {
-            const payoutSystem = this.serviceManager.getService('payoutAgent');
-            const transaction = await payoutSystem.processPayout(userId, amount, description, metadata);
-            
-            await this.logPayout({
-                userId,
-                amount,
-                description,
-                transactionId: transaction.id,
-                agent: 'autonomous_core',
-                metadata
-            });
-            
-            this.logger.info(`✅ Paid ${amount} BWAEZI to ${userId} for ${description}`);
-            return transaction;
-        } catch (error) {
-            this.logger.error(`❌ Payout failed:`, error);
-            throw error;
-        }
-    }
+# === Runtime stage: A lightweight container for the final application. ===
+FROM node:22.16.0-slim AS arielmatrix_runtime
 
-    async logPayout(payoutData) {
-        const db = this.serviceManager.getService('brianNwaezikeDB');
-        const payoutId = `payout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        await db.run(
-            `INSERT INTO agent_payouts_log (payout_id, user_id, amount, description, transaction_id, agent_type, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                payoutId,
-                payoutData.userId,
-                payoutData.amount,
-                payoutData.description,
-                payoutData.transactionId,
-                payoutData.agent,
-                JSON.stringify(payoutData.metadata || {})
-            ]
-        );
-    }
-}
+# === SYSTEM DEPENDENCY GUARANTEE ===
+# Install only essential runtime dependencies (no build tools)
+RUN apt-get update && apt-get install -y \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
+    python3 sqlite3 curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+WORKDIR /app
+
+# Copy the built application from the builder stage
+COPY --from=arielmatrix_builder /app /app
+
+# Ensure correct permissions
+RUN chown -R node:node /app
+USER node
+
+# === AUTONOMOUS AI ENVIRONMENT SETUP ===
+ENV NODE_ENV=production
+ENV AUTONOMOUS_AI=true
+ENV QUANTUM_MODE=enabled
+
+# === EXPOSE PORT & HEALTHCHECK ===
+EXPOSE 10000
+HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
+    CMD curl -f http://localhost:10000/health || exit 1
+
+# === QUANTUM ENTRYPOINT ===
+ENTRYPOINT ["node", "/app/arielsql_suite/server.js"]
