@@ -1,51 +1,74 @@
-#!/bin/bash
-set -e # Exit immediately if a command exits with a non-zero status.
+# syntax=docker/dockerfile:1.4
 
-echo "🚀 QUANTUM AI BUILD SYSTEM - 100% GUARANTEED"
-echo "🌌 Preparing for autonomous AI deployment..."
+# Builder stage: A robust build environment for all build tasks.
+FROM node:22.16.0 AS arielmatrix_builder
 
-# === QUANTUM BUILD ===
-echo "📦 Building quantum AI image..."
-# The --no-cache flag is crucial for ensuring a fresh, clean build.
-# This prevents stale cache layers from causing "ENOENT" errors.
-# We use the standard 'Dockerfile' name for clarity.
-DOCKER_BUILDKIT=1 docker build --no-cache \
-    -t arielsql-quantum-ai:latest .
+# === SYSTEM DEPENDENCY GUARANTEE ===
+RUN apt-get update && apt-get install -y \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
+    python3 python3-pip python3-venv build-essential sqlite3 libsqlite3-dev \
+    git curl \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
 
-# === QUANTUM TEST ===
-echo "🧪 Testing quantum deployment..."
-# The --rm flag ensures the container is cleaned up automatically on exit.
-# We also use 'node' as the executable and 'scripts/quantum-entrypoint.js'
-# as the single, definitive entry point.
-docker run -d --name quantum-test --rm -p 3000:3000 arielsql-quantum-ai:latest
+WORKDIR /app
 
-# Wait for the service to be ready before testing
-sleep 10 
+# === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
+# Copy all project files into the container. This is the crucial fix.
+COPY . .
 
-# Use a more robust health check with retries.
-# The 'quantum-revenue-server.js' and 'quantum-entrypoint.js'
-# should expose a /health endpoint for this to work.
-echo "🔍 Performing health check..."
-if curl -s -f http://localhost:3000/health; then
-    echo "✅ Quantum test successful"
-else
-    echo "❌ Health check failed. Test completed with errors."
-    docker logs quantum-test
-    docker stop quantum-test
-    exit 1
-fi
+# Build backend dependencies
+WORKDIR /app/backend
+RUN npm install --prefer-offline --no-audit --ignore-optional
 
-docker stop quantum-test
+# Build frontend dependencies and assets
+WORKDIR /app/frontend
+RUN npm install --prefer-offline --no-audit && npm run build
 
-# === QUANTUM DEPLOY ===
-# This section assumes you have a Docker registry set up and logged in.
-echo "🚀 Deploying quantum AI..."
-DOCKER_REGISTRY="your-registry/arielsql-quantum-ai"
-TAG="latest"
+# Switch back to the main working directory
+WORKDIR /app
 
-docker tag arielsql-quantum-ai:latest "$DOCKER_REGISTRY:$TAG"
-docker push "$DOCKER_REGISTRY:$TAG"
+# Rebuild native modules for the backend
+RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
+RUN if npm list better-sqlite3 >/dev/null 2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
-echo "🎯 QUANTUM AI DEPLOYMENT GUARANTEED SUCCESSFUL"
-echo "💰 Revenue generation system activated"
-echo "🌌 Autonomous AI future secured"
+# Install Python dependencies
+RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt; fi
+
+# Configure Hardhat
+RUN if [ -f "hardhat.config.js" ]; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
+
+# Ensure scripts are executable
+RUN chmod -R +x scripts/*.sh || true
+
+# === Runtime stage: A lightweight container for the final application. ===
+FROM node:22.16.0-slim AS arielmatrix_runtime
+
+# === SYSTEM DEPENDENCY GUARANTEE ===
+RUN apt-get update && apt-get install -y \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxi6 libxtst6 \
+    libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2 fonts-noto \
+    python3 sqlite3 curl \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+WORKDIR /app
+
+# Copy the built application from the builder stage
+COPY --from=arielmatrix_builder /app /app
+
+# Ensure correct permissions
+RUN chown -R node:node /app
+USER node
+
+# === AUTONOMOUS AI ENVIRONMENT SETUP ===
+ENV NODE_ENV=production
+ENV AUTONOMOUS_AI=true
+ENV QUANTUM_MODE=enabled
+
+# === EXPOSE PORT & HEALTHCHECK ===
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# === QUANTUM ENTRYPOINT ===
+ENTRYPOINT ["node", "/app/scripts/quantum-entrypoint.js"]
