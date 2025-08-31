@@ -14,31 +14,37 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
-# Copy all project files into the container. This is the crucial fix.
-COPY . .
+# Copy only the necessary files for the initial build to leverage caching.
+COPY package*.json ./
+COPY backend/package*.json ./backend/
+COPY frontend/package*.json ./frontend/
 
 # Build backend dependencies
 WORKDIR /app/backend
 RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Build frontend dependencies and assets
+# Build frontend dependencies
 WORKDIR /app/frontend
-RUN npm install --prefer-offline --no-audit && npm run build
+RUN npm install --prefer-offline --no-audit
 
-# Switch back to the main working directory
-WORKDIR /app
+# Copy the rest of the application source code.
+COPY . .
+
+# Build the frontend assets. This is done after copying all files to prevent cache busting.
+RUN npm run build
 
 # Rebuild native modules for the backend
+WORKDIR /app
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
 RUN if npm list better-sqlite3 >/dev/null 2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
-# Install Python dependencies with the fix
+# Install Python dependencies
 RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt --break-system-packages; fi
 
 # Configure Hardhat
 RUN if [ -f "hardhat.config.js" ]; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
 
-# Ensure scripts are executable
+# Ensure scripts are executable, a failsafe for the shell commands in the JS.
 RUN chmod -R +x scripts/*.sh || true
 
 # === Runtime stage: A lightweight container for the final application. ===
