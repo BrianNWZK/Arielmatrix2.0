@@ -20,13 +20,11 @@ echo "✅ Docker build structure verification completed!"
 
 # === QUANTUM BUILD ===
 echo "📦 Building quantum AI image..."
-# Use the --no-cache flag to ensure a fresh, clean build.
 DOCKER_BUILDKIT=1 docker build --no-cache \
     -t arielsql-quantum-ai:latest .
 
 # === QUANTUM TEST ===
 echo "🧪 Testing quantum deployment..."
-# The --rm flag ensures the container is cleaned up automatically on exit.
 docker run -d --name quantum-test --rm -p 3000:3000 arielsql-quantum-ai:latest
 
 # Wait for the service to be ready before testing
