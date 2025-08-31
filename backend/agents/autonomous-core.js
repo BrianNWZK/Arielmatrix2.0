@@ -1,75 +1,155 @@
+// =========================================================================
+// ArielSQL Autonomous AI Engine: The core decision-making unit for live networks.
+// =========================================================================
+
 import { ethers } from 'ethers';
-import serviceManager from '../serviceManager.js';
-import payoutAgent from './payoutAgent.js';
+import { Connection, clusterApiUrl } from '@solana/web3.js';
 
-// Minimal ABI for RevenueDistributor.sol (assumed based on project context)
-const REVENUE_DISTRIBUTOR_ABI = [
-  "function getRevenue() external view returns (uint256)"
-];
-
-class AutonomousAgentCore {
-    constructor(agentType) {
-        this.agentType = agentType;
-        this.bwaeziChain = null;
-        this.payoutSystem = null;
-        this.agentId = `agent_${agentType}_${Math.random().toString(36).substr(2, 9)}`;
-        this.provider = new ethers.JsonRpcProvider(process.env.RPC_URL || 'https://rpc.example.com');
-        this.contract = new ethers.Contract(
-            process.env.REVENUE_CONTRACT_ADDRESS || '0xContractAddr',
-            REVENUE_DISTRIBUTOR_ABI,
-            this.provider
-        );
-        this.threshold = parseFloat(process.env.PAYOUT_THRESHOLD || '1000'); // Revenue threshold in wei
+/**
+ * The AutonomousCore is a centralized, AI-driven agent that manages the
+ * most critical real-time decisions for the ArielSQL suite.
+ * Its primary function is to analyze live network conditions across
+ * multiple blockchain providers and select the optimal one for transactions.
+ */
+export class AutonomousCore {
+    constructor(config, logger, serviceManager) {
+        this.config = config;
+        this.logger = logger;
+        this.serviceManager = serviceManager;
+        this.networkConnections = {};
+        this.isInitialized = false;
+        this.currentProvider = null;
+        this.agentId = `agent_autonomous_core_${Math.random().toString(36).substr(2, 9)}`;
     }
 
+    /**
+     * Initializes the AutonomousCore by establishing connections to all
+     * available blockchain networks.
+     */
     async initialize() {
-        if (!this.bwaeziChain) {
-            this.bwaeziChain = serviceManager.getBwaeziChain();
-            this.payoutSystem = serviceManager.getPayoutSystem();
+        this.logger.info('🧠 Initializing Autonomous AI Engine...');
+        try {
+            // Establish connections to different blockchain networks
+            this.networkConnections.ethereum = new ethers.JsonRpcProvider(this.config.blockchain.ethereumRpc);
+            this.networkConnections.solana = new Connection(this.config.blockchain.solanaRpc);
+            
+            // Perform an initial selection of the best provider
+            await this.selectBlockchainProvider();
+
+            this.isInitialized = true;
+            this.logger.info('✅ AutonomousCore initialized successfully.');
+        } catch (error) {
+            this.logger.error('❌ Failed to initialize AutonomousCore:', error);
+            throw error;
         }
-        // Start autonomous loop after initialization
-        this.startAutonomousLoop();
-        return true;
     }
 
+    /**
+     * Analyzes live network conditions and autonomously selects the best
+     * blockchain provider based on a set of criteria.
+     * This is the core of the AI-driven logic.
+     */
+    async selectBlockchainProvider() {
+        this.logger.info('🔍 Analyzing network conditions to select the optimal provider...');
+
+        // Placeholder for the advanced AI-driven logic.
+        // In a live system, this would involve real-time data from a database
+        // or market APIs (e.g., gas fees, transaction speed, network health).
+        const providers = [
+            { name: 'Ethereum', connection: this.networkConnections.ethereum },
+            { name: 'Solana', connection: this.networkConnections.solana },
+        ];
+
+        let bestProvider = null;
+        let bestMetric = Infinity;
+
+        // This is a simplified, deterministic example. A real AI would
+        // use a more complex model (e.g., a neural network or a heuristic engine).
+        for (const provider of providers) {
+            try {
+                const metric = await this.getProviderHealthMetric(provider.name);
+                if (metric < bestMetric) {
+                    bestMetric = metric;
+                    bestProvider = provider;
+                }
+            } catch (error) {
+                this.logger.warn(`⚠️ Provider ${provider.name} is unhealthy or unreachable.`);
+            }
+        }
+
+        if (bestProvider) {
+            this.currentProvider = bestProvider.connection;
+            this.logger.info(`✨ Selected optimal provider: ${bestProvider.name}.`);
+        } else {
+            throw new Error('No healthy blockchain providers available.');
+        }
+    }
+
+    /**
+     * Gets a health metric for a given provider. Lower is better.
+     * @param {string} providerName - The name of the blockchain provider.
+     * @returns {Promise<number>} A metric representing the provider's health.
+     */
+    async getProviderHealthMetric(providerName) {
+        // This is a placeholder for a real-time health check.
+        // In a live system, this would ping the network, check gas fees, etc.
+        if (providerName === 'Ethereum') {
+            const gasPrice = await this.networkConnections.ethereum.getFeeData();
+            // A simple metric: gas price in gwei
+            return parseFloat(ethers.formatUnits(gasPrice.gasPrice, 'gwei'));
+        } else if (providerName === 'Solana') {
+            const blockHeight = await this.networkConnections.solana.getSlot();
+            // A simple metric: recent block height (higher is better, so we invert)
+            return 1 / blockHeight;
+        }
+        return Infinity;
+    }
+
+    /**
+     * Gets the currently selected blockchain provider instance.
+     * @returns {object} The Web3 or Solana Connection object.
+     */
+    getProvider() {
+        if (!this.isInitialized || !this.currentProvider) {
+            throw new Error('AutonomousCore not initialized or no provider selected.');
+        }
+        return this.currentProvider;
+    }
+
+    /**
+     * Processes a payout and logs it to the database using the ServiceManager.
+     * This function is now a core part of the AutonomousCore itself.
+     */
     async processBwaeziPayout(userId, amount, description, metadata = {}) {
-        await this.initialize();
-        
         try {
-            const transaction = await this.bwaeziChain.createTransaction(
-                'system-rewards',
-                userId,
-                amount,
-                'BWAEZI',
-                process.env.SYSTEM_PRIVATE_KEY
-            );
+            const payoutSystem = this.serviceManager.getService('payoutAgent');
+            const transaction = await payoutSystem.processPayout(userId, amount, description, metadata);
             
-            // Log the payout
             await this.logPayout({
                 userId,
                 amount,
                 description,
                 transactionId: transaction.id,
-                agent: this.agentType,
+                agent: 'autonomous_core',
                 metadata
             });
             
-            console.log(`✅ ${this.agentType}: Paid ${amount} BWAEZI to ${userId} for ${description}`);
+            this.logger.info(`✅ Paid ${amount} BWAEZI to ${userId} for ${description}`);
             return transaction;
         } catch (error) {
-            console.error(`❌ ${this.agentType}: Payout failed:`, error);
+            this.logger.error(`❌ Payout failed:`, error);
             throw error;
         }
     }
 
     async logPayout(payoutData) {
-        await this.initialize();
-        
-        await this.payoutSystem.db.run(
+        const db = this.serviceManager.getService('brianNwaezikeDB');
+        const payoutId = `payout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        await db.run(
             `INSERT INTO agent_payouts_log (payout_id, user_id, amount, description, transaction_id, agent_type, metadata)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
-                `payout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                payoutId,
                 payoutData.userId,
                 payoutData.amount,
                 payoutData.description,
@@ -79,90 +159,4 @@ class AutonomousAgentCore {
             ]
         );
     }
-
-    async getBwaeziBalance(address) {
-        await this.initialize();
-        return await this.bwaeziChain.getAccountBalance(address, 'BWAEZI');
-    }
-
-    async getAgentEarnings(agentType = null) {
-        await this.initialize();
-        
-        const query = agentType 
-            ? `SELECT SUM(amount) as total_earnings FROM agent_payouts_log WHERE agent_type = ?`
-            : `SELECT agent_type, SUM(amount) as total_earnings FROM agent_payouts_log GROUP BY agent_type`;
-        
-        const result = await this.payoutSystem.db.all(query, agentType ? [agentType] : []);
-        return agentType ? result[0]?.total_earnings || 0 : result;
-    }
-
-    async calculateAutonomousPayout(baseAmount, factors = {}) {
-        const {
-            userLoyalty = 1.0,
-            marketConditions = 1.0,
-            performanceMultiplier = 1.0,
-            agentPriority = 1.0
-        } = factors;
-
-        let calculatedAmount = baseAmount;
-        
-        // Apply multipliers
-        calculatedAmount *= userLoyalty;
-        calculatedAmount *= marketConditions;
-        calculatedAmount *= performanceMultiplier;
-        calculatedAmount *= agentPriority;
-
-        // Ensure minimum payout
-        return Math.max(0.001, calculatedAmount);
-    }
-
-    // Autonomous loop for blockchain-based revenue checks
-    async autonomousLoop() {
-        try {
-            const revenue = await this.contract.getRevenue();
-            console.log(`📊 ${this.agentType}: Current revenue: ${ethers.formatEther(revenue)} ETH`);
-            if (revenue > this.threshold) {
-                await this.triggerPayout();
-            }
-        } catch (error) {
-            console.error(`❌ ${this.agentType}: Autonomous loop error:`, error);
-            // Exponential backoff retry (max 5 attempts)
-            const retryDelay = Math.min(60000 * Math.pow(2, this.retryCount || 1), 300000);
-            this.retryCount = (this.retryCount || 0) + 1;
-            if (this.retryCount <= 5) {
-                console.log(`🔄 ${this.agentType}: Retrying in ${retryDelay / 1000}s...`);
-                setTimeout(() => this.autonomousLoop(), retryDelay);
-                return;
-            }
-            console.error(`❌ ${this.agentType}: Max retries reached, pausing loop.`);
-        }
-        // Reset retry count on success
-        this.retryCount = 0;
-        setTimeout(() => this.autonomousLoop(), 60000); // Poll every 60s
-    }
-
-    async triggerPayout() {
-        try {
-            // Example payout: adjust userId and amount as needed
-            const userId = 'system-user'; // Configurable via env or serviceManager
-            const amount = await this.calculateAutonomousPayout(0.1, {
-                userLoyalty: 1.2,
-                marketConditions: 1.1,
-                performanceMultiplier: 1.0,
-                agentPriority: 1.0
-            });
-            await payoutAgent.processPayout(userId, amount, 'Revenue-based payout', { source: 'autonomousLoop' });
-            console.log(`💸 ${this.agentType}: Triggered payout of ${amount} BWAEZI to ${userId}`);
-        } catch (error) {
-            console.error(`❌ ${this.agentType}: Payout trigger failed:`, error);
-            throw error;
-        }
-    }
-
-    startAutonomousLoop() {
-        console.log(`🚀 ${this.agentType}: Starting autonomous revenue loop...`);
-        this.autonomousLoop();
-    }
 }
-
-export default AutonomousAgentCore;
