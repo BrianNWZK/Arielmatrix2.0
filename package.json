@@ -5,7 +5,7 @@
   "main": "arielsql_suite/server.js",
   "type": "module",
   "scripts": {
-    "build": "npm --prefix ./frontend run build && npm --prefix ./backend run build",
+    "build": "cd frontend && npm run build && cd ../backend && npm run build",
     "start": "node arielsql_suite/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
