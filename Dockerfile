@@ -32,8 +32,8 @@ WORKDIR /app
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
 RUN if npm list better-sqlite3 >/dev/null 2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
-# Install Python dependencies
-RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt; fi
+# Install Python dependencies with the fix
+RUN if [ -f "requirements.txt" ]; then pip3 install -r requirements.txt --break-system-packages; fi
 
 # Configure Hardhat
 RUN if [ -f "hardhat.config.js" ]; then npm install -g hardhat && npm install @nomicfoundation/hardhat-toolbox @openzeppelin/contracts; fi
