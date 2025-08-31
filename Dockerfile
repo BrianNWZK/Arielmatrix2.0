@@ -16,20 +16,19 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
-# Copy only the necessary files for the initial build to leverage caching.
-COPY package*.json ./
+# Copy all files from the current directory into the container's /app directory.
+COPY . .
 
 # Install all dependencies from the unified package.json at the root
 RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Copy the rest of the application source code.
-COPY . .
-
-# Now, we build the frontend and backend.
+# Now, we build the frontend and backend by moving into their directories and running the build script.
 WORKDIR /app/frontend
-RUN npm run build:frontend
+RUN npm install
+RUN npm run build
 WORKDIR /app/backend
-RUN npm run build:backend
+RUN npm install
+RUN npm run build
 WORKDIR /app
 
 # Rebuild native modules for the backend
