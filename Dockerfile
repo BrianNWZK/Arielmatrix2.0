@@ -22,8 +22,10 @@ COPY . .
 # Now, we install dependencies for the frontend and backend by moving into their directories.
 WORKDIR /app/frontend
 RUN npm install
+RUN npm run build
 WORKDIR /app/backend
 RUN npm install
+RUN npm run build
 WORKDIR /app
 
 # Rebuild native modules for the backend
@@ -71,4 +73,4 @@ HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
     CMD curl -f http://localhost:10000/health || exit 1
 
 # === QUANTUM ENTRYPOINT ===
-ENTRYPOINT ["node", "/app/arielsql_suite/server.js"]
+ENTRYPOINT ["node", "/app/scripts/quantum-entrypoint.js"]
