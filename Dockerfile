@@ -16,16 +16,17 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # === PACKAGE.JSON GUARANTEE & DEPENDENCY RESOLUTION ===
-# Copy all files from the current directory into the container's /app directory.
-COPY . .
+# Copy only the necessary files for the initial build to leverage caching.
+COPY package*.json ./
 
 # Install all dependencies from the unified package.json at the root
 RUN npm install --prefer-offline --no-audit --ignore-optional
 
-# Now, we build the frontend and backend using the scripts from the root package.json
-RUN npm run build:frontend
-RUN npm run build:backend
-WORKDIR /app
+# Copy the rest of the application source code.
+COPY . .
+
+# Now, we build the frontend and backend by running the build script from the root.
+RUN npm run build
 
 # Rebuild native modules for the backend
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
