@@ -25,12 +25,10 @@ RUN npm install --prefer-offline --no-audit --ignore-optional
 # Copy the rest of the application source code.
 COPY . .
 
-# Build the frontend assets. This is done after copying all files to prevent cache busting.
-WORKDIR /app/frontend
-RUN npm run build
+# Now, we build the frontend from the root directory.
+RUN npm run build:frontend
 
 # Rebuild native modules for the backend
-WORKDIR /app
 RUN if npm list @tensorflow/tfjs-node >/dev/null 2>&1; then npm rebuild @tensorflow/tfjs-node --build-from-source; fi
 RUN if npm list better-sqlite3 >/dev/2>&1; then npm rebuild better-sqlite3 --build-from-source; fi
 
