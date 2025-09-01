@@ -3,7 +3,9 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  root: '.', // project root, since index.html is here
+  // CORRECTED: The root must point to the 'frontend' directory where the project's entry files are.
+  root: 'frontend',
+  // The rest of your configuration
   publicDir: 'public',
   build: {
     outDir: 'dist',
