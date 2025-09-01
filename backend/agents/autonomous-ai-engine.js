@@ -1,15 +1,18 @@
 // Autonomous Orchestration System - Resilient Deployment
 //
 // This file contains the main application logic for a self-sufficient
-// orchestration system, rewritten for a Node.js environment.
+// orchestration system, rewritten for a Node.js environment using ES Modules.
 //
-// It has been updated to be resilient to network failures and remove
-// the hard-coded "manual intervention" requirement. The system will
-// now attempt to reconnect to RPC endpoints if connections fail.
+// It has been updated to be resilient to network failures and to use the correct
+// 'import' syntax for ESM environments as indicated by your deployment logs.
 
-const { Web3 } = require('web3');
-const sqlite3 = require('sqlite3').verbose();
-const { v4: uuidv4 } = require('uuid');
+import { Web3 } from 'web3';
+import sqlite3 from 'sqlite3';
+import { v4 as uuidv4 } from 'uuid';
+
+// Enable verbose SQLite logging for debugging. In ESM, this is handled
+// by importing the module directly.
+const db = sqlite3;
 
 // Placeholder for API keys.
 // IMPORTANT: Replace these with your actual keys for a production environment.
@@ -34,7 +37,7 @@ class SysManager {
     initDatabase() {
         return new Promise((resolve, reject) => {
             console.log("[SYS-MANAGER] 🗃️ SQLite database initialized.");
-            this.db = new sqlite3.Database(':memory:', (err) => {
+            this.db = new db.Database(':memory:', (err) => {
                 if (err) {
                     console.error("[SYS-MANAGER] ❌ Database initialization failed:", err);
                     return reject(err);
@@ -57,7 +60,7 @@ class SysManager {
 
     /**
      * Attempts to connect to a blockchain RPC endpoint with a retry mechanism.
-     * This function now handles connection failures gracefully without exiting.
+     * This function handles connection failures gracefully without exiting.
      * @returns {Promise<boolean>} True if connection is established.
      */
     async connectToBlockchain() {
@@ -156,8 +159,7 @@ class SysManager {
     }
 }
 
-// Entry point for the application
-if (require.main === module) {
-    const manager = new SysManager();
-    manager.startOrchestration();
-}
+// Entry point for the application. The `if (require.main === module)` pattern
+// is for CommonJS. For ESM, we can simply instantiate and call the class.
+const manager = new SysManager();
+manager.startOrchestration();
