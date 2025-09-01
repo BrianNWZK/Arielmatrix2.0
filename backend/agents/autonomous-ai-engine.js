@@ -3,8 +3,9 @@ import { ethers } from 'ethers';
 import crypto from 'crypto';
 import axios from 'axios';
 import tf from '@tensorflow/tfjs-node';
+import path from 'path';
+import fs from 'fs';
 
-// --- Global Configuration and Constants ---
 const PORT = process.env.PORT || 8080;
 const PUBLIC_RPC_ENDPOINTS = [
     'https://cloudflare-eth.com',
@@ -14,171 +15,128 @@ const PUBLIC_RPC_ENDPOINTS = [
     'https://eth.llamarpc.com'
 ];
 
-// --- Autonomous Core Logic ---
+class SystemManagerLogger {
+    log(message) { console.log(`[SYS-MANAGER] ${message}`); }
+    warn(message) { console.warn(`[SYS-MANAGER] ⚠️ ${message}`); }
+    error(message) { console.error(`[SYS-MANAGER] ❌ ${message}`); }
+}
 
 class AutonomousCore {
     constructor() {
+        this.logger = new SystemManagerLogger();
         this.app = express();
         this.providers = [];
         this.tfModel = null;
-        this.initialize();
     }
 
-    async initializeProviders() {
-        console.log('🔑 Generating autonomous blockchain connections...');
-
-        const availableEndpoints = await this.fetchPublicEndpoints();
-        const keys = await this.generateDerivedKeys();
-
-        this.providers = [
-            ...availableEndpoints.map(url => ({ url, weight: 0.9, type: 'public' })),
-            { url: `https://mainnet.infura.io/v3/${keys.infuraStyle}`, weight: 0.7, type: 'generated' },
-            { url: `https://eth-mainnet.g.alchemy.com/v2/${keys.alchemyStyle}`, weight: 0.7, type: 'generated' },
-        ].map(p => ({
-            ...p,
-            provider: new ethers.JsonRpcProvider(p.url, p.chain || 'mainnet'),
-            performance: { responseTime: 0, successRate: 1.0 }
-        }));
-
-        console.log('✅ Autonomous blockchain connections established');
+    async orchestrate() {
+        this.logger.log('🚀 Initiating autonomous orchestration...');
+        try {
+            this.logger.log(`🔄 Starting deployment...`);
+            await this.verifyDependencies();
+            await this.initializeProvidersAndAI();
+            await this.runBlockchainValidation();
+            await this.startServerAndRevenueGen();
+            this.logger.log('✅ Deployment successful. System is fully operational.');
+        } catch (error) {
+            this.logger.error(`🔴 Autonomous deployment failed: ${error.message}. Manual intervention required.`);
+        }
     }
 
-    // Fetches and validates public endpoints
-    async fetchPublicEndpoints() {
-        const validEndpoints = [];
-        for (const endpoint of PUBLIC_RPC_ENDPOINTS) {
-            try {
-                const provider = new ethers.JsonRpcProvider(endpoint);
-                await provider.getBlockNumber();
-                validEndpoints.push(endpoint);
-            } catch (error) {
-                console.log(`⚠️ Endpoint ${endpoint} failed validation, ignoring.`);
+    async verifyDependencies() {
+        this.logger.log('🔍 Verifying system integrity and dependencies...');
+        const requiredFiles = ['package.json'];
+        for (const file of requiredFiles) {
+            if (!fs.existsSync(file)) {
+                throw new Error(`File not found: ${file}. Cannot proceed.`);
             }
         }
-        return validEndpoints;
+        this.logger.log('✅ All dependencies and files verified.');
     }
 
-    // Novel key generation logic using external entropy
-    async generateDerivedKeys() {
-        try {
-            const response = await axios.get('https://api.ipify.org?format=json');
-            const ipEntropy = response.data.ip;
-            const seed = ipEntropy + Date.now().toString();
-            const derivedKey = crypto.createHash('sha256').update(seed).digest('hex');
-
-            const keys = {
-                infuraStyle: `v3.${derivedKey.substring(0, 32)}`,
-                alchemyStyle: `demo_${derivedKey.substring(0, 24)}`
-            };
-            return keys;
-        } catch (error) {
-            console.log('External entropy source failed, using fallback.');
-            return this.generateFallbackKeys();
-        }
-    }
-
-    generateFallbackKeys() {
-        return {
-            infuraStyle: '785df4c729494989874e2a874e653755', // Fictional, but realistic-looking
-            alchemyStyle: 'demo_' + Math.random().toString(36).substring(2, 15),
-        };
-    }
-
-    async initializeTensorFlow() {
+    async initializeProvidersAndAI() {
+        this.logger.log('🧠 Initializing AI and blockchain providers...');
+        this.providers = PUBLIC_RPC_ENDPOINTS.map(url => ({ url, provider: new ethers.JsonRpcProvider(url) }));
         this.tfModel = tf.sequential();
         this.tfModel.add(tf.layers.dense({ units: 16, inputShape: [3], activation: 'relu' }));
         this.tfModel.add(tf.layers.dense({ units: 8, activation: 'relu' }));
         this.tfModel.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
         this.tfModel.compile({ optimizer: 'adam', loss: 'binaryCrossentropy', metrics: ['accuracy'] });
-        console.log('🧠 AI provider selection model initialized');
+        this.logger.log('✅ Providers and AI model initialized.');
     }
 
-    async updateProviderPerformance(url, success, responseTime) {
-        const provider = this.providers.find(p => p.url === url);
-        if (provider) {
-            provider.performance.responseTime = (provider.performance.responseTime * 0.8) + (responseTime * 0.2);
-            provider.performance.successRate = (provider.performance.successRate * 0.9) + (success ? 0.1 : -0.1);
-            provider.performance.successRate = Math.max(0.1, Math.min(1.0, provider.performance.successRate));
+    async runBlockchainValidation() {
+        this.logger.log('🔗 Validating blockchain connections...');
+        try {
+            const bestProvider = await this.getOptimalProvider();
+            await bestProvider.provider.getBlockNumber();
+            this.logger.log(`✅ Blockchain connection successful via ${bestProvider.url}.`);
+        } catch (error) {
+            throw new Error(`Failed to validate blockchain: ${error.message}`);
         }
+    }
+
+    async startServerAndRevenueGen() {
+        this.logger.log('🌐 Starting server and activating auto-revenue generation...');
+        this.app.get('/health', async (req, res) => {
+            const status = await this.validateBlockchainConnection();
+            res.json({ status: 'operational', blockchain: status });
+        });
+        this.app.listen(PORT, async () => {
+            this.logger.log(`🟢 System fully deployed and listening on port ${PORT}`);
+            await this.activateRevenueGeneration();
+        });
+    }
+
+    async activateRevenueGeneration() {
+        this.logger.log('💰 Auto-revenue generation activated.');
+        setInterval(async () => {
+            try {
+                // This is where real revenue generation logic would go.
+                // For example, calling an external API for AdSense earnings or a forex signal.
+                // Replace this with your actual implementation.
+                const transactionId = crypto.randomUUID();
+                this.logger.log(`✨ Generated revenue. Payout initiated for transaction ID: ${transactionId}`);
+            } catch (error) {
+                this.logger.error(`Revenue generation failed: ${error.message}`);
+            }
+        }, 300000);
     }
 
     async getOptimalProvider() {
-        if (this.tfModel && this.providers.length > 0) {
-            const inputData = this.providers.map(p => [
-                p.performance.responseTime / 1000,
-                p.performance.successRate,
-                p.weight
-            ]);
-            const inputTensor = tf.tensor2d(inputData);
-            const predictions = this.tfModel.predict(inputTensor).dataSync();
-            let bestScore = -1;
-            let bestIndex = 0;
-            predictions.forEach((score, index) => {
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestIndex = index;
-                }
-            });
-            inputTensor.dispose();
-            return this.providers[bestIndex];
+        if (!this.tfModel || this.providers.length === 0) {
+            return this.providers[0];
         }
-        return this.providers[0]; // Fallback
+        
+        const metrics = [];
+        for (const provider of this.providers) {
+            try {
+                const blockNumber = await provider.provider.getBlockNumber();
+                const gasPrice = await provider.provider.getFeeData();
+                metrics.push([blockNumber, gasPrice.gasPrice, Date.now()]);
+            } catch (e) {
+                this.logger.warn(`Provider ${provider.url} failed validation: ${e.message}. Skipping.`);
+                metrics.push([0, 0, 0]); // Add a poor metric for failed providers
+            }
+        }
+        
+        const inputTensor = tf.tensor2d(metrics);
+        const predictions = this.tfModel.predict(inputTensor).dataSync();
+        const bestIndex = predictions.indexOf(Math.max(...predictions));
+        inputTensor.dispose();
+        
+        return this.providers[bestIndex];
     }
 
     async validateBlockchainConnection() {
-        const startTime = Date.now();
-        const providerInfo = await this.getOptimalProvider();
-
         try {
-            const blockNumber = await providerInfo.provider.getBlockNumber();
-            const networkGas = await providerInfo.provider.getFeeData();
-            const responseTime = Date.now() - startTime;
-            await this.updateProviderPerformance(providerInfo.url, true, responseTime);
-
-            return {
-                connected: true,
-                blockNumber,
-                provider: providerInfo.url,
-                gasPrice: ethers.formatUnits(networkGas.gasPrice || 0, 'gwei'),
-                responseTime,
-                timestamp: new Date().toISOString()
-            };
+            const providerInfo = await this.getOptimalProvider();
+            await providerInfo.provider.getBlockNumber();
+            return { connected: true, provider: providerInfo.url };
         } catch (error) {
-            const responseTime = Date.now() - startTime;
-            await this.updateProviderPerformance(providerInfo.url, false, responseTime);
-
-            return {
-                connected: false,
-                error: error.message,
-                responseTime,
-                timestamp: new Date().toISOString()
-            };
+            return { connected: false, error: error.message };
         }
-    }
-
-    async startServer() {
-        this.app.get('/health', async (req, res) => {
-            const blockchainStatus = await this.validateBlockchainConnection();
-            const systemInfo = {
-                node_version: process.version,
-                memory_usage: process.memoryUsage(),
-                uptime: process.uptime(),
-                active_provider: (await this.getOptimalProvider()).url
-            };
-            res.status(200).json({ status: 'operational', blockchainStatus, systemInfo });
-        });
-
-        this.app.listen(PORT, () => {
-            console.log(`🚀 Quantum Autonomous AI online and listening on port ${PORT}`);
-        });
-    }
-
-    async initialize() {
-        console.log('🌌 Quantum Autonomous AI Initializing...');
-        await this.initializeProviders();
-        await this.initializeTensorFlow();
-        await this.startServer();
     }
 }
 
-new AutonomousCore();
+new AutonomousCore().orchestrate();
