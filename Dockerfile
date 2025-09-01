@@ -5,7 +5,8 @@ FROM node:22-alpine AS arielmatrix_builder
 
 # === SYSTEM DEPENDENCY GUARANTEE ===
 # Install essential dependencies for building native modules. Alpine uses apk.
-RUN apk add --no-cache python3 make g++ git curl
+# Added comprehensive build dependencies for 'better-sqlite3' and 'node-gyp'.
+RUN apk add --no-cache python3 make g++ git curl py3-setuptools py3-distutils libstdc++ linux-headers libgcc
 
 WORKDIR /app
 
@@ -14,7 +15,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ALL dependencies from the unified package.json
-RUN npm install
+# Running in verbose mode to get more detailed logs for debugging.
+RUN npm install --verbose
 
 # Copy the rest of the application source code.
 COPY . .
@@ -47,8 +49,8 @@ ENV QUANTUM_MODE=enabled
 # === EXPOSE PORT & HEALTHCHECK ===
 EXPOSE 10000
 HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
-  CMD curl -f http://localhost:10000/health || exit 1
+  CMD curl -f http://localhost:10000/health || exit 1
 
 # === QUANTUM ENTRYPOINT ===
-# The ENTRYPOINT points to the main server file.
-ENTRYPOINT ["node", "/app/arielsql_suite/server.js"]
+# The ENTRYPOINT now correctly points to the 'main.js' file as defined in your package.json.
+ENTRYPOINT ["node", "/app/arielsql_suite/main.js"]
