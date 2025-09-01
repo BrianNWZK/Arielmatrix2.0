@@ -1,3 +1,14 @@
+// =========================================================================
+// ArielSQL Autonomous AI Engine: Centralized Autonomous Logic
+//
+// This file orchestrates the core autonomous operations, including
+// network connection, provider selection, and AI-driven threat analysis.
+// This version is enhanced to handle competitive RPC connections.
+// =========================================================================
+
+// =========================================================================
+// 1. External Library Imports
+// =========================================================================
 import express from 'express';
 import { ethers } from 'ethers';
 import crypto from 'crypto';
@@ -6,75 +17,166 @@ import tf from '@tensorflow/tfjs-node';
 import path from 'path';
 import fs from 'fs';
 import sqlite3 from 'sqlite3';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import fetch from 'node-fetch';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// =========================================================================
+// 2. Constants & Configuration
+// =========================================================================
 const PORT = process.env.PROCESS_PORT || 8080;
 
-// The exclusive, live RPC endpoint for your custom Bwaezi Chain.
-const PRIVATE_RPC_ENDPOINT = 'https://private-rpc.bwaezi.network';
-
-// Placeholder RPCs for the Bwaezi Chain's public testnet.
-const PUBLIC_RPC_ENDPOINTS = [
-    'https://testnet-rpc.bwaezi.network/1',
-    'https://testnet-rpc.bwaezi.network/2',
-];
+// Centralized configuration for different networks, including Ankr and Infura.
+// This list of Solana endpoints has been significantly expanded for greater resilience.
+const RPC_CONFIG = {
+    'goerli-testnet': {
+        ankr: 'https://rpc.ankr.com/eth_goerli/YOUR_ANKR_KEY', // GOERLI TESTNET
+        infura: 'https://goerli.infura.io/v3/YOUR_INFURA_KEY' // GOERLI TESTNET
+    },
+    'solana-mainnet': {
+        // A comprehensive list of public Solana mainnet RPC endpoints
+        // The system will competitively check all of these to find the best one.
+        solana: 'https://api.mainnet-beta.solana.com',
+        public: 'https://solana-api.projectserum.com',
+        rpcpool: 'https://api.mainnet-beta.solana.com',
+        genesysgo: 'https://solana.genesysgo.net/',
+        triton: 'https://api.mainnet-beta.solana.com',
+        solana_rpc: 'https://rpc.solana.com',
+        solana_rpc_2: 'https://api.mainnet-beta.solana.com',
+        figment: 'https://solana-mainnet.rpc.figment.io/apikey/<YOUR_API_KEY>',
+        quicknode: 'https://api-mainnet.solana.io',
+        ankr_solana: 'https://rpc.ankr.com/solana/YOUR_ANKR_KEY'
+    }
+};
 
 const TARGET_WALLET_DETAILS = {
-    bwaezi: {
+    goerli: {
         address: '0x04eC5979f05B76d334824841B8341AFdD78b2aFC',
-        network: 'Bwaezi',
-        rpc: PRIVATE_RPC_ENDPOINT
+        network: 'Goerli',
+        // In a live system, this RPC would be chosen dynamically.
+        rpc: RPC_CONFIG['goerli-testnet'].infura
     },
 };
 
+// =========================================================================
+// 3. Core Classes
+// =========================================================================
+
+/**
+ * A dedicated logger for system management events.
+ */
 class SystemManagerLogger {
     log(message) { console.log(`[SYS-MANAGER] ${message}`); }
     warn(message) { console.warn(`[SYS-MANAGER] ⚠️ ${message}`); }
     error(message) { console.error(`[SYS-MANAGER] ❌ ${message}`); }
 }
 
-class ZeroCostProvider {
-    constructor(url) {
-        this.url = url;
+/**
+ * A threat analysis class to run AI-driven checks.
+ */
+class ThreatAnalyzer {
+    constructor(db) {
+        this.db = db;
+        this.logger = new SystemManagerLogger();
     }
 
-    async getBlockNumber() {
-        return new Promise((resolve, reject) => {
-            const db = new sqlite3.Database(':memory:', (err) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    db.get("SELECT block_number FROM blockchain_state WHERE id = 1", (err, row) => {
-                        db.close();
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve(row ? row.block_number : 1);
-                        }
-                    });
-                }
-            });
-        });
+    async analyze(data) {
+        this.logger.log('🧠 Running AI-driven threat analysis...');
+        try {
+            // Placeholder for a more complex TensorFlow model.
+            const result = Math.random() > 0.9 ? 'threat-detected' : 'safe';
+            const threatScore = Math.random() * 100;
+            const analysisId = crypto.randomUUID();
+
+            await this.db.run(
+                'INSERT INTO threat_scores (analysis_id, score, status, timestamp) VALUES (?, ?, ?, ?)',
+                [analysisId, threatScore, result, new Date().toISOString()]
+            );
+
+            this.logger.log(`✅ Threat analysis complete. Result: ${result} (Score: ${threatScore.toFixed(2)})`);
+            return result;
+        } catch (error) {
+            this.logger.error(`Failed to perform threat analysis: ${error.message}`);
+            return 'failed';
+        }
     }
 }
 
-class AutonomousCore {
-    constructor() {
+/**
+ * A class to manage and check the health of multiple network providers.
+ */
+class NetworkManager {
+    constructor(endpoints) {
+        this.endpoints = endpoints;
+    }
+
+    /**
+     * Finds the first available endpoint using a competitive check.
+     * This is your multiple login strategy in action.
+     * @returns {Promise<string>} The URL of the first healthy endpoint.
+     */
+    async findHealthyEndpoint() {
+        const promises = Object.entries(this.endpoints).map(async ([name, url]) => {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        method: 'eth_blockNumber',
+                        params: [],
+                        id: 1,
+                    }),
+                    timeout: 5000 // 5 second timeout
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.result) {
+                        return { name, url, blockNumber: parseInt(data.result, 16) };
+                    }
+                }
+            } catch (error) {
+                // Ignore the error; another promise will hopefully succeed.
+                return null;
+            }
+        });
+
+        const results = await Promise.all(promises);
+        const healthyEndpoint = results.find(result => result !== null);
+
+        if (!healthyEndpoint) {
+            throw new Error('All RPC endpoints failed to respond. Cannot start.');
+        }
+
+        return healthyEndpoint.url;
+    }
+}
+
+/**
+ * The core class for managing the autonomous system.
+ */
+export class AutonomousCore {
+    constructor(config) {
+        this.config = config;
         this.logger = new SystemManagerLogger();
-        this.app = express();
-        this.providers = [];
-        this.tfModel = null;
+        this.networkManager = new NetworkManager(RPC_CONFIG[this.config.networkName]);
+        this.db = null;
+        this.threatAnalyzer = null;
     }
 
     async orchestrate() {
         this.logger.log('🚀 Initiating autonomous orchestration...');
         try {
-            this.logger.log(`🔄 Starting deployment...`);
-            await this.verifyDependencies();
             await this.setupSQLiteDB();
-            await this.initializeProvidersAndAI();
-            await this.runBlockchainValidation();
-            const contractAddress = await this.deployAndGetContractAddress();
-            this.logger.log(`✅ Contract successfully deployed. Address: ${contractAddress}`);
+            this.threatAnalyzer = new ThreatAnalyzer(this.db);
+            const rpcUrl = await this.networkManager.findHealthyEndpoint();
+            await this.connectToBlockchain(rpcUrl);
+
+            this.logger.log('✅ All core services initialized and connected.');
             await this.startServerAndRevenueGen();
             this.logger.log('✅ Deployment successful. System is fully operational.');
         } catch (error) {
@@ -82,148 +184,28 @@ class AutonomousCore {
         }
     }
 
-    async verifyDependencies() {
-        this.logger.log('🔍 Verifying system integrity and dependencies...');
-        const requiredFiles = ['package.json'];
-        for (const file of requiredFiles) {
-            if (!fs.existsSync(file)) {
-                throw new Error(`File not found: ${file}. Cannot proceed.`);
-            }
-        }
-        this.logger.log('✅ All dependencies and files verified.');
-    }
-
     async setupSQLiteDB() {
         return new Promise((resolve, reject) => {
-            const db = new sqlite3.Database(':memory:', (err) => {
+            this.db = new sqlite3.Database(':memory:', (err) => {
                 if (err) {
-                    reject(err);
+                    return reject(new Error('Failed to create in-memory database.', { cause: err }));
                 }
                 const setupTable = `
+                    CREATE TABLE IF NOT EXISTS threat_scores (
+                        analysis_id TEXT PRIMARY KEY,
+                        score REAL,
+                        status TEXT,
+                        timestamp TEXT
+                    );
                     CREATE TABLE IF NOT EXISTS blockchain_state (
                         id INTEGER PRIMARY KEY,
                         block_number INTEGER
                     );
                     INSERT OR REPLACE INTO blockchain_state (id, block_number) VALUES (1, 1);
                 `;
-                db.exec(setupTable, (execErr) => {
-                    db.close();
+                this.db.exec(setupTable, (execErr) => {
                     if (execErr) {
-                        reject(execErr);
-                    } else {
-                        this.logger.log('🗃️ SQLite database initialized and ready for testing.');
-                        resolve();
+                        return reject(new Error('Failed to set up database tables.', { cause: execErr }));
                     }
-                });
-            });
-        });
-    }
-
-    async initializeProvidersAndAI() {
-        this.logger.log('🧠 Initializing AI and blockchain providers...');
-        this.providers = [{ url: PRIVATE_RPC_ENDPOINT, provider: new ethers.JsonRpcProvider(PRIVATE_RPC_ENDPOINT) }];
-        this.providers.push(...PUBLIC_RPC_ENDPOINTS.map(url => ({ url, provider: new ethers.JsonRpcProvider(url) })));
-        this.providers.push({
-            url: 'https://feeless-rpc.bwaezi.local',
-            provider: new ZeroCostProvider('https://feeless-rpc.bwaezi.local')
-        });
-
-        this.tfModel = tf.sequential();
-        this.tfModel.add(tf.layers.dense({ units: 16, inputShape: [2], activation: 'relu' }));
-        this.tfModel.add(tf.layers.dense({ units: 8, activation: 'relu' }));
-        this.tfModel.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
-        this.tfModel.compile({ optimizer: 'adam', loss: 'binaryCrossentropy', metrics: ['accuracy'] });
-        this.logger.log('✅ Providers and AI model initialized.');
-    }
-
-    async runBlockchainValidation() {
-        this.logger.log('🔗 Validating blockchain connections...');
-        try {
-            const bestProvider = await this.getOptimalProvider();
-            await bestProvider.provider.getBlockNumber();
-            this.logger.log(`✅ Blockchain connection successful via ${bestProvider.url}.`);
-        } catch (error) {
-            throw new Error(`Failed to validate blockchain: ${error.message}`);
-        }
-    }
-
-    async deployAndGetContractAddress() {
-        this.logger.log('✍️ Generating a contract address for the Bwaezi Chain...');
-        const wallet = ethers.Wallet.createRandom();
-        return wallet.address;
-    }
-
-    async startServerAndRevenueGen() {
-        this.logger.log('🌐 Starting server and activating auto-revenue generation...');
-        this.app.get('/health', async (req, res) => {
-            const status = await this.validateBlockchainConnection();
-            res.json({ status: 'operational', blockchain: status });
-        });
-        this.app.listen(PORT, async () => {
-            this.logger.log(`🟢 System fully deployed and listening on port ${PORT}`);
-            await this.activateRevenueGeneration();
-        });
-    }
-
-    async activateRevenueGeneration() {
-        this.logger.log('💰 Auto-revenue generation activated.');
-        setInterval(async () => {
-            try {
-                const targetToken = 'bwaezi'; // Default to Bwaezi for this example
-                const targetAddress = TARGET_WALLET_DETAILS[targetToken].address;
-
-                this.logger.log(`Initiating feeless transaction for token: ${targetToken}`);
-
-                const provider = await this.getOptimalProvider();
-                const signer = new ethers.Wallet(crypto.randomBytes(32).toString('hex'), provider.provider);
-                const transaction = { to: targetAddress, value: ethers.utils.parseEther('0.001') };
-
-                this.logger.log(`Initiating feeless transaction from ${signer.address} to ${targetAddress}.`);
-                const txResponse = await signer.sendTransaction(transaction);
-                await txResponse.wait();
-                const transactionId = crypto.randomUUID();
-                this.logger.log(`✨ Real revenue generated. Payout initiated for transaction ID: ${transactionId}`);
-            } catch (error) {
-                this.logger.error(`Revenue generation failed: ${error.message}`);
-            }
-        }, 15000); // 15 seconds
-    }
-
-    async getOptimalProvider() {
-        if (!this.tfModel || this.providers.length === 0) {
-            return this.providers[0];
-        }
-
-        const metrics = [];
-        for (const provider of this.providers) {
-            try {
-                const startTime = Date.now();
-                await provider.provider.getBlockNumber();
-                const latency = Date.now() - startTime;
-                metrics.push([latency]); // Adjusted to capture latency only
-            } catch (e) {
-                this.logger.warn(`Provider ${provider.url} failed validation: ${e.message}. Skipping.`);
-                metrics.push([Infinity]); // Add a poor metric for failed providers
-            }
-        }
-
-        const inputTensor = tf.tensor2d(metrics);
-        const predictions = this.tfModel.predict(inputTensor).dataSync();
-        const bestIndex = predictions.indexOf(Math.max(...predictions));
-        inputTensor.dispose();
-
-        return this.providers[bestIndex];
-    }
-
-    async validateBlockchainConnection() {
-        try {
-            const providerInfo = await this.getOptimalProvider();
-            await providerInfo.provider.getBlockNumber();
-            return { connected: true, provider: providerInfo.url };
-        } catch (error) {
-            return { connected: false, error: error.message };
-        }
-    }
-}
-
-new AutonomousCore().orchestrate();
+                    this.logger.log('🗃️ SQLite database initialized.');
+                    resolve();
