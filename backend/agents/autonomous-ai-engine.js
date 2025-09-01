@@ -1,165 +1,127 @@
-// Autonomous Orchestration System - Resilient Deployment
-//
-// This file contains the main application logic for a self-sufficient
-// orchestration system, rewritten for a Node.js environment using ES Modules.
-//
-// It has been updated to be resilient to network failures and to use the correct
-// 'import' syntax for ESM environments as indicated by your deployment logs.
+/**
+ * autonomous-ai-engine.js
+ *
+ * This module is the core backend service that autonomously processes the
+ * payout queue. It periodically checks the database for "pending" payouts,
+ * uses the secure `wallet.js` utility to send the transactions, and updates
+ * the records with the transaction hash upon completion.
+ *
+ * This engine operates as a single, centralized processor, ensuring that
+ * payouts are handled securely and reliably without manual intervention.
+ */
 
-import { Web3 } from 'web3';
-import sqlite3 from 'sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+// =========================================================================
+// 1. External Library Imports
+// =========================================================================
+// Use better-sqlite3 for a robust, production-grade local database.
+import betterSqlite3 from 'better-sqlite3';
 
-// Enable verbose SQLite logging for debugging. In ESM, this is handled
-// by importing the module directly.
-const db = sqlite3;
+// Import the wallet utility to handle secure, real transactions.
+import { sendTransaction } from './wallet.js';
 
-// 🟢 Keys have been updated based on user input. 🟢
-const ANKR_API_KEY = "https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97";
-const INFURA_API_KEY = "685df4c728494989874e2a874e653755";
+// =========================================================================
+// 2. Class Definition
+// =========================================================================
+class AutonomousAIEngine {
+  constructor() {
+    this.db = null;
+    console.log("Autonomous AI Engine initialized.");
+  }
 
-class SysManager {
-    constructor() {
-        this.db = null;
-        this.web3 = null;
-        this.isRunning = false;
-        this.rpcEndpoints = [
-            ANKR_API_KEY,
-            `https://sepolia.infura.io/v3/${INFURA_API_KEY}`
-        ];
+  /**
+   * Initializes the database connection.
+   */
+  async initializeDatabase() {
+    try {
+      this.db = new betterSqlite3('bwaezi_backend.db', { verbose: console.log });
+      console.log("Connected to the payouts database.");
+      
+      // Ensure the necessary table exists.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS payouts (
+          id TEXT PRIMARY KEY,
+          recipient TEXT NOT NULL,
+          amount REAL NOT NULL,
+          status TEXT NOT NULL,
+          txHash TEXT,
+          timestamp TEXT NOT NULL
+        );
+      `);
+      console.log("Payouts table verified.");
+
+    } catch (error) {
+      console.error("Failed to connect to the database:", error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Starts the engine, setting up a recurring job to process payouts.
+   * @param {number} intervalMs - The interval in milliseconds to check for new payouts.
+   */
+  async start(intervalMs = 5000) { // Default to 5 seconds
+    try {
+      await this.initializeDatabase();
+      console.log(`Autonomous AI Engine started. Processing payouts every ${intervalMs / 1000} seconds.`);
+
+      setInterval(() => {
+        this.processPayouts();
+      }, intervalMs);
+
+    } catch (error) {
+      console.error("Failed to start the engine:", error);
+    }
+  }
+
+  /**
+   * The main processing function that fetches and handles pending payouts.
+   */
+  async processPayouts() {
+    if (!this.db) {
+      console.error("Database connection not established. Skipping processing.");
+      return;
     }
 
-    /**
-     * Initializes the in-memory SQLite database.
-     * @returns {Promise<void>}
-     */
-    initDatabase() {
-        return new Promise((resolve, reject) => {
-            console.log("[SYS-MANAGER] 🗃️ SQLite database initialized.");
-            this.db = new db.Database(':memory:', (err) => {
-                if (err) {
-                    console.error("[SYS-MANAGER] ❌ Database initialization failed:", err);
-                    return reject(err);
-                }
-                this.db.run(`CREATE TABLE IF NOT EXISTS transactions (
-                    id TEXT,
-                    timestamp REAL,
-                    status TEXT,
-                    details TEXT
-                )`, (err) => {
-                    if (err) {
-                        console.error("[SYS-MANAGER] ❌ Table creation failed:", err);
-                        return reject(err);
-                    }
-                    resolve();
-                });
-            });
-        });
-    }
+    try {
+      // 1. Select all pending payouts from the queue.
+      const pendingPayouts = this.db.prepare("SELECT * FROM payouts WHERE status = 'pending'").all();
 
-    /**
-     * Attempts to connect to a blockchain RPC endpoint with a retry mechanism.
-     * This function handles connection failures gracefully without exiting.
-     * @returns {Promise<boolean>} True if connection is established.
-     */
-    async connectToBlockchain() {
-        while (true) {
-            for (const endpoint of this.rpcEndpoints) {
-                try {
-                    console.log(`[SYS-MANAGER] 🔗 Attempting to connect to blockchain via ${endpoint}...`);
-                    this.web3 = new Web3(endpoint);
-                    const isConnected = await this.web3.eth.net.isListening();
-                    
-                    if (isConnected) {
-                        const chainId = await this.web3.eth.getChainId();
-                        // 11155111n is the chain ID for Sepolia testnet.
-                        const network = chainId === 11155111n ? "sepolia" : "unknown";
-                        console.log(`[SYS-MANAGER] ✅ Blockchain connection successful. Network: ${network} (Chain ID: ${chainId})`);
-                        return true;
-                    }
-                } catch (e) {
-                    console.error(`[SYS-MANAGER] ❌ Connection failed for ${endpoint}:`, e.message);
-                }
-            }
+      if (pendingPayouts.length === 0) {
+        console.log("No pending payouts to process.");
+        return;
+      }
 
-            // If all endpoints fail, log a critical warning and enter a retry loop
-            console.log("[SYS-MANAGER] ❌ 🔴 All RPC endpoints failed to respond. Retrying in 30 seconds...");
-            await new Promise(resolve => setTimeout(resolve, 30000));
-        }
-    }
+      console.log(`[ENGINE] Found ${pendingPayouts.length} pending payouts. Beginning processing...`);
 
-    /**
-     * Simulates a feeless blockchain transaction.
-     * @param {string} token - The token for the transaction.
-     * @returns {Promise<void>}
-     */
-    async performFeelessTransaction(token = "sepolia") {
+      // 2. Process each pending payout sequentially.
+      for (const payout of pendingPayouts) {
         try {
-            console.log(`[SYS-MANAGER] Initiating feeless transaction for token: ${token}`);
+          console.log(`[ENGINE] Processing payout for recipient: ${payout.recipient} with amount: ${payout.amount}`);
 
-            // This part of the code is a simulation. In a real-world scenario,
-            // you would interact with a smart contract or protocol that allows
-            // for feeless transactions (e.g., meta-transactions).
-            
-            // Simulated transaction data
-            const transactionId = uuidv4();
-            const fromAddress = "0x" + "a".repeat(40); // Placeholder address
-            const toAddress = "0x04eC" + "b".repeat(36); // Placeholder address
-            
-            console.log(`[SYS-MANAGER] Initiating feeless transaction from ${fromAddress.slice(0, 6)}... to ${toAddress.slice(0, 6)}...`);
-            
-            // Log the successful "transaction"
-            this.db.run("INSERT INTO transactions VALUES (?, ?, ?, ?)",
-                [transactionId, Date.now(), "success", "Simulated feeless transaction"]);
-            
-            console.log(`[SYS-MANAGER] ✨ Real revenue generated. Payout initiated for transaction ID: ${transactionId}`);
-        } catch (e) {
-            console.error("[SYS-MANAGER] 🚨 Transaction failed:", e);
+          // Send the transaction using the secure wallet utility.
+          const txHash = await sendTransaction(payout.recipient, payout.amount.toString());
+
+          // 3. If successful, update the database record.
+          const updateStmt = this.db.prepare('UPDATE payouts SET status = ?, txHash = ? WHERE id = ?');
+          updateStmt.run('completed', txHash, payout.id);
+          console.log(`[ENGINE] Payout completed for ID ${payout.id}. Tx Hash: ${txHash}`);
+
+        } catch (error) {
+          // 4. Handle a failed transaction, updating the status.
+          console.error(`[ENGINE] Failed to process payout ID ${payout.id}:`, error.message);
+          const updateStmt = this.db.prepare('UPDATE payouts SET status = ? WHERE id = ?');
+          updateStmt.run('failed', payout.id);
         }
+      }
+
+    } catch (error) {
+      console.error("[ENGINE] An unexpected error occurred during processing:", error);
     }
-
-    /**
-     * Main loop for the system's operations.
-     * @returns {Promise<void>}
-     */
-    async startOrchestration() {
-        console.log("[SYS-MANAGER] 🚀 Initiating autonomous orchestration...");
-        await this.initDatabase();
-        
-        if (!(await this.connectToBlockchain())) {
-            // This path should now be unreachable due to the retry loop in connectToBlockchain()
-            console.log("[SYS-MANAGER] 🔴 Fatal error. System cannot start.");
-            return;
-        }
-
-        console.log("[SYS-MANAGER] ✅ All core services initialized and connected.");
-        this.isRunning = true;
-        console.log("[SYS-MANAGER] 🟢 System fully deployed and listening on port 8080");
-        console.log("[SYS-MANAGER] 💰 Auto-revenue generation activated.");
-
-        while (this.isRunning) {
-            try {
-                // Simulate core operational tasks
-                console.log("[SYS-MANAGER] 🧠 Running AI-driven threat analysis...");
-                await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
-                const analysisScore = Math.random() * 60 + 30;
-                const status = analysisScore > 50 ? "safe" : "warning";
-                console.log(`[SYS-MANAGER] ✅ Threat analysis complete. Result: ${status} (Score: ${analysisScore.toFixed(2)})`);
-                
-                // Perform the "revenue" action
-                await this.performFeelessTransaction();
-
-                // Wait before the next cycle
-                await new Promise(resolve => setTimeout(resolve, 15000));
-            } catch (e) {
-                console.error("[SYS-MANAGER] ⚠️ An error occurred in the main loop:", e);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-        }
-    }
+  }
 }
 
-// Entry point for the application. The `if (require.main === module)` pattern
-// is for CommonJS. For ESM, we can simply instantiate and call the class.
-const manager = new SysManager();
-manager.startOrchestration();
+// =========================================================================
+// 3. Engine Startup
+// =========================================================================
+const engine = new AutonomousAIEngine();
+engine.start();
