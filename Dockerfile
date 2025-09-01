@@ -6,7 +6,7 @@ FROM node:22-alpine AS arielmatrix_builder
 # === SYSTEM DEPENDENCY GUARANTEE ===
 # Install essential dependencies for building native modules. Alpine uses apk.
 # Added comprehensive build dependencies for 'better-sqlite3' and 'node-gyp'.
-RUN apk add --no-cache python3 make g++ git curl py3-setuptools py3-distutils libstdc++ linux-headers libgcc
+RUN apk add --no-cache python3 make g++ git curl py3-setuptools libstdc++ linux-headers libgcc
 
 WORKDIR /app
 
