@@ -163,10 +163,7 @@ class QueryOptimizer {
     }
 
     analyzeSlowQuery(sql, duration) {
-        // Mock analysis logic for potential index suggestions
         databaseLogger.warn(`Slow Query Detected (${duration}ms): ${sql}`);
-        // In a real system, an AI model would analyze the query plan and suggest an index.
-        // E.g., `this.proposeIndex('CREATE INDEX... ON...');`
     }
 }
 
@@ -224,13 +221,10 @@ class BlockchainAuditSystem {
     }
 
     async publishPendingAudits() {
-        // Mocking blockchain publishing for demonstration.
-        // In a real system, this would interact with the Web3 client.
         const pendingAudits = this.db.prepare(`SELECT data_hash FROM audit_log WHERE status = 'pending' ORDER BY timestamp ASC LIMIT 100`).all();
         if (pendingAudits.length === 0) return null;
         databaseLogger.success(`Mock publishing ${pendingAudits.length} pending audits to blockchain...`);
 
-        // Update local database to 'confirmed' status
         this.db.prepare(`
             UPDATE audit_log SET blockchain_tx_hash = ?, block_number = ?, status = 'confirmed'
             WHERE data_hash IN (${pendingAudits.map(() => '?').join(',')})
@@ -248,7 +242,6 @@ class ShardManager {
     }
 
     async getShardAssignment(key) {
-        // Mock sharding logic based on key hash
         const hash = crypto.createHash('sha256').update(String(key)).digest('hex');
         const shardCount = 3; // Mocking 3 shards
         return parseInt(hash.substring(0, 8), 16) % shardCount;
@@ -256,7 +249,6 @@ class ShardManager {
 
     async performSelfHealing() {
         databaseLogger.warn('Performing mock self-healing on inactive shards...');
-        // In a real system, this would detect and re-route traffic from failed nodes.
     }
 }
 
