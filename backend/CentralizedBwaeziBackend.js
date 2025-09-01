@@ -1,174 +1,70 @@
 /**
- * CentralizedBwaeziBackend.js
+ * wallet.js
  *
- * This file contains the core backend server for the Bwaezi ecosystem.
- * It is responsible for receiving payout requests, queuing them for processing,
- * and managing the state of all payouts in a persistent database.
+ * This utility module is a core component of the Bwaezi centralized backend.
+ * It is responsible for all blockchain-related operations, particularly
+ * creating and sending signed transactions.
  *
- * Components:
- * - Express.js: Handles incoming API requests.
- * - better-sqlite3: Manages the persistent, local database queue.
- * - Bull: Provides a robust job queueing system built on Redis, ensuring
- * that tasks are handled reliably even if the server restarts.
+ * This module is kept separate from the main server file to isolate
+ * all blockchain-specific logic and ensure the security of the private key.
  *
- * The architecture separates the web server (Express) from the job processing
- * to create a more resilient and scalable system.
+ * Dependencies:
+ * - ethers: A comprehensive library for interacting with the Ethereum blockchain.
  */
 
 // =========================================================================
-// 1. External Library Imports
+// 1. External Library Import
 // =========================================================================
-import express from 'express';
-import betterSqlite3 from 'better-sqlite3';
-import cors from 'cors';
-import { Queue } from 'bull';
-import path from 'path';
+import { ethers } from 'ethers';
 
 // =========================================================================
-// 2. Server and Database Initialization
+// 2. Configuration and Initialization
 // =========================================================================
-const app = express();
-const PORT = 3000;
+// IMPORTANT: For production, this private key must be loaded securely from
+// environment variables or a key management system. DO NOT hardcode it.
+const PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bac478c1b86e00194458f33878b6638";
 
-// Use a persistent SQLite database to store payout job data.
-const db = new betterSqlite3('bwaezi_backend.db', { verbose: console.log });
-console.log("Connected to SQLite database: bwaezi_backend.db");
+// Connect to a local Ethereum network (like Hardhat or Ganache).
+const provider = new ethers.JsonRpcProvider('http://127.0.0.1:8545');
 
-// Use Bull for a robust job queue, leveraging Redis as the message broker.
-const payoutQueue = new Queue('payouts', {
-  redis: {
-    port: 6379,
-    host: '127.0.0.1'
-  }
-});
-console.log("Connected to Redis and Bull queue.");
+// Create a wallet instance from the private key and connect it to the provider.
+const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+
+console.log(`Wallet initialized with address: ${wallet.address}`);
 
 // =========================================================================
-// 3. Middleware and Database Schema Setup
-// =========================================================================
-app.use(cors()); // Allow cross-origin requests from the client.
-app.use(express.json()); // Enable JSON body parsing for API requests.
-
-// Create the payouts table if it doesn't exist. This table acts as our
-// persistent log and queue state in case of server restarts.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS payouts (
-    id TEXT PRIMARY KEY,
-    recipient TEXT NOT NULL,
-    amount REAL NOT NULL,
-    status TEXT NOT NULL,
-    timestamp TEXT NOT NULL
-  );
-`);
-console.log("Payouts table verified.");
-
-// =========================================================================
-// 4. API Endpoints
+// 3. Core Functionality
 // =========================================================================
 
 /**
- * Endpoint to add a new payout request to the queue.
- * Client agents (like the one we just created) will call this.
+ * Sends a blockchain transaction from the centralized wallet to a recipient.
+ * This function is called by the job processor in `CentralizedBwaeziBackend.js`.
+ *
+ * @param {string} recipientAddress - The public address of the recipient.
+ * @param {string} amount - The amount of Ether to send, as a string.
+ * @returns {Promise<ethers.providers.TransactionResponse>} The transaction response object.
  */
-app.post('/payouts/add', async (req, res) => {
-  const { recipient, amount } = req.body;
-  if (!recipient || typeof amount === 'undefined') {
-    return res.status(400).json({ error: 'Recipient and amount are required.' });
-  }
-
-  // Generate a unique ID for this payout job.
-  const jobId = Date.now().toString();
-  const timestamp = new Date().toISOString();
-
+export async function sendTransaction(recipientAddress, amount) {
   try {
-    // Save the new job to our persistent database immediately.
-    const stmt = db.prepare('INSERT INTO payouts (id, recipient, amount, status, timestamp) VALUES (?, ?, ?, ?, ?)');
-    stmt.run(jobId, recipient, amount, 'pending', timestamp);
-    console.log(`Saved new payout job to DB: ${jobId}`);
+    // Log the details of the transaction being prepared.
+    console.log(`[WALLET] Preparing to send ${amount} ETH to ${recipientAddress}`);
 
-    // Add the job to the Bull queue for asynchronous processing.
-    await payoutQueue.add({ jobId, recipient, amount, timestamp }, { jobId });
-    console.log(`Added new job to Bull queue: ${jobId}`);
+    // Create the transaction object.
+    const transaction = {
+      to: recipientAddress,
+      value: ethers.parseEther(amount), // Convert the amount to a BigInt in wei.
+    };
 
-    res.status(200).json({
-      status: 'success',
-      message: 'Payout request received and queued.',
-      jobId: jobId
-    });
-  } catch (error) {
-    console.error("Failed to add payout job:", error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to add payout request to queue.',
-      error: error.message
-    });
-  }
-});
+    // Sign and send the transaction. The wallet automatically handles the nonce
+    // and gas estimation.
+    const txResponse = await wallet.sendTransaction(transaction);
 
-/**
- * Endpoint to get the current status of all payouts.
- */
-app.get('/payouts/status', (req, res) => {
-  try {
-    const allPayouts = db.prepare('SELECT * FROM payouts ORDER BY timestamp DESC').all();
-    res.status(200).json({
-      status: 'success',
-      message: 'Payout status retrieved successfully.',
-      payouts: allPayouts
-    });
-  } catch (error) {
-    console.error("Failed to retrieve payout status:", error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to retrieve payout status.',
-      error: error.message
-    });
-  }
-});
-
-// =========================================================================
-// 5. Job Queue Worker
-// =========================================================================
-
-/**
- * The worker function that processes jobs from the payout queue.
- * This simulates a real-world payout operation (e.g., blockchain transaction).
- */
-payoutQueue.process(async (job) => {
-  const { jobId, recipient, amount } = job.data;
-  console.log(`[WORKER] Processing payout job ${jobId}: Sending ${amount} to ${recipient}`);
-
-  try {
-    // Simulate a successful payout transaction after a delay.
-    // In a real application, this would be where you call a blockchain or
-    // payment service API.
-    await new Promise(resolve => setTimeout(resolve, 5000)); // 5-second delay.
-
-    // Update the job status in the persistent database.
-    const stmt = db.prepare('UPDATE payouts SET status = ? WHERE id = ?');
-    stmt.run('completed', jobId);
-    console.log(`[WORKER] Payout job ${jobId} completed successfully.`);
+    console.log(`[WALLET] Transaction sent. Transaction hash: ${txResponse.hash}`);
+    return txResponse;
 
   } catch (error) {
-    // Handle any failures during the simulated payout.
-    const stmt = db.prepare('UPDATE payouts SET status = ? WHERE id = ?');
-    stmt.run('failed', jobId);
-    console.error(`[WORKER] Payout job ${jobId} failed:`, error);
-    throw error; // Bull will handle retrying the failed job.
+    console.error('[WALLET] Failed to send transaction:', error);
+    // Rethrow the error so the calling function can handle it.
+    throw error;
   }
-});
-
-// =========================================================================
-// 6. Server Startup
-// =========================================================================
-app.listen(PORT, () => {
-  console.log(`Bwaezi Backend listening on http://localhost:${PORT}`);
-});
-
-// Graceful shutdown.
-process.on('SIGINT', () => {
-  console.log('SIGINT signal received: Closing database and queue.');
-  db.close();
-  payoutQueue.close();
-  process.exit(0);
-});
+}
