@@ -1,45 +1,68 @@
 /**
  * PayoutAgent.js
  *
- * This module simulates a microservice or an independent agent that generates
- * and submits payout requests to the BrianNwaezikePayoutSystem. This model
- * showcases a distributed, scalable architecture where various services
- * can seamlessly leverage the feeless payout infrastructure.
+ * This module is a live client-side agent. It sends API requests to the
+ * centralized backend, ensuring that new payouts are added to the
+ * persistent SQLite queue. This is a critical component for a distributed,
+ * production-ready system.
  */
 
-// We import the main payout system to interact with it.
-import BrianNwaezikePayoutSystem from '../blockchain/BrianNwaezikePayoutSystem.js';
+// The base URL of our new local Express server.
+const API_BASE_URL = 'http://localhost:3000';
 
 class PayoutAgent {
-  /**
-   * @param {object} payoutSystemInstance - The instance of the BrianNwaezikePayoutSystem.
-   */
-  constructor(payoutSystemInstance) {
-    if (!payoutSystemInstance) {
-      throw new Error("PayoutAgent requires a PayoutSystem instance.");
-    }
-    this.payoutSystem = payoutSystemInstance;
-    console.log("Payout Agent initialized.");
+  constructor() {
+    console.log("Payout Agent initialized for API calls.");
   }
 
   /**
-   * Simulates a continuous stream of payout requests.
+   * Submits a single payout request to the backend API.
+   * @param {string} recipientAddress - The recipient's public address.
+   * @param {number} amount - The amount to be paid.
+   */
+  async submitPayoutRequest(recipientAddress, amount) {
+    try {
+      console.log(`Submitting new payout request: ${amount} to ${recipientAddress}`);
+      const response = await fetch(`${API_BASE_URL}/payouts/add`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ recipient: recipientAddress, amount }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`Response from API:`, data.message);
+      return data;
+    } catch (error) {
+      console.error('Error submitting payout request:', error);
+      return { status: 'error', message: 'Failed to submit request.' };
+    }
+  }
+
+  /**
+   * Simulates a continuous stream of payout requests to the backend.
    * @param {number} intervalMs - The interval in milliseconds between adding new requests.
    */
-  start(intervalMs = 5000) { // Default to 5 seconds
+  start(intervalMs = 3000) { // Default to 3 seconds
     console.log(`Payout Agent started, submitting new requests every ${intervalMs / 1000} seconds.`);
     setInterval(() => {
       // Simulate new payout requests from a client service.
       const recipient1 = "recipient-address-1";
       const recipient2 = "recipient-address-2";
-      const amount1 = Math.random() * 10; // Random amount for a mock payout
+      const amount1 = Math.random() * 10;
       const amount2 = Math.random() * 5;
 
-      this.payoutSystem.addPayoutRequest(recipient1, amount1);
-      this.payoutSystem.addPayoutRequest(recipient2, amount2);
-
+      this.submitPayoutRequest(recipient1, amount1);
+      this.submitPayoutRequest(recipient2, amount2);
     }, intervalMs);
   }
 }
 
-export default PayoutAgent;
+// Example usage to start the agent:
+const agent = new PayoutAgent();
+agent.start();
