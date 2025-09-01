@@ -14,10 +14,9 @@ import { v4 as uuidv4 } from 'uuid';
 // by importing the module directly.
 const db = sqlite3;
 
-// Placeholder for API keys.
-// IMPORTANT: Replace these with your actual keys for a production environment.
-const ANKR_API_KEY = "TEST_KEY";
-const INFURA_API_KEY = "TEST_KEY";
+// 🟢 Keys have been updated based on user input. 🟢
+const ANKR_API_KEY = "https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97";
+const INFURA_API_KEY = "685df4c728494989874e2a874e653755";
 
 class SysManager {
     constructor() {
@@ -25,8 +24,8 @@ class SysManager {
         this.web3 = null;
         this.isRunning = false;
         this.rpcEndpoints = [
-            `https://rpc.ankr.com/eth_goerli/${ANKR_API_KEY}`,
-            `https://goerli.infura.io/v3/${INFURA_API_KEY}`
+            ANKR_API_KEY,
+            `https://sepolia.infura.io/v3/${INFURA_API_KEY}`
         ];
     }
 
@@ -73,7 +72,8 @@ class SysManager {
                     
                     if (isConnected) {
                         const chainId = await this.web3.eth.getChainId();
-                        const network = chainId === 5n ? "goerli" : "unknown";
+                        // 11155111n is the chain ID for Sepolia testnet.
+                        const network = chainId === 11155111n ? "sepolia" : "unknown";
                         console.log(`[SYS-MANAGER] ✅ Blockchain connection successful. Network: ${network} (Chain ID: ${chainId})`);
                         return true;
                     }
@@ -93,7 +93,7 @@ class SysManager {
      * @param {string} token - The token for the transaction.
      * @returns {Promise<void>}
      */
-    async performFeelessTransaction(token = "goerli") {
+    async performFeelessTransaction(token = "sepolia") {
         try {
             console.log(`[SYS-MANAGER] Initiating feeless transaction for token: ${token}`);
 
