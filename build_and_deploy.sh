@@ -6,7 +6,7 @@ set -e
 # Define variables for easy configuration
 IMAGE_NAME="arielsql-quantum-ai:latest"
 CONTAINER_NAME="quantum-test"
-PORT=8080
+PORT=1000
 HEALTH_CHECK_URL="http://localhost:${PORT}/health"
 HEALTH_CHECK_TIMEOUT_SECONDS=60
 HEALTH_CHECK_INTERVAL_SECONDS=5
@@ -26,7 +26,8 @@ DOCKER_BUILDKIT=1 docker build --no-cache -t "$IMAGE_NAME" .
 
 # === TEST ===
 echo "--- 🧪 Starting test container for health check... 🧪 ---"
-docker run -d --name "$CONTAINER_NAME" --rm -p "${PORT}:${PORT}" "$IMAGE_NAME"
+# Set the port via an environment variable in the Docker container
+docker run -d --name "$CONTAINER_NAME" --rm -p "${PORT}:${PORT}" -e PROCESS_PORT=${PORT} "$IMAGE_NAME"
 
 echo "--- ⏳ Waiting for service to become available... ⏳ ---"
 start_time=$(date +%s)
