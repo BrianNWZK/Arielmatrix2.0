@@ -18,7 +18,6 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 # Copy the application source code.
 # This assumes your main entry file is in the 'backend/agents/' directory.
 COPY backend/agents/autonomous-ai-engine.js ./backend/agents/
-COPY backend/agents/autonomous-core.js ./backend/agents/
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 COPY package.json ./
