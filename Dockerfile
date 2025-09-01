@@ -3,6 +3,11 @@
 FROM node:22-slim AS dependency-installer
 WORKDIR /usr/src/app
 
+# Install build tools required for native modules like better-sqlite3.
+# The `build-essential` package includes GCC, G++, and Make.
+# Python is needed for node-gyp, which handles the native module compilation.
+RUN apt-get update && apt-get install -y python3 build-essential
+
 # Copy the unified package.json and install all dependencies
 COPY package.json ./
 RUN npm install
@@ -23,7 +28,7 @@ COPY scripts ./scripts
 COPY package.json ./
 
 # Expose the port the application runs on.
-EXPOSE 8080
+EXPOSE 1000
 
 # The command to start the application with the new entry point.
 CMD ["node", "backend/agents/autonomous-ai-engine.js"]
