@@ -47,7 +47,7 @@ ENV QUANTUM_MODE=enabled
 # === EXPOSE PORT & HEALTHCHECK ===
 EXPOSE 10000
 HEALTHCHECK --interval=15s --timeout=10s --start-period=5s --retries=5 \
-  CMD curl -f http://localhost:10000/health || exit 1
+  CMD curl -f http://localhost:10000/health || exit 1
 
 # === QUANTUM ENTRYPOINT ===
 # The ENTRYPOINT points to the main server file.
