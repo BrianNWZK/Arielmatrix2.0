@@ -128,13 +128,13 @@ class QueryOptimizer {
                 const newMax = Math.max(existingQuery.max_duration_ms, duration);
                 const newMin = Math.min(existingQuery.min_duration_ms, duration);
                 this.db.prepare(`
-                    UPDATE query_performance_log 
+                    UPDATE query_performance_log
                     SET execution_count = ?, avg_duration_ms = ?, max_duration_ms = ?, min_duration_ms = ?, last_executed = ?
                     WHERE query_hash = ?
                 `).run(newCount, newAvg, newMax, newMin, timestamp, queryHash);
             } else {
                 this.db.prepare(`
-                    INSERT INTO query_performance_log 
+                    INSERT INTO query_performance_log
                     (query_hash, query_text, duration_ms, execution_count, avg_duration_ms, max_duration_ms, min_duration_ms, timestamp, last_executed)
                     VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)
                 `).run(queryHash, sql.substring(0, 1000), duration, duration, duration, duration, timestamp, timestamp);
@@ -232,7 +232,7 @@ class BlockchainAuditSystem {
 
         // Update local database to 'confirmed' status
         this.db.prepare(`
-            UPDATE audit_log SET blockchain_tx_hash = ?, block_number = ?, status = 'confirmed' 
+            UPDATE audit_log SET blockchain_tx_hash = ?, block_number = ?, status = 'confirmed'
             WHERE data_hash IN (${pendingAudits.map(() => '?').join(',')})
         `).run('mock_tx_hash_' + Date.now(), 123456, ...pendingAudits.map(a => a.data_hash));
 
