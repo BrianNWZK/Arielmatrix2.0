@@ -7,27 +7,33 @@
  */
 
 // =========================================================================
-// 1. Internal Module Imports
+// 1. Internal Module Imports & Configuration
 // =========================================================================
+import 'dotenv/config'; // Loads environment variables
 import { BrianNwaezikeDB } from './database/BrianNwaezikeDB.js';
 import { sendTransactionForJob } from './agents/wallet.js';
 
-// =========================================================================
-// 2. Configuration and Initialization
-// =========================================================================
-const DB_FILE_PATH = './data/bwaezi.db';
-const POLLING_INTERVAL = 5000; // 5 seconds
+/**
+ * Retrieves configuration from environment variables.
+ * This ensures the application is not hardcoded with paths or intervals.
+ */
+function getConfig() {
+    return {
+        database: {
+            path: process.env.DB_DATA_PATH || './data',
+            numberOfShards: parseInt(process.env.DB_SHARDS, 10) || 4
+        },
+        pollingInterval: parseInt(process.env.POLLING_INTERVAL, 10) || 5000,
+    };
+}
+
+const config = getConfig();
 
 // Create a unified database instance with sharding enabled.
-const bwaeziDB = new BrianNwaezikeDB({
-  database: {
-    path: './data',
-    numberOfShards: 4
-  }
-});
+const bwaeziDB = new BrianNwaezikeDB(config);
 
 // =========================================================================
-// 3. Main Job Processor Loop
+// 2. Main Job Processor Loop
 // =========================================================================
 
 /**
@@ -39,14 +45,31 @@ async function runJobProcessor() {
 
     while (true) {
         try {
+            // Fetch all pending jobs from the database.
             const pendingJobs = await bwaeziDB.getPendingJobs();
             
             if (pendingJobs.length > 0) {
                 console.log(`[BACKEND] Found ${pendingJobs.length} new jobs to process.`);
                 
-                // Process each job in a separate, non-blocking operation.
+                // Process each job sequentially to avoid overloading the network.
                 for (const job of pendingJobs) {
-                    sendTransactionForJob(job);
+                    try {
+                        // Use await to ensure each job is processed before moving to the next.
+                        const result = await sendTransactionForJob(job);
+                        
+                        if (result.success) {
+                            console.log(`[BACKEND] Successfully processed job ID ${job.id}.`);
+                            // Update job status in the database to 'completed'
+                            await bwaeziDB.updateJobStatus(job.id, 'completed');
+                        } else {
+                            console.error(`[BACKEND] Failed to process job ID ${job.id}: ${result.error}`);
+                            // Optionally, update job status to 'failed' or 'retry'
+                            await bwaeziDB.updateJobStatus(job.id, 'failed');
+                        }
+                    } catch (jobError) {
+                        console.error(`[BACKEND] An error occurred while processing job ID ${job.id}:`, jobError);
+                        await bwaeziDB.updateJobStatus(job.id, 'failed');
+                    }
                 }
             } else {
                 console.log('[BACKEND] No pending jobs found. Waiting...');
@@ -55,13 +78,13 @@ async function runJobProcessor() {
             console.error('[BACKEND] An error occurred in the main loop:', error);
         }
 
-        // Wait for the next polling interval.
-        await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL));
+        // Wait for the next polling interval, retrieved from the environment variables.
+        await new Promise(resolve => setTimeout(resolve, config.pollingInterval));
     }
 }
 
 // =========================================================================
-// 4. Application Entry Point
+// 3. Application Entry Point
 // =========================================================================
 
 /**
@@ -71,14 +94,6 @@ async function runJobProcessor() {
 async function main() {
     try {
         await bwaeziDB.init();
-
-        // Add some initial transaction jobs to demonstrate the system
-        await bwaeziDB.addTransactionJob('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', '0.01');
-        await bwaeziDB.addTransactionJob('0x70997970c51812dc3a010c7d01b50e0d17dc798c', '0.02');
-        await bwaeziDB.addTransactionJob('0x3c44cddfd16a70a83151978240097f414f4df77f', '0.03');
-        await bwaeziDB.addTransactionJob('0x90f79bf6eb2c4f870365e785982e1f101e93b906', '0.04');
-        await bwaeziDB.addTransactionJob('0x90f79bf6eb2c4f870365e785982e1f101e93b906', '0.05');
-
         runJobProcessor();
     } catch (error) {
         console.error('[BACKEND] Application failed to start:', error);
