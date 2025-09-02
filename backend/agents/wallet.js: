@@ -14,15 +14,13 @@ import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/sp
 // =========================================================================
 // 1. Configuration - HARDCODED RPCs and Public Information
 // =========================================================================
-// Hardcoded RPC URLs for redundancy and quick setup. These are public and not a security risk.
+// Hardcoded Mainnet RPC URLs for redundancy and quick setup. These are public and not a security risk.
 const ETHEREUM_RPC_URLS = [
-    'https://sepolia.infura.io/v3/685df4c728494989874e2a874e653755',
     'https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97'
 ];
 
 const SOLANA_RPC_URLS = [
-    'https://solana-rpc.publicnode.com',
-    'https://attentive-young-dawn.quiknode.pro/d36e8f9a1b252f36ac774b47e2a2ccdd66223fa2/'
+    'https://solana-rpc.publicnode.com'
 ];
 
 // Public addresses for stablecoins
