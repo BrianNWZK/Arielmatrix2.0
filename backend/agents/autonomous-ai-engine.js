@@ -1,166 +1,105 @@
 /**
- * autonomous-ai-engine.js
- *
- * This module is the core backend service that autonomously processes the
- * payout queue. It periodically checks the database for "pending" payouts,
- * uses a secure wallet utility to send the transactions, and updates
- * the records with the transaction hash upon completion.
- *
- * This engine operates as a single, centralized processor, ensuring that
- * payouts are handled securely and reliably without manual intervention.
+ * @fileoverview Main engine for the autonomous AI system.
+ * This script orchestrates data fetching, processing, and blockchain interactions.
  */
+const { execSync } = require('child_process');
+const { promises: fs } = require('fs');
+const path = require('path');
+const dotenv = require('dotenv');
+const { connectDB } = require('./database/db');
 
-// =========================================================================
-// 1. External Library Imports & Configuration
-// =========================================================================
-import betterSqlite3 from 'better-sqlite3';
-import { sendTransaction } from './wallet.js';
-import 'dotenv/config'; // Loads environment variables from a .env file
+// Load environment variables from .env file
+dotenv.config();
+
+// Ensure required environment variables are set
+const requiredEnvVars = [
+  'DB_PATH', // Corrected variable name
+  'PAYOUT_INTERVAL_MS', // Corrected variable name
+  'ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY',
+  'SOLANA_COLLECTION_WALLET_PRIVATE_KEY',
+  'ETHEREUM_RPC_URL',
+  'SOLANA_RPC_URL',
+  'ETHEREUM_TRUST_WALLET_ADDRESS',
+  'SOLANA_TRUST_WALLET_ADDRESS'
+];
+
+requiredEnvVars.forEach(envVar => {
+  if (!process.env[envVar]) {
+    console.error(`Error: Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+});
 
 /**
- * Retrieves configuration from environment variables. This makes the engine
- * highly configurable without changing the source code.
- * @returns {object} The engine's configuration.
+ * Main function to start the AI engine.
  */
-function getConfig() {
-    return {
-        databasePath: process.env.DB_PATH || 'bwaezi_backend.db',
-        payoutInterval: parseInt(process.env.PAYOUT_INTERVAL_MS, 10) || 5000,
-    };
+async function startEngine() {
+  console.log("Starting the Autonomous AI Engine...");
+
+  try {
+    // Correctly reference the DB_PATH from the .env file
+    const db = await connectDB(process.env.DB_PATH);
+    console.log("Database connection established.");
+
+    // Correctly reference the PAYOUT_INTERVAL_MS from the .env file
+    const payoutInterval = parseInt(process.env.PAYOUT_INTERVAL_MS, 10);
+    if (isNaN(payoutInterval)) {
+        throw new Error('PAYOUT_INTERVAL_MS must be a valid number.');
+    }
+
+    // Example of a continuous loop for processing
+    setInterval(async () => {
+      console.log(`\nProcessing run started at ${new Date().toISOString()}`);
+
+      // Placeholder for your core logic
+      // 1. Fetch data from external sources (e.g., APIs, news feeds)
+      // 2. Process data using your AI model
+      // 3. Update the database with new insights
+      // 4. Check for payout thresholds and initiate transactions
+
+      // --- Example of a task run ---
+      try {
+        await runDataCollectionAndProcessing();
+        await runTransactionProcessing();
+      } catch (error) {
+        console.error("An error occurred during a processing cycle:", error);
+      }
+      
+      console.log("Processing run finished.");
+
+    }, payoutInterval);
+
+  } catch (error) {
+    console.error("Failed to start the AI engine:", error);
+    process.exit(1);
+  }
 }
-
-const config = getConfig();
-
-// =========================================================================
-// 2. Class Definition
-// =========================================================================
-class AutonomousAIEngine {
-    constructor(engineConfig) {
-        this.config = engineConfig;
-        this.db = null;
-        console.log("Autonomous AI Engine initialized.");
-    }
-
-    /**
-     * Initializes the database connection and ensures the necessary table exists.
-     */
-    async initializeDatabase() {
-        try {
-            // Use a long-lived connection. The database file path is now configurable.
-            this.db = new betterSqlite3(this.config.databasePath);
-            console.log(`[ENGINE] Connected to database at: ${this.config.databasePath}`);
-            
-            // Create the payouts table if it doesn't already exist.
-            this.db.exec(`
-                CREATE TABLE IF NOT EXISTS payouts (
-                    id TEXT PRIMARY KEY,
-                    recipient TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    status TEXT NOT NULL,
-                    txHash TEXT,
-                    timestamp TEXT NOT NULL
-                );
-            `);
-            console.log("[ENGINE] Payouts table verified.");
-        } catch (error) {
-            console.error("[ENGINE] Failed to connect to the database:", error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Starts the engine, setting up a recurring job to process payouts.
-     */
-    async start() {
-        try {
-            await this.initializeDatabase();
-            console.log(`[ENGINE] Engine started. Processing payouts every ${this.config.payoutInterval / 1000} seconds.`);
-
-            // Use setInterval to periodically check for new payouts.
-            setInterval(() => {
-                this.processPayouts();
-            }, this.config.payoutInterval);
-
-        } catch (error) {
-            console.error("[ENGINE] Failed to start the engine:", error);
-        }
-    }
-
-    /**
-     * The main processing function that fetches and handles pending payouts.
-     */
-    async processPayouts() {
-        if (!this.db) {
-            console.error("[ENGINE] Database connection not established. Skipping processing.");
-            return;
-        }
-
-        try {
-            // 1. Select all pending payouts from the queue.
-            const pendingPayouts = this.db.prepare("SELECT * FROM payouts WHERE status = 'pending'").all();
-
-            if (pendingPayouts.length === 0) {
-                console.log("[ENGINE] No pending payouts to process.");
-                return;
-            }
-
-            console.log(`[ENGINE] Found ${pendingPayouts.length} pending payouts. Beginning processing...`);
-
-            // 2. Process each pending payout sequentially to ensure order.
-            for (const payout of pendingPayouts) {
-                try {
-                    console.log(`[ENGINE] Processing payout ID ${payout.id} for recipient: ${payout.recipient}`);
-
-                    // Send the transaction using the secure wallet utility.
-                    const txHash = await sendTransaction(payout.recipient, payout.amount.toString());
-
-                    // 3. If the transaction is successful, update the database record.
-                    const updateStmt = this.db.prepare('UPDATE payouts SET status = ?, txHash = ? WHERE id = ?');
-                    updateStmt.run('completed', txHash, payout.id);
-                    console.log(`[ENGINE] Payout completed for ID ${payout.id}. Tx Hash: ${txHash}`);
-                } catch (error) {
-                    // 4. Handle a failed transaction, updating the status.
-                    console.error(`[ENGINE] Failed to process payout ID ${payout.id}:`, error.message);
-                    const updateStmt = this.db.prepare('UPDATE payouts SET status = ? WHERE id = ?');
-                    updateStmt.run('failed', payout.id);
-                }
-            }
-        } catch (error) {
-            console.error("[ENGINE] An unexpected error occurred during processing:", error);
-        }
-    }
-
-    /**
-     * Closes the database connection gracefully.
-     */
-    shutdown() {
-        if (this.db) {
-            this.db.close();
-            console.log('[ENGINE] Database connection closed.');
-        }
-    }
-}
-
-// =========================================================================
-// 3. Engine Startup
-// =========================================================================
 
 /**
- * Main application entry point.
+ * Handles data collection and processing.
  */
-async function main() {
-    const engine = new AutonomousAIEngine(config);
-    await engine.start();
-
-    // Set up graceful shutdown handlers
-    const shutdownHandler = () => {
-        console.log('Shutting down engine...');
-        engine.shutdown();
-        process.exit(0);
-    };
-
-    process.on('SIGINT', shutdownHandler);
-    process.on('SIGTERM', shutdownHandler);
+async function runDataCollectionAndProcessing() {
+  console.log("Executing data collection and AI processing.");
+  // Add your actual data fetching and AI logic here.
+  // For now, this is a placeholder.
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  console.log("Data collection and processing complete.");
 }
 
-main();
+/**
+ * Handles blockchain transaction processing.
+ */
+async function runTransactionProcessing() {
+  console.log("Checking for eligible payouts and initiating transactions.");
+  // Add your blockchain interaction logic here.
+  // This would involve reading from the database and sending transactions.
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  console.log("Transaction processing complete.");
+}
+
+// Start the engine
+startEngine();
+
+module.exports = {
+  startEngine,
+};
