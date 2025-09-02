@@ -4,13 +4,13 @@
  * This utility provides the core functionality for all blockchain interactions.
  * It is a secure, server-side component and should never be exposed to the public.
  */
-import 'dotenv/config';
+import 'dotenv/config'; // Loads environment variables
 
 // =========================================================================
 // 1. External Library Imports
 // =========================================================================
 import { ethers, getAddress } from 'ethers';
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
 
 // =========================================================================
@@ -21,13 +21,13 @@ import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/sp
 // Use 'npm install dotenv' and create a .env file to store these.
 
 // Ethereum
-const ETHEREUM_RPC_URL = process.env.ETHEREUM_RPC_URL || 'YOUR_ETHEREUM_RPC_URL';
-const ETH_OPERATIONAL_WALLET_PRIVATE_KEY = process.env.ETH_OPERATIONAL_WALLET_PRIVATE_KEY || 'YOUR_ETH_PRIVATE_KEY';
+const ETHEREUM_RPC_URL = process.env.ETHEREUM_RPC_URL;
+const ETH_OPERATIONAL_WALLET_PRIVATE_KEY = process.env.ETH_OPERATIONAL_WALLET_PRIVATE_KEY;
 const USDT_CONTRACT_ADDRESS_ETH = '0xdAC17F958D2ee523a2206206994597C13D831ec7'; // USDT contract address on Ethereum Mainnet
 
 // Solana
-const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'YOUR_SOLANA_RPC_URL';
-const SOL_OPERATIONAL_WALLET_PRIVATE_KEY = process.env.SOL_OPERATIONAL_WALLET_PRIVATE_KEY || 'YOUR_SOL_PRIVATE_KEY';
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL;
+const SOL_OPERATIONAL_WALLET_PRIVATE_KEY = process.env.SOL_OPERATIONAL_WALLET_PRIVATE_KEY;
 const USDT_MINT_ADDRESS_SOL = 'Es9Kdd31Wq41G4R7s3M2wXq3T413d7tLg484e1t4t'; // USDT (ERC-20) on Solana (SPL Token)
 
 // Ethereum Wallet Setup
@@ -36,7 +36,7 @@ const ethWallet = new ethers.Wallet(ETH_OPERATIONAL_WALLET_PRIVATE_KEY, ethProvi
 
 // Solana Wallet Setup
 const solConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
-const solWallet = Keypair.fromSecretKey(Uint8Array.from(SOL_OPERATIONAL_WALLET_PRIVATE_KEY.split(',')));
+const solWallet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(SOL_OPERATIONAL_WALLET_PRIVATE_KEY)));
 
 // =========================================================================
 // 3. Core Functions
@@ -80,7 +80,7 @@ export async function sendSOL(toAddress, amount) {
     transaction.lastValidBlockHeight = lastValidBlockHeight;
     transaction.feePayer = solWallet.publicKey;
 
-    const signature = await solanaWeb3.sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+    const signature = await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
 
     return { signature };
   } catch (error) {
@@ -126,10 +126,9 @@ export async function getUSDTBalance(chain = 'eth') {
  */
 export async function sendUSDT(toAddress, amount) {
   try {
-    // Check if the address is a valid Ethereum address.
+    // If it's a valid Ethereum address, send USDT on the Ethereum network.
     const isEthAddress = getAddress(toAddress);
     
-    // If it's a valid Ethereum address, send USDT on the Ethereum network.
     const usdtContract = new ethers.Contract(
       USDT_CONTRACT_ADDRESS_ETH, 
       ["function transfer(address to, uint256 amount) returns (bool)"], 
@@ -166,7 +165,7 @@ export async function sendUSDT(toAddress, amount) {
       transaction.lastValidBlockHeight = lastValidBlockHeight;
       transaction.feePayer = solWallet.publicKey;
 
-      const signature = await solanaWeb3.sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+      const signature = await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
 
       return { signature };
     } catch (solError) {
