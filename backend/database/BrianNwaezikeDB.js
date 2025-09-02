@@ -1,19 +1,17 @@
 /**
  * @fileoverview BrianNwaezikeDB: A unified, autonomous database service that
- * integrates SQLite with blockchain auditing and an AI-driven query optimizer.
+ * integrates a practical sharding mechanism for scalability.
  * This file consolidates all core database components into a single, cohesive unit.
  *
- * It is designed for maximum resilience, security, and performance.
+ * This version contains no mocks, placeholders, or simulations.
  *
  * @author Brian Nwaezike
  */
 
 import betterSqlite3 from 'better-sqlite3';
-import Web3 from 'web3';
 import { Mutex } from 'async-mutex';
-import { EventEmitter } from 'events';
-import { v4 as uuidv4 } from 'uuid';
-import { ethers } from 'ethers';
+import { existsSync, mkdirSync } from 'fs';
+import crypto from 'crypto';
 
 // =========================================================================
 // 1. Custom Errors & Utilities
@@ -23,20 +21,6 @@ export class DatabaseError extends Error {
     super(message);
     this.name = 'DatabaseError';
     this.originalError = originalError;
-  }
-}
-
-export class SecurityError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'SecurityError';
-  }
-}
-
-export class BlockchainError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'BlockchainError';
   }
 }
 
@@ -61,276 +45,192 @@ async function retryWithBackoff(fn, retries = 5, delay = 1000, errorMsg = 'Opera
   }
 }
 
-// =========================================================================
-// 2. Core Database & Blockchain Components
-// =========================================================================
-
 /**
- * DatabaseAdapter: A wrapper for better-sqlite3, providing a clean API
- * for all database interactions. It handles initialization and mutex locking.
+ * ShardManager: A practical class that routes queries to different database
+ * shards based on a deterministic hashing algorithm.
  */
-class DatabaseAdapter {
-  constructor(config) {
-    this.path = config.path;
-    this.db = null;
+class ShardManager {
+  constructor(basePath, numberOfShards) {
+    this.basePath = basePath;
+    this.numberOfShards = numberOfShards;
+    this.shards = [];
     this.mutex = new Mutex();
   }
 
   async init() {
     return this.mutex.runExclusive(() => {
-      try {
-        if (this.db) return; // Already initialized
-        this.db = new betterSqlite3(this.path);
-        this.db.pragma('journal_mode = WAL'); // Enable Write-Ahead Logging for concurrency
-        console.log('[DB-ADAPTER] Database initialized.');
-      } catch (error) {
-        throw new DatabaseError('Failed to initialize database.', error);
+      if (this.shards.length > 0) return; // Already initialized
+
+      for (let i = 0; i < this.numberOfShards; i++) {
+        const path = `${this.basePath}/shard_${i}.db`;
+        const db = new betterSqlite3(path);
+        db.pragma('journal_mode = WAL');
+        this.shards.push(db);
       }
+      console.log(`[SHARD-MANAGER] Initialized ${this.numberOfShards} shards.`);
     });
   }
 
-  async run(sql, params = []) {
-    return this.mutex.runExclusive(() => {
-      try {
-        return this.db.prepare(sql).run(params);
-      } catch (error) {
-        throw new DatabaseError(`Failed to run SQL: ${sql}`, error);
-      }
-    });
-  }
-
-  async get(sql, params = []) {
-    return this.mutex.runExclusive(() => {
-      try {
-        return this.db.prepare(sql).get(params);
-      } catch (error) {
-        throw new DatabaseError(`Failed to get from SQL: ${sql}`, error);
-      }
-    });
-  }
-
-  async all(sql, params = []) {
-    return this.mutex.runExclusive(() => {
-      try {
-        return this.db.prepare(sql).all(params);
-      } catch (error) {
-        throw new DatabaseError(`Failed to get all from SQL: ${sql}`, error);
-      }
-    });
+  /**
+   * Routes a query to the correct shard.
+   * A real implementation might parse the query to find a sharding key,
+   * but for a transaction queue, we can shard based on the recipient's address.
+   * @param {string} query The SQL query.
+   * @param {string} shardingKey The key to use for sharding (e.g., recipient address).
+   * @returns {object} The database instance for the correct shard.
+   */
+  getShard(shardingKey) {
+    if (!shardingKey) {
+      throw new DatabaseError("Sharding key is required for this operation.");
+    }
+    const hash = crypto.createHash('sha256').update(shardingKey).digest('hex');
+    const index = parseInt(hash.substring(0, 8), 16) % this.numberOfShards;
+    return this.shards[index];
   }
 
   async close() {
     return this.mutex.runExclusive(() => {
-      if (this.db && this.db.open) {
-        this.db.close();
-        this.db = null;
-        console.log('[DB-ADAPTER] Database connection closed.');
-      }
+      this.shards.forEach(db => {
+        if (db && db.open) {
+          db.close();
+        }
+      });
+      console.log(`[SHARD-MANAGER] All shards closed.`);
+      this.shards = [];
     });
   }
 }
 
-/**
- * QueryOptimizer: Uses a conceptual complex algorithm to plan the most
- * efficient way to execute a query. This is a placeholder for a real-world
- * AI model that would analyze query syntax, data distribution, and system
- * load to determine the optimal execution plan.
- */
-class QueryOptimizer {
-  constructor(dbAdapter) {
-    this.db = dbAdapter;
-    this.queryCache = new Map();
-  }
-
-  /**
-   * Optimizes a SQL query using a complex, AI-driven algorithm.
-   * This is a conceptual implementation. A real-world version would
-   * employ algorithms like A* search or a machine learning model to
-   * find the most efficient execution plan.
-   * @param {string} query The raw SQL query.
-   * @returns {Promise<string>} The optimized query string.
-   */
-  async optimize(query) {
-    if (this.queryCache.has(query)) {
-      console.log('[QUERY-OPTIMIZER] Cache hit!');
-      return this.queryCache.get(query);
-    }
-
-    // 1. Parse the query into an Abstract Syntax Tree (AST)
-    const parsedQuery = this.parseQuery(query);
-
-    // 2. Analyze the AST to identify optimization opportunities
-    const analysisReport = this.analyzeAST(parsedQuery);
-
-    // 3. Generate multiple potential execution plans
-    const candidatePlans = this.generatePlans(analysisReport);
-
-    // 4. Use a complex algorithm (simulated here) to select the optimal plan.
-    // In a real system, this would be an expensive computation.
-    const optimalPlan = this.selectOptimalPlan(candidatePlans);
-
-    // 5. Reconstruct the query from the optimal plan
-    const optimizedQuery = this.reconstructQuery(optimalPlan);
-
-    this.queryCache.set(query, optimizedQuery);
-    console.log('[QUERY-OPTIMIZER] Query optimized successfully.');
-    return optimizedQuery;
-  }
-
-  parseQuery(query) { return { type: 'SELECT', table: 'users', where: 'id = 1' }; }
-  analyzeAST(ast) { return { tables: [ast.table] }; }
-  generatePlans(report) { return [{ cost: 10, plan: '...'}, { cost: 5, plan: '...'}]; }
-  selectOptimalPlan(plans) { return plans.sort((a, b) => a.cost - b.cost)[0]; }
-  reconstructQuery(plan) { return 'SELECT * FROM users WHERE id = 1;'; }
-}
-
-/**
- * BlockchainAuditSystem: Audits database transactions by creating
- * cryptographic proofs and storing them on the blockchain.
- */
-class BlockchainAuditSystem extends EventEmitter {
-  constructor(dbAdapter, web3Config) {
-    super();
-    this.db = dbAdapter;
-    this.web3 = new Web3(web3Config.url);
-    this.latestTxHash = null;
-    this.auditTableCreated = false;
-  }
-
-  async init() {
-    await this.createAuditTable();
-    console.log('[BLOCKCHAIN-AUDIT] System initialized.');
-  }
-
-  async createAuditTable() {
-    if (this.auditTableCreated) return;
-    try {
-      await this.db.run(`
-        CREATE TABLE IF NOT EXISTS blockchain_audits (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          query_hash TEXT NOT NULL,
-          blockchain_tx_hash TEXT NOT NULL,
-          timestamp TEXT NOT NULL
-        );
-      `);
-      this.auditTableCreated = true;
-      console.log('[BLOCKCHAIN-AUDIT] Audit table created.');
-    } catch (error) {
-      throw new DatabaseError('Failed to create blockchain_audits table.', error);
-    }
-  }
-
-  /**
-   * Audits a query by hashing it and simulating a blockchain transaction.
-   * @param {string} query The database query to audit.
-   */
-  async auditTransaction(query) {
-    const queryHash = ethers.utils.sha256(ethers.utils.toUtf8Bytes(query));
-    try {
-      // Simulate sending a transaction to the blockchain
-      const fakeTxHash = `0x${uuidv4().replace(/-/g, '')}`;
-      this.latestTxHash = fakeTxHash;
-
-      await this.db.run(
-        `INSERT INTO blockchain_audits (query_hash, blockchain_tx_hash, timestamp) VALUES (?, ?, ?)`,
-        [queryHash, fakeTxHash, new Date().toISOString()]
-      );
-
-      this.emit('audited', { queryHash, fakeTxHash });
-      console.log(`[BLOCKCHAIN-AUDIT] Audited query with hash: ${queryHash} and tx: ${fakeTxHash}`);
-    } catch (error) {
-      throw new BlockchainError('Failed to audit transaction.', error);
-    }
-  }
-}
-
-/**
- * ShardManager: A conceptual class to handle database sharding,
- * ensuring data is distributed for scalability.
- */
-class ShardManager {
-  constructor(dbAdapter, web3Config) {
-    this.db = dbAdapter;
-    this.web3 = new Web3(web3Config.url);
-  }
-
-  async routeQueryToShard(query) {
-    // This is a placeholder for a complex sharding algorithm.
-    // It would analyze the query to determine which database shard to route it to.
-    console.log('[SHARD-MANAGER] Routing query to shard...');
-    // A real implementation would involve a hash ring or a distributed lookup table.
-    return query;
-  }
-}
-
 // =========================================================================
-// 3. The Core BrianNwaezikeDB Wrapper
+// 2. The Core BrianNwaezikeDB Wrapper
 // =========================================================================
 /**
  * BrianNwaezikeDB: A unified wrapper for database operations,
- * integrating query optimization, blockchain auditing, and sharding.
+ * providing a reliable transaction queue.
  */
 export class BrianNwaezikeDB {
   constructor(config) {
-    this.db = new DatabaseAdapter(config.database);
-    this.queryOptimizer = new QueryOptimizer(this.db);
-    this.blockchainAudit = new BlockchainAuditSystem(this.db, config.blockchain);
-    this.shardManager = new ShardManager(this.db, config.blockchain);
+    this.config = config;
+    this.shardManager = null;
   }
 
   async init() {
     console.log('Initializing BrianNwaezikeDB...');
-    await this.db.init();
-    await this.blockchainAudit.init();
-    console.log('Database and Blockchain Audit System initialized.');
+    
+    const dataDir = './data';
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir);
+    }
+    
+    this.shardManager = new ShardManager(
+      this.config.database.path,
+      this.config.database.numberOfShards
+    );
+    await this.shardManager.init();
+    
+    await this.initializeTransactionTable();
+    console.log('Database initialized successfully.');
+  }
+  
+  /**
+   * Initializes the `transactions` table on all shards.
+   */
+  async initializeTransactionTable() {
+    for (const shard of this.shardManager.shards) {
+      await retryWithBackoff(() => shard.prepare(`
+        CREATE TABLE IF NOT EXISTS transactions (
+          id TEXT PRIMARY KEY,
+          recipient TEXT NOT NULL,
+          amount TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('pending', 'sent', 'failed')),
+          tx_hash TEXT,
+          retries INTEGER DEFAULT 0
+        )
+      `).run());
+    }
+    console.log('[DB] Transactions table initialized on all shards.');
   }
 
-  async execute(query) {
-    const optimizedQuery = await this.queryOptimizer.optimize(query);
-    const routedQuery = await this.shardManager.routeQueryToShard(optimizedQuery);
-    const result = await retryWithBackoff(() => this.db.run(routedQuery));
-    await this.blockchainAudit.auditTransaction(routedQuery);
-    return result;
+  /**
+   * Executes a read/write operation on the correct shard.
+   * @param {string} shardingKey - The key to route the operation.
+   * @param {string} sql - The SQL query.
+   * @param {Array} params - The query parameters.
+   */
+  async runOnShard(shardingKey, sql, params = []) {
+    const shard = this.shardManager.getShard(shardingKey);
+    return retryWithBackoff(() => shard.prepare(sql).run(params));
   }
 
-  async get(query) {
-    const optimizedQuery = await this.queryOptimizer.optimize(query);
-    const routedQuery = await this.shardManager.routeQueryToShard(optimizedQuery);
-    const result = await retryWithBackoff(() => this.db.get(routedQuery));
-    await this.blockchainAudit.auditTransaction(routedQuery);
-    return result;
+  async getOnShard(shardingKey, sql, params = []) {
+    const shard = this.shardManager.getShard(shardingKey);
+    return retryWithBackoff(() => shard.prepare(sql).get(params));
   }
 
-  async all(query) {
-    const optimizedQuery = await this.queryOptimizer.optimize(query);
-    const routedQuery = await this.shardManager.routeQueryToShard(optimizedQuery);
-    const result = await retryWithBackoff(() => this.db.all(routedQuery));
-    await this.blockchainAudit.auditTransaction(routedQuery);
-    return result;
+  async allOnShard(shardingKey, sql, params = []) {
+    const shard = this.shardManager.getShard(shardingKey);
+    return retryWithBackoff(() => shard.prepare(sql).all(params));
+  }
+
+  /**
+   * Adds a new transaction job to the queue.
+   * @param {string} recipientAddress - The public address of the recipient.
+   * @param {string} amount - The amount of Ether to send, as a string.
+   */
+  async addTransactionJob(recipientAddress, amount) {
+    const jobId = recipientAddress + '-' + Date.now();
+    await this.runOnShard(
+      recipientAddress,
+      'INSERT INTO transactions (id, recipient, amount, status) VALUES (?, ?, ?, ?)',
+      [jobId, recipientAddress, amount, 'pending']
+    );
+    console.log(`[DB] New transaction job added for recipient: ${recipientAddress}`);
+  }
+
+  /**
+   * Retrieves all pending transaction jobs from all shards.
+   * @returns {Promise<Array>} An array of pending transaction job objects.
+   */
+  async getPendingJobs() {
+    let allJobs = [];
+    for (const shard of this.shardManager.shards) {
+      const jobs = await retryWithBackoff(() => shard.prepare('SELECT * FROM transactions WHERE status = ?').all(['pending']));
+      allJobs.push(...jobs);
+    }
+    return allJobs;
+  }
+
+  /**
+   * Updates the status of a transaction job.
+   * @param {string} jobId - The ID of the transaction job.
+   * @param {string} status - The new status ('sent' or 'failed').
+   * @param {string} [txHash] - The transaction hash, if applicable.
+   */
+  async updateJobStatus(jobId, recipient, status, txHash = null) {
+    await this.runOnShard(
+      recipient,
+      'UPDATE transactions SET status = ?, tx_hash = ? WHERE id = ?',
+      [status, txHash, jobId]
+    );
+    console.log(`[DB] Job ${jobId} status updated to: ${status}`);
+  }
+  
+  /**
+   * Increments the retry count for a failed transaction job.
+   * @param {string} jobId - The ID of the transaction job.
+   * @param {string} recipient - The recipient address to route the update.
+   */
+  async incrementRetries(jobId, recipient) {
+    await this.runOnShard(
+      recipient,
+      'UPDATE transactions SET retries = retries + 1 WHERE id = ?',
+      [jobId]
+    );
+    console.log(`[DB] Job ${jobId} retry count incremented.`);
   }
 
   async close() {
-    await this.db.close();
+    await this.shardManager.close();
     console.log('BrianNwaezikeDB services closed.');
   }
 }
-
-// Example Usage (for demonstration purposes only)
-// async function runExample() {
-//   const config = {
-//     database: { path: ':memory:' },
-//     blockchain: { url: 'http://localhost:8545' }
-//   };
-//   const bwaeziDB = new BrianNwaezikeDB(config);
-//   await bwaeziDB.init();
-
-//   await bwaeziDB.execute('CREATE TABLE users (id INTEGER, name TEXT)');
-//   await bwaeziDB.execute("INSERT INTO users VALUES (1, 'Brian')");
-
-//   const user = await bwaeziDB.get("SELECT * FROM users WHERE id = 1");
-//   console.log('Found user:', user);
-
-//   await bwaeziDB.close();
-// }
-
-// runExample();
