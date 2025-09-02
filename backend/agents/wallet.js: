@@ -1,81 +1,177 @@
 /**
- * wallet.js
+ * Wallet Utility
  *
- * This is the ultimate, production-ready blockchain agent. It's responsible
- * for all secure blockchain-related operations. It manages the transaction
- * nonce and reports back to the database layer on success or failure,
- * using the sharded database for scalability.
+ * This utility provides the core functionality for all blockchain interactions.
+ * It is a secure, server-side component and should never be exposed to the public.
  */
+import 'dotenv/config';
 
 // =========================================================================
-// 1. External Library and Internal Module Imports
+// 1. External Library Imports
 // =========================================================================
-import { ethers } from 'ethers';
-import { config } from '../config.js';
-
-// Create a unified database instance with sharding enabled. This is our state management layer.
-import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
-const bwaeziDB = new BrianNwaezikeDB();
-
-// Connect to a local Ethereum network. This is our blockchain communication layer.
-const provider = new ethers.JsonRpcProvider(config.wallet.rpcUrl);
-
-// Create a wallet instance and connect it to the provider.
-const wallet = new ethers.Wallet(config.wallet.privateKey, provider);
-
-console.log(`[WALLET] Wallet initialized with address: ${wallet.address}`);
+import { ethers, getAddress } from 'ethers';
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
+import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
 
 // =========================================================================
-// 3. Core Functionality
+// 2. Configuration & Initialization
+// =========================================================================
+// ⚠️ IMPORTANT: Load your sensitive credentials from environment variables.
+// NEVER hardcode private keys or RPC URLs in your codebase.
+// Use 'npm install dotenv' and create a .env file to store these.
+
+// Ethereum
+const ETHEREUM_RPC_URL = process.env.ETHEREUM_RPC_URL || 'YOUR_ETHEREUM_RPC_URL';
+const ETH_OPERATIONAL_WALLET_PRIVATE_KEY = process.env.ETH_OPERATIONAL_WALLET_PRIVATE_KEY || 'YOUR_ETH_PRIVATE_KEY';
+const USDT_CONTRACT_ADDRESS_ETH = '0xdAC17F958D2ee523a2206206994597C13D831ec7'; // USDT contract address on Ethereum Mainnet
+
+// Solana
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'YOUR_SOLANA_RPC_URL';
+const SOL_OPERATIONAL_WALLET_PRIVATE_KEY = process.env.SOL_OPERATIONAL_WALLET_PRIVATE_KEY || 'YOUR_SOL_PRIVATE_KEY';
+const USDT_MINT_ADDRESS_SOL = 'Es9Kdd31Wq41G4R7s3M2wXq3T413d7tLg484e1t4t'; // USDT (ERC-20) on Solana (SPL Token)
+
+// Ethereum Wallet Setup
+const ethProvider = new ethers.JsonRpcProvider(ETHEREUM_RPC_URL);
+const ethWallet = new ethers.Wallet(ETH_OPERATIONAL_WALLET_PRIVATE_KEY, ethProvider);
+
+// Solana Wallet Setup
+const solConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
+const solWallet = Keypair.fromSecretKey(Uint8Array.from(SOL_OPERATIONAL_WALLET_PRIVATE_KEY.split(',')));
+
+// =========================================================================
+// 3. Core Functions
 // =========================================================================
 
 /**
- * Sends a blockchain transaction for a specific job.
- * @param {object} job - The transaction job object from the database.
- * @returns {Promise<void>}
+ * Retrieves the SOL balance of the operational wallet.
+ * @returns {Promise<number>} The balance in SOL.
  */
-export async function sendTransactionForJob(job) {
-    const { id, recipient, amount, retries } = job;
-    
-    // Set a maximum number of retries to prevent infinite loops and resource waste.
-    const MAX_RETRIES = config.backend.maxRetries;
+export async function getSolanaBalance() {
+  try {
+    const balance = await solConnection.getBalance(solWallet.publicKey);
+    return balance / LAMPORTS_PER_SOL;
+  } catch (error) {
+    console.error("Error fetching Solana balance:", error);
+    return 0;
+  }
+}
 
-    if (retries >= MAX_RETRIES) {
-        console.warn(`[WALLET] Job ${id} has reached maximum retries. Marking as failed.`);
-        // Update the job status in the database using the recipient for sharding.
-        await bwaeziDB.updateJobStatus(id, recipient, 'failed');
-        return;
-    }
+/**
+ * Sends native SOL from the operational wallet to a destination.
+ * @param {string} toAddress - The recipient's Solana address.
+ * @param {number} amount - The amount of SOL to send.
+ * @returns {Promise<object>} The transaction details or an error object.
+ */
+export async function sendSOL(toAddress, amount) {
+  try {
+    const toPublicKey = new PublicKey(toAddress);
+    const lamports = amount * LAMPORTS_PER_SOL;
 
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: solWallet.publicKey,
+        toPubkey: toPublicKey,
+        lamports,
+      })
+    );
+
+    const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.lastValidBlockHeight = lastValidBlockHeight;
+    transaction.feePayer = solWallet.publicKey;
+
+    const signature = await solanaWeb3.sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+
+    return { signature };
+  } catch (error) {
+    console.error("Error sending SOL:", error);
+    return { error: error.message };
+  }
+}
+
+/**
+ * Retrieves the USDT balance of the operational wallet on both chains.
+ * @param {string} chain - The blockchain to check ('eth' or 'sol').
+ * @returns {Promise<number>} The USDT balance.
+ */
+export async function getUSDTBalance(chain = 'eth') {
+  if (chain === 'eth') {
+    const usdtContract = new ethers.Contract(USDT_CONTRACT_ADDRESS_ETH, ["function balanceOf(address owner) view returns (uint256)"], ethProvider);
+    const balance = await usdtContract.balanceOf(ethWallet.address);
+    return ethers.formatUnits(balance, 6); // USDT has 6 decimals
+  } else if (chain === 'sol') {
     try {
-        // Fetch the current transaction count to ensure the correct nonce is used.
-        // The 'pending' keyword is crucial for accurate nonce management.
-        const nonce = await wallet.getNonce('pending');
-        
-        console.log(`[WALLET] Preparing to send ${amount} ETH to ${recipient} (Job ID: ${id}, Nonce: ${nonce})`);
+      const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
+      const associatedTokenAddress = await getAssociatedTokenAddress(
+        usdtMintAddress,
+        solWallet.publicKey
+      );
 
-        // Construct the raw transaction object.
-        const transaction = {
-            to: recipient,
-            value: ethers.parseEther(amount),
-            nonce: nonce
-        };
-
-        // Send the transaction to the network.
-        const txResponse = await wallet.sendTransaction(transaction);
-
-        console.log(`[WALLET] Transaction sent. Transaction hash: ${txResponse.hash}`);
-        
-        // Wait for the transaction to be confirmed on the blockchain.
-        await txResponse.wait();
-        
-        // On success, update the job status with the transaction hash.
-        await bwaeziDB.updateJobStatus(id, recipient, 'sent', txResponse.hash);
-        
+      const tokenBalance = await solConnection.getTokenAccountBalance(associatedTokenAddress);
+      return tokenBalance.value.uiAmount;
     } catch (error) {
-        console.error(`[WALLET] Failed to send transaction for job ${id}:`, error.message);
-        
-        // On failure, increment the retry count for this job.
-        await bwaeziDB.incrementRetries(id, recipient);
+      console.error("Error fetching Solana USDT balance:", error);
+      return 0;
     }
+  }
+  return 0;
+}
+
+/**
+ * Sends USDT from the operational wallet to a destination.
+ * It automatically detects the correct network based on the recipient's address format.
+ * @param {string} toAddress - The recipient's address.
+ * @param {number} amount - The amount of USDT to send.
+ * @returns {Promise<object>} The transaction details.
+ */
+export async function sendUSDT(toAddress, amount) {
+  try {
+    // Check if the address is a valid Ethereum address.
+    const isEthAddress = getAddress(toAddress);
+    
+    // If it's a valid Ethereum address, send USDT on the Ethereum network.
+    const usdtContract = new ethers.Contract(
+      USDT_CONTRACT_ADDRESS_ETH, 
+      ["function transfer(address to, uint256 amount) returns (bool)"], 
+      ethWallet
+    );
+    const amountInWei = ethers.parseUnits(amount.toString(), 6);
+    const tx = await usdtContract.transfer(toAddress, amountInWei);
+    
+    return { hash: tx.hash };
+  } catch (ethError) {
+    try {
+      // If Ethereum transaction fails, assume it's a Solana address and try to send SPL USDT.
+      const toPublicKey = new PublicKey(toAddress);
+      const fromTokenAccount = await getAssociatedTokenAddress(
+        new PublicKey(USDT_MINT_ADDRESS_SOL),
+        solWallet.publicKey
+      );
+      const toTokenAccount = await getAssociatedTokenAddress(
+        new PublicKey(USDT_MINT_ADDRESS_SOL),
+        toPublicKey
+      );
+      
+      const transaction = new Transaction().add(
+        createTransferInstruction(
+          fromTokenAccount,
+          toTokenAccount,
+          solWallet.publicKey,
+          amount * 10**6
+        )
+      );
+
+      const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.lastValidBlockHeight = lastValidBlockHeight;
+      transaction.feePayer = solWallet.publicKey;
+
+      const signature = await solanaWeb3.sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+
+      return { signature };
+    } catch (solError) {
+      console.error("Error sending USDT on both networks:", solError);
+      return { error: "Failed to send USDT. Check the address and network." };
+    }
+  }
 }
