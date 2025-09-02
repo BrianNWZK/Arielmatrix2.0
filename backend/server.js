@@ -1,6 +1,6 @@
-// =========================================================================
-// ArielSQL Server Entrypoint: A lightweight loader for the ServiceManager
-// =========================================================================
+/**
+ * ArielSQL Server Entrypoint: A lightweight loader for the ServiceManager
+ */
 
 import { ServiceManager } from './serviceManager.js';
 import 'dotenv/config'; // Loads environment variables from .env file
@@ -13,7 +13,7 @@ import 'dotenv/config'; // Loads environment variables from .env file
 function getDefaultConfig() {
     return {
         database: {
-            path: process.env.DATABASE_PATH || './data/arielsql.db',
+            path: process.env.DATABASE_PATH,
             passphrase: process.env.DB_PASSPHRASE,
             litestream: true,
             s3Bucket: process.env.S3_BUCKET,
@@ -21,7 +21,7 @@ function getDefaultConfig() {
             s3SecretKey: process.env.S3_SECRET_KEY,
         },
         server: {
-            port: process.env.PORT || 10000,
+            port: process.env.PORT || 1000,
             host: '0.0.0.0'
         },
         blockchain: {
@@ -29,7 +29,7 @@ function getDefaultConfig() {
             solanaRpc: process.env.SOLANA_RPC_URL
         },
         // All other agent-specific configs from the old server.js
-        PAYOUT_THRESHOLD_USD: process.env.PAYOUT_THRESHOLD_USD || 500,
+        PAYOUT_THRESHOLD_USD: process.env.PAYOUT_THRESHOLD_USD,
         COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
         COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY,
         GOOGLE_ADS_API_KEY: process.env.GOOGLE_ADS_API_KEY,
