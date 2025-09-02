@@ -1,0 +1,81 @@
+/**
+ * wallet.js
+ *
+ * This is the ultimate, production-ready blockchain agent. It's responsible
+ * for all secure blockchain-related operations. It manages the transaction
+ * nonce and reports back to the database layer on success or failure,
+ * using the sharded database for scalability.
+ */
+
+// =========================================================================
+// 1. External Library and Internal Module Imports
+// =========================================================================
+import { ethers } from 'ethers';
+import { config } from '../config.js';
+
+// Create a unified database instance with sharding enabled. This is our state management layer.
+import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
+const bwaeziDB = new BrianNwaezikeDB();
+
+// Connect to a local Ethereum network. This is our blockchain communication layer.
+const provider = new ethers.JsonRpcProvider(config.wallet.rpcUrl);
+
+// Create a wallet instance and connect it to the provider.
+const wallet = new ethers.Wallet(config.wallet.privateKey, provider);
+
+console.log(`[WALLET] Wallet initialized with address: ${wallet.address}`);
+
+// =========================================================================
+// 3. Core Functionality
+// =========================================================================
+
+/**
+ * Sends a blockchain transaction for a specific job.
+ * @param {object} job - The transaction job object from the database.
+ * @returns {Promise<void>}
+ */
+export async function sendTransactionForJob(job) {
+    const { id, recipient, amount, retries } = job;
+    
+    // Set a maximum number of retries to prevent infinite loops and resource waste.
+    const MAX_RETRIES = config.backend.maxRetries;
+
+    if (retries >= MAX_RETRIES) {
+        console.warn(`[WALLET] Job ${id} has reached maximum retries. Marking as failed.`);
+        // Update the job status in the database using the recipient for sharding.
+        await bwaeziDB.updateJobStatus(id, recipient, 'failed');
+        return;
+    }
+
+    try {
+        // Fetch the current transaction count to ensure the correct nonce is used.
+        // The 'pending' keyword is crucial for accurate nonce management.
+        const nonce = await wallet.getNonce('pending');
+        
+        console.log(`[WALLET] Preparing to send ${amount} ETH to ${recipient} (Job ID: ${id}, Nonce: ${nonce})`);
+
+        // Construct the raw transaction object.
+        const transaction = {
+            to: recipient,
+            value: ethers.parseEther(amount),
+            nonce: nonce
+        };
+
+        // Send the transaction to the network.
+        const txResponse = await wallet.sendTransaction(transaction);
+
+        console.log(`[WALLET] Transaction sent. Transaction hash: ${txResponse.hash}`);
+        
+        // Wait for the transaction to be confirmed on the blockchain.
+        await txResponse.wait();
+        
+        // On success, update the job status with the transaction hash.
+        await bwaeziDB.updateJobStatus(id, recipient, 'sent', txResponse.hash);
+        
+    } catch (error) {
+        console.error(`[WALLET] Failed to send transaction for job ${id}:`, error.message);
+        
+        // On failure, increment the retry count for this job.
+        await bwaeziDB.incrementRetries(id, recipient);
+    }
+}
