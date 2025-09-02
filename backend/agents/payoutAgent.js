@@ -8,7 +8,7 @@
  */
 
 // The base URL of our new local Express server.
-const API_BASE_URL = 'http://localhost:3000';
+const API_BASE_URL = 'http://localhost:1000';
 
 class PayoutAgent {
   constructor() {
@@ -20,16 +20,17 @@ class PayoutAgent {
    * Submits a single payout request to the backend API.
    * @param {string} recipientAddress - The recipient's public address.
    * @param {number} amount - The amount to be paid.
+   * @param {string} currency - The cryptocurrency to use (e.g., 'USDT', 'SOL').
    */
-  async submitPayoutRequest(recipientAddress, amount) {
+  async submitPayoutRequest(recipientAddress, amount, currency) {
     try {
-      console.log(`Submitting new payout request: ${amount} to ${recipientAddress}`);
+      console.log(`Submitting new payout request: ${amount} ${currency} to ${recipientAddress}`);
       const response = await fetch(`${API_BASE_URL}/payouts/add`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ recipient: recipientAddress, amount }),
+        body: JSON.stringify({ recipient: recipientAddress, amount, currency }),
       });
 
       if (!response.ok) {
@@ -59,12 +60,12 @@ class PayoutAgent {
     this.intervalId = setInterval(() => {
       // Simulate new payout requests from a client service.
       const mockRequests = [
-        { recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", amount: (Math.random() * 10).toFixed(4) },
-        { recipient: "0x3C44CdDdB6a900fa2b585dd299e03d120979392", amount: (Math.random() * 5).toFixed(4) }
+        { recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", amount: (Math.random() * 10).toFixed(4), currency: 'USDT' },
+        { recipient: "0x3C44CdDdB6a900fa2b585dd299e03d120979392", amount: (Math.random() * 5).toFixed(4), currency: 'SOL' }
       ];
 
       mockRequests.forEach(request => {
-        this.submitPayoutRequest(request.recipient, request.amount);
+        this.submitPayoutRequest(request.recipient, request.amount, request.currency);
       });
 
     }, intervalMs);
