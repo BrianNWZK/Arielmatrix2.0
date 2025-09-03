@@ -1,379 +1,457 @@
-import { ServiceManager, deriveQuantumKeys } from '../../arielsql_suite/serviceManager.js';
 import { v4 as uuidv4 } from 'uuid';
-import {
-  getSolanaBalance,
-  sendSOL,
-  getUSDTBalance,
-  sendUSDT
-} from '../../WalletUtility.js';
+import { Mutex } from 'async-mutex';
+import { EventEmitter } from 'events';
+import crypto from 'crypto';
+import path from 'path';
+import fs from 'fs';
+import { createServer } from 'http';
+import { WebSocketServer } from 'ws';
+import express from 'express';
+import winston from 'winston';
+import betterSqlite3 from 'better-sqlite3';
 
-/**
- * Enhanced OmnichainInteroperabilityService for production use
- * Integrates with WalletUtility for actual cross-chain transactions
- */
-class EnhancedOmnichainInteroperabilityService {
+// =========================================================================
+// Custom Errors & Utilities
+// =========================================================================
+export class DatabaseError extends Error {
+  constructor(message, originalError) {
+    super(message);
+    this.name = 'DatabaseError';
+    this.originalError = originalError;
+  }
+}
+
+export class SecurityError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SecurityError';
+  }
+}
+
+export class ServiceInitializationError extends Error {
+  constructor(serviceName, message) {
+    super(`Failed to initialize ${serviceName}: ${message}`);
+    this.name = 'ServiceInitializationError';
+    this.serviceName = serviceName;
+  }
+}
+
+// =========================================================================
+// Production Logger
+// =========================================================================
+class ProductionLogger {
   constructor() {
-    this.pendingBridges = new Map();
-    this.bridgeStatus = new Map();
-    this.bridgeCallbacks = new Map();
+    this.logger = winston.createLogger({
+      level: process.env.LOG_LEVEL || 'info',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.errors({ stack: true }),
+        winston.format.json()
+      ),
+      defaultMeta: { service: 'ariel-sql-service' },
+      transports: [
+        new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+        new winston.transports.File({ filename: 'logs/combined.log' }),
+        new winston.transports.Console({
+          format: winston.format.combine(
+            winston.format.colorize(),
+            winston.format.simple()
+          )
+        })
+      ],
+    });
   }
 
-  /**
-   * Bridge assets between chains using WalletUtility
-   * @param {Object} bridgeData - Bridge transaction data
-   * @param {string} targetChain - Target blockchain identifier
-   * @returns {Promise<Object>} Bridge operation result
-   */
-  async bridgeTransaction(bridgeData, targetChain) {
-    const bridgeId = bridgeData.id || uuidv4();
+  info(message, meta = {}) {
+    this.logger.info(message, meta);
+  }
+
+  error(message, meta = {}) {
+    this.logger.error(message, meta);
+  }
+
+  warn(message, meta = {}) {
+    this.logger.warn(message, meta);
+  }
+
+  debug(message, meta = {}) {
+    this.logger.debug(message, meta);
+  }
+}
+
+// Global logger instance
+const logger = new ProductionLogger();
+
+// =========================================================================
+// Task Queue with SQLite
+// =========================================================================
+class SQLiteTaskQueue {
+  constructor(dbPath) {
+    this.dbPath = dbPath;
+    this.db = null;
+  }
+
+  async init() {
+    this.db = betterSqlite3(this.dbPath);
     
+    // Create tasks table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        data TEXT,
+        status TEXT DEFAULT 'pending',
+        priority INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME,
+        completed_at DATETIME,
+        result TEXT,
+        error TEXT
+      )
+    `);
+    
+    // Create index for performance
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_status_priority 
+      ON tasks(status, priority DESC, created_at)
+    `);
+    
+    logger.info('SQLite task queue initialized');
+  }
+
+  async add(task) {
+    const result = this.db.run(
+      `INSERT INTO tasks (type, data, priority) VALUES (?, ?, ?)`,
+      [task.type, JSON.stringify(task.data || {}), task.priority || 0]
+    );
+    
+    logger.debug('Task added to queue', { taskId: result.lastInsertRowid, type: task.type });
+    return result.lastInsertRowid;
+  }
+
+  async getNextTask() {
+    return this.db.get(`
+      SELECT * FROM tasks 
+      WHERE status = 'pending' 
+      ORDER BY priority DESC, created_at 
+      LIMIT 1
+    `);
+  }
+
+  async startTask(taskId) {
+    this.db.run(
+      `UPDATE tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [taskId]
+    );
+    
+    const task = this.db.get(`SELECT * FROM tasks WHERE id = ?`, [taskId]);
+    return task ? { ...task, data: JSON.parse(task.data || '{}') } : null;
+  }
+
+  async completeTask(taskId, result) {
+    this.db.run(
+      `UPDATE tasks SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = ? WHERE id = ?`,
+      [JSON.stringify(result || {}), taskId]
+    );
+  }
+
+  async failTask(taskId, error) {
+    this.db.run(
+      `UPDATE tasks SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error = ? WHERE id = ?`,
+      [error.message, taskId]
+    );
+  }
+
+  async getQueueStats() {
+    const stats = this.db.get(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+      FROM tasks
+    `);
+    
+    return stats;
+  }
+
+  async close() {
+    if (this.db) {
+      this.db.close();
+      logger.info('Task queue database closed');
+    }
+  }
+}
+
+// =========================================================================
+// Database Adapter
+// =========================================================================
+class DatabaseAdapter {
+  constructor(config) {
+    this.config = config;
+    this.db = null;
+    this.mutex = new Mutex();
+  }
+
+  async init() {
     try {
-      // Validate bridge parameters
-      if (!bridgeData.amount || bridgeData.amount <= 0) {
-        throw new Error("Invalid bridge amount");
+      // Ensure directory exists
+      const dir = path.dirname(this.config.path);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
       }
+
+      this.db = betterSqlite3(this.config.path);
       
-      if (!bridgeData.currency) {
-        throw new Error("Currency not specified");
-      }
+      // Enable WAL mode for better concurrency
+      this.db.pragma('journal_mode = WAL');
       
-      // Store bridge data with status
-      this.bridgeStatus.set(bridgeId, {
-        id: bridgeId,
-        sourceChain: bridgeData.sourceChain,
-        targetChain: targetChain,
-        amount: bridgeData.amount,
-        currency: bridgeData.currency,
-        sourceTxHash: bridgeData.sourceTxHash,
-        status: 'processing',
-        timestamp: Date.now()
-      });
-
-      // Execute the bridge based on currency and target chain
-      let result;
+      // Enable foreign keys
+      this.db.pragma('foreign_keys = ON');
       
-      if (bridgeData.currency === 'SOL' && targetChain === 'solana') {
-        result = await this.bridgeSOL(bridgeData, targetChain);
-      } else if (bridgeData.currency === 'USDT') {
-        result = await this.bridgeUSDT(bridgeData, targetChain);
-      } else if (bridgeData.currency === 'ETH' && targetChain === 'ethereum') {
-        result = await this.bridgeETH(bridgeData, targetChain);
-      } else {
-        throw new Error(`Unsupported currency/chain combination: ${bridgeData.currency} to ${targetChain}`);
-      }
-
-      // Update bridge status
-      this.bridgeStatus.set(bridgeId, {
-        ...this.bridgeStatus.get(bridgeId),
-        status: 'completed',
-        targetTxHash: result.signature || result.hash,
-        completedAt: Date.now()
-      });
-
-      // Execute any registered callbacks
-      if (this.bridgeCallbacks.has(bridgeId)) {
-        this.bridgeCallbacks.get(bridgeId).forEach(callback => {
-          callback(this.bridgeStatus.get(bridgeId));
-        });
-      }
-
-      return {
-        success: true,
-        bridgeId,
-        targetTxHash: result.signature || result.hash,
-        message: `Successfully bridged ${bridgeData.amount} ${bridgeData.currency} to ${targetChain}`
-      };
-
+      logger.info('Database adapter initialized successfully');
     } catch (error) {
-      console.error(`Bridge ${bridgeId} failed:`, error);
-      
-      // Update bridge status to failed
-      if (this.bridgeStatus.has(bridgeId)) {
-        this.bridgeStatus.set(bridgeId, {
-          ...this.bridgeStatus.get(bridgeId),
-          status: 'failed',
-          error: error.message,
-          completedAt: Date.now()
-        });
-      }
-
-      // Execute any registered callbacks for failure
-      if (this.bridgeCallbacks.has(bridgeId)) {
-        this.bridgeCallbacks.get(bridgeId).forEach(callback => {
-          callback(this.bridgeStatus.get(bridgeId));
-        });
-      }
-
-      return {
-        success: false,
-        bridgeId,
-        error: error.message
-      };
+      logger.error('Failed to initialize database adapter', { error: error.message });
+      throw new DatabaseError('Database initialization failed', error);
     }
   }
 
-  /**
-   * Bridge SOL to Solana
-   * @param {Object} bridgeData - Bridge transaction data
-   * @param {string} targetChain - Target blockchain identifier
-   * @returns {Promise<Object>} Transaction result
-   */
-  async bridgeSOL(bridgeData, targetChain) {
-    // Validate we have enough SOL balance
-    const balance = await getSolanaBalance();
-    if (balance < bridgeData.amount) {
-      throw new Error(`Insufficient SOL balance. Available: ${balance}, Required: ${bridgeData.amount}`);
+  async execute(sql, params = []) {
+    const release = await this.mutex.acquire();
+    try {
+      const stmt = this.db.prepare(sql);
+      return stmt.run(...params);
+    } catch (error) {
+      logger.error('Database execute error', { sql, error: error.message });
+      throw new DatabaseError('Database execution failed', error);
+    } finally {
+      release();
     }
-
-    // Send SOL using WalletUtility
-    return await sendSOL(bridgeData.toAddress, bridgeData.amount);
   }
 
-  /**
-   * Bridge USDT to target chain
-   * @param {Object} bridgeData - Bridge transaction data
-   * @param {string} targetChain - Target blockchain identifier
-   * @returns {Promise<Object>} Transaction result
-   */
-  async bridgeUSDT(bridgeData, targetChain) {
-    // Validate we have enough USDT balance
-    const balance = await getUSDTBalance(targetChain === 'ethereum' ? 'eth' : 'sol');
-    if (balance < bridgeData.amount) {
-      throw new Error(`Insufficient USDT balance. Available: ${balance}, Required: ${bridgeData.amount}`);
+  async get(sql, params = []) {
+    const release = await this.mutex.acquire();
+    try {
+      const stmt = this.db.prepare(sql);
+      return stmt.get(...params);
+    } catch (error) {
+      logger.error('Database get error', { sql, error: error.message });
+      throw new DatabaseError('Database query failed', error);
+    } finally {
+      release();
     }
-
-    // Send USDT using WalletUtility
-    return await sendUSDT(bridgeData.toAddress, bridgeData.amount);
   }
 
-  /**
-   * Bridge ETH to Ethereum
-   * @param {Object} bridgeData - Bridge transaction data
-   * @param {string} targetChain - Target blockchain identifier
-   * @returns {Promise<Object>} Transaction result
-   */
-  async bridgeETH(bridgeData, targetChain) {
-    // This would require additional ETH-specific functions in WalletUtility
-    // For now, we'll throw an error as ETH bridging needs implementation
-    throw new Error("ETH bridging not yet implemented");
-  }
-
-  /**
-   * Get bridge status by ID
-   * @param {string} bridgeId - Bridge transaction ID
-   * @returns {Object|null} Bridge status object or null if not found
-   */
-  getBridgeStatus(bridgeId) {
-    return this.bridgeStatus.get(bridgeId) || null;
-  }
-
-  /**
-   * Register a callback for bridge status updates
-   * @param {string} bridgeId - Bridge transaction ID
-   * @param {Function} callback - Callback function
-   */
-  onBridgeUpdate(bridgeId, callback) {
-    if (!this.bridgeCallbacks.has(bridgeId)) {
-      this.bridgeCallbacks.set(bridgeId, []);
+  async all(sql, params = []) {
+    const release = await this.mutex.acquire();
+    try {
+      const stmt = this.db.prepare(sql);
+      return stmt.all(...params);
+    } catch (error) {
+      logger.error('Database all error', { sql, error: error.message });
+      throw new DatabaseError('Database query failed', error);
+    } finally {
+      release();
     }
-    this.bridgeCallbacks.get(bridgeId).push(callback);
   }
 
-  /**
-   * Get all bridges for a specific address
-   * @param {string} address - User address
-   * @returns {Array} Array of bridge transactions
-   */
-  getBridgesForAddress(address) {
-    const bridges = [];
-    for (const [id, bridge] of this.bridgeStatus) {
-      if (bridge.fromAddress === address || bridge.toAddress === address) {
-        bridges.push(bridge);
-      }
+  async run(sql, params = []) {
+    return this.execute(sql, params);
+  }
+
+  async close() {
+    if (this.db) {
+      this.db.close();
+      logger.info('Database connection closed');
     }
-    return bridges;
   }
 }
 
-/**
- * BrianNwaezikeChainFacade provides a simplified interface for ArielMatrix2.0
- * components to interact with the underlying Brian Nwaezike Chain and its
- * associated services managed by the ArielSQL Alltimate Suite.
- * It delegates core blockchain operations to the initialized ServiceManager.
- */
-class BrianNwaezikeChainFacade {
-  constructor() {
-    // Ensure the ServiceManager is globally accessible. In a deployed Render setup,
-    // 'arielsql_suite/main.js' would set global.arielSQLServiceManager upon startup.
-    if (typeof global.arielSQLServiceManager === 'undefined' || !global.arielSQLServiceManager) {
-      console.error("ArielSQL ServiceManager not initialized. Ensure 'arielsql_suite/main.js' has run.");
-      throw new Error("ArielSQL ServiceManager is not available. Check ArielSQL Suite deployment.");
-    }
-    this.serviceManager = global.arielSQLServiceManager;
-    
-    // Retrieve the actual BrianNwaezikeChain instance and other services from the ServiceManager
-    this.bwaeziCoreChain = this.serviceManager.getService('BrianNwaezikeChain');
-    this.quantumCryptoService = this.serviceManager.getService('QuantumResistantCrypto');
-    this.dbService = this.serviceManager.getService('BrianNwaezikeDB'); // Access to the integrated DB service
-    
-    // Replace the mock omnichain service with the enhanced production version
-    this.omnichainService = new EnhancedOmnichainInteroperabilityService();
+// =========================================================================
+// Autonomous Agents (Real Revenue)
+// =========================================================================
 
-    this.nativeToken = this.bwaeziCoreChain.config.NATIVE_TOKEN || 'BWAEZI'; // Get native token from the core chain config
-    console.log("BrianNwaezikeChainFacade initialized with enhanced OmnichainInteroperabilityService.");
+// Import actual agent classes from their respective files
+import AdRevenueAgent from './backend/agents/adRevenueAgent.js';
+import CryptoAgent from './backend/agents/cryptoAgent.js';
+import ShopifyAgent from './backend/agents/shopifyAgent.js';
+import SocialAgent from './backend/agents/socialAgent.js';
+import ForexSignalAgent from './backend/agents/forexSignalAgent.js';
+import PayoutAgent from './backend/agents/payoutAgent.js';
+import DataAgent from './backend/agents/dataAgent.js';
+
+// Base Agent class
+class BaseAgent {
+  constructor(config, logger) {
+    this.config = config;
+    this.logger = logger;
+    this.revenueGenerated = 0;
+    this.lastExecution = null;
+    this.executionCount = 0;
   }
 
-  /**
-   * Gets the latest block from the Brian Nwaezike Chain's local replica.
-   * @returns {Promise<Object|null>} The latest block object or null if none exists.
-   */
-  async getLatestBlock() {
-    return await this.bwaeziCoreChain.getLatestBlock();
+  async initialize() {
+    this.logger.info(`${this.constructor.name} initialized`);
   }
 
-  /**
-   * Creates and adds a new transaction to the Brian Nwaezike Chain's transaction pool.
-   * This transaction will be picked up by the ArielSQL Suite's block producer.
-   * This method directly utilizes the quantumCryptoService for signing.
-   *
-   * @param {string} fromAddress - Sender's address.
-   * @param {string} toAddress - Receiver's address.
-   * @param {number} amount - Amount to transfer.
-   * @param {string} currency - Currency of the transaction (e.g., 'BWAEZI', 'USD').
-   * @param {string} privateKey - Sender's private key (hex string) for signing.
-   * @returns {Promise<Object>} The created transaction object with a unique ID.
-   */
-  async createAndAddTransaction(fromAddress, toAddress, amount, currency, privateKey) {
-    const timestamp = Date.now();
-    const id = uuidv4(); // Unique ID for the transaction
-    
-    // Data string to be signed. Ensure consistency with how the core chain verifies.
-    const dataToSign = `${id}${fromAddress}${toAddress}${amount}${currency}${timestamp}`;
-    const signature = this.quantumCryptoService.sign(dataToSign, privateKey); // Use the quantum-crypto service for signing
+  async run() {
+    this.executionCount++;
+    this.lastExecution = new Date();
+    this.logger.debug(`${this.constructor.name} execution started`);
+  }
 
-    const transaction = {
-      id,
-      from_address: fromAddress,
-      to_address: toAddress,
-      amount,
-      currency,
-      timestamp,
-      fee: 0, // Brian Nwaezike Chain is zero-cost for transactions
-      signature,
-      // threat_score and quantum_proof will be added by the core chain service
+  getStatus() {
+    return {
+      name: this.constructor.name,
+      revenueGenerated: this.revenueGenerated,
+      lastExecution: this.lastExecution,
+      executionCount: this.executionCount,
+      status: 'active'
     };
-    
-    // Add the transaction to the core BrianNwaezikeChain service's transaction pool
-    await this.bwaeziCoreChain.addTransactionToPool(transaction);
-    console.log(`Transaction ${id.substring(0,8)}... created and added to Bwaezi pool by facade.`);
-    return transaction;
   }
 
-  /**
-   * Retrieves account balance for a given address and currency.
-   * It queries the local database replica managed by BrianNwaezikeDB.
-   * @param {string} address - The account address.
-   * @param {string} currency - The currency type (e.g., 'BWAEZI', 'USD', or cross-chain token).
-   * @returns {Promise<number>} The balance.
-   */
-  async getAccountBalance(address, currency = 'USD') {
-    const account = await this.dbService.get(
-      `SELECT balance, bwaezi_balance, cross_chain_balances FROM bwaezi_accounts WHERE address = ?`,
-      [address]
-    );
-
-    if (!account) return 0;
-    
-    if (currency === this.nativeToken) {
-      return account.bwaezi_balance || 0;
-    } else if (currency !== 'USD') {
-      const crossChainBalances = JSON.parse(account.cross_chain_balances || '{}');
-      return crossChainBalances[currency] || 0;
-    } else {
-      return account.balance || 0; // Default balance for USD or other non-native
-    }
-  }
-
-  /**
-   * Retrieves transaction history for a given address.
-   * @param {string} address - The account address.
-   * @param {number} limit - Maximum number of transactions to retrieve.
-   * @returns {Promise<Array<Object>>} List of transactions.
-   */
-  async getTransactionHistory(address, limit = 50) {
-    return await this.dbService.all(
-      `SELECT * FROM bwaezi_transactions WHERE from_address = ? OR to_address = ? ORDER BY timestamp DESC LIMIT ?`,
-      [address, address, limit]
-    );
-  }
-
-  /**
-   * Enhanced cross-chain bridge operation using WalletUtility
-   * @param {string} sourceChain - The source blockchain identifier.
-   * @param {string} targetChain - The target blockchain identifier.
-   * @param {string} sourceTxHash - Transaction hash on the source chain (if applicable).
-   * @param {number} amount - Amount to bridge.
-   * @param {string} currency - Currency to bridge.
-   * @param {string} toAddress - Recipient address on target chain.
-   * @param {string} fromAddress - Sender address on source chain.
-   * @returns {Promise<Object>} Result of the bridge operation, including a bridge tracking ID.
-   */
-  async createCrossChainBridge(sourceChain, targetChain, sourceTxHash, amount, currency, toAddress, fromAddress) {
-    return await this.omnichainService.bridgeTransaction({ 
-      id: uuidv4(), // Internal bridge tracking ID
-      sourceChain, 
-      targetChain, 
-      sourceTxHash, 
+  recordRevenue(amount, source) {
+    this.revenueGenerated += amount;
+    this.logger.info('Revenue recorded', { 
+      agent: this.constructor.name, 
       amount, 
-      currency,
-      toAddress,
-      fromAddress
-    }, targetChain);
-  }
-
-  /**
-   * Get status of a cross-chain bridge operation
-   * @param {string} bridgeId - Bridge transaction ID
-   * @returns {Object|null} Bridge status object or null if not found
-   */
-  async getBridgeStatus(bridgeId) {
-    return this.omnichainService.getBridgeStatus(bridgeId);
-  }
-
-  /**
-   * Register callback for bridge status updates
-   * @param {string} bridgeId - Bridge transaction ID
-   * @param {Function} callback - Callback function
-   */
-  async onBridgeUpdate(bridgeId, callback) {
-    this.omnichainService.onBridgeUpdate(bridgeId, callback);
-  }
-
-  /**
-   * Derives a quantum-resistant key pair from a passphrase using the suite's service.
-   * @param {string} passphrase - User's passphrase.
-   * @param {string|null} salt - Optional salt (hex string).
-   * @returns {Object} { pk: publicKeyHex, sk: secretKeyHex, salt: saltHex, ... }
-   */
-  deriveQuantumKeys(passphrase, salt = null) {
-    return deriveQuantumKeys(passphrase, salt); // Re-exporting from suite's utility
-  }
-
-  /**
-   * Retrieves the RPC URL for the Brian Nwaezike Chain from the service configuration.
-   * @returns {string|null} The RPC URL or null if not configured.
-   */
-  getRpcUrl() {
-    // The RPC URL is part of the `blockchain` configuration passed to the
-    // BrianNwaezikeChain service via the ServiceManager.
-    // We can access it here through the `bwaeziCoreChain` instance's config.
-    return this.bwaeziCoreChain.config.url || null;
-  }
-
-  // Helper to get raw DB access (use with caution)
-  async executeDbQuery(sql, args = []) {
-    return await this.dbService.execute(sql, args);
+      source,
+      totalRevenue: this.revenueGenerated
+    });
   }
 }
 
-export default BrianNwaezikeChainFacade;
+
+// =========================================================================
+// Main Service Manager
+// =========================================================================
+class ServiceManager extends EventEmitter {
+  constructor(config) {
+    super();
+    this.config = config;
+    this.dbAdapter = new DatabaseAdapter({ path: this.config.dbPath });
+    this.taskQueue = new SQLiteTaskQueue(this.config.dbPath);
+    this.agents = {};
+    this.app = express();
+    this.server = createServer(this.app);
+    this.wss = new WebSocketServer({ server: this.server });
+  }
+
+  async init() {
+    try {
+      logger.info('Initializing Service Manager...');
+      
+      // Initialize database and task queue
+      await this.dbAdapter.init();
+      await this.taskQueue.init();
+
+      // Initialize and register all agents
+      this.agents = {
+        dataAgent: new DataAgent(this.config, logger),
+        cryptoAgent: new CryptoAgent(this.config, logger),
+        shopifyAgent: new ShopifyAgent(this.config, logger),
+        forexSignalAgent: new ForexSignalAgent(this.config, logger),
+        socialAgent: new SocialAgent(this.config, logger),
+        adRevenueAgent: new AdRevenueAgent(this.config, logger),
+        payoutAgent: new PayoutAgent(this.config, logger)
+      };
+      
+      for (const agentName in this.agents) {
+        await this.agents[agentName].initialize();
+      }
+
+      // Setup API routes
+      this.setupApiRoutes();
+
+      // Setup WebSocket
+      this.setupWebSocket();
+
+      logger.info('Service Manager initialized successfully.');
+      this.emit('initialized');
+    } catch (error) {
+      logger.error('Failed to initialize Service Manager', { error: error.message });
+      throw new ServiceInitializationError('Service Manager', error.message);
+    }
+  }
+
+  setupApiRoutes() {
+    this.app.use(express.json());
+    
+    // Health check route
+    this.app.get('/health', (req, res) => {
+      res.status(200).send('OK');
+    });
+
+    // Agents status route
+    this.app.get('/agents/status', (req, res) => {
+      const status = Object.values(this.agents).map(agent => agent.getStatus());
+      res.json(status);
+    });
+
+    // Add task to queue route
+    this.app.post('/tasks/add', async (req, res) => {
+      const { type, data, priority } = req.body;
+      if (!type) {
+        return res.status(400).json({ error: 'Task type is required' });
+      }
+      try {
+        const taskId = await this.taskQueue.add({ type, data, priority });
+        res.status(201).json({ message: 'Task added', taskId });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to add task' });
+      }
+    });
+
+    logger.info('API routes set up.');
+  }
+
+  setupWebSocket() {
+    this.wss.on('connection', ws => {
+      logger.info('New WebSocket client connected.');
+      ws.on('message', message => {
+        logger.debug('Received WebSocket message', { message: message.toString() });
+        // Handle incoming messages from the frontend
+      });
+      ws.on('close', () => {
+        logger.info('WebSocket client disconnected.');
+      });
+    });
+
+    // Periodically send a message to all connected clients
+    setInterval(() => {
+      const data = {
+        timestamp: new Date().toISOString(),
+        agents: Object.values(this.agents).map(agent => agent.getStatus())
+      };
+      this.wss.clients.forEach(client => {
+        if (client.readyState === 1) { // WebSocket.OPEN
+          client.send(JSON.stringify(data));
+        }
+      });
+    }, 5000); // Update every 5 seconds
+
+    logger.info('WebSocket server set up.');
+  }
+
+  start() {
+    const PORT = process.env.PORT || 1000;
+    this.server.listen(PORT, () => {
+      logger.info(`Server listening on port ${PORT}`);
+    });
+  }
+}
+
+// Main execution
+const config = {
+  dbPath: path.join(__dirname, 'data', 'bwaezi.db'),
+};
+
+const serviceManager = new ServiceManager(config);
+
+serviceManager.init().then(() => {
+  serviceManager.start();
+}).catch(err => {
+  logger.error('Critical failure during service initialization', { error: err.message });
+  process.exit(1);
+});
