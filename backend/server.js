@@ -35,9 +35,10 @@ function getDefaultConfig() {
         GOOGLE_ADS_API_KEY: process.env.GOOGLE_ADS_API_KEY,
         META_ADS_API_KEY: process.env.META_ADS_API_KEY,
         NEWS_API_KEY: process.env.NEWS_API_KEY,
-        SHOPIFY_STORE_DOMAIN: process.env.SHOPIFY_STORE_DOMAIN,
-        SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
-        SHOPIFY_PASSWORD: process.env.SHOPIFY_PASSWORD,
+        STORE_URL: process.env.STORE_URL,
+        STORE_KEY: process.env.STORE_KEY,
+        STORE_SECRET: process.env.STORE_SECRET,
+        ADMIN_SHOP_SECRET: process.env.ADMIN_SHOP_SECRET,
         CYCLE_INTERVAL: 600000, // 10 minutes
     };
 }
