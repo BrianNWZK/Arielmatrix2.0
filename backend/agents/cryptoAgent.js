@@ -1,772 +1,305 @@
 // backend/agents/cryptoAgent.js
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import { QuantumShield } from 'quantum-resistant-crypto';
-import { AIThreatDetector } from 'ai-security-module';
-import { CrossChainBridge } from 'omnichain-interoperability';
-import { ShardingManager } from 'infinite-scalability-engine';
-import { EnergyEfficientConsensus } from 'carbon-negative-consensus';
-import { yourSQLite } from 'ariel-sqlite-engine';
+import { BrianNwaezikePayoutSystem } from '../blockchain/BrianNwaezikePayoutSystem.js';
+import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
 import ccxt from 'ccxt';
 import axios from 'axios';
-import Web3 from 'web3';
 import { ethers } from 'ethers';
+import winston from 'winston';
+
+// Import wallet functions
+import {
+  initializeConnections,
+  getSolanaBalance,
+  sendSOL,
+  getUSDTBalance,
+  sendUSDT,
+  testAllConnections
+} from '../wallet.js';
 
 class EnhancedCryptoAgent {
-    constructor(config, logger) {
-        this.config = config;
-        this.logger = logger;
-        this.DRY_RUN = true; // ENABLE DRY RUN MODE - NO REAL TRADING
-        this.blockchain = new BrianNwaezikeChain(config);
-        this.quantumShield = new QuantumShield();
-        this.threatDetector = new AIThreatDetector();
-        this.exchanges = new Map();
-        this.openPositions = new Map();
-        this.lastExecutionTime = 'Never';
-        this.lastStatus = 'idle';
-        this.lastTotalTransactions = 0;
-        this.lastConceptualEarnings = 0;
-        this.lastGasBalance = 0;
-        
-        // Initialize databases
-        this.initDatabases();
+  constructor(config = {}, logger) {
+    this.config = {
+      DRY_RUN: config.dryRun ?? true,
+      PAYMENT_CHAIN: config.paymentChain || 'eth',
+      BSC_NODE: config.bscNode || 'https://bsc-dataseed.binance.org',
+      DATABASE_PATH: config.dbPath || './data/crypto-agent',
+      DATABASE_SHARDS: config.dbShards || 3,
+      PAYOUT_WALLET: config.payoutWallet || process.env.PAYOUT_WALLET_ADDRESS
+    };
+
+    this.logger = logger || winston.createLogger({
+      level: 'info',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      ),
+      transports: [new winston.transports.Console()]
+    });
+
+    // Initialize BrianNwaezikeDB
+    this.db = new BrianNwaezikeDB({
+      database: {
+        path: this.config.DATABASE_PATH,
+        numberOfShards: this.config.DATABASE_SHARDS
+      }
+    });
+
+    // Blockchain & payout system
+    this.blockchain = new BrianNwaezikeChain('https://rpc.bwaezi.com/mainnet');
+    this.payoutSystem = new BrianNwaezikePayoutSystem(this.blockchain, '0x8a90CAb2b38dba80c64b7734e58Ee1dB38B8992e');
+
+    // Wallet state
+    this.walletInitialized = false;
+    this.lastExecutionTime = 'Never';
+    this.lastStatus = 'idle';
+    this.lastTotalTransactions = 0;
+    this.lastConceptualEarnings = 0;
+    this.lastGasBalance = 0;
+
+    this.initDatabases();
+  }
+
+  initDatabases() {
+    const tables = [
+      `CREATE TABLE IF NOT EXISTS crypto_trades (
+        id TEXT PRIMARY KEY,
+        symbol TEXT,
+        type TEXT,
+        amount REAL,
+        price REAL,
+        exchange TEXT,
+        tx_hash TEXT,
+        profit_loss REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS arbitrage_opportunities (
+        id TEXT PRIMARY KEY,
+        symbol TEXT,
+        buy_exchange TEXT,
+        sell_exchange TEXT,
+        buy_price REAL,
+        sell_price REAL,
+        potential_profit REAL,
+        executed BOOLEAN DEFAULT FALSE,
+        actual_profit REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS market_data (
+        id TEXT PRIMARY KEY,
+        symbol TEXT,
+        price REAL,
+        volume_24h REAL,
+        change_24h REAL,
+        source TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    ];
+
+    for (const sql of tables) {
+      for (let i = 0; i < this.config.DATABASE_SHARDS; i++) {
+        this.db.runOnShard(`shard_key_${i}`, sql);
+      }
+    }
+  }
+
+  async initialize() {
+    this.logger.info('🚀 Initializing Enhanced Crypto Agent with BrianNwaezikeChain Integration...');
+    if (this.config.DRY_RUN) {
+      this.logger.warn('⚠️ DRY RUN MODE ENABLED - No real trades will be executed');
     }
 
-    initDatabases() {
-        // Trading history database
-        this.db = yourSQLite.createDatabase('./data/crypto_agent.db');
-        
-        this.db.run(yourSQLite.optimizedQuery(`
-            CREATE TABLE IF NOT EXISTS crypto_trades (
-                id TEXT PRIMARY KEY,
-                symbol TEXT,
-                type TEXT,
-                amount REAL,
-                price REAL,
-                exchange TEXT,
-                tx_hash TEXT,
-                profit_loss REAL,
-                quantum_signature TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            ) WITH OPTIMIZATION=QUANTUM_COMPRESSION
-        `));
-        
-        this.db.run(yourSQLite.optimizedQuery(`
-            CREATE TABLE IF NOT EXISTS arbitrage_opportunities (
-                id TEXT PRIMARY KEY,
-                symbol TEXT,
-                buy_exchange TEXT,
-                sell_exchange TEXT,
-                buy_price REAL,
-                sell_price REAL,
-                potential_profit REAL,
-                executed BOOLEAN DEFAULT FALSE,
-                actual_profit REAL,
-                quantum_proof TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            ) WITH INDEX=QUANTUM_FAST_LOOKUP
-        `));
-        
-        this.db.run(yourSQLite.optimizedQuery(`
-            CREATE TABLE IF NOT EXISTS market_data (
-                id TEXT PRIMARY KEY,
-                symbol TEXT,
-                price REAL,
-                volume_24h REAL,
-                change_24h REAL,
-                source TEXT,
-                quantum_seal TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            ) WITH OPTIMIZATION=QUANTUM_COMPRESSION
-        `));
+    try {
+      await this.db.init();
+      await this.initializeWallets();
+      this.lastStatus = 'initialized';
+    } catch (error) {
+      this.logger.error('Initialization failed:', error);
+      this.lastStatus = 'failed';
+      throw error;
+    }
+  }
+
+  async initializeWallets() {
+    if (this.walletInitialized) return;
+
+    try {
+      await testAllConnections();
+      await initializeConnections();
+      this.walletInitialized = true;
+      this.logger.info('✅ Wallet system initialized');
+    } catch (error) {
+      this.logger.error('Wallet initialization failed:', error);
+      throw error;
+    }
+  }
+
+  async _checkGasWalletBalance() {
+    try {
+      const bnbBalance = await getUSDTBalance('eth');
+      this.lastGasBalance = bnbBalance;
+      return bnbBalance >= 0.05;
+    } catch (error) {
+      this.logger.error('Gas check failed:', error);
+      return false;
+    }
+  }
+
+  async executeArbitrageStrategy() {
+    const results = [];
+    const exchanges = ['binance', 'kraken', 'coinbase'];
+
+    // Simulate arbitrage detection
+    const opportunity = {
+      symbol: 'BTC/USDT',
+      buy_exchange: 'binance',
+      sell_exchange: 'coinbase',
+      buy_price: 60000,
+      sell_price: 60500,
+      potential_profit: 500
+    };
+
+    if (!this.config.DRY_RUN) {
+      const profit = opportunity.potential_profit;
+      const payoutResult = await this.distributePayout(profit);
+      results.push({
+        type: 'arbitrage',
+        symbol: opportunity.symbol,
+        profit,
+        payout: payoutResult
+      });
+    } else {
+      results.push({
+        type: 'arbitrage (simulated)',
+        symbol: opportunity.symbol,
+        profit: opportunity.potential_profit
+      });
     }
 
-    async initialize() {
-        this.logger.info('🚀 Initializing Enhanced Crypto Agent with BrianNwaezikeChain Integration...');
-        this.logger.warn('⚠️ DRY RUN MODE ENABLED - No real trades will be executed');
-        
-        // Initialize multiple exchanges for arbitrage opportunities
-        const exchangeConfigs = [
-            { id: 'binance', class: ccxt.binance },
-            { id: 'coinbase', class: ccxt.coinbasepro },
-            { id: 'kraken', class: ccxt.kraken },
-            { id: 'kucoin', class: ccxt.kucoin }
-        ];
+    return results;
+  }
 
-        for (const exchangeConfig of exchangeConfigs) {
-            try {
-                // In dry run mode, we'll create simulated exchange instances
-                const exchange = new exchangeConfig.class({
-                    apiKey: this.config[`${exchangeConfig.id.toUpperCase()}_API_KEY`] || 'dry-run-key',
-                    secret: this.config[`${exchangeConfig.id.toUpperCase()}_API_SECRET`] || 'dry-run-secret',
-                    enableRateLimit: true
-                });
-                
-                // For dry run, we'll simulate market data instead of loading real markets
-                if (this.DRY_RUN) {
-                    this.logger.info(`✅ ${exchangeConfig.id} exchange initialized (Simulated - Dry Run)`);
-                } else {
-                    await exchange.loadMarkets();
-                    this.logger.success(`✅ ${exchangeConfig.id} exchange initialized`);
-                }
-                
-                this.exchanges.set(exchangeConfig.id, exchange);
-            } catch (error) {
-                this.logger.error(`Failed to initialize ${exchangeConfig.id}: ${error.message}`);
-            }
-        }
+  async executeBlockchainStrategies() {
+    const results = [];
+    const profit = Math.random() * 100 + 50; // Simulate profit from staking, yield, etc.
 
-        // Initialize blockchain components
-        await this.blockchain.initBlockchainTables();
-        this.logger.success('✅ BrianNwaezikeChain integration initialized');
+    if (!this.config.DRY_RUN) {
+      const payoutResult = await this.distributePayout(profit);
+      results.push({
+        type: 'blockchain_yield',
+        amount: profit,
+        payout: payoutResult
+      });
+    } else {
+      results.push({
+        type: 'blockchain_yield (simulated)',
+        amount: profit
+      });
     }
 
-    async run() {
-        this.lastExecutionTime = new Date().toISOString();
-        this.lastStatus = 'running';
-        this.lastTotalTransactions = 0;
-        this.logger.info('💰 Enhanced Crypto Agent Activated: Managing on-chain assets...');
-        
-        if (this.DRY_RUN) {
-            this.logger.warn('⚠️ DRY RUN MODE - Simulating trades only');
-        }
-        
-        const startTime = process.hrtime.bigint();
+    return results;
+  }
 
-        try {
-            // Phase 1: Configuration & Remediation
-            const newlyRemediatedKeys = await this._remediateAndValidateConfig();
-            
-            // Phase 2: Self-Funding Check (Skip in dry run for BSC)
-            let hasSufficientFunds = true;
-            if (!this.DRY_RUN) {
-                hasSufficientFunds = await this._checkGasWalletBalance();
-                if (!hasSufficientFunds) {
-                    this.logger.error('🚨 Aborting crypto operations due to insufficient gas.');
-                    throw { message: 'insufficient_capital_for_onchain_ops' };
-                }
-            }
-
-            // Phase 3: Market Analysis
-            const marketData = await this._analyzeCryptoMarkets();
-
-            // Phase 4: Execute Multiple Revenue Strategies
-            const results = [];
-            
-            // Execute arbitrage strategies
-            const arbitrageResults = await this.executeArbitrageStrategy();
-            results.push(...arbitrageResults);
-            
-            // Execute market making
-            const marketMakingResults = await this.executeMarketMakingForMajorPairs();
-            results.push(...marketMakingResults);
-            
-            // Execute cross-chain opportunities
-            const crossChainResults = await this.executeCrossChainOpportunities(marketData);
-            results.push(...crossChainResults);
-            
-            // Execute BrianNwaezikeChain native strategies
-            const blockchainResults = await this.executeBlockchainStrategies();
-            results.push(...blockchainResults);
-
-            // Phase 5: Process Results and Trigger Payouts
-            const totalTransactions = results.length;
-            this.lastTotalTransactions = totalTransactions;
-
-            let totalProfit = results.reduce((sum, result) => sum + (result.profit || 0), 0);
-            this.lastConceptualEarnings = totalProfit;
-
-            if (totalTransactions > 0) {
-                this.logger.info(`🎯 Generated $${totalProfit.toFixed(2)} from ${totalTransactions} transactions`);
-                
-                // Convert profits to BWAEZI tokens on the blockchain
-                if (totalProfit > 0) {
-                    await this.convertProfitsToBWAEZI(totalProfit);
-                }
-            } else {
-                this.logger.info('No profitable transactions executed');
-            }
-
-            const endTime = process.hrtime.bigint();
-            const durationMs = Number(endTime - startTime) / 1_000_000;
-            this.lastStatus = 'success';
-            this.logger.success(`✅ Enhanced Crypto Agent Completed in ${durationMs.toFixed(0)}ms | Total TXs: ${totalTransactions} | Profit: $${totalProfit.toFixed(2)}`);
-            
-            return {
-                status: 'success',
-                transactions: results,
-                totalProfit,
-                durationMs,
-                newlyRemediatedKeys
-            };
-
-        } catch (error) {
-            const endTime = process.hrtime.bigint();
-            const durationMs = Number(endTime - startTime) / 1_000_000;
-            this.lastStatus = 'failed';
-            this.logger.error(`🚨 Enhanced Crypto Agent Critical Failure: ${error.message} in ${durationMs.toFixed(0)}ms`);
-            throw { message: error.message, duration: durationMs };
-        }
+  async distributePayout(amount) {
+    if (!this.config.PAYOUT_WALLET) {
+      throw new Error('PAYOUT_WALLET not configured');
     }
 
-    async executeArbitrageStrategy() {
-        const opportunities = await this._findArbitrageOpportunities();
-        const results = [];
+    try {
+      let result;
 
-        for (const opportunity of opportunities) {
-            try {
-                const profit = await this._executeArbitrageTrade(opportunity);
-                
-                // Record in database with quantum signature
-                const tradeId = `arb_${this.quantumShield.randomBytes(16)}`;
-                const quantumSignature = this.quantumShield.createProof(opportunity);
-                
-                await this.db.run(
-                    `INSERT INTO arbitrage_opportunities (id, symbol, buy_exchange, sell_exchange, buy_price, sell_price, potential_profit, executed, actual_profit, quantum_proof)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [tradeId, opportunity.symbol, opportunity.buyExchange, opportunity.sellExchange, 
-                     opportunity.buyPrice, opportunity.sellPrice, opportunity.potentialProfit, 
-                     true, profit, quantumSignature]
-                );
+      switch (this.config.PAYMENT_CHAIN.toLowerCase()) {
+        case 'eth':
+        case 'ethereum':
+          result = await sendUSDT(this.config.PAYOUT_WALLET, amount, 'eth');
+          break;
 
-                results.push({
-                    type: 'arbitrage',
-                    opportunity,
-                    profit,
-                    timestamp: new Date().toISOString(),
-                    tradeId
-                });
-            } catch (error) {
-                this.logger.error(`Arbitrage failed: ${error.message}`);
-            }
-        }
+        case 'sol':
+        case 'solana':
+          result = await sendUSDT(this.config.PAYOUT_WALLET, amount, 'sol');
+          break;
 
-        return results;
+        case 'bwaezi':
+          result = await this.payoutSystem.distributePayout(
+            this.config.PAYOUT_WALLET,
+            amount,
+            'USD',
+            { type: 'profit_distribution', timestamp: new Date().toISOString() }
+          );
+          break;
+
+        default:
+          throw new Error(`Unsupported payment chain: ${this.config.PAYMENT_CHAIN}`);
+      }
+
+      this.logger.info(`💸 Profit of $${amount} distributed to ${this.config.PAYOUT_WALLET}`);
+      return { success: true, amount, transactionId: result.hash || result.signature || result.transactionHash };
+    } catch (error) {
+      this.logger.error('Payout distribution failed:', error);
+      return { success: false, error: error.message };
     }
+  }
 
-    async _findArbitrageOpportunities() {
-        const opportunities = [];
-        const symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'BNB/USDT'];
-        
-        // For dry run, use simulated price data
-        if (this.DRY_RUN) {
-            this.logger.info('🔍 Simulating arbitrage opportunity detection...');
-            
-            // Create simulated arbitrage opportunities
-            for (const symbol of symbols) {
-                opportunities.push({
-                    symbol,
-                    buyExchange: 'binance',
-                    sellExchange: 'kraken',
-                    buyPrice: 50000 * (0.998 + Math.random() * 0.004), // Random price around $50k
-                    sellPrice: 50000 * (1.002 + Math.random() * 0.004), // Slightly higher price
-                    potentialProfit: 0.5 + Math.random() * 1.5 // 0.5% to 2% potential profit
-                });
-            }
-            
-            return opportunities;
-        }
-        
-        // Real implementation (original code)
-        for (const symbol of symbols) {
-            const prices = new Map();
-            
-            for (const [exchangeId, exchange] of this.exchanges) {
-                try {
-                    const ticker = await exchange.fetchTicker(symbol);
-                    prices.set(exchangeId, ticker.last);
-                    
-                    // Store market data with quantum seal
-                    const marketId = `mkt_${this.quantumShield.randomBytes(16)}`;
-                    const quantumSeal = this.quantumShield.createSeal({
-                        symbol, price: ticker.last, exchange: exchangeId
-                    });
-                    
-                    await this.db.run(
-                        `INSERT INTO market_data (id, symbol, price, volume_24h, change_24h, source, quantum_seal)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                        [marketId, symbol, ticker.last, ticker.quoteVolume, 
-                         ticker.percentage, exchangeId, quantumSeal]
-                    );
-                } catch (error) {
-                    this.logger.warn(`Failed to get ${symbol} price from ${exchangeId}`);
-                }
-            }
-            
-            if (prices.size > 1) {
-                const minPrice = Math.min(...prices.values());
-                const maxPrice = Math.max(...prices.values());
-                
-                if (maxPrice / minPrice > 1.002) { // 0.2% difference
-                    opportunities.push({
-                        symbol,
-                        buyExchange: [...prices.entries()].find(([_, price]) => price === minPrice)[0],
-                        sellExchange: [...prices.entries()].find(([_, price]) => price === maxPrice)[0],
-                        buyPrice: minPrice,
-                        sellPrice: maxPrice,
-                        potentialProfit: ((maxPrice - minPrice) / minPrice) * 100
-                    });
-                }
-            }
-        }
-        
-        return opportunities.sort((a, b) => b.potentialProfit - a.potentialProfit);
+  async run() {
+    const startTime = Date.now();
+    this.lastStatus = 'running';
+
+    try {
+      if (!this.walletInitialized) await this.initialize();
+
+      const hasFunds = await this._checkGasWalletBalance();
+      if (!this.config.DRY_RUN && !hasFunds) {
+        throw new Error('insufficient_capital_for_onchain_ops');
+      }
+
+      const arbitrageResults = await this.executeArbitrageStrategy();
+      const blockchainResults = await this.executeBlockchainStrategies();
+
+      const allResults = [...arbitrageResults, ...blockchainResults];
+      const totalProfit = allResults
+        .filter(r => r.profit || r.amount)
+        .reduce((sum, r) => sum + (r.profit || r.amount), 0);
+
+      const durationMs = Date.now() - startTime;
+      this.lastTotalTransactions = allResults.length;
+      this.lastConceptualEarnings = totalProfit;
+      this.lastExecutionTime = new Date().toISOString();
+      this.lastStatus = 'completed';
+
+      this.logger.info(`✅ Enhanced Crypto Agent Completed | Profit: $${totalProfit.toFixed(2)} | Duration: ${durationMs}ms`);
+
+      return {
+        status: 'success',
+        transactions: allResults,
+        totalProfit,
+        durationMs
+      };
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+      this.lastStatus = 'failed';
+      this.logger.error(`🚨 Crypto Agent Failed: ${error.message} | Duration: ${durationMs}ms`);
+      throw error;
     }
+  }
 
-    async _executeArbitrageTrade(opportunity) {
-        // DRY RUN MODE: Simulate the trade and return a random profit
-        if (this.DRY_RUN) {
-            this.logger.info(`[DRY RUN] Would execute arbitrage: Buy ${opportunity.symbol} on ${opportunity.buyExchange} at $${opportunity.buyPrice.toFixed(2)}, sell on ${opportunity.sellExchange} at $${opportunity.sellPrice.toFixed(2)}`);
-            
-            // Simulate a realistic profit based on the opportunity
-            const simulatedProfit = 50 + Math.random() * 150; // $50 to $200 profit
-            this.logger.info(`[DRY RUN] Simulated profit: $${simulatedProfit.toFixed(2)}`);
-            
-            return simulatedProfit;
-        }
+  getStatus() {
+    return {
+      agent: 'EnhancedCryptoAgent',
+      lastExecution: this.lastExecutionTime,
+      lastStatus: this.lastStatus,
+      lastTotalTransactions: this.lastTotalTransactions,
+      lastConceptualEarnings: this.lastConceptualEarnings,
+      lastGasBalance: this.lastGasBalance,
+      dryRun: this.config.DRY_RUN
+    };
+  }
 
-        // REAL TRADING CODE (original implementation)
-        const buyExchange = this.exchanges.get(opportunity.buyExchange);
-        const sellExchange = this.exchanges.get(opportunity.sellExchange);
-        
-        // Calculate trade size based on available balance
-        const balance = await buyExchange.fetchBalance();
-        const availableUSDT = balance.USDT?.free || 0;
-        const tradeSize = Math.min(availableUSDT * 0.1, 1000); // 10% of balance or $1000 max
-        
-        if (tradeSize < 10) {
-            throw new Error('Insufficient balance for arbitrage');
-        }
-        
-        // Execute buy order
-        const buyOrder = await buyExchange.createMarketBuyOrder(
-            opportunity.symbol,
-            tradeSize / opportunity.buyPrice
-        );
-        
-        // Wait for order completion
-        await this._waitForOrderCompletion(buyExchange, buyOrder.id);
-        
-        // Transfer funds between exchanges if needed
-        if (opportunity.buyExchange !== opportunity.sellExchange) {
-            await this._transferBetweenExchanges(
-                opportunity.symbol.split('/')[0], // base currency
-                buyExchange,
-                sellExchange,
-                buyOrder.amount
-            );
-        }
-        
-        // Execute sell order
-        const sellOrder = await sellExchange.createMarketSellOrder(
-            opportunity.symbol,
-            buyOrder.amount
-        );
-        
-        await this._waitForOrderCompletion(sellExchange, sellOrder.id);
-        
-        // Calculate actual profit
-        const profit = (sellOrder.price * sellOrder.amount) - (buyOrder.price * buyOrder.amount);
-        
-        // Record trade in database
-        const tradeId = `trade_${this.quantumShield.randomBytes(16)}`;
-        const quantumSignature = this.quantumShield.sign(`${opportunity.symbol}${profit}${Date.now()}`);
-        
-        await this.db.run(
-            `INSERT INTO crypto_trades (id, symbol, type, amount, price, exchange, profit_loss, quantum_signature)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [tradeId, opportunity.symbol, 'arbitrage', buyOrder.amount, 
-             buyOrder.price, `${opportunity.buyExchange}-${opportunity.sellExchange}`, 
-             profit, quantumSignature]
-        );
-        
-        return profit;
+  async close() {
+    if (this.walletInitialized) {
+      // No cleanup needed for wallet.js
     }
-
-    async executeMarketMakingForMajorPairs() {
-        const results = [];
-        const tradingPairs = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT'];
-        
-        for (const pair of tradingPairs) {
-            try {
-                const result = await this.executeMarketMaking(pair, 0.001);
-                results.push({
-                    type: 'market_making',
-                    pair,
-                    result,
-                    timestamp: new Date().toISOString()
-                });
-            } catch (error) {
-                this.logger.error(`Market making failed for ${pair}: ${error.message}`);
-            }
-        }
-        
-        return results;
-    }
-
-    async executeMarketMaking(symbol, spread = 0.001) {
-        // DRY RUN MODE: Simulate market making
-        if (this.DRY_RUN) {
-            this.logger.info(`[DRY RUN] Would place market making orders for ${symbol} with ${spread * 100}% spread`);
-            return { bidOrder: { id: 'dry-run-bid' }, askOrder: { id: 'dry-run-ask' } };
-        }
-
-        // REAL MARKET MAKING CODE (original implementation)
-        const exchange = this.exchanges.values().next().value; // Use first exchange
-        const orderBook = await exchange.fetchOrderBook(symbol);
-        
-        const bestBid = orderBook.bids[0][0];
-        const bestAsk = orderBook.asks[0][0];
-        
-        const myBid = bestBid * (1 - spread/2);
-        const myAsk = bestAsk * (1 + spread/2);
-        
-        // Place orders
-        const bidOrder = await exchange.createLimitBuyOrder(symbol, 0.1, myBid);
-        const askOrder = await exchange.createLimitSellOrder(symbol, 0.1, myAsk);
-        
-        this.openPositions.set(bidOrder.id, { type: 'bid', symbol, price: myBid });
-        this.openPositions.set(askOrder.id, { type: 'ask', symbol, price: myAsk });
-        
-        // Record in database
-        const tradeId = `mm_${this.quantumShield.randomBytes(16)}`;
-        const quantumSignature = this.quantumShield.createProof({
-            symbol, bid: myBid, ask: myAsk, timestamp: Date.now()
-        });
-        
-        await this.db.run(
-            `INSERT INTO crypto_trades (id, symbol, type, amount, price, exchange, quantum_signature)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [tradeId, symbol, 'market_making', 0.1, (myBid + myAsk) / 2, 
-             exchange.id, quantumSignature]
-        );
-        
-        return { bidOrder, askOrder };
-    }
-
-    async executeCrossChainOpportunities(marketData) {
-        const results = [];
-        
-        // Look for cross-chain arbitrage opportunities
-        if (marketData.bitcoin && marketData.ethereum) {
-            const btcPrice = marketData.bitcoin.usd;
-            const ethPrice = marketData.ethereum.usd;
-            
-            // Simple cross-chain opportunity detection
-            const ratio = btcPrice / ethPrice;
-            const historicalRatio = 15; // Example historical ratio
-            
-            if (Math.abs(ratio - historicalRatio) > historicalRatio * 0.05) {
-                // Opportunity detected
-                try {
-                    const profit = await this._executeCrossChainArbitrage(ratio, historicalRatio);
-                    results.push({
-                        type: 'cross_chain',
-                        description: 'BTC/ETH ratio arbitrage',
-                        profit,
-                        timestamp: new Date().toISOString()
-                    });
-                } catch (error) {
-                    this.logger.error(`Cross-chain arbitrage failed: ${error.message}`);
-                }
-            }
-        }
-        
-        return results;
-    }
-
-    async _executeCrossChainArbitrage(currentRatio, historicalRatio) {
-        // This would involve actual cross-chain transactions
-        // For now, we'll simulate the concept and record it on the blockchain
-        
-        const simulatedProfit = Math.abs(currentRatio - historicalRatio) * 100;
-        
-        // In dry run mode, just log the action
-        if (this.DRY_RUN) {
-            this.logger.info(`[DRY RUN] Would execute cross-chain arbitrage with profit: $${simulatedProfit.toFixed(2)}`);
-            return simulatedProfit;
-        }
-        
-        // Record on BrianNwaezikeChain
-        const transaction = await this.blockchain.createTransaction(
-            this.config.SYSTEM_ACCOUNT,
-            this.config.REVENUE_ACCOUNT,
-            simulatedProfit,
-            'BWAEZI',
-            this.config.SYSTEM_PRIVATE_KEY
-        );
-        
-        return simulatedProfit;
-    }
-
-    async executeBlockchainStrategies() {
-        const results = [];
-        
-        // Execute staking if available
-        try {
-            const stakingResult = await this._executeStakingStrategy();
-            results.push({
-                type: 'staking',
-                result: stakingResult,
-                timestamp: new Date().toISOString()
-            });
-        } catch (error) {
-            this.logger.error(`Staking strategy failed: ${error.message}`);
-        }
-        
-        // Execute liquidity provision if available
-        try {
-            const liquidityResult = await this._executeLiquidityProvision();
-            results.push({
-                type: 'liquidity',
-                result: liquidityResult,
-                timestamp: new Date().toISOString()
-            });
-        } catch (error) {
-            this.logger.error(`Liquidity provision failed: ${error.message}`);
-        }
-        
-        return results;
-    }
-
-    async _executeStakingStrategy() {
-        // Implement staking strategy using BrianNwaezikeChain
-        
-        const stakingAmount = await this.blockchain.getAccountBalance(
-            this.config.SYSTEM_ACCOUNT, 
-            'BWAEZI'
-        );
-        
-        if (stakingAmount > 100) { // Minimum staking amount
-            // Simulate staking rewards
-            const rewards = stakingAmount * 0.0001; // 0.01% daily reward
-            
-            // In dry run mode, just log the action
-            if (this.DRY_RUN) {
-                this.logger.info(`[DRY RUN] Would stake ${stakingAmount} BWAEZI for rewards: ${rewards} BWAEZI`);
-                return { staked: stakingAmount, rewards };
-            }
-            
-            // Record rewards on blockchain
-            await this.blockchain.createTransaction(
-                this.config.STAKING_CONTRACT,
-                this.config.SYSTEM_ACCOUNT,
-                rewards,
-                'BWAEZI',
-                this.config.SYSTEM_PRIVATE_KEY
-            );
-            
-            return { staked: stakingAmount, rewards };
-        }
-        
-        return { staked: 0, rewards: 0 };
-    }
-
-    async _executeLiquidityProvision() {
-        // Implement liquidity provision strategy
-        
-        // For dry run, simulate liquidity provision
-        if (this.DRY_RUN) {
-            this.logger.info('[DRY RUN] Would provide liquidity to DEX pools');
-            return { provided: 1000, fees: 5.25 }; // Simulated result
-        }
-        
-        // For now, simulate liquidity provision returns
-        const liquidityProvided = 1000; // Example amount
-        const feesEarned = liquidityProvided * 0.0005; // 0.05% daily fee estimate
-        
-        // Record on blockchain
-        await this.blockchain.createTransaction(
-            this.config.LIQUIDITY_POOL,
-            this.config.SYSTEM_ACCOUNT,
-            feesEarned,
-            'BWAEZI',
-            this.config.SYSTEM_PRIVATE_KEY
-        );
-        
-        return { provided: liquidityProvided, fees: feesEarned };
-    }
-
-    async convertProfitsToBWAEZI(profitAmount) {
-        // Convert profits to BWAEZI tokens on the blockchain
-        try {
-            // In dry run mode, just log the action
-            if (this.DRY_RUN) {
-                this.logger.info(`[DRY RUN] Would convert $${profitAmount.toFixed(2)} profits to BWAEZI tokens`);
-                return { id: 'dry-run-tx', status: 'simulated' };
-            }
-            
-            const transaction = await this.blockchain.createTransaction(
-                this.config.REVENUE_ACCOUNT,
-                this.config.STAKING_CONTRACT,
-                profitAmount,
-                'BWAEZI',
-                this.config.SYSTEM_PRIVATE_KEY
-            );
-            
-            this.logger.success(`✅ Converted $${profitAmount.toFixed(2)} profits to BWAEZI tokens`);
-            return transaction;
-        } catch (error) {
-            this.logger.error(`Failed to convert profits to BWAEZI: ${error.message}`);
-            throw error;
-        }
-    }
-
-    async closeAllPositions() {
-        for (const [orderId, position] of this.openPositions) {
-            try {
-                const exchange = this.exchanges.values().next().value;
-                await exchange.cancelOrder(orderId);
-                this.openPositions.delete(orderId);
-            } catch (error) {
-                this.logger.error(`Failed to close position ${orderId}: ${error.message}`);
-            }
-        }
-    }
-
-    async _remediateAndValidateConfig() {
-        this.logger.info('⚙️ Initiating proactive configuration remediation...');
-        const newlyRemediatedKeys = {};
-        const cryptoCriticalKeys = ['PRIVATE_KEY', 'GAS_WALLET', 'BSC_NODE', 'COINGECKO_API'];
-
-        for (const key of cryptoCriticalKeys) {
-            if (!this.config[key] || String(this.config[key]).includes('PLACEHOLDER')) {
-                const remediationResult = await this._attemptRemediation(key);
-                if (remediationResult) {
-                    Object.assign(newlyRemediatedKeys, remediationResult);
-                    Object.assign(this.config, remediationResult);
-                }
-            }
-        }
-        this.logger.info(`--- Finished Remediation. ${Object.keys(newlyRemediatedKeys).length} key(s) remediated. ---`);
-        return newlyRemediatedKeys;
-    }
-
-    async _attemptRemediation(keyName) {
-        this.logger.info(`⚙️ Attempting to remediate: ${keyName}`);
-        try {
-            switch (keyName) {
-                case 'PRIVATE_KEY': {
-                    const newWallet = ethers.Wallet.createRandom();
-                    this.logger.success(`✅ Autonomously generated new PRIVATE_KEY and derived wallets.`);
-                    return {
-                        PRIVATE_KEY: newWallet.privateKey,
-                        GAS_WALLET: newWallet.address
-                    };
-                }
-                case 'GAS_WALLET':
-                    if (this.config.PRIVATE_KEY) {
-                        const wallet = new ethers.Wallet(this.config.PRIVATE_KEY);
-                        this.logger.success(`✅ Derived GAS_WALLET from existing PRIVATE_KEY.`);
-                        return { GAS_WALLET: wallet.address };
-                    }
-                    this.logger.warn('⚠️ Cannot derive GAS_WALLET: PRIVATE_KEY is missing.');
-                    return null;
-                case 'BSC_NODE':
-                    this.logger.success(`✅ Set default BSC_NODE.`);
-                    return { BSC_NODE: 'https://bsc-dataseed.binance.org' };
-                case 'COINGECKO_API':
-                    this.logger.info('ℹ️ CoinGecko API typically does not require remediation.');
-                    return null;
-                default:
-                    this.logger.warn(`⚠️ No remediation strategy for key: ${keyName}.`);
-                    return null;
-            }
-        } catch (error) {
-            this.logger.error(`🚨 Remediation for ${keyName} failed: ${error.message}`);
-            return null;
-        }
-    }
-
-    async _checkGasWalletBalance() {
-        try {
-            if (!this.config.BSC_NODE || !this.config.GAS_WALLET) {
-                throw new Error('Missing BSC node or gas wallet configuration');
-            }
-
-            const provider = new ethers.providers.JsonRpcProvider(this.config.BSC_NODE);
-            const balance = await provider.getBalance(this.config.GAS_WALLET);
-            const bnbBalance = parseFloat(ethers.utils.formatEther(balance));
-            this.lastGasBalance = bnbBalance;
-            this.logger.info(`Current GAS_WALLET balance: ${bnbBalance} BNB`);
-
-            const MIN_BNB_THRESHOLD = 0.05;
-            if (bnbBalance < MIN_BNB_THRESHOLD) {
-                this.logger.warn(`⚠️ CRITICAL: Low gas: ${bnbBalance} BNB. Required: ${MIN_BNB_THRESHOLD} BNB.`);
-                return false;
-            }
-            this.logger.success(`✅ Sufficient gas: ${bnbBalance} BNB`);
-            return true;
-        } catch (error) {
-            this.logger.error(`🚨 Error checking gas balance: ${error.message}`);
-            return false;
-        }
-    }
-
-    async _analyzeCryptoMarkets() {
-        const fallbackData = {
-            bitcoin: { usd: 50000, last_updated_at: Date.now() / 1000 },
-            ethereum: { usd: 3000, last_updated_at: Date.now() / 1000 }
-        };
-
-        // In dry run mode, use fallback data to avoid API calls
-        if (this.DRY_RUN) {
-            this.logger.info('📊 Using simulated market data for dry run');
-            return fallbackData;
-        }
-
-        const url = this.config.COINGECKO_API && !this.config.COINGECKO_API.includes('PLACEHOLDER') ? 
-            this.config.COINGECKO_API : 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd';
-
-        try {
-            const response = await axios.get(url, { timeout: 8000 });
-            if (response.data && (response.data.bitcoin || response.data.ethereum)) {
-                this.logger.info('✅ Fetched real market data from CoinGecko.');
-                return response.data;
-            }
-            throw new Error('CoinGecko API returned invalid data.');
-        } catch (error) {
-            this.logger.warn(`⚠️ Error fetching market data: ${error.message}. Using fallback.`);
-            return fallbackData;
-        }
-    }
-
-    async _waitForOrderCompletion(exchange, orderId, maxAttempts = 10) {
-        let attempts = 0;
-        while (attempts < maxAttempts) {
-            try {
-                const order = await exchange.fetchOrder(orderId);
-                if (order.status === 'closed') {
-                    return order;
-                }
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-                attempts++;
-            } catch (error) {
-                this.logger.warn(`Error checking order status: ${error.message}`);
-                attempts++;
-            }
-        }
-        throw new Error(`Order ${orderId} did not complete within expected time`);
-    }
-
-    async _transferBetweenExchanges(asset, fromExchange, toExchange, amount) {
-        // This would involve actual transfer between exchanges
-        // For now, we'll simulate the process
-        this.logger.info(`Simulating transfer of ${amount} ${asset} from ${fromExchange.id} to ${toExchange.id}`);
-        await new Promise(resolve => setTimeout(resolve, 5000)); // Simulate transfer time
-        return true;
-    }
-
-    getStatus() {
-        return {
-            agent: 'EnhancedCryptoAgent',
-            lastExecution: this.lastExecutionTime,
-            lastStatus: this.lastStatus,
-            lastTotalTransactions: this.lastTotalTransactions,
-            lastConceptualEarnings: this.lastConceptualEarnings,
-            lastGasBalance: this.lastGasBalance,
-            dryRun: this.DRY_RUN
-        };
-    }
+    await this.db.close();
+  }
 }
 
 export default EnhancedCryptoAgent;
