@@ -1,13 +1,24 @@
 // backend/agents/socialAgent.js
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
-import { Redis } from 'ioredis';
 import { Mutex } from 'async-mutex';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
+import { createDatabase } from '../database/yourSQLite.js';
+
+// Import wallet functions
+import { 
+    initializeConnections,
+    getSolanaBalance,
+    sendSOL,
+    getUSDTBalance,
+    sendUSDT,
+    checkWalletBalances,
+    testAllConnections
+} from '../blockchain/wallet.js';
 
 // Get __filename equivalent in ES Module scope
 const __filename = fileURLToPath(import.meta.url);
@@ -99,13 +110,87 @@ class SocialAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
-        this.redis = new Redis(config.REDIS_URL);
+        this.db = createDatabase('./data/social_agent.db');
         this.platformClients = {};
         this.paymentProcessor = new EnterprisePaymentProcessor();
         this.analytics = new SocialAnalytics(config.ANALYTICS_WRITE_KEY);
+        this.walletInitialized = false;
         
+        this._initializeDatabase();
         this._initializePlatformClients();
         this._initializeBlockchain();
+    }
+
+    async _initializeDatabase() {
+        try {
+            await this.db.connect();
+            
+            // Create social agent specific tables
+            const tables = [
+                `CREATE TABLE IF NOT EXISTS social_posts (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    post_id TEXT,
+                    content_title TEXT NOT NULL,
+                    country TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    interest_category TEXT NOT NULL,
+                    success BOOLEAN NOT NULL,
+                    revenue_generated REAL DEFAULT 0,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )`,
+                `CREATE TABLE IF NOT EXISTS social_revenue (
+                    id TEXT PRIMARY KEY,
+                    amount REAL NOT NULL,
+                    currency TEXT NOT NULL,
+                    country TEXT NOT NULL,
+                    transaction_hash TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )`,
+                `CREATE TABLE IF NOT EXISTS platform_performance (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    successful_posts INTEGER DEFAULT 0,
+                    failed_posts INTEGER DEFAULT 0,
+                    total_revenue REAL DEFAULT 0,
+                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+                )`,
+                `CREATE TABLE IF NOT EXISTS country_performance (
+                    id TEXT PRIMARY KEY,
+                    country TEXT NOT NULL,
+                    total_revenue REAL DEFAULT 0,
+                    posts_count INTEGER DEFAULT 0,
+                    success_rate REAL DEFAULT 0,
+                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+                )`,
+                `CREATE INDEX IF NOT EXISTS idx_social_platform ON social_posts(platform)`,
+                `CREATE INDEX IF NOT EXISTS idx_social_country ON social_posts(country)`,
+                `CREATE INDEX IF NOT EXISTS idx_social_timestamp ON social_posts(timestamp)`,
+                `CREATE INDEX IF NOT EXISTS idx_revenue_currency ON social_revenue(currency)`
+            ];
+
+            for (const tableSql of tables) {
+                await this.db.run(tableSql);
+            }
+            
+            this.logger.success('✅ Social Agent database initialized successfully');
+        } catch (error) {
+            this.logger.error('Failed to initialize database:', error);
+        }
+    }
+
+    async initializeWalletConnections() {
+        this.logger.info('🔗 Initializing multi-chain wallet connections for Social Agent...');
+        
+        try {
+            // Use the imported wallet initialization
+            await initializeConnections();
+            this.walletInitialized = true;
+            this.logger.success('✅ Multi-chain wallet connections initialized successfully');
+            
+        } catch (error) {
+            this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
+        }
     }
 
     async _initializeBlockchain() {
@@ -261,35 +346,135 @@ Send ${content.currency} to: ${paymentAddress}
         }
     }
 
+    async _recordPostToDatabase(platform, content, result, revenue = 0) {
+        const postId = `post_${crypto.randomBytes(8).toString('hex')}`;
+        
+        await this.db.run(
+            `INSERT INTO social_posts (id, platform, post_id, content_title, country, currency, interest_category, success, revenue_generated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [postId, platform, result.postId, content.title, content.country, content.currency, content.interest, result.success, revenue]
+        );
+
+        // Update platform performance
+        await this._updatePlatformPerformance(platform, result.success, revenue);
+
+        // Update country performance
+        await this._updateCountryPerformance(content.country, result.success, revenue);
+    }
+
+    async _updatePlatformPerformance(platform, success, revenue) {
+        try {
+            const existing = await this.db.get(
+                'SELECT * FROM platform_performance WHERE platform = ?',
+                [platform]
+            );
+
+            if (existing) {
+                await this.db.run(
+                    `UPDATE platform_performance 
+                     SET successful_posts = successful_posts + ?, 
+                         failed_posts = failed_posts + ?,
+                         total_revenue = total_revenue + ?,
+                         last_updated = CURRENT_TIMESTAMP
+                     WHERE platform = ?`,
+                    [success ? 1 : 0, success ? 0 : 1, revenue, platform]
+                );
+            } else {
+                await this.db.run(
+                    `INSERT INTO platform_performance (id, platform, successful_posts, failed_posts, total_revenue)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [`perf_${platform}`, platform, success ? 1 : 0, success ? 0 : 1, revenue]
+                );
+            }
+        } catch (error) {
+            this.logger.error('Failed to update platform performance:', error);
+        }
+    }
+
+    async _updateCountryPerformance(country, success, revenue) {
+        try {
+            const existing = await this.db.get(
+                'SELECT * FROM country_performance WHERE country = ?',
+                [country]
+            );
+
+            if (existing) {
+                const newPostsCount = existing.posts_count + 1;
+                const newSuccessRate = ((existing.success_rate * existing.posts_count) + (success ? 1 : 0)) / newPostsCount;
+                
+                await this.db.run(
+                    `UPDATE country_performance 
+                     SET total_revenue = total_revenue + ?,
+                         posts_count = posts_count + 1,
+                         success_rate = ?,
+                         last_updated = CURRENT_TIMESTAMP
+                     WHERE country = ?`,
+                    [revenue, newSuccessRate, country]
+                );
+            } else {
+                await this.db.run(
+                    `INSERT INTO country_performance (id, country, total_revenue, posts_count, success_rate)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [`country_${country.replace(/\s/g, '_')}`, country, revenue, 1, success ? 1 : 0]
+                );
+            }
+        } catch (error) {
+            this.logger.error('Failed to update country performance:', error);
+        }
+    }
+
     async _processRevenue(content, platformResults) {
         try {
             // Calculate revenue based on engagement metrics
             const engagementScore = platformResults.filter(p => p.success).length * 25;
             const revenueAmount = engagementScore * (PROFITABILITY_MATRIX.find(c => c.country === content.country)?.score || 50) / 100;
 
-            // Record revenue on blockchain
-            const revenueTransaction = await this.paymentProcessor.processRevenuePayout(
-                'social_revenue_account',
-                revenueAmount,
-                content.currency
-            );
-
-            if (revenueTransaction.success) {
-                socialAgentStatus.totalRevenueGenerated += revenueAmount;
-                socialAgentStatus.blockchainTransactions++;
+            // Use wallet module for revenue processing
+            if (revenueAmount > 0) {
+                let settlementResult;
                 
-                await this.analytics.track({
-                    event: 'social_revenue_generated',
-                    properties: {
-                        amount: revenueAmount,
-                        currency: content.currency,
-                        country: content.country,
-                        interest: content.interest,
-                        transactionId: revenueTransaction.transactionId
-                    }
-                });
+                // Determine optimal settlement method based on currency
+                if (['USD', 'EUR', 'GBP'].includes(content.currency)) {
+                    // Use Ethereum for major currencies
+                    settlementResult = await sendUSDT(
+                        this.config.COMPANY_WALLET_ADDRESS,
+                        revenueAmount,
+                        'eth'
+                    );
+                } else {
+                    // Use Solana for other currencies
+                    const solAmount = await this._convertToSol(revenueAmount, content.currency);
+                    settlementResult = await sendSOL(
+                        this.config.COMPANY_WALLET_ADDRESS,
+                        solAmount
+                    );
+                }
 
-                return revenueAmount;
+                if (settlementResult.hash || settlementResult.signature) {
+                    socialAgentStatus.totalRevenueGenerated += revenueAmount;
+                    socialAgentStatus.blockchainTransactions++;
+                    
+                    // Record revenue in database
+                    const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
+                    await this.db.run(
+                        `INSERT INTO social_revenue (id, amount, currency, country, transaction_hash)
+                         VALUES (?, ?, ?, ?, ?)`,
+                        [revenueId, revenueAmount, content.currency, content.country, settlementResult.hash || settlementResult.signature]
+                    );
+
+                    await this.analytics.track({
+                        event: 'social_revenue_generated',
+                        properties: {
+                            amount: revenueAmount,
+                            currency: content.currency,
+                            country: content.country,
+                            interest: content.interest,
+                            transactionHash: settlementResult.hash || settlementResult.signature
+                        }
+                    });
+
+                    return revenueAmount;
+                }
             }
         } catch (error) {
             this.logger.error('Revenue processing failed:', error);
@@ -297,11 +482,45 @@ Send ${content.currency} to: ${paymentAddress}
         return 0;
     }
 
+    async _convertToSol(amount, currency) {
+        try {
+            // Simple conversion rates (in a real implementation, use an API)
+            const conversionRates = {
+                USD: 100, // 1 SOL ≈ $100
+                EUR: 110,
+                GBP: 130,
+                JPY: 0.70,
+                CAD: 75,
+                AUD: 65,
+                INR: 1.20,
+                NGN: 0.12,
+                BRL: 20,
+                SGD: 75,
+                CHF: 110,
+                AED: 27,
+                HKD: 13,
+                PHP: 1.80,
+                VND: 0.004
+            };
+
+            const rate = conversionRates[currency] || 100; // Default to USD rate
+            return amount / rate;
+        } catch (error) {
+            this.logger.error('Currency conversion failed:', error);
+            return amount / 100; // Fallback conversion
+        }
+    }
+
     async run() {
         return mutex.runExclusive(async () => {
             this.logger.info('🚀 Social Agent starting revenue generation cycle...');
 
             try {
+                // Initialize wallet connections if not already done
+                if (!this.walletInitialized) {
+                    await this.initializeWalletConnections();
+                }
+
                 // 1. Select target market
                 const targetCountry = this._selectTargetCountry();
                 this.logger.info(`🎯 Targeting: ${targetCountry.country} (${targetCountry.currency})`);
@@ -326,10 +545,13 @@ Send ${content.currency} to: ${paymentAddress}
                         this.logger.warn(`⚠️ Failed to post to ${platform}: ${result.error}`);
                     }
 
+                    // Record post to database
+                    await this._recordPostToDatabase(platform, content, result);
+
                     await quantumDelay(2000);
                 }
 
-                // 4. Process revenue and record on blockchain
+                // 4. Process revenue using wallet module
                 const revenue = await this._processRevenue(content, platformResults);
                 this.logger.success(`💰 Revenue generated: ${revenue} ${content.currency}`);
 
@@ -373,6 +595,9 @@ Send ${content.currency} to: ${paymentAddress}
             platformPerformance: {}
         };
 
+        // Initialize wallet connections
+        await this.initializeWalletConnections();
+
         // Run multiple cycles for global coverage
         const cycles = streamConfig.cycles || 5;
         
@@ -406,20 +631,118 @@ Send ${content.currency} to: ${paymentAddress}
             }
         }
 
-        // Record final revenue on blockchain
+        // Record final revenue using wallet module
         if (results.totalRevenue > 0) {
-            const finalRevenueTx = await this.paymentProcessor.processRevenuePayout(
-                'global_revenue_account',
-                results.totalRevenue,
-                'USD' // Convert to USD for final settlement
-            );
+            try {
+                // Convert to USD equivalent and send via Ethereum
+                const usdRevenue = results.totalRevenue; // Simplified - in real implementation, convert from various currencies
+                const settlementResult = await sendUSDT(
+                    this.config.COMPANY_WALLET_ADDRESS,
+                    usdRevenue,
+                    'eth'
+                );
 
-            if (finalRevenueTx.success) {
-                this.logger.success(`🌍 Global revenue completed: $${results.totalRevenue} USD`);
+                if (settlementResult.hash) {
+                    this.logger.success(`🌍 Global revenue completed: $${usdRevenue} USD`);
+                }
+            } catch (error) {
+                this.logger.error('Final revenue settlement failed:', error);
             }
         }
 
         return results;
+    }
+
+    // Additional wallet utility methods
+    async checkWalletBalances() {
+        try {
+            return await checkWalletBalances();
+        } catch (error) {
+            this.logger.error(`Error checking wallet balances: ${error.message}`);
+            return {};
+        }
+    }
+
+    async getSolanaBalance() {
+        try {
+            return await getSolanaBalance();
+        } catch (error) {
+            this.logger.error("Error fetching Solana balance:", error);
+            return 0;
+        }
+    }
+
+    async getUSDTBalance(chain = 'eth') {
+        try {
+            return await getUSDTBalance(chain);
+        } catch (error) {
+            this.logger.error(`Error fetching ${chain} USDT balance:`, error);
+            return 0;
+        }
+    }
+
+    // Database query methods for analytics
+    async getPerformanceStats(timeframe = '7 days') {
+        try {
+            const timeFilter = timeframe === '24 hours' ? 
+                "timestamp > datetime('now', '-1 day')" :
+                "timestamp > datetime('now', '-7 days')";
+
+            const stats = await this.db.all(`
+                SELECT 
+                    COUNT(*) as total_posts,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_posts,
+                    SUM(revenue_generated) as total_revenue,
+                    AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) as success_rate
+                FROM social_posts 
+                WHERE ${timeFilter}
+            `);
+
+            const platformStats = await this.db.all(`
+                SELECT 
+                    platform,
+                    COUNT(*) as post_count,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_posts,
+                    SUM(revenue_generated) as platform_revenue
+                FROM social_posts 
+                WHERE ${timeFilter}
+                GROUP BY platform
+            `);
+
+            const countryStats = await this.db.all(`
+                SELECT 
+                    country,
+                    COUNT(*) as post_count,
+                    SUM(revenue_generated) as country_revenue,
+                    AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) as success_rate
+                FROM social_posts 
+                WHERE ${timeFilter}
+                GROUP BY country
+                ORDER BY country_revenue DESC
+                LIMIT 10
+            `);
+
+            return {
+                timeframe,
+                overall: stats[0] || {},
+                platforms: platformStats,
+                top_countries: countryStats,
+                timestamp: new Date().toISOString()
+            };
+
+        } catch (error) {
+            this.logger.error('Error fetching performance stats:', error);
+            return { error: error.message };
+        }
+    }
+
+    async close() {
+        if (this.db) {
+            await this.db.close();
+        }
+        if (this.paymentProcessor) {
+            await this.paymentProcessor.cleanup();
+        }
     }
 }
 
@@ -434,6 +757,9 @@ async function workerThreadFunction() {
     };
 
     const socialAgent = new SocialAgent(config, workerLogger);
+    
+    // Initialize wallet connections for worker
+    await socialAgent.initializeWalletConnections();
 
     while (true) {
         await socialAgent.run();
@@ -445,7 +771,6 @@ async function workerThreadFunction() {
 if (isMainThread) {
     const numThreads = process.env.SOCIAL_AGENT_THREADS || 3;
     const config = {
-        REDIS_URL: process.env.REDIS_URL,
         ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
         COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
         COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY,
