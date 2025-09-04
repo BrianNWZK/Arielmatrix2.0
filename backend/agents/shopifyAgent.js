@@ -15,7 +15,7 @@ import {
     sendUSDT,
     checkWalletBalances,
     testAllConnections
-} from '../blockchain/wallet.js';
+} from '../wallet.js';
 
 // Constants for configuration
 const DEFAULT_STORE_DOMAIN = 'store';
@@ -48,7 +48,7 @@ const GOOGLE_ADS_TARGETING_PRESETS = {
     'US': { locations: ['2840'], languages: ['1000'] },
     'CA': { locations: ['2124'], languages: ['1000'] },
     'GB': { locations: ['2826'], languages: ['1000'] },
-    'AU': { locations: ['2036'], languages: ['1000'] }
+    'AU': { locations: '2036', languages: ['1000'] }
 };
 
 // Ad copy templates by country
@@ -194,24 +194,24 @@ class ContentGenerator {
         };
 
         const response = await axios.post(
-            'https://api.advanced-ai.com/v1/generate',
+            'https://api.openai.com/v1/chat/completions',
             {
                 model: models[contentType] || 'gpt-4',
-                prompt: prompt,
+                messages: [{ role: 'user', content: prompt }],
                 max_tokens: 2000,
                 temperature: 0.7,
                 top_p: 0.9
             },
             {
                 headers: {
-                    'Authorization': `Bearer ${this.config.ADVANCED_AI_API_KEY}`,
+                    'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
                     'Content-Type': 'application/json'
                 },
                 timeout: 30000
             }
         );
 
-        return response.data.choices[0].text;
+        return response.data.choices[0].message.content;
     }
 
     _createContentPrompt(product, country, contentType) {
@@ -296,12 +296,21 @@ class BacklinkBuilder {
     async _findIndustryPublications(category, country) {
         try {
             const response = await this.apiQueue.enqueue(() => 
-                axios.get('https://api.industrypublications.com/v1/search', {
-                    params: { category, country, min_da: 60 },
-                    headers: { 'Authorization': `Bearer ${this.config.INDUSTRY_PUB_API_KEY}` }
+                axios.get('https://api.semrush.com/analytics/v1/', {
+                    params: {
+                        type: 'domain_organic_search',
+                        key: this.config.SEMRUSH_API_KEY,
+                        database: country.toLowerCase(),
+                        domain: category + '.com',
+                        export_columns: 'domain,domain_authority,organic_traffic'
+                    }
                 }), 'industry_pub', 1
             );
-            return response.data.publications;
+            return response.data.data.map(site => ({
+                domain: site.domain,
+                domainAuthority: site.domain_authority,
+                contactEmail: `info@${site.domain}`
+            }));
         } catch (error) {
             this.logger.warn(`Industry publications search failed: ${error.message}`);
             return [];
@@ -328,14 +337,16 @@ class BacklinkBuilder {
     async _sendStrategicOutreach(website, product, country, content) {
         const emailContent = await this._createStrategicEmailTemplate(website, product, country, content);
         const response = await this.apiQueue.enqueue(() =>
-            axios.post('https://api.emailservice.com/v1/send', {
-                to: website.contact_email,
-                from: this.config.STORE_EMAIL,
-                subject: `Expert Contribution: ${product.title} for ${website.name}`,
-                html: emailContent,
-                tracking: true
+            axios.post('https://api.sendgrid.com/v3/mail/send', {
+                personalizations: [{ to: [{ email: website.contactEmail }] }],
+                from: { email: this.config.STORE_EMAIL, name: this.config.STORE_NAME },
+                subject: `Expert Contribution: ${product.title} for ${website.domain}`,
+                content: [{ type: 'text/html', value: emailContent }]
             }, {
-                headers: { 'Authorization': `Bearer ${this.config.EMAIL_API_KEY}` }
+                headers: { 
+                    'Authorization': `Bearer ${this.config.SENDGRID_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
             }), 'email', 2
         );
         return { success: true, messageId: response.data.id };
@@ -344,7 +355,7 @@ class BacklinkBuilder {
     async _createStrategicEmailTemplate(website, product, country, content) {
         return `
             <!DOCTYPE html><html><head><meta charset="utf-8"><title>Expert Contribution</title></head>
-            <body><p>Hello ${website.name} Team,</p>
+            <body><p>Hello ${website.domain} Team,</p>
             <p>I've been following your excellent work in the ${product.category} space and would like to contribute an expert article about ${product.title}.</p>
             <p>${content.substring(0, 200)}...</p>
             <p>Best regards,<br>${this.config.STORE_NAME} Team</p></body></html>
@@ -366,8 +377,27 @@ class BacklinkBuilder {
     }
 
     async _submitToPremiumDirectories(product, country) {
-        // Implementation for premium directory submissions
-        this.logger.info(`✅ Submitted to premium directories for ${product.title}`);
+        const directories = [
+            'https://directory.google.com',
+            'https://www.business.com',
+            'https://www.hotfrog.com'
+        ];
+
+        for (const directory of directories) {
+            try {
+                await this.apiQueue.enqueue(() =>
+                    axios.post(directory + '/submit', {
+                        url: `${this.config.STORE_URL}/products/${product.handle}`,
+                        title: product.title,
+                        description: product.description,
+                        category: product.category
+                    }), 'directory', 3
+                );
+                this.logger.info(`✅ Submitted to directory: ${directory}`);
+            } catch (error) {
+                this.logger.warn(`Directory submission failed for ${directory}: ${error.message}`);
+            }
+        }
     }
 
     delay(ms) {
@@ -422,8 +452,10 @@ class SEOManager {
 
     async _generateMetaDescription(product, country) {
         const prompt = `Write a compelling meta description for ${product.title} targeting ${country} customers.`;
-        // Implementation would use content generator
-        return `Premium ${product.title} for ${country} customers. Best quality and service.`;
+        const description = await this.apiQueue.enqueue(() =>
+            this._callAdvancedAI(prompt, 'ad_copy'), 'ai_content', 2
+        );
+        return description.substring(0, 160);
     }
 
     _generateSchemaMarkup(product, country) {
@@ -441,18 +473,82 @@ class SEOManager {
     }
 
     async _applySEOOptimizations(product, optimizations) {
-        // Implementation to apply SEO optimizations to Shopify product
+        const response = await this.apiQueue.enqueue(() =>
+            axios.put(`${this.config.STORE_URL}/admin/api/${this.apiVersion}/products/${product.id}.json`, {
+                product: {
+                    id: product.id,
+                    metafields: [
+                        {
+                            key: 'seo_title',
+                            value: optimizations.title,
+                            type: 'string',
+                            namespace: 'global'
+                        },
+                        {
+                            key: 'description',
+                            value: optimizations.description,
+                            type: 'string',
+                            namespace: 'global'
+                        }
+                    ]
+                }
+            }, {
+                headers: {
+                    'X-Shopify-Access-Token': this.config.ADMIN_SHOP_SECRET,
+                    'Content-Type': 'application/json'
+                }
+            }), 'shopify', 1
+        );
         this.logger.info(`✅ Applied SEO optimizations for ${product.title}`);
     }
 
     async _optimizeTechnicalSEO(product) {
-        // Technical SEO implementation
+        // Implement technical SEO optimizations
+        await this.apiQueue.enqueue(() =>
+            axios.post('https://api.google.com/search/url', {
+                url: `${this.config.STORE_URL}/products/${product.handle}`,
+                type: 'URL_UPDATED'
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${this.config.GOOGLE_SEARCH_API_KEY}`
+                }
+            }), 'google_search', 2
+        );
         this.logger.info(`✅ Technical SEO optimized for ${product.title}`);
     }
 
     async _optimizeContentSEO(product, country) {
         // Content SEO optimization
+        const content = await this.apiQueue.enqueue(() =>
+            this._callAdvancedAI(`Optimize content for ${product.title} targeting ${country} market`, 'blog_post'), 'ai_content', 2
+        );
+        
+        await this.db.run(`
+            INSERT INTO seo_optimizations 
+            (id, product_id, country_code, optimization_type, details, score)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `, [crypto.randomBytes(16).toString('hex'), product.id, country, 'content', content, 0.85]);
+        
         this.logger.info(`✅ Content SEO optimized for ${product.title}`);
+    }
+
+    async _callAdvancedAI(prompt, contentType) {
+        const response = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-4',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 1000,
+                temperature: 0.7
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        return response.data.choices[0].message.content;
     }
 
     _getCurrencyForCountry(country) {
@@ -474,10 +570,9 @@ class MarketingManager {
         this.logger.info('🔗 Initializing multi-chain wallet connections for Marketing Manager...');
         
         try {
-            // Use the imported wallet initialization
             await initializeConnections();
             this.walletInitialized = true;
-            this.logger.success('✅ Multi-chain wallet connections initialized successfully');
+            this.logger.info('✅ Multi-chain wallet connections initialized successfully');
             
         } catch (error) {
             this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
@@ -516,7 +611,7 @@ class MarketingManager {
                 this._executeOrganicSocialMedia(product, country),
                 this._executeInfluencerMarketing(product, country)
             ]);
-            this.logger.success(`✅ Executed multi-channel marketing for ${product.title} in ${country}`);
+            this.logger.info(`✅ Executed multi-channel marketing for ${product.title} in ${country}`);
             return campaigns;
         } catch (error) {
             this.logger.error(`Marketing strategy execution failed: ${error.message}`);
@@ -530,16 +625,28 @@ class MarketingManager {
             
             const campaignData = {
                 name: `${product.title} - ${country} Campaign`,
-                product: product.title,
-                country: country,
-                budget: this._calculateMarketingBudget(product.price, country),
-                currency: currency,
+                status: 'PAUSED',
+                advertisingChannelType: 'PERFORMANCE_MAX',
+                campaignBudget: {
+                    amountMicros: this._calculateMarketingBudget(product.price, country) * 1000000,
+                    deliveryMethod: 'STANDARD'
+                },
+                networkSettings: {
+                    targetGoogleSearch: true,
+                    targetSearchNetwork: true,
+                    targetContentNetwork: true,
+                    targetPartnerSearchNetwork: false
+                },
                 targeting: this._getGoogleAdsTargeting(country)
             };
 
             const response = await axios.post(
-                'https://googleads.googleapis.com/v14/customers/:customerId/campaigns',
-                campaignData,
+                `https://googleads.googleapis.com/v14/customers/${this.config.GOOGLE_ADS_CUSTOMER_ID}/campaigns:mutate`,
+                {
+                    operations: [{
+                        create: campaignData
+                    }]
+                },
                 {
                     headers: {
                         'Authorization': `Bearer ${this.config.GOOGLE_ADS_API_KEY}`,
@@ -550,14 +657,14 @@ class MarketingManager {
                 }
             );
 
-            const campaignId = response.data.id;
+            const campaignId = response.data.results[0].resourceName;
             const campaignDbId = `google_ads_${crypto.randomBytes(16).toString('hex')}`;
             
             await this.db.run(`
                 INSERT INTO marketing_campaigns 
                 (id, product_id, country_code, platform, campaign_type, budget, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            `, [campaignDbId, product.id, country, 'google_ads', 'shopping', campaignData.budget, 'active']);
+            `, [campaignDbId, product.id, country, 'google_ads', 'shopping', campaignData.campaignBudget.amountMicros / 1000000, 'active']);
 
             this.logger.info(`✅ Google Ads campaign created: ${campaignId}`);
             return campaignId;
@@ -566,17 +673,61 @@ class MarketingManager {
 
     async _executeMetaAdsCampaign(product, country, currency) {
         return this.apiQueue.enqueue(async () => {
-            // Meta Ads implementation
+            const campaignData = {
+                name: `${product.title} - ${country} Campaign`,
+                objective: 'CONVERSIONS',
+                status: 'PAUSED',
+                special_ad_categories: [],
+                daily_budget: this._calculateMarketingBudget(product.price, country) * 100,
+                bid_strategy: 'LOWEST_COST_WITHOUT_CAP'
+            };
+
+            const response = await axios.post(
+                `https://graph.facebook.com/v18.0/act_${this.config.FB_ADS_ACCOUNT_ID}/campaigns`,
+                campaignData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.config.FB_ADS_ACCESS_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
             this.logger.info(`✅ Meta Ads campaign created for ${product.title}`);
-            return `meta_campaign_${crypto.randomBytes(8).toString('hex')}`;
+            return response.data.id;
         }, 'meta_ads', 1);
     }
 
     async _executeEmailMarketing(product, country) {
         return this.apiQueue.enqueue(async () => {
-            // Email marketing implementation
+            const emailContent = await this._generateEmailContent(product, country);
+            
+            const response = await axios.post(
+                'https://api.mailchimp.com/3.0/campaigns',
+                {
+                    type: 'regular',
+                    recipients: {
+                        list_id: this.config.MAILCHIMP_LIST_ID
+                    },
+                    settings: {
+                        subject_line: `Discover ${product.title} - Special Offer for ${country}`,
+                        from_name: this.config.STORE_NAME,
+                        reply_to: this.config.STORE_EMAIL
+                    },
+                    content: {
+                        html: emailContent
+                    }
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.config.MAILCHIMP_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
             this.logger.info(`✅ Email marketing campaign created for ${product.title}`);
-            return `email_campaign_${crypto.randomBytes(8).toString('hex')}`;
+            return response.data.id;
         }, 'email', 2);
     }
 
@@ -597,7 +748,17 @@ class MarketingManager {
 
     async _executeInfluencerMarketing(product, country) {
         return this.apiQueue.enqueue(async () => {
-            // Influencer marketing implementation
+            const influencers = await this._findRelevantInfluencers(product.category, country);
+            
+            for (const influencer of influencers.slice(0, INFLUENCER_CONTACT_LIMIT)) {
+                try {
+                    await this._contactInfluencer(influencer, product, country);
+                    await this.delay(5000);
+                } catch (error) {
+                    this.logger.warn(`Failed to contact influencer ${influencer.name}: ${error.message}`);
+                }
+            }
+            
             this.logger.info(`✅ Influencer outreach initiated for ${product.title}`);
             return true;
         }, 'influencer', 2);
@@ -613,23 +774,19 @@ class MarketingManager {
 
     async processRevenuePayment(amount, currency, countryCode, productId) {
         try {
-            // Initialize wallet if not already done
             if (!this.walletInitialized) {
                 await this.initializeWalletConnections();
             }
 
             let settlementResult;
             
-            // Use wallet module for revenue processing
             if (['USD', 'EUR', 'GBP'].includes(currency)) {
-                // Use Ethereum for major currencies
                 settlementResult = await sendUSDT(
                     this.config.COMPANY_WALLET_ADDRESS,
                     amount,
                     'eth'
                 );
             } else {
-                // Use Solana for other currencies
                 const solAmount = await this._convertToSol(amount, currency);
                 settlementResult = await sendSOL(
                     this.config.COMPANY_WALLET_ADDRESS,
@@ -638,7 +795,6 @@ class MarketingManager {
             }
 
             if (settlementResult.hash || settlementResult.signature) {
-                // Record revenue in database
                 const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
                 await this.db.run(`
                     INSERT INTO revenue_streams 
@@ -649,7 +805,7 @@ class MarketingManager {
                     countryCode, productId, settlementResult.hash || settlementResult.signature
                 ]);
 
-                this.logger.success(`💰 Revenue payment processed: ${amount} ${currency}`);
+                this.logger.info(`💰 Revenue payment processed: ${amount} ${currency}`);
                 return true;
             }
 
@@ -677,35 +833,167 @@ class MarketingManager {
 
     async _convertToSol(amount, currency) {
         try {
-            // Simple conversion rates (in a real implementation, use an API)
-            const conversionRates = {
-                USD: 100, // 1 SOL ≈ $100
-                EUR: 110,
-                GBP: 130,
-                JPY: 0.70,
-                CAD: 75,
-                AUD: 65,
-                INR: 1.20,
-                NGN: 0.12,
-                BRL: 20,
-                SGD: 75,
-                CHF: 110,
-                AED: 27,
-                HKD: 13,
-                PHP: 1.80,
-                VND: 0.004
-            };
-
-            const rate = conversionRates[currency] || 100; // Default to USD rate
+            const response = await axios.get(
+                `https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=${currency.toLowerCase()}`
+            );
+            const rate = response.data.solana[currency.toLowerCase()];
             return amount / rate;
         } catch (error) {
             this.logger.error('Currency conversion failed:', error);
-            return amount / 100; // Fallback conversion
+            return amount / 100;
         }
     }
 
+    async _generateEmailContent(product, country) {
+        const prompt = `Create an engaging email about ${product.title} for customers in ${country}. Include special offers and compelling CTAs.`;
+        const response = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-4',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 1000
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        return response.data.choices[0].message.content;
+    }
+
+    async _findRelevantInfluencers(category, country) {
+        try {
+            const response = await axios.get(
+                'https://api.influencerdb.com/v1/influencers',
+                {
+                    params: {
+                        category,
+                        country,
+                        min_followers: 10000,
+                        engagement_rate: '0.03+'
+                    },
+                    headers: {
+                        'Authorization': `Bearer ${this.config.INFLUENCERDB_API_KEY}`
+                    }
+                }
+            );
+            return response.data.data;
+        } catch (error) {
+            this.logger.warn(`Influencer search failed: ${error.message}`);
+            return [];
+        }
+    }
+
+    async _contactInfluencer(influencer, product, country) {
+        const emailContent = await this._generateInfluencerEmail(influencer, product, country);
+        
+        await axios.post(
+            'https://api.sendgrid.com/v3/mail/send',
+            {
+                personalizations: [{ to: [{ email: influencer.contact_email }] }],
+                from: { email: this.config.STORE_EMAIL, name: this.config.STORE_NAME },
+                subject: `Collaboration Opportunity: ${product.title}`,
+                content: [{ type: 'text/html', value: emailContent }]
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.config.SENDGRARD_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+    }
+
+    async _generateInfluencerEmail(influencer, product, country) {
+        const prompt = `Write a professional collaboration email to influencer ${influencer.name} about promoting ${product.title} to their ${country} audience.`;
+        const response = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-4',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 500
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        return response.data.choices[0].message.content;
+    }
+
     async _postToSocialPlatform(platform, product, country) {
-        // Social media posting implementation
+        const content = await this._generateSocialMediaContent(platform, product, country);
+        
+        switch (platform) {
+            case 'twitter':
+                await axios.post(
+                    'https://api.twitter.com/2/tweets',
+                    { text: content },
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${this.config.TWITTER_BEARER_TOKEN}`,
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+                break;
+                
+            case 'linkedin':
+                await axios.post(
+                    'https://api.linkedin.com/v2/ugcPosts',
+                    {
+                        author: `urn:li:person:${this.config.LINKEDIN_PERSON_URN}`,
+                        lifecycleState: 'PUBLISHED',
+                        specificContent: {
+                            'com.linkedin.ugc.ShareContent': {
+                                shareCommentary: { text: content },
+                                shareMediaCategory: 'NONE'
+                            }
+                        },
+                        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+                    },
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${this.config.LINKEDIN_ACCESS_TOKEN}`,
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+                break;
+                
+            case 'instagram':
+                await axios.post(
+                    `https://graph.facebook.com/v18.0/${this.config.INSTAGRAM_BUSINESS_ACCOUNT_ID}/media`,
+                    {
+                        caption: content,
+                        access_token: this.config.INSTAGRAM_ACCESS_TOKEN
+                    }
+                );
+                break;
+        }
+    }
+
+    async _generateSocialMediaContent(platform, product, country) {
+        const prompt = `Create a ${platform} post about ${product.title} for ${country} audience. Platform-specific style and hashtags.`;
+        const response = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-4',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 280
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        return response.data.choices[0].message.content;
     }
 
     delay(ms) {
@@ -723,7 +1011,8 @@ class EnhancedShopifyAgent {
         this.threatDetector = new AIThreatDetector();
         this.walletInitialized = false;
         
-        this.baseURL = `https://${config.SHOPIFY_STORE_DOMAIN || DEFAULT_STORE_DOMAIN}.myshopify.com`;
+        // Update base URL to use STORE_URL
+        this.baseURL = this.config.STORE_URL || `https://${config.SHOPIFY_STORE_DOMAIN || DEFAULT_STORE_DOMAIN}.myshopify.com`;
         this.apiVersion = API_VERSION;
         this.lastExecutionTime = DEFAULT_LAST_EXECUTION;
         this.lastStatus = DEFAULT_STATUS;
@@ -745,10 +1034,9 @@ class EnhancedShopifyAgent {
         this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
         
         try {
-            // Use the imported wallet initialization
             await initializeConnections();
             this.walletInitialized = true;
-            this.logger.success('✅ Multi-chain wallet connections initialized successfully');
+            this.logger.info('✅ Multi-chain wallet connections initialized successfully');
             
         } catch (error) {
             this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
@@ -840,7 +1128,6 @@ class EnhancedShopifyAgent {
 
             await this.marketingManager.updateCampaignPerformance(product.id, countryData.country_code, totalRevenue, totalUnits);
             
-            // Process revenue payment using wallet
             if (totalRevenue > 0) {
                 await this.marketingManager.processRevenuePayment(
                     totalRevenue, 
@@ -869,8 +1156,8 @@ class EnhancedShopifyAgent {
                 `${this.baseURL}/admin/api/${this.apiVersion}/orders.json`,
                 {
                     auth: {
-                        username: this.config.SHOPIFY_API_KEY,
-                        password: this.config.SHOPIFY_PASSWORD
+                        username: this.config.STORE_KEY,
+                        password: this.config.STORE_SECRET
                     },
                     params: {
                         financial_status: 'paid',
@@ -913,7 +1200,6 @@ class EnhancedShopifyAgent {
     }
 
     async _calculateEstimatedSales(product, countryData) {
-        // Advanced estimation based on multiple factors
         const baseDemand = await this._calculateBaseDemand(product, countryData);
         const priceSensitivity = this._calculatePriceSensitivity(product.price, countryData);
         const seasonalityFactor = this._getSeasonalityFactor();
@@ -922,7 +1208,6 @@ class EnhancedShopifyAgent {
         const estimatedSales = baseDemand * priceSensitivity * seasonalityFactor * marketingImpact;
         const estimatedRevenue = estimatedSales * product.price;
 
-        // Record estimation for analytics
         const estimateId = `estimate_${crypto.randomBytes(16).toString('hex')}`;
         const quantumProof = this.quantumShield.createProof({
             product_id: product.id,
@@ -945,7 +1230,6 @@ class EnhancedShopifyAgent {
     }
 
     async _calculateBaseDemand(product, countryData) {
-        // Calculate base demand using multiple data sources
         const marketSize = await this._getMarketSize(product.category, countryData.country_code);
         const competitionFactor = await this._getCompetitionFactor(product, countryData.country_code);
         const economicIndicator = this._getEconomicIndicator(countryData.country_code);
@@ -954,13 +1238,12 @@ class EnhancedShopifyAgent {
     }
 
     async _calculateMarketingImpact(productId, countryCode) {
-        // Calculate impact of active marketing campaigns
         const campaigns = await this.db.all(`
             SELECT * FROM marketing_campaigns 
             WHERE product_id = ? AND country_code = ? AND status = 'active'
         `, [productId, countryCode]);
 
-        let totalImpact = 1.0; // Base impact
+        let totalImpact = 1.0;
         
         for (const campaign of campaigns) {
             const platformImpact = this._getPlatformImpactFactor(campaign.platform);
@@ -984,29 +1267,65 @@ class EnhancedShopifyAgent {
         return impacts[platform] || 0.3;
     }
 
-    _getMarketSize(category, countryCode) {
-        // Implementation would fetch market size data
-        return 1000; // Example value
+    async _getMarketSize(category, countryCode) {
+        try {
+            const response = await axios.get(
+                'https://api.marketdata.com/v1/size',
+                {
+                    params: { category, country: countryCode },
+                    headers: { 'Authorization': `Bearer ${this.config.MARKETDATA_API_KEY}` }
+                }
+            );
+            return response.data.market_size;
+        } catch (error) {
+            this.logger.warn(`Market size fetch failed: ${error.message}`);
+            return 1000;
+        }
     }
 
-    _getCompetitionFactor(product, countryCode) {
-        // Implementation would analyze competition
-        return 0.8; // Example value
+    async _getCompetitionFactor(product, countryCode) {
+        try {
+            const response = await axios.get(
+                'https://api.semrush.com/analytics/v1/',
+                {
+                    params: {
+                        type: 'domain_organic_search',
+                        key: this.config.SEMRUSH_API_KEY,
+                        database: countryCode.toLowerCase(),
+                        domain: product.category + '.com'
+                    }
+                }
+            );
+            return 1 - (response.data.competition_index || 0.5);
+        } catch (error) {
+            this.logger.warn(`Competition analysis failed: ${error.message}`);
+            return 0.8;
+        }
     }
 
-    _getEconomicIndicator(countryCode) {
-        // Implementation would fetch economic data
-        return 1.0; // Example value
+    async _getEconomicIndicator(countryCode) {
+        try {
+            const response = await axios.get(
+                `https://api.worldbank.org/v2/country/${countryCode}/indicator/NY.GDP.MKTP.CD`
+            );
+            const gdpData = response.data[1][0];
+            return gdpData.value > 1000000000000 ? 1.2 : 1.0;
+        } catch (error) {
+            this.logger.warn(`Economic indicator fetch failed: ${error.message}`);
+            return 1.0;
+        }
     }
 
     _getSeasonalityFactor() {
-        // Implementation would calculate seasonality
-        return 1.0; // Example value
+        const month = new Date().getMonth();
+        // Higher in Q4 (holiday season)
+        return month >= 9 && month <= 11 ? 1.3 : 
+               month >= 5 && month <= 7 ? 1.1 : 1.0;
     }
 
     _calculatePriceSensitivity(price, countryData) {
-        // Implementation would calculate price sensitivity
-        return 0.9; // Example value
+        // Price sensitivity based on country economic factors
+        return countryData.gdp_per_capita > 30000 ? 0.8 : 1.0;
     }
 }
 
