@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import { connectDB } from '../database/BrianNwaezikeDB.js';
+import { connectDB } from './database/db.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -35,12 +35,10 @@ requiredEnvVars.forEach(envVar => {
  */
 async function startEngine() {
   console.log("Starting the Autonomous AI Engine...");
-
   try {
     // Correctly reference the DB_PATH from the .env file
     const db = await connectDB(process.env.DB_PATH);
     console.log("Database connection established.");
-
     // Correctly reference the PAYOUT_INTERVAL_MS from the .env file
     const payoutInterval = parseInt(process.env.PAYOUT_INTERVAL_MS, 10);
     if (isNaN(payoutInterval)) {
@@ -50,7 +48,6 @@ async function startEngine() {
     // Example of a continuous loop for processing
     setInterval(async () => {
       console.log(`\nProcessing run started at ${new Date().toISOString()}`);
-
       // Placeholder for your core logic
       // 1. Fetch data from external sources (e.g., APIs, news feeds)
       // 2. Process data using your AI model
@@ -64,11 +61,8 @@ async function startEngine() {
       } catch (error) {
         console.error("An error occurred during a processing cycle:", error);
       }
-      
       console.log("Processing run finished.");
-
     }, payoutInterval);
-
   } catch (error) {
     console.error("Failed to start the AI engine:", error);
     process.exit(1);
