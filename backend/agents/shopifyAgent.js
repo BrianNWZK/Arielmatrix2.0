@@ -6,6 +6,17 @@ import { yourSQLite } from 'ariel-sqlite-engine';
 import axios from 'axios';
 import crypto from 'crypto';
 
+// Import wallet functions
+import { 
+    initializeConnections,
+    getSolanaBalance,
+    sendSOL,
+    getUSDTBalance,
+    sendUSDT,
+    checkWalletBalances,
+    testAllConnections
+} from '../blockchain/wallet.js';
+
 // Constants for configuration
 const DEFAULT_STORE_DOMAIN = 'store';
 const API_VERSION = '2024-01';
@@ -456,6 +467,21 @@ class MarketingManager {
         this.config = config;
         this.logger = logger;
         this.apiQueue = apiQueue;
+        this.walletInitialized = false;
+    }
+
+    async initializeWalletConnections() {
+        this.logger.info('🔗 Initializing multi-chain wallet connections for Marketing Manager...');
+        
+        try {
+            // Use the imported wallet initialization
+            await initializeConnections();
+            this.walletInitialized = true;
+            this.logger.success('✅ Multi-chain wallet connections initialized successfully');
+            
+        } catch (error) {
+            this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
+        }
     }
 
     initDatabase(db) {
@@ -585,6 +611,56 @@ class MarketingManager {
         `, [units, revenue / (units * 0.1), productId, countryCode]);
     }
 
+    async processRevenuePayment(amount, currency, countryCode, productId) {
+        try {
+            // Initialize wallet if not already done
+            if (!this.walletInitialized) {
+                await this.initializeWalletConnections();
+            }
+
+            let settlementResult;
+            
+            // Use wallet module for revenue processing
+            if (['USD', 'EUR', 'GBP'].includes(currency)) {
+                // Use Ethereum for major currencies
+                settlementResult = await sendUSDT(
+                    this.config.COMPANY_WALLET_ADDRESS,
+                    amount,
+                    'eth'
+                );
+            } else {
+                // Use Solana for other currencies
+                const solAmount = await this._convertToSol(amount, currency);
+                settlementResult = await sendSOL(
+                    this.config.COMPANY_WALLET_ADDRESS,
+                    solAmount
+                );
+            }
+
+            if (settlementResult.hash || settlementResult.signature) {
+                // Record revenue in database
+                const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
+                await this.db.run(`
+                    INSERT INTO revenue_streams 
+                    (id, source, amount, currency, country_code, product_id, blockchain_tx_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    revenueId, 'marketing_campaign', amount, currency, 
+                    countryCode, productId, settlementResult.hash || settlementResult.signature
+                ]);
+
+                this.logger.success(`💰 Revenue payment processed: ${amount} ${currency}`);
+                return true;
+            }
+
+            return false;
+
+        } catch (error) {
+            this.logger.error(`Revenue payment processing failed: ${error.message}`);
+            return false;
+        }
+    }
+
     _calculateMarketingBudget(price, country) {
         const weight = COUNTRY_WEIGHTS[country] || 0.7;
         return Math.max(MINIMUM_MARKETING_BUDGET, price * MARKETING_BUDGET_PERCENTAGE * weight);
@@ -597,6 +673,35 @@ class MarketingManager {
     _getCurrencyForCountry(country) {
         const currencies = { 'US': 'USD', 'GB': 'GBP', 'CA': 'CAD', 'AU': 'AUD', 'EU': 'EUR' };
         return currencies[country] || 'USD';
+    }
+
+    async _convertToSol(amount, currency) {
+        try {
+            // Simple conversion rates (in a real implementation, use an API)
+            const conversionRates = {
+                USD: 100, // 1 SOL ≈ $100
+                EUR: 110,
+                GBP: 130,
+                JPY: 0.70,
+                CAD: 75,
+                AUD: 65,
+                INR: 1.20,
+                NGN: 0.12,
+                BRL: 20,
+                SGD: 75,
+                CHF: 110,
+                AED: 27,
+                HKD: 13,
+                PHP: 1.80,
+                VND: 0.004
+            };
+
+            const rate = conversionRates[currency] || 100; // Default to USD rate
+            return amount / rate;
+        } catch (error) {
+            this.logger.error('Currency conversion failed:', error);
+            return amount / 100; // Fallback conversion
+        }
     }
 
     async _postToSocialPlatform(platform, product, country) {
@@ -616,6 +721,7 @@ class EnhancedShopifyAgent {
         this.blockchain = new BrianNwaezikeChain(config);
         this.quantumShield = new QuantumShield();
         this.threatDetector = new AIThreatDetector();
+        this.walletInitialized = false;
         
         this.baseURL = `https://${config.SHOPIFY_STORE_DOMAIN || DEFAULT_STORE_DOMAIN}.myshopify.com`;
         this.apiVersion = API_VERSION;
@@ -633,6 +739,20 @@ class EnhancedShopifyAgent {
         
         // Initialize databases
         this.initDatabases();
+    }
+
+    async initializeWalletConnections() {
+        this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
+        
+        try {
+            // Use the imported wallet initialization
+            await initializeConnections();
+            this.walletInitialized = true;
+            this.logger.success('✅ Multi-chain wallet connections initialized successfully');
+            
+        } catch (error) {
+            this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
+        }
     }
 
     initDatabases() {
@@ -719,6 +839,17 @@ class EnhancedShopifyAgent {
             }
 
             await this.marketingManager.updateCampaignPerformance(product.id, countryData.country_code, totalRevenue, totalUnits);
+            
+            // Process revenue payment using wallet
+            if (totalRevenue > 0) {
+                await this.marketingManager.processRevenuePayment(
+                    totalRevenue, 
+                    countryData.currency, 
+                    countryData.country_code, 
+                    product.id
+                );
+            }
+
             this.logger.info(`📊 Tracked ${totalUnits} units sold for ${product.title} in ${countryData.country_code}`);
             return totalRevenue;
 
