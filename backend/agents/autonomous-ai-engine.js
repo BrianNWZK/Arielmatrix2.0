@@ -2,11 +2,11 @@
  * @fileoverview Main engine for the autonomous AI system.
  * This script orchestrates data fetching, processing, and blockchain interactions.
  */
-const { execSync } = require('child_process');
-const { promises: fs } = require('fs');
-const path = require('path');
-const dotenv = require('dotenv');
-const { connectDB } = require('./database/db');
+import { execSync } from 'child_process';
+import { promises as fs } from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+import { connectDB } from '../database/BrianNwaezikeDB.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -44,7 +44,7 @@ async function startEngine() {
     // Correctly reference the PAYOUT_INTERVAL_MS from the .env file
     const payoutInterval = parseInt(process.env.PAYOUT_INTERVAL_MS, 10);
     if (isNaN(payoutInterval)) {
-        throw new Error('PAYOUT_INTERVAL_MS must be a valid number.');
+      throw new Error('PAYOUT_INTERVAL_MS must be a valid number.');
     }
 
     // Example of a continuous loop for processing
@@ -100,6 +100,4 @@ async function runTransactionProcessing() {
 // Start the engine
 startEngine();
 
-module.exports = {
-  startEngine,
-};
+export { startEngine };
