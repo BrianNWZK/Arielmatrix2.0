@@ -70,7 +70,7 @@ try {
   console.warn('Quantum crypto not available, using fallback encryption');
 }
 
-// Initialize rate limiters for various services
+// Initialize rate limiters for various services using the limiter package directly
 const rateLimiters = {
   ethereum: new RateLimiter({ tokensPerInterval: 15, interval: 'second' }),
   solana: new RateLimiter({ tokensPerInterval: 50, interval: 'second' }),
@@ -610,7 +610,7 @@ async function startEngine() {
     const db = new BrianNwaezikeDB({
       database: {
         path: process.env.DB_PATH || './data/ariel_matrix',
-        numberOfShards: parseInt(process.env.NUMBER_OF_SHARDS, 10) || 3,
+        numberOfShards: parseInt(process.env.NUMBER_OF_SHards, 10) || 3,
       },
     });
     
