@@ -6,7 +6,7 @@ set -e
 # Define variables for easy configuration
 IMAGE_NAME="arielsql-quantum-ai:latest"
 CONTAINER_NAME="quantum-test"
-PORT=3000
+PORT=1000
 HEALTH_CHECK_URL="http://localhost:${PORT}/health"
 HEALTH_CHECK_TIMEOUT_SECONDS=60
 HEALTH_CHECK_INTERVAL_SECONDS=5
