@@ -32,8 +32,9 @@
     "node-cache": "^5.1.2",
     "graphql": "^16.8.1",
     "apollo-server-express": "^3.12.1",
-    "@solana/web3.js": "^1.95.3",  
-    "@solana/spl-token": "^0.4.6"    
+    "@solana/web3.js": "^1.95.3",
+    "@solana/spl-token": "^0.4.6",   // Existing dependency
+    "async-mutex": "^0.1.0"          // Added missing dependency
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
