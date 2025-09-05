@@ -150,7 +150,6 @@
     "@types/node-cron": "^3.0.11",
     "@types/better-sqlite3": "^7.6.7",
     "@types/redis": "^4.0.11",
-    "@types/limiter": "^1.1.5",
     "@types/natural": "^6.2.2",
     "@types/node-machine-id": "^1.1.1"
   },
