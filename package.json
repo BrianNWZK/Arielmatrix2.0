@@ -37,7 +37,7 @@
     "async-mutex": "^0.1.0",         
     "natural": "^0.6.3",             
     "limiter": "^1.0.0",             
-    "cron": "^1.8.2",                            
+    "cron": "^1.8.2"                 // REMOVED TRAILING COMMA HERE
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
@@ -51,7 +51,7 @@
     "@types/cors": "^2.8.17"
   },
   "optionalDependencies": {
-    "litestream": "^0.3.9",
+    "litestream": "^0.3.9"
   },
   "license": "MIT",
   "private": true,
