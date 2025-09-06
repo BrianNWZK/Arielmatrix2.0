@@ -14,8 +14,9 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, SystemProgram, Transaction, send
 import { getAssociatedTokenAddress, createTransferInstruction, getAccount, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import { Mutex } from 'async-mutex';
 import * as tf from '@tensorflow/tfjs-node';
-import * as nlp from 'natural';
-import { BayesianClassifier } from 'natural';
+import natural from 'natural';
+const { BayesianClassifier } = natural;
+const nlp = natural;
 import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 import axios from 'axios';
 import { RateLimiter } from 'limiter';
