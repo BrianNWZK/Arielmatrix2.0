@@ -316,12 +316,21 @@ class AdvancedAIBrain {
    * @returns {Promise<void>}
    */
   async initialize() {
-    console.log('🧠 Initializing Advanced AI Brain...');
+  console.log('🧠 Initializing Advanced AI Brain...');
+  
+  try {
+    await this.loadModel('revenue_optimization');
+    await this.loadModel('risk_assessment');
+    await this.loadModel('market_prediction');
     
-    try {
-      await this.loadModel('revenue_optimization');
-      await this.loadModel('risk_assessment');
-      await this.loadModel('market_prediction');
+    this.initializeNLP();
+    
+    console.log('✅ Advanced AI Brain initialized successfully');
+  } catch (error) {
+    console.error('❌ AI Brain initialization failed:', error.message);
+    // Continue without AI features if initialization fails
+  }
+}
       
       this.initializeNLP() {
   const trainingData = [
