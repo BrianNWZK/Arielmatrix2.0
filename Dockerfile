@@ -20,35 +20,15 @@ WORKDIR /usr/src/app
 # Copy the Node.js dependencies from the installer stage.
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
-# Copy the application source code with proper directory structure
-# Copy entire backend directory
-COPY backend/ ./backend/
-
-# Copy other necessary directories
-COPY arielsql_suite/ ./arielsql_suite/
-COPY scripts/ ./scripts/
-COPY database/ ./database/ 2>/dev/null || echo "Database directory not found, continuing without it"
-
-# Copy configuration files
+# Copy the application source code.
+# This assumes your main entry file is in the 'backend/agents/' directory.
+COPY backend/agents/autonomous-ai-engine.js ./backend/agents/
+COPY arielsql_suite ./arielsql_suite
+COPY scripts ./scripts
 COPY package.json ./
-COPY .env ./.env 2>/dev/null || echo ".env file not found, using environment variables"
-
-# Create necessary directories if they don't exist
-RUN mkdir -p ./data ./logs
-
-# Set proper permissions for the app directory
-RUN chown -R node:node /usr/src/app && \
-    chmod -R 755 /usr/src/app
-
-# Switch to non-root user for security
-USER node
 
 # Expose the port the application runs on.
 EXPOSE 1000
-
-# Health check to ensure the container is running properly
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:1000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
 
 # The command to start the application with the new entry point.
 CMD ["node", "backend/agents/autonomous-ai-engine.js"]
