@@ -17,7 +17,6 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, SystemProgram, Transaction, send
 import { getAssociatedTokenAddress, createTransferInstruction, getAccount, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import * as tf from '@tensorflow/tfjs-node';
 import natural from 'natural';
-const { BayesianClassifier } = natural;
 import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 import axios from 'axios';
 import { RateLimiter } from 'limiter';
@@ -28,10 +27,38 @@ import dotenv from 'dotenv';
 import os from 'os';
 import { execSync, spawn } from 'child_process';
 
+// Fix for Natural library BayesianClassifier
+let BayesianClassifier;
+try {
+  BayesianClassifier = natural.BayesianClassifier;
+  if (!BayesianClassifier) {
+    throw new Error('BayesianClassifier not found in natural');
+  }
+} catch (error) {
+  console.warn('⚠️ Natural BayesianClassifier not available, using fallback:', error.message);
+  // Fallback implementation
+  BayesianClassifier = class FallbackClassifier {
+    constructor() {
+      this.categories = new Map();
+    }
+    addDocument(text, category) {
+      if (!this.categories.has(category)) {
+        this.categories.set(category, []);
+      }
+      this.categories.get(category).push(text);
+    }
+    train() {
+      console.log('Fallback classifier trained');
+    }
+    classify(text) {
+      return { positive: 0.5, negative: 0.5 }; // Neutral fallback
+    }
+  };
+}
+
 // Quantum-resistant cryptography with fallback
 let pqc;
 try {
-  // Note: The actual `pqc-kyber` library needs to be installed via npm.
   const kyberModule = await import('pqc-kyber');
   pqc = kyberModule.default || kyberModule;
   console.log('✅ pqc-kyber loaded successfully.');
@@ -87,7 +114,8 @@ const requiredEnvVars = [
   'ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY', 'SOLANA_COLLECTION_WALLET_PRIVATE_KEY',
   'ETHEREUM_RPC_URL', 'SOLANA_RPC_URL', 'ETHEREUM_TRUST_WALLET_ADDRESS',
   'SOLANA_TRUST_WALLET_ADDRESS', 'USDT_CONTRACT_ADDRESS_ETH', 'USDC_CONTRACT_ADDRESS_SOL',
-  'MAINNET_DEPLOYMENT', 'AI_MODEL_PATH', 'ENCRYPTION_KEY', 'BACKUP_NODE_URLS'
+  'MAINNET_DEPLOYMENT', 'AI_MODEL_PATH', 'ENCRYPTION_KEY'
+  // Removed BACKUP_NODE_URLS from required since it has a fallback
 ];
 
 /**
@@ -106,17 +134,23 @@ const CONFIG = {
   PAYOUT_INTERVAL_MS: parseInt(process.env.PAYOUT_INTERVAL_MS, 10) || 3600000 // Default 1 hour
 };
 
+// Set default values for backup URLs
+if (!process.env.BACKUP_NODE_URLS) {
+  process.env.BACKUP_NODE_URLS = 'https://eth-mainnet.public.blastapi.io,https://rpc.ankr.com/eth';
+}
+if (!process.env.BACKUP_SOLANA_URLS) {
+  process.env.BACKUP_SOLANA_URLS = 'https://solana-mainnet.rpc.extrnode.com,https://api.mainnet-beta.solana.com';
+}
+
 // Check if all required environment variables are present
 requiredEnvVars.forEach(envVar => {
   if (!process.env[envVar]) {
     const errorMsg = `CRITICAL: Missing required environment variable: ${envVar}`;
     console.error(errorMsg);
     
-    // Attempt self-healing for non-critical variables
-    if (envVar === 'BACKUP_NODE_URLS') {
-      process.env.BACKUP_NODE_URLS = 'https://backup1.example.com,https://backup2.example.com';
-      console.warn(`Self-healing: Set default value for ${envVar}`);
-    } else {
+    // Only exit for critical variables, provide defaults for others
+    const nonCriticalVars = ['BACKUP_NODE_URLS', 'BACKUP_SOLANA_URLS'];
+    if (!nonCriticalVars.includes(envVar)) {
       process.exit(1);
     }
   }
@@ -810,28 +844,28 @@ async function initializeBlockchainConnections() {
     const backupEthUrls = process.env.BACKUP_NODE_URLS.split(',');
     for (const url of backupEthUrls) {
       try {
-        const backupWeb3 = new Web3(new Web3.providers.HttpProvider(url));
+        const backupWeb3 = new Web3(new Web3.providers.HttpProvider(url.trim()));
         await backupWeb3.eth.getBlockNumber();
         ethWeb3 = backupWeb3;
         console.log(`✅ Using backup Ethereum node: ${url}`);
         break;
       } catch (error) {
-        console.warn(`Backup Ethereum node failed: ${url}`);
+        console.warn(`Backup Ethereum node failed: ${url}`, error.message);
       }
     }
 
     solConnection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
     
-    const backupSolUrls = process.env.BACKUP_SOLANA_URLS?.split(',') || [];
+    const backupSolUrls = process.env.BACKUP_SOLANA_URLS.split(',');
     for (const url of backupSolUrls) {
       try {
-        const backupConn = new Connection(url, 'confirmed');
+        const backupConn = new Connection(url.trim(), 'confirmed');
         await backupConn.getVersion();
         solConnection = backupConn;
         console.log(`✅ Using backup Solana node: ${url}`);
         break;
       } catch (error) {
-        console.warn(`Backup Solana node failed: ${url}`);
+        console.warn(`Backup Solana node failed: ${url}`, error.message);
       }
     }
 
@@ -1003,7 +1037,7 @@ async function runTransactionProcessing(db) {
   const results = [];
   for (const tx of txs) {
     if (tx.type === 'eth') {
-      results.push(await executeEthereumTransaction(tx));
+      results.push(await executeEhereumTransaction(tx));
     } else if (tx.type === 'sol') {
       results.push(await executeSolanaTransaction(tx));
     }
@@ -1032,7 +1066,6 @@ async function executeSolanaTransaction(tx) {
     tx_hash: createHash('sha256').update(JSON.stringify(tx)).digest('hex')
   };
 }
-
 
 async function optimizeRevenueStrategies() {
   const context = {
