@@ -35,11 +35,11 @@
     "@solana/web3.js": "^1.95.3",
     "@solana/spl-token": "^0.4.6",  
     "async-mutex": "^0.1.0",         
-    "natural": "^6.8.0",             // Updated to latest version
-    "limiter": "^2.1.0",             // Updated to latest version
-    "cron": "^3.1.7",                // Updated to latest version
+    "natural": "^6.8.0",             
+    "limiter": "^2.1.0",             
+    "cron": "^3.1.7",                
     "cheerio": "^1.0.0-rc.12",
-    "pqc-kyber": "^0.3.0"            // Added missing quantum crypto library
+    "pqc-kyber": "^0.3.0"            
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
