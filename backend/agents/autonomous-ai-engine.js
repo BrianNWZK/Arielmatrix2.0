@@ -300,7 +300,7 @@ class AdvancedAIBrain {
   constructor() {
     /** @type {Map<string, Object>} */
     this.models = new Map();
-    /** @type {BayesianClassifier} */
+    /** @type {any} */
     this.classifier = new BayesianClassifier();
     /** @type {number} */
     this.learningRate = 0.1;
