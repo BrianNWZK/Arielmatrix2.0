@@ -7,7 +7,15 @@
 // =========================================================================
 // 1. IMPORTS
 // =========================================================================
-
+// Add to imports section
+import { 
+    initializeConnections, 
+    getWalletBalances, 
+    getWalletAddresses,
+    sendSOL,
+    sendUSDT,
+    testAllConnections 
+} from './wallet.js';
 import { Mutex } from 'async-mutex';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, watch } from 'fs';
 import path from 'path';
