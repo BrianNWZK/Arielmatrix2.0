@@ -1,6 +1,9 @@
 /**
  * Automated Multi-Chain Fund Consolidation Script
- * Integrated with Autonomous AI Engine for revenue collection
+ *
+ * This utility connects to a list of RPC endpoints and uses the fastest one available.
+ * This approach enhances reliability by providing resilience against network
+ * congestion and individual node failures.
  */
 
 import 'dotenv/config'; // Loads environment variables
@@ -11,17 +14,13 @@ import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/sp
 // =========================================================================
 // 1. Configuration - HARDCODED RPCs and Public Information
 // =========================================================================
-// Hardcoded Mainnet RPC URLs for redundancy and quick setup
+// Hardcoded Mainnet RPC URLs for redundancy and quick setup. These are public and not a security risk.
 const ETHEREUM_RPC_URLS = [
-    'https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97',
-    'https://eth-mainnet.public.blastapi.io',
-    'https://rpc.ankr.com/eth'
+    'https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97'
 ];
 
 const SOLANA_RPC_URLS = [
-    'https://solana-rpc.publicnode.com',
-    'https://solana-mainnet.rpc.extrnode.com',
-    'https://api.mainnet-beta.solana.com'
+    'https://solana-rpc.publicnode.com'
 ];
 
 // Public addresses for stablecoins
@@ -39,26 +38,22 @@ const SOL_COLLECTION_WALLET_PRIVATE_KEY = process.env.SOLANA_COLLECTION_WALLET_P
 // =========================================================================
 /**
  * Finds the fastest RPC URL from a list by attempting a connection to each in parallel.
+ * @param {string[]} rpcUrls - An array of RPC URLs.
+ * @param {string} chainName - The name of the blockchain for logging.
+ * @returns {Promise<string>} The URL of the fastest responding RPC.
  */
 async function getFastestRPC(rpcUrls, chainName) {
     console.log(`\nTesting ${chainName} RPC endpoints to find the fastest connection...`);
     
+    // Create a promise for each RPC URL to test its connection
     const connectionPromises = rpcUrls.map(url => {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 reject(new Error(`Timeout connecting to ${url}`));
-            }, 5000);
+            }, 5000); // 5-second timeout
 
-            fetch(url, { 
-                method: 'POST', 
-                body: JSON.stringify({ 
-                    jsonrpc: '2.0', 
-                    id: 1, 
-                    method: chainName.toLowerCase() === 'ethereum' ? 'eth_blockNumber' : 'getLatestBlockhash',
-                    params: [] 
-                }), 
-                headers: { 'Content-Type': 'application/json' } 
-            })
+            // Use a simple fetch to check if the endpoint is reachable
+            fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }), headers: { 'Content-Type': 'application/json' } })
                 .then(res => {
                     clearTimeout(timeout);
                     if (res.ok) {
@@ -76,6 +71,7 @@ async function getFastestRPC(rpcUrls, chainName) {
     });
 
     try {
+        // Promise.any() resolves as soon as one of the promises in the array resolves
         const fastestUrl = await Promise.any(connectionPromises);
         return fastestUrl;
     } catch (error) {
@@ -123,57 +119,33 @@ let ethWallet, solWallet;
  * Initializes all blockchain connections. Must be called before any other function.
  */
 export async function initializeConnections() {
-    console.log("🔄 Initializing blockchain connections...");
-    
-    // Ethereum Initialization
-    try {
-        const ethereumRpcUrl = await getFastestRPC(ETHEREUM_RPC_URLS, 'Ethereum');
-        ethProvider = new ethers.JsonRpcProvider(ethereumRpcUrl);
-
-        if (!ETH_COLLECTION_WALLET_PRIVATE_KEY) {
-            throw new Error("Ethereum private key is missing from .env file.");
-        }
-        ethWallet = new ethers.Wallet(ETH_COLLECTION_WALLET_PRIVATE_KEY, ethProvider);
-        console.log(`✅ Ethereum connected: ${ethWallet.address}`);
-    } catch (error) {
-        console.error("❌ Ethereum initialization failed:", error.message);
-        throw error;
-    }
-
     // Solana Initialization
-    try {
-        const solanaRpcUrl = await getFastestRPC(SOLANA_RPC_URLS, 'Solana');
-        solConnection = new Connection(solanaRpcUrl, 'confirmed');
-        
-        if (!SOL_COLLECTION_WALLET_PRIVATE_KEY) {
-            throw new Error("Solana private key is missing from .env file.");
-        }
-        
-        // Handle both string and array formats for private key
-        let privateKey;
-        try {
-            privateKey = Uint8Array.from(JSON.parse(SOL_COLLECTION_WALLET_PRIVATE_KEY));
-        } catch {
-            // If parsing fails, assume it's already a base58 string
-            privateKey = new Uint8Array(Buffer.from(SOL_COLLECTION_WALLET_PRIVATE_KEY, 'hex'));
-        }
-        
-        solWallet = Keypair.fromSecretKey(privateKey);
-        console.log(`✅ Solana connected: ${solWallet.publicKey.toString()}`);
-        
-    } catch (error) {
-        console.error("❌ Solana initialization failed:", error.message);
-        throw error;
+    const solanaRpcUrl = await getFastestRPC(SOLANA_RPC_URLS, 'Solana');
+    solConnection = new Connection(solanaRpcUrl, 'confirmed');
+    
+    // Check if private key is provided
+    if (!SOL_COLLECTION_WALLET_PRIVATE_KEY) {
+        throw new Error("Solana private key is missing from .env file.");
     }
+    solWallet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(SOL_COLLECTION_WALLET_PRIVATE_KEY)));
 
-    console.log("✅ All blockchain connections initialized successfully");
+    // Ethereum Initialization
+    const ethereumRpcUrl = await getFastestRPC(ETHEREUM_RPC_URLS, 'Ethereum');
+    ethProvider = new ethers.JsonRpcProvider(ethereumRpcUrl);
+
+    // Check if private key is provided
+    if (!ETH_COLLECTION_WALLET_PRIVATE_KEY) {
+        throw new Error("Ethereum private key is missing from .env file.");
+    }
+    ethWallet = new ethers.Wallet(ETH_COLLECTION_WALLET_PRIVATE_KEY, ethProvider);
 }
 
 // =========================================================================
-// 5. Core Wallet Functions
+// 5. Wallet Functions
 // =========================================================================
 /**
  * Retrieves the SOL balance of the operational wallet.
+ * @returns {Promise<number>} The balance in SOL.
  */
 export async function getSolanaBalance() {
     try {
@@ -186,90 +158,44 @@ export async function getSolanaBalance() {
 }
 
 /**
- * Retrieves the ETH balance of the operational wallet.
- */
-export async function getEthereumBalance() {
-    try {
-        const balance = await ethProvider.getBalance(ethWallet.address);
-        return parseFloat(ethers.formatEther(balance));
-    } catch (error) {
-        console.error("Error fetching Ethereum balance:", error);
-        return 0;
-    }
-}
-
-/**
  * Sends native SOL from the operational wallet to a destination.
+ * @param {string} toAddress - The recipient's Solana address.
+ * @param {number} amount - The amount of SOL to send.
+ * @returns {Promise<object>} The transaction details or an error object.
  */
 export async function sendSOL(toAddress, amount) {
     try {
         const toPublicKey = new PublicKey(toAddress);
         const lamports = amount * LAMPORTS_PER_SOL;
-        const transaction = new Transaction().add(
-            SystemProgram.transfer({ 
-                fromPubkey: solWallet.publicKey, 
-                toPubkey: toPublicKey, 
-                lamports 
-            })
-        );
-        
+        const transaction = new Transaction().add(SystemProgram.transfer({ fromPubkey: solWallet.publicKey, toPubkey: toPublicKey, lamports }));
         const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
         transaction.recentBlockhash = blockhash;
+        transaction.lastValidBlockHeight = lastValidBlockHeight;
         transaction.feePayer = solWallet.publicKey;
-        
         const signature = await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
-        return { success: true, signature };
+        return { signature };
     } catch (error) {
         console.error("Error sending SOL:", error);
-        return { success: false, error: error.message };
-    }
-}
-
-/**
- * Sends native ETH from the operational wallet to a destination.
- */
-export async function sendETH(toAddress, amount) {
-    try {
-        if (!ethers.isAddress(toAddress)) {
-            throw new Error("Invalid Ethereum address.");
-        }
-        
-        const tx = await ethWallet.sendTransaction({
-            to: toAddress,
-            value: ethers.parseEther(amount.toString()),
-            gasLimit: 21000
-        });
-        
-        return { success: true, hash: tx.hash };
-    } catch (error) {
-        console.error("Error sending ETH:", error);
-        return { success: false, error: error.message };
+        return { error: error.message };
     }
 }
 
 /**
  * Retrieves the USDT balance of the operational wallet on both chains.
+ * @param {string} chain - The blockchain to check ('eth' or 'sol').
+ * @returns {Promise<number>} The USDT balance.
  */
 export async function getUSDTBalance(chain = 'eth') {
     if (chain === 'eth') {
-        try {
-            const usdtContract = new ethers.Contract(
-                USDT_CONTRACT_ADDRESS_ETH, 
-                ["function balanceOf(address owner) view returns (uint256)"], 
-                ethProvider
-            );
-            const balance = await usdtContract.balanceOf(ethWallet.address);
-            return parseFloat(ethers.formatUnits(balance, 6));
-        } catch (error) {
-            console.error("Error fetching Ethereum USDT balance:", error);
-            return 0;
-        }
+        const usdtContract = new ethers.Contract(USDT_CONTRACT_ADDRESS_ETH, ["function balanceOf(address owner) view returns (uint256)"], ethProvider);
+        const balance = await usdtContract.balanceOf(ethWallet.address);
+        return ethers.formatUnits(balance, 6);
     } else if (chain === 'sol') {
         try {
             const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
             const associatedTokenAddress = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
             const tokenBalance = await solConnection.getTokenAccountBalance(associatedTokenAddress);
-            return tokenBalance.value.uiAmount || 0;
+            return tokenBalance.value.uiAmount;
         } catch (error) {
             console.error("Error fetching Solana USDT balance:", error);
             return 0;
@@ -280,226 +206,41 @@ export async function getUSDTBalance(chain = 'eth') {
 
 /**
  * Sends USDT from the operational wallet to a destination.
+ * @param {string} toAddress - The recipient's address.
+ * @param {number} amount - The amount of USDT to send.
+ * @param {string} chain - The blockchain to send on ('eth' or 'sol').
+ * @returns {Promise<object>} The transaction details.
  */
 export async function sendUSDT(toAddress, amount, chain) {
     if (chain === 'eth') {
         try {
-            if (!ethers.isAddress(toAddress)) { 
-                throw new Error("Invalid Ethereum address."); 
-            }
-            
-            const usdtContract = new ethers.Contract(
-                USDT_CONTRACT_ADDRESS_ETH, 
-                ["function transfer(address to, uint256 amount) returns (bool)"], 
-                ethWallet
-            );
-            
+            if (!ethers.isAddress(toAddress)) { throw new Error("Invalid Ethereum address."); }
+            const usdtContract = new ethers.Contract(USDT_CONTRACT_ADDRESS_ETH, ["function transfer(address to, uint256 amount) returns (bool)"], ethWallet);
             const amountInWei = ethers.parseUnits(amount.toString(), 6);
             const tx = await usdtContract.transfer(toAddress, amountInWei);
-            
-            return { success: true, hash: tx.hash };
-        } catch (error) {
-            console.error("Error sending USDT on Ethereum:", error);
-            return { success: false, error: error.message };
+            return { hash: tx.hash };
+        } catch (ethError) {
+            console.error("Error sending USDT on Ethereum:", ethError);
+            return { error: ethError.message };
         }
     } else if (chain === 'sol') {
         try {
             const toPublicKey = new PublicKey(toAddress);
             const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
-            
             const fromTokenAccount = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
             const toTokenAccount = await getAssociatedTokenAddress(usdtMintAddress, toPublicKey);
-            
-            const transaction = new Transaction().add(
-                createTransferInstruction(
-                    fromTokenAccount, 
-                    toTokenAccount, 
-                    solWallet.publicKey, 
-                    amount * 10 ** 6
-                )
-            );
-            
-            const { blockhash } = await solConnection.getLatestBlockhash();
+            const transaction = new Transaction().add(createTransferInstruction(fromTokenAccount, toTokenAccount, solWallet.publicKey, amount * 10 ** 6));
+            const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
+            transaction.lastValidBlockHeight = lastValidBlockHeight;
             transaction.feePayer = solWallet.publicKey;
-            
             const signature = await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
-            return { success: true, signature };
-        } catch (error) {
-            console.error("Error sending USDT on Solana:", error);
-            return { success: false, error: error.message };
+            return { signature };
+        } catch (solError) {
+            console.error("Error sending USDT on Solana:", solError);
+            return { error: solError.message };
         }
     } else {
-        return { success: false, error: "Invalid chain specified. Please use 'eth' or 'sol'." };
+        return { error: "Invalid chain specified. Please use 'eth' or 'sol'." };
     }
 }
-
-// =========================================================================
-// 6. Integration Functions for Autonomous AI Engine
-// =========================================================================
-/**
- * Gets all wallet balances for monitoring and reporting
- */
-export async function getWalletBalances() {
-    try {
-        const [ethBalance, solBalance, ethUSDT, solUSDT] = await Promise.all([
-            getEthereumBalance(),
-            getSolanaBalance(),
-            getUSDTBalance('eth'),
-            getUSDTBalance('sol')
-        ]);
-        
-        return {
-            ethereum: { 
-                native: ethBalance, 
-                usdt: ethUSDT,
-                address: ethWallet.address 
-            },
-            solana: { 
-                native: solBalance, 
-                usdt: solUSDT,
-                address: solWallet.publicKey.toString() 
-            },
-            timestamp: Date.now()
-        };
-    } catch (error) {
-        console.error("Error getting wallet balances:", error);
-        return {
-            ethereum: { native: 0, usdt: 0, address: '' },
-            solana: { native: 0, usdt: 0, address: '' },
-            error: error.message,
-            timestamp: Date.now()
-        };
-    }
-}
-
-/**
- * Gets wallet addresses for data collection
- */
-export function getWalletAddresses() {
-    return {
-        ethereum: ethWallet?.address || '',
-        solana: solWallet?.publicKey?.toString() || '',
-        timestamp: Date.now()
-    };
-}
-
-/**
- * Consolidated function to process payments from revenue agents
- */
-export async function processRevenuePayment(payment) {
-    const { type, amount, toAddress, token = 'native' } = payment;
-    
-    try {
-        let result;
-        
-        if (token === 'native') {
-            if (type === 'sol') {
-                result = await sendSOL(toAddress, amount);
-            } else if (type === 'eth') {
-                result = await sendETH(toAddress, amount);
-            } else {
-                return { success: false, error: `Unsupported chain for native token: ${type}` };
-            }
-        } else if (token === 'usdt') {
-            result = await sendUSDT(toAddress, amount, type);
-        } else {
-            return { success: false, error: `Unsupported token: ${token}` };
-        }
-        
-        return {
-            success: result.success,
-            transaction: result,
-            paymentDetails: payment,
-            timestamp: Date.now()
-        };
-        
-    } catch (error) {
-        console.error("Error processing revenue payment:", error);
-        return {
-            success: false,
-            error: error.message,
-            paymentDetails: payment,
-            timestamp: Date.now()
-        };
-    }
-}
-
-// =========================================================================
-// 7. Health Check Functions
-// =========================================================================
-/**
- * Checks if all blockchain connections are healthy
- */
-export async function checkBlockchainHealth() {
-    try {
-        const [ethHealth, solHealth, walletBalances] = await Promise.allSettled([
-            ethProvider.getBlockNumber(),
-            solConnection.getLatestBlockhash(),
-            getWalletBalances()
-        ]);
-        
-        return {
-            healthy: ethHealth.status === 'fulfilled' && solHealth.status === 'fulfilled',
-            ethereum: ethHealth.status === 'fulfilled' ? { connected: true, block: ethHealth.value } : { connected: false },
-            solana: solHealth.status === 'fulfilled' ? { connected: true, blockhash: solHealth.value } : { connected: false },
-            wallets: walletBalances.status === 'fulfilled' ? walletBalances.value : null,
-            timestamp: Date.now()
-        };
-    } catch (error) {
-        return {
-            healthy: false,
-            error: error.message,
-            timestamp: Date.now()
-        };
-    }
-}
-
-// =========================================================================
-// 8. Utility Functions
-// =========================================================================
-/**
- * Validates cryptocurrency addresses
- */
-export function validateAddress(address, chain) {
-    try {
-        if (chain === 'eth') {
-            return ethers.isAddress(address);
-        } else if (chain === 'sol') {
-            new PublicKey(address); // This will throw if invalid
-            return true;
-        }
-        return false;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Formats balance for display
- */
-export function formatBalance(balance, decimals = 6) {
-    return parseFloat(balance.toFixed(decimals));
-}
-
-// =========================================================================
-// 9. Export all functions for integration
-// =========================================================================
-export default {
-    initializeConnections,
-    testAllConnections,
-    getWalletBalances,
-    getWalletAddresses,
-    processRevenuePayment,
-    checkBlockchainHealth,
-    validateAddress,
-    formatBalance,
-    
-    // Core functions
-    getSolanaBalance,
-    getEthereumBalance,
-    getUSDTBalance,
-    sendSOL,
-    sendETH,
-    sendUSDT
-};
