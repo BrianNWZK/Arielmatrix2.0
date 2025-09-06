@@ -106,19 +106,6 @@ const cache = new NodeCache({ stdTTL: 300, checkperiod: 120 });
 // =========================================================================
 
 /**
- * Quantum-resistant key pair for encryption
- * @type {Object|null}
- */
-let quantumKeyPair;
-
-try {
-  quantumKeyPair = pqc.keyGen();
-  console.log('✅ Quantum-resistant cryptography initialized');
-} catch (error) {
-  console.warn('⚠️ Quantum crypto not available, using fallback encryption');
-}
-
-/**
  * Rate limiters for various services
  * @type {Object}
  */
