@@ -38,7 +38,7 @@
     "natural": "^0.6.3",             
     "limiter": "^1.0.0",             
     "cron": "^1.8.2",
-    "cheerio": "^1.0.0-rc.12"  // ← Added cheerio here
+    "cheerio": "^1.0.0-rc.12"  
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
