@@ -332,40 +332,6 @@ class AdvancedAIBrain {
   }
 }
       
-      this.initializeNLP() {
-  const trainingData = [
-    { text: 'bull market', category: 'positive' },
-    { text: 'bear market', category: 'negative' },
-    { text: 'revenue growth', category: 'positive' },
-    { text: 'market crash', category: 'negative' },
-    { text: 'profit increase', category: 'positive' },
-    { text: 'economic downturn', category: 'negative' },
-    { text: 'liquidity crisis', category: 'negative' },
-    { text: 'market rally', category: 'positive' },
-    { text: 'earning beat', category: 'positive' },
-    { text: 'earning miss', category: 'negative' }
-  ];
-
-  trainingData.forEach(data => {
-    if (this.classifier && typeof this.classifier.addDocument === 'function') {
-      this.classifier.addDocument(data.text, data.category);
-    }
-  });
-
-  if (this.classifier && typeof this.classifier.train === 'function') {
-    this.classifier.train();
-  }
-  
-  console.log('✅ NLP classifier trained with financial terminology');
-}
-      
-      console.log('✅ Advanced AI Brain initialized successfully');
-    } catch (error) {
-      console.error('❌ AI Brain initialization failed:', error.message);
-      // Continue without AI features if initialization fails
-    }
-  }
-
   /**
    * Loads a machine learning model
    * @async
