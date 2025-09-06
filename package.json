@@ -37,7 +37,7 @@
     "async-mutex": "^0.1.0",         
     "natural": "^0.6.3",             
     "limiter": "^1.0.0",             
-    "cron": "^1.8.2"                 // REMOVED TRAILING COMMA HERE
+    "cron": "^1.8.2"                 
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
