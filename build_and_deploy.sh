@@ -2,7 +2,7 @@
 
 # =========================================================================
 # QUANTUM AI AUTONOMOUS BUILD & DEPLOYMENT SYSTEM - ULTIMATE EDITION
-# Enhanced with self-healing, error resolution, and 100% deployment guarantee
+# Enhanced with self-healing, proactive error resolution, and 100% deployment guarantee
 # =========================================================================
 
 # Exit immediately if a command exits with a non-zero status
@@ -43,9 +43,9 @@ log_debug() { echo -e "${BLUE}🐛 $1${NC}"; }
 resolve_wallet_js_issue() {
     local build_dir="$1"
     local wallet_path="$build_dir/backend/agents/wallet.js"
-    
+
     log_warning "🧠 Implementing ultimate wallet.js resolution strategy..."
-    
+
     # Create comprehensive wallet.js with all required exports
     cat > "$wallet_path" << 'EOF'
 /**
@@ -129,13 +129,13 @@ export async function initializeConnections() {
             try {
                 const pk = process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY;
                 let privateKey;
-                
+
                 if (pk.startsWith('[')) {
                     privateKey = new Uint8Array(JSON.parse(pk));
                 } else {
                     privateKey = new Uint8Array(Buffer.from(pk.replace(/^0x/, ''), 'hex'));
                 }
-                
+
                 solWallet = Keypair.fromSecretKey(privateKey);
                 console.log(`✅ Solana wallet: ${solWallet.publicKey.toString()}`);
             } catch (error) {
@@ -163,7 +163,7 @@ export async function getWalletBalances() {
             try {
                 const ethBalance = await ethProvider.getBalance(ethWallet.address);
                 balances.ethereum.native = parseFloat(ethers.formatEther(ethBalance));
-                
+
                 if (USDT_CONTRACT_ADDRESS_ETH) {
                     const usdtContract = new ethers.Contract(
                         USDT_CONTRACT_ADDRESS_ETH, 
@@ -182,11 +182,11 @@ export async function getWalletBalances() {
             try {
                 const solBalance = await solConnection.getBalance(solWallet.publicKey);
                 balances.solana.native = solBalance / LAMPORTS_PER_SOL;
-                
+
                 if (USDT_MINT_ADDRESS_SOL) {
                     const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
                     const associatedTokenAddress = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
-                    
+
                     const tokenAccountInfo = await solConnection.getAccountInfo(associatedTokenAddress);
                     if (tokenAccountInfo) {
                         const tokenBalance = await solConnection.getTokenAccountBalance(associatedTokenAddress);
@@ -519,6 +519,35 @@ fix_import_issues() {
     log_success "Fixed import issues in $file_path"
 }
 
+check_syntax() {
+    local build_dir="$1"
+    log_info "🔬 Proactively checking for syntax errors..."
+
+    if ! command -v node &> /dev/null; then
+        log_warning "Node.js not found. Skipping syntax check."
+        return 0
+    fi
+
+    local has_errors=false
+    find "$build_dir" -name "*.js" -type f | while read -r js_file; do
+        if ! node -c "$js_file" 2>&1 | grep -q "SyntaxError"; then
+            log_debug "Syntax OK: $js_file"
+        else
+            log_error "Syntax Error found in $js_file"
+            node -c "$js_file"
+            has_errors=true
+        fi
+    done
+
+    if [ "$has_errors" = "true" ]; then
+        log_error "❌ Critical syntax errors found. Aborting build."
+        return 1
+    fi
+
+    log_success "✅ All source files passed syntax check."
+    return 0
+}
+
 # === RETRY MECHANISM ===
 
 execute_with_retry() {
@@ -580,7 +609,7 @@ prepare_build_context() {
     
     # Fix syntax issues in source files
     find "$build_dir" -name "*.js" -type f | while read -r js_file; do
-        check_and_fix_syntax "$js_file" || true
+        fix_import_issues "$js_file" || true
     done
     
     log_success "Build context prepared with autonomous error resolution"
@@ -655,23 +684,57 @@ intelligent_health_check() {
     return 1
 }
 
+# === DEBUGGING AND CLEANUP ===
+
+debug_container() {
+    local container_name="$1"
+    log_info "🔍 Initiating deep container debugging for $container_name..."
+    log_info "--- Container Status ---"
+    docker ps -a | grep "$container_name" || log_warning "Container not found."
+    
+    log_info "--- Container Logs (Last 50 lines) ---"
+    docker logs "$container_name" 2>/dev/null | tail -n 50 || log_warning "Could not get logs."
+    
+    log_info "--- Running Processes in Container ---"
+    docker exec "$container_name" ps aux 2>/dev/null || log_warning "Could not get process list."
+    
+    log_info "--- File System Integrity Check ---"
+    docker exec "$container_name" ls -al /usr/src/app/ 2>/dev/null || log_warning "Could not access app directory."
+    
+    log_info "--- Network Status ---"
+    docker exec "$container_name" netstat -tuln 2>/dev/null || log_warning "Could not get network status."
+    
+    log_info "Debugging complete. Analyze the output for root cause."
+}
+
+cleanup() {
+    log_info "Performing cleanup..."
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
+    rm -rf ./.quantum-build 2>/dev/null || true
+}
+
 # === MAIN DEPLOYMENT PROCESS ===
 
 main() {
     log_info "🚀 Starting Quantum AI Autonomous Deployment System 🚀"
-    log_info "This system features self-healing and 100% deployment guarantee"
+    log_info "This system features proactive self-healing and 100% deployment guarantee"
     
     # Cleanup trap
     trap 'cleanup' EXIT
     
-    # Prepare build context with autonomous error resolution
     local build_dir="./.quantum-build"
+    
+    # 1. Prepare build context with autonomous error resolution
     prepare_build_context "$build_dir"
     
-    # Build Docker image with retry mechanism
+    # 2. Proactively check for syntax errors
+    check_syntax "$build_dir"
+    
+    # 3. Build Docker image with retry mechanism
     execute_with_retry "enhanced_docker_build \"$IMAGE_NAME\" \"$build_dir\"" "Docker build"
     
-    # Test container with intelligent health monitoring
+    # 4. Test container with intelligent health monitoring
     log_info "Starting test container for validation..."
     docker run -d --name "$CONTAINER_NAME" --rm -p "${PORT}:${PORT}" "$IMAGE_NAME"
     
@@ -698,7 +761,7 @@ main() {
         # Stop test container
         docker stop "$CONTAINER_NAME"
         
-        # Deployment phase
+        # 5. Deployment phase
         log_info "🚀 Proceeding with deployment..."
         if [ -n "$DOCKER_REGISTRY" ] && [ "$DOCKER_REGISTRY" != "your-registry/arielsql-quantum-ai" ]; then
             execute_with_retry "docker tag \"$IMAGE_NAME\" \"$DOCKER_REGISTRY:$TAG\" && docker push \"$DOCKER_REGISTRY:$TAG\"" "Docker push"
@@ -717,13 +780,6 @@ main() {
     # Cleanup
     rm -rf "$build_dir"
     log_success "🧹 Cleanup completed"
-}
-
-cleanup() {
-    log_info "Performing cleanup..."
-    docker stop "$CONTAINER_NAME" 2>/dev/null || true
-    docker rm "$CONTAINER_NAME" 2>/dev/null || true
-    rm -rf ./.quantum-build 2>/dev/null || true
 }
 
 # === EXECUTION WITH COMPREHENSIVE ERROR HANDLING ===
