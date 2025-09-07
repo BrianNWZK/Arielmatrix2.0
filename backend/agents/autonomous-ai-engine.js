@@ -48,8 +48,6 @@ try {
   await healDatabaseModule(error);
 }
 
-// Rest of your code...
-
 // Fix for Natural library BayesianClassifier
 let BayesianClassifier;
 try {
@@ -841,22 +839,6 @@ class RevenueAgentsManager {
 const aiBrain = new AdvancedAIBrain();
 const healingSystem = new SelfHealingSystem();
 const revenueManager = new RevenueAgentsManager();
-
-// Import database with enhanced error handling
-let BrianNwaezikeDB;
-try {
-  const dbModule = await import('../database/BrianNwaezikeDB.js');
-  BrianNwaezikeDB = dbModule.BrianNwaezikeDB;
-} catch (error) {
-  console.error('❌ Failed to import BrianNwaezikeDB:', error.message);
-  await healDatabaseModule(error);
-  const dbModule = await import('../database/BrianNwaezikeDB.js');
-  BrianNwaezikeDB = dbModule.BrianNwaezikeDB;
-}
-
-async function healDatabaseModule(error) {
-  console.log('🔧 Attempting to heal database module...');
-}
 
 let ethWeb3, solConnection;
 async function initializeBlockchainConnections() {
