@@ -37,6 +37,18 @@ import * as cheerio from 'cheerio';
 import dotenv from 'dotenv';
 import os from 'os';
 import { execSync, spawn } from 'child_process';
+// Import database with enhanced error handling
+import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js'; 
+
+// Handle import errors if needed
+try {
+  // Use BrianNwaezikeDB directly for any operations
+} catch (error) {
+  console.error('❌ Failed to use BrianNwaezikeDB:', error.message);
+  await healDatabaseModule(error);
+}
+
+// Rest of your code...
 
 // Fix for Natural library BayesianClassifier
 let BayesianClassifier;
@@ -831,14 +843,15 @@ const healingSystem = new SelfHealingSystem();
 const revenueManager = new RevenueAgentsManager();
 
 // Import database with enhanced error handling
-import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js'; 
-
-// Handle import errors if needed
+let BrianNwaezikeDB;
 try {
-  // Use BrianNwaezikeDB directly for any operations
+  const dbModule = await import('../database/BrianNwaezikeDB.js');
+  BrianNwaezikeDB = dbModule.BrianNwaezikeDB;
 } catch (error) {
-  console.error('❌ Failed to use BrianNwaezikeDB:', error.message);
+  console.error('❌ Failed to import BrianNwaezikeDB:', error.message);
   await healDatabaseModule(error);
+  const dbModule = await import('../database/BrianNwaezikeDB.js');
+  BrianNwaezikeDB = dbModule.BrianNwaezikeDB;
 }
 
 async function healDatabaseModule(error) {
