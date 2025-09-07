@@ -37,6 +37,7 @@ import * as cheerio from 'cheerio';
 import dotenv from 'dotenv';
 import os from 'os';
 import { execSync, spawn } from 'child_process';
+import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js';
 
 // Fix for Natural library BayesianClassifier
 let BayesianClassifier;
