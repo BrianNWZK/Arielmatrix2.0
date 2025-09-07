@@ -9,25 +9,35 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemPr
 import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
 import Web3 from 'web3';
 import { createHash } from 'crypto';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// Get current directory path for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load environment variables from .env file
+import dotenv from 'dotenv';
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 // =========================================================================
 // 1. CONFIGURATION
 // =========================================================================
 const ETHEREUM_RPC_URLS = [
-    'https://rpc.ankr.com/eth',
+    process.env.ETHEREUM_RPC_URL || 'https://rpc.ankr.com/eth',
     'https://eth-mainnet.public.blastapi.io',
     'https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97'
 ];
 
 const SOLANA_RPC_URLS = [
-    'https://solana-rpc.publicnode.com',
+    process.env.SOLANA_RPC_URL || 'https://solana-rpc.publicnode.com',
     'https://api.mainnet-beta.solana.com',
     'https://solana-mainnet.rpc.extrnode.com'
 ];
 
 // Public addresses for stablecoins
-const USDT_CONTRACT_ADDRESS_ETH = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
-const USDT_MINT_ADDRESS_SOL = 'Es9Kdd31Wq41G4R7s3M2wXq3T413d7tLg484e1t4t';
+const USDT_CONTRACT_ADDRESS_ETH = process.env.USDT_CONTRACT_ADDRESS_ETH || '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+const USDT_MINT_ADDRESS_SOL = process.env.USDT_MINT_ADDRESS_SOL || 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
 // =========================================================================
 // 2. GLOBAL VARIABLES
@@ -47,33 +57,79 @@ export async function initializeConnections() {
     console.log("🔄 Initializing blockchain connections...");
     
     try {
-        // Ethereum initialization with ethers.js
-        ethProvider = new ethers.JsonRpcProvider(ETHEREUM_RPC_URLS[0]);
+        // Try each Ethereum RPC URL until one works
+        let ethConnected = false;
+        for (const url of ETHEREUM_RPC_URLS) {
+            try {
+                ethProvider = new ethers.JsonRpcProvider(url);
+                await ethProvider.getBlockNumber(); // Test connection
+                console.log(`✅ Ethereum connected to: ${url}`);
+                ethConnected = true;
+                break;
+            } catch (error) {
+                console.warn(`❌ Failed to connect to Ethereum RPC: ${url}`, error.message);
+                continue;
+            }
+        }
         
+        if (!ethConnected) {
+            throw new Error("All Ethereum RPC connections failed");
+        }
+        
+        // Initialize Ethereum wallet if private key is available
         if (process.env.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY) {
-            ethWallet = new ethers.Wallet(process.env.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY, ethProvider);
-            console.log(`✅ Ethereum connected: ${ethWallet.address}`);
+            try {
+                ethWallet = new ethers.Wallet(process.env.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY, ethProvider);
+                console.log(`✅ Ethereum wallet connected: ${ethWallet.address}`);
+            } catch (error) {
+                console.error("❌ Failed to initialize Ethereum wallet:", error.message);
+            }
         } else {
             console.warn("⚠️ Ethereum private key not set");
         }
 
         // Ethereum initialization with Web3 (for legacy compatibility)
-        ethWeb3 = new Web3(new Web3.providers.HttpProvider(process.env.ETHEREUM_RPC_URLS || ETHEREUM_RPC_URLS[0]));
+        ethWeb3 = new Web3(new Web3.providers.HttpProvider(ETHEREUM_RPC_URLS[0]));
 
-        // Solana initialization
-        solConnection = new Connection(SOLANA_RPC_URLS[0], 'confirmed');
+        // Try each Solana RPC URL until one works
+        let solConnected = false;
+        for (const url of SOLANA_RPC_URLS) {
+            try {
+                solConnection = new Connection(url, 'confirmed');
+                await solConnection.getVersion(); // Test connection
+                console.log(`✅ Solana connected to: ${url}`);
+                solConnected = true;
+                break;
+            } catch (error) {
+                console.warn(`❌ Failed to connect to Solana RPC: ${url}`, error.message);
+                continue;
+            }
+        }
         
+        if (!solConnected) {
+            throw new Error("All Solana RPC connections failed");
+        }
+        
+        // Initialize Solana wallet if private key is available
         if (process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY) {
             try {
-                // Try parsing as JSON array first
-                const privateKey = new Uint8Array(JSON.parse(process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY));
+                // Handle different private key formats
+                let privateKey;
+                const pk = process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY;
+                
+                if (pk.startsWith('[')) {
+                    // JSON array format
+                    privateKey = new Uint8Array(JSON.parse(pk));
+                } else {
+                    // Hex string format
+                    privateKey = new Uint8Array(Buffer.from(pk.replace(/^0x/, ''), 'hex'));
+                }
+                
                 solWallet = Keypair.fromSecretKey(privateKey);
-            } catch {
-                // If JSON parsing fails, try as hex string
-                const privateKey = new Uint8Array(Buffer.from(process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY, 'hex'));
-                solWallet = Keypair.fromSecretKey(privateKey);
+                console.log(`✅ Solana wallet connected: ${solWallet.publicKey.toString()}`);
+            } catch (error) {
+                console.error("❌ Failed to initialize Solana wallet:", error.message);
             }
-            console.log(`✅ Solana connected: ${solWallet.publicKey.toString()}`);
         } else {
             console.warn("⚠️ Solana private key not set");
         }
@@ -104,15 +160,22 @@ export async function getWalletBalances() {
                 const ethBalance = await ethProvider.getBalance(ethWallet.address);
                 balances.ethereum.native = parseFloat(ethers.formatEther(ethBalance));
                 
-                const usdtContract = new ethers.Contract(
-                    USDT_CONTRACT_ADDRESS_ETH, 
-                    ["function balanceOf(address owner) view returns (uint256)"], 
-                    ethProvider
-                );
-                const usdtBalance = await usdtContract.balanceOf(ethWallet.address);
-                balances.ethereum.usdt = parseFloat(ethers.formatUnits(usdtBalance, 6));
+                // Only try to get USDT balance if we have the contract address
+                if (USDT_CONTRACT_ADDRESS_ETH) {
+                    try {
+                        const usdtContract = new ethers.Contract(
+                            USDT_CONTRACT_ADDRESS_ETH, 
+                            ["function balanceOf(address owner) view returns (uint256)"], 
+                            ethProvider
+                        );
+                        const usdtBalance = await usdtContract.balanceOf(ethWallet.address);
+                        balances.ethereum.usdt = parseFloat(ethers.formatUnits(usdtBalance, 6));
+                    } catch (error) {
+                        console.warn("⚠️ Could not fetch USDT balance on Ethereum:", error.message);
+                    }
+                }
             } catch (error) {
-                console.error("Error fetching Ethereum balances:", error.message);
+                console.error("❌ Error fetching Ethereum balances:", error.message);
             }
         }
 
@@ -122,18 +185,32 @@ export async function getWalletBalances() {
                 const solBalance = await solConnection.getBalance(solWallet.publicKey);
                 balances.solana.native = solBalance / LAMPORTS_PER_SOL;
                 
-                const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
-                const associatedTokenAddress = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
-                const tokenBalance = await solConnection.getTokenAccountBalance(associatedTokenAddress);
-                balances.solana.usdt = tokenBalance.value.uiAmount || 0;
+                // Only try to get USDT balance if we have the mint address
+                if (USDT_MINT_ADDRESS_SOL) {
+                    try {
+                        const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
+                        const associatedTokenAddress = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
+                        
+                        // Check if token account exists
+                        const tokenAccountInfo = await solConnection.getAccountInfo(associatedTokenAddress);
+                        if (tokenAccountInfo) {
+                            const tokenBalance = await solConnection.getTokenAccountBalance(associatedTokenAddress);
+                            balances.solana.usdt = tokenBalance.value.uiAmount || 0;
+                        } else {
+                            balances.solana.usdt = 0;
+                        }
+                    } catch (error) {
+                        console.warn("⚠️ Could not fetch USDT balance on Solana:", error.message);
+                    }
+                }
             } catch (error) {
-                console.error("Error fetching Solana balances:", error.message);
+                console.error("❌ Error fetching Solana balances:", error.message);
             }
         }
 
         return balances;
     } catch (error) {
-        console.error("Error in getWalletBalances:", error.message);
+        console.error("❌ Error in getWalletBalances:", error.message);
         return {
             ethereum: { native: 0, usdt: 0, address: '' },
             solana: { native: 0, usdt: 0, address: '' },
@@ -158,9 +235,11 @@ export function getWalletAddresses() {
 export async function sendSOL(toAddress, amount) {
     try {
         if (!solWallet) throw new Error("Solana wallet not initialized");
+        if (!solConnection) throw new Error("Solana connection not initialized");
         
         const toPublicKey = new PublicKey(toAddress);
-        const lamports = amount * LAMPORTS_PER_SOL;
+        const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
+        
         const transaction = new Transaction().add(
             SystemProgram.transfer({ 
                 fromPubkey: solWallet.publicKey, 
@@ -169,14 +248,23 @@ export async function sendSOL(toAddress, amount) {
             })
         );
         
-        const { blockhash } = await solConnection.getLatestBlockhash();
+        const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
         transaction.recentBlockhash = blockhash;
         transaction.feePayer = solWallet.publicKey;
         
-        const signature = await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+        const signature = await sendAndConfirmTransaction(
+            solConnection, 
+            transaction, 
+            [solWallet],
+            {
+                commitment: 'confirmed',
+                preflightCommitment: 'confirmed'
+            }
+        );
+        
         return { success: true, signature };
     } catch (error) {
-        console.error("Error sending SOL:", error);
+        console.error("❌ Error sending SOL:", error);
         return { success: false, error: error.message };
     }
 }
@@ -194,7 +282,7 @@ export async function sendETH(toAddress, amount) {
         
         return { success: true, hash: tx.hash };
     } catch (error) {
-        console.error("Error sending ETH:", error);
+        console.error("❌ Error sending ETH:", error);
         return { success: false, error: error.message };
     }
 }
@@ -204,23 +292,32 @@ export async function sendUSDT(toAddress, amount, chain) {
         try {
             if (!ethWallet) throw new Error("Ethereum wallet not initialized");
             if (!ethers.isAddress(toAddress)) throw new Error("Invalid Ethereum address");
+            if (!USDT_CONTRACT_ADDRESS_ETH) throw new Error("USDT contract address not configured");
             
             const usdtContract = new ethers.Contract(
                 USDT_CONTRACT_ADDRESS_ETH, 
-                ["function transfer(address to, uint256 amount) returns (bool)"], 
+                [
+                    "function transfer(address to, uint256 amount) returns (bool)",
+                    "function decimals() view returns (uint8)"
+                ], 
                 ethWallet
             );
             
-            const amountInWei = ethers.parseUnits(amount.toString(), 6);
+            // Get token decimals
+            const decimals = await usdtContract.decimals();
+            const amountInWei = ethers.parseUnits(amount.toString(), decimals);
+            
             const tx = await usdtContract.transfer(toAddress, amountInWei);
             return { success: true, hash: tx.hash };
         } catch (error) {
-            console.error("Error sending USDT on Ethereum:", error);
+            console.error("❌ Error sending USDT on Ethereum:", error);
             return { success: false, error: error.message };
         }
     } else if (chain === 'sol') {
         try {
             if (!solWallet) throw new Error("Solana wallet not initialized");
+            if (!solConnection) throw new Error("Solana connection not initialized");
+            if (!USDT_MINT_ADDRESS_SOL) throw new Error("USDT mint address not configured");
             
             const toPublicKey = new PublicKey(toAddress);
             const usdtMintAddress = new PublicKey(USDT_MINT_ADDRESS_SOL);
@@ -228,23 +325,47 @@ export async function sendUSDT(toAddress, amount, chain) {
             const fromTokenAccount = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
             const toTokenAccount = await getAssociatedTokenAddress(usdtMintAddress, toPublicKey);
             
-            const transaction = new Transaction().add(
+            // Check if recipient token account exists, create if not
+            const transaction = new Transaction();
+            const toAccountInfo = await solConnection.getAccountInfo(toTokenAccount);
+            
+            if (!toAccountInfo) {
+                transaction.add(
+                    createAssociatedTokenAccountInstruction(
+                        solWallet.publicKey,
+                        toTokenAccount,
+                        toPublicKey,
+                        usdtMintAddress
+                    )
+                );
+            }
+            
+            transaction.add(
                 createTransferInstruction(
                     fromTokenAccount, 
                     toTokenAccount, 
                     solWallet.publicKey, 
-                    amount * 10 ** 6
+                    BigInt(Math.floor(amount * 10 ** 6)) // USDT on Solana has 6 decimals
                 )
             );
             
-            const { blockhash } = await solConnection.getLatestBlockhash();
+            const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = solWallet.publicKey;
             
-            const signature = await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+            const signature = await sendAndConfirmTransaction(
+                solConnection, 
+                transaction, 
+                [solWallet],
+                {
+                    commitment: 'confirmed',
+                    preflightCommitment: 'confirmed'
+                }
+            );
+            
             return { success: true, signature };
         } catch (error) {
-            console.error("Error sending USDT on Solana:", error);
+            console.error("❌ Error sending USDT on Solana:", error);
             return { success: false, error: error.message };
         }
     }
@@ -283,7 +404,7 @@ export async function processRevenuePayment(payment) {
         };
         
     } catch (error) {
-        console.error("Error processing revenue payment:", error);
+        console.error("❌ Error processing revenue payment:", error);
         return {
             success: false,
             error: error.message,
@@ -332,14 +453,15 @@ export function getSolanaConnection() {
 
 export function getEthereumAccount() {
     return { 
-        address: ethWallet?.address || '0x0000000000000000000000000000000000000000' 
+        address: ethWallet?.address || '0x0000000000000000000000000000000000000000',
+        privateKey: ethWallet?.privateKey || ''
     };
 }
 
 export function getSolanaKeypair() {
-    return { 
+    return solWallet || { 
         publicKey: { 
-            toBase58: () => solWallet?.publicKey?.toString() || '11111111111111111111111111111111' 
+            toBase58: () => '11111111111111111111111111111111' 
         } 
     };
 }
