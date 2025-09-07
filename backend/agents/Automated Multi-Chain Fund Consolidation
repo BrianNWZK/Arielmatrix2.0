@@ -1,1 +1,156 @@
+/**
+ * Automated Multi-Chain Fund Consolidation Script
+ *
+ * This script consolidates all funds (native tokens and USDT) from a collection wallet
+ * and sends them to a single destination wallet on a recurring schedule for both
+ * Solana and Ethereum blockchains.
+ *
+ * IMPORTANT:
+ * 1. Make sure you have the required libraries installed:
+ * npm install dotenv node-cron ethers @solana/web3.js @solana/spl-token
+ * 2. Add the necessary private keys and addresses to your .env file as instructed below.
+ */
 
+import 'dotenv/config';
+import cron from 'node-cron';
+
+// Solana Imports
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
+import { getAssociatedTokenAddress, createTransferInstruction, getAccount } from '@solana/spl-token';
+
+// Ethereum Imports
+import { ethers } from 'ethers';
+
+// =========================================================================
+// 1. Configuration & Environment Variables
+// =========================================================================
+// Solana Configuration
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+const SOLANA_TRUST_WALLET_ADDRESS = process.env.SOLANA_TRUST_WALLET_ADDRESS;
+const SOLANA_COLLECTION_WALLET_PRIVATE_KEY = process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY;
+const USDT_SOL_MINT_ADDRESS = 'Es9Kdd31Wq41G4R7s3M2wXq3T413d7tLg484e1t4t';
+
+// Ethereum Configuration
+const ETHEREUM_RPC_URL = process.env.ETHEREUM_RPC_URL || 'https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID';
+const ETHEREUM_TRUST_WALLET_ADDRESS = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
+const ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY = process.env.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY;
+const USDT_ETH_CONTRACT_ADDRESS = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+
+// Check for required environment variables
+if (!SOLANA_TRUST_WALLET_ADDRESS || !SOLANA_COLLECTION_WALLET_PRIVATE_KEY || !ETHEREUM_TRUST_WALLET_ADDRESS || !ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY) {
+    console.error("❌ ERROR: Missing one or more required environment variables in your .env file.");
+    console.error("Please add: SOLANA_TRUST_WALLET_ADDRESS, SOLANA_COLLECTION_WALLET_PRIVATE_KEY, ETHEREUM_TRUST_WALLET_ADDRESS, ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY");
+    process.exit(1);
+}
+
+// Minimal ERC-20 ABI for transfer function
+const ERC20_ABI = [
+    "function transfer(address to, uint256 amount) returns (bool)",
+    "function balanceOf(address owner) view returns (uint256)"
+];
+
+// =========================================================================
+// 2. Solana Consolidation Logic
+// =========================================================================
+async function consolidateSolanaWallet() {
+    console.log(`\nStarting Solana consolidation...`);
+    try {
+        const solConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
+        const solWallet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(SOLANA_COLLECTION_WALLET_PRIVATE_KEY)));
+        const destinationPublicKey = new PublicKey(SOLANA_TRUST_WALLET_ADDRESS);
+
+        // Consolidate SPL USDT tokens
+        const usdtMintAddress = new PublicKey(USDT_SOL_MINT_ADDRESS);
+        const fromTokenAccount = await getAssociatedTokenAddress(usdtMintAddress, solWallet.publicKey);
+        const tokenAccountInfo = await getAccount(solConnection, fromTokenAccount);
+        const usdtBalance = tokenAccountInfo.amount;
+        
+        if (usdtBalance > 0) {
+            const toTokenAccount = await getAssociatedTokenAddress(usdtMintAddress, destinationPublicKey);
+            const transaction = new Transaction().add(
+                createTransferInstruction(fromTokenAccount, toTokenAccount, solWallet.publicKey, usdtBalance)
+            );
+            await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+            console.log(`- SPL USDT transfer successful to ${SOLANA_TRUST_WALLET_ADDRESS}`);
+        }
+
+        // Consolidate native SOL
+        const solBalance = await solConnection.getBalance(solWallet.publicKey);
+        const feeAmount = 5000; // Estimated fee in lamports
+        const amountToSend = solBalance - feeAmount;
+
+        if (amountToSend > 0) {
+            const transaction = new Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: solWallet.publicKey,
+                    toPubkey: destinationPublicKey,
+                    lamports: amountToSend,
+                })
+            );
+            await sendAndConfirmTransaction(solConnection, transaction, [solWallet]);
+            console.log(`- SOL transfer successful to ${SOLANA_TRUST_WALLET_ADDRESS}`);
+        }
+    } catch (error) {
+        console.error(`❌ Error during Solana consolidation:`, error.message);
+    }
+}
+
+// =========================================================================
+// 3. Ethereum Consolidation Logic
+// =========================================================================
+async function consolidateEthereumWallet() {
+    console.log(`\nStarting Ethereum consolidation...`);
+    try {
+        const provider = new ethers.JsonRpcProvider(ETHEREUM_RPC_URL);
+        const wallet = new ethers.Wallet(ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY, provider);
+        
+        // Consolidate native ETH
+        const ethBalance = await provider.getBalance(wallet.address);
+        if (ethBalance > 0) {
+            const gasPrice = await provider.getGasPrice();
+            const estimatedGasLimit = 21000n; // Standard ETH transfer gas limit
+            const fee = gasPrice * estimatedGasLimit;
+            const amountToSend = ethBalance - fee;
+
+            if (amountToSend > 0) {
+                const tx = await wallet.sendTransaction({
+                    to: ETHEREUM_TRUST_WALLET_ADDRESS,
+                    value: amountToSend,
+                    gasLimit: estimatedGasLimit
+                });
+                await tx.wait();
+                console.log(`- ETH transfer successful to ${ETHEREUM_TRUST_WALLET_ADDRESS}`);
+            }
+        }
+
+        // Consolidate ERC-20 USDT tokens
+        const usdtContract = new ethers.Contract(USDT_ETH_CONTRACT_ADDRESS, ERC20_ABI, wallet);
+        const usdtBalance = await usdtContract.balanceOf(wallet.address);
+
+        if (usdtBalance > 0) {
+            const tx = await usdtContract.transfer(ETHEREUM_TRUST_WALLET_ADDRESS, usdtBalance);
+            await tx.wait();
+            console.log(`- ERC-20 USDT transfer successful to ${ETHEREUM_TRUST_WALLET_ADDRESS}`);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error during Ethereum consolidation:`, error.message);
+    }
+}
+
+// =========================================================================
+// 4. Scheduled Task
+// =========================================================================
+async function startConsolidationProcess() {
+    console.log("🚀 Starting the automated fund consolidation service...");
+    await consolidateSolanaWallet();
+    await consolidateEthereumWallet();
+    console.log("✅ Consolidation process complete for this run.");
+}
+
+// Schedule the task to run every 3 hours.
+console.log("🔄 Scheduled to run every 3 hours.");
+cron.schedule('0 */3 * * *', startConsolidationProcess);
+
+// Run the script immediately on startup
+startConsolidationProcess();
