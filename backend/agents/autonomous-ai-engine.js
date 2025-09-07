@@ -7,14 +7,17 @@
 // =========================================================================
 // 1. IMPORTS
 // =========================================================================
-// Add to imports section
 import { 
     initializeConnections, 
     getWalletBalances, 
     getWalletAddresses,
     sendSOL,
     sendUSDT,
-    testAllConnections 
+    testAllConnections,
+    getEthereumWeb3,
+    getSolanaConnection,
+    getEthereumAccount,
+    getSolanaKeypair
 } from './wallet.js';
 import { Mutex } from 'async-mutex';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, watch } from 'fs';
@@ -98,7 +101,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load environment variables from .env file
-dotenv.config({ path: path.join(__dirname, '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 // =========================================================================
 // 2. GLOBAL CONSTANTS AND CONFIGURATION
@@ -846,37 +849,14 @@ async function healDatabaseModule(error) {
 let ethWeb3, solConnection;
 async function initializeBlockchainConnections() {
   try {
-    // Primary Ethereum connection
-    ethWeb3 = new Web3(new Web3.providers.HttpProvider(process.env.ETHEREUM_RPC_URL));
+    // Initialize wallet connections first
+    await initializeConnections();
     
-    const backupEthUrls = process.env.BACKUP_NODE_URLS.split(',');
-    for (const url of backupEthUrls) {
-      try {
-        const backupWeb3 = new Web3(new Web3.providers.HttpProvider(url.trim()));
-        await backupWeb3.eth.getBlockNumber();
-        ethWeb3 = backupWeb3;
-        console.log(`✅ Using backup Ethereum node: ${url}`);
-        break;
-      } catch (error) {
-        console.warn(`Backup Ethereum node failed: ${url}`, error.message);
-      }
-    }
-
-    solConnection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+    // Get connections from wallet module
+    ethWeb3 = getEthereumWeb3();
+    solConnection = getSolanaConnection();
     
-    const backupSolUrls = process.env.BACKUP_SOLANA_URLS.split(',');
-    for (const url of backupSolUrls) {
-      try {
-        const backupConn = new Connection(url.trim(), 'confirmed');
-        await backupConn.getVersion();
-        solConnection = backupConn;
-        console.log(`✅ Using backup Solana node: ${url}`);
-        break;
-      } catch (error) {
-        console.warn(`Backup Solana node failed: ${url}`, error.message);
-      }
-    }
-
+    console.log('✅ Blockchain connections initialized successfully');
   } catch (error) {
     console.error('❌ Blockchain connection initialization failed:', error.message);
     throw error;
@@ -886,15 +866,9 @@ async function initializeBlockchainConnections() {
 let ethAccount, solKeypair;
 function initializeWallets() {
   try {
-    ethAccount = ethWeb3.eth.accounts.privateKeyToAccount(
-      process.env.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY
-    );
-    ethWeb3.eth.accounts.wallet.add(ethAccount);
-    ethWeb3.eth.defaultAccount = ethAccount.address;
-
-    solKeypair = Keypair.fromSecretKey(
-      Buffer.from(process.env.SOLANA_COLLECTION_WALLET_PRIVATE_KEY, 'hex')
-    );
+    // Get wallet instances from wallet module
+    ethAccount = getEthereumAccount();
+    solKeypair = getSolanaKeypair();
 
     console.log('✅ Wallets initialized with enhanced security');
   } catch (error) {
@@ -1045,7 +1019,7 @@ async function runTransactionProcessing(db) {
   const results = [];
   for (const tx of txs) {
     if (tx.type === 'eth') {
-      results.push(await executeEhereumTransaction(tx));
+      results.push(await executeEthereumTransaction(tx));
     } else if (tx.type === 'sol') {
       results.push(await executeSolanaTransaction(tx));
     }
