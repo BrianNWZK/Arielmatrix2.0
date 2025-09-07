@@ -3,7 +3,7 @@
 FROM node:22-slim AS dependency-installer
 WORKDIR /usr/src/app
 
-# Install build tools required for native modules (like better-sqlite3).
+# Install build tools required for native modules.
 RUN apt-get update && apt-get install -y python3 build-essential
 
 # Copy the unified package.json and package-lock.json to leverage Docker's cache.
@@ -41,21 +41,8 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 # Assuming Vite places the output in `frontend/dist`.
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
-# Copy the backend code and other required project files.
-# We are specific here to minimize the final image size.
-COPY arielsql_suite ./arielsql_suite
-COPY backend ./backend
-COPY config ./config
-COPY scripts ./scripts
-COPY .dockerignore ./
-COPY .gitignore ./
-COPY .eslintrc.json ./
-COPY fix-structure.sh ./
-COPY main.js ./
-COPY serviceManager.js ./
-COPY hardhat.config.js ./
-COPY package.json ./
-COPY requirements.txt ./
+# Copy all the project's source code, excluding the files listed in .dockerignore.
+COPY . .
 
 # Expose the port the application runs on.
 EXPOSE 1000
