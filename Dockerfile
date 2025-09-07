@@ -26,7 +26,8 @@ COPY backend/agents/autonomous-ai-engine.js ./backend/agents/
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 COPY package.json ./
-
+# Copy entire backend directory
+COPY backend/ ./backend/
 # Expose the port the application runs on.
 EXPOSE 1000
 
