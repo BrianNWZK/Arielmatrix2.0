@@ -18,6 +18,7 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
 # Copy the application source code, including all necessary files.
 COPY backend/agents ./backend/agents
+COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 
