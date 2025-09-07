@@ -7,7 +7,6 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 build-essential
 
 # Copy the unified package.json and package-lock.json to leverage Docker's cache.
-# This step is critical for a monorepo-style setup.
 COPY package*.json ./
 
 # Install all dependencies for both front-end and back-end.
@@ -24,9 +23,8 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 # Copy the entire project source code to build the frontend.
 COPY . .
 
-# Build the frontend. The `npm run build` script should be defined in your
-# package.json and handle the Vite build process for your frontend directory.
-RUN npm run build --prefix frontend
+# Build the frontend from the root directory.
+RUN npm run build
 
 # --- STAGE 3: Final Production Image ---
 # This is the final, production-ready image.
@@ -39,7 +37,7 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
 # Copy the built frontend assets from the frontend-builder stage.
 # Assuming Vite places the output in `frontend/dist`.
-COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
+COPY --from=frontend-builder /usr/src/app/dist ./dist
 
 # Copy all the project's source code, excluding the files listed in .dockerignore.
 COPY . .
@@ -48,5 +46,4 @@ COPY . .
 EXPOSE 1000
 
 # The command to start the application with the new entry point.
-# This will start your backend, which should serve the frontend assets.
 CMD ["node", "backend/agents/autonomous-ai-engine.js"]
