@@ -1565,7 +1565,7 @@ adsenseAgent.prototype._updateExchangePerformanceMetrics = async function(campai
   // Update exchange performance metrics based on actual results
   for (const [exchange, metrics] of this.adExchangeIntegrator.exchanges) {
     const campaignData = campaignResults.successful.find(c => 
-      c.campaignId && c.campaignId.includes(exchange));
+      c.campaignId?.includes(exchange));
     
     if (campaignData) {
       metrics.actualROI = campaignData.earnings / campaignData.budget;

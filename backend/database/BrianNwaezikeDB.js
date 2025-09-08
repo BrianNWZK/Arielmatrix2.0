@@ -91,7 +91,7 @@ class ShardManager {
   async close() {
     return this.mutex.runExclusive(() => {
       this.shards.forEach(db => {
-        if (db && db.open) {
+        if (db?.open) {
           db.close();
         }
       });
