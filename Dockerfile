@@ -2,36 +2,36 @@
 # Use a Node.js base image with a recent version for building.
 FROM node:22-slim AS builder
 
-# Set the working directory inside the container.
+# Set the working directory inside the container to the root of your project.
 WORKDIR /usr/src/app
 
-# Install build tools required for native modules like better-sqlite3.
-RUN apt-get update && apt-get install -y python3 build-essential
-
-# Copy the package.json and package-lock.json files first.
-# This optimizes Docker's cache, so npm install only runs if dependencies change.
-COPY package*.json ./
-
-# Install all dependencies (production and development) as they are needed for the build step.
-RUN npm install
-
-# Copy all application source code.
+# Copy the entire application source code.
 COPY . .
 
+# CRITICAL FIX: Change the working directory to the 'frontend' subfolder.
+# This ensures that the 'npm run build' command can find the 'vite' executable
+# which is located in frontend/node_modules/.bin/.
+WORKDIR /usr/src/app/frontend
+
+# Install all dependencies required for the frontend.
+# This step happens after changing the directory, ensuring dependencies are
+# installed in the correct location relative to the package.json.
+RUN npm install
+
 # Run the build command to create the production bundle.
-# This is the crucial step that was missing and caused the 'vite: not found' error.
+# Since we are now in the 'frontend' directory, this command will succeed.
 RUN npm run build
 
 # --- STAGE 2: Final Production Image ---
 # Use a lean base image for the final production environment.
 FROM node:22-slim AS final
 
-# Set the working directory.
+# Set the working directory for the final application.
 WORKDIR /usr/src/app
 
-# Copy only the necessary files from the builder stage.
-# This keeps the final image small and secure.
-COPY --from=builder /usr/src/app/dist ./dist
+# Copy only the necessary files from the builder stage to keep the final
+# image small and secure.
+COPY --from=builder /usr/src/app/frontend/dist ./dist
 COPY --from=builder /usr/src/app/backend ./backend
 COPY --from=builder /usr/src/app/arielsql_suite ./arielsql_suite
 COPY --from=builder /usr/src/app/scripts ./scripts
