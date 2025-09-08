@@ -1,44 +1,59 @@
-# --- STAGE 1: Dependency Installation & Build ---
-# Use a Node.js base image with a recent version for building.
-FROM node:22-slim AS builder
+# --- Stage 1: Backend Builder ---
+# Use a Node.js base image for building backend dependencies
+FROM node:22-slim AS backend-builder
 
-# Set the working directory to the root of your project.
+# Set the working directory for the backend
 WORKDIR /usr/src/app
 
-# Copy the entire application source code.
+# Copy the backend's package files
+COPY package*.json ./
+
+# Install backend dependencies
+RUN npm install
+
+# Copy the rest of the backend source code
 COPY . .
 
-# CRITICAL FIX: Install Python and other build tools required by native Node.js modules.
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+# --- Stage 2: Frontend Builder ---
+# Use a fresh Node.js base image for building frontend dependencies
+FROM node:22-slim AS frontend-builder
 
-# Install backend dependencies from the root package.json.
-RUN npm install
-
-# IMPORTANT FIX: Change the working directory to the frontend folder.
+# Set the working directory for the frontend
 WORKDIR /usr/src/app/frontend
 
-# CRITICAL FIX: Install the frontend dependencies, which includes Vite.
-# This is the step that was missing in the previous versions.
+# Copy the frontend's package files
+# The user's files are structured with a root `package.json` and a separate `frontend/package.json`
+# I'm assuming that the user's project structure has a 'frontend' sub-directory.
+# I am making the file structure assumption based on the logs `WORKDIR /usr/src/app/frontend`
+# that there is a frontend folder and thus copying the package.json from there to the correct working directory.
+COPY frontend/package*.json ./
+
+# Install frontend dependencies (this will install Vite)
 RUN npm install
 
-# Run the build command to create the production bundle.
-# This will now succeed because Vite is properly installed.
+# Copy the rest of the frontend source code
+COPY frontend .
+
+# Run the frontend build command
 RUN npm run build
 
-# --- STAGE 2: Final Production Image ---
+# --- Stage 3: Final Production Image ---
 # Use a lean base image for the final production environment.
 FROM node:22-slim AS final
 
 # Set the working directory for the final application.
 WORKDIR /usr/src/app
 
-# Copy only the necessary files from the builder stage.
-COPY --from=builder /usr/src/app/frontend/dist ./dist
-COPY --from=builder /usr/src/app/backend ./backend
-COPY --from=builder /usr/src/app/arielsql_suite ./arielsql_suite
-COPY --from=builder /usr/src/app/scripts ./scripts
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/package*.json ./
+# Copy the built files from both builder stages
+# Copy backend files from backend-builder
+COPY --from=backend-builder /usr/src/app/backend ./backend
+COPY --from=backend-builder /usr/src/app/arielsql_suite ./arielsql_suite
+COPY --from=backend-builder /usr/src/app/scripts ./scripts
+COPY --from=backend-builder /usr/src/app/node_modules ./node_modules
+COPY --from=backend-builder /usr/src/app/package*.json ./
+
+# Copy the built frontend bundle from frontend-builder
+COPY --from=frontend-builder /usr/src/app/frontend/dist ./dist
 
 # Expose the port the application runs on.
 EXPOSE 1000
