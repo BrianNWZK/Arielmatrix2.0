@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y python3 build-essential curl && rm -rf 
 
 # Copy package.json + package-lock.json for reproducible installs
 COPY package*.json ./
+COPY package-lock.json ./
 
 # Install all deps including devDependencies
 RUN npm ci
