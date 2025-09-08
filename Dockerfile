@@ -8,17 +8,17 @@ WORKDIR /usr/src/app
 # Copy the entire application source code.
 COPY . .
 
-# Change the working directory to the 'frontend' subfolder.
-# This ensures that the 'npm run build' command can find the 'vite' executable
-# which is located in frontend/node_modules/.bin/.
-WORKDIR /usr/src/app/frontend
-
 # CRITICAL FIX: Install Python and other build essentials required by native Node.js modules like `better-sqlite3`.
 # This allows `node-gyp` to compile the packages successfully.
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
-# Install all dependencies required for the frontend.
+# Install all dependencies required for the project from the root package.json.
+# This will handle backend dependencies.
 RUN npm install
+
+# IMPORTANT FIX: Navigate to the `frontend` directory to build the frontend.
+# This ensures that the `vite` command can be found.
+WORKDIR /usr/src/app/frontend
 
 # Run the build command to create the production bundle.
 RUN npm run build
