@@ -2,25 +2,27 @@
 # Use a Node.js base image with a recent version for building.
 FROM node:22-slim AS builder
 
-# Set the working directory inside the container to the root of your project.
+# Set the working directory to the root of your project.
 WORKDIR /usr/src/app
 
 # Copy the entire application source code.
 COPY . .
 
-# CRITICAL FIX: Install Python and other build essentials required by native Node.js modules like `better-sqlite3`.
-# This allows `node-gyp` to compile the packages successfully.
+# CRITICAL FIX: Install Python and other build tools required by native Node.js modules.
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
-# Install all dependencies required for the project from the root package.json.
-# This will handle backend dependencies.
+# Install backend dependencies from the root package.json.
 RUN npm install
 
-# IMPORTANT FIX: Navigate to the `frontend` directory to build the frontend.
-# This ensures that the `vite` command can be found.
+# IMPORTANT FIX: Change the working directory to the frontend folder.
 WORKDIR /usr/src/app/frontend
 
+# CRITICAL FIX: Install the frontend dependencies, which includes Vite.
+# This is the step that was missing in the previous versions.
+RUN npm install
+
 # Run the build command to create the production bundle.
+# This will now succeed because Vite is properly installed.
 RUN npm run build
 
 # --- STAGE 2: Final Production Image ---
@@ -30,8 +32,7 @@ FROM node:22-slim AS final
 # Set the working directory for the final application.
 WORKDIR /usr/src/app
 
-# Copy only the necessary files from the builder stage to keep the final
-# image small and secure.
+# Copy only the necessary files from the builder stage.
 COPY --from=builder /usr/src/app/frontend/dist ./dist
 COPY --from=builder /usr/src/app/backend ./backend
 COPY --from=builder /usr/src/app/arielsql_suite ./arielsql_suite
