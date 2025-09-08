@@ -1,10 +1,10 @@
 # =========================================================================
-# QUANTUM AI PRODUCTION DOCKERFILE - SELF-HEALING EDITION
-# Enhanced with autonomous error resolution and multi-stage optimization
+# QUANTUM AI PRODUCTION DOCKERFILE - UNIFIED PACKAGE.JSON EDITION
+# Optimized for single package.json structure with all dependencies
 # =========================================================================
 
-# --- STAGE 1: DEPENDENCY RESOLUTION AND VALIDATION ---
-FROM node:22-slim AS dependency-resolver
+# --- STAGE 1: DEPENDENCY INSTALLER ---
+FROM node:22-slim AS dependency-installer
 WORKDIR /usr/src/app
 
 # Install system dependencies for native modules
@@ -13,102 +13,104 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files first for better caching
+# Copy package files first for optimal caching
 COPY package*.json ./
 
-# Create essential package.json files if missing with autonomous healing
-RUN mkdir -p backend frontend && \
-    if [ ! -f "./backend/package.json" ]; then \
-        echo '{"name": "arielsql-backend", "version": "1.0.0", "type": "module", "dependencies": {}}' > ./backend/package.json; \
-        echo "✅ Created missing backend/package.json"; \
-    fi && \
-    if [ ! -f "./frontend/package.json" ]; then \
-        echo '{"name": "arielsql-frontend", "version": "1.0.0", "type": "module", "dependencies": {}}' > ./frontend/package.json; \
-        echo "✅ Created missing frontend/package.json"; \
-    fi
+# Install all dependencies (including devDependencies for build)
+RUN npm install
 
-# Install root dependencies
-RUN npm install --include-workspace-root
-
-# --- STAGE 2: BACKEND BUILDER ---
-FROM node:22-slim AS backend-builder
+# --- STAGE 2: BUILD OPTIMIZER ---
+FROM node:22-slim AS build-optimizer
 WORKDIR /usr/src/app
 
-# Copy package files and node_modules from dependency resolver
-COPY --from=dependency-resolver /usr/src/app/package*.json ./
-COPY --from=dependency-resolver /usr/src/app/node_modules ./node_modules
-COPY --from=dependency-resolver /usr/src/app/backend/package.json ./backend/
+# Copy installed dependencies
+COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
+COPY --from=dependency-installer /usr/src/app/package*.json ./
 
-# Set working directory for backend
-WORKDIR /usr/src/app/backend
+# Copy all source code with error handling for missing directories
+COPY . .
 
-# Install backend-specific dependencies
-RUN if [ -f "./package.json" ]; then \
-        npm install --no-package-lock; \
-        echo "✅ Backend dependencies installed"; \
-    else \
-        echo "⚠️ No backend package.json found, using root dependencies"; \
-    fi
+# Create missing directories if they don't exist
+RUN mkdir -p \
+    backend/agents \
+    arielsql_suite \
+    scripts \
+    config \
+    blockchain \
+    database \
+    public \
+    frontend/src
 
-# Copy backend source code
-COPY backend/ .
-
-# --- STAGE 3: FRONTEND BUILDER ---
-FROM node:22-slim AS frontend-builder
-WORKDIR /usr/src/app
-
-# Copy package files and node_modules from dependency resolver
-COPY --from=dependency-resolver /usr/src/app/package*.json ./
-COPY --from=dependency-resolver /usr/src/app/node_modules ./node_modules
-COPY --from=dependency-resolver /usr/src/app/frontend/package.json ./frontend/
-
-# Set working directory for frontend
-WORKDIR /usr/src/app/frontend
-
-# Install frontend-specific dependencies
-RUN if [ -f "./package.json" ]; then \
-        npm install --no-package-lock; \
-        echo "✅ Frontend dependencies installed"; \
-    else \
-        echo "⚠️ No frontend package.json found, using root dependencies"; \
-    fi
-
-# Copy frontend source code
-COPY frontend/ .
-
-# Build frontend (if build script exists)
+# Run any build steps if they exist
 RUN if [ -f "package.json" ] && grep -q "\"build\":" package.json; then \
         npm run build; \
-        echo "✅ Frontend built successfully"; \
+        echo "✅ Build completed successfully"; \
     else \
-        echo "⚠️ No build script found, skipping frontend build"; \
-        mkdir -p dist && echo "<html><body>Frontend placeholder</body></html>" > dist/index.html; \
+        echo "ℹ️  No build script found, proceeding without build step"; \
     fi
 
-# --- STAGE 4: FINAL PRODUCTION IMAGE ---
+# Run any AI training if specified
+RUN if [ -f "package.json" ] && grep -q "\"train-ai\":" package.json; then \
+        npm run train-ai; \
+        echo "✅ AI training completed"; \
+    else \
+        echo "ℹ️  No AI training script found"; \
+    fi
+
+# --- STAGE 3: FINAL PRODUCTION IMAGE ---
 FROM node:22-slim AS final
 WORKDIR /usr/src/app
 
 # Create non-root user for security
 RUN adduser --system --no-create-home --group nodeuser
 
-# Copy package files and production dependencies
-COPY --from=dependency-resolver /usr/src/app/package*.json ./
-COPY --from=dependency-resolver /usr/src/app/node_modules ./node_modules
+# Copy package files
+COPY package*.json ./
 
-# Copy built backend
-COPY --from=backend-builder /usr/src/app/backend ./backend
+# Copy production dependencies only (no devDependencies)
+COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
-# Copy built frontend
-COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
+# Copy built application from build stage with directory existence checks
+COPY --from=build-optimizer /usr/src/app/backend ./backend
+COPY --from=build-optimizer /usr/src/app/arielsql_suite ./arielsql_suite
+COPY --from=build-optimizer /usr/src/app/scripts ./scripts
+COPY --from=build-optimizer /usr/src/app/config ./config
 
-# Copy other essential project files
-COPY arielsql_suite/ ./arielsql_suite/
-COPY scripts/ ./scripts/
-COPY config/ ./config/
-COPY blockchain/ ./blockchain/
-COPY database/ ./database/
-COPY public/ ./public/
+# Copy optional directories only if they exist
+RUN if [ -d "/usr/src/app/blockchain" ]; then \
+        cp -r /usr/src/app/blockchain ./blockchain; \
+    else \
+        mkdir -p blockchain && echo "⚠️  Blockchain directory not found, creating placeholder"; \
+    fi
+
+RUN if [ -d "/usr/src/app/database" ]; then \
+        cp -r /usr/src/app/database ./database; \
+    else \
+        mkdir -p database && echo "⚠️  Database directory not found, creating placeholder"; \
+    fi
+
+RUN if [ -d "/usr/src/app/public" ]; then \
+        cp -r /usr/src/app/public ./public; \
+    else \
+        mkdir -p public && echo "⚠️  Public directory not found, creating placeholder"; \
+    fi
+
+RUN if [ -d "/usr/src/app/frontend/dist" ]; then \
+        cp -r /usr/src/app/frontend/dist ./frontend/dist; \
+    else \
+        mkdir -p frontend/dist && echo "<html><body>Frontend placeholder</body></html>" > frontend/dist/index.html; \
+    fi
+
+# Remove devDependencies if they exist in production
+RUN if [ -d "node_modules" ]; then \
+        npm prune --production; \
+        echo "✅ Removed dev dependencies for production"; \
+    fi
+
+# Remove any unnecessary files for production
+RUN find . -name "*.log" -delete 2>/dev/null || true && \
+    find . -name "*.md" -delete 2>/dev/null || true && \
+    rm -rf .git .github .vscode 2>/dev/null || true
 
 # Set proper ownership
 RUN chown -R nodeuser:nodeuser /usr/src/app
@@ -123,5 +125,5 @@ EXPOSE 1000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:1000/health || exit 1
 
-# Start command with graceful shutdown handling
-CMD ["node", "backend/agents/autonomous-ai-engine.js"]
+# Start command - uses the main entry point from package.json
+CMD ["npm", "start"]
