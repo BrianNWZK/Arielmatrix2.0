@@ -16,11 +16,21 @@ log() { echo -e "\033[1;34mℹ️  $1\033[0m"; }
 ok() { echo -e "\033[1;32m✅ $1\033[0m"; }
 err() { echo -e "\033[1;31m❌ $1\033[0m"; }
 
+# Validate package-lock.json exists
+validate_lockfile() {
+  if [ ! -f "package-lock.json" ]; then
+    err "Error: package-lock.json is missing. Please generate it using 'npm install --package-lock-only'."
+    exit 1
+  fi
+  ok "Package-lock.json validated"
+}
+
 validate() {
   log "Validating environment..."
   for cmd in docker curl node npm; do
     command -v $cmd >/dev/null || { err "$cmd not found"; exit 1; }
   done
+  validate_lockfile
   ok "Environment validated"
 }
 
