@@ -54,7 +54,7 @@ async function checkDependency(depName) {
     try {
         const { stdout } = await execPromise(`npm ls ${depName} --json`);
         const result = JSON.parse(stdout);
-        if (result.dependencies && result.dependencies[depName]) {
+        if (result.dependencies?.[depName]) {
             return true;
         }
     } catch (e) {
@@ -135,16 +135,14 @@ function _assessThreatLevel(healthReport, externalThreatLevel, logger) {
     let aggregatedThreat = 'low';
 
     // Check for internal issues
-    const internalIssuesPresent = healthReport && 
-                                healthReport.issues && 
+    const internalIssuesPresent = healthReport?.issues && 
                                 healthReport.issues.some(issue => 
                                     issue.includes('Critical: High CPU load persisted') || 
                                     issue.includes('INTEGRITY BREACH DETECTED')
                                 );
 
     // Check basic health metrics
-    const basicHealthOk = healthReport && 
-                         healthReport.cpuReady && 
+    const basicHealthOk = healthReport?.cpuReady && 
                          healthReport.memoryReady && 
                          healthReport.networkActive && 
                          healthReport.nodeVersionOk && 

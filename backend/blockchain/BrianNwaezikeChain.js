@@ -157,7 +157,7 @@ class BrianNwaezikeChainFacade {
      * @returns {string} The RPC URL for direct chain access.
      */
     getBwaeziRpcUrl() {
-        if (this.bwaeziCoreChain.config && this.bwaeziCoreChain.config.RPC_URL) {
+        if (this.bwaeziCoreChain.config?.RPC_URL) {
             return this.bwaeziCoreChain.config.RPC_URL;
         }
         return process.env.BWAEZI_RPC_URL || 'https://rpc.bwaezi.briannwaezike.com';
@@ -168,7 +168,7 @@ class BrianNwaezikeChainFacade {
      * @returns {string} The WebSocket RPC URL.
      */
     getBwaeziWsRpcUrl() {
-        if (this.bwaeziCoreChain.config && this.bwaeziCoreChain.config.WS_RPC_URL) {
+        if (this.bwaeziCoreChain.config?.WS_RPC_URL) {
             return this.bwaeziCoreChain.config.WS_RPC_URL;
         }
         return process.env.BWAEZI_WS_RPC_URL || 'wss://rpc.bwaezi.briannwaezike.com/ws';
