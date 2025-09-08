@@ -701,7 +701,7 @@ export const adsenseAgent = async (CONFIG, logger, db = null) => {
 
     self.logger.info(`📈 Actual earnings: $${actualEarnings.toFixed(2)} from ${totalPageViews} page views`);
     self.logger.info(`👥 Sessions: ${totalSessions}, Avg Duration: ${avgSessionDuration}s`);
-    self.logger.info(`✨ Performance Metrics:`);
+    self.logger.info("✨ Performance Metrics:");
     self.logger.info(`   - Earnings Per Page View (EPPV): $${eppv.toFixed(6)}`);
     self.logger.info(`   - RPM (Revenue Per Mille): $${rpm.toFixed(2)}`);
     self.logger.info(`   - Estimated CPM: $${self.config.ESTIMATED_CPM}`);

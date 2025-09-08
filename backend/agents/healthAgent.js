@@ -115,7 +115,7 @@ async function checkFileIntegrity(filePath, logger) {
         logger.error(`🚨 INTEGRITY BREACH DETECTED for ${path.basename(filePath)}!`);
         logger.error(`   Old Hash: ${baselineHash}`);
         logger.error(`   New Hash: ${currentHash}`);
-        logger.error(`   Action: A critical file has been altered. Immediate investigation required.`);
+        logger.error("   Action: A critical file has been altered. Immediate investigation required.");
         setDefensePosture(DEFENSE_POSTURES.HIGH_RISK, logger);
     } else {
         logger.info(`✅ Integrity check passed for ${path.basename(filePath)}.`);

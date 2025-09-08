@@ -53,13 +53,13 @@ const GOOGLE_ADS_TARGETING_PRESETS = {
 
 // Ad copy templates by country
 const AD_COPY_TEMPLATES = {
-    'US': `🔥 New in {productTitle}! Limited time offer for US customers. Free shipping!`,
-    'CA': `🇨🇦 Exclusive Canadian offer: {productTitle}. Special pricing for Canada!`,
-    'GB': `🇬🇧 Discover {productTitle}! Exclusive UK offer with fast delivery.`,
-    'EU': `🇪🇺 European exclusive: {productTitle}. EU-wide shipping available.`
+    'US': "🔥 New in {productTitle}! Limited time offer for US customers. Free shipping!",
+    'CA': "🇨🇦 Exclusive Canadian offer: {productTitle}. Special pricing for Canada!",
+    'GB': "🇬🇧 Discover {productTitle}! Exclusive UK offer with fast delivery.",
+    'EU': "🇪🇺 European exclusive: {productTitle}. EU-wide shipping available."
 };
 
-const DEFAULT_AD_COPY = `Discover {productTitle}! Now available in your country.`;
+const DEFAULT_AD_COPY = "Discover {productTitle}! Now available in your country.";
 const SOCIAL_MEDIA_PLATFORMS = ['twitter', 'linkedin', 'instagram', 'tiktok'];
 
 // Rate Limiter Class

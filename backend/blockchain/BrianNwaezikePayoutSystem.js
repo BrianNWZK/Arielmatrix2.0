@@ -59,7 +59,7 @@ class BrianNwaezikePayoutSystem {
       return false;
     }
 
-    console.log(`\n--- Processing Payout Cycle ---`);
+    console.log("\n--- Processing Payout Cycle ---");
     console.log(`Processing a batch of ${this.payoutRequests.length} payouts.`);
 
     // Note: The Bwaezi whitepaper describes feeless transactions, so we create a
@@ -87,7 +87,7 @@ class BrianNwaezikePayoutSystem {
 
     // Clear the queue after processing.
     this.payoutRequests = [];
-    console.log(`Payouts submitted successfully. Queue cleared.`);
+    console.log("Payouts submitted successfully. Queue cleared.");
     return true;
   }
 

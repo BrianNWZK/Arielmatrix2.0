@@ -487,12 +487,12 @@ class DataAgent {
                 status TEXT DEFAULT 'completed',
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
-            `CREATE INDEX IF NOT EXISTS idx_blockchain_tx_hash ON blockchain_transactions(transaction_hash)`,
-            `CREATE INDEX IF NOT EXISTS idx_content_category ON ai_generated_content(category)`,
-            `CREATE INDEX IF NOT EXISTS idx_distribution_platform ON content_distribution(platform)`,
-            `CREATE INDEX IF NOT EXISTS idx_ad_content ON ad_placements(content_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_wallet_chain ON wallet_transactions(chain)`,
-            `CREATE INDEX IF NOT EXISTS idx_wallet_token ON wallet_transactions(token)`
+            "CREATE INDEX IF NOT EXISTS idx_blockchain_tx_hash ON blockchain_transactions(transaction_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_content_category ON ai_generated_content(category)",
+            "CREATE INDEX IF NOT EXISTS idx_distribution_platform ON content_distribution(platform)",
+            "CREATE INDEX IF NOT EXISTS idx_ad_content ON ad_placements(content_id)",
+            "CREATE INDEX IF NOT EXISTS idx_wallet_chain ON wallet_transactions(chain)",
+            "CREATE INDEX IF NOT EXISTS idx_wallet_token ON wallet_transactions(token)"
         ];
 
         for (const tableSql of additionalTables) {

@@ -163,10 +163,10 @@ class SocialAgent {
                     success_rate REAL DEFAULT 0,
                     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
                 )`,
-                `CREATE INDEX IF NOT EXISTS idx_social_platform ON social_posts(platform)`,
-                `CREATE INDEX IF NOT EXISTS idx_social_country ON social_posts(country)`,
-                `CREATE INDEX IF NOT EXISTS idx_social_timestamp ON social_posts(timestamp)`,
-                `CREATE INDEX IF NOT EXISTS idx_revenue_currency ON social_revenue(currency)`
+                "CREATE INDEX IF NOT EXISTS idx_social_platform ON social_posts(platform)",
+                "CREATE INDEX IF NOT EXISTS idx_social_country ON social_posts(country)",
+                "CREATE INDEX IF NOT EXISTS idx_social_timestamp ON social_posts(timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_revenue_currency ON social_revenue(currency)"
             ];
 
             for (const tableSql of tables) {

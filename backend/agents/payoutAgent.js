@@ -38,7 +38,7 @@ class PayoutAgent {
       }
 
       const data = await response.json();
-      console.log(`Response from API:`, data.message);
+      console.log("Response from API:", data.message);
       return data;
     } catch (error) {
       console.error('Error submitting payout request:', error);
