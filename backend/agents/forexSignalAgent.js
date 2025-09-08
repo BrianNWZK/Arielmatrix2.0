@@ -452,7 +452,7 @@ class ForexSignalAgent {
                 }
                 
             } catch (error) {
-                this.logger.error(`Signal distribution failed:`, error);
+                this.logger.error("Signal distribution failed:", error);
             }
         }
         

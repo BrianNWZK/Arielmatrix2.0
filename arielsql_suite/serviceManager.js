@@ -121,7 +121,7 @@ class SQLiteTaskQueue {
 
   async add(task) {
     const result = this.db.run(
-      `INSERT INTO tasks (type, data, priority) VALUES (?, ?, ?)`,
+      "INSERT INTO tasks (type, data, priority) VALUES (?, ?, ?)",
       [task.type, JSON.stringify(task.data || {}), task.priority || 0]
     );
     
@@ -140,24 +140,24 @@ class SQLiteTaskQueue {
 
   async startTask(taskId) {
     this.db.run(
-      `UPDATE tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      "UPDATE tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?",
       [taskId]
     );
     
-    const task = this.db.get(`SELECT * FROM tasks WHERE id = ?`, [taskId]);
+    const task = this.db.get("SELECT * FROM tasks WHERE id = ?", [taskId]);
     return task ? { ...task, data: JSON.parse(task.data || '{}') } : null;
   }
 
   async completeTask(taskId, result) {
     this.db.run(
-      `UPDATE tasks SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = ? WHERE id = ?`,
+      "UPDATE tasks SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = ? WHERE id = ?",
       [JSON.stringify(result || {}), taskId]
     );
   }
 
   async failTask(taskId, error) {
     this.db.run(
-      `UPDATE tasks SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error = ? WHERE id = ?`,
+      "UPDATE tasks SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error = ? WHERE id = ?",
       [error.message, taskId]
     );
   }

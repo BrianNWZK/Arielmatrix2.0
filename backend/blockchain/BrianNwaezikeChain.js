@@ -99,7 +99,7 @@ class BrianNwaezikeChainFacade {
      */
     async getAccountBalance(address, currency = 'USD') {
         const account = await this.dbService.get(
-            `SELECT balance, bwaezi_balance, cross_chain_balances FROM bwaezi_accounts WHERE address = ?`,
+            "SELECT balance, bwaezi_balance, cross_chain_balances FROM bwaezi_accounts WHERE address = ?",
             [address]
         );
 
@@ -123,7 +123,7 @@ class BrianNwaezikeChainFacade {
      */
     async getTransactionHistory(address, limit = 50) {
         return await this.dbService.all(
-            `SELECT * FROM bwaezi_transactions WHERE from_address = ? OR to_address = ? ORDER BY timestamp DESC LIMIT ?`,
+            "SELECT * FROM bwaezi_transactions WHERE from_address = ? OR to_address = ? ORDER BY timestamp DESC LIMIT ?",
             [address, address, limit]
         );
     }

@@ -95,7 +95,7 @@ class ShardManager {
           db.close();
         }
       });
-      console.log(`[SHARD-MANAGER] All shards closed.`);
+      console.log("[SHARD-MANAGER] All shards closed.");
       this.shards = [];
     });
   }
