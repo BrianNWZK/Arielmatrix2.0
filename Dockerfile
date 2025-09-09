@@ -22,7 +22,12 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 COPY package-lock.json ./
 RUN npm ci
-COPY . .  # Copy all source files
+
+# Now explicitly copy the rest of your source files
+# Ensure the context is correct when building the Docker image
+COPY ./ .  # Copy the rest of the project files from the local directory
+
+# Run build if specified in package.json
 RUN if [ -f "package.json" ] && grep -q "\"build\":" package.json; then npm run build; fi
 
 # Final production image
@@ -39,7 +44,7 @@ COPY package-lock.json ./
 # Install only production dependencies
 RUN npm ci --omit=dev
 
-# Copy the built code from build-optimizer
+# Copy the built code from the build-optimizer stage
 COPY --from=build-optimizer /usr/src/app/backend ./backend
 COPY --from=build-optimizer /usr/src/app/arielsql_suite ./arielsql_suite
 COPY --from=build-optimizer /usr/src/app/config ./config
