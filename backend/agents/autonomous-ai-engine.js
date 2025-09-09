@@ -197,7 +197,6 @@ const raxConfig = {
 };
 const interceptorId = rax.attach(raxConfig);
 
-***
 // =========================================================================
 // 2. GLOBAL CONSTANTS AND CONFIGURATION - Enhanced with validation and security
 // =========================================================================
