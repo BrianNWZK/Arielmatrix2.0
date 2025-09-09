@@ -1,6 +1,3 @@
 node_modules/
 .git/
 .env
-# Include backend agents and database
-!backend/agents/wallet.js
-!backend/database/BrianNwaezikeDB.js
