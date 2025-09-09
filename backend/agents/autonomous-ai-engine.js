@@ -991,9 +991,8 @@ class EnhancedAdvancedAIBrain {
   }
 }
 
-const aiBrain = new EnhancedAdvancedAIBrain();
+const dataScraper = new EnhancedZeroCostDataFetcher();
 
-***
 // =========================================================================
 // 5. SELF-HEALING AND GLOBAL SCALING - Enhanced with concrete logic and monitoring
 // =========================================================================
