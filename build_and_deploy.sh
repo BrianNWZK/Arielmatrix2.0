@@ -1,6 +1,6 @@
 #!/bin/bash
 # =========================================================================
-# QUANTUM AI AUTONOMOUS BUILD & DEPLOYMENT - Production Main-net
+# QUANTUM AI AUTONOMOUS BUILD & DEPLOYMENT - Main-Net, Zero-Simulation
 # =========================================================================
 set -euo pipefail
 shopt -s inherit_errexit
@@ -16,15 +16,16 @@ log() { echo -e "\033[1;34mℹ️  $1\033[0m"; }
 ok() { echo -e "\033[1;32m✅ $1\033[0m"; }
 err() { echo -e "\033[1;31m❌ $1\033[0m"; }
 
-# Validate package-lock.json exists
+# Validate that package-lock.json exists
 validate_lockfile() {
   if [ ! -f "package-lock.json" ]; then
-    err "Error: package-lock.json is missing. Please generate it using 'npm install --package-lock-only'."
+    err "Error: package-lock.json is missing. Please regenerate it with 'npm install --package-lock-only'."
     exit 1
   fi
   ok "Package-lock.json validated"
 }
 
+# Validate environment setup
 validate() {
   log "Validating environment..."
   for cmd in docker curl node npm; do
@@ -34,12 +35,14 @@ validate() {
   ok "Environment validated"
 }
 
+# Build Docker image
 build() {
   log "Building Docker image..."
-  docker buildx build --platform linux/amd64 -t "$IMAGE_NAME" . || { err "Build failed"; exit 1; }
-  ok "Docker image built"
+  docker buildx build --platform linux/amd64 -t "$IMAGE_NAME" . || { err "Docker build failed"; exit 1; }
+  ok "Docker image built successfully"
 }
 
+# Test the Docker container
 test_container() {
   log "Testing container..."
   docker run -d --rm --name "$CONTAINER_NAME" -p "${PORT}:${PORT}" "$IMAGE_NAME"
@@ -51,9 +54,13 @@ test_container() {
     fi
     sleep 5
   done
-  err "Health check failed"; docker logs "$CONTAINER_NAME"; docker stop "$CONTAINER_NAME"; exit 1
+  err "Health check failed"
+  docker logs "$CONTAINER_NAME"
+  docker stop "$CONTAINER_NAME"
+  exit 1
 }
 
+# Push to Docker registry
 push() {
   if [[ "$DOCKER_REGISTRY" == "your-registry/"* ]]; then
     log "Skipping push (registry not configured)"
@@ -65,6 +72,7 @@ push() {
   ok "Image pushed"
 }
 
+# Rollback function in case of failure
 rollback() {
   err "Rolling back to previous image..."
   if docker images | grep -q "${DOCKER_REGISTRY}"; then
@@ -72,6 +80,7 @@ rollback() {
   fi
 }
 
+# Main execution function
 main() {
   validate
   build
@@ -79,5 +88,9 @@ main() {
   push
   ok "🎉 Deployment successful"
 }
+
+# Trap error and rollback
 trap rollback ERR
+
+# Run main deployment process
 main "$@"
