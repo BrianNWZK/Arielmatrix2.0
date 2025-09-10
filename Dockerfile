@@ -20,6 +20,7 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 COPY backend/agents ./backend/agents
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
+COPY backend/database ./backend/database
 
 # Expose the port the application runs on.
 EXPOSE 1000
