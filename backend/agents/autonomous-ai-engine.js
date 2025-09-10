@@ -2112,7 +2112,7 @@ export {
   revenueManager,
   novelRevenue,
   executeRevenueCycle,
-  optimizeRevenueStrategies: revenueManager.optimizeRevenueStrategies.bind(revenueManager),
+  optimizeRevenueStrategies revenueManager.optimizeRevenueStrategies.bind(revenueManager),
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
