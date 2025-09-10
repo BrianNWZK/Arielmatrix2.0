@@ -2036,6 +2036,11 @@ export { EnhancedNovelRevenueStreams, initializeNovelRevenueStreams, novelRevenu
 // =========================================================================
 
 const revenueManager = new RevenueManager(aiBrain, new EnhancedZeroCostDataFetcher(), payoutManager);
+const revenueManager = {
+  optimizeRevenueStrategies: function() {
+    // implementation
+  }
+};
 
 async function startEngine() {
   console.log(`🚀 Starting BRAIN Engine v${BRAIN_VERSION}...`);
@@ -2112,7 +2117,7 @@ export {
   revenueManager,
   novelRevenue,
   executeRevenueCycle,
-  optimizeRevenueStrategies revenueManager.optimizeRevenueStrategies.bind(revenueManager),
+  optimizeRevenueStrategies: revenueManager.optimizeRevenueStrategies.bind(revenueManager),
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
