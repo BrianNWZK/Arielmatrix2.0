@@ -11,10 +11,11 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency manifests first to leverage Docker layer caching
-COPY package.json package-lock.json ./
+COPY package.json ./
+COPY package-lock.json ./
 
 # Install dependencies
-RUN npm ci --legacy-peer-deps
+RUN npm install --legacy-peer-deps
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
