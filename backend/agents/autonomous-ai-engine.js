@@ -1079,7 +1079,6 @@ import dataAgent from './dataAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
 import shopifyAgent from './shopifyAgent.js';
 import socialAgent from './socialAgent.js';
-import { getEthereumWeb3, getSolanaConnection } from './wallet.js';
 
 class RevenueManager {
   constructor(aiBrain, dataFetcher, payoutManager) {
