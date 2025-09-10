@@ -2117,7 +2117,6 @@ export {
   aiBrain,
   healingSystem,
   revenueManager,
-  novelRevenue,
   executeRevenueCycle,
   revenueStrategies
 };
