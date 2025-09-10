@@ -5,30 +5,26 @@ WORKDIR /usr/src/app
 # Install build tools required for native modules like better-sqlite3
 RUN apt-get update && apt-get install -y python3 build-essential
 
-# Copy dependency manifests
-COPY package.json ./
-COPY package-lock.json ./
+# Copy package.json and package-lock.json (if present) to install dependencies first
+COPY package.json ./  
+COPY package-lock.json ./   # Ensure both files are copied
 RUN npm install
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
 WORKDIR /usr/src/app
 
-# Copy node_modules from builder stage
+# Copy the necessary node_modules from the installer stage
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
 # Copy application source code
 COPY backend/agents ./backend/agents
-COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
+COPY backend/database ./backend/database
 
-# Copy cleanup-conflicts.sh into the container
-COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
-RUN chmod +x ./cleanup-conflicts.sh
-
-# Expose the port
+# Expose the port the application runs on
 EXPOSE 1000
 
-# ENTRYPOINT runs cleanup first, then starts the app
-ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node backend/agents/autonomous-ai-engine.js"]
+# Command to start the application
+CMD ["node", "backend/agents/autonomous-ai-engine.js"]
