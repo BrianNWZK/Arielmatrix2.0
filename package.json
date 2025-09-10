@@ -6,6 +6,11 @@
     "node": "22.x"
   },
   "scripts": {
+  ...
+  "refresh-lock": "rm -f package-lock.json && npm install"
+}
+
+  "scripts": {
     "start": "node arielsql_suite/main.js",
     "dev": "nodemon server.js",
     "precommit": "node scripts/precommit.js",
