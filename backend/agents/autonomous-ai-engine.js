@@ -2113,7 +2113,9 @@ export {
   novelRevenue,
   executeRevenueCycle,
   const revenueStrategies = {
-  optimizeRevenueStrategies: (...args) => revenueManager.optimizeRevenueStrategies(...args)
+  optimizeRevenueStrategies() {
+    return revenueManager.optimizeRevenueStrategies.apply(revenueManager, arguments);
+  }
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
