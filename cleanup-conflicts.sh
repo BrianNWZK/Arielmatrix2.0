@@ -1,49 +1,34 @@
 #!/bin/bash
+# ============================================================
+# cleanup-conflicts.sh
+# Ensures required directories exist without being shadowed
+# by files of the same name.
+# ============================================================
+
 set -euo pipefail
-
-# ============================================================
-# CLEAN DEPLOY SCRIPT for ArielMatrix2.0
-# ============================================================
-
-IMAGE_NAME="arielmatrix2.0"
-CONTAINER_NAME="arielmatrix2.0-container"
-PORT=1000
-HEALTH_CHECK_URL="http://localhost:${PORT}/agents/status"
 
 log() { echo -e "\033[1;34mℹ️  $1\033[0m"; }
 ok() { echo -e "\033[1;32m✅ $1\033[0m"; }
+warn() { echo -e "\033[1;33m⚠️  $1\033[0m"; }
 err() { echo -e "\033[1;31m❌ $1\033[0m"; }
 
-# Step 1: Stop and remove old containers
-log "Stopping old containers..."
-docker ps -q --filter "name=$CONTAINER_NAME" | grep -q . && docker stop "$CONTAINER_NAME" || true
-docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+log "🧹 Cleaning up file-directory conflicts..."
 
-# Step 2: Clean up Docker cache/images/volumes
-log "Cleaning Docker system..."
-docker system prune -af
-docker volume prune -f
+conflicts=("arielmatrix2.0" "config" "scripts" "contracts" "public" "frontend" "backend")
 
-# Step 3: Rebuild Docker image from scratch
-log "Building fresh Docker image..."
-docker build --no-cache -t "$IMAGE_NAME" .
-
-ok "Docker image built successfully"
-
-# Step 4: Run the container
-log "Starting container..."
-docker run -d --rm --name "$CONTAINER_NAME" -p ${PORT}:${PORT} "$IMAGE_NAME"
-
-# Step 5: Health check (up to 60s)
-log "Checking container health..."
-for i in {1..12}; do
-  if curl -fs "$HEALTH_CHECK_URL" >/dev/null 2>&1; then
-    ok "Health check passed — service is running ✅"
-    exit 0
-  fi
-  sleep 5
+for item in "${conflicts[@]}"; do
+    if [ -f "$item" ]; then
+        warn "File detected where directory should be: $item"
+        rm -f "$item" || { err "Failed to remove file: $item"; exit 1; }
+        mkdir -p "$item" || { err "Failed to create directory: $item"; exit 1; }
+        ok "Replaced file with directory: $item"
+    elif [ -d "$item" ]; then
+        ok "$item is already a directory"
+    else
+        log "$item does not exist — creating directory"
+        mkdir -p "$item" || { err "Failed to create directory: $item"; exit 1; }
+        ok "Created directory: $item"
+    fi
 done
 
-err "Health check failed — showing logs:"
-docker logs "$CONTAINER_NAME"
-exit 1
+ok "Cleanup complete!"
