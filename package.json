@@ -6,16 +6,17 @@
     "node": "22.x"
   },
 
-  "scripts": {
-    "start": "node arielsql_suite/main.js",
-    "dev": "nodemon server.js",
-    "precommit": "node scripts/precommit.js",
-    "test": "jest",
-     "refresh-lock": "rm -f package-lock.json && npm install"
-    "build": "vite build",
-    "train-ai": "node scripts/train-models.js",
-    "monitor": "node scripts/system-monitor.js"
-  },
+ "scripts": {
+  "start": "node arielsql_suite/main.js",
+  "dev": "nodemon server.js",
+  "precommit": "node scripts/precommit.js",
+  "test": "jest",
+  "refresh-lock": "rm -f package-lock.json && npm install",
+  "build": "vite build",
+  "train-ai": "node scripts/train-models.js",
+  "monitor": "node scripts/system-monitor.js"
+}
+
   "dependencies": {
     "express": "^4.21.0",
     "axios": "^1.7.7",
