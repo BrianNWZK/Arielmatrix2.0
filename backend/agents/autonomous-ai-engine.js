@@ -2105,6 +2105,13 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
+// Define revenueStrategies before exporting
+const revenueStrategies = {
+  optimizeRevenueStrategies(...args) {
+    return revenueManager.optimizeRevenueStrategies.apply(revenueManager, args);
+  }
+};
+
 export {
   startEngine,
   aiBrain,
@@ -2112,11 +2119,9 @@ export {
   revenueManager,
   novelRevenue,
   executeRevenueCycle,
-  revenueStrategies = {
-  optimizeRevenueStrategies() {
-    return revenueManager.optimizeRevenueStrategies.apply(revenueManager, arguments);
-  }
+  revenueStrategies
 };
+
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   startEngine();
