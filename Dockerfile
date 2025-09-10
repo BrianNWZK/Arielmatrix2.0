@@ -11,11 +11,10 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency manifests first to leverage Docker layer caching
-COPY package.json ./
-COPY package-lock.json ./
+COPY package*.json ./
 
-# Install dependencies
-RUN npm install --legacy-peer-deps
+# Install dependencies deterministically (strictly from package-lock.json)
+RUN npm ci --legacy-peer-deps --no-audit --no-fund
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
@@ -27,12 +26,17 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
 # Copy application source code
 COPY backend/agents ./backend/agents
+COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
-COPY backend/database ./backend/database
+
+# Copy and enable maintenance scripts inside container
+COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
+COPY fix-structure.sh ./fix-structure.sh
+RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 
 # Expose the application port
 EXPOSE 1000
 
-# Start the application
-CMD ["node", "backend/agents/autonomous-ai-engine.js"]
+# ENTRYPOINT: fix project structure + cleanup conflicts, then start app
+ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node backend/agents/autonomous-ai-engine.js"]
