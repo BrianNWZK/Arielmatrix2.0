@@ -6,7 +6,8 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 build-essential
 
 # Copy package.json and package-lock.json (if present) to install dependencies first
-COPY package.json ./  # You can add package-lock.json here too if using lock files
+COPY package.json ./  # This line copies the package.json
+COPY package-lock.json ./  # This line copies the package-lock.json, if present
 RUN npm install
 
 # --- STAGE 2: Build & Final Image ---
