@@ -2112,7 +2112,7 @@ export {
   revenueManager,
   novelRevenue,
   executeRevenueCycle,
-  const revenueStrategies = {
+  revenueStrategies = {
   optimizeRevenueStrategies() {
     return revenueManager.optimizeRevenueStrategies.apply(revenueManager, arguments);
   }
