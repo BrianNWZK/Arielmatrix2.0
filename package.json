@@ -17,7 +17,7 @@
   "dependencies": {
     "express": "^4.21.0",
     "axios": "^1.7.7",
-    "retry-axios": "^3.0.0",              // 🔥 Added missing dependency
+    "retry-axios": "^3.0.0",              
     "web3": "^4.11.1",
     "@tensorflow/tfjs-node": "^4.22.0",
     "puppeteer": "^24.16.0",
