@@ -13,13 +13,17 @@ RUN apt-get update && apt-get install -y \
 # Pin npm to stable version (avoid npm 11.x regressions)
 RUN npm install -g npm@10.9.3
 
-# Copy manifests
+# Use a reliable registry mirror to avoid tarball corruption
+RUN npm config set registry https://registry.npmmirror.com
+
+# Copy dependency manifests
 COPY package*.json ./
 
-# Install deps safely:
+# Install dependencies safely:
 # 1. Try npm ci
-# 2. If integrity errors → remove lockfile + fallback to npm install
-RUN (npm ci --no-audit --no-fund) || (rm -f package-lock.json && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund)
+# 2. If integrity errors → fallback to npm install
+RUN npm cache clean --force \
+ && (npm ci --no-audit --no-fund || (rm -f package-lock.json && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund --prefer-online))
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
@@ -29,8 +33,9 @@ WORKDIR /usr/src/app
 # Copy node_modules from builder
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
-# Copy app source
+# Copy application source
 COPY backend/ ./backend/
+COPY backend/blockchain ./backend/blockchain
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 
@@ -39,8 +44,8 @@ COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 COPY fix-structure.sh ./fix-structure.sh
 RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 
-# Expose app port
+# Expose application port
 EXPOSE 1000
 
-# Entrypoint self-heals project before starting
+# Entrypoint: self-heal structure, clean conflicts, launch engine
 ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node backend/agents/autonomous-ai-engine.js"]
