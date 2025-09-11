@@ -16,14 +16,10 @@ RUN npm install -g npm@10.9.3
 # Use a reliable registry mirror to avoid tarball corruption
 RUN npm config set registry https://registry.npmmirror.com
 
-# Copy dependency manifests
-COPY package*.json ./
+# Copy only package.json to avoid lockfile errors
+COPY package.json ./
 
-# Remove internal modules from lockfile to prevent E404
-RUN jq 'del(.dependencies["ai-security-module"], .dependencies["quantum-resistant-crypto"], .dependencies["omnichain-interoperability"], .dependencies["infinite-scalability-engine"], .dependencies["carbon-negative-consensus"], .dependencies["ariel-sqlite-engine"])' package-lock.json > temp-lock.json \
- && mv temp-lock.json package-lock.json
-
-# Install only public dependencies
+# Install public dependencies only
 RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 # --- STAGE 2: Build & Final Image ---
