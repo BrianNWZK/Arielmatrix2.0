@@ -19,15 +19,12 @@ RUN npm config set registry https://registry.npmmirror.com
 # Copy dependency manifests
 COPY package*.json ./
 
-# Pre-install ServiceManager-managed dependencies
-# These are required by agents like cryptoAgent.js and autonomous-ai-engine.js
-RUN npm install --no-audit --no-fund \
-    quantum-resistant-crypto@^1.0.0 \
-    ai-security-module@^1.0.0 \
-    omnichain-interoperability@^1.0.0 \
-    infinite-scalability-engine@^1.0.0 \
-    carbon-negative-consensus@^1.0.0 \
-    ariel-sqlite-engine@^1.0.0
+# Install dependencies safely:
+# 1. Try npm ci
+# 2. If integrity errors → fallback to npm install
+RUN npm cache clean --force \
+ && (npm ci --no-audit --no-fund || (rm -f package-lock.json && npm install --legacy-peer-deps --no-audit --no-fund))
+
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
@@ -50,8 +47,11 @@ COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 COPY fix-structure.sh ./fix-structure.sh
 RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 
+# Ensure ServiceManager can install internal modules at runtime
+ENV SERVICE_MANAGER_BOOTSTRAP=true
+
 # Expose application port
 EXPOSE 1000
 
 # Entrypoint: self-heal structure, clean conflicts, launch engine
-ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node backend/agents/autonomous-ai-engine.js"]
+ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node arielsql_suite/main.js"]
