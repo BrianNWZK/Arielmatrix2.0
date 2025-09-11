@@ -19,12 +19,12 @@ RUN npm config set registry https://registry.npmmirror.com
 # Copy dependency manifests
 COPY package*.json ./
 
-# Install dependencies safely:
-# 1. Try npm ci
-# 2. If integrity errors → fallback to npm install
-RUN npm cache clean --force \
- && (npm ci --no-audit --no-fund || (rm -f package-lock.json && npm install --legacy-peer-deps --no-audit --no-fund))
+# Remove internal modules from lockfile to prevent E404
+RUN jq 'del(.dependencies["ai-security-module"], .dependencies["quantum-resistant-crypto"], .dependencies["omnichain-interoperability"], .dependencies["infinite-scalability-engine"], .dependencies["carbon-negative-consensus"], .dependencies["ariel-sqlite-engine"])' package-lock.json > temp-lock.json \
+ && mv temp-lock.json package-lock.json
 
+# Install only public dependencies
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
