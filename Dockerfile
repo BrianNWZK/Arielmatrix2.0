@@ -16,10 +16,18 @@ RUN npm install -g npm@10.9.3
 # Use a reliable registry mirror to avoid tarball corruption
 RUN npm config set registry https://registry.npmmirror.com
 
-# Copy only package.json to avoid lockfile errors
+# Copy dependency manifests
 COPY package.json ./
 
-# Install public dependencies only
+# Remove internal modules from package.json before install
+RUN sed -i '/"ai-security-module"/d' package.json \
+ && sed -i '/"quantum-resistant-crypto"/d' package.json \
+ && sed -i '/"omnichain-interoperability"/d' package.json \
+ && sed -i '/"infinite-scalability-engine"/d' package.json \
+ && sed -i '/"carbon-negative-consensus"/d' package.json \
+ && sed -i '/"ariel-sqlite-engine"/d' package.json
+
+# Install only public dependencies
 RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 # --- STAGE 2: Build & Final Image ---
