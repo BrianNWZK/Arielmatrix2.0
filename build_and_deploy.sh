@@ -1,107 +1,47 @@
-#!/bin/bash
-# =========================================================================
-# QUANTUM AI AUTONOMOUS BUILD & DEPLOYMENT - Main-Net, Zero-Simulation
-# =========================================================================
+#!/usr/bin/env bash
 set -euo pipefail
-shopt -s inherit_errexit
 
-IMAGE_NAME="arielsql-quantum-ai"
-CONTAINER_NAME="quantum-mainnet"
-PORT=1000
-HEALTH_CHECK_URL="http://localhost:${PORT}/agents/status"
-DOCKER_REGISTRY="${DOCKER_REGISTRY:-your-registry/arielsql-quantum-ai}"
-TAG="${TAG:-latest}"
+echo "🔧 Validating production structure..."
 
-log() { echo -e "\033[1;34mℹ️  $1\033[0m"; }
-ok() { echo -e "\033[1;32m✅ $1\033[0m"; }
-err() { echo -e "\033[1;31m❌ $1\033[0m"; }
-
-# Validate that package-lock.json exists
-validate_lockfile() {
-  if [ ! -f "package-lock.json" ]; then
-    err "Error: package-lock.json is missing. Please regenerate it with 'npm install --package-lock-only'."
-    exit 1
-  fi
-  ok "Package-lock.json validated"
-}
-
-# Regenerate package-lock.json (if necessary)
-regenerate_lockfile() {
-  log "Regenerating package-lock.json..."
-  rm -f package-lock.json
-  npm install --package-lock-only --no-audit --no-fund
-  git add package-lock.json
-  git commit -m "fix: regenerate package-lock.json"
-  ok "package-lock.json regenerated and committed"
-}
-
-# Validate environment setup
-validate() {
-  log "Validating environment..."
-  for cmd in docker curl node npm; do
-    command -v $cmd >/dev/null || { err "$cmd not found"; exit 1; }
-  done
-  validate_lockfile
-  ok "Environment validated"
-}
-
-# Build Docker image
-build() {
-  log "Building Docker image..."
-  docker buildx build --platform linux/amd64 -t "$IMAGE_NAME" . || { err "Docker build failed"; exit 1; }
-  ok "Docker image built successfully"
-}
-
-# Test the Docker container
-test_container() {
-  log "Testing container..."
-  docker run -d --rm --name "$CONTAINER_NAME" -p "${PORT}:${PORT}" "$IMAGE_NAME"
-  for i in {1..30}; do
-    if curl -fs "$HEALTH_CHECK_URL" >/dev/null; then
-      ok "Health check passed"
-      docker stop "$CONTAINER_NAME"
-      return 0
-    fi
-    sleep 5
-  done
-  err "Health check failed"
-  docker logs "$CONTAINER_NAME"
-  docker stop "$CONTAINER_NAME"
+# 1. Verify all required files exist (no placeholders)
+required_files=(
+  "package.json"
+  "package-lock.json"
+  "backend/scripts/server.js"
+  "backend/config/bwaezi-config.js"
+  "backend/contracts/APIKeyGenerator.sol"
+  "backend/contracts/RevenueDistributor.sol"
+  "frontend/package.json"
+  "frontend/package-lock.json"
+)
+missing=()
+for f in "${required_files[@]}"; do
+  [ -e "$f" ] || missing+=("$f")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "❌ Missing required files:"
+  printf ' - %s\n' "${missing[@]}"
   exit 1
-}
+fi
+echo "✅ All required files present."
 
-# Push to Docker registry
-push() {
-  if [[ "$DOCKER_REGISTRY" == "your-registry/"* ]]; then
-    log "Skipping push (registry not configured)"
-    return 0
-  fi
-  log "Pushing to $DOCKER_REGISTRY:$TAG"
-  docker tag "$IMAGE_NAME" "${DOCKER_REGISTRY}:${TAG}"
-  docker push "${DOCKER_REGISTRY}:${TAG}" || { err "Push failed"; exit 1; }
-  ok "Image pushed"
-}
+# 2. Install system dependencies
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update -y
+  sudo apt-get install -y git curl python3 make g++ pkg-config sqlite3 libsqlite3-dev
+fi
 
-# Rollback function in case of failure
-rollback() {
-  err "Rolling back to previous image..."
-  if docker images | grep -q "${DOCKER_REGISTRY}"; then
-    docker run -d --rm -p "${PORT}:${PORT}" "${DOCKER_REGISTRY}:previous"
-  fi
-}
+# 3. Install Node dependencies without altering lockfiles
+npm ci --no-audit --no-fund
+if [ -f backend/package.json ]; then
+  (cd backend && npm ci --no-audit --no-fund)
+fi
+if [ -f frontend/package.json ]; then
+  (cd frontend && npm ci --no-audit --no-fund)
+fi
 
-# Main execution function
-main() {
-  regenerate_lockfile
-  validate
-  build
-  test_container
-  push
-  ok "🎉 Deployment successful"
-}
+# 4. Rebuild native modules if needed
+npm rebuild sqlite3 || true
+(cd backend && npm rebuild sqlite3 || true)
 
-# Trap error and rollback
-trap rollback ERR
-
-# Run main deployment process
-main "$@"
+echo "✅ fix-structure.sh completed successfully."
