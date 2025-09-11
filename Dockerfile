@@ -34,6 +34,7 @@ COPY backend/agents ./backend/agents
 COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
+COPY backend/blockchain ./backend/blockchain
 
 # Copy maintenance scripts
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
