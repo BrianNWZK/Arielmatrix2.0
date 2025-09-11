@@ -19,12 +19,6 @@ RUN npm config set registry https://registry.npmmirror.com
 # Copy dependency manifests
 COPY package*.json ./
 
-# Install dependencies safely:
-# 1. Try npm ci
-# 2. If integrity errors → fallback to npm install
-RUN npm cache clean --force \
- && (npm ci --no-audit --no-fund || (rm -f package-lock.json && npm install --legacy-peer-deps --no-audit --no-fund))
- 
 # Pre-install ServiceManager-managed dependencies
 # These are required by agents like cryptoAgent.js and autonomous-ai-engine.js
 RUN npm install --no-audit --no-fund \
