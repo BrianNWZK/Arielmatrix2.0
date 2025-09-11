@@ -437,12 +437,11 @@ class ServiceManager extends EventEmitter {
   }
 
   start() {
-    const PORT = process.env.PORT || 1000;
-    this.server.listen(PORT, () => {
-      logger.info(`Server listening on port ${PORT}`);
-    });
-  }
-}
+   const PORT = process.env.PORT || 10000;
+const HOST = '0.0.0.0';
+this.server.listen(PORT, HOST, () => {
+  logger.info(`Server listening on ${HOST}:${PORT}`);
+});
 
 // Main execution
 const config = {
