@@ -25,6 +25,16 @@ validate_lockfile() {
   ok "Package-lock.json validated"
 }
 
+# Regenerate package-lock.json (if necessary)
+regenerate_lockfile() {
+  log "Regenerating package-lock.json..."
+  rm -f package-lock.json
+  npm install --package-lock-only --no-audit --no-fund
+  git add package-lock.json
+  git commit -m "fix: regenerate package-lock.json"
+  ok "package-lock.json regenerated and committed"
+}
+
 # Validate environment setup
 validate() {
   log "Validating environment..."
@@ -82,6 +92,7 @@ rollback() {
 
 # Main execution function
 main() {
+  regenerate_lockfile
   validate
   build
   test_container
