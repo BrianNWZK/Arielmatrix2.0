@@ -20,7 +20,7 @@ function getDefaultConfig() {
             s3SecretKey: process.env.S3_SECRET_KEY,
         },
         server: {
-            port: parseInt(process.env.PORT, 10) || 1000,
+            port: parseInt(process.env.PORT, 10) || 10000,
             host: '0.0.0.0'
         },
         blockchain: {
@@ -50,8 +50,12 @@ async function startServer() {
         // Start Apollo GraphQL Server
         const apolloServer = new ApolloServer({ typeDefs, resolvers });
         await startStandaloneServer(apolloServer, {
-            listen: { port: config.server.port }
-        });
+  listen: {
+    port: config.server.port,
+    host: config.server.host || '0.0.0.0'
+  }
+});
+
 
         console.log("✅ ArielSQL Alltimate Suite is now operational.");
     } catch (error) {
