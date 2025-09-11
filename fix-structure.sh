@@ -143,14 +143,20 @@ done
 touch .env.example
 [ ! -f "data/schema.sql" ] && touch data/schema.sql
 
-# Validate critical dependencies
+# Validate and auto-install critical dependencies
 declare -a deps=("express" "axios" "ethers" "ccxt" "sqlite3" "puppeteer" "playwright")
+
+echo "🔍 Checking and installing missing dependencies..."
 for dep in "${deps[@]}"; do
   if npm list "$dep" >/dev/null 2>&1; then
     echo "✅ $dep present"
   else
-    echo "⚠️ Dependency missing: $dep"
+    echo "⚠️ $dep missing → installing..."
+    if npm install "$dep" --no-audit --no-fund; then
+      echo "✅ Installed: $dep"
+    else
+      echo "❌ Failed to install: $dep"
+    fi
   fi
 done
 
-echo "✅ Structure check complete. All missing items flagged. Deployment continues."
