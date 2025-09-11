@@ -10,6 +10,17 @@ import express from 'express';
 import winston from 'winston';
 import betterSqlite3 from 'better-sqlite3';
 
+// Import actual agent classes from their respective files
+import AdRevenueAgent from '../backend/agents/adRevenueAgent.js';
+import CryptoAgent from '../backend/agents/cryptoAgent.js';
+import ShopifyAgent from '../backend/agents/shopifyAgent.js';
+import SocialAgent from '../backend/agents/socialAgent.js';
+import ForexSignalAgent from '../backend/agents/forexSignalAgent.js';
+import PayoutAgent from '../backend/agents/payoutAgent.js';
+import DataAgent from '../backend/agents/dataAgent.js';
+import AdsenseApi from '../backend/agents/adsenseApi.js';
+import ContractDeploy from '../backend/agents/contractDeploy.js';
+
 // =========================================================================
 // Custom Errors & Utilities
 // =========================================================================
@@ -271,17 +282,6 @@ class DatabaseAdapter {
 // =========================================================================
 // Autonomous Agents (Real Revenue)
 // =========================================================================
-
-// Import actual agent classes from their respective files
-import AdRevenueAgent from '../backend/agents/adRevenueAgent.js';
-import CryptoAgent from '../backend/agents/cryptoAgent.js';
-import ShopifyAgent from '../backend/agents/shopifyAgent.js';
-import SocialAgent from '../backend/agents/socialAgent.js';
-import ForexSignalAgent from '../backend/agents/forexSignalAgent.js';
-import PayoutAgent from '../backend/agents/payoutAgent.js';
-import DataAgent from '../backend/agents/dataAgent.js';
-import AdsenseApi from '../backend/agents/adsenseApi.js';
-import ContractDeploy from '../backend/agents/contractDeploy.js';
 
 // Base Agent class
 class BaseAgent {
