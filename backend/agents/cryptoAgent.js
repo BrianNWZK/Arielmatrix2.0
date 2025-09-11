@@ -14,6 +14,9 @@ import Web3 from 'web3';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
+// Import browser manager for real browsing
+import { BrowserManager } from './browserManager.js';
+
 class EnhancedCryptoAgent {
   constructor(config, logger) {
     this.config = config;
