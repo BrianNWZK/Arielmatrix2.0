@@ -13,7 +13,7 @@ import {
   getUSDTBalance,
   sendUSDT,
   testAllConnections
-} from '../wallet.js';
+} from './wallet.js';
 
 // Import browser manager for real browsing
 import { BrowserManager } from './browserManager.js';
