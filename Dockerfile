@@ -1,36 +1,47 @@
 # --- STAGE 1: Dependency Installation ---
 FROM node:22-slim AS dependency-installer
+
 WORKDIR /usr/src/app
 
-# Install build tools needed for native modules
-RUN apt-get update && apt-get install -y python3 build-essential \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install build tools required for native modules like better-sqlite3
+RUN apt-get update && apt-get install -y \
+    python3 \
+    build-essential \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency manifests
-COPY package.json package-lock.json ./
+# Pin npm to stable version (avoid npm 11.x regressions)
+RUN npm install -g npm@10.9.3
 
-# Install dependencies with clean cache and updated npm
-RUN npm cache clean --force \
- && npm install -g npm@11.6.0 \
- && npm config set registry https://registry.npmmirror.com \
- && npm install --legacy-peer-deps --prefer-online
+# Copy manifests
+COPY package*.json ./
 
+# Install deps safely:
+# 1. Try npm ci
+# 2. If integrity errors → remove lockfile + fallback to npm install
+RUN (npm ci --no-audit --no-fund) || (rm -f package-lock.json && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund)
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
+
 WORKDIR /usr/src/app
 
-# Copy dependencies
+# Copy node_modules from builder
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
-# Copy source code
-COPY . .
+# Copy app source
+COPY backend/agents ./backend/agents
+COPY backend/database ./backend/database
+COPY arielsql_suite ./arielsql_suite
+COPY scripts ./scripts
 
-# Build frontend assets
-RUN npm run build
+# Copy maintenance scripts
+COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
+COPY fix-structure.sh ./fix-structure.sh
+RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 
 # Expose app port
 EXPOSE 1000
 
-# Start the app
-CMD ["node", "backend/agents/autonomous-ai-engine.js"]
+# Entrypoint self-heals project before starting
+ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node backend/agents/autonomous-ai-engine.js"]
