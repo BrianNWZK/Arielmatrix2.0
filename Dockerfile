@@ -13,13 +13,22 @@ RUN apt-get update && apt-get install -y \
 # Pin npm to stable version (avoid npm 11.x regressions)
 RUN npm install -g npm@10.9.3
 
-# Copy manifests
-COPY package*.json ./
+# Use a reliable registry mirror to avoid tarball corruption
+RUN npm config set registry https://registry.npmmirror.com
 
-# Install deps safely:
-# 1. Try npm ci
-# 2. If integrity errors → remove lockfile + fallback to npm install
-RUN (npm ci --no-audit --no-fund) || (rm -f package-lock.json && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund)
+# Copy dependency manifests
+COPY package.json ./
+
+# Remove internal modules from package.json before install
+RUN sed -i '/"ai-security-module"/d' package.json \
+ && sed -i '/"quantum-resistant-crypto"/d' package.json \
+ && sed -i '/"omnichain-interoperability"/d' package.json \
+ && sed -i '/"infinite-scalability-engine"/d' package.json \
+ && sed -i '/"carbon-negative-consensus"/d' package.json \
+ && sed -i '/"ariel-sqlite-engine"/d' package.json
+
+# Install only public dependencies
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
@@ -29,20 +38,24 @@ WORKDIR /usr/src/app
 # Copy node_modules from builder
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
-# Copy app source
+# Copy application source
+COPY backend/ ./backend/
+COPY backend/blockchain ./backend/blockchain
 COPY backend/agents ./backend/agents
 COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
-COPY backend/blockchain ./backend/blockchain
 
 # Copy maintenance scripts
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 COPY fix-structure.sh ./fix-structure.sh
 RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 
-# Expose app port
+# Ensure ServiceManager can install internal modules at runtime
+ENV SERVICE_MANAGER_BOOTSTRAP=true
+
+# Expose application port
 EXPOSE 1000
 
-# Entrypoint self-heals project before starting
-ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node backend/agents/autonomous-ai-engine.js"]
+# Entrypoint: self-heal structure, clean conflicts, launch engine
+ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node arielsql_suite/main.js"]
