@@ -36,6 +36,8 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 # Copy application source
 COPY backend/ ./backend/
 COPY backend/blockchain ./backend/blockchain
+COPY backend/agents ./backend/agents
+COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 
