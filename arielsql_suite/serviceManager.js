@@ -19,7 +19,7 @@ import ForexSignalAgent from '../backend/agents/forexSignalAgent.js';
 import PayoutAgent from '../backend/agents/payoutAgent.js';
 import DataAgent from '../backend/agents/dataAgent.js';
 import AdsenseApi from '../backend/agents/adsenseApi.js';
-import ContractDeploy from '../backend/agents/contractDeploy.js';
+import ContractDeployAgent from '../backend/agents/contractDeployAgent.js';
 
 // =========================================================================
 // Custom Errors & Utilities
