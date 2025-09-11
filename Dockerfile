@@ -23,7 +23,8 @@ COPY package*.json ./
 # 1. Try npm ci
 # 2. If integrity errors → fallback to npm install
 RUN npm cache clean --force \
- && (npm ci --no-audit --no-fund || (rm -f package-lock.json && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund --prefer-online))
+ && (npm ci --no-audit --no-fund || (rm -f package-lock.json && npm install --legacy-peer-deps --no-audit --no-fund))
+
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
