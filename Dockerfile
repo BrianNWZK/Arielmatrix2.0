@@ -9,8 +9,12 @@ RUN apt-get update && apt-get install -y python3 build-essential \
 # Copy dependency manifests
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm install --legacy-peer-deps
+# Install dependencies with clean cache and updated npm
+RUN npm cache clean --force \
+ && npm install -g npm@11.6.0 \
+ && npm config set registry https://registry.npmmirror.com \
+ && npm install --legacy-peer-deps --prefer-online
+
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
