@@ -11,9 +11,8 @@ import {
   sendSOL,
   getUSDTBalance,
   sendUSDT,
-  testAllConnections,
-  checkWalletBalances
-} from '../wallet.js';
+  testAllConnections
+} from './wallet.js';
 
 // Quantum Ad Optimization Engine
 class QuantumAdOptimizer {
