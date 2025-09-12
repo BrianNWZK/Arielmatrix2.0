@@ -21,9 +21,7 @@ import DataAgent from '../backend/agents/dataAgent.js';
 import AdsenseApi from '../backend/agents/adsenseApi.js';
 import ContractDeployAgent from '../backend/agents/contractDeployAgent.js';
 
-// =========================================================================
 // Custom Errors & Utilities
-// =========================================================================
 export class DatabaseError extends Error {
     constructor(message, originalError) {
         super(message);
@@ -47,9 +45,7 @@ export class ServiceInitializationError extends Error {
     }
 }
 
-// =========================================================================
 // Production Logger
-// =========================================================================
 class ProductionLogger {
     constructor() {
         this.logger = winston.createLogger({
@@ -93,9 +89,7 @@ class ProductionLogger {
 // Global logger instance
 const logger = new ProductionLogger();
 
-// =========================================================================
 // Task Queue with SQLite
-// =========================================================================
 class SQLiteTaskQueue {
     constructor(dbPath) {
         this.dbPath = dbPath;
@@ -195,9 +189,7 @@ class SQLiteTaskQueue {
     }
 }
 
-// =========================================================================
 // Database Adapter
-// =========================================================================
 class DatabaseAdapter {
     constructor(config) {
         this.config = config;
@@ -279,10 +271,7 @@ class DatabaseAdapter {
     }
 }
 
-// =========================================================================
 // Autonomous Agents (Real Revenue)
-// =========================================================================
-
 // Base Agent class
 class BaseAgent {
     constructor(config, logger) {
@@ -324,9 +313,7 @@ class BaseAgent {
     }
 }
 
-// =========================================================================
 // Main Service Manager
-// =========================================================================
 class ServiceManager extends EventEmitter {
     constructor(config) {
         super();
