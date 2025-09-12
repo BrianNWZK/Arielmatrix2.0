@@ -55,7 +55,7 @@ RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 ENV SERVICE_MANAGER_BOOTSTRAP=true
 
 # Expose application port
-EXPOSE 1000
+EXPOSE 10000
 
 # Entrypoint: self-heal structure, clean conflicts, launch engine
 ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node arielsql_suite/main.js"]
