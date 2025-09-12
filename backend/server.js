@@ -9,6 +9,30 @@ import { typeDefs } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import 'dotenv/config'; // Loads environment variables from .env file
 
+// backend/server.js
+import path from 'path';
+import { fileURLToPath } from 'url';
+import ServiceManager from '../arielsql_suite/ServiceManager.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const config = {
+  dbPath: path.join(__dirname, '..', 'data', 'bwaezi.db'),
+};
+
+const serviceManager = new ServiceManager(config);
+
+(async () => {
+  try {
+    await serviceManager.init();
+    serviceManager.start(); // This will bind correctly to PORT
+  } catch (err) {
+    console.error('❌ Failed to start service manager:', err);
+    process.exit(1);
+  }
+})();
+
 function getDefaultConfig() {
     return {
         database: {
