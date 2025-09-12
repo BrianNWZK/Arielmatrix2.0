@@ -35,12 +35,15 @@ COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
+RUN chmod +x ./cleanup-conflicts.sh 
+
+# In dependency-installer stage
 COPY fix-structure.sh ./fix-structure.sh
-RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
+RUN chmod +x fix-structure.sh && ./fix-structure.sh
 
 ENV SERVICE_MANAGER_BOOTSTRAP=true
 
 # Must match ServiceManager.js
 EXPOSE 10000
 
-ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node arielsql_suite/ServiceManager.js"]
+ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node arielsql_suite/ServiceManager.js"]
