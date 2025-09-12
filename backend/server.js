@@ -20,7 +20,7 @@ function getDefaultConfig() {
             s3SecretKey: process.env.S3_SECRET_KEY,
         },
         server: {
-            port: parseInt(process.env.PORT, 10) || 10000, // Default port set to 10000
+            port: parseInt(process.env.PORT, 10) || 10000, // Default to 10000
             host: '0.0.0.0' // Bind to all interfaces
         },
         blockchain: {
@@ -49,11 +49,11 @@ async function startServer() {
 
         // Start Apollo GraphQL Server
         const apolloServer = new ApolloServer({ typeDefs, resolvers });
-        const { url } = await startStandaloneServer(apolloServer, {
-            listen: { port: config.server.port, host: config.server.host }
+        await startStandaloneServer(apolloServer, {
+            listen: { port: config.server.port, host: config.server.host } // Bind to specified host and port
         });
 
-        console.log(`✅ ArielSQL Alltimate Suite is now operational at ${url}`);
+        console.log("✅ ArielSQL Alltimate Suite is now operational.");
     } catch (error) {
         console.error("❌ Failed to start ArielSQL Alltimate Suite:", error);
         try {
