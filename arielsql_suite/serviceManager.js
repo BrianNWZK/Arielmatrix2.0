@@ -422,18 +422,17 @@ class ServiceManager extends EventEmitter {
         logger.info('WebSocket server set up.');
     }
 
-    start() {
-        const PORT = process.env.PORT || 10000; // Set port from environment variable or default to 10000
-        const HOST = '0.0.0.0'; // Bind to all interfaces
+       start() {
+        const PORT = process.env.PORT || 10000; // must match Docker EXPOSE
+        const HOST = '0.0.0.0';
         this.server.listen(PORT, HOST, () => {
-            logger.info(`Server listening on ${HOST}:${PORT}`);
+            logger.info(`🚀 ServiceManager listening on ${HOST}:${PORT}`);
         });
     }
 }
 
-// Main execution
 const config = {
-    dbPath: path.join(__dirname, 'data', 'bwaezi.db'),
+    dbPath: path.join(process.cwd(), 'data', 'bwaezi.db'), // safer than __dirname in ESM
 };
 
 const serviceManager = new ServiceManager(config);
@@ -444,3 +443,4 @@ serviceManager.init().then(() => {
     logger.error('Critical failure during service initialization', { error: err.message });
     process.exit(1);
 });
+
