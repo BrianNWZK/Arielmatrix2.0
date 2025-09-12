@@ -1,5 +1,13 @@
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import walletManager from './wallet.js';
+// Import wallet functions
+import {
+  initializeConnections,
+  getSolanaBalance,
+  sendSOL,
+  getUSDTBalance,
+  sendUSDT,
+  testAllConnections
+} from './wallet.js';
 import { QuantumShield } from 'quantum-resistant-crypto';
 import { AIThreatDetector } from 'ai-security-module';
 import { CrossChainBridge } from 'omnichain-interoperability';
