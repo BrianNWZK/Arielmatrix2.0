@@ -1,161 +1,191 @@
 #!/bin/bash
+# ============================================================
+# fix-structure.sh
+# Ensures ArielSQL Ultimate project structure is correct
+# ============================================================
 
-echo "🔧 Fixing ArielSQL Ultimate project structure..."
-echo "🕒 $(date '+%Y-%m-%d %H:%M:%S')"
+set -euo pipefail
 
-# Ensure required directories exist
-declare -a dirs=(
-  "arielmatrix2.0"
-  "config"
-  "contracts"
-  "public"
-  "frontend"
-  "backend"
-  "backend/agents"
-  "backend/blockchain"
-  "backend/config"
-  "backend/contracts"
-  "backend/database"
-  "backend/public"
-  "backend/scripts"
-  "data"
-  "arielsql_suite"
-)
+log()  { echo -e "\033[1;34mℹ️  $1\033[0m"; }
+ok()   { echo -e "\033[1;32m✅ $1\033[0m"; }
+warn() { echo -e "\033[1;33m⚠️  $1\033[0m"; }
+err()  { echo -e "\033[1;31m❌ $1\033[0m"; }
 
-for dir in "${dirs[@]}"; do
-  if [ ! -d "$dir" ]; then
-    mkdir -p "$dir"
-    echo "⚠️ Created missing directory: $dir"
-  else
-    echo "✅ $dir is already a directory"
-  fi
-done
+log "🔧 Fixing ArielSQL Ultimate project structure..."
 
-# Validate all agent files
-declare -a agent_files=(
-  "Automated Multi-Chain Fund Consolidation"
-  "USDT-Wallet.js"
-  "adRevenueAgent.js"
-  "adsenseApi.js"
-  "apiScoutAgent.js"
-  "autonomous-ai-engine.js"
-  "browserManager.js"
-  "complianceAgent.js"
-  "configAgent.js"
-  "contractDeployAgent.js"
-  "cryptoAgent.js"
-  "dataAgent.js"
-  "forexSignalAgent.js"
-  "healthAgent.js"
-  "payoutAgent.js"
-  "shopifyAgent.js"
-  "socialAgent.js"
-  "solana-wallet.js"
-  "wallet.js"
-)
-
-for agent in "${agent_files[@]}"; do
-  path="backend/agents/$agent"
-  if [ ! -f "$path" ]; then
-    echo "⚠️ Missing agent file: $path"
-  else
-    echo "✅ Found agent: $path"
-  fi
-done
-
-# Validate critical backend files
-declare -a backend_files=(
-  "blockchain/BrianNwaezikeChain.js"
-  "blockchain/BrianNwaezikePayoutSystem.js"
-  "config/bwaezi-config.js"
-  "contracts/APIKeyGenerator.sol"
-  "contracts/RevenueDistributor.sol"
-  "database/BrianNwaezikeDB.js"
-  "public/index.html"
-  "scripts/CentralizedBwaeziBackend.js"
-  "scripts/dashboard.html"
-  "scripts/hardhat.config.js"
-  "scripts/precommit.js"
-  "scripts/server.js"
-)
-
-for file in "${backend_files[@]}"; do
-  path="backend/$file"
-  if [ ! -f "$path" ]; then
-    echo "⚠️ Missing backend file: $path"
-  else
-    echo "✅ Found backend file: $path"
-  fi
-done
-
-# Validate frontend essentials
-declare -a frontend_files=(
-  "public/assets/index.css"
-  "scripts/deployBwaeziContract.js"
-  "src/components/BwaeziDashboard.jsx"
-  "src/components/BwaeziStats.jsx"
-  "src/styles/BwaeziTheme.css"
-  "src/App.jsx"
-  "src/index.css"
-  "src/main.jsx"
-  ".deepsource.toml"
-  ".dockerignore"
-  ".eslintrc.json"
-  ".gitignore"
-  "build_and_deploy.sh"
-  "cleanup-conflicts.sh"
-  "dashboard.js"
-  "Dockerfile"
-  "fix-structure.sh"
-  "hardhat.config.js"
-  "index.html"
-  "package-lock.json"
-  "package.json"
-  "tailwind.config.js"
-  "vite.config.js"
-)
-
-for file in "${frontend_files[@]}"; do
-  path="frontend/$file"
-  if [ ! -f "$path" ]; then
-    echo "⚠️ Missing frontend file: $path"
-  else
-    echo "✅ Found frontend file: $path"
-  fi
-done
-
-# Validate arielsql_suite core files
-declare -a suite_files=(
-  "main.js"
-  "serviceManager.js"
-)
-
-for file in "${suite_files[@]}"; do
-  path="arielsql_suite/$file"
-  if [ ! -f "$path" ]; then
-    echo "⚠️ Missing ArielSQL Suite file: $path"
-  else
-    echo "✅ Found suite file: $path"
-  fi
-done
-
-# Ensure essential environment and schema files
-touch .env.example
-[ ! -f "data/schema.sql" ] && touch data/schema.sql
-
-# Validate and auto-install critical dependencies
-declare -a deps=("express" "axios" "ethers" "ccxt" "sqlite3" "puppeteer" "playwright")
-
-echo "🔍 Checking and installing missing dependencies..."
-for dep in "${deps[@]}"; do
-  if npm list "$dep" >/dev/null 2>&1; then
-    echo "✅ $dep present"
-  else
-    echo "⚠️ $dep missing → installing..."
-    if npm install "$dep" --no-audit --no-fund; then
-      echo "✅ Installed: $dep"
+# -------------------------------------------------------------------
+# 1. Handle file/directory conflicts
+# -------------------------------------------------------------------
+conflicts=("arielmatrix2.0" "config" "scripts" "contracts" "public" "frontend" "backend" "data" "arielsql_suite")
+for item in "${conflicts[@]}"; do
+    if [ -f "$item" ]; then
+        warn "File exists where directory should be: $item"
+        rm -f "$item" || { err "Failed to remove $item"; exit 1; }
+        mkdir -p "$item"
+        ok "Replaced file with directory: $item"
+    elif [ -d "$item" ]; then
+        ok "$item already a directory"
     else
-      echo "❌ Failed to install: $dep"
+        log "Creating missing directory: $item"
+        mkdir -p "$item"
+        ok "Created directory: $item"
     fi
-  fi
 done
+
+# -------------------------------------------------------------------
+# 2. Ensure essential subdirectories exist
+# -------------------------------------------------------------------
+log "📁 Ensuring essential subdirectories..."
+mkdir -p \
+    backend/{agents,blockchain,database,contracts} \
+    data/{migrations,backups} \
+    frontend/{public,src/{components,styles}} \
+    public/{scripts,assets}
+
+# -------------------------------------------------------------------
+# 3. Ensure critical files exist
+# -------------------------------------------------------------------
+
+# Root package.json
+if [ ! -f "package.json" ]; then
+    cat > package.json <<'EOF'
+{
+  "name": "arielsql-suite",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "start": "node arielsql_suite/main.js",
+    "dev": "nodemon server.js",
+    "precommit": "node scripts/precommit.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "axios": "^1.7.7",
+    "ethers": "^6.13.2",
+    "ccxt": "^4.4.0",
+    "sqlite3": "^5.1.7",
+    "puppeteer": "^24.16.0",
+    "playwright": "^1.48.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5"
+  },
+  "license": "MIT",
+  "private": true
+}
+EOF
+    ok "Created package.json with baseline dependencies"
+else
+    ok "package.json already exists"
+fi
+
+# Backend package.json
+[ ! -f "backend/package.json" ] && echo '{"name": "arielsql-backend", "version": "1.0.0"}' > backend/package.json && ok "Created backend/package.json"
+
+# arielsql_suite/main.js
+if [ ! -f "arielsql_suite/main.js" ]; then
+    cat > arielsql_suite/main.js <<'EOF'
+// ArielSQL Suite Main Entry Point
+import { ServiceManager } from './serviceManager.js';
+console.log('🚀 Starting ArielSQL Ultimate Suite...');
+console.log('📦 Node.js version:', process.version);
+const serviceManager = new ServiceManager();
+serviceManager.initialize().catch(console.error);
+EOF
+    ok "Created arielsql_suite/main.js"
+fi
+
+# arielsql_suite/serviceManager.js
+if [ ! -f "arielsql_suite/serviceManager.js" ]; then
+    cat > arielsql_suite/serviceManager.js <<'EOF'
+// Service Manager for ArielSQL Suite
+export class ServiceManager {
+    constructor() { this.services = new Map(); }
+    async initialize() {
+        console.log('🔄 Initializing services...');
+        for (const service of [
+            './database/BrianNwaezikeDB.js',
+            './blockchain/BrianNwaezikeChain.js',
+            './blockchain/BrianNwaezikePayoutSystem.js'
+        ]) {
+            await this.init(service);
+        }
+    }
+    async init(path) {
+        try {
+            const moduleName = path.split('/').pop().replace('.js','');
+            console.log(`🔄 Initializing ${moduleName}...`);
+            const mod = await import(path);
+            if (mod.default?.initialize) {
+                await mod.default.initialize();
+                this.services.set(moduleName, mod.default);
+                console.log(`✅ ${moduleName} initialized`);
+            }
+        } catch (e) { console.warn(`⚠️ Failed to init ${path}: ${e.message}`); }
+    }
+}
+EOF
+    ok "Created arielsql_suite/serviceManager.js"
+fi
+
+# Fallback server.js
+if [ ! -f "server.js" ]; then
+    cat > server.js <<'EOF'
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+dotenv.config();
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json());
+app.get('/health',(req,res)=>res.json({status:"healthy",timestamp:new Date(),service:"ArielSQL Ultimate"}));
+app.listen(PORT,()=>console.log(`🚀 Server running on port ${PORT}`));
+EOF
+    ok "Created server.js fallback"
+fi
+
+# Example .env
+[ ! -f ".env.example" ] && cat > .env.example <<'EOF'
+PORT=3000
+NODE_ENV=production
+DATABASE_PATH=./data/arielsql.db
+EOF
+[ -f ".env.example" ] && ok ".env.example ready"
+
+# DB schema
+[ ! -f "data/schema.sql" ] && cat > data/schema.sql <<'EOF'
+CREATE TABLE IF NOT EXISTS agent_payouts_log (
+    payout_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    description TEXT,
+    transaction_id TEXT,
+    agent_type TEXT,
+    metadata TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+ok "Ensured data/schema.sql exists"
+
+# -------------------------------------------------------------------
+# 4. Validate dependencies (safe check only, no installs here)
+# -------------------------------------------------------------------
+log "🔍 Checking critical dependencies..."
+if [ -f package.json ]; then
+    for dep in express axios ethers ccxt sqlite3 puppeteer playwright; do
+        if ! grep -q "\"$dep\"" package.json; then
+            warn "Dependency missing: $dep (run 'npm install $dep')"
+        else
+            ok "$dep present"
+        fi
+    done
+fi
+
+# -------------------------------------------------------------------
+# 5. Final permissions
+# -------------------------------------------------------------------
+chmod 755 data || true
+
+ok "ArielSQL Ultimate project structure fixed!"
