@@ -19,7 +19,7 @@ RUN npm config set registry https://registry.npmmirror.com
 # Copy dependency manifests
 COPY package.json ./
 
-# Remove internal modules from package.json before install
+# Remove internal modules (they will be handled by ServiceManager at runtime)
 RUN sed -i '/"ai-security-module"/d' package.json \
  && sed -i '/"quantum-resistant-crypto"/d' package.json \
  && sed -i '/"omnichain-interoperability"/d' package.json \
@@ -40,9 +40,6 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
 # Copy application source
 COPY backend/ ./backend/
-COPY backend/blockchain ./backend/blockchain
-COPY backend/agents ./backend/agents
-COPY backend/database ./backend/database
 COPY arielsql_suite ./arielsql_suite
 COPY scripts ./scripts
 
@@ -51,11 +48,12 @@ COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 COPY fix-structure.sh ./fix-structure.sh
 RUN chmod +x ./cleanup-conflicts.sh ./fix-structure.sh
 
-# Ensure ServiceManager can install internal modules at runtime
+# Environment
 ENV SERVICE_MANAGER_BOOTSTRAP=true
+ENV PORT=10000
 
-# Expose application port
+# Expose the correct port
 EXPOSE 10000
 
-# Entrypoint: self-heal structure, clean conflicts, launch engine
+# Entrypoint: clean, fix structure, launch ServiceManager via main.js
 ENTRYPOINT ["bash", "-c", "./fix-structure.sh && ./cleanup-conflicts.sh && node arielsql_suite/main.js"]
