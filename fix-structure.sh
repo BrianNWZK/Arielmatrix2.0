@@ -1,191 +1,82 @@
-#!/bin/bash
-# ============================================================
-# fix-structure.sh
-# Ensures ArielSQL Ultimate project structure is correct
-# ============================================================
-
+#!/usr/bin/env bash
 set -euo pipefail
 
-log()  { echo -e "\033[1;34mℹ️  $1\033[0m"; }
-ok()   { echo -e "\033[1;32m✅ $1\033[0m"; }
-warn() { echo -e "\033[1;33m⚠️  $1\033[0m"; }
-err()  { echo -e "\033[1;31m❌ $1\033[0m"; }
+echo "🔧 Pre-deploy: installing build tools & dependencies (no file checks, idempotent)"
 
-log "🔧 Fixing ArielSQL Ultimate project structure..."
+# 0) Fast npm config
+npm config set registry "https://registry.npmmirror.com" >/dev/null 2>&1 || true
+npm config set fund false >/dev/null 2>&1 || true
+npm config set audit false >/dev/null 2>&1 || true
+npm config set progress false >/dev/null 2>&1 || true
+npm config set legacy-peer-deps true >/dev/null 2>&1 || true
 
-# -------------------------------------------------------------------
-# 1. Handle file/directory conflicts
-# -------------------------------------------------------------------
-conflicts=("arielmatrix2.0" "config" "scripts" "contracts" "public" "frontend" "backend" "data" "arielsql_suite")
-for item in "${conflicts[@]}"; do
-    if [ -f "$item" ]; then
-        warn "File exists where directory should be: $item"
-        rm -f "$item" || { err "Failed to remove $item"; exit 1; }
-        mkdir -p "$item"
-        ok "Replaced file with directory: $item"
-    elif [ -d "$item" ]; then
-        ok "$item already a directory"
-    else
-        log "Creating missing directory: $item"
-        mkdir -p "$item"
-        ok "Created directory: $item"
-    fi
-done
-
-# -------------------------------------------------------------------
-# 2. Ensure essential subdirectories exist
-# -------------------------------------------------------------------
-log "📁 Ensuring essential subdirectories..."
-mkdir -p \
-    backend/{agents,blockchain,database,contracts} \
-    data/{migrations,backups} \
-    frontend/{public,src/{components,styles}} \
-    public/{scripts,assets}
-
-# -------------------------------------------------------------------
-# 3. Ensure critical files exist
-# -------------------------------------------------------------------
-
-# Root package.json
-if [ ! -f "package.json" ]; then
-    cat > package.json <<'EOF'
-{
-  "name": "arielsql-suite",
-  "version": "1.0.0",
-  "type": "module",
-  "engines": { "node": "22.x" },
-  "scripts": {
-    "start": "node arielsql_suite/main.js",
-    "dev": "nodemon server.js",
-    "precommit": "node scripts/precommit.js",
-    "test": "jest"
-  },
-  "dependencies": {
-    "express": "^4.21.0",
-    "axios": "^1.7.7",
-    "ethers": "^6.13.2",
-    "ccxt": "^4.4.0",
-    "sqlite3": "^5.1.7",
-    "puppeteer": "^24.16.0",
-    "playwright": "^1.48.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5"
-  },
-  "license": "MIT",
-  "private": true
-}
-EOF
-    ok "Created package.json with baseline dependencies"
+# 1) System dependencies (no sudo; assume root inside container)
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    git curl ca-certificates python3 make g++ pkg-config \
+    sqlite3 libsqlite3-dev
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y \
+    git curl ca-certificates python3 make gcc-c++ pkgconfig \
+    sqlite sqlite-devel
+elif command -v apk >/dev/null 2>&1; then
+  apk add --no-cache \
+    git curl ca-certificates python3 make g++ pkgconfig \
+    sqlite sqlite-dev
 else
-    ok "package.json already exists"
+  echo "⚠️  No supported package manager found — skipping system deps"
 fi
 
-# Backend package.json
-[ ! -f "backend/package.json" ] && echo '{"name": "arielsql-backend", "version": "1.0.0"}' > backend/package.json && ok "Created backend/package.json"
+# 2) Idempotent dependency installs based on lockfile hash
+install_deps_idempotent() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
 
-# arielsql_suite/main.js
-if [ ! -f "arielsql_suite/main.js" ]; then
-    cat > arielsql_suite/main.js <<'EOF'
-// ArielSQL Suite Main Entry Point
-import { ServiceManager } from './serviceManager.js';
-console.log('🚀 Starting ArielSQL Ultimate Suite...');
-console.log('📦 Node.js version:', process.version);
-const serviceManager = new ServiceManager();
-serviceManager.initialize().catch(console.error);
-EOF
-    ok "Created arielsql_suite/main.js"
-fi
-
-# arielsql_suite/serviceManager.js
-if [ ! -f "arielsql_suite/serviceManager.js" ]; then
-    cat > arielsql_suite/serviceManager.js <<'EOF'
-// Service Manager for ArielSQL Suite
-export class ServiceManager {
-    constructor() { this.services = new Map(); }
-    async initialize() {
-        console.log('🔄 Initializing services...');
-        for (const service of [
-            './database/BrianNwaezikeDB.js',
-            './blockchain/BrianNwaezikeChain.js',
-            './blockchain/BrianNwaezikePayoutSystem.js'
-        ]) {
-            await this.init(service);
-        }
-    }
-    async init(path) {
-        try {
-            const moduleName = path.split('/').pop().replace('.js','');
-            console.log(`🔄 Initializing ${moduleName}...`);
-            const mod = await import(path);
-            if (mod.default?.initialize) {
-                await mod.default.initialize();
-                this.services.set(moduleName, mod.default);
-                console.log(`✅ ${moduleName} initialized`);
-            }
-        } catch (e) { console.warn(`⚠️ Failed to init ${path}: ${e.message}`); }
-    }
+  if [ -f "$dir/package-lock.json" ]; then
+    local lock_hash
+    lock_hash="$(sha256sum "$dir/package-lock.json" | awk '{print $1}')"
+    local stamp="$dir/node_modules/.install-stamp"
+    if [ -f "$stamp" ] && grep -q "$lock_hash" "$stamp"; then
+      echo "⏭️  Skipping $dir (dependencies already up to date)"
+      return 0
+    fi
+    echo "📦 Installing deps in $dir (npm ci)..."
+    (cd "$dir" && npm ci --no-audit --no-fund) || (cd "$dir" && npm install --no-audit --no-fund || true)
+    mkdir -p "$dir/node_modules"
+    echo "$lock_hash" > "$stamp"
+  elif [ -f "$dir/package.json" ]; then
+    echo "📦 Installing deps in $dir (npm install)..."
+    (cd "$dir" && npm install --no-audit --no-fund || true)
+  fi
 }
-EOF
-    ok "Created arielsql_suite/serviceManager.js"
+
+install_deps_idempotent "."
+install_deps_idempotent "backend"
+install_deps_idempotent "frontend"
+
+# 3) Rebuild native modules for stability when present
+if (npm list better-sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list better-sqlite3 >/dev/null 2>&1); then
+  echo "🧱 Rebuilding better-sqlite3..."
+  npm rebuild better-sqlite3 || true
+  (cd backend && npm rebuild better-sqlite3) || true
+fi
+if (npm list sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list sqlite3 >/dev/null 2>&1); then
+  echo "🧱 Rebuilding sqlite3..."
+  npm rebuild sqlite3 || true
+  (cd backend && npm rebuild sqlite3) || true
 fi
 
-# Fallback server.js
-if [ ! -f "server.js" ]; then
-    cat > server.js <<'EOF'
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-dotenv.config();
-const app = express();
-const PORT = process.env.PORT || 3000;
-app.use(cors());
-app.use(express.json());
-app.get('/health',(req,res)=>res.json({status:"healthy",timestamp:new Date(),service:"ArielSQL Ultimate"}));
-app.listen(PORT,()=>console.log(`🚀 Server running on port ${PORT}`));
-EOF
-    ok "Created server.js fallback"
+# 4) Optional browsers (only if those deps exist)
+if (npm list playwright >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list playwright >/dev/null 2>&1); then
+  echo "🎭 Installing Playwright browsers..."
+  npx playwright install --with-deps || true
+fi
+if (npm list puppeteer >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list puppeteer >/dev/null 2>&1); then
+  if command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1; then
+    export PUPPETEER_SKIP_DOWNLOAD=1
+    echo "🌐 Puppeteer will use system Chromium."
+  fi
 fi
 
-# Example .env
-[ ! -f ".env.example" ] && cat > .env.example <<'EOF'
-PORT=3000
-NODE_ENV=production
-DATABASE_PATH=./data/arielsql.db
-EOF
-[ -f ".env.example" ] && ok ".env.example ready"
-
-# DB schema
-[ ! -f "data/schema.sql" ] && cat > data/schema.sql <<'EOF'
-CREATE TABLE IF NOT EXISTS agent_payouts_log (
-    payout_id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    amount REAL NOT NULL,
-    description TEXT,
-    transaction_id TEXT,
-    agent_type TEXT,
-    metadata TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-EOF
-ok "Ensured data/schema.sql exists"
-
-# -------------------------------------------------------------------
-# 4. Validate dependencies (safe check only, no installs here)
-# -------------------------------------------------------------------
-log "🔍 Checking critical dependencies..."
-if [ -f package.json ]; then
-    for dep in express axios ethers ccxt sqlite3 puppeteer playwright; do
-        if ! grep -q "\"$dep\"" package.json; then
-            warn "Dependency missing: $dep (run 'npm install $dep')"
-        else
-            ok "$dep present"
-        fi
-    done
-fi
-
-# -------------------------------------------------------------------
-# 5. Final permissions
-# -------------------------------------------------------------------
-chmod 755 data || true
-
-ok "ArielSQL Ultimate project structure fixed!"
+echo "✅ fix-structure.sh completed — environment ready (no re-install loops)"
