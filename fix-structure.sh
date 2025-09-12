@@ -1,66 +1,161 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-echo "🔧 Pre-deploy: installing build tools & dependencies (no file checks)"
+echo "🔧 Fixing ArielSQL Ultimate project structure..."
+echo "🕒 $(date '+%Y-%m-%d %H:%M:%S')"
 
-# 1. Install system dependencies for native builds
-if command -v apt-get >/dev/null 2>&1; then
-  apt-get update -y
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    git curl ca-certificates python3 make g++ pkg-config \
-    sqlite3 libsqlite3-dev
-elif command -v yum >/dev/null 2>&1; then
-  yum install -y \
-    git curl ca-certificates python3 make gcc-c++ pkgconfig \
-    sqlite sqlite-devel
-elif command -v apk >/dev/null 2>&1; then
-  apk add --no-cache \
-    git curl ca-certificates python3 make g++ pkgconfig \
-    sqlite sqlite-dev
-else
-  echo "⚠️  No supported package manager found — skipping system deps"
-fi
+# Ensure required directories exist
+declare -a dirs=(
+  "arielmatrix2.0"
+  "config"
+  "contracts"
+  "public"
+  "frontend"
+  "backend"
+  "backend/agents"
+  "backend/blockchain"
+  "backend/config"
+  "backend/contracts"
+  "backend/database"
+  "backend/public"
+  "backend/scripts"
+  "data"
+  "arielsql_suite"
+)
 
-# 2. Configure npm for speed & compatibility
-npm config set fund false >/dev/null 2>&1 || true
-npm config set audit false >/dev/null 2>&1 || true
-npm config set progress false >/dev/null 2>&1 || true
-npm config set legacy-peer-deps true >/dev/null 2>&1 || true
-
-# 3. Install Node dependencies in each workspace
-install_deps() {
-  local dir="$1"
-  if [ -f "$dir/package-lock.json" ]; then
-    echo "📦 Installing deps in $dir (npm ci)..."
-    (cd "$dir" && npm ci --no-audit --no-fund) || \
-    (cd "$dir" && npm install --no-audit --no-fund || true)
-  elif [ -f "$dir/package.json" ]; then
-    echo "📦 Installing deps in $dir (npm install)..."
-    (cd "$dir" && npm install --no-audit --no-fund || true)
+for dir in "${dirs[@]}"; do
+  if [ ! -d "$dir" ]; then
+    mkdir -p "$dir"
+    echo "⚠️ Created missing directory: $dir"
+  else
+    echo "✅ $dir is already a directory"
   fi
-}
+done
 
-install_deps "."
-[ -d "backend" ] && install_deps "backend"
-[ -d "frontend" ] && install_deps "frontend"
+# Validate all agent files
+declare -a agent_files=(
+  "Automated Multi-Chain Fund Consolidation"
+  "USDT-Wallet.js"
+  "adRevenueAgent.js"
+  "adsenseApi.js"
+  "apiScoutAgent.js"
+  "autonomous-ai-engine.js"
+  "browserManager.js"
+  "complianceAgent.js"
+  "configAgent.js"
+  "contractDeployAgent.js"
+  "cryptoAgent.js"
+  "dataAgent.js"
+  "forexSignalAgent.js"
+  "healthAgent.js"
+  "payoutAgent.js"
+  "shopifyAgent.js"
+  "socialAgent.js"
+  "solana-wallet.js"
+  "wallet.js"
+)
 
-# 4. Rebuild native modules if present
-if (npm list sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list sqlite3 >/dev/null 2>&1); then
-  echo "🧱 Rebuilding sqlite3..."
-  npm rebuild sqlite3 || true
-  (cd backend && npm rebuild sqlite3) || true
-fi
-
-# 5. Optional: Install Playwright/Puppeteer browsers if present
-if (npm list playwright >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list playwright >/dev/null 2>&1); then
-  echo "🎭 Installing Playwright browsers..."
-  npx playwright install --with-deps || true
-fi
-if (npm list puppeteer >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list puppeteer >/dev/null 2>&1); then
-  if command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1; then
-    export PUPPETEER_SKIP_DOWNLOAD=1
-    echo "🌐 Puppeteer will use system Chromium."
+for agent in "${agent_files[@]}"; do
+  path="backend/agents/$agent"
+  if [ ! -f "$path" ]; then
+    echo "⚠️ Missing agent file: $path"
+  else
+    echo "✅ Found agent: $path"
   fi
-fi
+done
 
-echo "✅ fix-structure.sh completed — environment ready for build & deploy"
+# Validate critical backend files
+declare -a backend_files=(
+  "blockchain/BrianNwaezikeChain.js"
+  "blockchain/BrianNwaezikePayoutSystem.js"
+  "config/bwaezi-config.js"
+  "contracts/APIKeyGenerator.sol"
+  "contracts/RevenueDistributor.sol"
+  "database/BrianNwaezikeDB.js"
+  "public/index.html"
+  "scripts/CentralizedBwaeziBackend.js"
+  "scripts/dashboard.html"
+  "scripts/hardhat.config.js"
+  "scripts/precommit.js"
+  "scripts/server.js"
+)
+
+for file in "${backend_files[@]}"; do
+  path="backend/$file"
+  if [ ! -f "$path" ]; then
+    echo "⚠️ Missing backend file: $path"
+  else
+    echo "✅ Found backend file: $path"
+  fi
+done
+
+# Validate frontend essentials
+declare -a frontend_files=(
+  "public/assets/index.css"
+  "scripts/deployBwaeziContract.js"
+  "src/components/BwaeziDashboard.jsx"
+  "src/components/BwaeziStats.jsx"
+  "src/styles/BwaeziTheme.css"
+  "src/App.jsx"
+  "src/index.css"
+  "src/main.jsx"
+  ".deepsource.toml"
+  ".dockerignore"
+  ".eslintrc.json"
+  ".gitignore"
+  "build_and_deploy.sh"
+  "cleanup-conflicts.sh"
+  "dashboard.js"
+  "Dockerfile"
+  "fix-structure.sh"
+  "hardhat.config.js"
+  "index.html"
+  "package-lock.json"
+  "package.json"
+  "tailwind.config.js"
+  "vite.config.js"
+)
+
+for file in "${frontend_files[@]}"; do
+  path="frontend/$file"
+  if [ ! -f "$path" ]; then
+    echo "⚠️ Missing frontend file: $path"
+  else
+    echo "✅ Found frontend file: $path"
+  fi
+done
+
+# Validate arielsql_suite core files
+declare -a suite_files=(
+  "main.js"
+  "serviceManager.js"
+)
+
+for file in "${suite_files[@]}"; do
+  path="arielsql_suite/$file"
+  if [ ! -f "$path" ]; then
+    echo "⚠️ Missing ArielSQL Suite file: $path"
+  else
+    echo "✅ Found suite file: $path"
+  fi
+done
+
+# Ensure essential environment and schema files
+touch .env.example
+[ ! -f "data/schema.sql" ] && touch data/schema.sql
+
+# Validate and auto-install critical dependencies
+declare -a deps=("express" "axios" "ethers" "ccxt" "sqlite3" "puppeteer" "playwright")
+
+echo "🔍 Checking and installing missing dependencies..."
+for dep in "${deps[@]}"; do
+  if npm list "$dep" >/dev/null 2>&1; then
+    echo "✅ $dep present"
+  else
+    echo "⚠️ $dep missing → installing..."
+    if npm install "$dep" --no-audit --no-fund; then
+      echo "✅ Installed: $dep"
+    else
+      echo "❌ Failed to install: $dep"
+    fi
+  fi
+done
