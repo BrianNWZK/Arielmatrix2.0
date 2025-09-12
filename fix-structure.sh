@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "🔧 Pre-deploy: installing build tools & dependencies (no file checks, idempotent)"
+echo "🔧 Pre-deploy: ensure build tools & only install missing deps"
 
 # 0) Fast npm config
 npm config set registry "https://registry.npmmirror.com" >/dev/null 2>&1 || true
@@ -28,8 +28,8 @@ else
   echo "⚠️  No supported package manager found — skipping system deps"
 fi
 
-# 2) Idempotent dependency installs based on lockfile hash
-install_deps_idempotent() {
+# 2) Install only if missing
+install_if_missing() {
   local dir="$1"
   [ -d "$dir" ] || return 0
 
@@ -37,25 +37,33 @@ install_deps_idempotent() {
     local lock_hash
     lock_hash="$(sha256sum "$dir/package-lock.json" | awk '{print $1}')"
     local stamp="$dir/node_modules/.install-stamp"
-    if [ -f "$stamp" ] && grep -q "$lock_hash" "$stamp"; then
-      echo "⏭️  Skipping $dir (dependencies already up to date)"
+
+    # Skip if node_modules exists and matches lockfile hash
+    if [ -d "$dir/node_modules" ] && [ -f "$stamp" ] && grep -q "$lock_hash" "$stamp"; then
+      echo "⏭️  $dir deps already installed and match lockfile — skipping"
       return 0
     fi
-    echo "📦 Installing deps in $dir (npm ci)..."
+
+    echo "📦 Installing missing deps in $dir..."
     (cd "$dir" && npm ci --no-audit --no-fund) || (cd "$dir" && npm install --no-audit --no-fund || true)
     mkdir -p "$dir/node_modules"
     echo "$lock_hash" > "$stamp"
+
   elif [ -f "$dir/package.json" ]; then
-    echo "📦 Installing deps in $dir (npm install)..."
+    if [ -d "$dir/node_modules" ]; then
+      echo "⏭️  $dir has node_modules — skipping"
+      return 0
+    fi
+    echo "📦 Installing deps in $dir..."
     (cd "$dir" && npm install --no-audit --no-fund || true)
   fi
 }
 
-install_deps_idempotent "."
-install_deps_idempotent "backend"
-install_deps_idempotent "frontend"
+install_if_missing "."
+install_if_missing "backend"
+install_if_missing "frontend"
 
-# 3) Rebuild native modules for stability when present
+# 3) Rebuild native modules if present
 if (npm list better-sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list better-sqlite3 >/dev/null 2>&1); then
   echo "🧱 Rebuilding better-sqlite3..."
   npm rebuild better-sqlite3 || true
@@ -67,7 +75,7 @@ if (npm list sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list sql
   (cd backend && npm rebuild sqlite3) || true
 fi
 
-# 4) Optional browsers (only if those deps exist)
+# 4) Optional browsers
 if (npm list playwright >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list playwright >/dev/null 2>&1); then
   echo "🎭 Installing Playwright browsers..."
   npx playwright install --with-deps || true
@@ -79,4 +87,4 @@ if (npm list puppeteer >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list p
   fi
 fi
 
-echo "✅ fix-structure.sh completed — environment ready (no re-install loops)"
+echo "✅ fix-structure.sh completed — only missing deps installed"
