@@ -43,7 +43,7 @@ RUN chmod +x fix-structure.sh && ./fix-structure.sh
 
 ENV SERVICE_MANAGER_BOOTSTRAP=true
 
-# Must match ServiceManager.js
+# Must match serviceManager.js
 EXPOSE 10000
 
-ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node arielsql_suite/ServiceManager.js"]
+ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node arielsql_suite/serviceManager.js"]
