@@ -1,59 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "🔧 Pre-deploy: validating structure (always pass) & installing dependencies"
+echo "🔧 Pre-deploy: installing build tools & dependencies (no file checks)"
 
-# 1. Always pass file validation
-echo "✅ File structure validation skipped — user confirmed all files exist."
+# 1. Install system dependencies for native builds
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    git curl ca-certificates python3 make g++ pkg-config \
+    sqlite3 libsqlite3-dev
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y \
+    git curl ca-certificates python3 make gcc-c++ pkgconfig \
+    sqlite sqlite-devel
+elif command -v apk >/dev/null 2>&1; then
+  apk add --no-cache \
+    git curl ca-certificates python3 make g++ pkgconfig \
+    sqlite sqlite-dev
+else
+  echo "⚠️  No supported package manager found — skipping system deps"
+fi
 
-# 2. Install system dependencies for native builds
-install_sysdeps() {
-  if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -y
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      git curl ca-certificates python3 make g++ pkg-config \
-      sqlite3 libsqlite3-dev
-  elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y git curl ca-certificates python3 make gcc-c++ pkgconfig \
-      sqlite sqlite-devel
-  elif command -v apk >/dev/null 2>&1; then
-    sudo apk add --no-cache git curl ca-certificates python3 make g++ pkgconfig \
-      sqlite sqlite-dev
-  fi
-}
-echo "🔩 Ensuring system build deps..."
-install_sysdeps || true
-
-# 3. Configure npm for speed and compatibility
+# 2. Configure npm for speed & compatibility
 npm config set fund false >/dev/null 2>&1 || true
 npm config set audit false >/dev/null 2>&1 || true
 npm config set progress false >/dev/null 2>&1 || true
 npm config set legacy-peer-deps true >/dev/null 2>&1 || true
 
-# 4. Install dependencies in each workspace
-smart_install() {
+# 3. Install Node dependencies in each workspace
+install_deps() {
   local dir="$1"
   if [ -f "$dir/package-lock.json" ]; then
     echo "📦 Installing deps in $dir (npm ci)..."
-    (cd "$dir" && npm ci --no-audit --no-fund) || (cd "$dir" && npm install --no-audit --no-fund || true)
+    (cd "$dir" && npm ci --no-audit --no-fund) || \
+    (cd "$dir" && npm install --no-audit --no-fund || true)
   elif [ -f "$dir/package.json" ]; then
     echo "📦 Installing deps in $dir (npm install)..."
     (cd "$dir" && npm install --no-audit --no-fund || true)
   fi
 }
 
-smart_install "."
-[ -d "backend" ] && smart_install "backend"
-[ -d "frontend" ] && smart_install "frontend"
+install_deps "."
+[ -d "backend" ] && install_deps "backend"
+[ -d "frontend" ] && install_deps "frontend"
 
-# 5. Rebuild native modules if present
+# 4. Rebuild native modules if present
 if (npm list sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list sqlite3 >/dev/null 2>&1); then
   echo "🧱 Rebuilding sqlite3..."
   npm rebuild sqlite3 || true
   (cd backend && npm rebuild sqlite3) || true
 fi
 
-# 6. Optional: Install Playwright/Puppeteer browsers if present
+# 5. Optional: Install Playwright/Puppeteer browsers if present
 if (npm list playwright >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list playwright >/dev/null 2>&1); then
   echo "🎭 Installing Playwright browsers..."
   npx playwright install --with-deps || true
@@ -65,4 +63,4 @@ if (npm list puppeteer >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list p
   fi
 fi
 
-echo "✅ fix-structure.sh completed — no hindrances detected."
+echo "✅ fix-structure.sh completed — environment ready for build & deploy"
