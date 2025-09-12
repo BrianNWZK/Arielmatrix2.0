@@ -1,9 +1,9 @@
-import { ServiceManager } from './serviceManager.js';
+import { serviceManager } from './serviceManager.js';
 import http from 'http';
 
 /**
  * Main entry point for the ArielSQL Alltimate Suite.
- * Initializes the ServiceManager and all its components.
+ * Initializes the serviceManager and all its components.
  */
 async function startArielSQLSuite() {
     console.log('🚀 Starting ArielSQL Ultimate Suite...');
@@ -50,10 +50,10 @@ async function startArielSQLSuite() {
         config = getDefaultConfig();
     }
 
-    const serviceManager = new ServiceManager(config);
+    const serviceManager = new serviceManager(config);
     
     // Make the service manager globally accessible
-    global.arielSQLServiceManager = serviceManager;
+    global.arielSQLserviceManager = serviceManager;
 
     try {
         await serviceManager.init();
@@ -167,9 +167,9 @@ startArielSQLSuite().catch(async (error) => {
     console.error('💥 Failed to start ArielSQL Suite:', error);
     
     // Try to close services if they were partially initialized
-    if (global.arielSQLServiceManager) {
+    if (global.arielSQLserviceManager) {
         try {
-            await global.arielSQLServiceManager.closeServices();
+            await global.arielSQLserviceManager.closeServices();
         } catch (closeError) {
             console.error('Error during emergency shutdown:', closeError);
         }
