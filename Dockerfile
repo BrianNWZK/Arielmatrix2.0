@@ -54,8 +54,8 @@ COPY scripts ./scripts
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 RUN chmod +x ./cleanup-conflicts.sh 
 
-COPY fix-structure.sh ./fix-structure.sh
-RUN chmod +x fix-structure.sh && ./fix-structure.sh
+COPY build_and_deploy.sh ./build_and_deploy.sh
+RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 ENV SERVICE_MANAGER_BOOTSTRAP=true
 
