@@ -27,10 +27,12 @@ RUN sed -i '/"ai-security-module"/d' package.json \
 # Install all dependencies including pqc-dilithium local module
 RUN npm install --legacy-peer-deps --no-audit --no-fund
 
-# Build Dilithium WASM files inside the container
+# Copy pqc-dilithium module and build script
 COPY modules/pqc-dilithium ./modules/pqc-dilithium
-COPY build-wasm.js ./build-wasm.js
-RUN node build-wasm.js
+COPY build_and_deploy.sh ./build_and_deploy.sh
+
+# Make build script executable and run it (this will build WASM)
+RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
@@ -44,7 +46,7 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 COPY backend ./backend
 COPY arielsql_suite ./arielsql_suite
 
-# Copy all 12 production-ready modules (including built pqc-dilithium WASM)
+# Copy all modules (including built pqc-dilithium WASM)
 COPY --from=dependency-installer /usr/src/app/modules ./modules
 
 # Copy scripts
@@ -53,9 +55,6 @@ COPY scripts ./scripts
 # Copy helper scripts
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 RUN chmod +x ./cleanup-conflicts.sh 
-
-COPY build_and_deploy.sh ./build_and_deploy.sh
-RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 ENV SERVICE_MANAGER_BOOTSTRAP=true
 
