@@ -1,7 +1,6 @@
 // Enhanced Crypto Agent with Complete Implementation
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import walletManager from './wallet.js';
-import { yourSQLite } from 'ariel-sqlite-engine';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import ccxt from 'ccxt';
 import axios from 'axios';
@@ -10,6 +9,65 @@ import Web3 from 'web3';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { BrowserManager } from './browserManager.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export default class CryptoAgent {
+  constructor(config, logger) {
+    this.config = config;
+    this.logger = logger;
+    this.dbEngine = new ArielSQLiteEngine(
+      path.resolve(__dirname, '../../data/crypto_agent.db')
+    );
+  }
+
+  async initialize() {
+    try {
+      await this.dbEngine.init();
+      this.logger.info('CryptoAgent database initialized');
+      await this._initSchema();
+    } catch (err) {
+      this.logger.error('Failed to initialize CryptoAgent:', err);
+      throw err;
+    }
+  }
+
+  async _initSchema() {
+    const schemaPath = path.resolve(__dirname, '../schema/crypto_agent.sql');
+    if (!fs.existsSync(schemaPath)) {
+      this.logger.warn(`Schema file not found: ${schemaPath}`);
+      return;
+    }
+    const schemaSQL = fs.readFileSync(schemaPath, 'utf-8');
+    await this.dbEngine.run(schemaSQL);
+    this.logger.info('CryptoAgent schema initialized');
+  }
+
+  async runTask(task) {
+    try {
+      // Example usage of SQLite engine
+      await this.dbEngine.run(
+        'INSERT INTO tasks (name, status) VALUES (?, ?)',
+        [task.name, 'pending']
+      );
+      this.logger.info(`Task queued: ${task.name}`);
+    } catch (err) {
+      this.logger.error('Error queuing task:', err);
+    }
+  }
+
+  async getPendingTasks() {
+    return this.dbEngine.all(
+      'SELECT * FROM tasks WHERE status = ?',
+      ['pending']
+    );
+  }
+}
 
 class EnhancedCryptoAgent {
   constructor(config, logger) {
@@ -17,7 +75,6 @@ class EnhancedCryptoAgent {
     this.logger = logger;
     this.blockchain = BrianNwaezikeChain;
     this.aiEngine = new AutonomousAIEngine(config, logger);
-    this.db = yourSQLite.createDatabase('./data/crypto_agent.db');
     this.exchanges = new Map();
     this.lastStatus = 'idle';
     this.lastExecutionTime = null;
