@@ -14,6 +14,7 @@ RUN npm config set registry https://registry.npmmirror.com
 
 COPY package.json ./
 
+# Remove stubbed dependencies if they exist in package.json
 RUN sed -i '/"ai-security-module"/d' package.json \
  && sed -i '/"quantum-resistant-crypto"/d' package.json \
  && sed -i '/"omnichain-interoperability"/d' package.json \
@@ -30,20 +31,21 @@ WORKDIR /usr/src/app
 
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
+# Copy project sources
 COPY backend ./backend
 COPY arielsql_suite ./arielsql_suite
+COPY modules ./modules        # ✅ FIX: copy all 12 modules into container
 COPY scripts ./scripts
 
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 RUN chmod +x ./cleanup-conflicts.sh 
 
-# In dependency-installer stage
 COPY fix-structure.sh ./fix-structure.sh
 RUN chmod +x fix-structure.sh && ./fix-structure.sh
 
 ENV SERVICE_MANAGER_BOOTSTRAP=true
 
-# Must match serviceManager.js
+# ServiceManager will bind on this port
 EXPOSE 10000
 
-ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node arielsql_suite/serviceManager.js"]
+ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node arielsql_suite/main.js"]
