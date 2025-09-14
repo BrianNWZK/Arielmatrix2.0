@@ -16,7 +16,6 @@ COPY package.json ./
 
 # Remove stubbed dependencies if they exist in package.json
 RUN sed -i '/"ai-security-module"/d' package.json \
- && sed -i '/"quantum-resistant-crypto"/d' package.json \
  && sed -i '/"omnichain-interoperability"/d' package.json \
  && sed -i '/"infinite-scalability-engine"/d' package.json \
  && sed -i '/"carbon-negative-consensus"/d' package.json \
