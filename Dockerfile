@@ -3,9 +3,12 @@ FROM node:22-slim AS dependency-installer
 
 WORKDIR /usr/src/app
 
+# Install build tools for liboqs WASM
 RUN apt-get update && apt-get install -y \
     python3 \
     build-essential \
+    cmake \
+    git \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +24,13 @@ RUN sed -i '/"ai-security-module"/d' package.json \
  && sed -i '/"carbon-negative-consensus"/d' package.json \
  && sed -i '/"ariel-sqlite-engine"/d' package.json
 
+# Install all dependencies including pqc-dilithium local module
 RUN npm install --legacy-peer-deps --no-audit --no-fund
+
+# Build Dilithium WASM files inside the container
+COPY modules/pqc-dilithium ./modules/pqc-dilithium
+COPY build-wasm.js ./build-wasm.js
+RUN node build-wasm.js
 
 # --- STAGE 2: Build & Final Image ---
 FROM node:22-slim AS final-image
@@ -35,8 +44,8 @@ COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 COPY backend ./backend
 COPY arielsql_suite ./arielsql_suite
 
-# Copy all 12 production-ready modules
-COPY modules ./modules
+# Copy all 12 production-ready modules (including built pqc-dilithium WASM)
+COPY --from=dependency-installer /usr/src/app/modules ./modules
 
 # Copy scripts
 COPY scripts ./scripts
