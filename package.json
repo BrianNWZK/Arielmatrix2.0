@@ -42,12 +42,13 @@
     "cron": "^3.1.7",
     "cheerio": "^1.0.0-rc.12",
     "pqc-kyber": "^0.3.0",
+    "pqc-dilithium": "^0.3.0",
     "@huggingface/inference": "^2.6.0",
     "ccxt": "^4.1.89",
-    "rimraf": "^4.0.0",  
-    "@npmcli/move-file": "^2.0.0", 
-    "gauge": "^4.0.0", 
-    "are-we-there-yet": "^3.0.0" 
+    "rimraf": "^4.0.0",
+    "@npmcli/move-file": "^2.0.0",
+    "gauge": "^4.0.0",
+    "are-we-there-yet": "^3.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
