@@ -99,40 +99,376 @@ class EnhancedCryptoAgent {
     }
   }
 
-  // Initialize cryptocurrency exchanges
-  async initializeExchanges() {
-    const exchangeConfigs = [
-      { id: 'binance', class: ccxt.binance },
-      { id: 'coinbase', class: ccxt.coinbasepro },
-      { id: 'kraken', class: ccxt.kraken },
-      { id: 'kucoin', class: ccxt.kucoin },
-      { id: 'huobi', class: ccxt.huobipro },
-      { id: 'okex', class: ccxt.okex },
-      { id: 'bitfinex', class: ccxt.bitfinex },
-      { id: 'bybit', class: ccxt.bybit },
-      { id: 'gateio', class: ccxt.gateio },
-      { id: 'mexc', class: ccxt.mexc }
-    ];
+  return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
 
-    for (const { id, class: ExchangeClass } of exchangeConfigs) {
-      try {
-        const exchange = new ExchangeClass({
-          apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-          secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-          enableRateLimit: true,
-          timeout: 30000,
-          options: { defaultType: 'spot', adjustForTimeDifference: true }
-        });
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
 
-        await exchange.loadMarkets();
-        this.exchanges.set(id, exchange);
-        this.logger.info(`✅ Exchange initialized: ${id}`);
-      } catch (error) {
-        this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
+      }
+    }return Math.max(tradeSize, minTradeSize);
+    } catch (error) { // Corrected catch statement
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0; // Handle error appropriately
+    }
+
+    // Initialize cryptocurrency exchanges
+    async initializeExchanges() {
+      const exchangeConfigs = [
+        { id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+      ];
+
+      for (let i = 0; i < exchangeConfigs.length; i++) {
+        const config = exchangeConfigs[i]; // Use a single variable
+        const id = config.id;
+        const ExchangeClass = config.class; // Get class separately
+        try {
+          const exchange = new ExchangeClass({
+            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
+            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
+            enableRateLimit: true,
+            timeout: 30000,
+            options: { defaultType: 'spot', adjustForTimeDifference: true }
+          });
+
+          await exchange.loadMarkets();
+          this.exchanges.set(id, exchange);
+          this.logger.info(`✅ Exchange initialized: ${id}`);
+        } catch (error) {
+          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+        }
       }
     }
-  }
-
   // Initialize blockchain connections
   async initializeChainConnections() {
     this.chainConnections = {
