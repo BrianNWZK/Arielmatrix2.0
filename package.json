@@ -42,11 +42,11 @@
     "cron": "^3.1.7",
     "cheerio": "^1.0.0-rc.12",
     "pqc-kyber": "^0.3.0",
-    "pqc-dilithium": "^0.3.0",
-    "@huggingface/inference": "^2.6.0",
-    "ccxt": "^4.1.89",
+    "pqc-dilithium": "file:./modules/pqc-dilithium",
     "liboqs-js": "^0.5.0",
     "pqclean": "^0.0.1",
+    "@huggingface/inference": "^2.6.0",
+    "ccxt": "^4.1.89",
     "rimraf": "^4.0.0",
     "@npmcli/move-file": "^2.0.0",
     "gauge": "^4.0.0",
@@ -62,10 +62,10 @@
     "@types/node": "^20.11.24",
     "@types/express": "^4.17.21",
     "@types/cors": "^2.8.17",
-    "emscripten": "^3.1.45",
+    "vite": "^5.0.0",
+    "emscripten-sdk": "^0.3.2",
     "webpack": "^5.88.0",
-    "webpack-cli": "^5.1.4",
-    "vite": "^5.0.0"
+    "webpack-cli": "^5.1.4"
   },
   "optionalDependencies": {
     "litestream": "^0.3.9"
