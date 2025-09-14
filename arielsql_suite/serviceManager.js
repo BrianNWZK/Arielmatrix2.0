@@ -1,446 +1,219 @@
-import { v4 as uuidv4 } from 'uuid';
-import { Mutex } from 'async-mutex';
-import { EventEmitter } from 'events';
-import crypto from 'crypto';
-import path from 'path';
-import fs from 'fs';
-import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
-import express from 'express';
-import winston from 'winston';
-import betterSqlite3 from 'better-sqlite3';
+import express from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
+import http from "http";
+import WebSocket, { WebSocketServer } from "ws";
 
-// Import actual agent classes from their respective files
-import AdRevenueAgent from '../backend/agents/adRevenueAgent.js';
-import CryptoAgent from '../backend/agents/cryptoAgent.js';
-import ShopifyAgent from '../backend/agents/shopifyAgent.js';
-import SocialAgent from '../backend/agents/socialAgent.js';
-import ForexSignalAgent from '../backend/agents/forexSignalAgent.js';
-import PayoutAgent from '../backend/agents/payoutAgent.js';
-import DataAgent from '../backend/agents/dataAgent.js';
-import AdsenseApi from '../backend/agents/adsenseApi.js';
-import ContractDeployAgent from '../backend/agents/contractDeployAgent.js';
+// === Core Blockchain Systems ===
+import { BrianNwaezikeChain } from "../backend/blockchain/BrianNwaezikeChain.js";
+import { BrianNwaezikePayoutSystem } from "../backend/blockchain/BrianNwaezikePayoutSystem.js";
 
-// Custom Errors & Utilities
-export class DatabaseError extends Error {
-    constructor(message, originalError) {
-        super(message);
-        this.name = 'DatabaseError';
-        this.originalError = originalError;
-    }
-}
+// === Phase 3 Advanced Modules ===
+import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
+import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
+import { QuantumShield } from "../modules/quantum-shield/index.js";
+import { AIThreatDetector } from "../modules/ai-threat-detector/index.js";
+import { AISecurityModule } from "../modules/ai-security-module/index.js";
+import { CrossChainBridge } from "../modules/cross-chain-bridge/index.js";
+import { OmnichainInterop } from "../modules/omnichain-interoperability/index.js";
+import { ShardingManager } from "../modules/sharding-manager/index.js";
+import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js";
+import { EnergyEfficientConsensus } from "../modules/energy-efficient-consensus/index.js";
+import { CarbonNegativeConsensus } from "../modules/carbon-negative-consensus/index.js";
 
-export class SecurityError extends Error {
-    constructor(message) {
-        super(message);
-        this.name = 'SecurityError';
-    }
-}
+// === Agents (simplified examples) ===
+import AdRevenueAgent from "../backend/agents/adRevenueAgent.js";
+import ComplianceAgent from "../backend/agents/complianceAgent.js";
+import PayoutAgent from "../backend/agents/payoutAgent.js";
+import HealthAgent from "../backend/agents/healthAgent.js";
 
-export class ServiceInitializationError extends Error {
-    constructor(serviceName, message) {
-        super(`Failed to initialize ${serviceName}: ${message}`);
-        this.name = 'ServiceInitializationError';
-        this.serviceName = serviceName;
-    }
-}
+export class ServiceManager {
+  constructor(config = {}) {
+    this.config = {
+      port: config.port || process.env.PORT || 10000,
+    };
 
-// Production Logger
-class ProductionLogger {
-    constructor() {
-        this.logger = winston.createLogger({
-            level: process.env.LOG_LEVEL || 'info',
-            format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.errors({ stack: true }),
-                winston.format.json()
-            ),
-            defaultMeta: { service: 'ariel-sql-service' },
-            transports: [
-                new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-                new winston.transports.File({ filename: 'logs/combined.log' }),
-                new winston.transports.Console({
-                    format: winston.format.combine(
-                        winston.format.colorize(),
-                        winston.format.simple()
-                    )
-                })
-            ],
-        });
-    }
+    // Core App/Server
+    this.app = express();
+    this.app.use(cors());
+    this.app.use(bodyParser.json({ limit: "20mb" }));
+    this.server = http.createServer(this.app);
 
-    info(message, meta = {}) {
-        this.logger.info(message, meta);
-    }
+    // WebSocket
+    this.wss = new WebSocketServer({ server: this.server });
 
-    error(message, meta = {}) {
-        this.logger.error(message, meta);
-    }
+    // Core Blockchain
+    this.blockchain = new BrianNwaezikeChain();
+    this.payoutSystem = new BrianNwaezikePayoutSystem();
 
-    warn(message, meta = {}) {
-        this.logger.warn(message, meta);
-    }
+    // Advanced Modules
+    this.modules = {
+      qrCrypto: new QuantumResistantCrypto(),
+      sqlite: new ArielSQLiteEngine("./data/ariel.db"),
+      qShield: new QuantumShield(),
+      aiThreat: new AIThreatDetector(),
+      aiSecurity: new AISecurityModule(),
+      bridge: new CrossChainBridge(),
+      interop: new OmnichainInterop(),
+      shards: new ShardingManager(),
+      scalability: new InfiniteScalabilityEngine(),
+      consensus: new EnergyEfficientConsensus(),
+      carbonConsensus: new CarbonNegativeConsensus(),
+    };
 
-    debug(message, meta = {}) {
-        this.logger.debug(message, meta);
-    }
-}
+    // Core Agents
+    this.agents = {
+      adRevenue: new AdRevenueAgent(),
+      compliance: new ComplianceAgent(),
+      payout: new PayoutAgent(),
+      health: new HealthAgent(),
+    };
 
-// Global logger instance
-const logger = new ProductionLogger();
+    this._setupApiRoutes();
+    this._setupWebSocket();
+  }
 
-// Task Queue with SQLite
-class SQLiteTaskQueue {
-    constructor(dbPath) {
-        this.dbPath = dbPath;
-        this.db = null;
+  async init() {
+    // Initialize blockchain + payout system
+    if (this.blockchain.init) await this.blockchain.init();
+    if (this.payoutSystem.init) await this.payoutSystem.init();
+
+    // Initialize all modules
+    for (const [name, mod] of Object.entries(this.modules)) {
+      if (mod.initialize) {
+        console.log(`⚙ Initializing module: ${name}`);
+        await mod.initialize();
+      }
     }
 
-    async init() {
-        this.db = betterSqlite3(this.dbPath);
-
-        // Create tasks table
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                data TEXT,
-                status TEXT DEFAULT 'pending',
-                priority INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                started_at DATETIME,
-                completed_at DATETIME,
-                result TEXT,
-                error TEXT
-            )
-        `);
-
-        // Create index for performance
-        this.db.exec(`
-            CREATE INDEX IF NOT EXISTS idx_tasks_status_priority 
-            ON tasks(status, priority DESC, created_at)
-        `);
-
-        logger.info('SQLite task queue initialized');
+    // Initialize all agents
+    for (const [name, agent] of Object.entries(this.agents)) {
+      if (agent.initialize) {
+        console.log(`🤖 Initializing agent: ${name}`);
+        await agent.initialize();
+      }
     }
+  }
 
-    async add(task) {
-        const result = this.db.run(
-            "INSERT INTO tasks (type, data, priority) VALUES (?, ?, ?)",
-            [task.type, JSON.stringify(task.data || {}), task.priority || 0]
-        );
+  start() {
+    this.server.listen(this.config.port, "0.0.0.0", () => {
+      console.log(`🌐 ServiceManager live on port ${this.config.port}`);
+    });
+  }
 
-        logger.debug('Task added to queue', { taskId: result.lastInsertRowid, type: task.type });
-        return result.lastInsertRowid;
+  async stop() {
+    console.log("🛑 Stopping services...");
+    this.wss.close();
+    this.server.close();
+
+    // Close module connections
+    if (this.modules.sqlite && this.modules.sqlite.db) {
+      await this.modules.sqlite.db.close();
     }
+  }
 
-    async getNextTask() {
-        return this.db.get(`
-            SELECT * FROM tasks 
-            WHERE status = 'pending' 
-            ORDER BY priority DESC, created_at 
-            LIMIT 1
-        `);
-    }
+  _setupApiRoutes() {
+    this.app.get("/", (req, res) => {
+      res.json({ status: "ok", service: "ArielSQL Suite v2.0" });
+    });
 
-    async startTask(taskId) {
-        this.db.run(
-            "UPDATE tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?",
-            [taskId]
-        );
+    this.app.get("/health", (req, res) => {
+      res.json(this.agents.health.getStatus());
+    });
 
-        const task = this.db.get("SELECT * FROM tasks WHERE id = ?", [taskId]);
-        return task ? { ...task, data: JSON.parse(task.data || '{}') } : null;
-    }
+    // Blockchain APIs
+    this.app.get("/blockchain/chain", (req, res) => {
+      res.json(this.blockchain.chain);
+    });
 
-    async completeTask(taskId, result) {
-        this.db.run(
-            "UPDATE tasks SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = ? WHERE id = ?",
-            [JSON.stringify(result || {}), taskId]
-        );
-    }
+    this.app.post("/blockchain/tx", async (req, res) => {
+      try {
+        await this.blockchain.addTransaction(req.body);
+        const block = await this.blockchain.minePendingTransactions();
+        res.json({ success: true, block });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
-    async failTask(taskId, error) {
-        this.db.run(
-            "UPDATE tasks SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error = ? WHERE id = ?",
-            [error.message, taskId]
-        );
-    }
+    // Payouts
+    this.app.post("/payouts", async (req, res) => {
+      const { wallet, amount } = req.body;
+      try {
+        const result = await this.payoutSystem.recordPayout(wallet, amount);
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
-    async getQueueStats() {
-        const stats = this.db.get(`
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
-                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-            FROM tasks
-        `);
+    // AI Security
+    this.app.post("/security/scan", async (req, res) => {
+      try {
+        const result = await this.modules.aiSecurity.monitorSystem(req.body.logs, req.body.data);
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
-        return stats;
-    }
+    // Interop
+    this.app.post("/interop", async (req, res) => {
+      try {
+        const result = await this.modules.interop.executeCrossChainOperation(req.body);
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
-    async close() {
-        if (this.db) {
-            this.db.close();
-            logger.info('Task queue database closed');
-        }
-    }
-}
+    // Consensus
+    this.app.post("/consensus/block", async (req, res) => {
+      try {
+        const result = await this.modules.consensus.proposeBlock(req.body);
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
-// Database Adapter
-class DatabaseAdapter {
-    constructor(config) {
-        this.config = config;
-        this.db = null;
-        this.mutex = new Mutex();
-    }
+    // Carbon Offsets
+    this.app.post("/carbon/offset", async (req, res) => {
+      try {
+        const result = await this.modules.carbonConsensus.processTransaction(req.body);
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+  }
 
-    async init() {
+  _setupWebSocket() {
+    this.wss.on("connection", (ws) => {
+      ws.send(JSON.stringify({ msg: "Connected to ArielSQL Suite WS" }));
+
+      ws.on("message", async (msg) => {
         try {
-            // Ensure directory exists
-            const dir = path.dirname(this.config.path);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
+          const data = JSON.parse(msg);
 
-            this.db = betterSqlite3(this.config.path);
+          if (data.type === "ping") {
+            ws.send(JSON.stringify({ type: "pong" }));
+          }
 
-            // Enable WAL mode for better concurrency
-            this.db.pragma('journal_mode = WAL');
+          if (data.type === "blockchain_tx") {
+            await this.blockchain.addTransaction(data.payload);
+            const block = await this.blockchain.minePendingTransactions();
+            ws.send(JSON.stringify({ type: "block_mined", block }));
+          }
 
-            // Enable foreign keys
-            this.db.pragma('foreign_keys = ON');
-
-            logger.info('Database adapter initialized successfully');
-        } catch (error) {
-            logger.error('Failed to initialize database adapter', { error: error.message });
-            throw new DatabaseError('Database initialization failed', error);
+          if (data.type === "interop") {
+            const result = await this.modules.interop.executeCrossChainOperation(data.payload);
+            ws.send(JSON.stringify({ type: "interop_result", result }));
+          }
+        } catch (err) {
+          ws.send(JSON.stringify({ error: err.message }));
         }
-    }
-
-    async execute(sql, params = []) {
-        const release = await this.mutex.acquire();
-        try {
-            const stmt = this.db.prepare(sql);
-            return stmt.run(...params);
-        } catch (error) {
-            logger.error('Database execute error', { sql, error: error.message });
-            throw new DatabaseError('Database execution failed', error);
-        } finally {
-            release();
-        }
-    }
-
-    async get(sql, params = []) {
-        const release = await this.mutex.acquire();
-        try {
-            const stmt = this.db.prepare(sql);
-            return stmt.get(...params);
-        } catch (error) {
-            logger.error('Database get error', { sql, error: error.message });
-            throw new DatabaseError('Database query failed', error);
-        } finally {
-            release();
-        }
-    }
-
-    async all(sql, params = []) {
-        const release = await this.mutex.acquire();
-        try {
-            const stmt = this.db.prepare(sql);
-            return stmt.all(...params);
-        } catch (error) {
-            logger.error('Database all error', { sql, error: error.message });
-            throw new DatabaseError('Database query failed', error);
-        } finally {
-            release();
-        }
-    }
-
-    async run(sql, params = []) {
-        return this.execute(sql, params);
-    }
-
-    async close() {
-        if (this.db) {
-            this.db.close();
-            logger.info('Database connection closed');
-        }
-    }
+      });
+    });
+  }
 }
-
-// Autonomous Agents (Real Revenue)
-// Base Agent class
-class BaseAgent {
-    constructor(config, logger) {
-        this.config = config;
-        this.logger = logger;
-        this.revenueGenerated = 0;
-        this.lastExecution = null;
-        this.executionCount = 0;
-    }
-
-    async initialize() {
-        this.logger.info(`${this.constructor.name} initialized`);
-    }
-
-    async run() {
-        this.executionCount++;
-        this.lastExecution = new Date();
-        this.logger.debug(`${this.constructor.name} execution started`);
-    }
-
-    getStatus() {
-        return {
-            name: this.constructor.name,
-            revenueGenerated: this.revenueGenerated,
-            lastExecution: this.lastExecution,
-            executionCount: this.executionCount,
-            status: 'active'
-        };
-    }
-
-    recordRevenue(amount, source) {
-        this.revenueGenerated += amount;
-        this.logger.info('Revenue recorded', { 
-            agent: this.constructor.name, 
-            amount, 
-            source,
-            totalRevenue: this.revenueGenerated
-        });
-    }
-}
-
-// Main Service Manager
-class ServiceManager extends EventEmitter {
-    constructor(config) {
-        super();
-        this.config = config;
-        this.dbAdapter = new DatabaseAdapter({ path: this.config.dbPath });
-        this.taskQueue = new SQLiteTaskQueue(this.config.dbPath);
-        this.agents = {};
-        this.app = express();
-        this.server = createServer(this.app);
-        this.wss = new WebSocketServer({ server: this.server });
-    }
-
-    async init() {
-        try {
-            logger.info('Initializing Service Manager...');
-
-            // Initialize database and task queue
-            await this.dbAdapter.init();
-            await this.taskQueue.init();
-
-            // Initialize and register all agents
-            this.agents = {
-                dataAgent: new DataAgent(this.config, logger),
-                cryptoAgent: new CryptoAgent(this.config, logger),
-                shopifyAgent: new ShopifyAgent(this.config, logger),
-                forexSignalAgent: new ForexSignalAgent(this.config, logger),
-                socialAgent: new SocialAgent(this.config, logger),
-                adRevenueAgent: new AdRevenueAgent(this.config, logger),
-                payoutAgent: new PayoutAgent(this.config, logger)
-            };
-
-            for (const agentName in this.agents) {
-                await this.agents[agentName].initialize();
-            }
-
-            // Setup API routes
-            this.setupApiRoutes();
-
-            // Setup WebSocket
-            this.setupWebSocket();
-
-            logger.info('Service Manager initialized successfully.');
-            this.emit('initialized');
-        } catch (error) {
-            logger.error('Failed to initialize Service Manager', { error: error.message });
-            throw new ServiceInitializationError('Service Manager', error.message);
-        }
-    }
-
-    setupApiRoutes() {
-        this.app.use(express.json());
-
-        // Health check route
-        this.app.get('/health', (req, res) => {
-            res.status(200).send('OK');
-        });
-
-        // Agents status route
-        this.app.get('/agents/status', (req, res) => {
-            const status = Object.values(this.agents).map(agent => agent.getStatus());
-            res.json(status);
-        });
-
-        // Add task to queue route
-        this.app.post('/tasks/add', async (req, res) => {
-            const { type, data, priority } = req.body;
-            if (!type) {
-                return res.status(400).json({ error: 'Task type is required' });
-            }
-            try {
-                const taskId = await this.taskQueue.add({ type, data, priority });
-                res.status(201).json({ message: 'Task added', taskId });
-            } catch (error) {
-                res.status(500).json({ error: 'Failed to add task' });
-            }
-        });
-
-        logger.info('API routes set up.');
-    }
-
-    setupWebSocket() {
-        this.wss.on('connection', ws => {
-            logger.info('New WebSocket client connected.');
-            ws.on('message', message => {
-                logger.debug('Received WebSocket message', { message: message.toString() });
-                // Handle incoming messages from the frontend
-            });
-            ws.on('close', () => {
-                logger.info('WebSocket client disconnected.');
-            });
-        });
-
-        // Periodically send a message to all connected clients
-        setInterval(() => {
-            const data = {
-                timestamp: new Date().toISOString(),
-                agents: Object.values(this.agents).map(agent => agent.getStatus())
-            };
-            this.wss.clients.forEach(client => {
-                if (client.readyState === 1) { // WebSocket.OPEN
-                    client.send(JSON.stringify(data));
-                }
-            });
-        }, 5000); // Update every 5 seconds
-
-        logger.info('WebSocket server set up.');
-    }
-
-       start() {
-        const PORT = process.env.PORT || 10000; // must match Docker EXPOSE
-        const HOST = '0.0.0.0';
-        this.server.listen(PORT, HOST, () => {
-            logger.info(`🚀 ServiceManager listening on ${HOST}:${PORT}`);
-        });
-    }
-}
-
-const config = {
-    dbPath: path.join(process.cwd(), 'data', 'bwaezi.db'), // safer than __dirname in ESM
-};
-
-const serviceManager = new ServiceManager(config);
-
-serviceManager.init().then(() => {
-    serviceManager.start();
-}).catch(err => {
-    logger.error('Critical failure during service initialization', { error: err.message });
-    process.exit(1);
-});
-
