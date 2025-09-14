@@ -44,4 +44,4 @@ fi
 npm rebuild sqlite3 || true
 (cd backend && npm rebuild sqlite3 || true)
 
-echo "✅ fix-structure.sh completed successfully."
+echo "✅ build_and_deploy.sh completed successfully."
