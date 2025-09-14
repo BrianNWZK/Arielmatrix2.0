@@ -29,14 +29,20 @@ FROM node:22-slim AS final-image
 
 WORKDIR /usr/src/app
 
+# Copy node_modules from builder
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
 # Copy project sources
 COPY backend ./backend
 COPY arielsql_suite ./arielsql_suite
-COPY modules ./modules        # ✅ FIX: copy all 12 modules into container
+
+# Copy all 12 production-ready modules
+COPY modules ./modules
+
+# Copy scripts
 COPY scripts ./scripts
 
+# Copy helper scripts
 COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 RUN chmod +x ./cleanup-conflicts.sh 
 
@@ -47,5 +53,7 @@ ENV SERVICE_MANAGER_BOOTSTRAP=true
 
 # ServiceManager will bind on this port
 EXPOSE 10000
+EXPOSE 10001
 
+# Entrypoint: cleanup, then start
 ENTRYPOINT ["bash", "-c", "./cleanup-conflicts.sh && node arielsql_suite/main.js"]
