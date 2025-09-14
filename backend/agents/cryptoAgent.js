@@ -1406,4 +1406,3 @@ class EnhancedCryptoAgent {
   }
 }
 
-export default EnhancedCryptoAgent;
