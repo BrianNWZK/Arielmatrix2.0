@@ -139,4 +139,38 @@ else
   echo "ℹ️ pqc-dilithium WASM already present, skipping build."
 fi
 
+# 7) Build pqc-kyber WASM if not already present
+echo "🔨 Building pqc-kyber WASM modules..."
+KYBER_DIR="modules/pqc-kyber"
+KYBER_DIST="$KYBER_DIR/dist"
+mkdir -p "$KYBER_DIST"
+
+if [ -z "$(ls -A "$KYBER_DIST" 2>/dev/null)" ]; then
+  # Reuse liboqs if already cloned by dilithium, otherwise clone here
+  if [ ! -d "$KYBER_DIR/liboqs" ]; then
+    echo "📦 Cloning liboqs for Kyber..."
+    git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git "$KYBER_DIR/liboqs"
+  fi
+
+  echo "⚙️ Compiling Kyber variants to WASM..."
+  (cd "$KYBER_DIR/liboqs" && mkdir -p build && cd build && \
+    cmake -DOQS_USE_OPENSSL=OFF -DOQS_BUILD_ONLY_LIB=ON -DOQS_OPT_TARGET=wasm .. && \
+    make -j"$(nproc)")
+
+  # Copy produced WASM(s) to dist; adjust paths if your build outputs elsewhere
+  for lvl in 512 768 1024; do
+    wasm="kyber${lvl}.wasm"
+    # Common liboqs build output dir example; change if needed
+    src="$KYBER_DIR/liboqs/build/bin/$wasm"
+    if [ -f "$src" ]; then
+      cp "$src" "$KYBER_DIST/"
+      echo "✅ Built $wasm"
+    else
+      echo "⚠️ $wasm not found in liboqs build output; check CMake flags and output paths."
+    fi
+  done
+else
+  echo "ℹ️ pqc-kyber WASM already present, skipping build."
+fi
+
 echo "✅ build_and_deploy.sh completed successfully."
