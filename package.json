@@ -43,7 +43,7 @@
     "cheerio": "^1.0.0-rc.12",
     "pqc-kyber": "^0.3.0",
     "pqc-dilithium": "file:./modules/pqc-dilithium",
-    "pqclean": "^0.0.1",
+    "pqclean": "^0.8.1",
     "@huggingface/inference": "^2.6.0",
     "ccxt": "^4.1.89",
     "rimraf": "^4.0.0",
