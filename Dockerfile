@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
 RUN npm install -g npm@10.9.3
 RUN npm config set registry https://registry.npmmirror.com
 
+# Copy package.json first for dependency caching
 COPY package.json ./
 
 # Remove stubbed dependencies if they exist in package.json
@@ -24,14 +25,13 @@ RUN sed -i '/"ai-security-module"/d' package.json \
  && sed -i '/"carbon-negative-consensus"/d' package.json \
  && sed -i '/"ariel-sqlite-engine"/d' package.json
 
-# Install all dependencies including pqc-dilithium local module
+# Install base dependencies (local module will be copied later)
 RUN npm install --legacy-peer-deps --no-audit --no-fund
 
-# Copy pqc-dilithium module and build script
-COPY modules/pqc-dilithium ./modules/pqc-dilithium
-COPY build_and_deploy.sh ./build_and_deploy.sh
+# Copy the rest of the project so build_and_deploy.sh can see all files
+COPY . .
 
-# Make build script executable and run it (this will build WASM)
+# Make build script executable and run it (installs missing deps, builds WASM)
 RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 # --- STAGE 2: Build & Final Image ---
@@ -42,18 +42,13 @@ WORKDIR /usr/src/app
 # Copy node_modules from builder
 COPY --from=dependency-installer /usr/src/app/node_modules ./node_modules
 
-# Copy project sources
-COPY backend ./backend
-COPY arielsql_suite ./arielsql_suite
-
-# Copy all modules (including built pqc-dilithium WASM)
+# Copy project sources from builder (ensures built WASM is included)
+COPY --from=dependency-installer /usr/src/app/backend ./backend
+COPY --from=dependency-installer /usr/src/app/arielsql_suite ./arielsql_suite
 COPY --from=dependency-installer /usr/src/app/modules ./modules
+COPY --from=dependency-installer /usr/src/app/scripts ./scripts
+COPY --from=dependency-installer /usr/src/app/cleanup-conflicts.sh ./cleanup-conflicts.sh
 
-# Copy scripts
-COPY scripts ./scripts
-
-# Copy helper scripts
-COPY cleanup-conflicts.sh ./cleanup-conflicts.sh
 RUN chmod +x ./cleanup-conflicts.sh 
 
 ENV SERVICE_MANAGER_BOOTSTRAP=true
