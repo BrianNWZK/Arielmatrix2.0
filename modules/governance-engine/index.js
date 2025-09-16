@@ -1,6 +1,20 @@
 import { ArielSQLiteEngine } from "../ariel-sqlite-engine/index.js";
 import { QuantumResistantCrypto } from "../quantum-resistant-crypto/index.js";
 
+async executeProposal(proposal, blockchain) {
+    // Founder veto check (first 2 years)
+    if (await this.isWithinFounderVetoPeriod()) {
+        const founderVeto = await this.checkFounderVeto(proposal.id);
+        if (founderVeto) {
+            console.log("⛔ Founder veto exercised on proposal:", proposal.id);
+            await this.db.run(
+                "UPDATE governance_proposals SET status = 'vetoed' WHERE id = ?",
+                [proposal.id]
+            );
+            return false;
+        }
+    }
+    
 class GovernanceEngine {
     constructor() {
         this.db = null;
