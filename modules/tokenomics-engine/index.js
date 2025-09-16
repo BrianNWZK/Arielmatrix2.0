@@ -6,12 +6,12 @@ import axios from 'axios';
 class TokenomicsEngine {
     constructor(maxSupply, config = {}) {
         this.config = {
-            maxSupply: maxSupply || 1000000000,
-            founderAllocation: config.founderAllocation || 0.6, // 60% to founders
-            ecosystemAllocation: config.ecosystemAllocation || 0.4, // 40% to ecosystem
-            inflationRate: config.inflationRate || 0.05, // 5% annual inflation
-            communityTax: config.communityTax || 0.02, // 2% community tax
-            blockReward: config.blockReward || 10, // Base block reward
+            maxSupply: maxSupply || 100000000, 
+            founderAllocation: config.founderAllocation || 0.6,
+            ecosystemAllocation: config.ecosystemAllocation || 0.4,
+            inflationRate: config.inflationRate || 0.05,
+            communityTax: config.communityTax || 0.02,
+            blockReward: config.blockReward || 10,
             mainnet: config.mainnet || true,
             ...config
         };
@@ -595,23 +595,38 @@ class TokenomicsEngine {
 
 export default TokenomicsEngine;import { ArielSQLiteEngine } from "../ariel-sqlite-engine/index.js";
 
+// ... existing code ...
 class TokenomicsEngine {
-    constructor(maxSupply = 1000000000) {
+    constructor(maxSupply, config = {}) {
+        this.config = {
+            maxSupply: maxSupply || 100000000, // CHANGED: 100M instead of 1B
+            founderAllocation: config.founderAllocation || 0.6,
+            ecosystemAllocation: config.ecosystemAllocation || 0.4,
+            inflationRate: config.inflationRate || 0.05,
+            communityTax: config.communityTax || 0.02,
+            blockReward: config.blockReward || 10,
+            mainnet: config.mainnet || true,
+            ...config
+        };
+
+// AND in the second TokenomicsEngine class:
+class TokenomicsEngine {
+    constructor(maxSupply = 100000000) { // 100M 
         this.maxSupply = maxSupply;
         this.db = null;
         
-        // REVISED: 60% Founder, 40% Ecosystem
-        this.founderAllocation = 600000000; // 600M bwzC (60%) - Your permanent stake
-        this.ecosystemAllocation = 400000000; // 400M bwzC (40%) - For distribution
+        // REVISED: 60% Founder, 40% Ecosystem - UPDATED FOR 100M TOTAL
+        this.founderAllocation = 60000000; // 60M bwzC (60%) - permanent stake
+        this.ecosystemAllocation = 40000000; // 40M bwzC (40%) - for distribution
         
-        // Sub-allocation of ecosystem fund
-        this.stakingRewardsAllocation = 300000000; // 300M (30% of total)
-        this.liquidityMiningAllocation = 50000000; // 50M (5%)
-        this.communityTreasuryAllocation = 50000000; // 50M (5%)
+        // Sub-allocation of ecosystem fund - UPDATED FOR 100M TOTAL
+        this.stakingRewardsAllocation = 30000000; // 30M (30% of total) 
+        this.liquidityMiningAllocation = 5000000; // 5M (5%) 
+        this.communityTreasuryAllocation = 5000000; // 5M (5%) 
         
         this.founderVesting = {
-            cliff: 365 * 24 * 60 * 60, // 1 year cliff (in seconds)
-            duration: 4 * 365 * 24 * 60 * 60, // 4 year linear vesting
+            cliff: 365 * 24 * 60 * 60,
+            duration: 4 * 365 * 24 * 60 * 60,
             startTime: null
         };
     }
