@@ -26,15 +26,35 @@ import axios from 'axios';
 
 // Real-world blockchain RPC endpoints
 const MAINNET_RPC = {
-    ETHEREUM: process.env.ETH_MAINNET_RPC || "https://mainnet.infura.io/v3/YOUR_PROJECT_ID",
-    SOLANA: process.env.SOL_MAINNET_RPC || "https://api.mainnet-beta.solana.com",
-    BINANCE: process.env.BNB_MAINNET_RPC || "https://bsc-dataseed.binance.org/",
-    POLYGON: process.env.MATIC_MAINNET_RPC || "https://polygon-rpc.com/",
-    AVALANCHE: process.env.AVAX_MAINNET_RPC || "https://api.avax.network/ext/bc/C/rpc"
+    ETHEREUM: process.env.ETH_MAINNET_RPC,
+    SOLANA: process.env.SOL_MAINNET_RPC,
+    BINANCE: process.env.BNB_MAINNET_RPC,
+    POLYGON: process.env.MATIC_MAINNET_RPC,
+    AVALANCHE: process.env.AVAX_MAINNET_RPC
 };
+
+// Validate required environment variables
+function validateEnvironment() {
+    const requiredVars = ['ETH_MAINNET_RPC', 'AI_THREAT_API_KEY', 'CARBON_OFFSET_API_KEY'];
+    const missingVars = requiredVars.filter(varName => !process.env[varName]);
+    
+    if (missingVars.length > 0) {
+        throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+    }
+    
+    // Validate RPC endpoints
+    Object.entries(MAINNET_RPC).forEach(([chain, endpoint]) => {
+        if (!endpoint) {
+            throw new Error(`Missing RPC endpoint for ${chain}`);
+        }
+    });
+}
 
 class BrianNwaezikeChain {
     constructor(config = {}) {
+        // Validate environment before initialization
+        validateEnvironment();
+        
         this.config = {
             chainId: config.chainId || 'bwaezi-mainnet-1',
             dbPath: config.dbPath || './data/bwaezi-chain.db',
@@ -42,62 +62,37 @@ class BrianNwaezikeChain {
             validatorSetSize: config.validatorSetSize || 21,
             emissionRate: config.emissionRate || 0.05,
             shards: config.shards || 4,
-            maxSupply: config.maxSupply || 100000000,
+            maxSupply: config.maxSupply || 100000000, // Updated to 100,000,000
             minStakeAmount: config.minStakeAmount || 10000,
             slashingPercentage: config.slashingPercentage || 0.01,
             mainnet: config.mainnet || true,
             ...config
         };
 
-        // Initialize real blockchain connections
-        this.web3 = new Web3(new Web3.providers.HttpProvider(MAINNET_RPC.ETHEREUM));
+        // Initialize real blockchain connections with connection pooling
+        this.web3 = new Web3(new Web3.providers.HttpProvider(MAINNET_RPC.ETHEREUM, {
+            timeout: 30000,
+            keepAlive: true
+        }));
         this.solanaConnection = new Connection(MAINNET_RPC.SOLANA, 'confirmed');
         this.ethersProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.ETHEREUM);
         this.bscProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.BINANCE);
 
         // Initialize all modules with real configurations
-        this.db = new ArielSQLiteEngine(this.config.dbPath);
+        this.db = new ArielSQLiteEngine(this.config.dbPath, {
+            poolSize: 10,
+            timeout: 30000
+        });
         this.quantumShield = new QuantumShield({ mainnet: this.config.mainnet });
         this.quantumCrypto = new QuantumResistantCrypto({ 
             algorithm: 'dilithium3',
             mainnet: this.config.mainnet 
         });
-        // Simple local AI threat detector
-        this.aiThreatDetector = {
-        initialize: async () => {
-        console.log("✅ AI Threat Detector Ready (Local Mode)");
-        return true;
-     },
-        detectAnomalies: async (transactionData, context) => {
-    
-        const anomalies = [];
-        const amount = transactionData.amount || 0;
-    
-       // Check for very large transactions
-        if (amount > 1000000) {
-        anomalies.push({
-        type: 'large_transaction',
-        description: 'This is a very large transaction',
-        severity: 'medium'
-      });
-    }
-    
-       // Check for rapid transactions
-        if (context.transactionCount > 50) {
-        anomalies.push({
-        type: 'high_frequency',
-        description: 'Many transactions in short time',
-        severity: 'medium'
-      });
-    }
-    
-    return {
-      anomalies,
-      severity: anomalies.length > 0 ? 'medium' : 'low',
-      validated: true
-    };
-  }
-};
+        this.aiThreatDetector = new AIThreatDetector({
+            apiKey: process.env.AI_THREAT_API_KEY,
+            model: 'gpt-4',
+            mainnet: this.config.mainnet
+        });
         this.aiSecurity = new AISecurityModule({
             monitoring: true,
             realTimeScan: true,
@@ -123,21 +118,11 @@ class BrianNwaezikeChain {
             zeroCost: true,
             mainnet: this.config.mainnet
         });
-        this.carbonConsensus = {
-           initialize: async () => {
-           console.log("✅ Carbon Offset Ready (Local Mode)");
-           return true;
-        },
-           offsetGenesisBlock: async () => {
-           return 'local_genesis_offset_' + Date.now();
-        },
-           offsetBlock: async (blockHash, gasUsed, transactionCount) => {
-           return {
-           offsetId: 'local_offset_' + Date.now(),
-           carbonOffset: (gasUsed * 0.0001) + (transactionCount * 0.01)
-        };
-      }
-   };
+        this.carbonConsensus = new CarbonNegativeConsensus({
+            carbonOffsetProvider: 'patch.io',
+            apiKey: process.env.CARBON_OFFSET_API_KEY,
+            mainnet: this.config.mainnet
+        });
         this.governanceEngine = new GovernanceEngine({
             votingPeriod: 7 * 24 * 60 * 60 * 1000, // 7 days
             mainnet: this.config.mainnet
@@ -157,6 +142,8 @@ class BrianNwaezikeChain {
         this.isMining = false;
         this.miningInterval = null;
         this.consensusRound = 0;
+        this.baseFee = 0.001; // Dynamic base fee for EIP-1559 style fee market
+        this.baseFeeUpdateBlock = 0;
 
         console.log("✅ Brian Nwaezike Chain (Bwaezi) Mainnet Initialized");
     }
@@ -265,9 +252,11 @@ class BrianNwaezikeChain {
                 finality_score REAL DEFAULT 1.0 CHECK(finality_score BETWEEN 0 AND 1),
                 gas_used INTEGER DEFAULT 0,
                 gas_limit INTEGER DEFAULT 30000000,
+                base_fee REAL DEFAULT 0.001 CHECK(base_fee >= 0),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_blocks_timestamp (timestamp),
-                INDEX idx_blocks_validator (validator_address)
+                INDEX idx_blocks_validator (validator_address),
+                INDEX idx_blocks_timestamp_validator (timestamp, validator_address)
             )`,
 
             // Transactions table with enhanced constraints
@@ -433,6 +422,24 @@ class BrianNwaezikeChain {
                 total_value_locked REAL NOT NULL CHECK(total_value_locked >= 0),
                 timestamp INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`,
+
+            // Enhanced network statistics with system metrics
+            `CREATE TABLE IF NOT EXISTS enhanced_network_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                metrics TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`,
+
+            // Failed transactions for analysis
+            `CREATE TABLE IF NOT EXISTS failed_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_data TEXT NOT NULL,
+                error_message TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_failed_tx_timestamp (timestamp)
             )`
         ];
 
@@ -458,17 +465,18 @@ class BrianNwaezikeChain {
                 validator_signatures: JSON.stringify([]),
                 finality_score: 1.0,
                 gas_used: 0,
-                gas_limit: 30000000
+                gas_limit: 30000000,
+                base_fee: this.baseFee
             };
 
             await this.db.run(
                 `INSERT INTO blocks (height, hash, previous_hash, timestamp, validator_address, 
-                 transactions_count, quantum_seal, carbon_offset_id, validator_signatures, finality_score, gas_used, gas_limit)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 transactions_count, quantum_seal, carbon_offset_id, validator_signatures, finality_score, gas_used, gas_limit, base_fee)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [genesisBlock.height, genesisBlock.hash, genesisBlock.previous_hash, genesisBlock.timestamp, 
                  genesisBlock.validator_address, genesisBlock.transactions_count, genesisBlock.quantum_seal, 
                  genesisBlock.carbon_offset_id, genesisBlock.validator_signatures, genesisBlock.finality_score,
-                 genesisBlock.gas_used, genesisBlock.gas_limit]
+                 genesisBlock.gas_used, genesisBlock.gas_limit, genesisBlock.base_fee]
             );
 
             // Initialize tokenomics with real distribution
@@ -480,6 +488,11 @@ class BrianNwaezikeChain {
         } else {
             const latestBlock = await this.db.get("SELECT MAX(height) as height FROM blocks");
             this.currentBlockHeight = latestBlock.height;
+            
+            // Load the current base fee from the latest block
+            const latestBlockData = await this.db.get("SELECT base_fee FROM blocks WHERE height = ?", [this.currentBlockHeight]);
+            this.baseFee = latestBlockData.base_fee;
+            this.baseFeeUpdateBlock = this.currentBlockHeight;
         }
     }
 
@@ -501,7 +514,8 @@ class BrianNwaezikeChain {
             }
 
             // Enhanced balance check with gas consideration
-            const totalCost = transaction.amount + (transaction.fee || await this.calculateGasFee(transaction));
+            const gasFee = await this.calculateGasFee(transaction);
+            const totalCost = transaction.amount + gasFee;
             if (fromAccount.balance < totalCost) {
                 throw new Error(`Insufficient balance. Required: ${totalCost}, Available: ${fromAccount.balance}`);
             }
@@ -547,32 +561,83 @@ class BrianNwaezikeChain {
             transaction.shard_id = this.shardingManager.getShardForKey(transaction.to);
             transaction.gas_price = await this.calculateGasPrice();
             transaction.gas_limit = await this.estimateGas(transaction);
+            transaction.fee = gasFee;
 
             this.pendingTransactions.push(transaction);
 
-            console.log(`📥 Transaction added to mempool: ${transaction.id}, Gas: ${transaction.gas_limit}`);
-            return { id: transaction.id, gasPrice: transaction.gas_price, gasLimit: transaction.gas_limit };
+            console.log(`📥 Transaction added to mempool: ${transaction.id}, Gas: ${transaction.gas_limit}, Fee: ${gasFee}`);
+            return { id: transaction.id, gasPrice: transaction.gas_price, gasLimit: transaction.gas_limit, fee: gasFee };
         } catch (error) {
-            console.error("❌ Failed to add transaction:", error);
+            console.error("❌ Failed to add transaction:", {
+                error: error.message,
+                transactionId: transaction?.id,
+                from: transaction?.from,
+                amount: transaction?.amount,
+                timestamp: Date.now()
+            });
+            
+            // Log failed transaction for analysis
+            await this.logFailedTransaction(transaction, error);
             throw error;
         }
     }
 
+    async logFailedTransaction(transaction, error) {
+        try {
+            await this.db.run(
+                "INSERT INTO failed_transactions (transaction_data, error_message, timestamp) VALUES (?, ?, ?)",
+                [JSON.stringify(transaction), error.message, Date.now()]
+            );
+        } catch (logError) {
+            console.error("❌ Failed to log failed transaction:", logError);
+        }
+    }
+
     async calculateGasFee(transaction) {
-        // Real gas calculation based on transaction complexity
-        const baseFee = 0.001; // Base fee in bwzC
-        const sizeFee = transaction.amount * 0.0001; // 0.01% of amount
-        const priorityFee = 0.0005; // Priority fee for faster processing
+        // EIP-1559 style fee calculation
+        const baseFee = await this.getBaseFee();
+        const priorityFee = await this.calculatePriorityFee();
+        return baseFee + priorityFee;
+    }
+
+    async getBaseFee() {
+        // Update base fee every 10 blocks based on network congestion
+        if (this.currentBlockHeight - this.baseFeeUpdateBlock >= 10) {
+            const recentBlocks = await this.db.all(
+                "SELECT gas_used, gas_limit FROM blocks WHERE height > ? ORDER BY height DESC LIMIT 10",
+                [this.currentBlockHeight - 10]
+            );
+            
+            const avgUtilization = recentBlocks.reduce((sum, block) => {
+                return sum + (block.gas_used / block.gas_limit);
+            }, 0) / recentBlocks.length;
+            
+            // Adjust base fee based on network utilization (target 50% utilization)
+            if (avgUtilization > 0.5) {
+                this.baseFee *= 1.125; // Increase by 12.5% if overutilized
+            } else if (avgUtilization < 0.5) {
+                this.baseFee *= 0.875; // Decrease by 12.5% if underutilized
+            }
+            
+            // Ensure base fee doesn't go below minimum
+            this.baseFee = Math.max(0.0001, this.baseFee);
+            this.baseFeeUpdateBlock = this.currentBlockHeight;
+        }
         
-        return baseFee + sizeFee + priorityFee;
+        return this.baseFee;
+    }
+
+    async calculatePriorityFee() {
+        // Priority fee based on mempool congestion
+        const congestionFactor = Math.max(0.1, Math.min(2.0, this.pendingTransactions.length / 1000));
+        return 0.0005 * congestionFactor;
     }
 
     async calculateGasPrice() {
-        // Real-time gas price calculation based on network congestion
-        const basePrice = 0.0001; // Base price in bwzC
-        const congestionFactor = Math.max(0.1, Math.min(2.0, this.pendingTransactions.length / 1000));
-        
-        return basePrice * congestionFactor;
+        // Gas price is base fee + priority fee
+        const baseFee = await this.getBaseFee();
+        const priorityFee = await this.calculatePriorityFee();
+        return baseFee + priorityFee;
     }
 
     async estimateGas(transaction) {
@@ -589,9 +654,10 @@ class BrianNwaezikeChain {
             return null;
         }
 
+        let validator = null;
         try {
             // Select validator with real performance-based selection
-            const validator = this.selectValidator();
+            validator = this.selectValidator();
             if (!validator) {
                 console.warn("⚠️ No active validators available");
                 return null;
@@ -611,7 +677,8 @@ class BrianNwaezikeChain {
                 validator_signatures: "",
                 finality_score: 0,
                 gas_used: 0,
-                gas_limit: 30000000
+                gas_limit: 30000000,
+                base_fee: this.baseFee
             };
 
             block.hash = this.calculateBlockHash(block);
@@ -621,29 +688,27 @@ class BrianNwaezikeChain {
             const failedTransactions = [];
             let totalGasUsed = 0;
             
-            for (const tx of this.pendingTransactions) {
-                const shard = tx.shard_id || this.shardingManager.getShardForKey(tx.to);
-                try {
-                    if (totalGasUsed + tx.gas_limit > block.gas_limit) {
-                        throw new Error("Block gas limit exceeded");
-                    }
-
-                    // Process transaction with real gas accounting
-                    const result = await this.processTransaction(tx, shard);
-                    if (result.success) {
+            // Process transactions in batches for better performance
+            const batchSize = 100;
+            for (let i = 0; i < this.pendingTransactions.length; i += batchSize) {
+                const batch = this.pendingTransactions.slice(i, i + batchSize);
+                const batchResults = await Promise.allSettled(
+                    batch.map(tx => this.processTransactionBatch(tx, block.gas_limit, totalGasUsed))
+                );
+                
+                for (let j = 0; j < batchResults.length; j++) {
+                    const result = batchResults[j];
+                    const tx = batch[j];
+                    
+                    if (result.status === 'fulfilled' && result.value.success) {
                         processedTransactions.push(tx);
-                        totalGasUsed += result.gasUsed || tx.gas_limit;
-                        await this.shardingManager.incrementLoad(shard);
+                        totalGasUsed += result.value.gasUsed || tx.gas_limit;
+                        await this.shardingManager.incrementLoad(tx.shard_id);
                     } else {
                         tx.status = 'failed';
-                        tx.error = result.error;
+                        tx.error = result.status === 'fulfilled' ? result.value.error : result.reason.message;
                         failedTransactions.push(tx);
                     }
-                } catch (error) {
-                    console.error(`❌ Failed to process transaction ${tx.id}:`, error);
-                    tx.status = 'failed';
-                    tx.error = error.message;
-                    failedTransactions.push(tx);
                 }
             }
 
@@ -673,12 +738,12 @@ class BrianNwaezikeChain {
             try {
                 await this.db.run(
                     `INSERT INTO blocks (height, hash, previous_hash, timestamp, validator_address, 
-                     transactions_count, quantum_seal, carbon_offset_id, validator_signatures, finality_score, gas_used, gas_limit)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     transactions_count, quantum_seal, carbon_offset_id, validator_signatures, finality_score, gas_used, gas_limit, base_fee)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [block.height, block.hash, block.previous_hash, block.timestamp, 
                      block.validator_address, block.transactions_count, block.quantum_seal, 
                      block.carbon_offset_id, block.validator_signatures, block.finality_score,
-                     block.gas_used, block.gas_limit]
+                     block.gas_used, block.gas_limit, block.base_fee]
                 );
 
                 // Save successful transactions
@@ -739,6 +804,27 @@ class BrianNwaezikeChain {
         }
     }
 
+    async processTransactionBatch(tx, blockGasLimit, currentGasUsed) {
+        try {
+            const shard = tx.shard_id || this.shardingManager.getShardForKey(tx.to);
+            
+            if (currentGasUsed + tx.gas_limit > blockGasLimit) {
+                throw new Error("Block gas limit exceeded");
+            }
+
+            // Process transaction with real gas accounting
+            const result = await this.processTransaction(tx, shard);
+            if (result.success) {
+                return { success: true, gasUsed: result.gasUsed || tx.gas_limit };
+            } else {
+                return { success: false, error: result.error };
+            }
+        } catch (error) {
+            console.error(`❌ Failed to process transaction ${tx.id}:`, error);
+            return { success: false, error: error.message };
+        }
+    }
+
     async startRealTimeMonitoring() {
         // Start real-time price feeds
         setInterval(async () => {
@@ -755,7 +841,43 @@ class BrianNwaezikeChain {
             await this.monitorValidatorPerformance();
         }, 300000); // Every 5 minutes
 
+        // Start system metrics monitoring
+        setInterval(async () => {
+            await this.updateSystemMetrics();
+        }, 30000); // Every 30 seconds
+
         console.log("✅ Real-time monitoring started");
+    }
+
+    async updateSystemMetrics() {
+        try {
+            const metrics = {
+                memoryUsage: process.memoryUsage(),
+                cpuUsage: process.cpuUsage(),
+                uptime: process.uptime(),
+                pendingTransactions: this.pendingTransactions.length,
+                dbSize: await this.getDatabaseSize(),
+                shardLoad: await this.shardingManager.getShardLoad(),
+                timestamp: Date.now()
+            };
+            
+            await this.db.run(
+                "INSERT INTO enhanced_network_stats (metrics, timestamp) VALUES (?, ?)",
+                [JSON.stringify(metrics), Date.now()]
+            );
+        } catch (error) {
+            console.error("❌ Error updating system metrics:", error);
+        }
+    }
+
+    async getDatabaseSize() {
+        try {
+            const result = await this.db.get("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()");
+            return result.size;
+        } catch (error) {
+            console.error("❌ Error getting database size:", error);
+            return 0;
+        }
     }
 
     async updatePriceFeeds() {
@@ -829,8 +951,6 @@ class BrianNwaezikeChain {
             console.error("❌ Error monitoring validator performance:", error);
         }
     }
-
-    // ... rest of the methods with enhanced real-world implementations
 
     async getChainStats() {
         const [
