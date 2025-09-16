@@ -62,29 +62,29 @@ class BrianNwaezikeChain {
             algorithm: 'dilithium3',
             mainnet: this.config.mainnet 
         });
-       // Simple local AI threat detector
-this.aiThreatDetector = {
-  initialize: async () => {
-    console.log("✅ AI Threat Detector Ready (Local Mode)");
-    return true;
-  },
-  detectAnomalies: async (transactionData, context) => {
-    // Simple threat detection logic
-    const anomalies = [];
-    const amount = transactionData.amount || 0;
+        // Simple local AI threat detector
+        this.aiThreatDetector = {
+        initialize: async () => {
+        console.log("✅ AI Threat Detector Ready (Local Mode)");
+        return true;
+     },
+        detectAnomalies: async (transactionData, context) => {
     
-    // Check for very large transactions
-    if (amount > 1000000) {
-      anomalies.push({
+        const anomalies = [];
+        const amount = transactionData.amount || 0;
+    
+       // Check for very large transactions
+        if (amount > 1000000) {
+        anomalies.push({
         type: 'large_transaction',
         description: 'This is a very large transaction',
         severity: 'medium'
       });
     }
     
-    // Check for rapid transactions
-    if (context.transactionCount > 50) {
-      anomalies.push({
+       // Check for rapid transactions
+        if (context.transactionCount > 50) {
+        anomalies.push({
         type: 'high_frequency',
         description: 'Many transactions in short time',
         severity: 'medium'
