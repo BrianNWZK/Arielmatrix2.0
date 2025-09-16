@@ -1,3 +1,4 @@
+javascript
 /**
  * BrianNwaezikeChain.js - Phase 5 Implementation
  * 
@@ -262,6 +263,79 @@ class BrianNwaezikeChain {
                 account_count INTEGER DEFAULT 0,
                 load_score REAL DEFAULT 0.0,
                 last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Governance changes table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS governance_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                proposal_id INTEGER NOT NULL,
+                parameter TEXT NOT NULL,
+                old_value TEXT NOT NULL,
+                new_value TEXT NOT NULL,
+                executed_at INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (proposal_id) REFERENCES governance_proposals (id)
+            )
+        `);
+
+        // Reward distributions table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS reward_distributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                block_height INTEGER NOT NULL,
+                validator_address TEXT NOT NULL,
+                amount REAL NOT NULL,
+                distributed_at INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Cross-chain mints table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS cross_chain_mints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                amount REAL NOT NULL,
+                source_chain TEXT NOT NULL,
+                minted_at INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Cross-chain burns table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS cross_chain_burns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                amount REAL NOT NULL,
+                dest_chain TEXT NOT NULL,
+                burned_at INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Foundation distributions table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS foundation_distributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipient TEXT NOT NULL,
+                amount REAL NOT NULL,
+                purpose TEXT NOT NULL,
+                distributed_at INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Network upgrades table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS network_upgrades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                activation_height INTEGER NOT NULL,
+                proposed_at INTEGER NOT NULL,
+                status TEXT DEFAULT 'scheduled',
+                executed_at INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
     }
