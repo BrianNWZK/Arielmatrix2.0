@@ -124,6 +124,43 @@ class BrianNwaezikeChain {
     }
 
     async createDatabaseSchema() {
+        // Founder vesting table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS founder_vesting (
+                address TEXT PRIMARY KEY,
+                total_amount REAL NOT NULL,
+                vested_amount REAL DEFAULT 0,
+                cliff_duration INTEGER NOT NULL,
+                vesting_duration INTEGER NOT NULL,
+                start_time INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+       `);
+
+        // Ecosystem funds breakdown
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS ecosystem_funds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                staking_rewards REAL NOT NULL,
+                liquidity_mining REAL NOT NULL,
+                community_treasury REAL NOT NULL,
+                total_amount REAL NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+       `);
+        
+        // Founder multi-sig table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS founder_multisig (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                address TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                required_signatures INTEGER DEFAULT 3,
+                total_signers INTEGER DEFAULT 5,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+    `   );
+
         // Accounts table (for state management)
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS accounts (
