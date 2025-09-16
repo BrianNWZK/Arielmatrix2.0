@@ -42,7 +42,7 @@ class BrianNwaezikeChain {
             validatorSetSize: config.validatorSetSize || 21,
             emissionRate: config.emissionRate || 0.05,
             shards: config.shards || 4,
-            maxSupply: config.maxSupply || 1000000000,
+            maxSupply: config.maxSupply || 100000000,
             minStakeAmount: config.minStakeAmount || 10000,
             slashingPercentage: config.slashingPercentage || 0.01,
             mainnet: config.mainnet || true,
