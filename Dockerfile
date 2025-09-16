@@ -25,8 +25,15 @@ RUN sed -i '/"ai-security-module"/d' package.json \
  && sed -i '/"carbon-negative-consensus"/d' package.json \
  && sed -i '/"ariel-sqlite-engine"/d' package.json
 
-# Install base dependencies (local module will be copied later)
+# Copy local PQC modules before install so npm links them
+COPY modules/pqc-dilithium ./modules/pqc-dilithium
+COPY modules/pqc-kyber ./modules/pqc-kyber
+
+# Install all dependencies (including local modules)
 RUN npm install --legacy-peer-deps --no-audit --no-fund
+
+# Verify web3 is installed
+RUN npm list web3 || (echo "❌ web3 is missing after npm install" && exit 1)
 
 # Copy the rest of the project so build_and_deploy.sh can see all files
 COPY . .
