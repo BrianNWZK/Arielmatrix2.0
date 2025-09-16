@@ -84,6 +84,24 @@ install_if_missing "."
 install_if_missing "backend"
 install_if_missing "frontend"
 
+# 3.5) Ensure critical modules are installed
+ensure_module_installed() {
+  local pkg="$1"
+  if ! npm list "$pkg" >/dev/null 2>&1; then
+    echo "📦 $pkg not found — attempting install..."
+    npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund || {
+      echo "❌ Failed to install $pkg"
+      exit 1
+    }
+  else
+    echo "✅ $pkg is already installed."
+  fi
+}
+
+ensure_module_installed "web3"
+ensure_module_installed "axios"
+ensure_module_installed "sqlite3"
+
 # 4) Rebuild native modules if present
 if (npm list better-sqlite3 >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list better-sqlite3 >/dev/null 2>&1); then
   echo "🧱 Rebuilding better-sqlite3..."
@@ -108,36 +126,10 @@ if (npm list puppeteer >/dev/null 2>&1) || (cd backend 2>/dev/null && npm list p
   fi
 fi
 
-# 6) Build pqc-dilithium WASM if not already present
-echo "🔨 Building pqc-dilithium WASM modules..."
-PQC_DIR="modules/pqc-dilithium"
-DIST_DIR="$PQC_DIR/dist"
-mkdir -p "$DIST_DIR"
-
-if [ -z "$(ls -A "$DIST_DIR" 2>/dev/null)" ]; then
-  echo "📦 Cloning liboqs..."
-  if [ ! -d "$PQC_DIR/liboqs" ]; then
-    git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git "$PQC_DIR/liboqs"
-  fi
-
-  echo "⚙️ Compiling Dilithium variants to WASM..."
-  (cd "$PQC_DIR/liboqs" && mkdir -p build && cd build && \
-    cmake -DOQS_USE_OPENSSL=OFF -DOQS_BUILD_ONLY_LIB=ON -DOQS_OPT_TARGET=wasm .. && \
-    make -j"$(nproc)")
-
-  for level in 2 3 5; do
-    wasm_file="dilithium${level}.wasm"
-    src_path="$PQC_DIR/liboqs/build/bin/${wasm_file}"
-    if [ -f "$src_path" ]; then
-      cp "$src_path" "$DIST_DIR/"
-      echo "✅ Built $wasm_file"
-    else
-      echo "⚠️ $wasm_file not found in build output"
-    fi
-  done
-else
-  echo "ℹ️ pqc-dilithium WASM already present, skipping build."
-fi
+# 6) Skipping pqc-dilithium WASM build
+echo "⏭️ Skipping pqc-dilithium WASM build — using native bindings only."
 
 # 7) Skipping pqc-kyber WASM build
 echo "⏭️ Skipping pqc-kyber WASM build — using native bindings only."
+
+echo "✅ build_and_deploy.sh completed successfully."
