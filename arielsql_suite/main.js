@@ -1,7 +1,7 @@
 import http from "http";
 import { ServiceManager } from "./serviceManager.js";
-import BrianNwaezikeChain from './backend/blockchain/BrianNwaezikeChain.js';
-import healthAgent from './backend/agents/healthAgent.js';
+import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
+import healthAgent from '../backend/agents/healthAgent.js';
 import winston from 'winston';
 
 const logger = winston.createLogger({
