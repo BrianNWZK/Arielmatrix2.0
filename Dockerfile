@@ -67,4 +67,4 @@ COPY --from=builder /usr/src/app .
 
 EXPOSE 10000
 
-ENTRYPOINT ["node", "main.js"]
+ENTRYPOINT ["node", "arielsql_suite/main.js"]
