@@ -4,7 +4,7 @@ set -euo pipefail
 echo "🔧 Pre-deploy: ensure build tools & install missing deps"
 
 # 0) Fast npm config
-npm config set registry "https://registry.npmmirror.com" >/dev/null 2>&1 || true
+npm config set registry "https://registry.npmjs.org" >/dev/null 2>&1 || true
 npm config set fund false >/dev/null 2>&1 || true
 npm config set audit false >/dev/null 2>&1 || true
 npm config set progress false >/dev/null 2>&1 || true
@@ -66,6 +66,7 @@ install_if_missing() {
     fi
 
     echo "📦 Installing deps in $dir..."
+    npm cache clean --force
     (cd "$dir" && npm ci --no-audit --no-fund) || (cd "$dir" && npm install --no-audit --no-fund || true)
     mkdir -p "$dir/node_modules"
     echo "$lock_hash" > "$stamp"
@@ -76,6 +77,7 @@ install_if_missing() {
       return 0
     fi
     echo "📦 Installing deps in $dir..."
+    npm cache clean --force
     (cd "$dir" && npm install --no-audit --no-fund || true)
   fi
 }
@@ -87,11 +89,17 @@ install_if_missing "frontend"
 # 3.5) Ensure critical modules are installed
 ensure_module_installed() {
   local pkg="$1"
+  echo "🔍 Checking for $pkg..."
   if ! npm list "$pkg" >/dev/null 2>&1; then
     echo "📦 $pkg not found — attempting install..."
+    npm cache clean --force
     npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund || {
-      echo "❌ Failed to install $pkg"
-      exit 1
+      echo "❌ Failed to install $pkg — retrying with official registry..."
+      npm config set registry "https://registry.npmjs.org"
+      npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund || {
+        echo "❌ Final attempt to install $pkg failed"
+        exit 1
+      }
     }
   else
     echo "✅ $pkg is already installed."
