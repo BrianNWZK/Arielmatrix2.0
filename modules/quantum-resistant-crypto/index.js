@@ -3,7 +3,8 @@
 // Using 'crypto' module for secure key derivation and AES encryption
 import { kyberKeyPair, dilithiumKeyPair, kyberEncrypt, kyberDecrypt, dilithiumSign, dilithiumVerify } from 'pqc-kyber';
 import { randomBytes, createHash, createCipheriv, createDecipheriv, scryptSync } from 'crypto';
-import { Database } from '../ariel-sqlite-engine';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
+
 
 /**
  * @class QuantumResistantCrypto
@@ -14,7 +15,7 @@ import { Database } from '../ariel-sqlite-engine';
  */
 export class QuantumResistantCrypto {
     constructor() {
-        this.db = new Database();
+        this.db = new ArielSQLiteEngine();
         this.keyDerivationSalt = randomBytes(16); // A unique salt for key derivation
     }
 
