@@ -1,52 +1,63 @@
-# --- STAGE 1: Dependency Installation ---
-FROM node:22-slim AS dependency-installer
+# --- STAGE 1: Dependency Installer ---
+FROM node:22-slim AS builder
 
 WORKDIR /usr/src/app
 
-# Install build tools for liboqs WASM
+# System dependencies
 RUN apt-get update && apt-get install -y \
-    python3 \
-    build-essential \
-    cmake \
-    git \
-    sqlite3 \
-    libsqlite3-dev \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+  python3 \
+  build-essential \
+  cmake \
+  git \
+  curl \
+  pkg-config \
+  sqlite3 \
+  libsqlite3-dev \
+  ca-certificates \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g npm@10.9.3
+# Use official registry to avoid integrity errors
+RUN npm config set registry https://registry.npmjs.org \
+  && npm config set legacy-peer-deps true \
+  && npm config set audit false \
+  && npm config set fund false \
+  && npm config set progress false
 
-# Use official npm registry for better reliability
-RUN npm config set registry https://registry.npmjs.org
-RUN npm config set fund false
-RUN npm config set audit false
-RUN npm config set progress false
-RUN npm config set legacy-peer-deps true
-
-# Copy package.json and local modules first for dependency caching
+# Copy package files
 COPY package.json ./
-COPY modules/pqc-dilithium ./modules/pqc-dilithium
-COPY modules/pqc-kyber ./modules/pqc-kyber
+COPY package-lock.json ./
 
-# Remove stubbed dependencies if they exist in package.json
-RUN sed -i '/"ai-security-module"/d' package.json \
- && sed -i '/"omnichain-interoperability"/d' package.json \
- && sed -i '/"infinite-scalability-engine"/d' package.json \
- && sed -i '/"carbon-negative-consensus"/d' package.json \
- && sed -i '/"ariel-sqlite-engine"/d' package.json
+# Clean cache and install
+RUN npm cache clean --force \
+  && npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-# Clean npm cache and install dependencies
-RUN npm cache clean --force
-RUN npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
+# Verify critical modules
+RUN npm list web3 || (echo "❌ web3 missing" && exit 1)
+RUN npm list axios || (echo "❌ axios missing" && exit 1)
+RUN npm list sqlite3 || (echo "❌ sqlite3 missing" && exit 1)
 
-# Clean up problematic node_modules directory if it exists
-RUN rm -rf node_modules/@tensorflow 2>/dev/null || true
-
-# Verify web3 is installed
-RUN npm list web3 || (echo "❌ web3 is missing after npm install" && exit 1)
-
-# Copy the rest of the project
+# Copy full project
 COPY . .
 
 # Run build script
 RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
+
+# --- STAGE 2: Final Image ---
+FROM node:22-slim AS final
+
+WORKDIR /usr/src/app
+
+# Copy node_modules and source
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /usr/src/app/backend ./backend
+COPY --from=builder /usr/src/app/frontend ./frontend
+COPY --from=builder /usr/src/app/modules ./modules
+COPY --from=builder /usr/src/app/scripts ./scripts
+COPY --from=builder /usr/src/app/main.js ./main.js
+
+# Optional health check
+COPY --from=builder /usr/src/app/health.js ./health.js
+
+EXPOSE 10000
+
+ENTRYPOINT ["node", "main.js"]
