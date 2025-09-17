@@ -1,4 +1,3 @@
-// modules/tokenomics-engine/index.js
 import { ArielSQLiteEngine } from "../ariel-sqlite-engine/index.js";
 import { QuantumResistantCrypto } from "../quantum-resistant-crypto/index.js";
 import axios from 'axios';
@@ -6,7 +5,7 @@ import axios from 'axios';
 class TokenomicsEngine {
     constructor(maxSupply, config = {}) {
         this.config = {
-            maxSupply: maxSupply || 100000000, 
+            maxSupply: maxSupply || 100000000,
             founderAllocation: config.founderAllocation || 0.6,
             ecosystemAllocation: config.ecosystemAllocation || 0.4,
             inflationRate: config.inflationRate || 0.05,
@@ -28,10 +27,10 @@ class TokenomicsEngine {
             await this.db.init();
             await this.createDatabaseSchema();
             await this.quantumCrypto.initialize();
-            
+
             // Start real-time tokenomics monitoring
             await this.startTokenomicsMonitoring();
-            
+
             console.log("✅ Tokenomics Engine Initialized");
             return true;
         } catch (error) {
@@ -69,9 +68,7 @@ class TokenomicsEngine {
                 vesting_start INTEGER,
                 vesting_duration INTEGER,
                 claimed_amount REAL DEFAULT 0 CHECK(claimed_amount >= 0),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_emission_recipient (recipient_address),
-                INDEX idx_emission_block (block_height)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
 
             `CREATE TABLE IF NOT EXISTS founder_vesting (
@@ -79,12 +76,11 @@ class TokenomicsEngine {
                 founder_address TEXT NOT NULL,
                 total_amount REAL NOT NULL CHECK(total_amount > 0),
                 vested_amount REAL DEFAULT 0 CHECK(vested_amount >= 0 AND vested_amount <= total_amount),
-                cliff_period INTEGER NOT NULL, // Blocks until cliff
-                vesting_period INTEGER NOT NULL, // Total vesting period in blocks
+                cliff_period INTEGER NOT NULL,
+                vesting_period INTEGER NOT NULL,
                 start_block INTEGER NOT NULL,
                 claimed_amount REAL DEFAULT 0 CHECK(claimed_amount >= 0 AND claimed_amount <= vested_amount),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_founder_vesting (founder_address)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
 
             `CREATE TABLE IF NOT EXISTS staking_rewards (
@@ -95,9 +91,7 @@ class TokenomicsEngine {
                 block_height INTEGER NOT NULL,
                 claimable INTEGER DEFAULT 1 CHECK(claimable IN (0, 1)),
                 claimed_block INTEGER,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_staking_rewards (staker_address),
-                INDEX idx_validator_rewards (validator_address)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
 
             `CREATE TABLE IF NOT EXISTS community_pool (
@@ -127,8 +121,7 @@ class TokenomicsEngine {
                 volume_24h REAL,
                 source TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_price_timestamp (timestamp)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
 
             `CREATE TABLE IF NOT EXISTS liquidity_pools (
@@ -141,8 +134,7 @@ class TokenomicsEngine {
                 total_liquidity REAL NOT NULL CHECK(total_liquidity >= 0),
                 exchange TEXT NOT NULL,
                 block_height INTEGER NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_liquidity_pools (pair_address)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )`,
 
             `CREATE TABLE IF NOT EXISTS tokenomics_metrics (
@@ -157,6 +149,18 @@ class TokenomicsEngine {
             )`
         ];
 
+        // SQL INDEX syntax is invalid in a CREATE TABLE statement.
+        // It should be a separate CREATE INDEX statement if needed.
+        const indices = [
+          `CREATE INDEX IF NOT EXISTS idx_emission_recipient ON emission_schedule(recipient_address)`,
+          `CREATE INDEX IF NOT EXISTS idx_emission_block ON emission_schedule(block_height)`,
+          `CREATE INDEX IF NOT EXISTS idx_founder_vesting ON founder_vesting(founder_address)`,
+          `CREATE INDEX IF NOT EXISTS idx_staking_rewards ON staking_rewards(staker_address)`,
+          `CREATE INDEX IF NOT EXISTS idx_validator_rewards ON staking_rewards(validator_address)`,
+          `CREATE INDEX IF NOT EXISTS idx_price_timestamp ON price_history(timestamp)`,
+          `CREATE INDEX IF NOT EXISTS idx_liquidity_pools ON liquidity_pools(pair_address)`
+        ];
+
         for (const tableSql of tables) {
             await this.db.run(tableSql);
         }
@@ -167,7 +171,7 @@ class TokenomicsEngine {
 
     async initializeTokenSupply() {
         const existingSupply = await this.db.get("SELECT COUNT(*) as count FROM token_supply");
-        
+
         if (existingSupply.count === 0) {
             // Initial token distribution
             const founderAllocation = this.config.maxSupply * this.config.founderAllocation;
@@ -205,7 +209,7 @@ class TokenomicsEngine {
 
         for (const address of founderAddresses) {
             await this.db.run(
-                `INSERT INTO founder_vesting (founder_address, total_amount, vested_amount, cliff_period, vesting_period, start_block) 
+                `INSERT INTO founder_vesting (founder_address, total_amount, vested_amount, cliff_period, vesting_period, start_block)
                  VALUES (?, ?, ?, ?, ?, ?)`,
                 [address, amountPerFounder, 0, cliffPeriod, vestingPeriod, 0]
             );
@@ -262,7 +266,7 @@ class TokenomicsEngine {
     async distributeBlockReward(blockHeight, validatorAddress, totalStaked) {
         try {
             const blockReward = await this.calculateBlockReward(blockHeight, totalStaked);
-            
+
             // Calculate community tax
             const communityTax = blockReward * this.config.communityTax;
             const validatorReward = blockReward - communityTax;
@@ -380,7 +384,7 @@ class TokenomicsEngine {
     async vestFounderTokens(blockHeight) {
         try {
             const founders = await this.db.all("SELECT * FROM founder_vesting");
-            
+
             for (const founder of founders) {
                 if (blockHeight < founder.start_block + founder.cliff_period) {
                     continue; // Still in cliff period
@@ -477,7 +481,7 @@ class TokenomicsEngine {
                     parser: (data) => ({
                         price_usd: parseFloat(data.price) || 0,
                         price_btc: 0, // Would need BTC pair
-                        price_eth: 0  // Would need ETH pair
+                        price_eth: 0 // Would need ETH pair
                     })
                 }
             ];
@@ -486,7 +490,7 @@ class TokenomicsEngine {
                 try {
                     const response = await axios.get(exchange.url, { timeout: 5000 });
                     const prices = exchange.parser(response.data);
-                    
+
                     if (prices.price_usd > 0) {
                         const circulatingSupply = await this.getCirculatingSupply();
                         const marketCap = circulatingSupply * prices.price_usd;
@@ -511,17 +515,18 @@ class TokenomicsEngine {
             const circulatingSupply = await this.getCirculatingSupply();
             const stakedSupply = await this.getStakedSupply();
             const inflationRate = await this.getCurrentInflationRate();
-            
+
             // Calculate staking APY
             const annualInflation = circulatingSupply * inflationRate;
             const stakingAPY = stakedSupply > 0 ? (annualInflation * 0.8) / stakedSupply : 0; // 80% of inflation to stakers
 
             // Get TVL from liquidity pools
             const tvl = await this.calculateTotalValueLocked();
+            const currentPrice = await this.getCurrentPrice();
 
             await this.db.run(
                 "INSERT INTO tokenomics_metrics (block_height, inflation_rate, staking_apy, circulating_supply, market_cap, total_value_locked) VALUES (?, ?, ?, ?, ?, ?)",
-                [currentBlock, inflationRate, stakingAPY, circulatingSupply, circulatingSupply * await getCurrentPrice(), tvl]
+                [currentBlock, inflationRate, stakingAPY, circulatingSupply, circulatingSupply * currentPrice, tvl]
             );
 
             console.log("📊 Tokenomics metrics updated");
@@ -593,187 +598,5 @@ class TokenomicsEngine {
     }
 }
 
-// ... existing code ...
-class TokenomicsEngine {
-    constructor(maxSupply, config = {}) {
-        this.config = {
-            maxSupply: maxSupply || 100000000, // CHANGED: 100M instead of 1B
-            founderAllocation: config.founderAllocation || 0.6,
-            ecosystemAllocation: config.ecosystemAllocation || 0.4,
-            inflationRate: config.inflationRate || 0.05,
-            communityTax: config.communityTax || 0.02,
-            blockReward: config.blockReward || 10,
-            mainnet: config.mainnet || true,
-            ...config
-        };
-
-// AND in the second TokenomicsEngine class:
-class TokenomicsEngine {
-    constructor(maxSupply = 100000000) { // 100M 
-        this.maxSupply = maxSupply;
-        this.db = null;
-        
-        // REVISED: 60% Founder, 40% Ecosystem - UPDATED FOR 100M TOTAL
-        this.founderAllocation = 60000000; // 60M bwzC (60%) - permanent stake
-        this.ecosystemAllocation = 40000000; // 40M bwzC (40%) - for distribution
-        
-        // Sub-allocation of ecosystem fund - UPDATED FOR 100M TOTAL
-        this.stakingRewardsAllocation = 30000000; // 30M (30% of total) 
-        this.liquidityMiningAllocation = 5000000; // 5M (5%) 
-        this.communityTreasuryAllocation = 5000000; // 5M (5%) 
-        
-        this.founderVesting = {
-            cliff: 365 * 24 * 60 * 60,
-            duration: 4 * 365 * 24 * 60 * 60,
-            startTime: null
-        };
-    }
-
-    async initialize() {
-        console.log("✅ Tokenomics Engine initialized with 60% founder allocation");
-        this.founderVesting.startTime = Date.now() / 1000; // Convert to Unix timestamp
-    }
-
-    async initializeGenesisSupply() {
-        // Create founder allocation account
-        await this.createFounderAllocation();
-        
-        // Initialize ecosystem funds
-        await this.initializeEcosystemFunds();
-        
-        console.log(`✅ Genesis supply initialized: 600M to founder, 400M to ecosystem`);
-    }
-
-    async createFounderAllocation() {
-        // Founder allocation address (should be multi-sig in production)
-        const founderAddress = "bwz1founderxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-        
-        // Create founder account with vested balance
-        await this.db.run(
-            `INSERT INTO accounts (address, balance, nonce, shard_id) 
-             VALUES (?, ?, ?, ?)`,
-            [founderAddress, 0, 0, 0] // Start with 0 balance (vested over time)
-        );
-        
-        // Initialize vesting schedule
-        await this.db.run(
-            `INSERT INTO founder_vesting (
-                address, total_amount, vested_amount, cliff_duration, 
-                vesting_duration, start_time, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-            [
-                founderAddress, 
-                this.founderAllocation,
-                0,
-                this.founderVesting.cliff,
-                this.founderVesting.duration,
-                this.founderVesting.startTime
-            ]
-        );
-    }
-
-    async initializeEcosystemFunds() {
-        const ecosystemAddress = "bwz1ecosystemxxxxxxxxxxxxxxxxxxxxxxxxxx";
-        
-        // Create ecosystem fund account
-        await this.db.run(
-            `INSERT INTO accounts (address, balance, nonce, shard_id) 
-             VALUES (?, ?, ?, ?)`,
-            [ecosystemAddress, this.ecosystemAllocation, 0, 0]
-        );
-        
-        // Initialize ecosystem sub-allocations
-        await this.db.run(
-            `INSERT INTO ecosystem_funds (
-                staking_rewards, liquidity_mining, community_treasury,
-                total_amount, created_at
-             ) VALUES (?, ?, ?, ?, datetime('now'))`,
-            [
-                this.stakingRewardsAllocation,
-                this.liquidityMiningAllocation,
-                this.communityTreasuryAllocation,
-                this.ecosystemAllocation
-            ]
-        );
-    }
-
-    async calculateVestedFounderTokens() {
-        const currentTime = Date.now() / 1000;
-        const vestingInfo = await this.db.get(
-            "SELECT * FROM founder_vesting WHERE address = ?",
-            ["bwz1founderxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]
-        );
-        
-        if (!vestingInfo) return 0;
-        
-        const elapsed = currentTime - vestingInfo.start_time;
-        
-        if (elapsed < vestingInfo.cliff_duration) {
-            return 0; // Still in cliff period
-        }
-        
-        const vestingElapsed = elapsed - vestingInfo.cliff_duration;
-        const totalVestingDuration = vestingInfo.vesting_duration;
-        
-        if (vestingElapsed >= totalVestingDuration) {
-            return vestingInfo.total_amount; // Fully vested
-        }
-        
-        // Linear vesting calculation
-        const vestedAmount = (vestingInfo.total_amount * vestingElapsed) / totalVestingDuration;
-        return Math.min(vestedAmount, vestingInfo.total_amount);
-    }
-
-    async releaseVestedTokens() {
-        const vestedAmount = await this.calculateVestedFounderTokens();
-        const founderAddress = "bwz1founderxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-        
-        const currentVested = await this.db.get(
-            "SELECT vested_amount FROM founder_vesting WHERE address = ?",
-            [founderAddress]
-        );
-        
-        if (vestedAmount > currentVested.vested_amount) {
-            const tokensToRelease = vestedAmount - currentVested.vested_amount;
-            
-            // Update founder balance
-            await this.db.run(
-                "UPDATE accounts SET balance = balance + ? WHERE address = ?",
-                [tokensToRelease, founderAddress]
-            );
-            
-            // Update vesting record
-            await this.db.run(
-                "UPDATE founder_vesting SET vested_amount = ? WHERE address = ?",
-                [vestedAmount, founderAddress]
-            );
-            
-            console.log(`✅ Released ${tokensToRelease} bwzC to founder (${vestedAmount}/${this.founderAllocation} vested)`);
-        }
-    }
-
-    // ... rest of the existing methods with updated calculations
-    async calculateBlockReward(blockHeight, transactionCount, validatorStake) {
-        // Calculate from ecosystem staking rewards pool
-        const baseReward = this.calculateBaseReward(blockHeight);
-        const transactionBonus = transactionCount * 0.001;
-        const stakeFactor = Math.log1p(validatorStake / 1000000);
-        
-        const reward = baseReward + transactionBonus * stakeFactor;
-        
-        // Ensure we don't exceed ecosystem staking allocation
-        const distributedRewards = await this.getDistributedStakingRewards();
-        const remainingRewards = this.stakingRewardsAllocation - distributedRewards;
-        
-        return Math.min(reward, remainingRewards);
-    }
-
-    async getDistributedStakingRewards() {
-        const result = await this.db.get(
-            "SELECT SUM(amount) as total FROM reward_distributions"
-        );
-        return result.total || 0;
-    }
-}
-
-
+// Export the class
+export { TokenomicsEngine };
