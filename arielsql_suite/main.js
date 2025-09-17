@@ -1,5 +1,16 @@
 import http from "http";
 import { ServiceManager } from "./serviceManager.js";
+import BrianNwaezikeChain from './backend/blockchain/BrianNwaezikeChain.js';
+
+(async () => {
+  try {
+    const chain = new BrianNwaezikeChain();
+    await chain.initialize();
+  } catch (err) {
+    console.error('❌ Startup failed:', err);
+    process.exit(1);
+  }
+})();
 
 function startHealthServer() {
   const healthPort = process.env.HEALTH_PORT || 10001;
