@@ -65,9 +65,6 @@ WORKDIR /usr/src/app
 # Copy built app from builder
 COPY --from=builder /usr/src/app .
 
-# Optional health check endpoint
-COPY health.js ./health.js
-
 EXPOSE 10000
 
 ENTRYPOINT ["node", "main.js"]
