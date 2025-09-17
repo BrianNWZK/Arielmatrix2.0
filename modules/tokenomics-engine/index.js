@@ -593,14 +593,6 @@ class TokenomicsEngine {
     }
 }
 
-class TokenomicsEngine {
-  // your logic here
-}
-
-export { ArielSQLiteEngine };
-export default TokenomicsEngine;
-
-
 // ... existing code ...
 class TokenomicsEngine {
     constructor(maxSupply, config = {}) {
