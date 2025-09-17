@@ -3,27 +3,32 @@ set -euo pipefail
 
 echo "🔧 Starting build_and_deploy.sh"
 
-# 1) Fast npm config
+# Fast npm config
 npm config set registry "https://registry.npmjs.org"
 npm config set legacy-peer-deps true
 npm config set audit false
 npm config set fund false
 npm config set progress false
-
-# 2) Clean cache
 npm cache clean --force
 
-# 3) Install dependencies if missing
+# Clean up problematic modules
+rm -rf node_modules/@tensorflow node_modules/sqlite3 node_modules/.cache 2>/dev/null || true
+
+# Generate lockfile if missing
+if [ ! -f "package-lock.json" ]; then
+  echo "⚠️ package-lock.json missing — generating..."
+  npm install --package-lock-only --no-audit --no-fund --legacy-peer-deps
+fi
+
+# Install dependencies
 install_if_missing() {
   local dir="$1"
   [ -d "$dir" ] || return 0
-
   if [ -f "$dir/package-lock.json" ]; then
-    echo "📦 Installing deps in $dir..."
-    (cd "$dir" && npm ci --no-audit --no-fund) || (cd "$dir" && npm install --no-audit --no-fund || true)
+    (cd "$dir" && npm ci --legacy-peer-deps --no-audit --no-fund --prefer-offline) || \
+    (cd "$dir" && npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline || true)
   elif [ -f "$dir/package.json" ]; then
-    echo "📦 Installing deps in $dir..."
-    (cd "$dir" && npm install --no-audit --no-fund || true)
+    (cd "$dir" && npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline || true)
   fi
 }
 
@@ -31,12 +36,13 @@ install_if_missing "."
 install_if_missing "backend"
 install_if_missing "frontend"
 
-# 4) Ensure critical modules
+# Ensure critical modules
 ensure_module_installed() {
   local pkg="$1"
-  echo "🔍 Checking for $pkg..."
   if ! npm list "$pkg" >/dev/null 2>&1; then
     echo "📦 Installing $pkg..."
+    npm cache clean --force
+    npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund --prefer-offline --no-verify || \
     npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund || {
       echo "❌ Failed to install $pkg"
       exit 1
@@ -48,17 +54,21 @@ ensure_module_installed() {
 
 ensure_module_installed "web3"
 ensure_module_installed "axios"
-ensure_module_installed "sqlite3"
 
-# 5) Rebuild native modules
-for mod in better-sqlite3 sqlite3; do
-  if npm list "$mod" >/dev/null 2>&1; then
-    echo "🧱 Rebuilding $mod..."
-    npm rebuild "$mod" || true
-  fi
-done
+# sqlite3 fallback
+if ! npm list sqlite3 >/dev/null 2>&1; then
+  echo "📦 sqlite3 not found — trying install..."
+  npm install sqlite3 --save --legacy-peer-deps --no-audit --no-fund --prefer-offline --no-verify || {
+    echo "⚠️ sqlite3 install failed — checking system fallback..."
+    command -v sqlite3 >/dev/null 2>&1 && echo "✅ System sqlite3 available" || echo "❌ No sqlite3 available"
+  }
+fi
 
-# 6) Skip WASM builds
+# Rebuild native modules
+npm rebuild better-sqlite3 || true
+npm rebuild sqlite3 || true
+
+# Skip WASM builds
 echo "⏭️ Skipping pqc-dilithium WASM build — using native bindings only."
 echo "⏭️ Skipping pqc-kyber WASM build — using native bindings only."
 
