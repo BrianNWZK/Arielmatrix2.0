@@ -6,8 +6,9 @@ import BrianNwaezikeChain from './backend/blockchain/BrianNwaezikeChain.js';
   try {
     const chain = new BrianNwaezikeChain();
     await chain.initialize();
+    console.log("✅ BrianNwaezikeChain initialized.");
   } catch (err) {
-    console.error('❌ Startup failed:', err);
+    console.error('❌ Chain initialization failed:', err);
     process.exit(1);
   }
 })();
@@ -18,7 +19,11 @@ function startHealthServer() {
   const server = http.createServer((req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "healthy", uptime: process.uptime() }));
+      res.end(JSON.stringify({
+        status: "healthy",
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+      }));
     } else {
       res.writeHead(404);
       res.end();
@@ -52,6 +57,12 @@ function setupGracefulShutdown(manager, healthServer) {
 
 async function startArielSQLSuite() {
   console.log("🚀 Starting ArielSQL Ultimate Suite (Phase 3 Mainnet Ready)...");
+
+  const requiredEnv = ["ETH_MAINNET_RPC", "AI_THREAT_API_KEY"];
+  const missingEnv = requiredEnv.filter(key => !process.env[key]);
+  if (missingEnv.length > 0) {
+    console.warn(`⚠️ Missing environment variables: ${missingEnv.join(", ")}`);
+  }
 
   const serviceManager = new ServiceManager();
 
