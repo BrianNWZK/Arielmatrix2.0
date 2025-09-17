@@ -593,8 +593,6 @@ class TokenomicsEngine {
     }
 }
 
-import { ArielSQLiteEngine } from "../ariel-sqlite-engine/index.js";
-
 class TokenomicsEngine {
   // your logic here
 }
