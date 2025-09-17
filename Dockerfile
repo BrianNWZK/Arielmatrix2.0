@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
   ca-certificates \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Use official registry and clean cache
+# Configure npm and clean cache
 RUN npm config set registry https://registry.npmjs.org \
   && npm config set legacy-peer-deps true \
   && npm config set audit false \
@@ -29,7 +29,7 @@ COPY package.json package-lock.json* ./
 COPY modules/pqc-dilithium ./modules/pqc-dilithium
 COPY modules/pqc-kyber ./modules/pqc-kyber
 
-# Remove stubbed dependencies
+# Remove stubbed dependencies from package.json
 RUN sed -i '/"ai-security-module"/d' package.json \
  && sed -i '/"omnichain-interoperability"/d' package.json \
  && sed -i '/"infinite-scalability-engine"/d' package.json \
@@ -44,8 +44,8 @@ RUN if [ -f package-lock.json ]; then \
       npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline; \
     fi
 
-# Clean up problematic modules
-RUN rm -rf node_modules/@tensorflow node_modules/sqlite3 2>/dev/null || true
+# Remove problematic modules
+RUN rm -rf node_modules/@tensorflow node_modules/sqlite3 node_modules/.cache 2>/dev/null || true
 
 # Verify critical modules
 RUN npm list web3 || (echo "❌ web3 missing" && exit 1)
@@ -62,7 +62,11 @@ FROM node:22-slim AS final
 
 WORKDIR /usr/src/app
 
+# Copy built app from builder
 COPY --from=builder /usr/src/app .
+
+# Optional health check endpoint
+COPY health.js ./health.js
 
 EXPOSE 10000
 
