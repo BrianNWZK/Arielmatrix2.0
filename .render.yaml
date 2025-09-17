@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: arielsql-suite
+    env: node
+    buildCommand: ./build_and_deploy.sh
+    startCommand: node arielsql_suite/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: ETH_MAINNET_RPC
+        value: your_rpc_url
+      - key: AI_THREAT_API_KEY
+        value: your_api_key
