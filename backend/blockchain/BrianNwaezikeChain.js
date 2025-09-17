@@ -88,11 +88,43 @@ class BrianNwaezikeChain {
             algorithm: 'dilithium3',
             mainnet: this.config.mainnet 
         });
-        this.aiThreatDetector = new AIThreatDetector({
-            apiKey: process.env.AI_THREAT_API_KEY,
-            model: 'gpt-4',
-            mainnet: this.config.mainnet
-        });
+
+        // Simple local AI threat detector
+        this.aiThreatDetector = {
+          initialize: async () => {
+            console.log("✅ AI Threat Detector Ready (Local Mode)");
+            return true;
+          },
+          detectAnomalies: async (transactionData, context) => {
+            // Simple threat detection logic
+            const anomalies = [];
+            const amount = transactionData.amount || 0;
+    
+            // Check for very large transactions
+            if (amount > 1000000) {
+              anomalies.push({
+                type: 'large_transaction',
+                description: 'This is a very large transaction',
+                severity: 'medium'
+              });
+             }
+    
+             // Check for rapid transactions
+             if (context.transactionCount > 50) {
+               anomalies.push({
+                 type: 'high_frequency',
+                 description: 'Many transactions in short time',
+                 severity: 'medium'
+               });
+             }
+    
+             return {
+               anomalies,
+               severity: anomalies.length > 0 ? 'medium' : 'low',
+               validated: true
+             };
+          }
+        };
         this.aiSecurity = new AISecurityModule({
             monitoring: true,
             realTimeScan: true,
@@ -118,11 +150,23 @@ class BrianNwaezikeChain {
             zeroCost: true,
             mainnet: this.config.mainnet
         });
-        this.carbonConsensus = new CarbonNegativeConsensus({
-            carbonOffsetProvider: 'patch.io',
-            apiKey: process.env.CARBON_OFFSET_API_KEY,
-            mainnet: this.config.mainnet
-        });
+        
+        // Simple local carbon offset service
+        this.carbonConsensus = {
+          initialize: async () => {
+            console.log("✅ Carbon Offset Ready (Local Mode)");
+            return true;
+          },
+          offsetGenesisBlock: async () => {
+            return 'local_genesis_offset_' + Date.now();
+          },
+          offsetBlock: async (blockHash, gasUsed, transactionCount) => {
+            return {
+              offsetId: 'local_offset_' + Date.now(),
+              carbonOffset: (gasUsed * 0.0001) + (transactionCount * 0.01)
+            };
+          }
+        };
         this.governanceEngine = new GovernanceEngine({
             votingPeriod: 7 * 24 * 60 * 60 * 1000, // 7 days
             mainnet: this.config.mainnet
