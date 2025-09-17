@@ -1,14 +1,27 @@
 import http from "http";
 import { ServiceManager } from "./serviceManager.js";
 import BrianNwaezikeChain from './backend/blockchain/BrianNwaezikeChain.js';
+import healthAgent from './backend/agents/healthAgent.js';
+import winston from 'winston';
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ level, message, timestamp }) => {
+      return `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+    })
+  ),
+  transports: [new winston.transports.Console()]
+});
 
 (async () => {
   try {
     const chain = new BrianNwaezikeChain();
     await chain.initialize();
-    console.log("✅ BrianNwaezikeChain initialized.");
+    logger.info("✅ BrianNwaezikeChain initialized.");
   } catch (err) {
-    console.error('❌ Chain initialization failed:', err);
+    logger.error('❌ Chain initialization failed:', err);
     process.exit(1);
   }
 })();
@@ -16,14 +29,21 @@ import BrianNwaezikeChain from './backend/blockchain/BrianNwaezikeChain.js';
 function startHealthServer() {
   const healthPort = process.env.HEALTH_PORT || 10001;
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     if (req.url === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        status: "healthy",
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString()
-      }));
+      try {
+        const report = await healthAgent.run({}, logger);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          status: report.status,
+          issues: report.issues,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (err) {
+        logger.error("❌ HealthAgent failed:", err);
+        res.writeHead(500);
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
     } else {
       res.writeHead(404);
       res.end();
@@ -31,7 +51,7 @@ function startHealthServer() {
   });
 
   server.listen(healthPort, "0.0.0.0", () => {
-    console.log(`❤ Health server running on port ${healthPort}`);
+    logger.info(`🩺 Health server running on port ${healthPort}`);
   });
 
   return server;
@@ -39,13 +59,13 @@ function startHealthServer() {
 
 function setupGracefulShutdown(manager, healthServer) {
   async function shutdown() {
-    console.log("🛑 Shutdown signal received, stopping services...");
+    logger.info("🛑 Shutdown signal received, stopping services...");
     try {
       await manager.stop();
       if (healthServer) healthServer.close();
-      console.log("✅ Shutdown complete.");
+      logger.info("✅ Shutdown complete.");
     } catch (err) {
-      console.error("❌ Error during shutdown:", err);
+      logger.error("❌ Error during shutdown:", err);
     } finally {
       process.exit(0);
     }
@@ -56,24 +76,20 @@ function setupGracefulShutdown(manager, healthServer) {
 }
 
 async function startArielSQLSuite() {
-  console.log("🚀 Starting ArielSQL Ultimate Suite (Phase 3 Mainnet Ready)...");
-
-  const requiredEnv = ["ETH_MAINNET_RPC", "AI_THREAT_API_KEY"];
-  const missingEnv = requiredEnv.filter(key => !process.env[key]);
-  if (missingEnv.length > 0) {
-    console.warn(`⚠️ Missing environment variables: ${missingEnv.join(", ")}`);
-  }
+  logger.info("🚀 Starting ArielSQL Ultimate Suite (Phase 3 Mainnet Ready)...");
 
   const serviceManager = new ServiceManager();
 
   try {
     await serviceManager.init();
     serviceManager.start();
+
     const healthServer = startHealthServer();
     setupGracefulShutdown(serviceManager, healthServer);
-    console.log("✅ ArielSQL Suite is live.");
+
+    logger.info("✅ ArielSQL Suite is live.");
   } catch (err) {
-    console.error("❌ Failed to start suite:", err);
+    logger.error("❌ Failed to start suite:", err);
     process.exit(1);
   }
 }
