@@ -593,7 +593,15 @@ class TokenomicsEngine {
     }
 }
 
-export default TokenomicsEngine;import { ArielSQLiteEngine } from "../ariel-sqlite-engine/index.js";
+import { ArielSQLiteEngine } from "../ariel-sqlite-engine/index.js";
+
+class TokenomicsEngine {
+  // your logic here
+}
+
+export { ArielSQLiteEngine };
+export default TokenomicsEngine;
+
 
 // ... existing code ...
 class TokenomicsEngine {
