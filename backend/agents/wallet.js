@@ -518,6 +518,21 @@ export function getSolanaKeypair() {
 // =========================================================================
 // 8. UTILITY FUNCTIONS
 // =========================================================================
+/**
+ * Unified send wrapper for ETH, SOL, and USDT
+ */
+export async function send(toAddress, amount, currency = 'ETH') {
+  if (currency === 'ETH') {
+    return await sendETH(toAddress, amount);
+  } else if (currency === 'SOL') {
+    return await sendSOL(toAddress, amount);
+  } else if (currency === 'USDT') {
+    const chain = toAddress.startsWith('0x') ? 'eth' : 'sol';
+    return await sendUSDT(toAddress, amount, chain);
+  } else {
+    throw new Error(`Unsupported currency: ${currency}`);
+  }
+}
 
 export function validateAddress(address, chain) {
     try {
@@ -544,24 +559,24 @@ export async function testAllConnections() {
 
 // =========================================================================
 // 9. DEFAULT EXPORT
-// =========================================================================
-
+// =========================================================================  
 export default {
-    initializeConnections,
-    getWalletBalances,
-    getWalletAddresses,
-    sendSOL,
-    sendETH,
-    sendUSDT,
-    processRevenuePayment,
-    checkBlockchainHealth,
-    validateAddress,
-    formatBalance,
-    testAllConnections,
-    
-    // Legacy compatibility
-    getEthereumWeb3,
-    getSolanaConnection,
-    getEthereumAccount,
-    getSolanaKeypair
+  initializeConnections,
+  getWalletBalances,
+  getWalletAddresses,
+  sendSOL,
+  sendETH,
+  sendUSDT,
+  send, // ✅ Add this line
+  processRevenuePayment,
+  checkBlockchainHealth,
+  validateAddress,
+  formatBalance,
+  testAllConnections,
+
+  // Legacy compatibility
+  getEthereumWeb3,
+  getSolanaConnection,
+  getEthereumAccount,
+  getSolanaKeypair
 };
