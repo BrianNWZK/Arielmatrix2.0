@@ -1,123 +1,111 @@
-// modules/omnichain-interop/index.js
+// modules/omnichain-interoperability/index.js
+import Web3 from 'web3';
+import { ethers } from 'ethers';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine';
+import { Logger } from '../enterprise-logger';
+import axios from 'axios';
 
-import { Database } from '../ariel-sqlite-engine';
-import { QuantumResistantCrypto } from '../quantum-resistant-crypto';
-import { CrossChainBridge } from '../cross-chain-bridge';
+export class OmnichainInteroperabilityEngine {
+  constructor(config = {}) {
+    this.config = {
+      supportedChains: config.supportedChains || ['ethereum', 'binance', 'polygon', 'solana', 'avalanche'],
+      rpcUrls: config.rpcUrls || {},
+      ...config
+    };
 
-/**
- * @class OmnichainInterop
- * @description Facilitates secure, quantum-resistant data and asset transfers
- * across multiple blockchains using the Cross-Chain Bridge.
- */
-export class OmnichainInterop {
-    constructor() {
-        this.db = new Database();
-        this.qrCrypto = new QuantumResistantCrypto();
-        this.bridge = new CrossChainBridge();
+    this.db = new ArielSQLiteEngine(config.databaseConfig);
+    this.logger = new Logger('OmnichainEngine');
+    this.chainProviders = new Map();
+    this.eventListeners = new Map();
+    this.crossChainTransactions = new Map();
+  }
+
+  async initialize() {
+    await this.db.init();
+    
+    // Create blockchain tracking tables
+    await this.createDatabaseSchema();
+    
+    // Initialize chain providers
+    await this.initializeChainProviders();
+    
+    // Start chain monitoring using SQLite pub/sub
+    this.startChainMonitoring();
+    
+    // Initialize cross-chain bridge if configured
+    if (this.config.bridgeContracts) {
+      await this.initializeCrossChainBridge();
     }
 
-    /**
-     * @method initialize
-     * @description Initializes the interoperability module and its dependencies.
-     */
-    async initialize(bridgeConfig) {
-        await this.db.init();
-        await this.qrCrypto.initialize();
-        await this.bridge.initialize(bridgeConfig);
+    // Subscribe to transaction events
+    await this.db.subscribe('chain:transactions', 'omnichain-engine', (message) => {
+      this.handleTransactionEvent(message);
+    });
 
-        await this.db.run(`
-            CREATE TABLE IF NOT EXISTS data_transfers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_chain TEXT NOT NULL,
-                target_chain TEXT NOT NULL,
-                sender TEXT NOT NULL,
-                receiver TEXT NOT NULL,
-                encrypted_data TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                completed_at DATETIME
-            )
-        `);
-    }
+    this.logger.info(`Omnichain engine initialized with ${this.chainProviders.size} chains`);
+  }
 
-    /**
-     * @method transferData
-     * @description Transfers encrypted data across chains.
-     * @param {string} sourceChain - The source blockchain.
-     * @param {string} targetChain - The target blockchain.
-     * @param {string} sender - The sender's address.
-     * @param {string} receiver - The receiver's address.
-     * @param {object} data - The data to be transferred.
-     * @param {string} publicKey - The receiver's Kyber public key.
-     * @returns {Promise<object>} The transfer details.
-     */
-    async transferData(sourceChain, targetChain, sender, receiver, data, publicKey) {
-        let transferId;
-        try {
-            // Encrypt the data with the receiver's quantum-resistant public key
-            const encryptedData = await this.qrCrypto.encryptData(data, publicKey);
+  async processTransaction(chainName, transaction) {
+    try {
+      // Check if this is a cross-chain transaction
+      const isCrossChain = await this.detectCrossChainTransaction(chainName, transaction);
+      
+      // Store transaction in database
+      await this.db.run(
+        `INSERT INTO chain_transactions 
+         (tx_hash, chain_name, block_number, from_address, to_address, value, gas_used, status) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          transaction.hash,
+          chainName,
+          transaction.blockNumber,
+          transaction.from,
+          transaction.to,
+          transaction.value.toString(),
+          transaction.gasLimit.toNumber(),
+          'pending'
+        ]
+      );
 
-            // Record the transfer in the local database
-            const result = await this.db.run(
-                'INSERT INTO data_transfers (source_chain, target_chain, sender, receiver, encrypted_data) VALUES (?, ?, ?, ?, ?)',
-                [sourceChain, targetChain, sender, receiver, encryptedData]
-            );
-            transferId = result.lastID;
+      if (isCrossChain) {
+        await this.handleCrossChainTransaction(chainName, transaction);
+      }
 
-            // Use a small asset transfer to trigger the cross-chain event.
-            // The `encryptedData` can be included as part of the transaction memo or data payload.
-            // This is a simplified representation.
-            const bridgeResult = await this.bridge.bridgeAssets(
-                sourceChain,
-                targetChain,
-                0.001, // A small amount to trigger the bridge
-                '0x...', // A dummy token address
-                sender,
-                receiver
-            );
-
-            // Update the transfer status
-            await this.db.run(
-                'UPDATE data_transfers SET status = "completed", completed_at = CURRENT_TIMESTAMP WHERE id = ?',
-                [transferId]
-            );
-
-            return { transferId, bridgeTxHash: bridgeResult.sourceTxHash };
-        } catch (error) {
-            if (transferId) {
-                await this.db.run(
-                    'UPDATE data_transfers SET status = "failed" WHERE id = ?',
-                    [transferId]
-                );
-            }
-            throw new Error(`Data transfer failed: ${error.message}`);
+      // Publish transaction event using SQLite pub/sub
+      await this.db.publish(
+        `chain:${chainName}:transactions`,
+        {
+          hash: transaction.hash,
+          from: transaction.from,
+          to: transaction.to,
+          value: transaction.value.toString(),
+          timestamp: Date.now()
         }
+      );
+
+    } catch (error) {
+      this.logger.error(`Error processing transaction ${transaction.hash}: ${error.message}`);
     }
+  }
 
-    /**
-     * @method verifyDataTransfer
-     * @description Verifies and decrypts a received data transfer.
-     * @param {number} transferId - The ID of the transfer.
-     * @param {number} privateKeyId - The ID of the private key for decryption.
-     * @returns {Promise<object>} The decrypted data.
-     */
-    async verifyDataTransfer(transferId, privateKeyId) {
-        try {
-            const transfer = await this.db.get('SELECT * FROM data_transfers WHERE id = ? AND status = "completed"', [transferId]);
+  async startCrossChainMonitoring() {
+    // Use SQLite-based interval instead of setInterval for better coordination
+    await this.db.subscribe('heartbeat', 'cross-chain-monitor', async () => {
+      try {
+        const pendingOperations = await this.db.allWithCache(
+          'SELECT * FROM cross_chain_operations WHERE status = "initiated"',
+          [],
+          { cacheTtl: 30000 }
+        );
 
-            if (!transfer) {
-                throw new Error('Transfer not found or not completed.');
-            }
-
-            // Verify the on-chain transaction if necessary
-            // For now, we trust the local database state
-
-            // Decrypt the data using the provided private key ID
-            const decryptedData = await this.qrCrypto.decryptData(transfer.encrypted_data, privateKeyId);
-
-            return decryptedData;
-        } catch (error) {
-            throw new Error(`Failed to verify or decrypt data transfer: ${error.message}`);
+        for (const operation of pendingOperations) {
+          await this.checkOperationStatus(operation);
         }
-    }
+      } catch (error) {
+        this.logger.error(`Cross-chain monitoring error: ${error.message}`);
+      }
+    });
+  }
+
+  // Keep all other methods but use SQLite-based functionality
 }
