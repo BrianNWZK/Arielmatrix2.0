@@ -4,6 +4,18 @@ import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
 import healthAgent from '../backend/agents/healthAgent.js';
 import winston from 'winston';
 
+import { registerAllServices } from "../ServiceManager.js";
+import payoutAgent from "../backend/agents/payoutAgent.js";
+
+async function start() {
+  console.log("🚀 Starting ArielMatrix2.0 + BwaeziChain...");
+  await registerAllServices();
+  payoutAgent.start();
+  console.log("✅ All services registered and payout agent activated.");
+}
+
+start();
+
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
