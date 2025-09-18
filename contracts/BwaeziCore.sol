@@ -1,47 +1,115 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-// This is a simplified placeholder. Your actual Bwaezi smart contract
-// will be much more complex, handling ZERO_COST_DPoS, quantum proofs,
-// validator logic, etc. This just provides the ABI needed by ArielSQL Suite.
+pragma solidity ^0.8.20;
 
 contract BwaeziCore {
-    // Events for ArielSQL Alltimate Suite to listen to
-    event RebalanceEvent(string shardId, string newLoad, address targetNode);
-    event SchemaChange(string proposalHash, string proposalText);
-    event BlockAdded(string blockHash, string transactions, string previousHash, uint256 timestamp, address validator, string signature);
+    address public owner;
+    address public treasury;
+    uint256 public protocolFeePercent = 5; // 5% fee
 
-    // Functions for ArielSQL Alltimate Suite to call (simulated)
-    function registerShard(string memory shardId, address nodeAddress) public {
-        // In a real contract, this would update an on-chain shard registry
-        emit RebalanceEvent(shardId, "0", nodeAddress); // Simulate rebalance upon registration
+    constructor(address _treasury) {
+        owner = msg.sender;
+        treasury = _treasury;
     }
 
-    function triggerRebalance() public {
-        // In a real contract, this would initiate a more complex rebalancing algorithm
-        // For simplicity, we just emit an event.
-        emit RebalanceEvent("0", "0", address(0)); // Example: Global rebalance triggered
+    struct Service {
+        string name;
+        string endpoint;
+        uint256 pricePerCall;
+        address owner;
+        bool active;
+        uint256 registeredAt;
     }
 
-    function proposeSchemaChange(string memory proposalHash, string memory proposalText) public {
-        // In a real contract, this would involve governance/voting mechanisms
-        emit SchemaChange(proposalHash, proposalText);
+    mapping(string => Service) public services;
+    string[] public serviceNames;
+
+    event ServiceRegistered(string name, string endpoint, uint256 price, address owner);
+    event ServiceUpdated(string name, string endpoint, uint256 price, bool active);
+    event ServiceDeactivated(string name);
+    event ServiceCalled(string name, address caller, uint256 amount, uint256 timestamp);
+
+    modifier onlyOwner(string memory name) {
+        require(services[name].owner == msg.sender, "Unauthorized");
+        _;
     }
 
-    function publishAudit(string memory batchHash, string[] memory auditHashes) public {
-        // This would store the batchHash on-chain for auditability
-        // The auditHashes are passed to prove the batch contents
+    function registerService(
+        string memory name,
+        string memory endpoint,
+        uint256 pricePerCall
+    ) public {
+        require(bytes(name).length > 0, "Name required");
+        require(bytes(endpoint).length > 0, "Endpoint required");
+        require(services[name].owner == address(0), "Already registered");
+
+        services[name] = Service({
+            name: name,
+            endpoint: endpoint,
+            pricePerCall: pricePerCall,
+            owner: msg.sender,
+            active: true,
+            registeredAt: block.timestamp
+        });
+
+        serviceNames.push(name);
+        emit ServiceRegistered(name, endpoint, pricePerCall, msg.sender);
     }
 
-    function addBlock(string memory blockHash, string memory transactions, string memory previousHash, uint255 timestamp, address validator, string memory signature) public {
-        // This would add the block header to the on-chain representation of Bwaezi
-        emit BlockAdded(blockHash, transactions, previousHash, timestamp, validator, signature);
+    function updateService(
+        string memory name,
+        string memory newEndpoint,
+        uint256 newPrice,
+        bool active
+    ) public onlyOwner(name) {
+        Service storage svc = services[name];
+        svc.endpoint = newEndpoint;
+        svc.pricePerCall = newPrice;
+        svc.active = active;
+
+        emit ServiceUpdated(name, newEndpoint, newPrice, active);
     }
 
-    function proposeBlock(string memory blockHash, string memory transactions, string memory previousHash) public {
-        // This is a function for light clients (like Render instances) to propose blocks
-        // These proposals would then be validated by full validator nodes.
-        // For simplicity, we just log it.
-        // In a real scenario, this might emit a "BlockProposed" event for validators to pick up.
+    function deactivateService(string memory name) public onlyOwner(name) {
+        services[name].active = false;
+        emit ServiceDeactivated(name);
+    }
+
+    function getAllServices() public view returns (Service[] memory) {
+        Service[] memory result = new Service[](serviceNames.length);
+        for (uint i = 0; i < serviceNames.length; i++) {
+            result[i] = services[serviceNames[i]];
+        }
+        return result;
+    }
+
+    function getService(string memory name) public view returns (Service memory) {
+        return services[name];
+    }
+
+    function callService(string memory name) public payable {
+        Service memory svc = services[name];
+        require(svc.active, "Service inactive");
+        require(msg.value >= svc.pricePerCall, "Insufficient payment");
+
+        uint256 fee = (msg.value * protocolFeePercent) / 100;
+        uint256 payout = msg.value - fee;
+
+        address recipient = svc.owner != address(0) ? svc.owner : treasury;
+
+        payable(recipient).transfer(payout);
+        payable(treasury).transfer(fee);
+
+        emit ServiceCalled(name, msg.sender, msg.value, block.timestamp);
+    }
+
+    function updateProtocolFee(uint256 newFeePercent) public {
+        require(msg.sender == owner, "Only contract owner");
+        require(newFeePercent <= 20, "Fee too high");
+        protocolFeePercent = newFeePercent;
+    }
+
+    function updateTreasury(address newTreasury) public {
+        require(msg.sender == owner, "Only contract owner");
+        treasury = newTreasury;
     }
 }
