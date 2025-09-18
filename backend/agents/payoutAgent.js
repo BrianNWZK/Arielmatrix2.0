@@ -1,106 +1,67 @@
-/**
- * PayoutAgent.js
- *
- * This module is a live client-side agent. It sends API requests to the
- * centralized backend, ensuring that new payouts are added to the
- * persistent SQLite queue. This is a critical component for a distributed,
- * production-ready system.
- */
+import fetch from 'node-fetch';
+import db from '../db/sqlite.js';
+import { send } from './wallet.js';
+import { logServiceCall } from '../blockchain/BrianNwaezikeChain.js';
 
-// The base URL of our new local Express server.
-const API_BASE_URL = 'http://localhost:1000';
+const ETHEREUM_TRUST_WALLET = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
+const SOLANA_TRUST_WALLET = process.env.SOLANA_TRUST_WALLET_ADDRESS;
 
 class PayoutAgent {
   constructor() {
-    console.log("Payout Agent initialized for API calls.");
+    console.log("✅ Payout Agent initialized.");
     this.intervalId = null;
   }
 
-  /**
-   * Submits a single payout request to the backend API.
-   * @param {string} recipientAddress - The recipient's public address.
-   * @param {number} amount - The amount to be paid.
-   * @param {string} currency - The cryptocurrency to use (e.g., 'USDT', 'SOL').
-   */
-  async submitPayoutRequest(recipientAddress, amount, currency) {
-    try {
-      console.log(`Submitting new payout request: ${amount} ${currency} to ${recipientAddress}`);
-      const response = await fetch(`${API_BASE_URL}/payouts/add`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ recipient: recipientAddress, amount, currency }),
-      });
+  async getServiceOwner(serviceName) {
+    return serviceName.includes('sol') ? SOLANA_TRUST_WALLET : ETHEREUM_TRUST_WALLET;
+  }
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
+  async queue(payment) {
+    const recipient = await this.getServiceOwner(payment.service);
+    await db.insert("payout_queue", {
+      recipient,
+      amount: payment.amount,
+      service: payment.service,
+      currency: payment.currency || "ETH",
+      status: "pending",
+      timestamp: Date.now()
+    });
+    console.log(`🧾 Queued payout for ${payment.service} → ${recipient}`);
+  }
+
+  async processPendingJobs() {
+    const jobs = await db.all("SELECT * FROM payout_queue WHERE status = 'pending'");
+    for (const job of jobs) {
+      try {
+        await send(job.recipient, job.amount, job.currency);
+        await db.update("payout_queue", { id: job.id }, { status: "completed" });
+        await logServiceCall({
+          service: job.service,
+          caller: "system",
+          action: "payout",
+          payload: job
+        });
+        console.log(`✅ Payout sent: ${job.amount} ${job.currency} → ${job.recipient}`);
+      } catch (err) {
+        console.error(`❌ Payout failed for ${job.recipient}:`, err.message);
+        await db.update("payout_queue", { id: job.id }, { status: "failed" });
       }
-
-      const data = await response.json();
-      console.log("Response from API:", data.message);
-      return data;
-    } catch (error) {
-      console.error('Error submitting payout request:', error);
-      return { status: 'error', message: 'Failed to submit request.' };
     }
   }
 
-  export async function queue(payment) {
-  await db.insert("payout_queue", {
-    recipient: getServiceOwner(payment.service),
-    amount: payment.amount,
-    service: payment.service,
-    status: "pending"
-  });
-}
-
-export async function processPendingJobs() {
-  const jobs = await db.all("SELECT * FROM payout_queue WHERE status = 'pending'");
-  for (const job of jobs) {
-    await wallet.send(job.recipient, job.amount);
-    await db.update("payout_queue", { id: job.id }, { status: "completed" });
-    console.log(`🔁 Payout sent to ${job.recipient} for ${job.service}`);
-  }
-}
-
-  /**
-   * Simulates a continuous stream of payout requests to the backend.
-   * @param {number} intervalMs - The interval in milliseconds between adding new requests.
-   */
-  start(intervalMs = 3000) { // Default to 3 seconds
-    if (this.intervalId) {
-      console.log("Agent is already running.");
-      return;
-    }
-
-    console.log(`Payout Agent started, submitting new requests every ${intervalMs / 1000} seconds.`);
-    this.intervalId = setInterval(() => {
-      // Simulate new payout requests from a client service.
-      const mockRequests = [
-        { recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", amount: (Math.random() * 10).toFixed(4), currency: 'USDT' },
-        { recipient: "0x3C44CdDdB6a900fa2b585dd299e03d120979392", amount: (Math.random() * 5).toFixed(4), currency: 'SOL' }
-      ];
-
-      mockRequests.forEach(request => {
-        this.submitPayoutRequest(request.recipient, request.amount, request.currency);
-      });
-
-    }, intervalMs);
+  start(intervalMs = 5000) {
+    if (this.intervalId) return console.log("⚠️ Agent already running.");
+    console.log(`🚀 Payout Agent started. Checking queue every ${intervalMs / 1000}s.`);
+    this.intervalId = setInterval(() => this.processPendingJobs(), intervalMs);
   }
 
-  /**
-   * Stops the continuous stream of payout requests.
-   */
   stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log("Payout Agent stopped.");
+      console.log("🛑 Payout Agent stopped.");
     }
   }
 }
 
-// Example usage to start the agent:
-const agent = new PayoutAgent();
-agent.start();
+export default new PayoutAgent();
