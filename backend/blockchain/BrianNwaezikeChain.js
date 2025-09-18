@@ -23,6 +23,21 @@ import Web3 from 'web3';
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { ethers } from 'ethers';
 import axios from 'axios';
+import crypto from 'crypto';
+import db from '../db/sqlite.js';
+
+export async function logServiceCall({ service, caller, action, payload }) {
+  const hash = crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  await db.insert("service_logs", {
+    service,
+    caller,
+    action,
+    hash,
+    timestamp: Date.now()
+  });
+  console.log(`📡 Logged ${action} on ${service} by ${caller}`);
+}
+
 
 // Real-world blockchain RPC endpoints
 const MAINNET_RPC = {
