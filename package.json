@@ -13,7 +13,10 @@
     "refresh-lock": "rm -f package-lock.json && npm install",
     "build": "vite build",
     "train-ai": "node scripts/train-models.js",
-    "monitor": "node scripts/system-monitor.js"
+    "monitor": "node scripts/system-monitor.js",
+    "payout-agent": "node backend/agents/payoutAgent.js",
+    "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
+    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -25,8 +28,10 @@
     "ethers": "^6.13.2",
     "node-cron": "^3.0.3",
     "dotenv": "^16.4.5",
+    "dotenv-expand": "^10.0.0",
     "winston": "^3.8.2",
     "better-sqlite3": "^9.2.0",
+    "sqlite3": "^5.1.6",
     "uuid": "^9.0.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
@@ -49,7 +54,9 @@
     "rimraf": "^4.0.0",
     "@npmcli/move-file": "^2.0.0",
     "gauge": "^4.0.0",
-    "are-we-there-yet": "^3.0.0"
+    "are-we-there-yet": "^3.0.0",
+    "bignumber.js": "^9.0.2",
+    "websocket": "^1.0.34"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
@@ -63,7 +70,8 @@
     "@types/cors": "^2.8.17",
     "vite": "^5.0.0",
     "webpack": "^5.88.0",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^5.1.4",
+    "ts-node": "^10.9.2"
   },
   "optionalDependencies": {
     "litestream": "^0.3.9"
