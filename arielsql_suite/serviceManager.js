@@ -20,6 +20,23 @@ import { ShardingManager } from "../modules/sharding-manager/index.js";
 import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js";
 import { EnergyEfficientConsensus } from "../modules/energy-efficient-consensus/index.js";
 import { CarbonNegativeConsensus } from "../modules/carbon-negative-consensus/index.js";
+import { ethers } from "ethers";
+import { BwaeziCoreABI } from "../contracts/abi/BwaeziCore.js";
+import modules from "../modules/index.js";
+
+export async function registerAllServices() {
+  const provider = new ethers.JsonRpcProvider(process.env.ETH_MAINNET_RPC);
+  const signer = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+  const registry = new ethers.Contract(process.env.BWAEZI_CORE_ADDRESS, BwaeziCoreABI, signer);
+
+  for (const mod of modules) {
+    const { name, endpoint, pricePerCall } = mod.metadata;
+    const tx = await registry.registerService(name, endpoint, ethers.parseEther(pricePerCall));
+    await tx.wait();
+    console.log(`✅ Registered ${name} at ${endpoint}`);
+  }
+}
+
 
 // === Agents (simplified examples) ===
 import AdRevenueAgent from "../backend/agents/adRevenueAgent.js";
