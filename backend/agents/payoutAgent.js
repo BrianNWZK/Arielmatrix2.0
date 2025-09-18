@@ -46,6 +46,24 @@ class PayoutAgent {
     }
   }
 
+  export async function queue(payment) {
+  await db.insert("payout_queue", {
+    recipient: getServiceOwner(payment.service),
+    amount: payment.amount,
+    service: payment.service,
+    status: "pending"
+  });
+}
+
+export async function processPendingJobs() {
+  const jobs = await db.all("SELECT * FROM payout_queue WHERE status = 'pending'");
+  for (const job of jobs) {
+    await wallet.send(job.recipient, job.amount);
+    await db.update("payout_queue", { id: job.id }, { status: "completed" });
+    console.log(`🔁 Payout sent to ${job.recipient} for ${job.service}`);
+  }
+}
+
   /**
    * Simulates a continuous stream of payout requests to the backend.
    * @param {number} intervalMs - The interval in milliseconds between adding new requests.
