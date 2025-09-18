@@ -53,6 +53,19 @@ let ethWeb3; // For legacy Web3 compatibility
 /**
  * Initializes all blockchain connections
  */
+
+export async function receivePayment({ from, amount, service }) {
+  const log = {
+    from,
+    amount,
+    service,
+    timestamp: Date.now()
+  };
+  await db.insert("payments", log);
+  await payoutAgent.queue(log);
+  console.log(`💰 Payment received for ${service} from ${from}`);
+}
+
 export async function initializeConnections() {
     console.log("🔄 Initializing blockchain connections...");
     
