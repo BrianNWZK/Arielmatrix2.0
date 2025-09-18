@@ -1,10 +1,10 @@
 const { ethers } = require("hardhat");
 
 async function main() {
-    const RevenueDistributor = await ethers.getContractFactory("RevenueDistributor");
-    const distributor = await RevenueDistributor.deploy();
-    await distributor.waitForDeployment();
-    console.log("Deployed to:", distributor.target);
+    const BwaeziCore = await ethers.getContractFactory("BwaeziCore");
+    const registry = await BwaeziCore.deploy();
+    await registry.waitForDeployment();
+    console.log("✅ BwaeziCore deployed to:", registry.target);
 }
 
 main().catch(console.error);
