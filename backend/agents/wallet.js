@@ -2,6 +2,7 @@
  * wallet.js - Unified Blockchain Wallet Manager
  * Integrated with Autonomous AI Engine for multi-chain operations
  */
+
 import 'dotenv/config';
 import { ethers } from 'ethers';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
@@ -18,43 +19,6 @@ const __dirname = path.dirname(__filename);
 // Load environment variables from .env file
 import dotenv from 'dotenv';
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
-
-import { ethers } from 'ethers';
-import solanaWeb3 from '@solana/web3.js';
-import db from '../db/sqlite.js';
-
-const ETHEREUM_TRUST_WALLET = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
-const SOLANA_TRUST_WALLET = process.env.SOLANA_TRUST_WALLET_ADDRESS;
-
-export async function send(recipient, amount, currency = 'ETH') {
-  if (currency === 'ETH') {
-    const provider = new ethers.JsonRpcProvider(process.env.ETH_MAINNET_RPC);
-    const signer = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-    const tx = await signer.sendTransaction({
-      to: recipient,
-      value: ethers.parseEther(amount.toString())
-    });
-    await tx.wait();
-    console.log(`✅ ETH sent: ${amount} → ${recipient}`);
-  } else if (currency === 'SOL') {
-    const connection = new solanaWeb3.Connection(process.env.SOL_MAINNET_RPC);
-    const from = solanaWeb3.Keypair.fromSecretKey(process.env.SOLANA_PRIVATE_KEY);
-    const toPubKey = new solanaWeb3.PublicKey(recipient);
-    const tx = await solanaWeb3.sendAndConfirmTransaction(
-      connection,
-      new solanaWeb3.Transaction().add(
-        solanaWeb3.SystemProgram.transfer({
-          fromPubkey: from.publicKey,
-          toPubkey: toPubKey,
-          lamports: amount * solanaWeb3.LAMPORTS_PER_SOL
-        })
-      ),
-      [from]
-    );
-    console.log(`✅ SOL sent: ${amount} → ${recipient}`);
-  }
-}
-
 
 // =========================================================================
 // 1. CONFIGURATION
@@ -89,19 +53,6 @@ let ethWeb3; // For legacy Web3 compatibility
 /**
  * Initializes all blockchain connections
  */
-
-export async function receivePayment({ from, amount, service }) {
-  const log = {
-    from,
-    amount,
-    service,
-    timestamp: Date.now()
-  };
-  await db.insert("payments", log);
-  await payoutAgent.queue(log);
-  console.log(`💰 Payment received for ${service} from ${from}`);
-}
-
 export async function initializeConnections() {
     console.log("🔄 Initializing blockchain connections...");
     
@@ -518,21 +469,6 @@ export function getSolanaKeypair() {
 // =========================================================================
 // 8. UTILITY FUNCTIONS
 // =========================================================================
-/**
- * Unified send wrapper for ETH, SOL, and USDT
- */
-export async function send(toAddress, amount, currency = 'ETH') {
-  if (currency === 'ETH') {
-    return await sendETH(toAddress, amount);
-  } else if (currency === 'SOL') {
-    return await sendSOL(toAddress, amount);
-  } else if (currency === 'USDT') {
-    const chain = toAddress.startsWith('0x') ? 'eth' : 'sol';
-    return await sendUSDT(toAddress, amount, chain);
-  } else {
-    throw new Error(`Unsupported currency: ${currency}`);
-  }
-}
 
 export function validateAddress(address, chain) {
     try {
@@ -559,24 +495,24 @@ export async function testAllConnections() {
 
 // =========================================================================
 // 9. DEFAULT EXPORT
-// =========================================================================  
-export default {
-  initializeConnections,
-  getWalletBalances,
-  getWalletAddresses,
-  sendSOL,
-  sendETH,
-  sendUSDT,
-  send, // ✅ Add this line
-  processRevenuePayment,
-  checkBlockchainHealth,
-  validateAddress,
-  formatBalance,
-  testAllConnections,
+// =========================================================================
 
-  // Legacy compatibility
-  getEthereumWeb3,
-  getSolanaConnection,
-  getEthereumAccount,
-  getSolanaKeypair
+export default {
+    initializeConnections,
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
+    
+    // Legacy compatibility
+    getEthereumWeb3,
+    getSolanaConnection,
+    getEthereumAccount,
+    getSolanaKeypair
 };
