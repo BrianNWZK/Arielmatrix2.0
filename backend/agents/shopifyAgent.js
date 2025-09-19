@@ -5,6 +5,9 @@ import { AIThreatDetector } from 'ai-security-module';
 import { yourSQLite } from 'ariel-sqlite-engine';
 import axios from 'axios';
 import crypto from 'crypto';
+import apiScoutAgent from './apiScoutAgent.js';
+// Import browser manager for real browsing
+import { BrowserManager } from './browserManager.js';
 
 // Import wallet functions
 import { 
