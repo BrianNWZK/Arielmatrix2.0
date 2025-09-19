@@ -6,6 +6,8 @@ import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl/token';
+import apiScoutAgent from './apiScoutAgent.js';
+import walletManager from './wallet.js';
 
 // Quantum jitter for anti-detection
 const quantumDelay = (ms) => new Promise(resolve => {
