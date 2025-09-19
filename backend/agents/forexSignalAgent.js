@@ -9,6 +9,10 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
+import apiScoutAgent from './apiScoutAgent.js';
+import walletManager from './wallet.js';
+// Import browser manager for real browsing
+import { BrowserManager } from './browserManager.js';
 
 // Get __filename equivalent in ES Module scope
 const __filename = fileURLToPath(import.meta.url);
