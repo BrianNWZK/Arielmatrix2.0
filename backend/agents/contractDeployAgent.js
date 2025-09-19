@@ -9,6 +9,19 @@ import { dirname } from 'path';
 import axios from 'axios';
 import apiScoutAgent from './apiScoutAgent.js';
 
+// Import browser manager for real browsing
+import { BrowserManager } from './browserManager.js';
+
+// Import wallet functions
+import {
+  initializeConnections,
+  getSolanaBalance,
+  sendSOL,
+  getUSDTBalance,
+  sendUSDT,
+  testAllConnections
+} from './wallet.js';
+
 const execPromise = util.promisify(exec);
 
 const __filename = fileURLToPath(import.meta.url);
