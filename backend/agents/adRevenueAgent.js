@@ -4,7 +4,7 @@ import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { BrianNwaezikePayoutSystem } from '../blockchain/BrianNwaezikePayoutSystem.js';
 import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
 import winston from 'winston';
-
+import apiScoutAgent from './apiScoutAgent.js';
 // Import wallet functions
 import {
   initializeConnections,
