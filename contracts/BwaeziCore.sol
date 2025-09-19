@@ -1,115 +1,75 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: SOVEREIGN-AI-ECONOMIC-ZONE
 pragma solidity ^0.8.20;
 
-contract BwaeziCore {
-    address public owner;
-    address public treasury;
-    uint256 public protocolFeePercent = 5; // 5% fee
-
-    constructor(address _treasury) {
-        owner = msg.sender;
-        treasury = _treasury;
-    }
-
+// Simplified sovereign contract - No external dependencies
+contract BwaeziSovereignZone {
+    address public immutable sovereign;
+    uint256 public constant TOTAL_SUPPLY = 100_000_000 * 10**18;
+    
+    mapping(string => Service) public services;
+    mapping(address => uint256) public serviceBalances;
+    mapping(address => bool) public licensedEntities;
+    
+    uint256 public totalRevenue;
+    uint256 public sovereignTreasury;
+    uint256 public ecosystemFund;
+    
     struct Service {
         string name;
-        string endpoint;
-        uint256 pricePerCall;
-        address owner;
-        bool active;
+        address provider;
+        uint256 fee;
         uint256 registeredAt;
+        bool active;
     }
-
-    mapping(string => Service) public services;
-    string[] public serviceNames;
-
-    event ServiceRegistered(string name, string endpoint, uint256 price, address owner);
-    event ServiceUpdated(string name, string endpoint, uint256 price, bool active);
-    event ServiceDeactivated(string name);
-    event ServiceCalled(string name, address caller, uint256 amount, uint256 timestamp);
-
-    modifier onlyOwner(string memory name) {
-        require(services[name].owner == msg.sender, "Unauthorized");
+    
+    event ServiceRegistered(string name, address provider, uint256 fee);
+    ServiceExecuted(string name, address user, uint256 fee, uint256 timestamp);
+    RevenueDistributed(uint256 toSovereign, uint256 toEcosystem, uint256 timestamp);
+    EntityLicensed(address entity, uint256 licenseFee, uint256 timestamp);
+    
+    modifier onlySovereign() {
+        require(msg.sender == sovereign, "Only sovereign allowed");
         _;
     }
-
-    function registerService(
-        string memory name,
-        string memory endpoint,
-        uint256 pricePerCall
-    ) public {
-        require(bytes(name).length > 0, "Name required");
-        require(bytes(endpoint).length > 0, "Endpoint required");
-        require(services[name].owner == address(0), "Already registered");
-
-        services[name] = Service({
-            name: name,
-            endpoint: endpoint,
-            pricePerCall: pricePerCall,
-            owner: msg.sender,
-            active: true,
-            registeredAt: block.timestamp
-        });
-
-        serviceNames.push(name);
-        emit ServiceRegistered(name, endpoint, pricePerCall, msg.sender);
+    
+    constructor() {
+        sovereign = msg.sender;
+        sovereignTreasury = TOTAL_SUPPLY;
     }
-
-    function updateService(
-        string memory name,
-        string memory newEndpoint,
-        uint256 newPrice,
-        bool active
-    ) public onlyOwner(name) {
-        Service storage svc = services[name];
-        svc.endpoint = newEndpoint;
-        svc.pricePerCall = newPrice;
-        svc.active = active;
-
-        emit ServiceUpdated(name, newEndpoint, newPrice, active);
+    
+    function registerService(string memory name, uint256 fee) external onlySovereign {
+        services[name] = Service(name, msg.sender, fee, block.timestamp, true);
+        emit ServiceRegistered(name, msg.sender, fee);
     }
-
-    function deactivateService(string memory name) public onlyOwner(name) {
-        services[name].active = false;
-        emit ServiceDeactivated(name);
+    
+    function executeService(string memory name) external payable {
+        Service memory service = services[name];
+        require(service.active, "Service not active");
+        require(msg.value >= service.fee, "Insufficient payment");
+        
+        // Distribute revenue: 80% to sovereign, 20% to ecosystem
+        uint256 sovereignShare = (msg.value * 80) / 100;
+        uint256 ecosystemShare = msg.value - sovereignShare;
+        
+        sovereignTreasury += sovereignShare;
+        ecosystemFund += ecosystemShare;
+        totalRevenue += msg.value;
+        
+        payable(sovereign).transfer(sovereignShare);
+        
+        emit ServiceExecuted(name, msg.sender, msg.value, block.timestamp);
+        emit RevenueDistributed(sovereignShare, ecosystemShare, block.timestamp);
     }
-
-    function getAllServices() public view returns (Service[] memory) {
-        Service[] memory result = new Service[](serviceNames.length);
-        for (uint i = 0; i < serviceNames.length; i++) {
-            result[i] = services[serviceNames[i]];
-        }
-        return result;
+    
+    function licenseEntity(address entity) external payable onlySovereign {
+        licensedEntities[entity] = true;
+        sovereignTreasury += msg.value;
+        emit EntityLicensed(entity, msg.value, block.timestamp);
     }
-
-    function getService(string memory name) public view returns (Service memory) {
-        return services[name];
-    }
-
-    function callService(string memory name) public payable {
-        Service memory svc = services[name];
-        require(svc.active, "Service inactive");
-        require(msg.value >= svc.pricePerCall, "Insufficient payment");
-
-        uint256 fee = (msg.value * protocolFeePercent) / 100;
-        uint256 payout = msg.value - fee;
-
-        address recipient = svc.owner != address(0) ? svc.owner : treasury;
-
-        payable(recipient).transfer(payout);
-        payable(treasury).transfer(fee);
-
-        emit ServiceCalled(name, msg.sender, msg.value, block.timestamp);
-    }
-
-    function updateProtocolFee(uint256 newFeePercent) public {
-        require(msg.sender == owner, "Only contract owner");
-        require(newFeePercent <= 20, "Fee too high");
-        protocolFeePercent = newFeePercent;
-    }
-
-    function updateTreasury(address newTreasury) public {
-        require(msg.sender == owner, "Only contract owner");
-        treasury = newTreasury;
+    
+    function withdrawEcosystemFunds(address recipient, uint256 amount) external onlySovereign {
+        require(amount <= ecosystemFund, "Insufficient ecosystem funds");
+        ecosystemFund -= amount;
+        payable(recipient).transfer(amount);
     }
 }
