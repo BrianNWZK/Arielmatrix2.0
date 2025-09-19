@@ -3,6 +3,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
+import apiScoutAgent from './apiScoutAgent.js';
 
 // Import browser manager for real browsing
 import { BrowserManager } from './browserManager.js';
