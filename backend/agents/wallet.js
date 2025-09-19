@@ -11,6 +11,8 @@ import Web3 from 'web3';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
+
 
 // Get current directory path for ES modules
 const __filename = fileURLToPath(import.meta.url);
