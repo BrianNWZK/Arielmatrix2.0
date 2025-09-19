@@ -9,6 +9,9 @@ import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import Web3 from 'web3';
 import { Connection } from '@solana/web3.js';
+import apiScoutAgent from './apiScoutAgent.js';
+
+// Import browser manager for real browsing
 import { BrowserManager } from './browserManager.js';
 
 class EnhancedCryptoAgent {
