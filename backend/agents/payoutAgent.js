@@ -2,6 +2,12 @@ import fetch from 'node-fetch';
 import db from '../db/sqlite.js';
 import { send } from './wallet.js';
 import { logServiceCall } from '../blockchain/BrianNwaezikeChain.js';
+import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
+
+const founderWallet = BWAEZI_SOVEREIGN_CONFIG.SOVEREIGN_OWNER;
+const revenueShare = BWAEZI_SOVEREIGN_CONFIG.SOVEREIGN_SERVICES.revenueShare;
+
+await wallet.send(founderWallet, amount * (1 - revenueShare), 'ETH');
 
 const ETHEREUM_TRUST_WALLET = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
 const SOLANA_TRUST_WALLET = process.env.SOLANA_TRUST_WALLET_ADDRESS;
