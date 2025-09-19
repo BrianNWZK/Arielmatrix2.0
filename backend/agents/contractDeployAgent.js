@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import axios from 'axios';
+import apiScoutAgent from './apiScoutAgent.js';
 
 const execPromise = util.promisify(exec);
 
