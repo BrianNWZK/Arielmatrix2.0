@@ -1,6 +1,6 @@
 // modules/sharding-manager/index.js
 import { createHash, randomBytes } from 'crypto';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine';
 import { Logger } from '../enterprise-logger';
 
 export class ShardingManager {
