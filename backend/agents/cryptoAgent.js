@@ -144,11 +144,15 @@ class EnhancedCryptoAgent {
     }
   }
 
-  return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
+  calculateOptimalTradeSize(tradeSize, minTradeSize) {
+  try {
+    return Math.max(tradeSize, minTradeSize);
+  } catch (error) {
+    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+    return 0;
+  }
+}
+
 
     // Initialize cryptocurrency exchanges
     async initializeExchanges() {
