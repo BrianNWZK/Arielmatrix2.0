@@ -169,14 +169,29 @@ class EnhancedCryptoAgent {
         { id: 'mexc', class: ccxt.mexc }
       ];
 
-     class CryptoAgent {
+   class CryptoAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
     this.exchanges = new Map();
   }
 
-  async initializeExchanges(exchangeConfigs, exchangeIds) {
+  // ✅ FIXED: Properly scoped method
+  async initializeExchanges() {
+    const exchangeConfigs = [
+      // your exchange config objects here
+      //{ id: 'binance', class: ccxt.binance },
+        { id: 'coinbase', class: ccxt.coinbasepro },
+        { id: 'kraken', class: ccxt.kraken },
+        { id: 'kucoin', class: ccxt.kucoin },
+        { id: 'huobi', class: ccxt.huobipro },
+        { id: 'okex', class: ccxt.okex },
+        { id: 'bitfinex', class: ccxt.bitfinex },
+        { id: 'bybit', class: ccxt.bybit },
+        { id: 'gateio', class: ccxt.gateio },
+        { id: 'mexc', class: ccxt.mexc }
+    ];
+
     for (let i = 0; i < exchangeConfigs.length; i++) {
       const config = exchangeConfigs[i];
       const id = config.id;
@@ -191,52 +206,15 @@ class EnhancedCryptoAgent {
           options: { defaultType: 'spot', adjustForTimeDifference: true }
         });
 
-        this.exchanges.set(id, exchange);
-        this.logger.info(`✅ Exchange class instantiated: ${id}`);
-      } catch (error) {
-        this.logger.error(`❌ Failed to instantiate ${id}: ${error.message}`);
-      }
-    }
-
-    for (const id of exchangeIds) {
-      try {
-        const exchange = this.exchanges.get(id);
-        if (!exchange) throw new Error('Exchange not found');
-
         await exchange.loadMarkets();
+        this.exchanges.set(id, exchange);
         this.logger.info(`✅ Exchange initialized: ${id}`);
       } catch (error) {
         this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
       }
     }
   }
-
-  calculateOptimalTradeSize(tradeSize, minTradeSize) {
-    try {
-      return Math.max(tradeSize, minTradeSize);
-    } catch (error) {
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0;
-    }
-  }
 }
-
-  
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
 
       for (let i = 0; i < exchangeConfigs.length; i++) {
         const config = exchangeConfigs[i]; // Use a single variable
