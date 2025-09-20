@@ -235,15 +235,20 @@ class EnhancedCryptoAgent {
         } catch (error) {
           this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
         }
-      }
-    calculateOptimalTradeSize(tradeSize, minTradeSize) {
-  try {
-    return Math.max(tradeSize, minTradeSize);
-  } catch (error) {
-    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-    return 0;
+     /**
+   * Calculates the optimal trade size based on minimum thresholds.
+   * @param {number} tradeSize - Proposed trade size.
+   * @param {number} minTradeSize - Minimum allowed trade size.
+   * @returns {number} - The adjusted trade size.
+   */
+  calculateOptimalTradeSize(tradeSize, minTradeSize) {
+    try {
+      return Math.max(tradeSize, minTradeSize);
+    } catch (error) {
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0;
+    }
   }
-}
 
     } catch (error) { // Corrected catch statement
       this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
