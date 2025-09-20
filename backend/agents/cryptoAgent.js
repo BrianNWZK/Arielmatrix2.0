@@ -192,6 +192,14 @@ class EnhancedCryptoAgent {
         { id: 'mexc', class: ccxt.mexc }
     ];
 
+    class CryptoAgent {
+  constructor(config, logger) {
+    this.config = config;
+    this.logger = logger;
+    this.exchanges = new Map();
+  }
+
+  async initializeExchanges(exchangeConfigs) {
     for (let i = 0; i < exchangeConfigs.length; i++) {
       const config = exchangeConfigs[i];
       const id = config.id;
@@ -214,41 +222,17 @@ class EnhancedCryptoAgent {
       }
     }
   }
-}
 
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    calculateOptimalTradeSize(tradeSize, minTradeSize) {
-  try {
-    return Math.max(tradeSize, minTradeSize);
-  } catch (error) {
-    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-    return 0;
+  calculateOptimalTradeSize(tradeSize, minTradeSize) {
+    try {
+      return Math.max(tradeSize, minTradeSize);
+    } catch (error) {
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0;
+    }
   }
 }
 
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
 
     // Initialize cryptocurrency exchanges
     async initializeExchanges() {
