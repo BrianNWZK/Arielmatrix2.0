@@ -811,7 +811,6 @@ export function getStatus() {
     };
 }
 
-export default ForexSignalAgent;
 
 // Worker thread execution
 if (!isMainThread) {
