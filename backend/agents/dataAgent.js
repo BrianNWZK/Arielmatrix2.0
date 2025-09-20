@@ -9,6 +9,48 @@ import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/sp
 import apiScoutAgent from './apiScoutAgent.js';
 import walletManager from './wallet.js';
 
+export default class apiScoutAgentExtension {
+  constructor(config, logger) {
+    this.config = config;
+    this.logger = logger;
+    this.apiScout = new apiScoutAgent(config, logger);
+  }
+
+  async initialize() {
+    this.logger.info('🧠 Initializing apiScoutAgentExtension...');
+    await this.apiScout.initialize();
+  }
+
+  async executeAcrossAllTargets() {
+    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets(); // Autonomous discovery
+
+    for (const target of discoveredTargets) {
+      try {
+        const credentials = await this.apiScout.discoverCredentials(target.type, target.domain);
+
+        if (credentials?.apiKey) {
+          this.logger.info(`🔑 Retrieved API key for ${target.type}: ${credentials.apiKey}`);
+          await this._executeTargetLogic(target, credentials.apiKey);
+        } else {
+          this.logger.warn(`⚠️ No valid API key retrieved for ${target.type}`);
+        }
+      } catch (error) {
+        this.logger.error(`❌ Error executing ${target.type}: ${error.message}`);
+      }
+    }
+  }
+
+  async _executeTargetLogic(target, apiKey) {
+    const handler = await this.apiScout.loadHandlerFor(target.type);
+    if (!handler || typeof handler.execute !== 'function') {
+      throw new Error(`No executable handler found for ${target.type}`);
+    }
+
+    const result = await handler.execute(apiKey);
+    this.logger.info(`📊 Execution result for ${target.type}: ${JSON.stringify(result)}`);
+  }
+}
+
 // Quantum jitter for anti-detection
 const quantumDelay = (ms) => new Promise(resolve => {
     const jitter = crypto.randomInt(1000, 5000);
