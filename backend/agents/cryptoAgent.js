@@ -193,13 +193,13 @@ class EnhancedCryptoAgent {
   }
 }
 
-// ✅ Wrap trade size logic inside a method
-calculateOptimalTradeSize(tradeSize, minTradeSize) {
-  try {
-    return Math.max(tradeSize, minTradeSize);
-  } catch (error) {
-    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-    return 0;
+ calculateOptimalTradeSize(tradeSize, minTradeSize) {
+    try {
+      return Math.max(tradeSize, minTradeSize);
+    } catch (error) {
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0;
+    }
   }
 }
 
