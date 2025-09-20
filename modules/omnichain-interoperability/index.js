@@ -1,7 +1,7 @@
 // modules/omnichain-interoperability/index.js
 import Web3 from 'web3';
 import { ethers } from 'ethers';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine';
 import { Logger } from '../enterprise-logger';
 import axios from 'axios';
 
