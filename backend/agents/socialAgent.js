@@ -884,7 +884,7 @@ export function getStatus() {
     };
 }
 
-export default SocialAgent;
+
 
 // Worker thread execution
 if (!isMainThread) {
