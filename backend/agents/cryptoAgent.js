@@ -200,9 +200,7 @@ class EnhancedCryptoAgent {
       this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
       return 0;
     }
-  }
-}
-
+  
 
     // Initialize cryptocurrency exchanges
     async initializeExchanges() {
