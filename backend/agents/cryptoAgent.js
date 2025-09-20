@@ -157,6 +157,70 @@ class EnhancedCryptoAgent {
     }
   }
 
+    /**
+   * Uses the AI engine to evaluate trade viability.
+   * @param {object} marketData - Real-time market data.
+   * @returns {boolean} - Whether to proceed with trade.
+   */
+  async evaluateTradeWithAI(marketData) {
+    try {
+      const decision = await this.aiEngine.analyzeMarket(marketData);
+      this.logger.info(`🧠 AI decision: ${decision.action}`);
+      return decision.action === 'buy' || decision.action === 'sell';
+    } catch (error) {
+      this.logger.error(`❌ AI evaluation failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Logs a trade record to the local SQLite database.
+   * @param {object} tradeDetails - Trade metadata.
+   */
+  async logTradeToDatabase(tradeDetails) {
+    try {
+      await this.db.insert('trades', tradeDetails);
+      this.logger.info(`📘 Trade logged: ${JSON.stringify(tradeDetails)}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to log trade: ${error.message}`);
+    }
+  }
+
+  /**
+   * Checks Ethereum wallet balance using Web3.
+   * @param {string} walletAddress - Ethereum wallet address.
+   * @returns {string} - Balance in ETH.
+   */
+  async getEthereumBalance(walletAddress) {
+    try {
+      const balanceWei = await this.web3.eth.getBalance(walletAddress);
+      const balanceEth = this.web3.utils.fromWei(balanceWei, 'ether');
+      this.logger.info(`💰 ETH Balance: ${balanceEth}`);
+      return balanceEth;
+    } catch (error) {
+      this.logger.error(`❌ Failed to fetch ETH balance: ${error.message}`);
+      return '0';
+    }
+  }
+
+  /**
+   * Checks Solana wallet balance using Solana RPC.
+   * @param {string} walletAddress - Solana wallet address.
+   * @returns {number} - Balance in SOL.
+   */
+  async getSolanaBalance(walletAddress) {
+    try {
+      const balanceLamports = await this.solanaConnection.getBalance(new PublicKey(walletAddress));
+      const balanceSol = balanceLamports / 1e9;
+      this.logger.info(`💰 SOL Balance: ${balanceSol}`);
+      return balanceSol;
+    } catch (error) {
+      this.logger.error(`❌ Failed to fetch SOL balance: ${error.message}`);
+      return 0;
+    }
+  }
+
+  
   // Initialize cryptocurrency exchanges
   async initializeExchanges() {
     const exchangeConfigs = [
