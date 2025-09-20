@@ -42,13 +42,6 @@ import { HfInference } from '@huggingface/inference'; // Added for advanced NLP
 import rax from 'retry-axios'; // Added for robust HTTP requests
 import puppeteer from 'puppeteer'; // Added for advanced scraping
 import BrowserManager from './browserManager.js';
-import APIScoutAgent from './apiScoutAgent.js';
-
-const apiScout = new APIScoutAgent(config, logger);
-await apiScout.initialize();
-
-const revenueManager = new RevenueManager(aiBrain, dataFetcher, payoutManager, apiScout);
-
 
 class SovereignAIGovernor {
     constructor() {
