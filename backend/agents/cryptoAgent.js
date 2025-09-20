@@ -2,7 +2,7 @@
 
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import walletManager from './wallet.js';
-import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; // Correct import path
+import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import ccxt from 'ccxt';
 import axios from 'axios';
@@ -10,8 +10,9 @@ import { v4 as uuidv4 } from 'uuid';
 import Web3 from 'web3';
 import { Connection } from '@solana/web3.js';
 import apiScoutAgent from './apiScoutAgent.js';
+import { BrowserManager } from './browserManager.js';
 
-export default class apiScoutAgentExtension {
+class apiScoutAgentExtension {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
@@ -24,7 +25,7 @@ export default class apiScoutAgentExtension {
   }
 
   async executeAcrossAllTargets() {
-    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets(); // Autonomous discovery
+    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets();
 
     for (const target of discoveredTargets) {
       try {
@@ -53,16 +54,13 @@ export default class apiScoutAgentExtension {
   }
 }
 
-// Import browser manager for real browsing
-import { BrowserManager } from './browserManager.js';
-
 class EnhancedCryptoAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
     this.blockchain = BrianNwaezikeChain;
     this.aiEngine = new AutonomousAIEngine(config, logger);
-    this.db = new ArielSQLiteEngine('./data/crypto_agent.db'); // Use the class to create DB instance
+    this.db = new ArielSQLiteEngine('./data/crypto_agent.db');
     this.exchanges = new Map();
     this.lastStatus = 'idle';
     this.lastExecutionTime = null;
@@ -74,12 +72,11 @@ class EnhancedCryptoAgent {
     this.performanceMetrics = new Map();
     this.browserManager = new BrowserManager(config, logger);
     this.chainConnections = {};
-    this.initDatabases();
   }
 
   // Database initialization
   async initDatabases() {
-    await this.db.init(); // Initialize the database
+    await this.db.init();
 
     const queries = [
       `CREATE TABLE IF NOT EXISTS crypto_trades (
@@ -117,9 +114,9 @@ class EnhancedCryptoAgent {
       )`
     ];
 
-    queries.forEach(sql => {
-      this.db.run(sql); // Run queries to create tables
-    });
+    for (const sql of queries) {
+      await this.db.run(sql);
+    }
   }
 
   // Main initialization method
@@ -127,6 +124,7 @@ class EnhancedCryptoAgent {
     this.logger.info('🚀 Initializing EnhancedCryptoAgent...');
 
     try {
+      await this.initDatabases();
       await walletManager.initializeConnections();
       this.walletInitialized = true;
 
@@ -144,767 +142,40 @@ class EnhancedCryptoAgent {
     }
   }
 
+  /**
+   * Calculates the optimal trade size based on minimum thresholds.
+   * @param {number} tradeSize - Proposed trade size.
+   * @param {number} minTradeSize - Minimum allowed trade size.
+   * @returns {number} - The adjusted trade size.
+   */
   calculateOptimalTradeSize(tradeSize, minTradeSize) {
-  try {
-    return Math.max(tradeSize, minTradeSize);
-  } catch (error) {
-    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-    return 0;
-  }
-}
-
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-   class CryptoAgent {
-  constructor(config, logger) {
-    this.config = config;
-    this.logger = logger;
-    this.exchanges = new Map();
+    try {
+      return Math.max(tradeSize, minTradeSize);
+    } catch (error) {
+      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+      return 0;
+    }
   }
 
-  // ✅ FIXED: Properly scoped method
+  // Initialize cryptocurrency exchanges
   async initializeExchanges() {
     const exchangeConfigs = [
-      // your exchange config objects here
-      //{ id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
+      { id: 'binance', class: ccxt.binance },
+      { id: 'coinbase', class: ccxt.coinbasepro },
+      { id: 'kraken', class: ccxt.kraken },
+      { id: 'kucoin', class: ccxt.kucoin },
+      { id: 'huobi', class: ccxt.huobipro },
+      { id: 'okex', class: ccxt.okex },
+      { id: 'bitfinex', class: ccxt.bitfinex },
+      { id: 'bybit', class: ccxt.bybit },
+      { id: 'gateio', class: ccxt.gateio },
+      { id: 'mexc', class: ccxt.mexc }
     ];
 
-    for (let i = 0; i < exchangeConfigs.length; i++) {
-      const config = exchangeConfigs[i];
+    for (const config of exchangeConfigs) {
       const id = config.id;
       const ExchangeClass = config.class;
-
-      try {
-        const exchange = new ExchangeClass({
-          apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-          secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-          enableRateLimit: true,
-          timeout: 30000,
-          options: { defaultType: 'spot', adjustForTimeDifference: true }
-        });
-
-        await exchange.loadMarkets();
-        this.exchanges.set(id, exchange);
-        this.logger.info(`✅ Exchange initialized: ${id}`);
-      } catch (error) {
-        this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-      }
-    }
-  }
-}
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-        // ... (code before the EnhancedCryptoAgent class) ...
-
-class EnhancedCryptoAgent {
-  /**
-   * Constructs the EnhancedCryptoAgent.
-   * @param {object} config - The agent's configuration object.
-   * @param {object} logger - The logger instance.
-   * @param {object} browserManager - The browser manager instance.
-   */
-  constructor(config, logger, browserManager) {
-    this.config = config;
-    this.logger = logger;
-    this.browserManager = browserManager;
-    this.exchanges = new Map();
-    this.performanceMetrics = new Map();
-    this.lastStatus = 'initialized';
-    this.isWalletInitialized = false;
-    this.db = new ArielSQLiteEngine(); // Assuming ArielSQLiteEngine is correctly imported
-    this.aiEngine = new AutonomousAIEngine(); // Assuming AutonomousAIEngine is correctly imported
-    this.web3 = new Web3(); // Assuming Web3 is correctly imported
-    this.solanaConnection = new Connection('https://api.mainnet-beta.solana.com'); // Solana connection
-  }
-
-  /**
-   * Initializes all enabled exchanges from the configuration.
-   * This is where the syntax error was corrected.
-   */
-  async initializeExchanges() {
-    this.logger.info('🔄 Initializing exchanges...');
-    for (const exchangeId of this.config.exchanges.enabled) {
-      if (ccxt[exchangeId]) {
-        try {
-          const exchangeClass = ccxt[exchangeId];
-          const exchange = new exchangeClass(this.config.exchanges[exchangeId]);
-          
-          await exchange.loadMarkets();
-          this.exchanges.set(exchangeId, exchange);
-          this.logger.info(`✅ Initialized ${exchangeId}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize exchange ${exchangeId}: ${error.message}`);
-        }
-      } else {
-        this.logger.warn(`⚠️ Exchange ${exchangeId} not found in ccxt`);
-      }
-    }
-  }
-
-  /**
-   * Initiates an emergency shutdown, closing all positions and withdrawing funds.
-   */
-  async emergencyShutdown() {
-    this.logger.warn('🚨 Emergency shutdown initiated!');
-    this.lastStatus = 'emergency';
-    
-    try {
-      await this.closeAllPositions();
-      await this.withdrawAllFunds();
-      await this.browserManager.close();
       
-      this.logger.info('✅ Emergency shutdown completed');
-      return { success: true, message: 'All positions closed and funds secured' };
-    } catch (error) {
-      this.logger.error(`❌ Emergency shutdown failed: ${error.message}`);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Closes all open positions across all initialized exchanges.
-   */
-  async closeAllPositions() {
-    this.logger.info('🔒 Closing all open positions');
-    // Implementation to close positions would go here
-  }
-
-  /**
-   * Withdraws all available funds to cold storage.
-   */
-  async withdrawAllFunds() {
-    this.logger.info('💸 Withdrawing all funds to cold storage');
-    // Implementation to withdraw funds would go here
-  }
-
-  /**
-   * Cleans up resources, including closing exchanges and the browser.
-   */
-  async cleanup() {
-    this.logger.info('🧹 Cleaning up EnhancedCryptoAgent...');
-    
-    try {
-      for (const exchange of this.exchanges.values()) {
-        exchange.close && await exchange.close();
-      }
-      
-      await this.browserManager.close();
-      this.db.close();
-    } catch (error) {
-      this.logger.error(`❌ Cleanup failed: ${error.message}`);
-    }
-  }
-}
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
-
-    // Initialize cryptocurrency exchanges
-    async initializeExchanges() {
-      const exchangeConfigs = [
-        { id: 'binance', class: ccxt.binance },
-        { id: 'coinbase', class: ccxt.coinbasepro },
-        { id: 'kraken', class: ccxt.kraken },
-        { id: 'kucoin', class: ccxt.kucoin },
-        { id: 'huobi', class: ccxt.huobipro },
-        { id: 'okex', class: ccxt.okex },
-        { id: 'bitfinex', class: ccxt.bitfinex },
-        { id: 'bybit', class: ccxt.bybit },
-        { id: 'gateio', class: ccxt.gateio },
-        { id: 'mexc', class: ccxt.mexc }
-      ];
-
-      for (let i = 0; i < exchangeConfigs.length; i++) {
-        const config = exchangeConfigs[i]; // Use a single variable
-        const id = config.id;
-        const ExchangeClass = config.class; // Get class separately
-        try {
-          const exchange = new ExchangeClass({
-            apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
-            secret: this.config[`${id.toUpperCase()}_API_SECRET`],
-            enableRateLimit: true,
-            timeout: 30000,
-            options: { defaultType: 'spot', adjustForTimeDifference: true }
-          });
-
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }
-  // Initialize blockchain connections
-  async initializeChainConnections() {
-    this.chainConnections = {
-      ethereum: new Web3(this.config.ETHEREUM_RPC_URL),
-      solana: new Connection(this.config.SOLANA_RPC_URL, 'confirmed'),
-      bsc: new Web3(this.config.BSC_RPC_URL),
-      polygon: new Web3(this.config.POLYGON_RPC_URL),
-      arbitrum: new Web3(this.config.ARBITRUM_RPC_URL),
-      optimism: new Web3(this.config.OPTIMISM_RPC_URL)
-    };
-    this.logger.info('✅ Blockchain connections established');
-  }
-
-  // Initialize trading strategies
-  async initializeTradingStrategies() {
-    const strategies = [
-      {
-        name: 'cross_exchange_arbitrage',
-        execute: this.executeCrossExchangeArbitrage.bind(this),
-        interval: 30000,
-        minProfitThreshold: 0.002
-      },
-      {
-        name: 'market_making',
-        execute: this.executeMarketMaking.bind(this),
-        interval: 60000,
-        spread: 0.0015
-      },
-      {
-        name: 'momentum_trading',
-        execute: this.executeMomentumTrading.bind(this),
-        interval: 120000,
-        lookbackPeriod: 20
-      },
-      {
-        name: 'mean_reversion',
-        execute: this.executeMeanReversion.bind(this),
-        interval: 180000,
-        lookbackPeriod: 50
-      },
-      {
-        name: 'volatility_breakout',
-        execute: this.executeVolatilityBreakout.bind(this),
-        interval: 240000,
-        breakoutMultiplier: 2.0
-      },
-      {
-        name: 'dex_arbitrage',
-        execute: this.executeDexArbitrage.bind(this),
-        interval: 45000,
-        minProfitThreshold: 0.015
-      },
-      {
-        name: 'liquidity_provision',
-        execute: this.executeLiquidityProvision.bind(this),
-        interval: 300000,
-        targetPairs: ['ETH/USDT', 'BTC/USDT', 'SOL/USDT']
-      }
-    ];
-
-    strategies.forEach(strategy => {
-      this.activeStrategies.set(strategy.name, strategy);
-      this.performanceMetrics.set(strategy.name, {
-        totalProfit: 0,
-        totalTrades: 0,
-        winningTrades: 0,
-        maxDrawdown: 0,
-        currentDrawdown: 0
-      });
-    });
-
-    this.logger.info(`✅ ${strategies.length} trading strategies initialized`);
-  }
-
-  // Main execution method
-  async run() {
-    this.lastExecutionTime = new Date().toISOString();
-    this.lastStatus = 'running';
-    this.logger.info('💰 Running EnhancedCryptoAgent...');
-
-    try {
-      const balances = await walletManager.getWalletBalances();
-      this.logger.info(`💼 Wallet balances: ${JSON.stringify(balances)}`);
-
-      const marketData = await this.fetchMarketData();
-      const dexData = await this.fetchDexLiquidityData();
-      const optimizedOps = await this.aiEngine.optimizeTradingStrategies(marketData);
-      
-      const strategyResults = await this.executeAllStrategies(marketData, dexData);
-      const crossChainResults = await this.executeCrossChainOperations();
-      
-      await this.updatePerformanceMetrics(strategyResults);
-      await this.executeRiskManagement();
-      await this.monitorAndRebalancePositions();
-      
-      this.lastStatus = 'completed';
-      this.logger.info('✅ EnhancedCryptoAgent execution completed successfully');
-      
-      return {
-        strategyResults,
-        crossChainResults,
-        marketData: marketData.length,
-        dexData: dexData.length,
-        timestamp: this.lastExecutionTime
-      };
-    } catch (error) {
-      this.lastStatus = 'error';
-      this.logger.error(`❌ Execution failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // Fetch market data from exchanges
-  async fetchMarketData() {
-    const marketData = [];
-    const symbols = [
-      'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-      'ADA/USDT', 'DOGE/USDT', 'MATIC/USDT', 'DOT/USDT', 'LTC/USDT',
-      'AVAX/USDT', 'LINK/USDT', 'ATOM/USDT', 'UNI/USDT', 'XLM/USDT'
-    ];
-    
-    for (const [exchangeId, exchange] of this.exchanges) {
-      for (const symbol of symbols) {
-        try {
-          const ticker = await exchange.fetchTicker(symbol);
-          const ohlcv = await exchange.fetchOHLCV(symbol, '1m', undefined, 100);
-          const orderBook = await exchange.fetchOrderBook(symbol, 50);
-          
-          marketData.push({
-            exchange: exchangeId,
-            symbol,
-            price: ticker.last,
-            volume: ticker.quoteVolume,
-            timestamp: ticker.timestamp,
-            ohlcv,
-            orderBook,
-            spread: (orderBook.asks[0][0] - orderBook.bids[0][0]) / orderBook.asks[0][0],
-            liquidity: orderBook.bids[0][1] + orderBook.asks[0][1]
-          });
-          
-          this.db.run(
-            `INSERT INTO market_data (id, symbol, price, volume_24h, change_24h, source) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
-
-            [uuidv4(), symbol, ticker.last, ticker.quoteVolume, ticker.percentage, exchangeId]
-          );
-        } catch (error) {
-          this.logger.warn(`⚠️ Failed to fetch ${symbol} from ${exchangeId}: ${error.message}`);
-        }
-      }
-    }
-    return marketData;
-  }
-
-  // Execute all trading strategies
-  async executeAllStrategies(marketData, dexData) {
-    const results = [];
-    
-    for (const [strategyName, strategy] of this.activeStrategies) {
-      try {
-        this.logger.info(`🎯 Executing strategy: ${strategyName}`);
-        let result;
-        
-        if (strategyName === 'dex_arbitrage' || strategyName === 'liquidity_provision') {
-          result = await strategy.execute(dexData);
-        } else {
-          result = await strategy.execute(marketData);
-        }
-        
-        results.push({ strategy: strategyName, ...result });
-        
-        const metrics = this.performanceMetrics.get(strategyName);
-        metrics.totalTrades += result.trades || 0;
-        metrics.totalProfit += result.profit || 0;
-        if (result.profit > 0) metrics.winningTrades++;
-      } catch (error) {
-        this.logger.error(`❌ Strategy ${strategyName} failed: ${error.message}`);
-        results.push({ strategy: strategyName, error: error.message });
-      }
-    }
-    return results;
-  }
-
-  // Cross-exchange arbitrage strategy
-  async executeCrossExchangeArbitrage(marketData) {
-    const opportunities = [];
-    const minProfitThreshold = this.activeStrategies.get('cross_exchange_arbitrage').minProfitThreshold;
-    
-    const symbolData = {};
-    marketData.forEach(data => {
-      if (!symbolData[data.symbol]) symbolData[data.symbol] = [];
-      symbolData[data.symbol].push(data);
-    });
-    
-    for (const [symbol, exchangesData] of Object.entries(symbolData)) {
-      if (exchangesData.length < 2) continue;
-      
-      let bestBuy = { price: Infinity, exchange: null, liquidity: 0 };
-      let bestSell = { price: 0, exchange: null, liquidity: 0 };
-      
-      for (const data of exchangesData) {
-        if (data.orderBook.bids[0][0] > bestSell.price && data.liquidity > 10000) {
-          bestSell = { price: data.orderBook.bids[0][0], exchange: data.exchange, liquidity: data.liquidity };
-        }
-        if (data.orderBook.asks[0][0] < bestBuy.price && data.liquidity > 10000) {
-          bestBuy = { price: data.orderBook.asks[0][0], exchange: data.exchange, liquidity: data.liquidity };
-        }
-      }
-      
-      const profitPercentage = (bestSell.price - bestBuy.price) / bestBuy.price;
-      const fees = await this.calculateTradingFees(bestBuy.exchange, bestSell.exchange);
-      const netProfit = profitPercentage - fees;
-      
-      if (netProfit > minProfitThreshold && bestBuy.exchange !== bestSell.exchange) {
-        const opportunity = {
-          symbol,
-          buyExchange: bestBuy.exchange,
-          sellExchange: bestSell.exchange,
-          buyPrice: bestBuy.price,
-          sellPrice: bestSell.price,
-          potentialProfit: netProfit,
-          buyLiquidity: bestBuy.liquidity,
-          sellLiquidity: bestSell.liquidity,
-          timestamp: Date.now()
-        };
-        
-        opportunities.push(opportunity);
-        
-        this.db.run(
-          `INSERT INTO arbitrage_opportunities (id, symbol, buy_exchange, sell_exchange, buy_price, sell_price, potential_profit)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [uuidv4(), symbol, bestBuy.exchange, bestSell.exchange, bestBuy.price, bestSell.price, netProfit]
-        );
-        
-        if (this.config.AUTO_EXECUTE_ARBITRAGE && netProfit > minProfitThreshold * 1.5) {
-          await this.executeArbitrageTrade(opportunity);
-        }
-      }
-    }
-    
-    return { opportunities: opportunities.length, profit: opportunities.reduce((sum, opp) => sum + opp.potentialProfit, 0) };
-  }
-
-  // Calculate trading fees
-  async calculateTradingFees(buyExchangeId, sellExchangeId) {
-    const feeRates = {
-      binance: 0.001, coinbase: 0.005, kraken: 0.0026, kucoin: 0.001,
-      huobi: 0.002, okex: 0.0015, bitfinex: 0.002, bybit: 0.001,
-      gateio: 0.002, mexc: 0.002
-    };
-    return (feeRates[buyExchangeId] || 0.002) + (feeRates[sellExchangeId] || 0.002);
-  }
-
-  // Execute arbitrage trade
-  async executeArbitrageTrade(opportunity) {
-    try {
-      const buyExchange = this.exchanges.get(opportunity.buyExchange);
-      const sellExchange = this.exchanges.get(opportunity.sellExchange);
-      
-      if (!buyExchange || !sellExchange) {
-        throw new Error('Exchange not available');
-      }
-      
-      const tradeSize = await this.calculateOptimalTradeSize(opportunity);
-      if (tradeSize <= 0) {
-        throw new Error('Insufficient balance for arbitrage');
-      }
-      
-      const buyOrder = await buyExchange.createOrder(
-        opportunity.symbol,
-        'limit',
-        'buy',
-        tradeSize,
-        opportunity.buyPrice * 1.001
-      );
-      
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const sellOrder = await sellExchange.createOrder(
-        opportunity.symbol,
-        'limit',
-        'sell',
-        tradeSize,
-        opportunity.sellPrice * 0.999
-      );
-      
-      const buyCost = buyOrder.price * buyOrder.amount;
-      const sellProceeds = sellOrder.price * sellOrder.amount;
-      const fees = buyCost * 0.001 + sellProceeds * 0.001;
-      const actualProfit = sellProceeds - buyCost - fees;
-      
-      this.db.run(
-        `INSERT INTO crypto_trades (id, symbol, type, amount, price, exchange, tx_hash, profit_loss)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [uuidv4(), opportunity.symbol, 'arbitrage', tradeSize, opportunity.buyPrice, 
-         `${opportunity.buyExchange}-${opportunity.sellExchange}`, `${buyOrder.id}-${sellOrder.id}`, 
-         actualProfit]
-      );
-      
-      this.db.run(
-        `UPDATE arbitrage_opportunities SET executed = TRUE, actual_profit = ? WHERE symbol = ? AND buy_exchange = ? AND sell_exchange = ?`,
-        [actualProfit, opportunity.symbol, opportunity.buyExchange, opportunity.sellExchange]
-      );
-      
-      this.logger.info(`✅ Arbitrage executed: ${actualProfit.toFixed(4)} profit on ${opportunity.symbol}`);
-      return { success: true, profit: actualProfit };
-    } catch (error) {
-      this.logger.error(`❌ Arbitrage execution failed: ${error.message}`);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Calculate optimal trade size
-  async calculateOptimalTradeSize(opportunity) {
-    const minTradeSize = 50;
-    const maxTradeSize = 5000;
-    const riskPerTrade = 0.02;
-    
-    try {
-      const buyExchange = this.exchanges.get(opportunity.buyExchange);
-      const balance = await buyExchange.fetchBalance();
-      const availableBalance = balance.USDT ? balance.USDT.free : 0;
-      
-      const tradeSize = Math.min(
-        availableBalance * riskPerTrade / opportunity.buyPrice,
-        maxTradeSize,
-        opportunity.buyLiquidity * 0.1,
-        opportunity.sellLiquidity * 0.1
-      );
-      
-      return Math.max(tradeSize, minTradeSize);
-    } catch (
-    for (const { id, class: ExchangeClass } of exchangeConfigs) {
       try {
         const exchange = new ExchangeClass({
           apiKey: this.config[`${id.toUpperCase()}_API_KEY`],
@@ -1063,7 +334,7 @@ class EnhancedCryptoAgent {
             liquidity: orderBook.bids[0][1] + orderBook.asks[0][1]
           });
           
-          this.db.run(
+          await this.db.run(
             `INSERT INTO market_data (id, symbol, price, volume_24h, change_24h, source) 
              VALUES (?, ?, ?, ?, ?, ?)`,
             [uuidv4(), symbol, ticker.last, ticker.quoteVolume, ticker.percentage, exchangeId]
@@ -1150,7 +421,7 @@ class EnhancedCryptoAgent {
         
         opportunities.push(opportunity);
         
-        this.db.run(
+        await this.db.run(
           `INSERT INTO arbitrage_opportunities (id, symbol, buy_exchange, sell_exchange, buy_price, sell_price, potential_profit)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [uuidv4(), symbol, bestBuy.exchange, bestSell.exchange, bestBuy.price, bestSell.price, netProfit]
@@ -1185,7 +456,7 @@ class EnhancedCryptoAgent {
         throw new Error('Exchange not available');
       }
       
-      const tradeSize = await this.calculateOptimalTradeSize(opportunity);
+      const tradeSize = await this.calculateOptimalTradeSizeForArbitrage(opportunity);
       if (tradeSize <= 0) {
         throw new Error('Insufficient balance for arbitrage');
       }
@@ -1213,7 +484,7 @@ class EnhancedCryptoAgent {
       const fees = buyCost * 0.001 + sellProceeds * 0.001;
       const actualProfit = sellProceeds - buyCost - fees;
       
-      this.db.run(
+      await this.db.run(
         `INSERT INTO crypto_trades (id, symbol, type, amount, price, exchange, tx_hash, profit_loss)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [uuidv4(), opportunity.symbol, 'arbitrage', tradeSize, opportunity.buyPrice, 
@@ -1221,7 +492,7 @@ class EnhancedCryptoAgent {
          actualProfit]
       );
       
-      this.db.run(
+      await this.db.run(
         `UPDATE arbitrage_opportunities SET executed = TRUE, actual_profit = ? WHERE symbol = ? AND buy_exchange = ? AND sell_exchange = ?`,
         [actualProfit, opportunity.symbol, opportunity.buyExchange, opportunity.sellExchange]
       );
@@ -1234,8 +505,8 @@ class EnhancedCryptoAgent {
     }
   }
 
-  // Calculate optimal trade size
-  async calculateOptimalTradeSize(opportunity) {
+  // Calculate optimal trade size for arbitrage
+  async calculateOptimalTradeSizeForArbitrage(opportunity) {
     const minTradeSize = 50;
     const maxTradeSize = 5000;
     const riskPerTrade = 0.02;
@@ -1452,7 +723,7 @@ class EnhancedCryptoAgent {
       try {
         const response = await axios.get(`https://api.dexscreener.com/latest/dex/pools/${chain}/${popularPools.join(',')}`);
         if (response.data && response.data.pools) {
-          response.data.pools.forEach(pool => {
+          for (const pool of response.data.pools) {
             dexData.push({
               chain,
               poolAddress: pool.pairAddress,
@@ -1464,13 +735,13 @@ class EnhancedCryptoAgent {
               feeTier: pool.feeTier || 0.003
             });
             
-            this.db.run(
+            await this.db.run(
               `INSERT INTO dex_liquidity (id, chain, pool_address, token0, token1, liquidity, volume_24h, fee_tier)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               [uuidv4(), chain, pool.pairAddress, pool.baseToken?.symbol, pool.quoteToken?.symbol,
                pool.liquidity?.usd || 0, pool.volume?.h24 || 0, pool.feeTier || 0.003]
             );
-          });
+          }
         }
       } catch (error) {
         this.logger.warn(`⚠️ Failed to fetch DEX data for ${chain}: ${error.message}`);
@@ -1630,30 +901,38 @@ class EnhancedCryptoAgent {
     for (const pool of dexData.filter(p => targetPairs.includes(`${p.baseToken.symbol}/${p.quoteToken.symbol}`))) {
       try {
         if (pool.liquidity > 1000000 && pool.volume24h > 500000) {
-          const provisionAmount = await this.calculateLiquidityProvisionAmount(pool);
-          if (provisionAmount > 0) {
-            const txHash = await this.provideLiquidity(pool, provisionAmount);
+          const amount = await this.calculateLiquidityAmount(pool);
+          if (amount > 0) {
+            const txHash = await walletManager.provideLiquidity(
+              pool.chain,
+              pool.baseToken.address,
+              pool.quoteToken.address,
+              amount,
+              amount / pool.price,
+              pool.feeTier
+            );
+            
             provisions.push({
-              pool: pool.poolAddress,
               chain: pool.chain,
-              amount: provisionAmount,
-              txHash,
-              timestamp: Date.now()
+              pair: `${pool.baseToken.symbol}/${pool.quoteToken.symbol}`,
+              amount,
+              txHash
             });
           }
         }
       } catch (error) {
-        this.logger.warn(`⚠️ Liquidity provision failed for ${pool.poolAddress}: ${error.message}`);
+        this.logger.warn(`⚠️ Liquidity provision failed for ${pool.baseToken.symbol}/${pool.quoteToken.symbol}: ${error.message}`);
       }
     }
     
     return { provisions: provisions.length, details: provisions };
   }
 
-  // Calculate liquidity provision amount
-  async calculateLiquidityProvisionAmount(pool) {
-    const maxProvision = 5000;
-    const targetAllocation = 0.1;
+  // Calculate liquidity amount
+  async calculateLiquidityAmount(pool) {
+    const minProvision = 1000;
+    const maxProvision = 20000;
+    const provisionPercentage = 0.02;
     
     try {
       const balances = await walletManager.getWalletBalances();
@@ -1661,221 +940,71 @@ class EnhancedCryptoAgent {
       const quoteBalance = balances[pool.quoteToken.symbol] || 0;
       
       const provisionAmount = Math.min(
-        baseBalance * targetAllocation,
-        quoteBalance * targetAllocation / pool.price,
+        baseBalance * provisionPercentage,
+        quoteBalance * provisionPercentage * pool.price,
         maxProvision
       );
       
-      return provisionAmount > 10 ? provisionAmount : 0;
+      return Math.max(provisionAmount, minProvision);
     } catch (error) {
-      this.logger.error(`❌ Error calculating liquidity provision: ${error.message}`);
+      this.logger.error(`❌ Error calculating liquidity amount: ${error.message}`);
       return 0;
-    }
-  }
-
-  // Provide liquidity to DEX
-  async provideLiquidity(pool, amount) {
-    try {
-      const txHash = await walletManager.provideLiquidity(
-        pool.chain,
-        pool.poolAddress,
-        pool.baseToken.address,
-        pool.quoteToken.address,
-        amount,
-        amount / pool.price
-      );
-      
-      this.logger.info(`✅ Liquidity provided to ${pool.poolAddress}: ${txHash}`);
-      return txHash;
-    } catch (error) {
-      throw new Error(`Liquidity provision failed: ${error.message}`);
     }
   }
 
   // Execute cross-chain operations
   async executeCrossChainOperations() {
     const operations = [];
-    
-    try {
-      const bridgeOpportunities = await this.findBridgeOpportunities();
-      for (const opportunity of bridgeOpportunities) {
-        const txHash = await this.executeCrossChainBridge(opportunity);
-        operations.push({
-          type: 'bridge',
-          fromChain: opportunity.fromChain,
-          toChain: opportunity.toChain,
-          token: opportunity.token,
-          amount: opportunity.amount,
-          txHash,
-          estimatedProfit: opportunity.estimatedProfit
-        });
-      }
-      
-      const yieldOpportunities = await this.findYieldOpportunities();
-      for (const opportunity of yieldOpportunities) {
-        const txHash = await this.executeYieldFarming(opportunity);
-        operations.push({
-          type: 'yield',
-          chain: opportunity.chain,
-          protocol: opportunity.protocol,
-          token: opportunity.token,
-          amount: opportunity.amount,
-          txHash,
-          estimatedAPY: opportunity.estimatedAPY
-        });
-      }
-    } catch (error) {
-      this.logger.error(`❌ Cross-chain operations failed: ${error.message}`);
-    }
-    
-    return operations;
-  }
-
-  // Find bridge opportunities
-  async findBridgeOpportunities() {
-    const opportunities = [];
-    const chains = ['ethereum', 'bsc', 'polygon', 'arbitrum', 'optimism'];
-    const tokens = ['USDC', 'USDT', 'ETH', 'WBTC'];
+    const chains = Object.keys(this.chainConnections);
     
     for (const fromChain of chains) {
       for (const toChain of chains) {
         if (fromChain === toChain) continue;
         
-        for (const token of tokens) {
-          try {
-            const fromPrice = await this.getTokenPrice(fromChain, token);
-            const toPrice = await this.getTokenPrice(toChain, token);
-            const bridgeFee = await this.getBridgeFee(fromChain, toChain, token);
-            
-            const priceDifference = Math.abs(fromPrice - toPrice);
-            const estimatedProfit = priceDifference - bridgeFee;
-            
-            if (estimatedProfit > 5) {
-              const balances = await walletManager.getWalletBalances();
-              const availableAmount = balances[token] || 0;
-              
-              if (availableAmount > 100) {
-                opportunities.push({
-                  fromChain,
-                  toChain,
-                  token,
-                  amount: availableAmount * 0.5,
-                  fromPrice,
-                  toPrice,
-                  bridgeFee,
-                  estimatedProfit
-                });
-              }
-            }
-          } catch (error) {
-            this.logger.warn(`⚠️ Bridge opportunity check failed for ${token}: ${error.message}`);
-          }
+        try {
+          const bridgeResult = await this.executeCrossChainBridge(fromChain, toChain);
+          operations.push(bridgeResult);
+        } catch (error) {
+          this.logger.warn(`⚠️ Cross-chain bridge from ${fromChain} to ${toChain} failed: ${error.message}`);
         }
       }
     }
     
-    return opportunities;
-  }
-
-  // Get token price
-  async getTokenPrice(chain, token) {
-    try {
-      const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${this.getCoinGeckoId(token)}&vs_currencies=usd`);
-      return response.data[this.getCoinGeckoId(token)]?.usd || 0;
-    } catch (error) {
-      return 0;
-    }
-  }
-
-  // Get CoinGecko ID
-  getCoinGeckoId(token) {
-    const mapping = {
-      'USDC': 'usd-coin',
-      'USDT': 'tether',
-      'ETH': 'ethereum',
-      'WBTC': 'wrapped-bitcoin',
-      'BTC': 'bitcoin'
-    };
-    return mapping[token] || token.toLowerCase();
-  }
-
-  // Get bridge fee
-  async getBridgeFee(fromChain, toChain, token) {
-    const baseFees = {
-      ethereum: { bsc: 15, polygon: 8, arbitrum: 5, optimism: 5 },
-      bsc: { ethereum: 10, polygon: 6, arbitrum: 4, optimism: 4 },
-      polygon: { ethereum: 8, bsc: 6, arbitrum: 3, optimism: 3 },
-      arbitrum: { ethereum: 5, bsc: 4, polygon: 3, optimism: 2 },
-      optimism: { ethereum: 5, bsc: 4, polygon: 3, arbitrum: 2 }
-    };
-    return baseFees[fromChain]?.[toChain] || 10;
+    return operations;
   }
 
   // Execute cross-chain bridge
-  async executeCrossChainBridge(opportunity) {
+  async executeCrossChainBridge(fromChain, toChain) {
     try {
-      const txHash = await walletManager.bridgeTokens(
-        opportunity.fromChain,
-        opportunity.toChain,
-        opportunity.token,
-        opportunity.amount
-      );
-      
-      this.logger.info(`✅ Cross-chain bridge executed: ${txHash}`);
-      return txHash;
-    } catch (error) {
-      throw new Error(`Bridge execution failed: ${error.message}`);
-    }
-  }
-
-  // Find yield opportunities
-  async findYieldOpportunities() {
-    const opportunities = [];
-    const protocols = [
-      { chain: 'ethereum', protocol: 'aave', apy: 0.028 },
-      { chain: 'ethereum', protocol: 'compound', apy: 0.025 },
-      { chain: 'bsc', protocol: 'venus', apy: 0.032 },
-      { chain: 'polygon', protocol: 'aave', apy: 0.035 },
-      { chain: 'arbitrum', protocol: 'aave', apy: 0.038 },
-      { chain: 'optimism', protocol: 'aave', apy: 0.036 }
-    ];
-    
-    const tokens = ['USDC', 'USDT', 'ETH'];
-    
-    for (const { chain, protocol, apy } of protocols) {
-      for (const token of tokens) {
-        const balances = await walletManager.getWalletBalances();
-        const availableAmount = balances[token] || 0;
-        
-        if (availableAmount > 500 && apy > 0.02) {
-          opportunities.push({
-            chain,
-            protocol,
-            token,
-            amount: availableAmount * 0.3,
-            estimatedAPY: apy
-          });
-        }
+      const bridgeAmount = await this.calculateBridgeAmount(fromChain);
+      if (bridgeAmount <= 0) {
+        throw new Error('Insufficient balance for bridging');
       }
+      
+      const txHash = await walletManager.bridgeAssets(fromChain, toChain, bridgeAmount);
+      
+      this.logger.info(`✅ Cross-chain bridge executed: ${bridgeAmount} from ${fromChain} to ${toChain}`);
+      return { fromChain, toChain, amount: bridgeAmount, txHash };
+    } catch (error) {
+      throw new Error(`Cross-chain bridge failed: ${error.message}`);
     }
-    
-    return opportunities;
   }
 
-  // Execute yield farming
-  async executeYieldFarming(opportunity) {
+  // Calculate bridge amount
+  async calculateBridgeAmount(chain) {
+    const minBridge = 50;
+    const maxBridge = 5000;
+    const bridgePercentage = 0.1;
+    
     try {
-      const txHash = await walletManager.depositToYield(
-        opportunity.chain,
-        opportunity.protocol,
-        opportunity.token,
-        opportunity.amount
-      );
+      const balances = await walletManager.getWalletBalances();
+      const chainBalance = balances[chain.toUpperCase()] || 0;
       
-      this.logger.info(`✅ Yield farming executed: ${txHash}`);
-      return txHash;
+      const bridgeAmount = Math.min(chainBalance * bridgePercentage, maxBridge);
+      return Math.max(bridgeAmount, minBridge);
     } catch (error) {
-      throw new Error(`Yield farming failed: ${error.message}`);
+      this.logger.error(`❌ Error calculating bridge amount: ${error.message}`);
+      return 0;
     }
   }
 
@@ -1885,26 +1014,16 @@ class EnhancedCryptoAgent {
       if (result.profit) {
         const metrics = this.performanceMetrics.get(result.strategy);
         metrics.totalProfit += result.profit;
-        metrics.totalTrades += result.trades || 1;
+        metrics.totalTrades += result.trades || 0;
         
-        const successRate = metrics.winningTrades / metrics.totalTrades;
-        const sharpeRatio = await this.calculateSharpeRatio(result.strategy);
-        
-        this.db.run(
-          `INSERT INTO strategy_performance (id, strategy_name, total_profit, total_trades, success_rate, sharpe_ratio)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [uuidv4(), result.strategy, metrics.totalProfit, metrics.totalTrades, successRate, sharpeRatio]
+        await this.db.run(
+          `INSERT INTO strategy_performance (id, strategy_name, total_profit, total_trades, success_rate, sharpe_ratio, max_drawdown)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [uuidv4(), result.strategy, metrics.totalProfit, metrics.totalTrades,
+           metrics.winningTrades / Math.max(metrics.totalTrades, 1), 1.2, metrics.maxDrawdown]
         );
       }
     }
-  }
-
-  // Calculate Sharpe ratio
-  async calculateSharpeRatio(strategyName) {
-    const returns = [0.02, 0.015, -0.01, 0.025, 0.018];
-    const mean = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
-    const stdDev = Math.sqrt(returns.reduce((sum, ret) => sum + Math.pow(ret - mean, 2), 0) / returns.length);
-    return stdDev > 0 ? mean / stdDev : 0;
   }
 
   // Execute risk management
@@ -1912,20 +1031,17 @@ class EnhancedCryptoAgent {
     try {
       const riskMetrics = await this.calculateRiskMetrics();
       
-      this.db.run(
+      await this.db.run(
         `INSERT INTO risk_metrics (id, value_at_risk, expected_shortfall, volatility, correlation_matrix)
          VALUES (?, ?, ?, ?, ?)`,
         [uuidv4(), riskMetrics.var, riskMetrics.es, riskMetrics.volatility, JSON.stringify(riskMetrics.correlation)]
       );
       
       if (riskMetrics.var > 0.05) {
-        await this.reduceLeverage();
-        await this.hedgePositions();
+        await this.reduceExposure();
       }
       
-      if (riskMetrics.es > 0.08) {
-        await this.closeRiskyPositions();
-      }
+      this.logger.info('✅ Risk management executed successfully');
     } catch (error) {
       this.logger.error(`❌ Risk management failed: ${error.message}`);
     }
@@ -1933,193 +1049,202 @@ class EnhancedCryptoAgent {
 
   // Calculate risk metrics
   async calculateRiskMetrics() {
+    const trades = await this.db.all(`SELECT profit_loss FROM crypto_trades WHERE timestamp > datetime('now', '-7 day')`);
+    const profits = trades.map(t => t.profit_loss || 0);
+    
+    const mean = profits.reduce((sum, p) => sum + p, 0) / profits.length;
+    const variance = profits.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / profits.length;
+    const volatility = Math.sqrt(variance);
+    
+    const sortedProfits = [...profits].sort((a, b) => a - b);
+    const varIndex = Math.floor(sortedProfits.length * 0.05);
+    const varValue = sortedProfits[varIndex];
+    
+    const esValue = sortedProfits.slice(0, varIndex).reduce((sum, p) => sum + p, 0) / varIndex;
+    
     return {
-      var: 0.032,
-      es: 0.045,
-      volatility: 0.028,
-      correlation: { 'BTC-ETH': 0.78, 'BTC-SOL': 0.65, 'ETH-SOL': 0.72 }
+      var: Math.abs(varValue),
+      es: Math.abs(esValue),
+      volatility,
+      correlation: { BTC: 1, ETH: 0.85, SOL: 0.7 }
     };
   }
 
-  // Reduce leverage
-  async reduceLeverage() {
-    this.logger.info('⚠️ Reducing leverage due to high risk');
-  }
-
-  // Hedge positions
-  async hedgePositions() {
-    this.logger.info('🛡️ Hedging positions');
-  }
-
-  // Close risky positions
-  async closeRiskyPositions() {
-    this.logger.info('🔒 Closing risky positions');
+  // Reduce exposure
+  async reduceExposure() {
+    this.logger.warn('⚠️ High risk detected, reducing exposure');
+    
+    for (const [exchangeId, exchange] of this.exchanges) {
+      try {
+        const positions = await exchange.fetchPositions();
+        for (const position of positions) {
+          if (position.notional > 1000) {
+            await exchange.createOrder(
+              position.symbol,
+              'market',
+              position.side === 'long' ? 'sell' : 'buy',
+              Math.abs(position.contracts) * 0.5
+            );
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`⚠️ Failed to reduce exposure on ${exchangeId}: ${error.message}`);
+      }
+    }
   }
 
   // Monitor and rebalance positions
   async monitorAndRebalancePositions() {
     try {
-      const currentAllocation = await this.getCurrentAllocation();
-      const targetAllocation = this.getTargetAllocation();
+      const targetAllocation = {
+        'BTC/USDT': 0.3,
+        'ETH/USDT': 0.25,
+        'SOL/USDT': 0.15,
+        'Other': 0.3
+      };
       
-      const rebalancingTrades = await this.executeRebalancing(currentAllocation, targetAllocation);
+      const currentAllocation = await this.calculateCurrentAllocation();
+      const rebalanceActions = this.calculateRebalanceActions(currentAllocation, targetAllocation);
       
-      this.logger.info(`✅ Portfolio rebalanced: ${rebalancingTrades.length} trades executed`);
-      return rebalancingTrades;
+      for (const action of rebalanceActions) {
+        await this.executeRebalance(action);
+      }
+      
+      this.logger.info('✅ Portfolio rebalanced successfully');
     } catch (error) {
-      this.logger.error(`❌ Rebalancing failed: ${error.message}`);
-      return [];
+      this.logger.error(`❌ Portfolio rebalancing failed: ${error.message}`);
     }
   }
 
-  // Get current allocation
-  async getCurrentAllocation() {
-    const balances = await walletManager.getWalletBalances();
-    const totalValue = Object.values(balances).reduce((sum, balance) => sum + balance, 0);
+  // Calculate current allocation
+  async calculateCurrentAllocation() {
+    const allocation = {};
+    let totalValue = 0;
     
-    return Object.entries(balances).reduce((acc, [asset, value]) => {
-      acc[asset] = value / totalValue;
-      return acc;
-    }, {});
-  }
-
-  // Get target allocation
-  getTargetAllocation() {
-    return {
-      'BTC': 0.40,
-      'ETH': 0.25,
-      'SOL': 0.15,
-      'USDC': 0.10,
-      'USDT': 0.05,
-      'Other': 0.05
-    };
-  }
-
-  // Execute rebalancing
-  async executeRebalancing(currentAllocation, targetAllocation) {
-    const trades = [];
-    
-    for (const [asset, targetWeight] of Object.entries(targetAllocation)) {
-      const currentWeight = currentAllocation[asset] || 0;
-      const difference = targetWeight - currentWeight;
-      
-      if (Math.abs(difference) > 0.02) {
-        const totalValue = Object.values(await walletManager.getWalletBalances()).reduce((sum, b) => sum + b, 0);
-        const tradeAmount = difference * totalValue;
+    for (const [exchangeId, exchange] of this.exchanges) {
+      try {
+        const balance = await exchange.fetchBalance();
+        const tickers = await exchange.fetchTickers();
         
-        if (tradeAmount > 10) {
-          try {
-            if (difference > 0) {
-              const txHash = await this.executeBuyOrder(asset, tradeAmount);
-              trades.push({ asset, action: 'buy', amount: tradeAmount, txHash });
-            } else {
-              const txHash = await this.executeSellOrder(asset, -tradeAmount);
-              trades.push({ asset, action: 'sell', amount: -tradeAmount, txHash });
-            }
-          } catch (error) {
-            this.logger.warn(`⚠️ Rebalancing trade failed for ${asset}: ${error.message}`);
+        for (const [currency, amount] of Object.entries(balance.total)) {
+          if (amount > 0) {
+            const symbol = currency + '/USDT';
+            const price = tickers[symbol]?.last || 1;
+            const value = amount * price;
+            
+            allocation[currency] = (allocation[currency] || 0) + value;
+            totalValue += value;
           }
         }
+      } catch (error) {
+        this.logger.warn(`⚠️ Failed to calculate allocation for ${exchangeId}: ${error.message}`);
       }
     }
     
-    return trades;
+    for (const currency in allocation) {
+      allocation[currency] /= totalValue;
+    }
+    
+    return allocation;
   }
 
-  // Execute buy order
-  async executeBuyOrder(asset, amount) {
-    try {
-      const symbol = `${asset}/USDT`;
-      const exchange = this.exchanges.values().next().value;
+  // Calculate rebalance actions
+  calculateRebalanceActions(current, target) {
+    const actions = [];
+    const threshold = 0.02;
+    
+    for (const [asset, targetWeight] of Object.entries(target)) {
+      const currentWeight = current[asset] || 0;
+      const difference = currentWeight - targetWeight;
       
-      if (exchange) {
-        const order = await exchange.createOrder(symbol, 'market', 'buy', amount / await this.getCurrentPrice(symbol));
-        return order.id;
+      if (Math.abs(difference) > threshold) {
+        actions.push({
+          asset,
+          action: difference > 0 ? 'sell' : 'buy',
+          amount: Math.abs(difference)
+        });
       }
-      
-      return await walletManager.executeSwap('ethereum', 'USDC', this.getTokenAddress(asset), amount, 'exactInput');
-    } catch (error) {
-      throw new Error(`Buy order failed: ${error.message}`);
     }
+    
+    return actions;
   }
 
-  // Execute sell order
-  async executeSellOrder(asset, amount) {
+  // Execute rebalance
+  async executeRebalance(action) {
     try {
-      const symbol = `${asset}/USDT`;
-      const exchange = this.exchanges.values().next().value;
-      
-      if (exchange) {
-        const order = await exchange.createOrder(symbol, 'market', 'sell', amount / await this.getCurrentPrice(symbol));
-        return order.id;
+      for (const [exchangeId, exchange] of this.exchanges) {
+        const symbol = action.asset + '/USDT';
+        if (exchange.markets[symbol]) {
+          const order = await exchange.createOrder(
+            symbol,
+            'market',
+            action.action,
+            action.amount
+          );
+          
+          this.logger.info(`✅ Rebalance ${action.action} ${action.amount} ${action.asset} on ${exchangeId}`);
+          return order;
+        }
       }
+    } catch (error) {
+      this.logger.warn(`⚠️ Rebalance failed for ${action.asset}: ${error.message}`);
+    }
+  }
+
+  // Get performance report
+  async getPerformanceReport() {
+    const strategies = Array.from(this.activeStrategies.keys());
+    const report = {};
+    
+    for (const strategy of strategies) {
+      const metrics = this.performanceMetrics.get(strategy);
+      const trades = await this.db.all(
+        `SELECT COUNT(*) as count, SUM(profit_loss) as total_profit FROM crypto_trades 
+         WHERE type = ? AND timestamp > datetime('now', '-1 day')`,
+        [strategy]
+      );
       
-      return await walletManager.executeSwap('ethereum', this.getTokenAddress(asset), 'USDC', amount, 'exactInput');
-    } catch (error) {
-      throw new Error(`Sell order failed: ${error.message}`);
+      report[strategy] = {
+        totalProfit: metrics?.totalProfit || 0,
+        totalTrades: metrics?.totalTrades || 0,
+        dailyTrades: trades[0]?.count || 0,
+        dailyProfit: trades[0]?.total_profit || 0,
+        successRate: metrics ? metrics.winningTrades / Math.max(metrics.totalTrades, 1) : 0
+      };
     }
-  }
-
-  // Get current price
-  async getCurrentPrice(symbol) {
-    try {
-      const exchange = this.exchanges.values().next().value;
-      const ticker = await exchange.fetchTicker(symbol);
-      return ticker.last;
-    } catch (error) {
-      return 0;
-    }
-  }
-
-  // Get token address
-  getTokenAddress(token) {
-    const addresses = {
-      'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-      'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-      'ETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-      'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599'
-    };
-    return addresses[token] || token;
-  }
-
-  // Get status
-  getStatus() {
-    return {
-      status: this.lastStatus,
-      lastExecutionTime: this.lastExecutionTime,
-      totalStrategies: this.activeStrategies.size,
-      walletInitialized: this.walletInitialized,
-      exchangeCount: this.exchanges.size,
-      performanceMetrics: Object.fromEntries(this.performanceMetrics)
-    };
+    
+    return report;
   }
 
   // Emergency shutdown
   async emergencyShutdown() {
-    this.logger.warn('🚨 Emergency shutdown initiated!');
-    this.lastStatus = 'emergency';
+    this.logger.error('🚨 EMERGENCY SHUTDOWN INITIATED');
     
-    try {
-      await this.closeAllPositions();
-      await this.withdrawAllFunds();
-      await this.browserManager.close();
-      
-      this.logger.info('✅ Emergency shutdown completed');
-      return { success: true, message: 'All positions closed and funds secured' };
-    } catch (error) {
-      this.logger.error(`❌ Emergency shutdown failed: ${error.message}`);
-      return { success: false, error: error.message };
+    for (const [exchangeId, exchange] of this.exchanges) {
+      try {
+        const openOrders = await exchange.fetchOpenOrders();
+        for (const order of openOrders) {
+          await exchange.cancelOrder(order.id, order.symbol);
+        }
+        
+        const positions = await exchange.fetchPositions();
+        for (const position of positions) {
+          if (position.notional > 0) {
+            await exchange.createOrder(
+              position.symbol,
+              'market',
+              position.side === 'long' ? 'sell' : 'buy',
+              Math.abs(position.contracts)
+            );
+          }
+        }
+      } catch (error) {
+        this.logger.error(`❌ Emergency shutdown failed on ${exchangeId}: ${error.message}`);
+      }
     }
-  }
-
-  // Close all positions
-  async closeAllPositions() {
-    this.logger.info('🔒 Closing all open positions');
-  }
-
-  // Withdraw all funds
-  async withdrawAllFunds() {
-    this.logger.info('💸 Withdrawing all funds to cold storage');
+    
+    this.lastStatus = 'emergency_shutdown';
+    this.logger.info('✅ Emergency shutdown completed');
   }
 
   // Cleanup
@@ -2127,11 +1252,21 @@ class EnhancedCryptoAgent {
     this.logger.info('🧹 Cleaning up EnhancedCryptoAgent...');
     
     try {
+      // Close all exchange connections
       for (const exchange of this.exchanges.values()) {
-        exchange.close && await exchange.close();
+        try {
+          if (exchange.close && typeof exchange.close === 'function') {
+            await exchange.close();
+          }
+        } catch (error) {
+          this.logger.warn(`⚠️ Failed to close exchange connection: ${error.message}`);
+        }
       }
       
+      // Close browser manager
       await this.browserManager.close();
+      
+      // Close database connection
       this.db.close();
       
       this.logger.info('✅ Cleanup completed');
@@ -2141,4 +1276,4 @@ class EnhancedCryptoAgent {
   }
 }
 
-export default EnhancedCryptoAgent;
+export { EnhancedCryptoAgent, apiScoutAgentExtension };
