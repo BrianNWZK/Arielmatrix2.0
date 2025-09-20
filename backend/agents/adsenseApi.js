@@ -1,4 +1,4 @@
-// backend/agents/adsenseAgent.js
+// backend/agents/adsenseApi.js
 import axios from 'axios';
 import crypto from 'crypto';
 import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
