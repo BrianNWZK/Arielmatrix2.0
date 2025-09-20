@@ -1862,4 +1862,4 @@ adsenseAgent.prototype._getDefaultOptimizationResult = function() {
   };
 };
 
-export default adsenseAgent;
+
