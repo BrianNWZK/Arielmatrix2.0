@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import db from '../db/sqlite.js';
+import db from '../database/BrianNwaezikeDB.js';
 import { send } from './wallet.js';
 import { logServiceCall } from '../blockchain/BrianNwaezikeChain.js';
 import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
