@@ -182,18 +182,27 @@ class EnhancedCryptoAgent {
             options: { defaultType: 'spot', adjustForTimeDifference: true }
           });
 
-          await exchange.loadMarkets();
-          this.exchanges.set(id, exchange);
-          this.logger.info(`✅ Exchange initialized: ${id}`);
-        } catch (error) {
-          this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
-        }
-      }
-    }return Math.max(tradeSize, minTradeSize);
-    } catch (error) { // Corrected catch statement
-      this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
-      return 0; // Handle error appropriately
-    }
+       for (const id of exchangeIds) {
+  try {
+    const exchange = await this.initializeExchange(id);
+    await exchange.loadMarkets();
+    this.exchanges.set(id, exchange);
+    this.logger.info(`✅ Exchange initialized: ${id}`);
+  } catch (error) {
+    this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
+  }
+}
+
+// ✅ Wrap trade size logic inside a method
+calculateOptimalTradeSize(tradeSize, minTradeSize) {
+  try {
+    return Math.max(tradeSize, minTradeSize);
+  } catch (error) {
+    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+    return 0;
+  }
+}
+
 
     // Initialize cryptocurrency exchanges
     async initializeExchanges() {
