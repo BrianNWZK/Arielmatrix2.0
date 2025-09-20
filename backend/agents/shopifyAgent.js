@@ -1374,4 +1374,4 @@ class EnhancedShopifyAgent {
     }
 }
 
-export default EnhancedShopifyAgent;
+
