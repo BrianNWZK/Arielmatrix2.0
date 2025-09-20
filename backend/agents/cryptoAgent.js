@@ -193,7 +193,7 @@ class EnhancedCryptoAgent {
   }
 }
 
- calculateOptimalTradeSize(tradeSize, minTradeSize) {
+ calculateOptimalTradeSize(tradeSize, minTradeSize) 
     try {
       return Math.max(tradeSize, minTradeSize);
     } catch (error) {
