@@ -236,7 +236,15 @@ class EnhancedCryptoAgent {
           this.logger.error(`❌ Failed to initialize ${id}: ${error.message}`);
         }
       }
-    }return Math.max(tradeSize, minTradeSize);
+    calculateOptimalTradeSize(tradeSize, minTradeSize) {
+  try {
+    return Math.max(tradeSize, minTradeSize);
+  } catch (error) {
+    this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
+    return 0;
+  }
+}
+
     } catch (error) { // Corrected catch statement
       this.logger.error(`❌ Error calculating optimal trade size: ${error.message}`);
       return 0; // Handle error appropriately
