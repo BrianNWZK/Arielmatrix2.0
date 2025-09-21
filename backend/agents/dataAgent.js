@@ -76,7 +76,7 @@ class DataAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
-        this.db = createDatabase('./data/ariel_matrix.db');
+        this.db = BrianNwaezikeDB('../database/BrianNwaezikeDB.js');
         this.dataPointValue = DATA_POINT_VALUE;
         this.qualityMultipliers = QUALITY_MULTIPLIERS;
         this.initialized = false;
