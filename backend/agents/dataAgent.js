@@ -1,6 +1,6 @@
 import axios from 'axios';
 import crypto from 'crypto';
-import { createDatabase } from '../database/yourSQLite.js';
+import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js';
 import browserManager from './browserManager.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
