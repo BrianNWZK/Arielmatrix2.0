@@ -10,7 +10,6 @@ import { ethers } from 'ethers';
 import BrowserManager from './browserManager.js';
 import { provideThreatIntelligence } from './healthAgent.js';
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
 import { Mutex } from 'async-mutex';
 import Bottleneck from 'bottleneck';
 
