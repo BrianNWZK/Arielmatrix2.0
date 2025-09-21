@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
-import { createDatabase } from '../database/yourSQLite.js';
+import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js';
 import apiScoutAgent from './apiScoutAgent.js';
 
 export default class apiScoutAgentExtension {
