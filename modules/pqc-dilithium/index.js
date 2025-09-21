@@ -216,9 +216,11 @@ async function initializeWasm(level) {
       }
 
       // Get function pointers with fallbacks
+      // Get function pointers with fallbacks
       const keypair = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_keypair`];
-      const sign = exports.PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_signature;
-      const verify = exports.PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_verify;
+      const sign = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_signature`];
+      const verify = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_verify`];
+
 
       if (!keypair || !sign || !verify) {
         throw new ConfigurationError(`Required Dilithium${level} functions not found in WASM exports`);
