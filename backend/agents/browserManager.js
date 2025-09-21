@@ -11,7 +11,7 @@ import { execSync } from 'child_process';
 import { Redis } from 'ioredis';
 import { Mutex } from 'async-mutex';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import { QuantumShield } from 'quantum-resistant-crypto';
+import { QuantumShield } from '../../modules/quantum-shield/index.js';
 
 // Apply stealth plugins
 puppeteer.use(StealthPlugin());
