@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "express": "^4.21.0",
+    "bottleneck": "^2.19.5",
     "axios": "^1.7.7",
     "retry-axios": "^3.0.0",
     "web3": "^4.11.1",
