@@ -6,6 +6,16 @@ import { yourSQLite } from '../../modules/your-sqlite/index.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import apiScoutAgent from './apiScoutAgent.js';
+// Import wallet functions
+import {
+  initializeConnections,
+  getSolanaBalance,
+  sendSOL,
+  getUSDTBalance,
+  sendUSDT,
+  testAllConnections
+} from './wallet.js';
+
 // Import browser manager for real browsing
 import { BrowserManager } from './browserManager.js';
 
