@@ -1,6 +1,6 @@
 import axios from 'axios';
 import crypto from 'crypto';
-import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js';
+import { createDatabase } from '../database/yourSQLite.js';
 import browserManager from './browserManager.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
@@ -76,7 +76,7 @@ class DataAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
-        this.db = BrianNwaezikeDB('../database/BrianNwaezikeDB.js');
+        this.db = createDatabase('./data/ariel_matrix.db');
         this.dataPointValue = DATA_POINT_VALUE;
         this.qualityMultipliers = QUALITY_MULTIPLIERS;
         this.initialized = false;
@@ -817,5 +817,4 @@ class DataAgent {
         }
     }
 }
-
 
