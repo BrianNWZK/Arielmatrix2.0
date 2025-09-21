@@ -2,7 +2,7 @@
 
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import walletManager from './wallet.js';
-import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import ccxt from 'ccxt';
 import axios from 'axios';
