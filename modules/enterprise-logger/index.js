@@ -1,7 +1,7 @@
 // modules/enterprise-logger/index.js
 import winston from 'winston';
 import { createWriteStream } from 'fs';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 
 export class EnterpriseLogger {
   constructor(serviceName = 'application', config = {}) {
