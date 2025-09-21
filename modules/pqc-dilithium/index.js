@@ -227,9 +227,11 @@ async function initializeWasm(level) {
       }
 
       // Get constants
-      const PUBLICKEYBYTES = exports.PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_PUBLICKEYBYTES;
-      const SECRETKEYBYTES = exports.PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_SECRETKEYBYTES;
-      const BYTES = exports.PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_BYTES;
+     // Get constant values with fallbacks
+     const PUBLICKEYBYTES = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_PUBLICKEYBYTES`];
+     const SECRETKEYBYTES = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_SECRETKEYBYTES`];
+     const BYTES = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_BYTES`];
+
 
       dilithium = {
         keypair: () => {
