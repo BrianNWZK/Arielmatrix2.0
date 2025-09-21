@@ -1,6 +1,7 @@
 // modules/quantum-resistant-crypto/index.js - ENTERPRISE GRADE (PRODUCTION READY)
 
-import { Database } from 'sqlite3';
+import sqlite3 from 'sqlite3';
+const { Database } = sqlite3;
 import { promisify } from 'util';
 import { 
   randomBytes, 
@@ -665,7 +666,7 @@ export class EnterpriseQuantumResistantCrypto {
           break;
 
         default:
-          throw new Error(`Unsupported verification algorithm: ${algorithm}`);
+      throw new Error(`Unsupported verification algorithm: ${algorithm}`);
       }
 
       const operationTime = Date.now() - startTime;
