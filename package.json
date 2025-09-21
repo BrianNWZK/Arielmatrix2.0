@@ -29,6 +29,7 @@
     "puppeteer-extra": "^3.3.4",
     "puppeteer-extra-plugin-recaptcha": "^3.3.4",
     "puppeteer-extra-plugin-stealth": "^2.11.1",
+     "ioredis": "^5.3.2",
     "ethers": "^6.13.2",
     "node-cron": "^3.0.3",
     "dotenv": "^16.4.5",
