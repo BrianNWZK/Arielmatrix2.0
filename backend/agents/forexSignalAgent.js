@@ -8,7 +8,6 @@ import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import { EnterprisePaymentProcessor } from '../blockchain/EnterprisePaymentProcessor.js';
 import apiScoutAgent from './apiScoutAgent.js';
 import walletManager from './wallet.js';
 // Import browser manager for real browsing
