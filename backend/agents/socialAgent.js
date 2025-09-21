@@ -63,7 +63,7 @@ import {
     sendUSDT,
     checkWalletBalances,
     testAllConnections
-} from '../blockchain/wallet.js';
+} from './wallet.js';
 
 // Get __filename equivalent in ES Module scope
 const __filename = fileURLToPath(import.meta.url);
