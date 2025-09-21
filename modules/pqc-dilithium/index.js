@@ -216,7 +216,7 @@ async function initializeWasm(level) {
       }
 
       // Get function pointers with fallbacks
-      const keypair = exports.PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_keypair;
+      const keypair = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_keypair`];
       const sign = exports.PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_signature;
       const verify = exports.PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_verify;
 
