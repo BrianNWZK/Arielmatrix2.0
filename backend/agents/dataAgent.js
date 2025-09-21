@@ -3,8 +3,8 @@ import crypto from 'crypto';
 import { createDatabase } from '../../modules/your-sqlite/index.js'; 
 import browserManager from './browserManager.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
-import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl/token';
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/spl-token';
+import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
 import apiScoutAgent from './apiScoutAgent.js';
 import walletManager from './wallet.js';
 
