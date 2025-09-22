@@ -24,7 +24,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { ethers } from 'ethers';
 import axios from 'axios';
 import crypto from 'crypto';
-import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js';
+import BrianNwaezikeDB from "../../database/BrianNwaezikeDB.js';
 
 export async function logServiceCall({ service, caller, action, payload }) {
   const hash = crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
