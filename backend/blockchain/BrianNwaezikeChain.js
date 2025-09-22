@@ -1052,4 +1052,4 @@ class BrianNwaezikeChain {
     }
 }
 
-export default { BrianNwaezikeChain };
+            export { BrianNwaezikeChain };
