@@ -18,13 +18,13 @@ import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-en
 import { EnergyEfficientConsensus } from "../../modules/energy-efficient-consensus/index.js";
 import { CarbonNegativeConsensus } from "../../modules/carbon-negative-consensus/index.js";
 import { SovereignGovernance } from "../../modules/governance-engine/index.js";
-import { TokenomicsEngine } from "../../modules/tokenomics-engine/index.js";
+import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js";
 import Web3 from 'web3';
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { ethers } from 'ethers';
 import axios from 'axios';
 import crypto from 'crypto';
-import db from '../database/BrianNwaezikeDB.js';
+import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js';
 
 export async function logServiceCall({ service, caller, action, payload }) {
   const hash = crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
