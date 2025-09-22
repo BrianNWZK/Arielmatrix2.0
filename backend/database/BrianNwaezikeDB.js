@@ -57,7 +57,7 @@ const logger = createLogger({
 // =========================================================================
 // 1. Custom Errors & Utilities
 // =========================================================================
-export class DatabaseError extends Error {
+class DatabaseError extends Error {
   constructor(message, originalError = null, code = 'DB_ERROR') {
     super(message);
     this.name = 'DatabaseError';
@@ -67,14 +67,14 @@ export class DatabaseError extends Error {
   }
 }
 
-export class ShardUnavailableError extends DatabaseError {
+class ShardUnavailableError extends DatabaseError {
   constructor(shardIndex, message = 'Shard unavailable') {
     super(`${message} (shard ${shardIndex})`, null, 'SHARD_UNAVAILABLE');
     this.shardIndex = shardIndex;
   }
 }
 
-export class ConnectionTimeoutError extends DatabaseError {
+class ConnectionTimeoutError extends DatabaseError {
   constructor(operation, timeout) {
     super(`Operation ${operation} timed out after ${timeout}ms`, null, 'CONNECTION_TIMEOUT');
     this.operation = operation;
@@ -413,7 +413,7 @@ class ShardManager {
       }
     }
 
-    await Promise.allScheduled(backupPromises);
+    await Promise.all(backupPromises);
     
     // Clean up old backups (keep last 7 days)
     this.cleanupOldBackups(backupDir);
@@ -483,7 +483,7 @@ class ShardManager {
 // =========================================================================
 // 2. The Core BrianNwaezikeDB Wrapper
 // =========================================================================
-export class BrianNwaezikeDB {
+class BrianNwaezikeDB {
   constructor(config) {
     this.config = {
       database: {
@@ -777,9 +777,9 @@ export class BrianNwaezikeDB {
 }
 
 // Export singleton instance for easy access
-export let dbInstance = null;
+let dbInstance = null;
 
-export async function initializeDatabase(config = {}) {
+async function initializeDatabase(config = {}) {
   if (!dbInstance) {
     dbInstance = new BrianNwaezikeDB(config);
     await dbInstance.init();
@@ -787,7 +787,7 @@ export async function initializeDatabase(config = {}) {
   return dbInstance;
 }
 
-export function getDatabase() {
+function getDatabase() {
   if (!dbInstance) {
     throw new DatabaseError('Database not initialized. Call initializeDatabase() first.');
   }
@@ -811,4 +811,12 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-export { BrianNwaezikeDB };
+// Fix: Export only once at the end of the file
+export { 
+  BrianNwaezikeDB, 
+  DatabaseError, 
+  ShardUnavailableError, 
+  ConnectionTimeoutError,
+  initializeDatabase, 
+  getDatabase 
+};
