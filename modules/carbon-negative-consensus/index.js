@@ -1,6 +1,6 @@
 // modules/carbon-negative-consensus/index.js
 import { createHash } from 'crypto';
-import { Database } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 import Web3 from 'web3';
 import axios from 'axios';
 
