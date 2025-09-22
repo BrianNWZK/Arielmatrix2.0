@@ -12,7 +12,7 @@ import { QuantumResistantCrypto } from "../../modules/quantum-resistant-crypto/i
 import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js";
 import { AISecurityModule } from "../../modules/ai-security-module/index.js";
 import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js";
-import { OmnichainInterop } from "../../modules/omnichain-interoperability/index.js";
+import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js";
 import { ShardingManager } from "../../modules/sharding-manager/index.js";
 import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js";
 import { EnergyEfficientConsensus } from "../../modules/energy-efficient-consensus/index.js";
