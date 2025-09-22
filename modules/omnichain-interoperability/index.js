@@ -2,7 +2,7 @@
 import Web3 from 'web3';
 import { ethers } from 'ethers';
 import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
-import { Logger } from '../enterprise-logger/index.js';
+import { EnterpriseLogger } from '../enterprise-logger/index.js';
 import axios from 'axios';
 import { EventEmitter } from 'events';
 import { setTimeout } from 'timers/promises';
