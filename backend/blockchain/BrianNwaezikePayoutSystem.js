@@ -15,7 +15,7 @@
  */
 
 import Wallet from "../agents/wallet.js";
-import { BrianNwaezikeChain } from "./BrianNwaezikeChain.js";
+import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
 
 // === ArielSQLite Ultimate Suite Modules ===
 import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js";
