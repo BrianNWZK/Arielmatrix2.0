@@ -3,7 +3,7 @@ import cluster from 'cluster';
 import os from 'os';
 import { createServer } from 'http';
 import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
-import { Logger } from '../enterprise-logger/index.js';
+import { EnterpriseLogger } from '../enterprise-logger/index.js';
 import { cpus, totalmem, freemem, loadavg } from 'os';
 import process from 'process';
 import { EventEmitter } from 'events';
