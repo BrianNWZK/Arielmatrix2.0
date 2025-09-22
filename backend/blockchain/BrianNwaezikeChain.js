@@ -65,7 +65,7 @@ function validateEnvironment() {
     });
 }
 
-class BrianNwaezikeChain {
+export default class BrianNwaezikeChain {
     constructor(config = {}) {
         // Validate environment before initialization
         validateEnvironment();
