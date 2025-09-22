@@ -1,6 +1,6 @@
 // modules/energy-efficient-consensus/index.js
 import { createHash } from 'crypto';
-import { Database } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 import { QuantumResistantCrypto } from '../quantum-resistant-crypto/index.js';
 import Web3 from 'web3';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
