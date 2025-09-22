@@ -42,3 +42,5 @@ class SovereignTokenomics {
         }
     }
 }
+
+export { SovereignTokenomics };
