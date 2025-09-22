@@ -15,8 +15,19 @@ import {
   constants
 } from 'crypto';
 import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
-import { kyberKeyPair, kyberEncrypt, kyberDecrypt } from '../pqc-kyber/index.js';
-import { dilithiumKeyPair, dilithiumSign, dilithiumVerify } from '../pqc-dilithium/index.js';
+
+// Import Kyber functions - check what's actually exported
+import * as kyberModule from '../pqc-kyber/index.js';
+// Check if kyberDecrypt exists, otherwise use a fallback
+const kyberKeyPair = kyberModule.kyberKeyPair || kyberModule.default?.kyberKeyPair;
+const kyberEncrypt = kyberModule.kyberEncrypt || kyberModule.default?.kyberEncrypt;
+const kyberDecrypt = kyberModule.kyberDecrypt || kyberModule.default?.kyberDecrypt;
+
+// Import Dilithium functions
+import * as dilithiumModule from '../pqc-dilithium/index.js';
+const dilithiumKeyPair = dilithiumModule.dilithiumKeyPair || dilithiumModule.default?.dilithiumKeyPair;
+const dilithiumSign = dilithiumModule.dilithiumSign || dilithiumModule.default?.dilithiumSign;
+const dilithiumVerify = dilithiumModule.dilithiumVerify || dilithiumModule.default?.dilithiumVerify;
 
 // Zero-cost implementations for enterprise services
 class HSMClient {
@@ -381,6 +392,9 @@ export class EnterpriseQuantumResistantCrypto {
       switch (algorithm) {
         case ALGORITHMS.KYBER_1024:
           // Kyber for encryption
+          if (!kyberKeyPair) {
+            throw new Error('Kyber key pair generation not available');
+          }
           const kyberKeys = await kyberKeyPair();
           publicKey = kyberKeys.publicKey.toString('base64');
           privateKey = kyberKeys.privateKey.toString('base64');
@@ -388,6 +402,9 @@ export class EnterpriseQuantumResistantCrypto {
 
         case ALGORITHMS.DILITHIUM_5:
           // Dilithium for signatures
+          if (!dilithiumKeyPair) {
+            throw new Error('Dilithium key pair generation not available');
+          }
           const dilithiumKeys = await dilithiumKeyPair();
           publicKey = dilithiumKeys.publicKey.toString('base64');
           privateKey = dilithiumKeys.privateKey.toString('base64');
@@ -511,6 +528,9 @@ export class EnterpriseQuantumResistantCrypto {
 
       switch (algorithm) {
         case ALGORITHMS.KYBER_1024:
+          if (!kyberEncrypt) {
+            throw new Error('Kyber encryption not available');
+          }
           const dataBuffer = Buffer.from(JSON.stringify(data));
           const ciphertext = await kyberEncrypt(publicKey, dataBuffer);
           encryptedData = ciphertext.toString('base64');
@@ -572,6 +592,9 @@ export class EnterpriseQuantumResistantCrypto {
 
       switch (algorithm) {
         case ALGORITHMS.KYBER_1024:
+          if (!kyberDecrypt) {
+            throw new Error('Kyber decryption not available');
+          }
           const decrypted = await kyberDecrypt(Buffer.from(privateKey, 'base64'), encryptedBuffer);
           decryptedData = JSON.parse(decrypted.toString());
           break;
@@ -626,6 +649,9 @@ export class EnterpriseQuantumResistantCrypto {
 
       switch (algorithm) {
         case ALGORITHMS.DILITHIUM_5:
+          if (!dilithiumSign) {
+            throw new Error('Dilithium signing not available');
+          }
           signature = await dilithiumSign(Buffer.from(privateKey, 'base64'), dataBuffer);
           break;
 
@@ -662,11 +688,14 @@ export class EnterpriseQuantumResistantCrypto {
 
       switch (algorithm) {
         case ALGORITHMS.DILITHIUM_5:
+          if (!dilithiumVerify) {
+            throw new Error('Dilithium verification not available');
+          }
           isValid = await dilithiumVerify(publicKey, dataBuffer, signatureBuffer);
           break;
 
         default:
-      throw new Error(`Unsupported verification algorithm: ${algorithm}`);
+          throw new Error(`Unsupported verification algorithm: ${algorithm}`);
       }
 
       const operationTime = Date.now() - startTime;
