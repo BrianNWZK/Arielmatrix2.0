@@ -10,7 +10,7 @@ import axios from 'axios';
 import apiScoutAgent from './apiScoutAgent.js';
 
 // Import browser manager for real browsing
-import { BrowserManager } from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 
 export default class apiScoutAgentExtension {
   constructor(config, logger) {
