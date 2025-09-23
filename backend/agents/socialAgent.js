@@ -6,7 +6,7 @@ import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import { createDatabase } from '../../modules/your-sqlite/index.js';
+import { ArielSQLiteEngine } from '../../modules/your-sqlite/index.js';
 import apiScoutAgent from './apiScoutAgent.js';
 
 export default class apiScoutAgentExtension {
