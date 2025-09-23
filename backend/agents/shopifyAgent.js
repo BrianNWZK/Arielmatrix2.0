@@ -11,12 +11,16 @@ import { QuantumBrowserManager } from './browserManager.js';
 // Import wallet functions (single import to avoid duplicates)
 import {
   initializeConnections,
-  getSolanaBalance,
-  sendSOL,
-  getUSDTBalance,
-  sendUSDT,
-  testAllConnections,
-  checkWalletBalances
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
 } from './wallet.js'; // Consolidated import
 
 // Constants for configuration
