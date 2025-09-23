@@ -11,11 +11,16 @@ import { QuantumBrowserManager } from './browserManager.js';
 // Import wallet functions
 import {
   initializeConnections,
-  getSolanaBalance,
-  sendSOL,
-  getUSDTBalance,
-  sendUSDT,
-  testAllConnections
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
 } from './wallet.js';
 
 export default class apiScoutAgentExtension {
