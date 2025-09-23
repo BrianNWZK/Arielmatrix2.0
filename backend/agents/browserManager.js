@@ -1126,4 +1126,4 @@ class QuantumBrowserManager {
   }
 }
 
-export default QuantumBrowserManager;
+export { QuantumBrowserManager };
