@@ -55,14 +55,18 @@ export default class apiScoutAgentExtension {
 import { QuantumBrowserManager } from './browserManager.js';
 
 // Import wallet functions
-import { 
-    initializeConnections,
-    getSolanaBalance,
+import {
+  initializeConnections,
+    getWalletBalances,
+    getWalletAddresses,
     sendSOL,
-    getUSDTBalance,
+    sendETH,
     sendUSDT,
-    checkWalletBalances,
-    testAllConnections
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
 } from './wallet.js';
 
 // Get __filename equivalent in ES Module scope
