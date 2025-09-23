@@ -6,7 +6,7 @@ import { yourSQLite } from '../../modules/your-sqlite/index.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import apiScoutAgent from './apiScoutAgent.js';
-import { BrowserManager } from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 
 // Import wallet functions (single import to avoid duplicates)
 import {
