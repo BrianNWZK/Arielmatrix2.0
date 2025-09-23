@@ -1,117 +1,75 @@
-{
-  "name": "arielsql-alltimate",
-  "version": "1.0.0",
-  "type": "module",
-  "engines": {
-    "node": "22.x"
-  },
-  "scripts": {
-    "start": "node arielsql_suite/main.js",
-    "dev": "nodemon backend/server.js",
-    "precommit": "node scripts/precommit.js",
-    "test": "jest",
-    "refresh-lock": "rm -f package-lock.json && npm install",
-    "build": "vite build",
-    "train-ai": "node scripts/train-models.js",
-    "monitor": "node scripts/system-monitor.js",
-    "payout-agent": "node backend/agents/payoutAgent.js",
-    "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
-    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
-    "check-deps": "node scripts/check-deps.js",
-    "fix-deps": "node scripts/fix-dependencies.js",
-    "cleanup": "./scripts/cleanup-conflicts.sh"
-  },
-  "dependencies": {
-    "express": "^4.21.0",
-    "bottleneck": "^2.19.5",
-    "axios": "^1.7.7",
-    "retry-axios": "^3.0.0",
-    "@solana/spl-token": "^0.4.6",
-    "twitter-api-v2": "^1.14.0",
-    "web3": "^4.11.1",
-    "@tensorflow/tfjs-node": "^4.22.0",
-    "puppeteer": "^24.16.0",
-    "puppeteer-extra": "^3.3.4",
-    "puppeteer-extra-plugin-recaptcha": "^3.3.4",
-    "puppeteer-extra-plugin-stealth": "^2.11.1",
-    "ioredis": "^5.3.2",
-    "better-sqlite3-multiple-ciphers": "^12.2.0",
-    "ethers": "^6.13.2",
-    "node-cron": "^3.0.3",
-    "dotenv": "^16.4.5",
-    "dotenv-expand": "^10.0.0",
-    "winston": "^3.8.2",
-    "better-sqlite3": "^9.2.0",
-    "sqlite3": "^5.1.6",
-    "uuid": "^9.0.1",
-    "bcryptjs": "^2.4.3",
-    "compression": "^1.7.4",
-    "redis": "^4.7.0",
-    "node-cache": "^5.1.2",
-    "graphql": "^16.8.1",
-    "@apollo/server": "^5.0.0",
-    "@solana/web3.js": "^1.95.3",
-    "async-mutex": "^0.1.0",
-    "natural": "^6.8.0",
-    "limiter": "^2.1.0",
-    "cron": "^3.1.7",
-    "cheerio": "^1.0.0-rc.12",
-    "pqclean": "^0.8.1",
-    "pqc-kyber": "file:./modules/pqc-kyber",
-    "pqc-dilithium": "file:./modules/pqc-dilithium",
-    "@huggingface/inference": "^2.6.0",
-    "ccxt": "^4.1.89",
-    "rimraf": "^5.0.0",
-    "@npmcli/move-file": "^3.0.0",
-    "bignumber.js": "^9.0.2",
-    "websocket": "^1.0.34",
-    "lru-cache": "^10.0.0",
-    "pino": "^8.15.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4",
-    "eslint": "^9.12.0",
-    "jest": "^29.7.0",
-    "@types/jest": "^29.5.12",
-    "ts-jest": "^29.2.5",
-    "supertest": "^7.0.0",
-    "@types/node": "^20.11.24",
-    "@types/express": "^4.17.21",
-    "@types/cors": "^2.8.17",
-    "vite": "^5.0.0",
-    "webpack": "^5.88.0",
-    "webpack-cli": "^5.1.4",
-    "ts-node": "^10.9.2"
-  },
-  "optionalDependencies": {
-    "litestream": "^0.3.9"
-  },
-  "overrides": {
-    "glob": "^10.0.0",
-    "rimraf": "^5.0.0"
-  },
-  "license": "MIT",
-  "private": true,
-  "keywords": [
-    "autonomous-ai",
-    "blockchain",
-    "ethereum",
-    "solana",
-    "machine-learning"
-  ],
-  "contributors": [
-    "Brian Nwaezike <brian@bwaezi.com>"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-username/arielsql-alltimate.git"
-  },
-  "bugs": {
-    "url": "https://github.com/your-username/arielsql-alltimate/issues"
-  },
-  "homepage": "https://github.com/your-username/arielsql-alltimate#readme",
-  "funding": {
-    "type": "patreon",
-    "url": "https://patreon.com/yourusername"
-  }
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "🔧 Starting build_and_deploy.sh"
+
+# Fast npm config
+npm config set registry "https://registry.npmjs.org"
+npm config set legacy-peer-deps true
+npm config set audit false
+npm config set fund false
+npm config set progress false
+npm cache clean --force
+
+# Clean up problematic modules
+rm -rf node_modules/@tensorflow node_modules/sqlite3 node_modules/.cache 2>/dev/null || true
+
+# Generate lockfile if missing
+if [ ! -f "package-lock.json" ]; then
+  echo "⚠️ package-lock.json missing — generating..."
+  npm install --package-lock-only --no-audit --no-fund --legacy-peer-deps
+fi
+
+# Install dependencies
+install_if_missing() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  if [ -f "$dir/package-lock.json" ]; then
+    (cd "$dir" && npm ci --legacy-peer-deps --no-audit --no-fund --prefer-offline) || \
+    (cd "$dir" && npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline || true)
+  elif [ -f "$dir/package.json" ]; then
+    (cd "$dir" && npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline || true)
+  fi
 }
+
+install_if_missing "."
+install_if_missing "backend"
+install_if_missing "frontend"
+
+# Ensure critical modules
+ensure_module_installed() {
+  local pkg="$1"
+  if ! npm list "$pkg" >/dev/null 2>&1; then
+    echo "📦 Installing $pkg..."
+    npm cache clean --force
+    npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund --prefer-offline --no-verify || \
+    npm install "$pkg" --save --legacy-peer-deps --no-audit --no-fund || {
+      echo "❌ Failed to install $pkg"
+      exit 1
+    }
+  else
+    echo "✅ $pkg is already installed."
+  fi
+}
+
+ensure_module_installed "web3"
+ensure_module_installed "axios"
+
+# sqlite3 fallback
+if ! npm list sqlite3 >/dev/null 2>&1; then
+  echo "📦 sqlite3 not found — trying install..."
+  npm install sqlite3 --save --legacy-peer-deps --no-audit --no-fund --prefer-offline --no-verify || {
+    echo "⚠️ sqlite3 install failed — checking system fallback..."
+    command -v sqlite3 >/dev/null 2>&1 && echo "✅ System sqlite3 available" || echo "❌ No sqlite3 available"
+  }
+fi
+
+# Rebuild native modules
+npm rebuild better-sqlite3 || true
+npm rebuild sqlite3 || true
+
+# Skip WASM builds
+echo "⏭️ Skipping pqc-dilithium WASM build — using native bindings only."
+echo "⏭️ Skipping pqc-kyber WASM build — using native bindings only."
+
+echo "✅ build_and_deploy.sh completed successfully."
