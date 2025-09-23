@@ -6,7 +6,19 @@ import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/spl-token';
 import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
 import apiScoutAgent from './apiScoutAgent.js';
-import walletManager from './wallet.js';
+import {
+  initializeConnections,
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
+} from './wallet.js';
 
 export default class apiScoutAgentExtension {
   constructor(config, logger) {
