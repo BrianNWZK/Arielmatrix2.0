@@ -6,7 +6,7 @@ import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import apiScoutAgent from './apiScoutAgent.js';
 
 // Import browser manager for real browsing
-import { BrowserManager } from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 
 // Import wallet functions
 import {
