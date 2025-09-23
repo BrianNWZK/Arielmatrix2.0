@@ -763,4 +763,4 @@ export class AIThreatDetector {
 
 // Export error classes
 export { AIThreatDetectorError, ModelError, TrainingError };
-export default { AIThreatDetector };
+export { AIThreatDetector };
