@@ -11,7 +11,7 @@ import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import apiScoutAgent from './apiScoutAgent.js';
 import walletManager from './wallet.js';
 // Import browser manager for real browsing
-import { BrowserManager } from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 
 export default class apiScoutAgentExtension {
   constructor(config, logger) {
