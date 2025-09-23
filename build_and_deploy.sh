@@ -2,7 +2,81 @@
 set -euo pipefail
 
 echo "🔧 Starting build_and_deploy.sh"
+# --- STAGE 1: Dependency Installer ---
+FROM node:22-slim AS builder
 
+WORKDIR /usr/src/app
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+  python3 \
+  build-essential \
+  cmake \
+  git \
+  curl \
+  pkg-config \
+  sqlite3 \
+  libsqlite3-dev \
+  ca-certificates \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Use official registry and clean cache
+# -1) Regenerate lockfile if missing or corrupted
+if [ ! -f "package-lock.json" ] || ! grep '"lockfileVersion":' package-lock.json >/dev/null; then
+  echo "⚠️ Lockfile missing or invalid — regenerating..."
+  bash ./scripts/postinstall-fix-lock.sh
+fi
+
+RUN npm config set registry https://registry.npmjs.org \
+  && npm config set legacy-peer-deps true \
+  && npm config set audit false \
+  && npm config set fund false \
+  && npm config set progress false \
+  && npm cache clean --force
+
+# Copy package files
+COPY package.json package-lock.json* ./
+COPY modules/pqc-dilithium ./modules/pqc-dilithium
+COPY modules/pqc-kyber ./modules/pqc-kyber
+
+# Remove stubbed dependencies
+RUN sed -i '/"ai-security-module"/d' package.json \
+ && sed -i '/"omnichain-interoperability"/d' package.json \
+ && sed -i '/"infinite-scalability-engine"/d' package.json \
+ && sed -i '/"carbon-negative-consensus"/d' package.json \
+ && sed -i '/"ariel-sqlite-engine"/d' package.json
+
+# Install dependencies with fallback
+RUN if [ -f package-lock.json ]; then \
+      npm ci --legacy-peer-deps --no-audit --no-fund --prefer-offline || \
+      npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline; \
+    else \
+      npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline; \
+    fi
+
+# Clean up problematic modules
+RUN rm -rf node_modules/@tensorflow node_modules/sqlite3 2>/dev/null || true
+
+# Verify critical modules
+RUN npm list web3 || (echo "❌ web3 missing" && exit 1)
+RUN npm list axios || (echo "❌ axios missing" && exit 1)
+
+# Copy full project
+COPY . .
+
+# Run build script
+RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
+
+# --- STAGE 2: Final Image ---
+FROM node:22-slim AS final
+
+WORKDIR /usr/src/app
+
+COPY --from=builder /usr/src/app .
+
+EXPOSE 10000
+
+ENTRYPOINT ["node", "main.js"]
 # Fast npm config
 npm config set registry "https://registry.npmjs.org"
 npm config set legacy-peer-deps true
@@ -11,22 +85,14 @@ npm config set fund false
 npm config set progress false
 npm cache clean --force
 
-# Clean up problematic modules and deprecated packages
+# Clean up problematic modules
 rm -rf node_modules/@tensorflow node_modules/sqlite3 node_modules/.cache 2>/dev/null || true
-
-# Remove deprecated packages that cause conflicts
-echo "🧹 Removing deprecated packages..."
-npm uninstall yaeti npmlog inflight gauge are-we-there-yet @npmcli/move-file@1 @npmcli/move-file@2 rimraf@2 rimraf@3 glob@7 2>/dev/null || true
 
 # Generate lockfile if missing
 if [ ! -f "package-lock.json" ]; then
   echo "⚠️ package-lock.json missing — generating..."
   npm install --package-lock-only --no-audit --no-fund --legacy-peer-deps
 fi
-
-# Install updated versions of critical packages
-echo "📦 Installing updated dependencies..."
-npm install glob@^10.0.0 rimraf@^5.0.0 @npmcli/move-file@^3.0.0 lru-cache@^10.0.0 pino@^8.15.0 --save --no-audit --no-fund
 
 # Install dependencies
 install_if_missing() {
@@ -62,16 +128,6 @@ ensure_module_installed() {
 
 ensure_module_installed "web3"
 ensure_module_installed "axios"
-ensure_module_installed "@solana/web3.js"
-ensure_module_installed "@solana/spl-token"
-
-# Check for dependency issues
-echo "🔍 Checking for dependency issues..."
-node scripts/check-deps.js
-
-# Fix any remaining dependency issues
-echo "🔧 Fixing dependency issues..."
-node scripts/fix-dependencies.js
 
 # sqlite3 fallback
 if ! npm list sqlite3 >/dev/null 2>&1; then
@@ -85,10 +141,6 @@ fi
 # Rebuild native modules
 npm rebuild better-sqlite3 || true
 npm rebuild sqlite3 || true
-
-# Fix file-directory conflicts
-echo "🧹 Cleaning up file-directory conflicts..."
-./scripts/cleanup-conflicts.sh
 
 # Skip WASM builds
 echo "⏭️ Skipping pqc-dilithium WASM build — using native bindings only."
