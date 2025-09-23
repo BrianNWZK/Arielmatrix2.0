@@ -16,17 +16,17 @@
 
 import {
   initializeConnections,
-    getWalletBalances,
-    getWalletAddresses,
-    sendSOL,
-    sendETH,
-    sendUSDT,
-    processRevenuePayment,
-    checkBlockchainHealth,
-    validateAddress,
-    formatBalance,
-    testAllConnections,
-} from './wallet.js';
+  getWalletBalances,
+  getWalletAddresses,
+  sendSOL,
+  sendETH,
+  sendUSDT,
+  processRevenuePayment,
+  checkBlockchainHealth,
+  validateAddress,
+  formatBalance,
+  testAllConnections,
+} from '../agents/wallet.js';
 import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
 
 // === ArielSQLite Ultimate Suite Modules ===
