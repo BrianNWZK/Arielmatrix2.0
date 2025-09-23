@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import Web3 from 'web3';
 import { Connection } from '@solana/web3.js';
 import apiScoutAgent from './apiScoutAgent.js';
-import { BrowserManager } from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 
 class apiScoutAgentExtension {
   constructor(config, logger) {
