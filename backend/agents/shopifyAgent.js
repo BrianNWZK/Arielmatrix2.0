@@ -1,8 +1,8 @@
 // backend/agents/shopifyAgent.js
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { QuantumShield } from '../../modules/quantum-shield/index.js';
-import { AIThreatDetector } from '../../modules/ai-security-module/index.js';
-import { yourSQLite } from '../../modules/your-sqlite/index.js';
+import { AISecurityModule } from '../../modules/ai-security-module/index.js';
+import { ArielSQLiteEngine } from '../../modules/your-sqlite/index.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import apiScoutAgent from './apiScoutAgent.js';
