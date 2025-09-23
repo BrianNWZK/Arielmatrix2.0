@@ -8,7 +8,7 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import { ethers } from 'ethers';
-import BrowserManager from './browserManager.js';
+import QuantumBrowserManager from './browserManager.js';
 import { provideThreatIntelligence } from './healthAgent.js';
 import crypto from 'crypto';
 import { Mutex } from 'async-mutex';
