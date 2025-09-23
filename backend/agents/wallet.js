@@ -6,7 +6,7 @@
 import 'dotenv/config';
 import { ethers } from 'ethers';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
-import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
+import { getAssociatedTokenAddress, createTransferInstruction, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import Web3 from 'web3';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
