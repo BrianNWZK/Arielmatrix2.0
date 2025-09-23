@@ -1,6 +1,18 @@
 import fetch from 'node-fetch';
 import db from '../database/BrianNwaezikeDB.js';
-import { send } from './wallet.js';
+import {
+  initializeConnections,
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
+} from './wallet.js';
 import { logServiceCall } from '../blockchain/BrianNwaezikeChain.js';
 import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
 
