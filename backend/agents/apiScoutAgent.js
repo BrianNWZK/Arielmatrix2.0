@@ -2,13 +2,12 @@
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { QuantumShield } from '../../modules/quantum-shield/index.js';
 import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js";
-import { AISecurityModule } from "../../modules/ai-security-module/index.js";
-import {OmnichainInteroperabilityEngine } from '../../modules/omnichain-interoperability/index.js';
+import { OmnichainInteroperabilityEngine } from '../../modules/omnichain-interoperability/index.js';
 import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import { ethers } from 'ethers';
-import QuantumBrowserManager from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 import { provideThreatIntelligence } from './healthAgent.js';
 import crypto from 'crypto';
 import { Mutex } from 'async-mutex';
