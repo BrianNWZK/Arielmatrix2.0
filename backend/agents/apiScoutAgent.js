@@ -1,7 +1,8 @@
 // backend/agents/apiScoutAgent.js
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { QuantumShield } from '../../modules/quantum-shield/index.js';
-import { AIThreatDetector } from '../../modules/ai-security-module/index.js';
+import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js";
+import { AISecurityModule } from "../../modules/ai-security-module/index.js";
 import { CrossChainBridge } from '../../modules/omnichain-interoperability/index.js';
 import axios from 'axios';
 import fs from 'fs/promises';
