@@ -16,14 +16,17 @@
     "monitor": "node scripts/system-monitor.js",
     "payout-agent": "node backend/agents/payoutAgent.js",
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
-    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js"
+    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
+    "check-deps": "node scripts/check-deps.js",
+    "fix-deps": "node scripts/fix-dependencies.js",
+    "cleanup": "./scripts/cleanup-conflicts.sh"
   },
   "dependencies": {
     "express": "^4.21.0",
     "bottleneck": "^2.19.5",
     "axios": "^1.7.7",
     "retry-axios": "^3.0.0",
-    "@solana/spl-token": "^0.3.5",
+    "@solana/spl-token": "^0.4.6",
     "twitter-api-v2": "^1.14.0",
     "web3": "^4.11.1",
     "@tensorflow/tfjs-node": "^4.22.0",
@@ -48,7 +51,6 @@
     "graphql": "^16.8.1",
     "@apollo/server": "^5.0.0",
     "@solana/web3.js": "^1.95.3",
-    "@solana/spl-token": "^0.4.6",
     "async-mutex": "^0.1.0",
     "natural": "^6.8.0",
     "limiter": "^2.1.0",
@@ -59,12 +61,12 @@
     "pqc-dilithium": "file:./modules/pqc-dilithium",
     "@huggingface/inference": "^2.6.0",
     "ccxt": "^4.1.89",
-    "rimraf": "^4.0.0",
-    "@npmcli/move-file": "^2.0.0",
-    "gauge": "^4.0.0",
-    "are-we-there-yet": "^3.0.0",
+    "rimraf": "^5.0.0",
+    "@npmcli/move-file": "^3.0.0",
     "bignumber.js": "^9.0.2",
-    "websocket": "^1.0.34"
+    "websocket": "^1.0.34",
+    "lru-cache": "^10.0.0",
+    "pino": "^8.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
@@ -83,6 +85,10 @@
   },
   "optionalDependencies": {
     "litestream": "^0.3.9"
+  },
+  "overrides": {
+    "glob": "^10.0.0",
+    "rimraf": "^5.0.0"
   },
   "license": "MIT",
   "private": true,
