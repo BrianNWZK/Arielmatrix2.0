@@ -1,7 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import { createDatabase } from '../../modules/your-sqlite/index.js'; 
-import QuantumBrowserManager from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
