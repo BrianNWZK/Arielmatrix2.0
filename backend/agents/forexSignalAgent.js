@@ -9,7 +9,19 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import apiScoutAgent from './apiScoutAgent.js';
-import walletManager from './wallet.js';
+import {
+  initializeConnections,
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
+} from './wallet.js';
 // Import browser manager for real browsing
 import { QuantumBrowserManager } from './browserManager.js';
 
