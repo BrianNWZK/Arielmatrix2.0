@@ -1,7 +1,6 @@
 // backend/agents/cryptoAgent.js
 
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
-import walletManager from './wallet.js';
 import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import ccxt from 'ccxt';
@@ -11,6 +10,19 @@ import Web3 from 'web3';
 import { Connection } from '@solana/web3.js';
 import apiScoutAgent from './apiScoutAgent.js';
 import { QuantumBrowserManager } from './browserManager.js';
+import {
+  initializeConnections,
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
+} from './wallet.js';
 
 class apiScoutAgentExtension {
   constructor(config, logger) {
