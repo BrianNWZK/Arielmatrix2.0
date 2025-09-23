@@ -11,14 +11,22 @@ npm config set fund false
 npm config set progress false
 npm cache clean --force
 
-# Clean up problematic modules
+# Clean up problematic modules and deprecated packages
 rm -rf node_modules/@tensorflow node_modules/sqlite3 node_modules/.cache 2>/dev/null || true
+
+# Remove deprecated packages that cause conflicts
+echo "🧹 Removing deprecated packages..."
+npm uninstall yaeti npmlog inflight gauge are-we-there-yet @npmcli/move-file@1 @npmcli/move-file@2 rimraf@2 rimraf@3 glob@7 2>/dev/null || true
 
 # Generate lockfile if missing
 if [ ! -f "package-lock.json" ]; then
   echo "⚠️ package-lock.json missing — generating..."
   npm install --package-lock-only --no-audit --no-fund --legacy-peer-deps
 fi
+
+# Install updated versions of critical packages
+echo "📦 Installing updated dependencies..."
+npm install glob@^10.0.0 rimraf@^5.0.0 @npmcli/move-file@^3.0.0 lru-cache@^10.0.0 pino@^8.15.0 --save --no-audit --no-fund
 
 # Install dependencies
 install_if_missing() {
@@ -54,6 +62,16 @@ ensure_module_installed() {
 
 ensure_module_installed "web3"
 ensure_module_installed "axios"
+ensure_module_installed "@solana/web3.js"
+ensure_module_installed "@solana/spl-token"
+
+# Check for dependency issues
+echo "🔍 Checking for dependency issues..."
+node scripts/check-deps.js
+
+# Fix any remaining dependency issues
+echo "🔧 Fixing dependency issues..."
+node scripts/fix-dependencies.js
 
 # sqlite3 fallback
 if ! npm list sqlite3 >/dev/null 2>&1; then
@@ -67,6 +85,10 @@ fi
 # Rebuild native modules
 npm rebuild better-sqlite3 || true
 npm rebuild sqlite3 || true
+
+# Fix file-directory conflicts
+echo "🧹 Cleaning up file-directory conflicts..."
+./scripts/cleanup-conflicts.sh
 
 # Skip WASM builds
 echo "⏭️ Skipping pqc-dilithium WASM build — using native bindings only."
