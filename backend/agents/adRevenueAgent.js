@@ -8,11 +8,16 @@ import apiScoutAgent from './apiScoutAgent.js';
 // Import wallet functions
 import {
   initializeConnections,
-  getSolanaBalance,
-  sendSOL,
-  getUSDTBalance,
-  sendUSDT,
-  testAllConnections
+    getWalletBalances,
+    getWalletAddresses,
+    sendSOL,
+    sendETH,
+    sendUSDT,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
+    testAllConnections,
 } from './wallet.js';
 
 // Import browser manager for real browsing
