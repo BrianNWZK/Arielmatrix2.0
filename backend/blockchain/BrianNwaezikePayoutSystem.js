@@ -446,4 +446,4 @@ class BrianNwaezikePayoutSystem {
     }
 }
 
-export default BrianNwaezikePayoutSystem;
+export BrianNwaezikePayoutSystem;
