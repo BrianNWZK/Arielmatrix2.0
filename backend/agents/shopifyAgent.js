@@ -1028,7 +1028,7 @@ class MarketingManager {
 }
 
 // Main EnhancedShopifyAgent Class
-class EnhancedShopifyAgent {
+export default class EnhancedShopifyAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
