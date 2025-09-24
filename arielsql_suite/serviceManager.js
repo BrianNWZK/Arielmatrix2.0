@@ -26,7 +26,7 @@ import { CarbonNegativeConsensus } from "../modules/carbon-negative-consensus/in
 
 // === Agents ===
 import AdRevenueAgent from "../backend/agents/adRevenueAgent.js";
-import AdsenseApi from "../backend/agents/adsenseApi.js";
+import AdsenseAgent from "../backend/agents/adsenseAgent.js";
 import ApiScoutAgent from "../backend/agents/apiScoutAgent.js";
 import QuantumBrowserManager from "../backend/agents/browserManager.js";
 import ConfigAgent from "../backend/agents/configAgent.js";
