@@ -36,7 +36,7 @@ import DataAgent from "../backend/agents/dataAgent.js";
 import ForexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
-import ShopifyAgent from "../backend/agents/shopifyAgent.js";
+import EnhancedShopifyAgent from "../backend/agents/shopifyAgent.js";
 import SocialAgent from "../backend/agents/socialAgent.js";
 
 
