@@ -1361,7 +1361,7 @@ export default class EnhancedShopifyAgent {
 
 // Export the main class and extension
 export { EnhancedShopifyAgent };
-export default class apiScoutAgentExtension {
+export class apiScoutAgentExtension {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
