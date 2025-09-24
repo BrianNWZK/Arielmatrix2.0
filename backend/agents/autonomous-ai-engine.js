@@ -41,7 +41,7 @@ import { ethers } from 'ethers'; // Added missing import
 import { HfInference } from '@huggingface/inference'; // Added for advanced NLP
 import rax from 'retry-axios'; // Added for robust HTTP requests
 import puppeteer from 'puppeteer'; // Added for advanced scraping
-import QuantumBrowserManager from './browserManager.js';
+import { QuantumBrowserManager } from './browserManager.js';
 import apiScoutAgent from './apiScoutAgent.js';
 
 export default class apiScoutAgentExtension {
