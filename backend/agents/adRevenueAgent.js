@@ -122,7 +122,7 @@ const PUBLIC_AD_ENDPOINTS = {
   EU_DSA: 'https://digital-services-act.ec.europa.eu/api/v1/online-platforms/ads'
 };
 
-class AdRevenueAgent {
+export default class AdRevenueAgent {
   constructor(config = {}) {
     this.config = {
       REVENUE_SHARE: config.revenueShare || 0.75,
