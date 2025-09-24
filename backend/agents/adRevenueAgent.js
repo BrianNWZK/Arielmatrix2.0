@@ -23,7 +23,7 @@ import {
 // Import browser manager for real browsing
 import { QuantumBrowserManager } from './browserManager.js';
 
-export default class apiScoutAgentExtension {
+export class apiScoutAgentExtension {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
