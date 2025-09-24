@@ -144,7 +144,7 @@ class SovereignAIGovernor {
 }
 
 // Import database with enhanced error handling
-import BrianNwaezikeDB from '../database/BrianNwaezikeDB.js'; 
+import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js'; 
 
 // Lazy loading for heavy modules
 let tensorflowLoaded = false;
