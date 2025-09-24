@@ -23,7 +23,7 @@ import {
     testAllConnections,
 } from './wallet.js';
 
-export default class apiScoutAgentExtension {
+export class apiScoutAgentExtension {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
