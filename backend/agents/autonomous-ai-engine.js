@@ -1178,7 +1178,7 @@ import contractDeployAgent from './contractDeployAgent.js';
 import cryptoAgent from './cryptoAgent.js';
 import dataAgent from './dataAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
-import shopifyAgent from './shopifyAgent.js';
+import EnhancedShopifyAgent from './shopifyAgent.js';
 import socialAgent from './socialAgent.js';
 
 class RevenueManager {
