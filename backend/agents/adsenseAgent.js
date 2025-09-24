@@ -1866,5 +1866,5 @@ adsenseAgent.prototype._getDefaultOptimizationResult = function() {
     recommendedActions: ['Maintain current optimization strategy']
   };
 };
-
+    export default adsenseAgent 
 
