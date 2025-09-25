@@ -1173,7 +1173,7 @@ const healingSystem = new SelfHealingSystem();
 // 6. REVENUE AGENTS INTEGRATION AND OPTIMIZATION
 // =========================================================================
 import adRevenueAgent from './adRevenueAgent.js';
-import adsenseAgent from './adsenseApi.js';
+import adsenseAgent from './adsenseAgent.js';
 import contractDeployAgent from './contractDeployAgent.js';
 import cryptoAgent from './cryptoAgent.js';
 import dataAgent from './dataAgent.js';
