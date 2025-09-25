@@ -1175,7 +1175,7 @@ const healingSystem = new SelfHealingSystem();
 import adRevenueAgent from './adRevenueAgent.js';
 import adsenseAgent from './adsenseAgent.js';
 import contractDeployAgent from './contractDeployAgent.js';
-import cryptoAgent from './cryptoAgent.js';
+import { cryptoAgent } from './cryptoAgent.js';
 import dataAgent from './dataAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
 import EnhancedShopifyAgent from './shopifyAgent.js';
