@@ -510,7 +510,6 @@ class NeuralRevenuePredictor {
   }
 }
 
-const axios = require('axios');
 
 // Global Ad Exchange Integrator
 class GlobalAdExchangeIntegrator {
