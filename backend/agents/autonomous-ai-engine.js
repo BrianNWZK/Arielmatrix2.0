@@ -2260,349 +2260,39 @@ async optimizePricingStrategy(product, adoptionMetrics, competitiveAnalysis) {
     };
 }
 
-class IdentityServiceEngine {
-  calculateHeuristicAdoption(product, marketConditions) {
-    let baseProbability = 0.3;
-
-    const priceSensitivity = product.price > 1000 ? 0.7 : 1.0;
-    baseProbability *= priceSensitivity;
-
-    baseProbability *= marketConditions.demandScore;
-
-    const complexityFactor = this.assessProductComplexity(product) > 0.7 ? 0.8 : 1.0;
-    baseProbability *= complexityFactor;
-
-    return Math.max(0.1, Math.min(0.9, baseProbability));
-  }
-
-  calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions) {
-    const totalCompetitors = competitiveAnalysis.competitors.length;
-    const ourCompetitiveAdvantage = this.assessCompetitiveAdvantage(product, competitiveAnalysis);
-
-    let marketShare = (1 / (totalCompetitors + 1)) * (1 + ourCompetitiveAdvantage);
-    marketShare *= marketConditions.growthRate > 0.05 ? 1.2 : 0.8;
-
-    return Math.max(0.01, Math.min(0.3, marketShare));
-  }
-
-  async checkRegulatoryCompliance(product) {
-    const regulations = {
-      biometric: ['GDPR', 'CCPA', 'Biometric Laws'],
-      document_verification: ['KYC', 'AML', 'Local Regulations'],
-      digital_wallet: ['eIDAS', 'PSD2', 'Digital Identity Laws'],
-      theft_protection: ['Data Protection Laws', 'Privacy Regulations']
-    };
-
-    const applicableRegulations = regulations[product.category] || [];
-    const complianceStatus = await this.verifyCompliance(product, applicableRegulations);
-
-    return {
-      compliant: complianceStatus.isCompliant,
-      regulations: applicableRegulations,
-      requirements: complianceStatus.requirements,
-      riskLevel: complianceStatus.riskLevel
-    };
-  }
-
-  assessTechnicalFeasibility(product) {
-    const feasibilityFactors = {
-      infrastructure: this.assessInfrastructureRequirements(product),
-      integration: this.assessIntegrationComplexity(product),
-      security: this.assessSecurityRequirements(product),
-      scalability: this.assessScalability(product)
-    };
-
-    const overallFeasibility =
-      feasibilityFactors.infrastructure.score * 0.3 +
-      feasibilityFactors.integration.score * 0.25 +
-      feasibilityFactors.security.score * 0.3 +
-      feasibilityFactors.scalability.score * 0.15;
-
-    return overallFeasibility;
-  }
-
-  async offerIdentityServices(products, marketData = null) {
-    for (const product of products) {
-      const adoptionRate = this.calculateAdoptionRate(product, marketData);
-      console.log(`Offering ${product.name} with projected adoption rate: ${adoptionRate}%`);
-    }
-  }
-
-  calculateAdoptionRate(product, marketData) {
-    const baseRates = {
-      'Biometric Verification': 50,
-      'Document Verification': 75,
-      'Decentralized Identity Wallet': 30,
-      'Identity Theft Protection': 60
-    };
-
-    return baseRates[product.name] || 25;
-  }
-
-  // Placeholder methods for completeness
-  assessProductComplexity(product) {
-    return product.complexityScore || 0.5;
-  }
-
-  assessCompetitiveAdvantage(product, analysis) {
-    return product.advantageScore || 0.3;
-  }
-
-  verifyCompliance(product, regulations) {
-    return Promise.resolve({
-      isCompliant: true,
-      requirements: ['Encryption', 'Audit Trail'],
-      riskLevel: 'low'
-    });
-  }
-
-  assessInfrastructureRequirements(product) {
-    return { score: 0.8 };
-  }
-
-  assessIntegrationComplexity(product) {
-    return { score: 0.6 };
-  }
-
-  assessSecurityRequirements(product) {
-    return { score: 0.9 };
-  }
-
-  assessScalability(product) {
-    return { score: 0.7 };
-  }
-}
-
-
-                // Calculate real adoption metrics using market data and AI prediction
-                const adoptionMetrics = await this.calculateRealAdoptionMetrics(
-                    product, 
-                    marketConditions,
-                    competitiveAnalysis,
-                    industryTrends
-                );
-
-                // Calculate actual revenue projection with market validation
-                const revenueProjection = await this.calculateRevenueProjection(
-                    product,
-                    adoptionMetrics,
-                    marketConditions
-                );
-
-                // Generate market-optimized pricing
-                const optimizedPricing = await this.optimizePricingStrategy(
-                    product,
-                    adoptionMetrics,
-                    competitiveAnalysis
-                );
-
-                const serviceOffer = {
-                    productId: product.id || `unknown_${Date.now()}`,
-                    productName: product.name || 'Unnamed Product',
-                    productCategory: product.category || 'general',
-                    targetMarket: product.targetMarket || 'unknown',
-                    basePrice: Number(product.price) || 0,
-                    optimizedPrice: optimizedPricing?.price || Number(product.price) || 0,
-                    adoptionProbability: adoptionMetrics?.probability || 0.1,
-                    confidenceScore: adoptionMetrics?.confidence || 0.3,
-                    expectedRevenue: revenueProjection?.expected || 0,
-                    revenueConfidenceInterval: revenueProjection?.confidenceInterval || { lower: 0, upper: 0 },
-                    marketConditions: marketConditions?.score || 0.5,
-                    competitivePosition: competitiveAnalysis?.positions?.[product.category] || 'unknown',
-                    timeToMarket: adoptionMetrics?.implementationTime || 90,
-                    regulatoryCompliance: await this.checkRegulatoryCompliance(product),
-                    technicalFeasibility: await this.assessTechnicalFeasibility(product),
-                    estimatedMarketShare: adoptionMetrics?.marketShare || 0.01,
-                    kycAmlRequirements: this.analyzeKycAmlRequirements?.(product) || { compliant: false },
-                    integrationComplexity: this.assessIntegrationComplexity?.(product) || 'unknown',
-                    scalabilityPotential: adoptionMetrics?.scalability || 0.5,
-                    riskAssessment: await this.performRiskAssessment?.(product) || { level: 'medium' },
-                    timestamp: new Date().toISOString()
-                };
-
-                // Only add valid services
-                if (serviceOffer.basePrice > 0 && serviceOffer.productName !== 'Unnamed Product') {
-                    services.push(serviceOffer);
-                } else {
-                    console.warn('Skipping invalid service offer:', serviceOffer);
-                }
-
-            } catch (productError) {
-                console.warn(`Failed to process identity product ${product?.name || 'unknown'}:`, {
-                    productId: product?.id,
-                    error: productError.message
-                });
-                continue;
-            }
-        }
-
-        // Store service offerings for tracking and analysis (if any valid services)
-        if (services.length > 0) {
-            await this.storeServiceOfferings(services);
-            console.log(`✅ Successfully created ${services.length} identity service offerings`);
-        } else {
-            console.warn('⚠️ No valid identity service offerings were created');
-            services.push(...this.generateMinimalFallbackOffers(products));
-        }
-
-        return services;
-
-    } catch (error) {
-        console.error('Failed to offer identity services:', error.message);
-        return this.generateFallbackIdentityOffers(products, error);
-    }
-}
-
-// Supporting methods
-_validateIdentityProduct(product) {
-    const requiredFields = ['id', 'name', 'price', 'category', 'targetMarket'];
-    const missingFields = requiredFields.filter(field => !product[field]);
-    
-    if (missingFields.length > 0) {
-        throw new Error(`Missing required product fields: ${missingFields.join(', ')}`);
-    }
-
-    if (typeof product.price !== 'number' || product.price < 0) {
-        throw new Error('Product price must be a non-negative number');
-    }
-
-    const validCategories = ['biometric', 'document_verification', 'digital_wallet', 'theft_protection'];
-    if (!validCategories.includes(product.category)) {
-        throw new Error(`Invalid product category. Must be one of: ${validCategories.join(', ')}`);
-    }
-}
-
-generateMinimalFallbackOffers(products) {
-    console.warn('Generating minimal fallback offers due to no valid services');
-    
-    return products.filter(p => p && typeof p === 'object').map(product => ({
-        productId: product.id || `fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        productName: product.name || 'Fallback Product',
-        basePrice: Number(product.price) || 1000,
-        optimizedPrice: Number(product.price) * 0.8 || 800,
-        adoptionProbability: 0.2,
-        confidenceScore: 0.3,
-        expectedRevenue: (Number(product.price) || 1000) * 0.2 * 0.8,
-        revenueConfidenceInterval: { lower: 0, upper: Number(product.price) || 1000 },
-        marketConditions: 0.5,
-        competitivePosition: 'unknown',
-        timeToMarket: 90,
-        regulatoryCompliance: { compliant: false, riskLevel: 'high' },
-        technicalFeasibility: { score: 0.5, recommendation: 'unknown' },
-        estimatedMarketShare: 0.01,
-        isFallback: true,
-        timestamp: new Date().toISOString()
-    }));
-}
-
-async calculateRealAdoptionMetrics(product, marketConditions, competitiveAnalysis, industryTrends) {
-    const predictionFeatures = {
-        productFeatures: {
-            price: product.price,
-            complexity: this.assessProductComplexity(product),
-            implementationTime: this.estimateImplementationTime(product),
-            regulatoryRequirements: await this.assessRegulatoryRequirements(product)
-        },
-        marketFeatures: {
-            demand: marketConditions?.demandScore || 0.5,
-            competition: competitiveAnalysis?.intensity || 0.5,
-            growthRate: industryTrends?.growthRate || 0.1,
-            marketSize: industryTrends?.totalAddressableMarket || 1000000
-        },
-        timingFeatures: {
-            marketReadiness: this.assessMarketReadiness(product.category),
-            technologicalAdoption: industryTrends?.technologyAdoptionCurve || 0.3
-        }
-    };
-
-    let adoptionProbability = 0.5;
-    let confidence = 0.7;
-
-    if (this.aiBrain && this.aiBrain.models.get('adoption_prediction')) {
-        try {
-            const prediction = await this.aiBrain.predictAdoption(predictionFeatures);
-            adoptionProbability = prediction.probability;
-            confidence = prediction.confidence;
-        } catch (error) {
-            console.warn('AI adoption prediction failed, using heuristic fallback:', error.message);
-            adoptionProbability = this.calculateHeuristicAdoption(product, marketConditions);
-            confidence = 0.6;
-        }
-    }
-
-    const marketShare = this.calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions);
-
-    return {
-        probability: Math.max(0, Math.min(1, adoptionProbability)),
-        confidence: Math.max(0.1, Math.min(1, confidence)),
-        marketShare: marketShare,
-        implementationTime: this.estimateImplementationTime(product),
-        scalability: this.assessScalability(product),
-        riskFactors: await this.identifyRiskFactors(product)
-    };
-}
-
-async calculateRevenueProjection(product, adoptionMetrics, marketConditions) {
-    const baseRevenue = product.price * (adoptionMetrics?.probability || 0.1) * (adoptionMetrics?.marketShare || 0.01);
-    const marketMultiplier = this.calculateMarketMultiplier(marketConditions);
-    const economicMultiplier = this.calculateEconomicMultiplier();
-    const standardError = this.calculateRevenueStandardError(adoptionMetrics);
-    const confidenceInterval = {
-        lower: Math.max(0, baseRevenue - (1.96 * standardError)),
-        upper: baseRevenue + (1.96 * standardError)
-    };
-
-    const expectedRevenue = baseRevenue * marketMultiplier * economicMultiplier;
-
-    return {
-        expected: Math.round(expectedRevenue * 100) / 100,
-        confidenceInterval: {
-            lower: Math.round(confidenceInterval.lower * 100) / 100,
-            upper: Math.round(confidenceInterval.upper * 100) / 100
-        },
-        standardError: Math.round(standardError * 100) / 100
-    };
-}
-
-async optimizePricingStrategy(product, adoptionMetrics, competitiveAnalysis) {
-    const basePrice = product.price;
-    const marketMultiplier = this.calculatePricingMultiplier(competitiveAnalysis);
-    const valueMultiplier = this.assessValueProposition(product);
-    const competitiveAdjustment = this.getCompetitivePricingAdjustment(product, competitiveAnalysis);
-    const timeFactor = this.calculateTimeFactor(adoptionMetrics?.implementationTime || 90);
-    
-    const optimizedPrice = basePrice * marketMultiplier * valueMultiplier * competitiveAdjustment * timeFactor;
-    const minPrice = basePrice * 0.5;
-    const maxPrice = basePrice * 2.0;
-    const finalPrice = Math.max(minPrice, Math.min(maxPrice, optimizedPrice));
-
-    return {
-        price: Math.round(finalPrice * 100) / 100,
-        strategy: this.determinePricingStrategy(adoptionMetrics, competitiveAnalysis),
-        discountRate: finalPrice < basePrice ? (1 - (finalPrice / basePrice)) : 0,
-        premiumRate: finalPrice > basePrice ? ((finalPrice / basePrice) - 1) : 0
-    };
-}
-
+// Helper methods for realistic calculations
 calculateHeuristicAdoption(product, marketConditions) {
-    let baseProbability = 0.3;
+    let baseProbability = 0.3; // Base adoption probability
+    
+    // Price sensitivity adjustment
     const priceSensitivity = product.price > 1000 ? 0.7 : 1.0;
     baseProbability *= priceSensitivity;
-    baseProbability *= marketConditions?.demandScore || 0.5;
+    
+    // Market demand adjustment
+    baseProbability *= marketConditions.demandScore;
+    
+    // Product complexity adjustment
     const complexityFactor = this.assessProductComplexity(product) > 0.7 ? 0.8 : 1.0;
     baseProbability *= complexityFactor;
+    
     return Math.max(0.1, Math.min(0.9, baseProbability));
 }
 
 calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions) {
-    const totalCompetitors = competitiveAnalysis?.competitors?.length || 1;
+    const totalCompetitors = competitiveAnalysis.competitors.length;
     const ourCompetitiveAdvantage = this.assessCompetitiveAdvantage(product, competitiveAnalysis);
+    
+    // Basic market share calculation considering competition and advantage
     let marketShare = (1 / (totalCompetitors + 1)) * (1 + ourCompetitiveAdvantage);
-    marketShare *= (marketConditions?.growthRate || 0.05) > 0.05 ? 1.2 : 0.8;
-    return Math.max(0.01, Math.min(0.3, marketShare));
+    
+    // Adjust for market conditions
+    marketShare *= marketConditions.growthRate > 0.05 ? 1.2 : 0.8;
+    
+    return Math.max(0.01, Math.min(0.3, marketShare)); // Cap between 1% and 30%
 }
 
 async checkRegulatoryCompliance(product) {
+    // Check regulatory requirements for identity services
     const regulations = {
         biometric: ['GDPR', 'CCPA', 'Biometric Laws'],
         document_verification: ['KYC', 'AML', 'Local Regulations'],
@@ -2614,14 +2304,15 @@ async checkRegulatoryCompliance(product) {
     const complianceStatus = await this.verifyCompliance(product, applicableRegulations);
     
     return {
-        compliant: complianceStatus?.isCompliant || false,
+        compliant: complianceStatus.isCompliant,
         regulations: applicableRegulations,
-        requirements: complianceStatus?.requirements || [],
-        riskLevel: complianceStatus?.riskLevel || 'high'
+        requirements: complianceStatus.requirements,
+        riskLevel: complianceStatus.riskLevel
     };
 }
 
 assessTechnicalFeasibility(product) {
+    // Assess technical implementation feasibility
     const feasibilityFactors = {
         infrastructure: this.assessInfrastructureRequirements(product),
         integration: this.assessIntegrationComplexity(product),
@@ -2630,10 +2321,10 @@ assessTechnicalFeasibility(product) {
     };
     
     const overallFeasibility = (
-        (feasibilityFactors.infrastructure?.score || 0.5) * 0.3 +
-        (feasibilityFactors.integration?.score || 0.5) * 0.25 +
-        (feasibilityFactors.security?.score || 0.5) * 0.3 +
-        (feasibilityFactors.scalability?.score || 0.5) * 0.15
+        feasibilityFactors.infrastructure.score * 0.3 +
+        feasibilityFactors.integration.score * 0.25 +
+        feasibilityFactors.security.score * 0.3 +
+        feasibilityFactors.scalability.score * 0.15
     );
     
     return {
@@ -2647,18 +2338,18 @@ assessTechnicalFeasibility(product) {
 generateFallbackIdentityOffers(products, error) {
     console.warn('Generating fallback identity offers due to system error:', error.message);
     
-    return products.filter(p => p && typeof p === 'object').map(product => ({
+    return products.map(product => ({
         productId: product.id,
         productName: product.name,
         basePrice: product.price,
-        optimizedPrice: product.price * 0.8,
+        optimizedPrice: product.price * 0.8, // 20% discount as fallback
         adoptionProbability: 0.4,
         confidenceScore: 0.3,
         expectedRevenue: product.price * 0.4 * 0.8,
         revenueConfidenceInterval: { lower: 0, upper: product.price },
         marketConditions: 0.5,
         competitivePosition: 'unknown',
-        timeToMarket: 90,
+        timeToMarket: 90, // days
         regulatoryCompliance: { compliant: false, riskLevel: 'high' },
         technicalFeasibility: { score: 0.5, recommendation: 'unknown' },
         estimatedMarketShare: 0.05,
@@ -2673,117 +2364,39 @@ async storeServiceOfferings(services) {
         await this.db.store('identity_service_offerings', {
             timestamp: Date.now(),
             services: services,
-            totalExpectedRevenue: services.reduce((sum, s) => sum + (s.expectedRevenue || 0), 0),
-            averageAdoptionRate: services.length > 0 ? services.reduce((sum, s) => sum + (s.adoptionProbability || 0), 0) / services.length : 0,
-            totalServices: services.length,
-            successfulServices: services.filter(s => !s.isFallback).length
+            totalExpectedRevenue: services.reduce((sum, s) => sum + s.expectedRevenue, 0),
+            averageAdoptionProbability: services.reduce((sum, s) => sum + s.adoptionProbability, 0) / services.length
         });
-        console.log('✅ Identity service offerings stored successfully');
     } catch (error) {
-        console.error('❌ Failed to store service offerings:', error.message);
-        await this.fallbackStorage('identity_service_offerings', services, error);
+        console.error('Failed to store service offerings:', error.message);
     }
 }
+    function getAdoptionRate(product) {
+  // Simple adoption rate calculation based on product type and market
+  const baseRates = {
+    'Biometric Verification': 50,
+    'Document Verification': 75,
+    'Decentralized Identity Wallet': 30,
+    'Identity Theft Protection': 60
+  };
 
-async getAdoptionRate(product, marketData = null) {
+  return baseRates[product.name] || 25;
+}
+
+  async storeRevenueResults(results) {
     try {
-        if (!product || typeof product !== 'object') {
-            return 0.1;
-        }
-
-        const baseRates = {
-            'Biometric Verification': 0.15,
-            'Document Verification': 0.25,
-            'Decentralized Identity Wallet': 0.08,
-            'Identity Theft Protection': 0.20
-        };
-
-        let baseRate = baseRates[product.name] || 0.10;
-        
-        if (marketData && typeof marketData === 'object') {
-            baseRate = await this.applyMarketAdjustments(baseRate, product, marketData);
-        }
-        
-        baseRate = this.applyProductFactors(baseRate, product);
-        
-        return Math.max(0.05, Math.min(0.95, baseRate));
-        
+      await this.db.store('revenue_streams', {
+        timestamp: Date.now(),
+        results,
+        totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
+        successfulStreams: results.filter(r => r.success).length
+      });
+      
+      console.log('✅ Revenue results stored in database');
     } catch (error) {
-        console.warn('Adoption rate calculation failed, using conservative estimate:', error.message);
-        return 0.1;
+      console.error('❌ Failed to store revenue results:', error.message);
     }
-}
-
-async applyMarketAdjustments(baseRate, product, marketData) {
-    let adjustedRate = baseRate;
-    
-    if (marketData.demandScore) {
-        const demandFactor = Math.max(0.5, Math.min(1.5, marketData.demandScore));
-        adjustedRate *= demandFactor;
-    }
-    
-    if (marketData.competitorCount) {
-        const competitionFactor = Math.max(0.3, Math.min(1.2, 1 - (marketData.competitorCount * 0.05)));
-        adjustedRate *= competitionFactor;
-    }
-    
-    if (marketData.growthRate) {
-        const growthFactor = Math.max(0.7, Math.min(1.3, 1 + (marketData.growthRate * 2)));
-        adjustedRate *= growthFactor;
-    }
-    
-    return adjustedRate;
-}
-
-applyProductFactors(baseRate, product) {
-    let adjustedRate = baseRate;
-    
-    if (product.price > 2000) adjustedRate *= 0.7;
-    else if (product.price > 1000) adjustedRate *= 0.85;
-    else if (product.price < 500) adjustedRate *= 1.2;
-    
-    const complexity = this.assessImplementationComplexity(product);
-    if (complexity === 'high') adjustedRate *= 0.7;
-    else if (complexity === 'medium') adjustedRate *= 0.9;
-    else if (complexity === 'low') adjustedRate *= 1.1;
-    
-    if (product.targetMarket && product.targetMarket.includes('enterprise')) {
-        adjustedRate *= 0.8;
-    }
-    
-    return adjustedRate;
-}
-
-assessImplementationComplexity(product) {
-    if (!product || !product.name) return 'medium';
-    
-    const complexityScores = {
-        'Biometric Verification': 'high',
-        'Document Verification': 'medium',
-        'Decentralized Identity Wallet': 'high', 
-        'Identity Theft Protection': 'low'
-    };
-    
-    return complexityScores[product.name] || 'medium';
-}
-
-    async writeToFallbackFile(data) {
-        try {
-            const fallbackDir = path.join(__dirname, 'fallback_storage');
-            if (!existsSync(fallbackDir)) {
-                mkdirSync(fallbackDir, { recursive: true });
-            }
-
-            const filename = `revenue_fallback_${Date.now()}.json`;
-            const filepath = path.join(fallbackDir, filename);
-
-            writeFileSync(filepath, JSON.stringify(data, null, 2));
-            console.log(`📁 Fallback data written to: ${filepath}`);
-
-        } catch (fileError) {
-            console.error('❌ Failed to write fallback file:', fileError.message);
-        }
-    }
+  }
 
   startOpportunityMonitoring() {
     // Continuously monitor for new revenue opportunities
