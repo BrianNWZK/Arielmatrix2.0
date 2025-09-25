@@ -2326,6 +2326,295 @@ assessTechnicalFeasibility(product) {
         feasibilityFactors.security.score * 0.3 +
         feasibilityFactors.scalability.score * 0.15
     );
+    async offerIdentityServices(products, marketData = null) {
+    const services = [];
+    
+    try {
+        // Validate input parameters
+        if (!products || !Array.isArray(products) || products.length === 0) {
+            throw new Error('Invalid products array provided');
+        }
+
+        // Get real-time market data and user analytics
+        const [marketConditions, competitiveAnalysis, industryTrends] = await Promise.allSettled([
+            marketData || this.dataFetcher.fetchMarketConditions?.() || { score: 0.5, demandScore: 0.5 },
+            this.analyzeCompetitiveLandscape?.('identity_services') || { intensity: 0.5, competitors: [] },
+            this.fetchIndustryTrends?.('identity_verification') || { growthRate: 0.1, totalAddressableMarket: 1000000 }
+        ]).then(results => results.map(result => 
+            result.status === 'fulfilled' ? result.value : { error: result.reason?.message || 'Unknown error' }
+        ));
+
+        for (const product of products) {
+            try {
+                // Validate product structure
+                if (!product || typeof product !== 'object') {
+                    console.warn('Skipping invalid product:', product);
+                    continue;
+                }
+                
+                this._validateIdentityProduct(product);
+
+                // Calculate real adoption metrics using market data and AI prediction
+                const adoptionMetrics = await this.calculateRealAdoptionMetrics(
+                    product, 
+                    marketConditions,
+                    competitiveAnalysis,
+                    industryTrends
+                );
+
+                // Calculate actual revenue projection with market validation
+                const revenueProjection = await this.calculateRevenueProjection(
+                    product,
+                    adoptionMetrics,
+                    marketConditions
+                );
+
+                // Generate market-optimized pricing
+                const optimizedPricing = await this.optimizePricingStrategy(
+                    product,
+                    adoptionMetrics,
+                    competitiveAnalysis
+                );
+
+                const serviceOffer = {
+                    productId: product.id || `unknown_${Date.now()}`,
+                    productName: product.name || 'Unnamed Product',
+                    productCategory: product.category || 'general',
+                    targetMarket: product.targetMarket || 'unknown',
+                    basePrice: Number(product.price) || 0,
+                    optimizedPrice: optimizedPricing?.price || Number(product.price) || 0,
+                    adoptionProbability: adoptionMetrics?.probability || 0.1,
+                    confidenceScore: adoptionMetrics?.confidence || 0.3,
+                    expectedRevenue: revenueProjection?.expected || 0,
+                    revenueConfidenceInterval: revenueProjection?.confidenceInterval || { lower: 0, upper: 0 },
+                    marketConditions: marketConditions?.score || 0.5,
+                    competitivePosition: competitiveAnalysis?.positions?.[product.category] || 'unknown',
+                    timeToMarket: adoptionMetrics?.implementationTime || 90,
+                    regulatoryCompliance: await this.checkRegulatoryCompliance(product),
+                    technicalFeasibility: await this.assessTechnicalFeasibility(product),
+                    estimatedMarketShare: adoptionMetrics?.marketShare || 0.01,
+                    kycAmlRequirements: this.analyzeKycAmlRequirements?.(product) || { compliant: false },
+                    integrationComplexity: this.assessIntegrationComplexity?.(product) || 'unknown',
+                    scalabilityPotential: adoptionMetrics?.scalability || 0.5,
+                    riskAssessment: await this.performRiskAssessment?.(product) || { level: 'medium' },
+                    timestamp: new Date().toISOString()
+                };
+
+                // Only add valid services
+                if (serviceOffer.basePrice > 0 && serviceOffer.productName !== 'Unnamed Product') {
+                    services.push(serviceOffer);
+                } else {
+                    console.warn('Skipping invalid service offer:', serviceOffer);
+                }
+
+            } catch (productError) {
+                console.warn(`Failed to process identity product ${product?.name || 'unknown'}:`, {
+                    productId: product?.id,
+                    error: productError.message
+                });
+                continue;
+            }
+        }
+
+        // Store service offerings for tracking and analysis (if any valid services)
+        if (services.length > 0) {
+            await this.storeServiceOfferings(services);
+            console.log(`✅ Successfully created ${services.length} identity service offerings`);
+        } else {
+            console.warn('⚠️ No valid identity service offerings were created');
+            services.push(...this.generateMinimalFallbackOffers(products));
+        }
+
+        return services;
+
+    } catch (error) {
+        console.error('Failed to offer identity services:', error.message);
+        return this.generateFallbackIdentityOffers(products, error);
+    }
+}
+
+// Supporting methods
+_validateIdentityProduct(product) {
+    const requiredFields = ['id', 'name', 'price', 'category', 'targetMarket'];
+    const missingFields = requiredFields.filter(field => !product[field]);
+    
+    if (missingFields.length > 0) {
+        throw new Error(`Missing required product fields: ${missingFields.join(', ')}`);
+    }
+
+    if (typeof product.price !== 'number' || product.price < 0) {
+        throw new Error('Product price must be a non-negative number');
+    }
+
+    const validCategories = ['biometric', 'document_verification', 'digital_wallet', 'theft_protection'];
+    if (!validCategories.includes(product.category)) {
+        throw new Error(`Invalid product category. Must be one of: ${validCategories.join(', ')}`);
+    }
+}
+
+generateMinimalFallbackOffers(products) {
+    console.warn('Generating minimal fallback offers due to no valid services');
+    
+    return products.filter(p => p && typeof p === 'object').map(product => ({
+        productId: product.id || `fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        productName: product.name || 'Fallback Product',
+        basePrice: Number(product.price) || 1000,
+        optimizedPrice: Number(product.price) * 0.8 || 800,
+        adoptionProbability: 0.2,
+        confidenceScore: 0.3,
+        expectedRevenue: (Number(product.price) || 1000) * 0.2 * 0.8,
+        revenueConfidenceInterval: { lower: 0, upper: Number(product.price) || 1000 },
+        marketConditions: 0.5,
+        competitivePosition: 'unknown',
+        timeToMarket: 90,
+        regulatoryCompliance: { compliant: false, riskLevel: 'high' },
+        technicalFeasibility: { score: 0.5, recommendation: 'unknown' },
+        estimatedMarketShare: 0.01,
+        isFallback: true,
+        timestamp: new Date().toISOString()
+    }));
+}
+
+async calculateRealAdoptionMetrics(product, marketConditions, competitiveAnalysis, industryTrends) {
+    const predictionFeatures = {
+        productFeatures: {
+            price: product.price,
+            complexity: this.assessProductComplexity(product),
+            implementationTime: this.estimateImplementationTime(product),
+            regulatoryRequirements: await this.assessRegulatoryRequirements(product)
+        },
+        marketFeatures: {
+            demand: marketConditions?.demandScore || 0.5,
+            competition: competitiveAnalysis?.intensity || 0.5,
+            growthRate: industryTrends?.growthRate || 0.1,
+            marketSize: industryTrends?.totalAddressableMarket || 1000000
+        },
+        timingFeatures: {
+            marketReadiness: this.assessMarketReadiness(product.category),
+            technologicalAdoption: industryTrends?.technologyAdoptionCurve || 0.3
+        }
+    };
+
+    let adoptionProbability = 0.5;
+    let confidence = 0.7;
+
+    if (this.aiBrain && this.aiBrain.models.get('adoption_prediction')) {
+        try {
+            const prediction = await this.aiBrain.predictAdoption(predictionFeatures);
+            adoptionProbability = prediction.probability;
+            confidence = prediction.confidence;
+        } catch (error) {
+            console.warn('AI adoption prediction failed, using heuristic fallback:', error.message);
+            adoptionProbability = this.calculateHeuristicAdoption(product, marketConditions);
+            confidence = 0.6;
+        }
+    }
+
+    const marketShare = this.calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions);
+
+    return {
+        probability: Math.max(0, Math.min(1, adoptionProbability)),
+        confidence: Math.max(0.1, Math.min(1, confidence)),
+        marketShare: marketShare,
+        implementationTime: this.estimateImplementationTime(product),
+        scalability: this.assessScalability(product),
+        riskFactors: await this.identifyRiskFactors(product)
+    };
+}
+
+async calculateRevenueProjection(product, adoptionMetrics, marketConditions) {
+    const baseRevenue = product.price * (adoptionMetrics?.probability || 0.1) * (adoptionMetrics?.marketShare || 0.01);
+    const marketMultiplier = this.calculateMarketMultiplier(marketConditions);
+    const economicMultiplier = this.calculateEconomicMultiplier();
+    const standardError = this.calculateRevenueStandardError(adoptionMetrics);
+    const confidenceInterval = {
+        lower: Math.max(0, baseRevenue - (1.96 * standardError)),
+        upper: baseRevenue + (1.96 * standardError)
+    };
+
+    const expectedRevenue = baseRevenue * marketMultiplier * economicMultiplier;
+
+    return {
+        expected: Math.round(expectedRevenue * 100) / 100,
+        confidenceInterval: {
+            lower: Math.round(confidenceInterval.lower * 100) / 100,
+            upper: Math.round(confidenceInterval.upper * 100) / 100
+        },
+        standardError: Math.round(standardError * 100) / 100
+    };
+}
+
+async optimizePricingStrategy(product, adoptionMetrics, competitiveAnalysis) {
+    const basePrice = product.price;
+    const marketMultiplier = this.calculatePricingMultiplier(competitiveAnalysis);
+    const valueMultiplier = this.assessValueProposition(product);
+    const competitiveAdjustment = this.getCompetitivePricingAdjustment(product, competitiveAnalysis);
+    const timeFactor = this.calculateTimeFactor(adoptionMetrics?.implementationTime || 90);
+    
+    const optimizedPrice = basePrice * marketMultiplier * valueMultiplier * competitiveAdjustment * timeFactor;
+    const minPrice = basePrice * 0.5;
+    const maxPrice = basePrice * 2.0;
+    const finalPrice = Math.max(minPrice, Math.min(maxPrice, optimizedPrice));
+
+    return {
+        price: Math.round(finalPrice * 100) / 100,
+        strategy: this.determinePricingStrategy(adoptionMetrics, competitiveAnalysis),
+        discountRate: finalPrice < basePrice ? (1 - (finalPrice / basePrice)) : 0,
+        premiumRate: finalPrice > basePrice ? ((finalPrice / basePrice) - 1) : 0
+    };
+}
+
+calculateHeuristicAdoption(product, marketConditions) {
+    let baseProbability = 0.3;
+    const priceSensitivity = product.price > 1000 ? 0.7 : 1.0;
+    baseProbability *= priceSensitivity;
+    baseProbability *= marketConditions?.demandScore || 0.5;
+    const complexityFactor = this.assessProductComplexity(product) > 0.7 ? 0.8 : 1.0;
+    baseProbability *= complexityFactor;
+    return Math.max(0.1, Math.min(0.9, baseProbability));
+}
+
+calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions) {
+    const totalCompetitors = competitiveAnalysis?.competitors?.length || 1;
+    const ourCompetitiveAdvantage = this.assessCompetitiveAdvantage(product, competitiveAnalysis);
+    let marketShare = (1 / (totalCompetitors + 1)) * (1 + ourCompetitiveAdvantage);
+    marketShare *= (marketConditions?.growthRate || 0.05) > 0.05 ? 1.2 : 0.8;
+    return Math.max(0.01, Math.min(0.3, marketShare));
+}
+
+async checkRegulatoryCompliance(product) {
+    const regulations = {
+        biometric: ['GDPR', 'CCPA', 'Biometric Laws'],
+        document_verification: ['KYC', 'AML', 'Local Regulations'],
+        digital_wallet: ['eIDAS', 'PSD2', 'Digital Identity Laws'],
+        theft_protection: ['Data Protection Laws', 'Privacy Regulations']
+    };
+    
+    const applicableRegulations = regulations[product.category] || [];
+    const complianceStatus = await this.verifyCompliance(product, applicableRegulations);
+    
+    return {
+        compliant: complianceStatus?.isCompliant || false,
+        regulations: applicableRegulations,
+        requirements: complianceStatus?.requirements || [],
+        riskLevel: complianceStatus?.riskLevel || 'high'
+    };
+}
+
+assessTechnicalFeasibility(product) {
+    const feasibilityFactors = {
+        infrastructure: this.assessInfrastructureRequirements(product),
+        integration: this.assessIntegrationComplexity(product),
+        security: this.assessSecurityRequirements(product),
+        scalability: this.assessScalability(product)
+    };
+    
+    const overallFeasibility = (
+        (feasibilityFactors.infrastructure?.score || 0.5) * 0.3 +
+        (feasibilityFactors.integration?.score || 0.5) * 0.25 +
+        (feasibilityFactors.security?.score || 0.5) * 0.3 +
+        (feasibilityFactors.scalability?.score || 0.5) * 0.15
+    );
     
     return {
         score: overallFeasibility,
@@ -2338,18 +2627,18 @@ assessTechnicalFeasibility(product) {
 generateFallbackIdentityOffers(products, error) {
     console.warn('Generating fallback identity offers due to system error:', error.message);
     
-    return products.map(product => ({
+    return products.filter(p => p && typeof p === 'object').map(product => ({
         productId: product.id,
         productName: product.name,
         basePrice: product.price,
-        optimizedPrice: product.price * 0.8, // 20% discount as fallback
+        optimizedPrice: product.price * 0.8,
         adoptionProbability: 0.4,
         confidenceScore: 0.3,
         expectedRevenue: product.price * 0.4 * 0.8,
         revenueConfidenceInterval: { lower: 0, upper: product.price },
         marketConditions: 0.5,
         competitivePosition: 'unknown',
-        timeToMarket: 90, // days
+        timeToMarket: 90,
         regulatoryCompliance: { compliant: false, riskLevel: 'high' },
         technicalFeasibility: { score: 0.5, recommendation: 'unknown' },
         estimatedMarketShare: 0.05,
@@ -2365,62 +2654,59 @@ async storeServiceOfferings(services) {
             timestamp: Date.now(),
             services: services,
             totalExpectedRevenue: services.reduce((sum, s) => sum + (s.expectedRevenue || 0), 0),
-            averageAdoptionRate: services.reduce((sum, s) => sum + (s.adoptionRate || 0), 0) / services.length,
+            averageAdoptionRate: services.length > 0 ? services.reduce((sum, s) => sum + (s.adoptionProbability || 0), 0) / services.length : 0,
             totalServices: services.length,
             successfulServices: services.filter(s => !s.isFallback).length
         });
         console.log('✅ Identity service offerings stored successfully');
     } catch (error) {
         console.error('❌ Failed to store service offerings:', error.message);
-        // Implement fallback storage or retry logic
         await this.fallbackStorage('identity_service_offerings', services, error);
     }
 }
 
 async getAdoptionRate(product, marketData = null) {
     try {
-        // Real adoption rate calculation based on multiple factors
+        if (!product || typeof product !== 'object') {
+            return 0.1;
+        }
+
         const baseRates = {
-            'Biometric Verification': 0.15,  // 15% base adoption
-            'Document Verification': 0.25,   // 25% base adoption
-            'Decentralized Identity Wallet': 0.08, // 8% base adoption
-            'Identity Theft Protection': 0.20 // 20% base adoption
+            'Biometric Verification': 0.15,
+            'Document Verification': 0.25,
+            'Decentralized Identity Wallet': 0.08,
+            'Identity Theft Protection': 0.20
         };
 
-        let baseRate = baseRates[product.name] || 0.10; // 10% default
+        let baseRate = baseRates[product.name] || 0.10;
         
-        // Apply market adjustments if data available
-        if (marketData) {
+        if (marketData && typeof marketData === 'object') {
             baseRate = await this.applyMarketAdjustments(baseRate, product, marketData);
         }
         
-        // Apply product-specific factors
         baseRate = this.applyProductFactors(baseRate, product);
         
-        return Math.max(0.05, Math.min(0.95, baseRate)); // Keep between 5% and 95%
+        return Math.max(0.05, Math.min(0.95, baseRate));
         
     } catch (error) {
-        console.warn('❌ Adoption rate calculation failed, using conservative estimate:', error.message);
-        return 0.15; // Conservative fallback rate
+        console.warn('Adoption rate calculation failed, using conservative estimate:', error.message);
+        return 0.1;
     }
 }
 
 async applyMarketAdjustments(baseRate, product, marketData) {
     let adjustedRate = baseRate;
     
-    // Market demand adjustment (0.5 to 1.5 range)
     if (marketData.demandScore) {
         const demandFactor = Math.max(0.5, Math.min(1.5, marketData.demandScore));
         adjustedRate *= demandFactor;
     }
     
-    // Competitive landscape adjustment
     if (marketData.competitorCount) {
         const competitionFactor = Math.max(0.3, Math.min(1.2, 1 - (marketData.competitorCount * 0.05)));
         adjustedRate *= competitionFactor;
     }
     
-    // Market growth adjustment
     if (marketData.growthRate) {
         const growthFactor = Math.max(0.7, Math.min(1.3, 1 + (marketData.growthRate * 2)));
         adjustedRate *= growthFactor;
@@ -2432,401 +2718,34 @@ async applyMarketAdjustments(baseRate, product, marketData) {
 applyProductFactors(baseRate, product) {
     let adjustedRate = baseRate;
     
-    // Price sensitivity adjustment
-    if (product.price > 2000) adjustedRate *= 0.7;    // High price = lower adoption
+    if (product.price > 2000) adjustedRate *= 0.7;
     else if (product.price > 1000) adjustedRate *= 0.85;
-    else if (product.price < 500) adjustedRate *= 1.2; // Low price = higher adoption
+    else if (product.price < 500) adjustedRate *= 1.2;
     
-    // Implementation complexity adjustment
     const complexity = this.assessImplementationComplexity(product);
     if (complexity === 'high') adjustedRate *= 0.7;
     else if (complexity === 'medium') adjustedRate *= 0.9;
     else if (complexity === 'low') adjustedRate *= 1.1;
     
-    // Target market adjustment
     if (product.targetMarket && product.targetMarket.includes('enterprise')) {
-        adjustedRate *= 0.8; // Enterprise sales typically have lower adoption rates
+        adjustedRate *= 0.8;
     }
     
     return adjustedRate;
 }
 
 assessImplementationComplexity(product) {
+    if (!product || !product.name) return 'medium';
+    
     const complexityScores = {
         'Biometric Verification': 'high',
         'Document Verification': 'medium',
         'Decentralized Identity Wallet': 'high', 
         'Identity Theft Protection': 'low'
     };
+    
     return complexityScores[product.name] || 'medium';
 }
-
-async storeRevenueResults(results) {
-    try {
-        const storageData = {
-            timestamp: Date.now(),
-            results: results,
-            totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
-            successfulStreams: results.filter(r => r.success).length,
-            failedStreams: results.filter(r => !r.success).length,
-            totalStreams: results.length,
-            successRate: results.length > 0 ? (results.filter(r => r.success).length / results.length) : 0
-        };
-
-        // Add detailed breakdown by source
-        storageData.breakdown = this.calculateRevenueBreakdown(results);
-        
-        // Add performance metrics
-        storageData.performance = this.calculatePerformanceMetrics(results);
-        
-        await this.db.store('revenue_streams', storageData);
-        console.log('✅ Revenue results stored successfully');
-        
-        // Trigger analytics event
-        await this.triggerRevenueAnalytics(storageData);
-        
-    } catch (error) {
-        console.error('❌ Failed to store revenue results:', error.message);
-        
-        // Implement robust fallback storage
-        await this.fallbackRevenueStorage(results, error);
-    }
-}
-
-calculateRevenueBreakdown(results) {
-    const breakdown = {};
-    
-    results.forEach(result => {
-        if (result.success) {
-            const source = result.source || 'unknown';
-            if (!breakdown[source]) {
-                breakdown[source] = { revenue: 0, count: 0 };
-            }
-            breakdown[source].revenue += result.revenue || 0;
-            breakdown[source].count += 1;
-        }
-    });
-    
-    return breakdown;
-}
-
-calculatePerformanceMetrics(results) {
-    const successfulResults = results.filter(r => r.success);
-    const revenues = successfulResults.map(r => r.revenue || 0);
-    
-    return {
-        averageRevenue: revenues.length > 0 ? revenues.reduce((a, b) => a + b, 0) / revenues.length : 0,
-        maxRevenue: revenues.length > 0 ? Math.max(...revenues) : 0,
-        minRevenue: revenues.length > 0 ? Math.min(...revenues) : 0,
-        totalOpportunities: results.length,
-        conversionRate: results.length > 0 ? successfulResults.length / results.length : 0
-    };
-}
-
-async triggerRevenueAnalytics(storageData) {
-    try {
-        // Send to analytics service
-        await this.analytics.track('revenue_results_stored', {
-            totalRevenue: storageData.totalRevenue,
-            successRate: storageData.successRate,
-            streamCount: storageData.totalStreams,
-            timestamp: storageData.timestamp
-        });
-    } catch (error) {
-        console.warn('⚠️ Analytics tracking failed:', error.message);
-    }
-}
-
-async fallbackStorage(collection, data, error) {
-    try {
-        // Attempt local storage as fallback
-        const fallbackPath = path.join(__dirname, 'fallback_storage', `${collection}_${Date.now()}.json`);
-        const fallbackDir = path.dirname(fallbackPath);
-        
-        if (!existsSync(fallbackDir)) {
-            mkdirSync(fallbackDir, { recursive: true });
-        }
-        
-        writeFileSync(fallbackPath, JSON.stringify({
-            data: data,
-            error: error.message,
-            timestamp: Date.now(),
-            originalError: error.stack
-        }, null, 2));
-        
-        console.log(`📦 Data stored in fallback location: ${fallbackPath}`);
-        
-        // Schedule retry for later
-        setTimeout(() => this.retryStorage(collection, data, fallbackPath), 30000);
-        
-    } catch (fallbackError) {
-        console.error('❌ Fallback storage also failed:', fallbackError.message);
-    }
-}
-
-async fallbackRevenueStorage(results, error) {
-    try {
-        // Simplified fallback for revenue data
-        const fallbackData = {
-            totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
-            successfulCount: results.filter(r => r.success).length,
-            totalCount: results.length,
-            timestamp: Date.now(),
-            error: error.message
-        };
-        
-       async fallbackRevenueStorage(results, error) {
-    try {
-        // Validate input
-        if (!results || !Array.isArray(results)) {
-            throw new Error('Invalid results for fallback storage');
-        }
-
-        // Simplified fallback for revenue data
-        const fallbackData = {
-            totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
-            successfulCount: results.filter(r => r && r.success).length,
-            totalCount: results.length,
-            timestamp: Date.now(),
-            error: error?.message || 'Unknown error',
-            stack: error?.stack || ''
-        };
-
-        // Store in memory cache as last resort
-        cache.set('fallback_revenue_data', fallbackData, 3600); // 1 hour TTL
-
-        // Also write to local file system as backup
-        await this.writeToFallbackFile(fallbackData);
-
-        console.log('📦 Revenue data stored in fallback storage');
-
-    } catch (fallbackError) {
-        console.error('❌ Revenue fallback storage failed:', fallbackError.message);
-        // Last resort: log to console with structured data
-        console.error('💥 CRITICAL: Revenue data lost:', {
-            resultsCount: results?.length || 0,
-            error: fallbackError.message,
-            timestamp: Date.now()
-        });
-    }
-}
-
-async retryStorage(collection, data, fallbackPath) {
-    try {
-        console.log(`🔄 Retrying storage for ${collection}...`);
-        await this.db.store(collection, data);
-        console.log('✅ Retry storage successful');
-
-        // Clean up fallback file
-        if (existsSync(fallbackPath)) {
-            unlinkSync(fallbackPath);
-            console.log('🗑️ Fallback file cleaned up');
-        }
-    } catch (retryError) {
-        console.error('❌ Storage retry failed:', retryError.message);
-        // Log the error but don't throw - we've already tried our fallback
-    }
-}
-
-async storeRevenueResults(results) {
-    try {
-        // Validate input
-        if (!results || !Array.isArray(results)) {
-            throw new Error('Invalid results data provided');
-        }
-
-        const storageData = {
-            timestamp: Date.now(),
-            results: results,
-            totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
-            successfulStreams: results.filter(r => r.success).length,
-            failedStreams: results.filter(r => !r.success).length,
-            totalStreams: results.length,
-            successRate: results.length > 0 ? (results.filter(r => r.success).length / results.length) : 0
-        };
-
-        // Add detailed breakdown by source
-        storageData.breakdown = this.calculateRevenueBreakdown(results);
-
-        // Add performance metrics
-        storageData.performance = this.calculatePerformanceMetrics(results);
-
-        // Store in database
-        await this.db.store('revenue_streams', storageData);
-        console.log('✅ Revenue results stored in database');
-
-        // Trigger analytics event
-        await this.triggerRevenueAnalytics(storageData);
-
-        return {
-            success: true,
-            storedRecords: results.length,
-            totalRevenue: storageData.totalRevenue
-        };
-
-    } catch (error) {
-        console.error('❌ Failed to store revenue results:', error.message);
-        
-        // Implement robust fallback storage
-        await this.fallbackRevenueStorage(results, error);
-        
-        return {
-            success: false,
-            error: error.message,
-            usedFallback: true
-        };
-    }
-}
-            // Add detailed breakdown by source
-            storageData.breakdown = this.calculateRevenueBreakdown(results);
-
-            // Add performance metrics
-            storageData.performance = this.calculatePerformanceMetrics(results);
-
-            // Store in database
-            await this.db.store('revenue_streams', storageData);
-            console.log('✅ Revenue results stored in database');
-
-            // Trigger analytics event
-            await this.triggerRevenueAnalytics(storageData);
-
-            return {
-                success: true,
-                storedRecords: results.length,
-                totalRevenue: storageData.totalRevenue
-            };
-
-        } catch (error) {
-            console.error('❌ Failed to store revenue results:', error.message);
-            
-            // Implement robust fallback storage
-            await this.fallbackRevenueStorage(results, error);
-            
-            return {
-                success: false,
-                error: error.message,
-                usedFallback: true
-            };
-        }
-    }
-
-    calculateRevenueBreakdown(results) {
-        const breakdown = {};
-        
-        if (!results || !Array.isArray(results)) {
-            return breakdown;
-        }
-
-        results.forEach(result => {
-            if (result && result.success) {
-                const source = result.source || 'unknown';
-                if (!breakdown[source]) {
-                    breakdown[source] = { revenue: 0, count: 0, average: 0 };
-                }
-                breakdown[source].revenue += result.revenue || 0;
-                breakdown[source].count += 1;
-                breakdown[source].average = breakdown[source].revenue / breakdown[source].count;
-            }
-        });
-
-        return breakdown;
-    }
-
-    calculatePerformanceMetrics(results) {
-        if (!results || !Array.isArray(results) || results.length === 0) {
-            return {
-                averageRevenue: 0,
-                maxRevenue: 0,
-                minRevenue: 0,
-                totalOpportunities: 0,
-                conversionRate: 0
-            };
-        }
-
-        const successfulResults = results.filter(r => r && r.success);
-        const revenues = successfulResults.map(r => r.revenue || 0);
-
-        return {
-            averageRevenue: revenues.length > 0 ? revenues.reduce((a, b) => a + b, 0) / revenues.length : 0,
-            maxRevenue: revenues.length > 0 ? Math.max(...revenues) : 0,
-            minRevenue: revenues.length > 0 ? Math.min(...revenues) : 0,
-            totalOpportunities: results.length,
-            conversionRate: results.length > 0 ? successfulResults.length / results.length : 0,
-            medianRevenue: this.calculateMedianRevenue(revenues)
-        };
-    }
-
-    calculateMedianRevenue(revenues) {
-        if (!revenues || revenues.length === 0) return 0;
-        
-        const sorted = [...revenues].sort((a, b) => a - b);
-        const middle = Math.floor(sorted.length / 2);
-        
-        if (sorted.length % 2 === 0) {
-            return (sorted[middle - 1] + sorted[middle]) / 2;
-        }
-        
-        return sorted[middle];
-    }
-
-    async triggerRevenueAnalytics(storageData) {
-        try {
-            // Validate data before sending to analytics
-            if (!storageData || typeof storageData !== 'object') {
-                throw new Error('Invalid analytics data');
-            }
-
-            // Send to analytics service
-            await this.analytics.track('revenue_results_stored', {
-                totalRevenue: storageData.totalRevenue || 0,
-                successRate: storageData.successRate || 0,
-                streamCount: storageData.totalStreams || 0,
-                timestamp: storageData.timestamp || Date.now(),
-                breakdown: storageData.breakdown || {}
-            });
-            
-            console.log('📊 Revenue analytics sent successfully');
-        } catch (error) {
-            console.warn('⚠️ Analytics tracking failed:', error.message);
-            // Don't throw - analytics failure shouldn't break the main flow
-        }
-    }
-
-    async fallbackRevenueStorage(results, error) {
-        try {
-            // Validate input
-            if (!results || !Array.isArray(results)) {
-                throw new Error('Invalid results for fallback storage');
-            }
-
-            // Simplified fallback for revenue data
-            const fallbackData = {
-                totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
-                successfulCount: results.filter(r => r && r.success).length,
-                totalCount: results.length,
-                timestamp: Date.now(),
-                error: error?.message || 'Unknown error',
-                stack: error?.stack || ''
-            };
-
-            // Store in memory cache as last resort
-            cache.set('fallback_revenue_data', fallbackData, 3600); // 1 hour TTL
-
-            // Also write to local file system as backup
-            await this.writeToFallbackFile(fallbackData);
-
-            console.log('📦 Revenue data stored in fallback storage');
-
-        } catch (fallbackError) {
-            console.error('❌ Revenue fallback storage failed:', fallbackError.message);
-            // Last resort: log to console with structured data
-            console.error('💥 CRITICAL: Revenue data lost:', {
-                resultsCount: results?.length || 0,
-                error: fallbackError.message,
-                timestamp: Date.now()
-            });
-        }
-    }
 
     async writeToFallbackFile(data) {
         try {
