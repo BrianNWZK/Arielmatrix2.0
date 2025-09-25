@@ -2591,20 +2591,208 @@ async retryStorage(collection, data, fallbackPath) {
         await this.db.store(collection, data);
         console.log('✅ Retry storage successful');
         
-        // Clean up fallback file
-        if (existsSync(fallbackPath)) {
-            unlinkSync(fallbackPath);
+           async retryStorage(collection, data, fallbackPath) {
+        try {
+            console.log(`🔄 Retrying storage for ${collection}...`);
+            await this.db.store(collection, data);
+            console.log('✅ Retry storage successful');
+
+            // Clean up fallback file
+            if (existsSync(fallbackPath)) {
+                unlinkSync(fallbackPath);
+                console.log('🗑️ Fallback file cleaned up');
+            }
+        } catch (retryError) {
+            console.error('❌ Storage retry failed:', retryError.message);
+            // Log the error but don't throw - we've already tried our fallback
         }
-    } catch (retryError) {
-        console.error('❌ Storage retry failed:', retryError.message);
     }
-}
-      
-      console.log('✅ Revenue results stored in database');
-    } catch (error) {
-      console.error('❌ Failed to store revenue results:', error.message);
+
+    async storeRevenueResults(results) {
+        try {
+            // Validate input
+            if (!results || !Array.isArray(results)) {
+                throw new Error('Invalid results data provided');
+            }
+
+            const storageData = {
+                timestamp: Date.now(),
+                results: results,
+                totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
+                successfulStreams: results.filter(r => r.success).length,
+                failedStreams: results.filter(r => !r.success).length,
+                totalStreams: results.length,
+                successRate: results.length > 0 ? (results.filter(r => r.success).length / results.length) : 0
+            };
+
+            // Add detailed breakdown by source
+            storageData.breakdown = this.calculateRevenueBreakdown(results);
+
+            // Add performance metrics
+            storageData.performance = this.calculatePerformanceMetrics(results);
+
+            // Store in database
+            await this.db.store('revenue_streams', storageData);
+            console.log('✅ Revenue results stored in database');
+
+            // Trigger analytics event
+            await this.triggerRevenueAnalytics(storageData);
+
+            return {
+                success: true,
+                storedRecords: results.length,
+                totalRevenue: storageData.totalRevenue
+            };
+
+        } catch (error) {
+            console.error('❌ Failed to store revenue results:', error.message);
+            
+            // Implement robust fallback storage
+            await this.fallbackRevenueStorage(results, error);
+            
+            return {
+                success: false,
+                error: error.message,
+                usedFallback: true
+            };
+        }
     }
-  }
+
+    calculateRevenueBreakdown(results) {
+        const breakdown = {};
+        
+        if (!results || !Array.isArray(results)) {
+            return breakdown;
+        }
+
+        results.forEach(result => {
+            if (result && result.success) {
+                const source = result.source || 'unknown';
+                if (!breakdown[source]) {
+                    breakdown[source] = { revenue: 0, count: 0, average: 0 };
+                }
+                breakdown[source].revenue += result.revenue || 0;
+                breakdown[source].count += 1;
+                breakdown[source].average = breakdown[source].revenue / breakdown[source].count;
+            }
+        });
+
+        return breakdown;
+    }
+
+    calculatePerformanceMetrics(results) {
+        if (!results || !Array.isArray(results) || results.length === 0) {
+            return {
+                averageRevenue: 0,
+                maxRevenue: 0,
+                minRevenue: 0,
+                totalOpportunities: 0,
+                conversionRate: 0
+            };
+        }
+
+        const successfulResults = results.filter(r => r && r.success);
+        const revenues = successfulResults.map(r => r.revenue || 0);
+
+        return {
+            averageRevenue: revenues.length > 0 ? revenues.reduce((a, b) => a + b, 0) / revenues.length : 0,
+            maxRevenue: revenues.length > 0 ? Math.max(...revenues) : 0,
+            minRevenue: revenues.length > 0 ? Math.min(...revenues) : 0,
+            totalOpportunities: results.length,
+            conversionRate: results.length > 0 ? successfulResults.length / results.length : 0,
+            medianRevenue: this.calculateMedianRevenue(revenues)
+        };
+    }
+
+    calculateMedianRevenue(revenues) {
+        if (!revenues || revenues.length === 0) return 0;
+        
+        const sorted = [...revenues].sort((a, b) => a - b);
+        const middle = Math.floor(sorted.length / 2);
+        
+        if (sorted.length % 2 === 0) {
+            return (sorted[middle - 1] + sorted[middle]) / 2;
+        }
+        
+        return sorted[middle];
+    }
+
+    async triggerRevenueAnalytics(storageData) {
+        try {
+            // Validate data before sending to analytics
+            if (!storageData || typeof storageData !== 'object') {
+                throw new Error('Invalid analytics data');
+            }
+
+            // Send to analytics service
+            await this.analytics.track('revenue_results_stored', {
+                totalRevenue: storageData.totalRevenue || 0,
+                successRate: storageData.successRate || 0,
+                streamCount: storageData.totalStreams || 0,
+                timestamp: storageData.timestamp || Date.now(),
+                breakdown: storageData.breakdown || {}
+            });
+            
+            console.log('📊 Revenue analytics sent successfully');
+        } catch (error) {
+            console.warn('⚠️ Analytics tracking failed:', error.message);
+            // Don't throw - analytics failure shouldn't break the main flow
+        }
+    }
+
+    async fallbackRevenueStorage(results, error) {
+        try {
+            // Validate input
+            if (!results || !Array.isArray(results)) {
+                throw new Error('Invalid results for fallback storage');
+            }
+
+            // Simplified fallback for revenue data
+            const fallbackData = {
+                totalRevenue: results.reduce((sum, r) => sum + (r.revenue || 0), 0),
+                successfulCount: results.filter(r => r && r.success).length,
+                totalCount: results.length,
+                timestamp: Date.now(),
+                error: error?.message || 'Unknown error',
+                stack: error?.stack || ''
+            };
+
+            // Store in memory cache as last resort
+            cache.set('fallback_revenue_data', fallbackData, 3600); // 1 hour TTL
+
+            // Also write to local file system as backup
+            await this.writeToFallbackFile(fallbackData);
+
+            console.log('📦 Revenue data stored in fallback storage');
+
+        } catch (fallbackError) {
+            console.error('❌ Revenue fallback storage failed:', fallbackError.message);
+            // Last resort: log to console with structured data
+            console.error('💥 CRITICAL: Revenue data lost:', {
+                resultsCount: results?.length || 0,
+                error: fallbackError.message,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    async writeToFallbackFile(data) {
+        try {
+            const fallbackDir = path.join(__dirname, 'fallback_storage');
+            if (!existsSync(fallbackDir)) {
+                mkdirSync(fallbackDir, { recursive: true });
+            }
+
+            const filename = `revenue_fallback_${Date.now()}.json`;
+            const filepath = path.join(fallbackDir, filename);
+
+            writeFileSync(filepath, JSON.stringify(data, null, 2));
+            console.log(`📁 Fallback data written to: ${filepath}`);
+
+        } catch (fileError) {
+            console.error('❌ Failed to write fallback file:', fileError.message);
+        }
+    }
 
   startOpportunityMonitoring() {
     // Continuously monitor for new revenue opportunities
