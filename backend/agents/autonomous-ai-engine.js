@@ -1067,7 +1067,7 @@ class EnhancedAdvancedAIBrain {
     // Preprocess agent data into a feature vector for the model
     return [
       agents.adRevenueAgent.revenue,
-      agents.adsenseApi.revenue,
+      agents.adsenseAgent.revenue,
       agents.contractDeployAgent.revenue,
       agents.cryptoAgent.revenue,
       agents.dataAgent.revenue,
@@ -1188,7 +1188,7 @@ class RevenueManager {
     this.payoutManager = payoutManager;
     this.agents = {
       adRevenueAgent,
-      adsenseApi,
+      adsenseAgent,
       contractDeployAgent,
       cryptoAgent,
       dataAgent,
