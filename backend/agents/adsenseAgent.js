@@ -1,4 +1,4 @@
-// backend/agents/adsenseApi.js
+// backend/agents/adsenseAgent.js
 import axios from 'axios';
 import crypto from 'crypto';
 import { BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
@@ -510,124 +510,296 @@ class NeuralRevenuePredictor {
   }
 }
 
+const axios = require('axios');
+
 // Global Ad Exchange Integrator
 class GlobalAdExchangeIntegrator {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
     this.exchanges = new Map();
-    this._initializeExchanges();
+    this.rateLimiters = new Map();
+    this.circuitBreakers = new Map();
+    this._initializeRateLimiters();
+  }
+
+  async initialize() {
+    await this._initializeExchanges();
+  }
+
+  _initializeRateLimiters() {
+    const exchanges = [
+      'google_adsense', 'amazon_a9', 'microsoft_advertising', 
+      'facebook_audience_network', 'twitter_mopub', 'verizon_media', 
+      'openx', 'pubmatic', 'appnexus', 'smaato'
+    ];
+
+    exchanges.forEach(exchange => {
+      this.rateLimiters.set(exchange, {
+        requests: 0,
+        lastReset: Date.now(),
+        maxRequests: this.config.rateLimits?.[exchange]?.maxRequests || 1000
+      });
+      
+      this.circuitBreakers.set(exchange, {
+        failures: 0,
+        state: 'CLOSED',
+        lastFailure: null,
+        timeout: null
+      });
+    });
+  }
+
+  async _checkRateLimit(exchange) {
+    const limiter = this.rateLimiters.get(exchange);
+    const now = Date.now();
+    
+    // Reset counter every minute
+    if (now - limiter.lastReset > 60000) {
+      limiter.requests = 0;
+      limiter.lastReset = now;
+    }
+    
+    if (limiter.requests >= limiter.maxRequests) {
+      throw new Error(`Rate limit exceeded for ${exchange}`);
+    }
+    
+    limiter.requests++;
+  }
+
+  _checkCircuitBreaker(exchange) {
+    const breaker = this.circuitBreakers.get(exchange);
+    
+    if (breaker.state === 'OPEN') {
+      if (Date.now() - breaker.lastFailure > 30000) { // 30 second timeout
+        breaker.state = 'HALF_OPEN';
+      } else {
+        throw new Error(`Circuit breaker open for ${exchange}`);
+      }
+    }
+  }
+
+  _recordFailure(exchange) {
+    const breaker = this.circuitBreakers.get(exchange);
+    breaker.failures++;
+    breaker.lastFailure = Date.now();
+    
+    if (breaker.failures >= 5) {
+      breaker.state = 'OPEN';
+      breaker.timeout = setTimeout(() => {
+        breaker.state = 'HALF_OPEN';
+        breaker.failures = 0;
+      }, 30000);
+    }
+  }
+
+  _recordSuccess(exchange) {
+    const breaker = this.circuitBreakers.get(exchange);
+    breaker.failures = 0;
+    breaker.state = 'CLOSED';
+    if (breaker.timeout) {
+      clearTimeout(breaker.timeout);
+      breaker.timeout = null;
+    }
   }
 
   async _initializeExchanges() {
     const exchanges = [
-      'google_adsense',
-      'amazon_a9',
-      'microsoft_advertising',
-      'facebook_audience_network',
-      'twitter_mopub',
-      'verizon_media',
-      'openx',
-      'pubmatic',
-      'appnexus',
-      'smaato'
+      'google_adsense', 'amazon_a9', 'microsoft_advertising', 
+      'facebook_audience_network', 'twitter_mopub', 'verizon_media', 
+      'openx', 'pubmatic', 'appnexus', 'smaato'
     ];
 
-    for (const exchange of exchanges) {
-      await this._connectToExchange(exchange);
-    }
+    const connectionPromises = exchanges.map(exchange => 
+      this._connectToExchange(exchange)
+    );
+
+    await Promise.allSettled(connectionPromises);
   }
 
   async _connectToExchange(exchange) {
     try {
+      this._checkCircuitBreaker(exchange);
+      await this._checkRateLimit(exchange);
+
+      const authToken = await this._authenticateExchange(exchange);
+      const metrics = await this._fetchExchangeMetrics(exchange, authToken);
+      
       this.exchanges.set(exchange, {
         connected: true,
         lastConnection: new Date(),
-        performanceMetrics: await this._fetchExchangeMetrics(exchange)
+        authToken: authToken,
+        performanceMetrics: metrics,
+        healthScore: this._calculateHealthScore(metrics)
       });
-      this.logger.info(`✅ Connected to ${exchange} exchange`);
+      
+      this._recordSuccess(exchange);
+      this.logger.info(`✅ Connected to ${exchange} exchange`, { 
+        exchange, 
+        healthScore: this.exchanges.get(exchange).healthScore 
+      });
     } catch (error) {
-      this.logger.warn(`⚠️ Failed to connect to ${exchange}: ${error.message}`);
+      this._recordFailure(exchange);
+      this.logger.warn(`⚠️ Failed to connect to ${exchange}`, { 
+        exchange, 
+        error: error.message,
+        circuitBreakerState: this.circuitBreakers.get(exchange).state
+      });
     }
+  }
+
+  async _authenticateExchange(exchange) {
+    const exchangeConfig = this.config.exchanges?.[exchange];
+    if (!exchangeConfig?.apiKey) {
+      throw new Error(`Missing API configuration for ${exchange}`);
+    }
+
+    const response = await axios.post(
+      this._getAuthEndpoint(exchange),
+      {
+        api_key: exchangeConfig.apiKey,
+        client_id: exchangeConfig.clientId,
+        ...exchangeConfig.authParams
+      },
+      {
+        timeout: 10000,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    if (!response.data.access_token) {
+      throw new Error(`Authentication failed for ${exchange}`);
+    }
+
+    return response.data.access_token;
+  }
+
+  async _fetchExchangeMetrics(exchange, authToken) {
+    const response = await axios.get(
+      this._getMetricsEndpoint(exchange),
+      {
+        timeout: 15000,
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (response.status !== 200) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return this._normalizeMetrics(response.data, exchange);
+  }
+
+  _getAuthEndpoint(exchange) {
+    const endpoints = {
+      'google_adsense': 'https://adsense.googleapis.com/v2/auth/token',
+      'amazon_a9': 'https://api.amazon.com/auth/o2/token',
+      'microsoft_advertising': 'https://login.microsoftonline.com/common/oauth2/token',
+      'facebook_audience_network': 'https://graph.facebook.com/oauth/access_token',
+      'twitter_mopub': 'https://api.twitter.com/oauth2/token',
+      'verizon_media': 'https://api.verizonmedia.com/oauth/token',
+      'openx': 'https://api.openx.com/oauth/token',
+      'pubmatic': 'https://api.pubmatic.com/v1/auth/token',
+      'appnexus': 'https://api.appnexus.com/auth',
+      'smaato': 'https://auth.smaato.com/oauth/token'
+    };
+
+    return endpoints[exchange];
+  }
+
+  _getMetricsEndpoint(exchange) {
+    const endpoints = {
+      'google_adsense': 'https://adsense.googleapis.com/v2/accounts/~/reports',
+      'amazon_a9': 'https://api.amazon.com/a9/metrics',
+      'microsoft_advertising': 'https://api.ads.microsoft.com/v13/reports/metrics',
+      'facebook_audience_network': 'https://graph.facebook.com/v15.0/network_metrics',
+      'twitter_mopub': 'https://ads-api.twitter.com/10/network_metrics',
+      'verizon_media': 'https://api.verizonmedia.com/v1/performance/metrics',
+      'openx': 'https://api.openx.com/v2/performance',
+      'pubmatic': 'https://api.pubmatic.com/v1/analytics',
+      'appnexus': 'https://api.appnexus.com/report',
+      'smaato': 'https://api.smaato.com/v1/analytics'
+    };
+
+    return endpoints[exchange];
+  }
+
+  _normalizeMetrics(rawData, exchange) {
+    const normalizers = {
+      'google_adsense': (data) => ({
+        fillRate: data.metrics?.impressions / data.metrics?.requests || 0,
+        cpm: data.metrics?.estimatedRevenue / (data.metrics?.impressions / 1000) || 0,
+        latency: data.metrics?.averageLatencyMs || 0,
+        impressions: data.metrics?.impressions || 0,
+        requests: data.metrics?.requests || 0
+      }),
+      'amazon_a9': (data) => ({
+        fillRate: data.fill_rate || 0,
+        cpm: data.ecpm || 0,
+        latency: data.avg_latency_ms || 0,
+        impressions: data.impressions || 0,
+        requests: data.requests || 0
+      }),
+      'default': (data) => ({
+        fillRate: data.fillRate || data.fill_rate || 0,
+        cpm: data.cpm || data.ecpm || 0,
+        latency: data.latency || data.avg_latency_ms || 0,
+        impressions: data.impressions || 0,
+        requests: data.requests || 0
+      })
+    };
+
+    const normalizer = normalizers[exchange] || normalizers.default;
+    return normalizer(rawData);
+  }
+
+  _calculateHealthScore(metrics) {
+    const fillRateScore = Math.min(metrics.fillRate * 100, 100);
+    const latencyScore = Math.max(0, 100 - (metrics.latency / 10));
+    const cpmScore = Math.min(metrics.cpm * 10, 100);
+    
+    return (fillRateScore * 0.4) + (latencyScore * 0.3) + (cpmScore * 0.3);
   }
 
   async executeCrossExchangeBidding(adOpportunities) {
-    const bids = [];
-    
-    for (const [exchange, metrics] of this.exchanges) {
-      if (metrics.connected) {
-        const optimalBid = await this._calculateOptimalBid(exchange, adOpportunities);
-        bids.push({
-          exchange,
-          bid: optimalBid,
-          expectedROI: this._calculateExpectedROI(optimalBid, metrics),
-          confidence: this._calculateBidConfidence(metrics)
-        });
-      }
-    }
-
-    return this._optimizeBidPortfolio(bids);
-  }
-
-  async _calculateOptimalBid(exchange, opportunities) {
-    const baseBid = this._calculateBaseBid(exchange);
-    const adjustments = this._calculateBidAdjustments(opportunities);
-    return baseBid * adjustments;
-  }
-
-  async _fetchExchangeMetrics(exchange) {
-    try {
-      // Simulate API call to exchange
-      const response = await axios.get(`https://api.ad-exchange.com/${exchange}/metrics`, {
-        timeout: 5000
+    const bidPromises = Array.from(this.exchanges.entries())
+      .filter(([_, metrics]) => metrics.connected && metrics.healthScore > 50)
+      .map(async ([exchange, metrics]) => {
+        try {
+          const optimalBid = await this._calculateOptimalBid(exchange, adOpportunities, metrics);
+          return {
+            exchange,
+            bid: optimalBid,
+            expectedROI: this._calculateExpectedROI(optimalBid, metrics),
+            confidence: this._calculateBidConfidence(metrics),
+            healthScore: metrics.healthScore
+          };
+        } catch (error) {
+          this.logger.error(`Bid calculation failed for ${exchange}`, { error: error.message });
+          return null;
+        }
       });
-      return response.data;
-    } catch (error) {
-      this.logger.warn(`Failed to fetch metrics for ${exchange}: ${error.message}`);
-      return {
-        fillRate: 0.7 + Math.random() * 0.2,
-        cpm: 1.5 + Math.random() * 2.0,
-        latency: 100 + Math.random() * 200
-      };
-    }
+
+    const bids = (await Promise.allSettled(bidPromises))
+      .map(result => result.status === 'fulfilled' ? result.value : null)
+      .filter(bid => bid !== null);
+
+    return this._optimizeBidPortfolio(bids, adOpportunities.totalBudget);
   }
 
-  _calculateExpectedROI(bid, metrics) {
-    const expectedClicks = metrics.fillRate * 0.05; // Assume 5% CTR
-    const expectedValue = expectedClicks * 0.02 * 100; // Assume 2% conversion, $100 AOV
-    return expectedValue / bid;
-  }
-
-  _calculateBidConfidence(metrics) {
-    const fillRateConfidence = metrics.fillRate;
-    const latencyConfidence = 1 - (Math.min(metrics.latency, 500) / 500);
-    return (fillRateConfidence * 0.7) + (latencyConfidence * 0.3);
-  }
-
-  _optimizeBidPortfolio(bids) {
-    // Sort by expected ROI and allocate budget accordingly
-    bids.sort((a, b) => b.expectedROI - a.expectedROI);
+  async _calculateOptimalBid(exchange, opportunities, metrics) {
+    const baseBid = this._calculateBaseBid(exchange, metrics);
+    const adjustments = this._calculateBidAdjustments(opportunities, metrics);
+    const competitiveMultiplier = await this._getCompetitiveMultiplier(exchange);
     
-    const totalBudget = 1000; // Example budget
-    let remainingBudget = totalBudget;
-    const allocations = [];
-    
-    for (const bid of bids) {
-      const allocation = Math.min(remainingBudget, totalBudget * 0.3);
-      allocations.push({
-        exchange: bid.exchange,
-        bid: bid.bid,
-        budget: allocation,
-        expectedROI: bid.expectedROI
-      });
-      remainingBudget -= allocation;
-    }
-    
-    return allocations;
+    return Math.min(baseBid * adjustments * competitiveMultiplier, this.config.maxBid || 10.0);
   }
 
-  _calculateBaseBid(exchange) {
-    const exchangeBaseBids = {
+  _calculateBaseBid(exchange, metrics) {
+    const baseBids = {
       'google_adsense': 0.8,
       'amazon_a9': 0.7,
       'microsoft_advertising': 0.6,
@@ -640,24 +812,134 @@ class GlobalAdExchangeIntegrator {
       'smaato': 0.6
     };
     
-    return exchangeBaseBids[exchange] || 0.5;
+    const baseBid = baseBids[exchange] || 0.5;
+    const healthMultiplier = metrics.healthScore / 100;
+    
+    return baseBid * healthMultiplier;
   }
 
-  _calculateBidAdjustments(opportunities) {
+  _calculateBidAdjustments(opportunities, metrics) {
     let adjustment = 1.0;
     
-    // Adjust based on opportunity quality
+    // Quality-based adjustment
     if (opportunities.quality > 0.8) adjustment *= 1.3;
     else if (opportunities.quality > 0.6) adjustment *= 1.1;
+    else if (opportunities.quality < 0.3) adjustment *= 0.7;
     
-    // Adjust based on competition
+    // Competition-based adjustment
     if (opportunities.competition > 0.8) adjustment *= 1.4;
     else if (opportunities.competition > 0.5) adjustment *= 1.2;
+    else if (opportunities.competition < 0.2) adjustment *= 0.8;
     
-    return adjustment;
+    // Performance-based adjustment
+    if (metrics.fillRate > 0.9) adjustment *= 1.2;
+    else if (metrics.fillRate < 0.5) adjustment *= 0.6;
+    
+    return Math.max(0.1, Math.min(adjustment, 5.0)); // Clamp between 0.1 and 5.0
+  }
+
+  async _getCompetitiveMultiplier(exchange) {
+    try {
+      const response = await axios.get(
+        `${this._getMetricsEndpoint(exchange)}/market_analysis`,
+        { timeout: 5000 }
+      );
+      return response.data.competitive_index || 1.0;
+    } catch (error) {
+      this.logger.debug(`Market analysis unavailable for ${exchange}, using default multiplier`);
+      return 1.0;
+    }
+  }
+
+  _calculateExpectedROI(bid, metrics) {
+    if (bid <= 0) return 0;
+    
+    const expectedClicks = metrics.fillRate * metrics.ctr || 0.05;
+    const conversionRate = this.config.conversionRate || 0.02;
+    const averageOrderValue = this.config.averageOrderValue || 100;
+    const expectedValue = expectedClicks * conversionRate * averageOrderValue;
+    
+    return expectedValue / bid;
+  }
+
+  _calculateBidConfidence(metrics) {
+    const fillRateConfidence = metrics.fillRate;
+    const latencyConfidence = 1 - (Math.min(metrics.latency, 1000) / 1000);
+    const volumeConfidence = Math.min(metrics.impressions / 1000000, 1); // Confidence based on volume
+    
+    return (fillRateConfidence * 0.5) + (latencyConfidence * 0.3) + (volumeConfidence * 0.2);
+  }
+
+  _optimizeBidPortfolio(bids, totalBudget = 1000) {
+    if (!bids.length) return [];
+    
+    // Filter and sort by expected ROI
+    const validBids = bids
+      .filter(bid => bid.expectedROI > 0 && bid.confidence > 0.3)
+      .sort((a, b) => (b.expectedROI * b.confidence) - (a.expectedROI * a.confidence));
+
+    let remainingBudget = totalBudget;
+    const allocations = [];
+    const maxAllocationPerExchange = totalBudget * 0.4; // No more than 40% to one exchange
+
+    for (const bid of validBids) {
+      if (remainingBudget <= 0) break;
+
+      const baseAllocation = Math.min(
+        remainingBudget * 0.25, // Allocate up to 25% of remaining budget
+        maxAllocationPerExchange
+      );
+
+      const weightedAllocation = baseAllocation * bid.confidence;
+      const finalAllocation = Math.min(weightedAllocation, remainingBudget);
+
+      allocations.push({
+        exchange: bid.exchange,
+        bid: bid.bid,
+        budget: Math.round(finalAllocation * 100) / 100, // Round to 2 decimal places
+        expectedROI: bid.expectedROI,
+        confidence: bid.confidence,
+        healthScore: bid.healthScore
+      });
+
+      remainingBudget -= finalAllocation;
+    }
+
+    // Redistribute any remaining budget to top performers
+    if (remainingBudget > 0 && allocations.length > 0) {
+      const topAllocation = allocations[0];
+      topAllocation.budget += remainingBudget;
+      remainingBudget = 0;
+    }
+
+    return allocations;
+  }
+
+  async refreshExchangeMetrics() {
+    const refreshPromises = Array.from(this.exchanges.keys()).map(exchange =>
+      this._connectToExchange(exchange)
+    );
+    
+    await Promise.allSettled(refreshPromises);
+  }
+
+  getExchangeHealth() {
+    const health = {};
+    
+    for (const [exchange, data] of this.exchanges) {
+      health[exchange] = {
+        connected: data.connected,
+        healthScore: data.healthScore,
+        lastConnection: data.lastConnection,
+        performanceMetrics: data.performanceMetrics
+      };
+    }
+    
+    return health;
   }
 }
 
+module.exports = GlobalAdExchangeIntegrator;
 /**
  * @function adsenseAgent
  * @description Estimates AdSense-like earnings using public traffic data,
