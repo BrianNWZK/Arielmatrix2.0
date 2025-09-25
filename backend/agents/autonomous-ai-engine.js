@@ -2371,16 +2371,17 @@ async storeServiceOfferings(services) {
         console.error('Failed to store service offerings:', error.message);
     }
 }
-    // Simple adoption rate calculation based on product type and market
-    const baseRates = {
-      'Biometric Verification': 50,
-      'Document Verification': 75,
-      'Decentralized Identity Wallet': 30,
-      'Identity Theft Protection': 60
-    };
-    
-    return baseRates[product.name] || 25;
-  }
+    function getAdoptionRate(product) {
+  // Simple adoption rate calculation based on product type and market
+  const baseRates = {
+    'Biometric Verification': 50,
+    'Document Verification': 75,
+    'Decentralized Identity Wallet': 30,
+    'Identity Theft Protection': 60
+  };
+
+  return baseRates[product.name] || 25;
+}
 
   async storeRevenueResults(results) {
     try {
