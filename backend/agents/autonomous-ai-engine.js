@@ -1230,7 +1230,7 @@ class RevenueManager {
         await adRevenueAgent.adjustSpend(1.1);
         break;
       case 'optimize_adsense':
-        await adsenseApi.optimizeAds();
+        await adsenseAgent.optimizeAds();
         break;
       case 'deploy_contract':
         await contractDeployAgent.deployNewContract();
