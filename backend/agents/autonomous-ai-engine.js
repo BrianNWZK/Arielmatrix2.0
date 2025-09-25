@@ -2326,33 +2326,23 @@ assessTechnicalFeasibility(product) {
         feasibilityFactors.security.score * 0.3 +
         feasibilityFactors.scalability.score * 0.15
     );
-    async offerIdentityServices(products, marketData = null) {
-    const services = [];
-    
-    try {
-        // Validate input parameters
-        if (!products || !Array.isArray(products) || products.length === 0) {
-            throw new Error('Invalid products array provided');
-        }
+     async offerIdentityServices(products, marketData = null) {
+    for (const product of products) {
+      const adoptionRate = this.calculateAdoptionRate(product, marketData);
+      console.log(`Offering ${product.name} with projected adoption rate: ${adoptionRate}%`);
+    }
+  }
 
-        // Get real-time market data and user analytics
-        const [marketConditions, competitiveAnalysis, industryTrends] = await Promise.allSettled([
-            marketData || this.dataFetcher.fetchMarketConditions?.() || { score: 0.5, demandScore: 0.5 },
-            this.analyzeCompetitiveLandscape?.('identity_services') || { intensity: 0.5, competitors: [] },
-            this.fetchIndustryTrends?.('identity_verification') || { growthRate: 0.1, totalAddressableMarket: 1000000 }
-        ]).then(results => results.map(result => 
-            result.status === 'fulfilled' ? result.value : { error: result.reason?.message || 'Unknown error' }
-        ));
+  calculateAdoptionRate(product, marketData) {
+    const baseRates = {
+      'Biometric Verification': 50,
+      'Document Verification': 75,
+      'Decentralized Identity Wallet': 30,
+      'Identity Theft Protection': 60
+    };
 
-        for (const product of products) {
-            try {
-                // Validate product structure
-                if (!product || typeof product !== 'object') {
-                    console.warn('Skipping invalid product:', product);
-                    continue;
-                }
-                
-                this._validateIdentityProduct(product);
+    return baseRates[product.name] || 25;
+  }
 
                 // Calculate real adoption metrics using market data and AI prediction
                 const adoptionMetrics = await this.calculateRealAdoptionMetrics(
