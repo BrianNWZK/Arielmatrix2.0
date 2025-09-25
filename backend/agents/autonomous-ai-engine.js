@@ -2260,73 +2260,68 @@ async optimizePricingStrategy(product, adoptionMetrics, competitiveAnalysis) {
     };
 }
 
-// Helper methods for realistic calculations
-calculateHeuristicAdoption(product, marketConditions) {
-    let baseProbability = 0.3; // Base adoption probability
-    
-    // Price sensitivity adjustment
+class IdentityServiceEngine {
+  calculateHeuristicAdoption(product, marketConditions) {
+    let baseProbability = 0.3;
+
     const priceSensitivity = product.price > 1000 ? 0.7 : 1.0;
     baseProbability *= priceSensitivity;
-    
-    // Market demand adjustment
+
     baseProbability *= marketConditions.demandScore;
-    
-    // Product complexity adjustment
+
     const complexityFactor = this.assessProductComplexity(product) > 0.7 ? 0.8 : 1.0;
     baseProbability *= complexityFactor;
-    
-    return Math.max(0.1, Math.min(0.9, baseProbability));
-}
 
-calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions) {
+    return Math.max(0.1, Math.min(0.9, baseProbability));
+  }
+
+  calculatePotentialMarketShare(product, competitiveAnalysis, marketConditions) {
     const totalCompetitors = competitiveAnalysis.competitors.length;
     const ourCompetitiveAdvantage = this.assessCompetitiveAdvantage(product, competitiveAnalysis);
-    
-    // Basic market share calculation considering competition and advantage
-    let marketShare = (1 / (totalCompetitors + 1)) * (1 + ourCompetitiveAdvantage);
-    
-    // Adjust for market conditions
-    marketShare *= marketConditions.growthRate > 0.05 ? 1.2 : 0.8;
-    
-    return Math.max(0.01, Math.min(0.3, marketShare)); // Cap between 1% and 30%
-}
 
-async checkRegulatoryCompliance(product) {
-    // Check regulatory requirements for identity services
+    let marketShare = (1 / (totalCompetitors + 1)) * (1 + ourCompetitiveAdvantage);
+    marketShare *= marketConditions.growthRate > 0.05 ? 1.2 : 0.8;
+
+    return Math.max(0.01, Math.min(0.3, marketShare));
+  }
+
+  async checkRegulatoryCompliance(product) {
     const regulations = {
-        biometric: ['GDPR', 'CCPA', 'Biometric Laws'],
-        document_verification: ['KYC', 'AML', 'Local Regulations'],
-        digital_wallet: ['eIDAS', 'PSD2', 'Digital Identity Laws'],
-        theft_protection: ['Data Protection Laws', 'Privacy Regulations']
+      biometric: ['GDPR', 'CCPA', 'Biometric Laws'],
+      document_verification: ['KYC', 'AML', 'Local Regulations'],
+      digital_wallet: ['eIDAS', 'PSD2', 'Digital Identity Laws'],
+      theft_protection: ['Data Protection Laws', 'Privacy Regulations']
     };
-    
+
     const applicableRegulations = regulations[product.category] || [];
     const complianceStatus = await this.verifyCompliance(product, applicableRegulations);
-    
-    return {
-        compliant: complianceStatus.isCompliant,
-        regulations: applicableRegulations,
-        requirements: complianceStatus.requirements,
-        riskLevel: complianceStatus.riskLevel
-    };
-}
 
-assessTechnicalFeasibility(product) {
-    // Assess technical implementation feasibility
-    const feasibilityFactors = {
-        infrastructure: this.assessInfrastructureRequirements(product),
-        integration: this.assessIntegrationComplexity(product),
-        security: this.assessSecurityRequirements(product),
-        scalability: this.assessScalability(product)
+    return {
+      compliant: complianceStatus.isCompliant,
+      regulations: applicableRegulations,
+      requirements: complianceStatus.requirements,
+      riskLevel: complianceStatus.riskLevel
     };
-    
-    const overallFeasibility = (
-        feasibilityFactors.infrastructure.score * 0.3 +
-        feasibilityFactors.integration.score * 0.25 +
-        feasibilityFactors.security.score * 0.3 +
-        feasibilityFactors.scalability.score * 0.15
-    );
-     async offerIdentityServices(products, marketData = null) {
+  }
+
+  assessTechnicalFeasibility(product) {
+    const feasibilityFactors = {
+      infrastructure: this.assessInfrastructureRequirements(product),
+      integration: this.assessIntegrationComplexity(product),
+      security: this.assessSecurityRequirements(product),
+      scalability: this.assessScalability(product)
+    };
+
+    const overallFeasibility =
+      feasibilityFactors.infrastructure.score * 0.3 +
+      feasibilityFactors.integration.score * 0.25 +
+      feasibilityFactors.security.score * 0.3 +
+      feasibilityFactors.scalability.score * 0.15;
+
+    return overallFeasibility;
+  }
+
+  async offerIdentityServices(products, marketData = null) {
     for (const product of products) {
       const adoptionRate = this.calculateAdoptionRate(product, marketData);
       console.log(`Offering ${product.name} with projected adoption rate: ${adoptionRate}%`);
@@ -2343,6 +2338,41 @@ assessTechnicalFeasibility(product) {
 
     return baseRates[product.name] || 25;
   }
+
+  // Placeholder methods for completeness
+  assessProductComplexity(product) {
+    return product.complexityScore || 0.5;
+  }
+
+  assessCompetitiveAdvantage(product, analysis) {
+    return product.advantageScore || 0.3;
+  }
+
+  verifyCompliance(product, regulations) {
+    return Promise.resolve({
+      isCompliant: true,
+      requirements: ['Encryption', 'Audit Trail'],
+      riskLevel: 'low'
+    });
+  }
+
+  assessInfrastructureRequirements(product) {
+    return { score: 0.8 };
+  }
+
+  assessIntegrationComplexity(product) {
+    return { score: 0.6 };
+  }
+
+  assessSecurityRequirements(product) {
+    return { score: 0.9 };
+  }
+
+  assessScalability(product) {
+    return { score: 0.7 };
+  }
+}
+
 
                 // Calculate real adoption metrics using market data and AI prediction
                 const adoptionMetrics = await this.calculateRealAdoptionMetrics(
