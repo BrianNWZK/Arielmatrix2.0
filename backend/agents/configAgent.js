@@ -1,4 +1,4 @@
-import { EnhancedcryptoAgent } from './cryptoAgent.js';
+import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import { EnhancedShopifyAgent } from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
 import { forexSignalAgent } from './forexSignalAgent.js';
