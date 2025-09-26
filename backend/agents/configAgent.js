@@ -1,10 +1,10 @@
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import { EnhancedShopifyAgent } from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
-import { forexSignalAgent } from './forexSignalAgent.js';
-import { dataAgent } from './dataAgent.js';
-import { adsenseAgent } from './adsenseAgent.js';
-import   adRevenueAgent  from './adRevenueAgent.js';
+import forexSignalAgent from './forexSignalAgent.js';
+import dataAgent from './dataAgent.js';
+import adsenseAgent from './adsenseAgent.js';
+import adRevenueAgent from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import { serviceManager } from '../../arielsql_suite/serviceManager.js';
 
