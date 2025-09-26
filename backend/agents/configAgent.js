@@ -1,5 +1,5 @@
-import { cryptoAgent } from './cryptoAgent.js';
-import { shopifyAgent } from './shopifyAgent.js';
+import { EnhancedcryptoAgent } from './cryptoAgent.js';
+import { EnhancedShopifyAgent } from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
 import { forexSignalAgent } from './forexSignalAgent.js';
 import { dataAgent } from './dataAgent.js';
