@@ -44,3 +44,6 @@ export const configAgent = async (CONFIG) => {
     throw error;
   }
 };
+
+export { configAgent };
+
