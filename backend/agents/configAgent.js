@@ -5,7 +5,7 @@ import { forexSignalAgent } from './forexSignalAgent.js';
 import { dataAgent } from './dataAgent.js';
 import { adsenseAgent } from './adsenseAgent.js';
 import   adRevenueAgent  from './adRevenueAgent.js';
-import { autonomousAIEngine } from './autonomous-ai-engine.js';
+import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import { serviceManager } from '../../arielsql_suite/serviceManager.js';
 
 export const configAgent = async (CONFIG) => {
