@@ -45,5 +45,5 @@ export const configAgent = async (CONFIG) => {
   }
 };
 
-export { configAgent };
+
 
