@@ -1,41 +1,63 @@
-import { EnhancedcryptoAgent } from './cryptoAgent.js';
-import { EnhancedShopifyAgent } from './shopifyAgent.js';
+import { cryptoAgent } from './cryptoAgent.js';
+import { shopifyAgent } from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
 import { forexSignalAgent } from './forexSignalAgent.js';
 import { dataAgent } from './dataAgent.js';
 import { adsenseAgent } from './adsenseAgent.js';
 import { adRevenueAgent } from './adRevenueAgent.js';
+import { autonomousAIEngine } from '../autonomous-ai-engine.js';
+import { ServiceManager } from '../ServiceManager.js';
 
 export const configAgent = async (CONFIG) => {
   try {
     const results = {};
 
     if (CONFIG.enableCrypto) {
-      results.crypto = await cryptoAgent(CONFIG.crypto);
+      const cryptoResult = await cryptoAgent(CONFIG.crypto);
+      ServiceManager.register('cryptoAgent', cryptoResult);
+      results.crypto = cryptoResult;
     }
 
     if (CONFIG.enableShopify) {
-      results.shopify = await shopifyAgent(CONFIG.shopify);
+      const shopifyResult = await shopifyAgent(CONFIG.shopify);
+      ServiceManager.register('shopifyAgent', shopifyResult);
+      results.shopify = shopifyResult;
     }
 
     if (CONFIG.enableSocial) {
-      results.social = await socialAgent(CONFIG.social);
+      const socialResult = await socialAgent(CONFIG.social);
+      ServiceManager.register('socialAgent', socialResult);
+      results.social = socialResult;
     }
 
     if (CONFIG.enableForex) {
-      results.forex = await forexSignalAgent(CONFIG.forex);
+      const forexResult = await forexSignalAgent(CONFIG.forex);
+      ServiceManager.register('forexSignalAgent', forexResult);
+      results.forex = forexResult;
     }
 
     if (CONFIG.enableData) {
-      results.data = await dataAgent(CONFIG.data);
+      const dataResult = await dataAgent(CONFIG.data);
+      ServiceManager.register('dataAgent', dataResult);
+      results.data = dataResult;
     }
 
     if (CONFIG.enableAdsense) {
-      results.adsense = await adsenseAgent(CONFIG.adsense);
+      const adsenseResult = await adsenseAgent(CONFIG.adsense);
+      ServiceManager.register('adsenseAgent', adsenseResult);
+      results.adsense = adsenseResult;
     }
 
     if (CONFIG.enableAdRevenue) {
-      results.adRevenue = await adRevenueAgent(CONFIG.adRevenue);
+      const adRevenueResult = await adRevenueAgent(CONFIG.adRevenue);
+      ServiceManager.register('adRevenueAgent', adRevenueResult);
+      results.adRevenue = adRevenueResult;
+    }
+
+    if (CONFIG.enableAutonomousAI) {
+      const aiResult = await autonomousAIEngine(CONFIG.autonomousAI);
+      ServiceManager.register('autonomousAIEngine', aiResult);
+      results.autonomousAI = aiResult;
     }
 
     return results;
@@ -45,5 +67,4 @@ export const configAgent = async (CONFIG) => {
   }
 };
 
-
-
+export default configAgent;
