@@ -1,6 +1,6 @@
 import { CONFIG } from '../../config/bwaezi-config.js';
 import { validateWallets } from '../wallet.js';
-import { ServiceManager } from '../../ServiceManager.js';
+import { serviceManager } from '../../serviceManager.js';
 import { GovernanceEngine } from '../../modules/governance-engine/index.js';
 import { TokenomicsEngine } from '../../modules/tokenomics-engine/index.js';
 
