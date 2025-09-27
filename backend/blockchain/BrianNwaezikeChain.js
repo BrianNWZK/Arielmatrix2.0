@@ -85,13 +85,27 @@ export default class BrianNwaezikeChain {
         };
 
         // Initialize real blockchain connections with connection pooling
-        this.web3 = new Web3(new Web3.providers.HttpProvider(MAINNET_RPC.ETHEREUM, {
-            timeout: 30000,
-            keepAlive: true
-        }));
-        this.solanaConnection = new Connection(MAINNET_RPC.SOLANA, 'confirmed');
-        this.ethersProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.ETHEREUM);
-        this.bscProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.BINANCE);
+        const MAINNET_RPC = {
+  ETHEREUM: process.env.ETHEREUM_MAINNET_RPC,
+  BINANCE: process.env.BINANCE_MAINNET_RPC,
+  SOLANA: process.env.SOLANA_MAINNET_RPC
+};
+
+if (!MAINNET_RPC.ETHEREUM || !MAINNET_RPC.BINANCE || !MAINNET_RPC.SOLANA) {
+  throw new Error('❌ Missing one or more MAINNET RPC URLs in environment variables');
+}
+
+// ✅ Initialize real blockchain connections with connection pooling
+this.web3 = new Web3(new Web3.providers.HttpProvider(MAINNET_RPC.ETHEREUM, {
+  timeout: 30000,
+  keepAlive: true
+}));
+
+this.solanaConnection = new Connection(MAINNET_RPC.SOLANA, 'confirmed');
+
+this.ethersProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.ETHEREUM);
+
+this.bscProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.BINANCE);
 
         // Initialize all modules with real configurations
         this.db = new ArielSQLiteEngine(this.config.dbPath, {
