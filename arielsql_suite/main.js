@@ -3,8 +3,6 @@ import { serviceManager } from "./serviceManager.js";
 import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
 import healthAgent from '../backend/agents/healthAgent.js';
 import winston from 'winston';
-
-import { registerAllServices } from "./serviceManager.js";
 import payoutAgent from "../backend/agents/payoutAgent.js";
 
 async function start() {
