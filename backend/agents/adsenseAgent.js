@@ -938,7 +938,6 @@ class GlobalAdExchangeIntegrator {
   }
 }
 
-module.exports = GlobalAdExchangeIntegrator;
 /**
  * @function adsenseAgent
  * @description Estimates AdSense-like earnings using public traffic data,
