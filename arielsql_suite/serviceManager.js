@@ -31,7 +31,7 @@ import ApiScoutAgent from "../backend/agents/apiScoutAgent.js";
 import QuantumBrowserManager from "../backend/agents/browserManager.js";
 import ConfigAgent from "../backend/agents/configAgent.js";
 import ContractDeployAgent from "../backend/agents/contractDeployAgent.js";
-import CryptoAgent from "../backend/agents/cryptoAgent.js";
+import { EnhancedCryptoAgent } from "../backend/agents/cryptoAgent.js";
 import DataAgent from "../backend/agents/dataAgent.js";
 import ForexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
