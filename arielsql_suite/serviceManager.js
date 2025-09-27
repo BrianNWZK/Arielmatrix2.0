@@ -9,7 +9,7 @@ import { BrianNwaezikeChain } from "../backend/blockchain/BrianNwaezikeChain.js"
 import { BrianNwaezikePayoutSystem } from "../backend/blockchain/BrianNwaezikePayoutSystem.js";
 
 // === Governance + Logging ===
-import GovernanceEngine from "../modules/governance-engine/index.js";
+import { GovernanceEngine } from "../modules/governance-engine/index.js";
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 
 // === Phase 3 Advanced Modules ===
