@@ -59,6 +59,8 @@
     "pqc-dilithium": "file:./modules/pqc-dilithium",
     "@huggingface/inference": "^2.6.0",
     "ccxt": "^4.1.89",
+     "tesseract.js": "^4.1.1",
+    "sharp": "^0.32.0",
     "rimraf": "^4.0.0",
     "@npmcli/move-file": "^2.0.0",
     "gauge": "^4.0.0",
