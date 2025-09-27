@@ -102,10 +102,8 @@ this.web3 = new Web3(new Web3.providers.HttpProvider(MAINNET_RPC.ETHEREUM, {
 }));
 
 this.solanaConnection = new Connection(MAINNET_RPC.SOLANA, 'confirmed');
-
-this.ethersProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.ETHEREUM);
-
-this.bscProvider = new ethers.providers.JsonRpcProvider(MAINNET_RPC.BINANCE);
+this.ethersProvider = new ethers.JsonRpcProvider(MAINNET_RPC.ETHEREUM);
+this.bscProvider = new ethers.JsonRpcProvider(MAINNET_RPC.BINANCE);
 
         // Initialize all modules with real configurations
         this.db = new ArielSQLiteEngine(this.config.dbPath, {
