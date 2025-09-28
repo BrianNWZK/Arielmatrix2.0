@@ -13,7 +13,7 @@ import {
     formatBalance,
     testAllConnections,
 } from './wallet.js';
-import { logServiceCall } from '../blockchain/BrianNwaezikeChain.js';
+import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
 
 const founderWallet = BWAEZI_SOVEREIGN_CONFIG.SOVEREIGN_OWNER;
