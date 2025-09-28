@@ -7,6 +7,7 @@ import { EventEmitter } from 'events';
 export class ShardingManager extends EventEmitter {
   constructor(config = {}) {
     super();
+
     this.config = {
       shards: config.shards || 4,
       rebalanceThreshold: config.rebalanceThreshold || 0.2,
@@ -18,13 +19,20 @@ export class ShardingManager extends EventEmitter {
     };
 
     this.db = new ArielSQLiteEngine(config.databaseConfig);
-    this.logger = new Logger('ShardingManager');
+
+    this.logger = new EnterpriseLogger('ShardingManager', {
+      logLevel: 'info',
+      logToDatabase: true,
+      database: config.databaseConfig
+    });
+
     this.shards = new Map();
     this.shardLoad = new Map();
     this.shardHealth = new Map();
     this.migrationQueue = [];
     this.isRebalancing = false;
   }
+}
 
   async initialize() {
     try {
