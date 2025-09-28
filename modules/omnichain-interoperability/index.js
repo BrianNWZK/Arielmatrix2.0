@@ -142,7 +142,12 @@ export class OmnichainInteroperabilityEngine extends EventEmitter {
     };
 
     this.db = new ArielSQLiteEngine(config.databaseConfig);
-    this.logger = new Logger('OmnichainEngine');
+    this.logger = new EnterpriseLogger('OmnichainEngine', {
+  logLevel: 'info',
+  logToDatabase: true,
+  database: config.databaseConfig
+});
+
     this.chainProviders = new Map();
     this.bridgeContracts = new Map();
     this.eventListeners = new Map();
