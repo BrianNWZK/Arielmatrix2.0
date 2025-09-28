@@ -1003,4 +1003,4 @@ export class CrossChainBridge {
 }
 
 export { BridgeError, BridgeValidationError, BridgeExecutionError };
-export CrossChainBridge;
+
