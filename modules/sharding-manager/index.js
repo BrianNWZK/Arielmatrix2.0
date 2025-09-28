@@ -32,9 +32,21 @@ export class ShardingManager extends EventEmitter {
     this.isRebalancing = false;
   }
 
-  async initialize() {
+ async initialize() {
+  try {
     this.logger.info('🧠 Initializing shard topology...');
-    // Add real logic here
+    
+    // Example logic — replace with your actual shard setup
+    for (let i = 0; i < this.config.shards; i++) {
+      const shardId = `shard-${i}`;
+      this.shards.set(shardId, []);
+      this.shardLoad.set(shardId, 0);
+      this.shardHealth.set(shardId, 'healthy');
+    }
+
+    this.logger.info(`✅ Initialized ${this.config.shards} shards.`);
+  } catch (error) {
+    this.logger.error(`❌ Failed to initialize shards: ${error.message}`);
   }
 }
 
