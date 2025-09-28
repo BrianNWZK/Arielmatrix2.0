@@ -21,7 +21,7 @@ import { SovereignGovernance } from "../../modules/governance-engine/index.js";
 import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js";
 import Web3 from 'web3';
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import * as ethers from 'ethers';
+import { ethers } from 'ethers';
 import axios from 'axios';
 import crypto from 'crypto';
 import { BrianNwaezikeDB } from "../database/BrianNwaezikeDB.js";
