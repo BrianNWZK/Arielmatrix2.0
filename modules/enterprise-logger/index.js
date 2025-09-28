@@ -3,7 +3,6 @@ import winston from 'winston';
 import { createWriteStream, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,19 +16,25 @@ export class EnterpriseLogger {
       logToConsole: config.logToConsole !== false,
       logToFile: config.logToFile !== false,
       enableRealtime: config.enableRealtime !== false,
+      databaseInitialized: config.databaseInitialized || false,
       ...config
     };
 
-    this.db = config.database || new ArielSQLiteEngine();
+    this.db = config.database || null;
     this.logger = null;
     this.isInitialized = false;
     this.logQueue = [];
     this.isProcessingQueue = false;
+    this.databaseReady = this.config.databaseInitialized;
 
     // Ensure logs directory exists
     this.ensureLogsDirectory();
 
-    this.initializeLogger();
+    // Initialize file-based logger immediately
+    this.initializeFileLogger();
+
+    // Defer database initialization
+    this.deferredDatabaseInit = this.deferDatabaseInitialization();
   }
 
   ensureLogsDirectory() {
@@ -39,7 +44,7 @@ export class EnterpriseLogger {
     }
   }
 
-  async initializeLogger() {
+  initializeFileLogger() {
     try {
       const transports = [];
 
@@ -108,29 +113,59 @@ export class EnterpriseLogger {
         ]
       });
 
-      // Initialize database logging if enabled
-      if (this.config.logToDatabase) {
-        await this.initializeDatabaseLogging();
-      }
-
-      // Subscribe to log events from other services
-      if (this.config.enableRealtime) {
-        await this.subscribeToLogEvents();
-      }
-
       this.isInitialized = true;
-      
-      // Process any queued logs
-      await this.processLogQueue();
+      console.log(`File logger initialized for service: ${this.serviceName}`);
 
     } catch (error) {
-      console.error('Logger initialization failed:', error);
-      throw error;
+      console.error('File logger initialization failed:', error);
+      // Fallback to basic console logging
+      this.initializeFallbackLogger();
+    }
+  }
+
+  initializeFallbackLogger() {
+    this.logger = {
+      log: (level, message, meta) => {
+        const timestamp = new Date().toISOString();
+        console.log(`${timestamp} [${level}] ${this.serviceName}: ${message}`, meta || '');
+      },
+      info: (message, meta) => console.log(`[INFO] ${this.serviceName}: ${message}`, meta || ''),
+      error: (message, meta) => console.error(`[ERROR] ${this.serviceName}: ${message}`, meta || ''),
+      warn: (message, meta) => console.warn(`[WARN] ${this.serviceName}: ${message}`, meta || ''),
+      debug: (message, meta) => console.log(`[DEBUG] ${this.serviceName}: ${message}`, meta || '')
+    };
+    this.isInitialized = true;
+  }
+
+  async deferDatabaseInitialization() {
+    // Wait a bit for database to potentially initialize
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    if (this.config.logToDatabase && this.db) {
+      try {
+        await this.initializeDatabaseLogging();
+        this.databaseReady = true;
+        console.log(`Database logging initialized for service: ${this.serviceName}`);
+        
+        // Process any queued logs
+        await this.processLogQueue();
+      } catch (error) {
+        console.warn(`Database logging deferred for service ${this.serviceName}:`, error.message);
+        // Retry later
+        setTimeout(() => this.deferDatabaseInitialization(), 5000);
+      }
     }
   }
 
   async initializeDatabaseLogging() {
+    if (!this.db) {
+      throw new Error('Database instance not provided');
+    }
+
     try {
+      // Check if database is initialized by making a simple query
+      await this.db.get('SELECT 1 as test');
+      
       // Create logs table if it doesn't exist
       await this.db.run(`
         CREATE TABLE IF NOT EXISTS application_logs (
@@ -155,34 +190,26 @@ export class EnterpriseLogger {
       await this.db.run(`
         CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON application_logs(timestamp)
       `);
-      await this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_logs_context ON application_logs(context)
-      `);
 
       console.log('Database logging initialized successfully');
 
     } catch (error) {
-      console.error('Database logging initialization failed:', error);
+      console.error('Database logging initialization failed:', error.message);
       throw error;
     }
   }
 
-  async subscribeToLogEvents() {
-    try {
-      if (this.db && typeof this.db.subscribe === 'function') {
-        await this.db.subscribe('logging', this.serviceName, async (message) => {
-          try {
-            if (message.level && message.message) {
-              this.logger.log(message.level, message.message, message.meta || {});
-            }
-          } catch (error) {
-            console.error('Log subscription handler error:', error);
-          }
-        });
-        console.log('Log events subscription initialized');
-      }
-    } catch (error) {
-      console.error('Log events subscription failed:', error);
+  async setDatabase(database) {
+    this.db = database;
+    if (this.config.logToDatabase) {
+      await this.deferDatabaseInitialization();
+    }
+  }
+
+  async markDatabaseReady() {
+    this.databaseReady = true;
+    if (this.config.logToDatabase) {
+      await this.deferDatabaseInitialization();
     }
   }
 
@@ -194,12 +221,15 @@ export class EnterpriseLogger {
     }
 
     try {
-      // Log to winston
+      // Log to winston immediately
       this.logger.log(level, message, meta);
 
-      // Log to database if enabled
-      if (this.config.logToDatabase) {
+      // Log to database if enabled and ready
+      if (this.config.logToDatabase && this.databaseReady) {
         await this.logToDatabase(level, message, meta);
+      } else if (this.config.logToDatabase) {
+        // Queue for database when ready
+        this.logQueue.push({ level, message, meta });
       }
     } catch (error) {
       console.error('Logging failed:', error);
@@ -207,7 +237,7 @@ export class EnterpriseLogger {
   }
 
   async logToDatabase(level, message, meta = {}) {
-    if (!this.config.logToDatabase) return;
+    if (!this.config.logToDatabase || !this.databaseReady || !this.db) return;
 
     try {
       await this.db.run(
@@ -217,13 +247,18 @@ export class EnterpriseLogger {
 
       // Also publish to pub/sub for real-time log aggregation if enabled
       if (this.config.enableRealtime && this.db && typeof this.db.publish === 'function') {
-        await this.db.publish('logging', {
-          level,
-          message,
-          meta,
-          service: this.serviceName,
-          timestamp: new Date().toISOString()
-        });
+        try {
+          await this.db.publish('logging', {
+            level,
+            message,
+            meta,
+            service: this.serviceName,
+            timestamp: new Date().toISOString()
+          });
+        } catch (pubSubError) {
+          // Non-critical, just log it
+          console.warn('Log publishing failed:', pubSubError.message);
+        }
       }
 
     } catch (error) {
@@ -270,8 +305,12 @@ export class EnterpriseLogger {
     await this.log('verbose', message, meta);
   }
 
-  // Query methods
+  // Query methods (only work when database is ready)
   async queryLogs(options = {}) {
+    if (!this.databaseReady || !this.db) {
+      throw new Error('Database not ready for querying');
+    }
+
     const {
       level,
       startTime,
@@ -328,6 +367,10 @@ export class EnterpriseLogger {
   }
 
   async getLogStatistics(timeRange = '24 hours') {
+    if (!this.databaseReady || !this.db) {
+      throw new Error('Database not ready for statistics');
+    }
+
     try {
       return await this.db.all(`
         SELECT 
@@ -346,91 +389,34 @@ export class EnterpriseLogger {
     }
   }
 
-  async getServiceStatistics(timeRange = '24 hours') {
-    try {
-      return await this.db.all(`
-        SELECT 
-          service,
-          level,
-          COUNT(*) as count
-        FROM application_logs 
-        WHERE timestamp >= datetime('now', ?)
-        GROUP BY service, level
-        ORDER BY service, count DESC
-      `, [`-${timeRange}`]);
-    } catch (error) {
-      console.error('Service statistics query failed:', error);
-      throw error;
-    }
-  }
-
-  async cleanupOldLogs(retentionDays = 30) {
-    try {
-      const result = await this.db.run(
-        'DELETE FROM application_logs WHERE timestamp < datetime("now", ?)',
-        [`-${retentionDays} days`]
-      );
-      
-      console.log(`Cleaned up ${result.changes} old log entries`);
-      return result.changes;
-    } catch (error) {
-      console.error('Log cleanup failed:', error);
-      throw error;
-    }
-  }
-
-  async getErrorTrends(timeRange = '7 days') {
-    try {
-      return await this.db.all(`
-        SELECT 
-          date(timestamp) as date,
-          level,
-          COUNT(*) as count
-        FROM application_logs 
-        WHERE timestamp >= datetime('now', ?)
-          AND level IN ('error', 'warn')
-        GROUP BY date(timestamp), level
-        ORDER BY date DESC
-      `, [`-${timeRange}`]);
-    } catch (error) {
-      console.error('Error trends query failed:', error);
-      throw error;
-    }
-  }
-
   // Health check method
   async healthCheck() {
-    try {
-      // Test database connection
-      await this.db.get('SELECT 1 as test');
-      
-      // Test file system access
-      const testLog = `logs/${this.serviceName}-healthcheck.test`;
-      const fs = await import('fs').then(mod => mod.promises);
-      await fs.writeFile(testLog, 'healthcheck');
-      await fs.unlink(testLog);
+    const status = {
+      status: 'healthy',
+      fileLogger: 'initialized',
+      database: this.databaseReady ? 'connected' : 'not-ready',
+      service: this.serviceName,
+      timestamp: new Date().toISOString()
+    };
 
-      return {
-        status: 'healthy',
-        database: 'connected',
-        fileSystem: 'accessible',
-        service: this.serviceName,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      return {
-        status: 'unhealthy',
-        error: error.message,
-        service: this.serviceName,
-        timestamp: new Date().toISOString()
-      };
+    if (this.databaseReady && this.db) {
+      try {
+        await this.db.get('SELECT 1 as test');
+        status.database = 'connected';
+      } catch (error) {
+        status.database = 'error';
+        status.databaseError = error.message;
+        status.status = 'degraded';
+      }
     }
+
+    return status;
   }
 
   // Close method for cleanup
   async close() {
     try {
-      if (this.logger) {
+      if (this.logger && this.logger.end) {
         this.logger.end();
       }
       
@@ -444,12 +430,19 @@ export class EnterpriseLogger {
   }
 }
 
-// Export a singleton instance for global use
+// Global logger management with deferred initialization
 export let globalLogger = null;
+export let globalLoggerPromise = null;
 
-export function initializeGlobalLogger(serviceName = 'application', config = {}) {
+export async function initializeGlobalLogger(serviceName = 'application', config = {}) {
   if (!globalLogger) {
-    globalLogger = new EnterpriseLogger(serviceName, config);
+    // Create logger with file logging only initially
+    globalLogger = new EnterpriseLogger(serviceName, {
+      ...config,
+      logToDatabase: false // Disable database logging initially
+    });
+    
+    globalLoggerPromise = Promise.resolve(globalLogger);
   }
   return globalLogger;
 }
@@ -458,5 +451,17 @@ export function getGlobalLogger() {
   if (!globalLogger) {
     throw new Error('Global logger not initialized. Call initializeGlobalLogger first.');
   }
+  return globalLogger;
+}
+
+export async function enableDatabaseLogging(database) {
+  if (!globalLogger) {
+    throw new Error('Global logger not initialized');
+  }
+  
+  await globalLogger.setDatabase(database);
+  globalLogger.config.logToDatabase = true;
+  await globalLogger.markDatabaseReady();
+  
   return globalLogger;
 }
