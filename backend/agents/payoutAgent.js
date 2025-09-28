@@ -16,18 +16,65 @@ import {
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
 
-const db = new BrianNwaezikeDB();
-const blockchain = new BrianNwaezikeChain();
-
 const founderWallet = BWAEZI_SOVEREIGN_CONFIG.SOVEREIGN_OWNER;
 const revenueShare = BWAEZI_SOVEREIGN_CONFIG.SOVEREIGN_SERVICES.revenueShare;
 
 const ETHEREUM_TRUST_WALLET = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
 const SOLANA_TRUST_WALLET = process.env.SOLANA_TRUST_WALLET_ADDRESS;
 
+// Database initialization wrapper
+class DatabaseManager {
+  constructor() {
+    this.db = null;
+    this.blockchain = null;
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+
+    try {
+      // Initialize database first
+      this.db = new BrianNwaezikeDB();
+      
+      // Wait for database to be ready before initializing blockchain
+      if (this.db.init && typeof this.db.init === 'function') {
+        await this.db.init();
+      }
+
+      // Now initialize blockchain connections
+      this.blockchain = new BrianNwaezikeChain();
+      
+      // Initialize wallet connections
+      await initializeConnections();
+      
+      this.initialized = true;
+      console.log("✅ Database and Blockchain connections initialized successfully");
+    } catch (error) {
+      console.error("❌ Failed to initialize database and blockchain:", error);
+      throw error;
+    }
+  }
+
+  getDB() {
+    if (!this.initialized) {
+      throw new Error('Database not initialized. Call initialize() first.');
+    }
+    return this.db;
+  }
+
+  getBlockchain() {
+    if (!this.initialized) {
+      throw new Error('Blockchain not initialized. Call initialize() first.');
+    }
+    return this.blockchain;
+  }
+}
+
 // Enhanced blockchain connection management
 class BlockchainConnector {
-  constructor() {
+  constructor(databaseManager) {
+    this.databaseManager = databaseManager;
     this.connections = new Map();
     this.healthStatus = new Map();
   }
@@ -91,39 +138,65 @@ class BlockchainConnector {
 
 class PayoutAgent {
   constructor() {
-    console.log("✅ Payout Agent initialized.");
+    console.log("✅ Payout Agent initializing...");
     this.intervalId = null;
-    this.blockchainConnector = new BlockchainConnector();
+    this.databaseManager = new DatabaseManager();
+    this.blockchainConnector = null;
     this.retryCount = new Map();
     this.maxRetries = 3;
     this.initialized = false;
+    this.initializationPromise = null;
   }
 
   async initialize() {
-    if (this.initialized) return;
-    
-    try {
-      await this.blockchainConnector.initialize();
-      
-      // Verify environment variables
-      if (!ETHEREUM_TRUST_WALLET || !SOLANA_TRUST_WALLET) {
-        throw new Error('Missing required environment variables: ETHEREUM_TRUST_WALLET_ADDRESS or SOLANA_TRUST_WALLET_ADDRESS');
-      }
+    // Prevent multiple simultaneous initializations
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
 
-      // Verify founder wallet configuration
-      if (!founderWallet) {
-        throw new Error('Founder wallet not configured in BWAEZI_SOVEREIGN_CONFIG');
-      }
+    this.initializationPromise = (async () => {
+      if (this.initialized) return;
 
-      console.log("✅ Payout Agent fully initialized and ready for mainnet operations");
-      this.initialized = true;
-    } catch (error) {
-      console.error("❌ Payout Agent initialization failed:", error);
-      throw error;
+      try {
+        // Initialize database and blockchain first
+        await this.databaseManager.initialize();
+        
+        // Now initialize blockchain connector
+        this.blockchainConnector = new BlockchainConnector(this.databaseManager);
+        await this.blockchainConnector.initialize();
+
+        // Verify environment variables
+        if (!ETHEREUM_TRUST_WALLET || !SOLANA_TRUST_WALLET) {
+          throw new Error('Missing required environment variables: ETHEREUM_TRUST_WALLET_ADDRESS or SOLANA_TRUST_WALLET_ADDRESS');
+        }
+
+        // Verify founder wallet configuration
+        if (!founderWallet) {
+          throw new Error('Founder wallet not configured in BWAEZI_SOVEREIGN_CONFIG');
+        }
+
+        console.log("✅ Payout Agent fully initialized and ready for mainnet operations");
+        this.initialized = true;
+        return true;
+      } catch (error) {
+        console.error("❌ Payout Agent initialization failed:", error);
+        this.initializationPromise = null;
+        throw error;
+      }
+    })();
+
+    return this.initializationPromise;
+  }
+
+  async ensureInitialized() {
+    if (!this.initialized) {
+      await this.initialize();
     }
   }
 
   async getServiceOwner(serviceName) {
+    await this.ensureInitialized();
+
     // Enhanced service owner mapping with validation
     const serviceMapping = {
       'sol': SOLANA_TRUST_WALLET,
@@ -147,9 +220,7 @@ class PayoutAgent {
   }
 
   async queue(payment) {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureInitialized();
 
     try {
       // Validate payment object
@@ -164,6 +235,8 @@ class PayoutAgent {
       if (!await validateAddress(recipient, currency)) {
         throw new Error(`Invalid recipient address for ${currency}: ${recipient}`);
       }
+
+      const db = this.databaseManager.getDB();
 
       // Insert into payout queue with enhanced data
       const payoutRecord = {
@@ -198,9 +271,7 @@ class PayoutAgent {
   }
 
   async processRevenueShare(amount, service) {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureInitialized();
 
     try {
       // Calculate revenue shares
@@ -240,7 +311,8 @@ class PayoutAgent {
 
   async processPendingJobs() {
     if (!this.initialized) {
-      await this.initialize();
+      console.log('⚠️ Payout Agent not initialized, skipping payout cycle');
+      return;
     }
 
     try {
@@ -251,6 +323,7 @@ class PayoutAgent {
         return;
       }
 
+      const db = this.databaseManager.getDB();
       const jobs = await db.all("SELECT * FROM payout_queue WHERE status = 'pending' OR (status = 'failed' AND retry_count < ?)", [this.maxRetries]);
       
       console.log(`🔍 Processing ${jobs.length} pending payout jobs...`);
@@ -266,6 +339,8 @@ class PayoutAgent {
   async processJob(job) {
     try {
       console.log(`🔄 Processing payout job ${job.id}: ${job.amount} ${job.currency} → ${job.recipient}`);
+
+      const db = this.databaseManager.getDB();
 
       // Update job status to processing
       await db.update("payout_queue", { id: job.id }, { 
@@ -311,6 +386,8 @@ class PayoutAgent {
     } catch (error) {
       console.error(`❌ Payout failed for job ${job.id}:`, error.message);
       
+      const db = this.databaseManager.getDB();
+
       // Update retry count and status
       const retryCount = (job.retry_count || 0) + 1;
       const status = retryCount >= this.maxRetries ? "failed" : "pending";
@@ -339,6 +416,7 @@ class PayoutAgent {
 
   async logServiceCall(logData) {
     try {
+      const db = this.databaseManager.getDB();
       await db.insert("service_logs", {
         service: logData.service,
         caller: logData.caller,
@@ -353,6 +431,9 @@ class PayoutAgent {
 
   async getPayoutStats() {
     try {
+      await this.ensureInitialized();
+      const db = this.databaseManager.getDB();
+
       const stats = await db.all(`
         SELECT 
           status,
@@ -394,6 +475,8 @@ class PayoutAgent {
       this.intervalId = setInterval(() => this.processPendingJobs(), intervalMs);
     }).catch(error => {
       console.error("❌ Failed to start Payout Agent:", error);
+      // Retry initialization after 10 seconds
+      setTimeout(() => this.start(intervalMs), 10000);
     });
   }
 
@@ -409,9 +492,11 @@ class PayoutAgent {
   async shutdown() {
     this.stop();
     
-    // Process any remaining jobs before shutdown
-    console.log("🔄 Processing final payouts before shutdown...");
-    await this.processPendingJobs();
+    if (this.initialized) {
+      // Process any remaining jobs before shutdown
+      console.log("🔄 Processing final payouts before shutdown...");
+      await this.processPendingJobs();
+    }
     
     console.log("✅ Payout Agent shutdown completed.");
   }
