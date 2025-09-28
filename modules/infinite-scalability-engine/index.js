@@ -14,11 +14,15 @@ export class InfiniteScalabilityEngine extends EventEmitter {
     this.numCPUs = config.cpuLimit || cpus().length;
     this.workers = new Map();
     this.db = new ArielSQLiteEngine(config.databaseConfig);
-    this.logger = new Logger('ClusterEngine');
+    this.logger = new EnterpriseLogger('InfiniteScalabilityEngine');
     this.healthCheckInterval = config.healthCheckInterval || 30000;
     this.maxWorkerRestarts = config.maxWorkerRestarts || 10;
     this.workerRestarts = new Map();
     this.shuttingDown = false;
+    this.workerTypes = config.workerTypes || {
+      'forex-signal': { count: 1, module: '../forex-signal-worker/index.js' },
+      'social-agent': { count: 3, module: '../social-agent-worker/index.js' }
+    };
     
     // Graceful shutdown handlers
     process.on('SIGINT', () => this.gracefulShutdown());
@@ -41,10 +45,8 @@ export class InfiniteScalabilityEngine extends EventEmitter {
         ['primary_process', process.pid]
       );
 
-      // Fork workers based on CPU cores
-      for (let i = 0; i < this.numCPUs; i++) {
-        await this.forkWorker();
-      }
+      // Fork workers based on worker types configuration
+      await this.forkWorkerTypes();
 
       // Set up cluster event handlers
       cluster.on('exit', this.handleWorkerExit.bind(this));
@@ -59,11 +61,14 @@ export class InfiniteScalabilityEngine extends EventEmitter {
 
     } else {
       // Worker process initialization
-      this.logger.info(`Worker process ${process.pid} started`);
+      this.logger.info(`Worker process ${process.pid} started with type: ${process.env.WORKER_TYPE}`);
       
-      // Initialize worker-specific application
+      // Initialize worker-specific application based on type
       if (appServer && typeof appServer === 'function') {
         await appServer();
+      } else {
+        // Load worker module based on type
+        await this.loadWorkerModule();
       }
       
       // Worker health reporting using SQLite pub/sub
@@ -71,14 +76,59 @@ export class InfiniteScalabilityEngine extends EventEmitter {
         try {
           await this.db.publish('cluster:worker:health', {
             pid: process.pid,
+            workerType: process.env.WORKER_TYPE,
             memory: process.memoryUsage(),
             uptime: process.uptime(),
+            cpuUsage: process.cpuUsage(),
             timestamp: Date.now()
           });
         } catch (error) {
-          console.error('Health report failed:', error);
+          this.logger.error('Health report failed:', error);
         }
       }, 15000);
+    }
+  }
+
+  async loadWorkerModule() {
+    const workerType = process.env.WORKER_TYPE;
+    if (workerType && this.workerTypes[workerType]) {
+      try {
+        const modulePath = this.workerTypes[workerType].module;
+        const WorkerModule = await import(modulePath);
+        if (WorkerModule && WorkerModule.default) {
+          const workerInstance = new WorkerModule.default();
+          if (typeof workerInstance.initialize === 'function') {
+            await workerInstance.initialize();
+          }
+        }
+      } catch (error) {
+        this.logger.error(`Failed to load worker module for type ${workerType}:`, error);
+      }
+    }
+  }
+
+  async forkWorkerTypes() {
+    let workerId = 1;
+    
+    for (const [type, config] of Object.entries(this.workerTypes)) {
+      this.logger.info(`Starting ${config.count} ${type} workers`);
+      
+      for (let i = 0; i < config.count; i++) {
+        await this.forkWorker(workerId++, type);
+      }
+    }
+
+    // Fork additional CPU workers if needed
+    const totalConfiguredWorkers = Object.values(this.workerTypes)
+      .reduce((sum, config) => sum + config.count, 0);
+    
+    if (totalConfiguredWorkers < this.numCPUs) {
+      const additionalWorkers = this.numCPUs - totalConfiguredWorkers;
+      this.logger.info(`Starting ${additionalWorkers} additional CPU workers`);
+      
+      for (let i = 0; i < additionalWorkers; i++) {
+        await this.forkWorker(workerId++, 'cpu-worker');
+      }
     }
   }
 
@@ -97,6 +147,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       CREATE TABLE IF NOT EXISTS worker_health (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         worker_id INTEGER NOT NULL,
+        worker_type TEXT NOT NULL,
         pid INTEGER NOT NULL,
         memory_rss INTEGER,
         memory_heap_total INTEGER,
@@ -113,6 +164,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       CREATE TABLE IF NOT EXISTS worker_status (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         worker_id INTEGER NOT NULL,
+        worker_type TEXT NOT NULL,
         pid INTEGER NOT NULL,
         status TEXT DEFAULT 'online',
         last_checked DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -132,66 +184,115 @@ export class InfiniteScalabilityEngine extends EventEmitter {
         active_workers INTEGER
       )
     `);
+
+    // Create worker_performance table for specialized metrics
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS worker_performance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        worker_type TEXT NOT NULL,
+        worker_id INTEGER NOT NULL,
+        metric_name TEXT NOT NULL,
+        metric_value REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
   }
 
-  async forkWorker() {
-    const worker = cluster.fork();
-    this.workers.set(worker.id, worker);
-    this.workerRestarts.set(worker.id, 0);
+  async forkWorker(workerId, workerType = 'generic') {
+    const workerEnv = {
+      ...process.env,
+      WORKER_ID: workerId.toString(),
+      WORKER_TYPE: workerType
+    };
+
+    const worker = cluster.fork(workerEnv);
     
-    this.logger.info(`Forked worker ${worker.id} with PID ${worker.process.pid}`);
+    worker.workerType = workerType;
+    this.workers.set(workerId, worker);
+    this.workerRestarts.set(workerId, 0);
+    
+    this.logger.info(`Forked ${workerType} worker ${workerId} with PID ${worker.process.pid}`);
     
     // Store worker info in database
     await this.db.run(
       'INSERT OR REPLACE INTO cluster_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
-      [`worker_${worker.id}`, worker.process.pid]
+      [`worker_${workerId}`, JSON.stringify({
+        pid: worker.process.pid,
+        type: workerType,
+        startTime: Date.now()
+      })]
+    );
+    
+    await this.db.run(
+      'INSERT OR REPLACE INTO worker_status (worker_id, worker_type, pid, status, last_checked) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+      [workerId, workerType, worker.process.pid, 'starting']
     );
     
     return worker;
   }
 
   async handleWorkerExit(worker, code, signal) {
-    this.logger.warn(`Worker ${worker.process.pid} died with code ${code} and signal ${signal}`);
+    const workerId = this.getWorkerId(worker);
+    const workerType = worker.workerType || 'unknown';
     
-    const restarts = this.workerRestarts.get(worker.id) || 0;
+    this.logger.warn(`${workerType} worker ${worker.process.pid} died with code ${code} and signal ${signal}`);
+    
+    const restarts = this.workerRestarts.get(workerId) || 0;
     
     if (restarts < this.maxWorkerRestarts && !this.shuttingDown) {
-      this.logger.info(`Restarting worker ${worker.id} (${restarts + 1}/${this.maxWorkerRestarts})`);
-      this.workerRestarts.set(worker.id, restarts + 1);
+      this.logger.info(`Restarting ${workerType} worker ${workerId} (${restarts + 1}/${this.maxWorkerRestarts})`);
+      this.workerRestarts.set(workerId, restarts + 1);
       
       // Update database with worker status
       await this.db.run(
-        'INSERT OR REPLACE INTO worker_status (worker_id, pid, status, last_checked) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-        [worker.id, worker.process.pid, 'restarting']
+        'INSERT OR REPLACE INTO worker_status (worker_id, worker_type, pid, status, last_checked) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+        [workerId, workerType, worker.process.pid, 'restarting']
       );
       
-      // Fork a new worker
-      await this.forkWorker();
+      // Fork a new worker with same type
+      await this.forkWorker(workerId, workerType);
     } else {
-      this.logger.error(`Worker ${worker.id} exceeded maximum restart attempts or shutdown in progress`);
-      this.workers.delete(worker.id);
-      this.workerRestarts.delete(worker.id);
+      this.logger.error(`${workerType} worker ${workerId} exceeded maximum restart attempts or shutdown in progress`);
+      this.workers.delete(workerId);
+      this.workerRestarts.delete(workerId);
     }
   }
 
+  getWorkerId(worker) {
+    for (const [id, w] of this.workers) {
+      if (w === worker) {
+        return id;
+      }
+    }
+    return null;
+  }
+
   handleWorkerOnline(worker) {
-    this.logger.info(`Worker ${worker.process.pid} is online`);
+    const workerId = this.getWorkerId(worker);
+    const workerType = worker.workerType || 'generic';
+    
+    this.logger.info(`${workerType} worker ${worker.process.pid} is online`);
+    
     this.db.run(
-      'INSERT OR REPLACE INTO worker_status (worker_id, pid, status, last_checked) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-      [worker.id, worker.process.pid, 'online']
+      'INSERT OR REPLACE INTO worker_status (worker_id, worker_type, pid, status, last_checked) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+      [workerId, workerType, worker.process.pid, 'online']
     ).catch(err => this.logger.error(`Failed to update worker status: ${err.message}`));
   }
 
   async handleWorkerMessage(worker, message) {
     try {
+      const workerId = this.getWorkerId(worker);
+      const workerType = worker.workerType || 'generic';
+
       if (message.type === 'health') {
         // Store worker health in SQLite
         await this.db.run(
           `INSERT INTO worker_health 
-           (worker_id, pid, memory_rss, memory_heap_total, memory_heap_used, memory_external, uptime, cpu_usage) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (worker_id, worker_type, pid, memory_rss, memory_heap_total, memory_heap_used, memory_external, uptime, cpu_usage) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            worker.id, 
+            workerId,
+            workerType,
             message.pid, 
             message.memory.rss, 
             message.memory.heapTotal, 
@@ -204,16 +305,63 @@ export class InfiniteScalabilityEngine extends EventEmitter {
 
         // Also publish to pub/sub for real-time monitoring
         await this.db.publish('cluster:worker:health', {
-          workerId: worker.id,
+          workerId,
+          workerType,
           pid: message.pid,
           memory: message.memory,
           uptime: message.uptime,
           cpuUsage: message.cpuUsage,
           timestamp: Date.now()
         });
+      } else if (message.type === 'performance_metric') {
+        // Store specialized performance metrics
+        await this.db.run(
+          'INSERT INTO worker_performance (worker_type, worker_id, metric_name, metric_value) VALUES (?, ?, ?, ?)',
+          [workerType, workerId, message.metricName, message.metricValue]
+        );
+      } else if (message.type === 'forex_signal') {
+        // Handle forex trading signals
+        await this.handleForexSignal(message);
+      } else if (message.type === 'social_revenue') {
+        // Handle social revenue events
+        await this.handleSocialRevenue(message);
       }
     } catch (error) {
       this.logger.error(`Failed to handle worker message: ${error.message}`);
+    }
+  }
+
+  async handleForexSignal(signal) {
+    try {
+      // Store forex signal in database
+      await this.db.run(
+        'INSERT INTO forex_signals (currency_pair, action, confidence, timestamp) VALUES (?, ?, ?, ?)',
+        [signal.currencyPair, signal.action, signal.confidence, Date.now()]
+      );
+
+      // Emit event for real-time processing
+      this.emit('forexSignal', signal);
+      
+      this.logger.info(`Processed forex signal: ${signal.currencyPair} ${signal.action} (${signal.confidence}%)`);
+    } catch (error) {
+      this.logger.error('Failed to handle forex signal:', error);
+    }
+  }
+
+  async handleSocialRevenue(event) {
+    try {
+      // Store social revenue event in database
+      await this.db.run(
+        'INSERT INTO social_revenue_events (platform, revenue, engagement, timestamp) VALUES (?, ?, ?, ?)',
+        [event.platform, event.revenue, event.engagement, Date.now()]
+      );
+
+      // Emit event for real-time processing
+      this.emit('socialRevenue', event);
+      
+      this.logger.info(`Processed social revenue: ${event.platform} $${event.revenue}`);
+    } catch (error) {
+      this.logger.error('Failed to handle social revenue event:', error);
     }
   }
 
@@ -243,18 +391,18 @@ export class InfiniteScalabilityEngine extends EventEmitter {
             // Update SQLite with worker status
             await this.db.run(
               `INSERT OR REPLACE INTO worker_status 
-               (worker_id, pid, status, last_checked) 
-               VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
-              [id, worker.process.pid, 'online']
+               (worker_id, worker_type, pid, status, last_checked) 
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+              [id, worker.workerType || 'generic', worker.process.pid, 'online']
             );
           } catch (error) {
             this.logger.error(`Health check failed for worker ${id}: ${error.message}`);
             
             await this.db.run(
               `INSERT OR REPLACE INTO worker_status 
-               (worker_id, pid, status, last_checked) 
-               VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
-              [id, worker.process.pid, 'unresponsive']
+               (worker_id, worker_type, pid, status, last_checked) 
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+              [id, worker.workerType || 'generic', worker.process.pid, 'unresponsive']
             );
           }
         }
@@ -266,7 +414,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
 
   async handleHealthUpdate(message) {
     // Update in-memory state based on pub/sub messages
-    const { workerId, pid, memory, uptime, cpuUsage } = message;
+    const { workerId, workerType, pid, memory, uptime, cpuUsage } = message;
     
     if (this.workers.has(workerId)) {
       const worker = this.workers.get(workerId);
@@ -281,6 +429,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       // Emit health update event
       this.emit('workerHealthUpdate', {
         workerId,
+        workerType,
         pid,
         health: worker.health
       });
@@ -315,16 +464,24 @@ export class InfiniteScalabilityEngine extends EventEmitter {
           req.on('data', chunk => body += chunk);
           req.on('end', async () => {
             try {
-              const { count } = JSON.parse(body);
-              await this.scaleWorkers(count);
+              const { count, workerType } = JSON.parse(body);
+              await this.scaleWorkers(count, workerType);
               res.statusCode = 200;
-              res.end(JSON.stringify({ message: `Scaled to ${count} workers` }));
+              res.end(JSON.stringify({ message: `Scaled ${workerType || 'all'} to ${count} workers` }));
             } catch (error) {
               res.statusCode = 400;
               res.end(JSON.stringify({ error: error.message }));
             }
           });
           return;
+        } else if (req.url === '/forex-signals' && req.method === 'GET') {
+          const signals = await this.getForexSignals();
+          res.statusCode = 200;
+          res.end(JSON.stringify(signals));
+        } else if (req.url === '/social-revenue' && req.method === 'GET') {
+          const revenue = await this.getSocialRevenue();
+          res.statusCode = 200;
+          res.end(JSON.stringify(revenue));
         } else {
           res.statusCode = 404;
           res.end(JSON.stringify({ error: 'Not found' }));
@@ -357,6 +514,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       
       workerStatuses.push({
         id,
+        type: worker.workerType || 'generic',
         pid: worker.process.pid,
         status: status ? status.status : 'unknown',
         health: health || {}
@@ -367,6 +525,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       primary: process.pid,
       workers: workerStatuses,
       totalWorkers: this.workers.size,
+      workerTypes: this.workerTypes,
       cpuCores: this.numCPUs,
       systemLoad: loadavg(),
       memory: {
@@ -388,6 +547,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       
       workerMetrics.push({
         id,
+        type: worker.workerType || 'generic',
         pid: worker.process.pid,
         healthHistory: healthRecords
       });
@@ -422,6 +582,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
       );
       details.push({
         id,
+        type: worker.workerType || 'generic',
         pid: worker.process.pid,
         restartCount: this.workerRestarts.get(id) || 0,
         health: health || {}
@@ -429,29 +590,94 @@ export class InfiniteScalabilityEngine extends EventEmitter {
     }
     return details;
   }
+
+  async getForexSignals() {
+    try {
+      const signals = await this.db.all(
+        'SELECT * FROM forex_signals ORDER BY timestamp DESC LIMIT 50'
+      );
+      return { signals };
+    } catch (error) {
+      this.logger.error('Failed to get forex signals:', error);
+      return { signals: [] };
+    }
+  }
+
+  async getSocialRevenue() {
+    try {
+      const revenue = await this.db.all(
+        'SELECT platform, SUM(revenue) as total_revenue, AVG(engagement) as avg_engagement FROM social_revenue_events GROUP BY platform ORDER BY total_revenue DESC'
+      );
+      return { revenue };
+    } catch (error) {
+      this.logger.error('Failed to get social revenue:', error);
+      return { revenue: [] };
+    }
+  }
   
-  async scaleWorkers(count) {
-    const currentCount = this.workers.size;
+  async scaleWorkers(count, workerType = null) {
+    if (workerType) {
+      // Scale specific worker type
+      await this.scaleWorkerType(workerType, count);
+    } else {
+      // Scale all workers proportionally
+      const currentCount = this.workers.size;
+      
+      if (count > currentCount) {
+        // Scale up - add generic workers
+        for (let i = currentCount; i < count; i++) {
+          await this.forkWorker(this.getNextWorkerId(), 'generic');
+        }
+        this.logger.info(`Scaled up from ${currentCount} to ${count} workers`);
+      } else if (count < currentCount) {
+        // Scale down - remove generic workers first
+        const genericWorkers = Array.from(this.workers.entries())
+          .filter(([id, worker]) => worker.workerType === 'generic')
+          .slice(0, currentCount - count);
+        
+        for (const [id, worker] of genericWorkers) {
+          this.logger.info(`Disconnecting generic worker ${id} for scaling down`);
+          worker.disconnect();
+          this.workers.delete(id);
+          this.workerRestarts.delete(id);
+        }
+        this.logger.info(`Scaled down from ${currentCount} to ${count} workers`);
+      }
+    }
+  }
+
+  async scaleWorkerType(workerType, count) {
+    const currentWorkers = Array.from(this.workers.values())
+      .filter(worker => worker.workerType === workerType);
+    
+    const currentCount = currentWorkers.length;
     
     if (count > currentCount) {
-      // Scale up
+      // Scale up this worker type
       for (let i = currentCount; i < count; i++) {
-        await this.forkWorker();
+        await this.forkWorker(this.getNextWorkerId(), workerType);
       }
-      this.logger.info(`Scaled up from ${currentCount} to ${count} workers`);
+      this.logger.info(`Scaled up ${workerType} workers from ${currentCount} to ${count}`);
     } else if (count < currentCount) {
-      // Scale down
-      const workersToRemove = Array.from(this.workers.values()).slice(0, currentCount - count);
+      // Scale down this worker type
+      const workersToRemove = currentWorkers.slice(0, currentCount - count);
       for (const worker of workersToRemove) {
-        this.logger.info(`Disconnecting worker ${worker.id} for scaling down`);
+        const workerId = this.getWorkerId(worker);
+        this.logger.info(`Disconnecting ${workerType} worker ${workerId} for scaling down`);
         worker.disconnect();
-        this.workers.delete(worker.id);
-        this.workerRestarts.delete(worker.id);
+        this.workers.delete(workerId);
+        this.workerRestarts.delete(workerId);
       }
-      this.logger.info(`Scaled down from ${currentCount} to ${count} workers`);
+      this.logger.info(`Scaled down ${workerType} workers from ${currentCount} to ${count}`);
     }
-    
-    this.numCPUs = count;
+  }
+
+  getNextWorkerId() {
+    let maxId = 0;
+    for (const id of this.workers.keys()) {
+      if (id > maxId) maxId = id;
+    }
+    return maxId + 1;
   }
 
   async gracefulShutdown() {
@@ -478,7 +704,7 @@ export class InfiniteScalabilityEngine extends EventEmitter {
     
     // Disconnect all workers
     for (const [id, worker] of this.workers) {
-      this.logger.info(`Disconnecting worker ${id}`);
+      this.logger.info(`Disconnecting worker ${id} (${worker.workerType})`);
       worker.disconnect();
     }
     
@@ -509,10 +735,8 @@ export class InfiniteScalabilityEngine extends EventEmitter {
     const oldWorkers = new Map(this.workers);
     this.workers.clear();
     
-    // Fork new workers
-    for (let i = 0; i < this.numCPUs; i++) {
-      await this.forkWorker();
-    }
+    // Fork new workers based on current configuration
+    await this.forkWorkerTypes();
     
     // Then disconnect old workers
     setTimeout(() => {
