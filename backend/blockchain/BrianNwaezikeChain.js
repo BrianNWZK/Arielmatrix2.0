@@ -161,7 +161,7 @@ this.bscProvider = new ethers.JsonRpcProvider(MAINNET_RPC.BINANCE);
             mainnet: this.config.mainnet,
             rpcEndpoints: MAINNET_RPC
         });
-        this.omnichainInterop = new OmnichainInterop({
+        this.omnichainInterop = new OmnichainInteroperabilityEngine({
             mainnet: this.config.mainnet,
             supportedChains: ['ethereum', 'solana', 'binance', 'polygon', 'avalanche']
         });
@@ -194,11 +194,11 @@ this.bscProvider = new ethers.JsonRpcProvider(MAINNET_RPC.BINANCE);
             };
           }
         };
-        this.governanceEngine = new GovernanceEngine({
+        this.governanceEngine = new SovereignGovernance({
             votingPeriod: 7 * 24 * 60 * 60 * 1000, // 7 days
             mainnet: this.config.mainnet
         });
-        this.tokenomicsEngine = new TokenomicsEngine(this.config.maxSupply, {
+        this.tokenomicsEngine = new SovereignTokenomics(this.config.maxSupply, {
             founderAllocation: 0.6,
             ecosystemAllocation: 0.4,
             mainnet: this.config.mainnet
