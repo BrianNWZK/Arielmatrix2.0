@@ -250,7 +250,7 @@ function setupGracefulShutdown(serviceManager, healthServer, blockchain) {
       }
 
       // Stop service manager
-      if (serviceManager) {
+      if (serviceManager && typeof serviceManager.stop === 'function') {
         await serviceManager.stop();
         logger.info("🔴 ServiceManager stopped");
       }
@@ -291,15 +291,17 @@ function setupGracefulShutdown(serviceManager, healthServer, blockchain) {
  * Main ArielSQL Suite startup function
  */
 async function startArielSQLSuite() {
+  let serviceManagerInstance = null;
+  
   try {
     logger.info("🚀 Starting ArielSQL Ultimate Suite (Phase 3 Mainnet Ready)...");
     logger.info(`🌐 Environment: ${config.mainnet ? 'MAINNET' : 'TESTNET'}`);
     logger.info(`🔧 Configuration:`, config);
 
-    // 1. Initialize Service Manager
+    // 1. Initialize Service Manager - FIXED: Use imported serviceManager
     logger.info("1. Initializing ServiceManager...");
-    const serviceManager = new ServiceManager(config);
-    await serviceManager.initialize();
+    serviceManagerInstance = new serviceManager(config);
+    await serviceManagerInstance.initialize();
 
     // 2. Initialize Blockchain
     logger.info("2. Initializing Blockchain...");
@@ -307,7 +309,7 @@ async function startArielSQLSuite() {
 
     // 3. Register all services
     logger.info("3. Registering services...");
-    const registeredCount = await registerAllServices(serviceManager);
+    const registeredCount = await registerAllServices(serviceManagerInstance);
 
     // 4. Start Payout System
     logger.info("4. Starting payout system...");
@@ -319,11 +321,11 @@ async function startArielSQLSuite() {
 
     // 6. Start Service Manager
     logger.info("6. Starting ServiceManager...");
-    serviceManager.start();
+    serviceManagerInstance.start();
 
     // 7. Setup graceful shutdown
     logger.info("7. Setting up graceful shutdown...");
-    setupGracefulShutdown(serviceManager, healthServer, blockchain);
+    setupGracefulShutdown(serviceManagerInstance, healthServer, blockchain);
 
     // Final startup message
     logger.info("🎉 ArielSQL Suite started successfully!");
@@ -334,7 +336,7 @@ async function startArielSQLSuite() {
     logger.info(`🔗 Mainnet: ${config.mainnet}`);
 
     return {
-      serviceManager,
+      serviceManager: serviceManagerInstance,
       blockchain,
       healthServer,
       config
@@ -345,8 +347,8 @@ async function startArielSQLSuite() {
     
     // Attempt graceful shutdown on startup failure
     try {
-      if (serviceManager) {
-        await serviceManager.stop();
+      if (serviceManagerInstance && typeof serviceManagerInstance.stop === 'function') {
+        await serviceManagerInstance.stop();
       }
     } catch (shutdownError) {
       logger.error("❌ Error during startup failure shutdown:", shutdownError);
