@@ -1293,7 +1293,7 @@ export default class BrianNwaezikeChain {
 }
 
 // Enhanced export for ES modules
-export default BrianNwaezikeChain;
+export BrianNwaezikeChain;
 
 // CommonJS style export for compatibility
 if (typeof module !== 'undefined' && module.exports) {
