@@ -277,7 +277,8 @@ class ShardManager {
           gas_used INTEGER,
           nonce INTEGER,
           block_number INTEGER,
-          confirmation_count INTEGER DEFAULT 0
+          confirmation_count INTEGER DEFAULT 0,
+          error_message TEXT
         )
       `).run();
 
@@ -285,6 +286,7 @@ class ShardManager {
       db.prepare('CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)').run();
       db.prepare('CREATE INDEX IF NOT EXISTS idx_transactions_recipient ON transactions(recipient)').run();
       db.prepare('CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at)').run();
+      db.prepare('CREATE INDEX IF NOT EXISTS idx_transactions_tx_hash ON transactions(tx_hash)').run();
 
       // Shard metadata table
       db.prepare(`
@@ -650,6 +652,34 @@ class BrianNwaezikeDB {
   }
 
   /**
+   * Get completed transactions for a recipient
+   */
+  async getCompletedTransactions(recipientAddress, limit = 50, offset = 0) {
+    return retryWithBackoff(async () => {
+      const shard = this.shardManager.getShard(recipientAddress, 'read');
+      return shard.prepare(`
+        SELECT * FROM transactions 
+        WHERE recipient = ? AND status = 'confirmed'
+        ORDER BY created_at DESC 
+        LIMIT ? OFFSET ?
+      `).all(recipientAddress, limit, offset);
+    }, 'getCompletedTransactions');
+  }
+
+  /**
+   * Get transaction by ID
+   */
+  async getTransactionById(transactionId, recipientAddress) {
+    return retryWithBackoff(async () => {
+      const shard = this.shardManager.getShard(recipientAddress, 'read');
+      return shard.prepare(`
+        SELECT * FROM transactions 
+        WHERE id = ? AND recipient = ?
+      `).get(transactionId, recipientAddress);
+    }, 'getTransactionById');
+  }
+
+  /**
    * Comprehensive job status update
    */
   async updateJobStatus(jobId, recipient, status, updateData = {}) {
@@ -684,6 +714,35 @@ class BrianNwaezikeDB {
       txHash,
       blockNumber
     });
+  }
+
+  /**
+   * Get failed transactions for analysis
+   */
+  async getFailedTransactions(hours = 24, limit = 100) {
+    const allFailed = [];
+    const cutoffTime = new Date(Date.now() - (hours * 60 * 60 * 1000)).toISOString();
+    
+    for (let i = 0; i < this.config.database.numberOfShards; i++) {
+      if (this.shardManager.shardHealth[i]) {
+        try {
+          const shard = this.shardManager.shards[i];
+          const failed = shard.prepare(`
+            SELECT * FROM transactions 
+            WHERE status = 'failed' 
+            AND updated_at > ?
+            ORDER BY updated_at DESC 
+            LIMIT ?
+          `).all(cutoffTime, limit);
+          
+          allFailed.push(...failed);
+        } catch (error) {
+          logger.warn(`Failed to get failed transactions from shard ${i}`, { error: error.message });
+        }
+      }
+    }
+
+    return allFailed;
   }
 
   /**
@@ -794,9 +853,6 @@ function getDatabase() {
   return dbInstance;
 }
 
-// Export Database class for other modules to use
-export { Database } from './path-to-database-class.js'; // Adjust path as needed
-
 // Graceful shutdown handling
 process.on('SIGINT', async () => {
   logger.info('Received SIGINT, shutting down database...');
@@ -823,3 +879,5 @@ export {
   initializeDatabase, 
   getDatabase 
 };
+
+export default BrianNwaezikeDB;
