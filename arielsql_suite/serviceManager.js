@@ -39,7 +39,7 @@ import PayoutAgent from "../backend/agents/payoutAgent.js";
 import EnhancedShopifyAgent from "../backend/agents/shopifyAgent.js";
 import SocialAgent from "../backend/agents/socialAgent.js";
 
-export default class serviceManager {
+class ServiceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
@@ -141,6 +141,7 @@ export default class serviceManager {
 
     this.connectedClients = new Set();
     this.isInitialized = false;
+    this.backgroundInterval = null;
 
     this._setupApiRoutes();
     this._setupWebSocket();
@@ -707,4 +708,5 @@ export default class serviceManager {
   }
 }
 
-export { serviceManager };
+export { ServiceManager as serviceManager };
+export default ServiceManager;
