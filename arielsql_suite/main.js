@@ -4,7 +4,7 @@
  */
 
 import http from "http";
-import { ServiceManager } from "./services/ServiceManager.js";
+import { serviceManager } from "./serviceManager.js";
 import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
 import healthAgent from '../backend/agents/healthAgent.js';
 import winston from 'winston';
