@@ -66,7 +66,7 @@ class BrianNwaezikePayoutSystem {
         this.aiThreatDetector = new AIThreatDetector();
         this.aiSecurity = new AISecurityModule();
         this.crossChainBridge = new CrossChainBridge();
-        this.omnichainInterop = new OmnichainInterop();
+        this.OmnichainInterop = new OmnichainInteroperabilityEngine();
         this.shardingManager = new ShardingManager();
         this.scalabilityEngine = new InfiniteScalabilityEngine();
         this.consensusEngine = new EnergyEfficientConsensus();
