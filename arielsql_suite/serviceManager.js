@@ -6,7 +6,7 @@ import WebSocket, { WebSocketServer } from "ws";
 
 // === Core Blockchain Systems ===
 import BrianNwaezikeChain from "../backend/blockchain/BrianNwaezikeChain.js";
-import BrianNwaezikePayoutSystem from "../backend/blockchain/BrianNwaezikePayoutSystem.js";
+import { BrianNwaezikePayoutSystem } from "../backend/blockchain/BrianNwaezikePayoutSystem.js";
 
 // === Governance + Logging ===
 import { SovereignGovernance } from "../modules/governance-engine/index.js";
