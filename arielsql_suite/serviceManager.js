@@ -707,4 +707,4 @@ export class ServiceManager {
   }
 }
 
-export default ServiceManager;
+export { serviceManager };
