@@ -794,6 +794,9 @@ function getDatabase() {
   return dbInstance;
 }
 
+// Export Database class for other modules to use
+export { Database } from './path-to-database-class.js'; // Adjust path as needed
+
 // Graceful shutdown handling
 process.on('SIGINT', async () => {
   logger.info('Received SIGINT, shutting down database...');
@@ -811,7 +814,7 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-// Fix: Export only once at the end of the file
+// Export only once at the end of the file
 export { 
   BrianNwaezikeDB, 
   DatabaseError, 
