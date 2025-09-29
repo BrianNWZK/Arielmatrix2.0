@@ -1292,10 +1292,4 @@ export default class BrianNwaezikeChain {
     }
 }
 
-Export { BrianNwaezikeChain };
-
-// CommonJS style export for compatibility
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = BrianNwaezikeChain;
-  module.exports.default = BrianNwaezikeChain;
-}
+     export { BrianNwaezikeChain };
