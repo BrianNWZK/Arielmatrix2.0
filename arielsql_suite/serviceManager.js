@@ -39,7 +39,7 @@ import PayoutAgent from "../backend/agents/payoutAgent.js";
 import EnhancedShopifyAgent from "../backend/agents/shopifyAgent.js";
 import SocialAgent from "../backend/agents/socialAgent.js";
 
-export class ServiceManager {
+export class serviceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
