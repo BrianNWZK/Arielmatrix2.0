@@ -9,6 +9,7 @@ import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
 import healthAgent from '../backend/agents/healthAgent.js';
 import winston from 'winston';
 import payoutAgent from "../backend/agents/payoutAgent.js";
+import { initializeDatabase } from '../backend/database/BrianNwaezikeDB.js';
 
 // Enhanced logger configuration
 const logger = winston.createLogger({
@@ -66,6 +67,31 @@ process.on('uncaughtException', (error) => {
   logger.error('🛑 Uncaught Exception:', error);
   process.exit(1);
 });
+
+/**
+ * Initialize Database System
+ */
+async function initializeDatabaseSystem() {
+  try {
+    logger.info("🗄️ Initializing BrianNwaezikeDB...");
+    const database = await initializeDatabase({
+      database: {
+        path: './data',
+        numberOfShards: 4,
+        backup: {
+          enabled: true,
+          retentionDays: 7
+        }
+      }
+    });
+    
+    logger.info("✅ BrianNwaezikeDB initialized successfully");
+    return database;
+  } catch (error) {
+    logger.error('❌ Database initialization failed:', error);
+    throw error;
+  }
+}
 
 /**
  * Initialize Blockchain System
@@ -233,7 +259,7 @@ async function startPayoutSystem() {
 /**
  * Setup graceful shutdown handlers
  */
-function setupGracefulShutdown(serviceManager, healthServer, blockchain) {
+function setupGracefulShutdown(serviceManager, healthServer, blockchain, database) {
   let isShuttingDown = false;
 
   async function shutdown(signal) {
@@ -255,6 +281,12 @@ function setupGracefulShutdown(serviceManager, healthServer, blockchain) {
         logger.info("🔴 ServiceManager stopped");
       }
 
+      // Close database connections
+      if (database && typeof database.close === 'function') {
+        await database.close();
+        logger.info("🔴 Database connections closed");
+      }
+
       // Close health server
       if (healthServer) {
         healthServer.close(() => {
@@ -268,140 +300,103 @@ function setupGracefulShutdown(serviceManager, healthServer, blockchain) {
         logger.info("🔴 Payout agent stopped");
       }
 
-      logger.info("✅ Graceful shutdown completed");
-      
-      // Give a moment for logs to flush
-      setTimeout(() => process.exit(0), 1000);
-      
+      logger.info("👋 Graceful shutdown completed");
+      process.exit(0);
     } catch (error) {
       logger.error("❌ Error during shutdown:", error);
       process.exit(1);
     }
   }
 
-  // Register signal handlers
-  process.on("SIGINT", () => shutdown('SIGINT'));
-  process.on("SIGTERM", () => shutdown('SIGTERM'));
-  
-  // Handle PM2/Graceful reload signals
-  process.on("SIGUSR2", () => shutdown('SIGUSR2'));
+  // Register shutdown handlers
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGUSR2', () => shutdown('SIGUSR2')); // For nodemon
 }
 
 /**
  * Main ArielSQL Suite startup function
  */
 async function startArielSQLSuite() {
-  let serviceManagerInstance = null;
-  
   try {
     logger.info("🚀 Starting ArielSQL Ultimate Suite (Phase 3 Mainnet Ready)...");
-    logger.info(`🌐 Environment: ${config.mainnet ? 'MAINNET' : 'TESTNET'}`);
-    logger.info(`🔧 Configuration:`, config);
+    logger.info("🌐 Environment: " + (config.mainnet ? "MAINNET" : "DEVELOPMENT"));
+    logger.info("🔧 Configuration:", { port: config.port, healthPort: config.healthPort });
 
-    // 1. Initialize Service Manager - FIXED: Use imported serviceManager
+    // Step 1: Initialize core systems
     logger.info("1. Initializing ServiceManager...");
-    serviceManagerInstance = new serviceManager(config);
-    await serviceManagerInstance.initialize();
+    const manager = new serviceManager();
+    await manager.start();
 
-    // 2. Initialize Blockchain
-    logger.info("2. Initializing Blockchain...");
+    logger.info("2. Initializing Database System...");
+    const database = await initializeDatabaseSystem();
+
+    logger.info("3. Initializing Blockchain System...");
     const blockchain = await initializeBlockchain();
 
-    // 3. Register all services
-    logger.info("3. Registering services...");
-    const registeredCount = await registerAllServices(serviceManagerInstance);
-
-    // 4. Start Payout System
-    logger.info("4. Starting payout system...");
-    const payoutStarted = await startPayoutSystem();
-
-    // 5. Start Health Server
-    logger.info("5. Starting health server...");
+    logger.info("4. Starting Health Monitoring...");
     const healthServer = startHealthServer();
 
-    // 6. Start Service Manager
-    logger.info("6. Starting ServiceManager...");
-    serviceManagerInstance.start();
+    logger.info("5. Registering Services...");
+    const registeredServices = await registerAllServices(manager);
 
-    // 7. Setup graceful shutdown
-    logger.info("7. Setting up graceful shutdown...");
-    setupGracefulShutdown(serviceManagerInstance, healthServer, blockchain);
+    logger.info("6. Starting Payout System...");
+    const payoutStarted = await startPayoutSystem();
 
-    // Final startup message
-    logger.info("🎉 ArielSQL Suite started successfully!");
-    logger.info(`📊 Services: ${registeredCount} registered`);
-    logger.info(`💰 Payouts: ${payoutStarted ? 'Active' : 'Inactive'}`);
-    logger.info(`🌐 API: http://localhost:${config.port}`);
-    logger.info(`🩺 Health: http://localhost:${config.healthPort}/health`);
-    logger.info(`🔗 Mainnet: ${config.mainnet}`);
+    // Step 2: Setup graceful shutdown
+    setupGracefulShutdown(manager, healthServer, blockchain, database);
+
+    // Step 3: Final startup confirmation
+    logger.info("🎉 ArielSQL Suite started successfully!", {
+      services: registeredServices,
+      payoutActive: payoutStarted,
+      blockchain: blockchain ? "active" : "inactive",
+      database: database ? "active" : "inactive",
+      healthPort: config.healthPort,
+      mainnet: config.mainnet
+    });
 
     return {
-      serviceManager: serviceManagerInstance,
+      serviceManager: manager,
+      database,
       blockchain,
-      healthServer,
-      config
+      healthServer
     };
 
   } catch (error) {
-    logger.error("❌ Failed to start ArielSQL Suite:", error);
-    
-    // Attempt graceful shutdown on startup failure
-    try {
-      if (serviceManagerInstance && typeof serviceManagerInstance.stop === 'function') {
-        await serviceManagerInstance.stop();
-      }
-    } catch (shutdownError) {
-      logger.error("❌ Error during startup failure shutdown:", shutdownError);
-    }
-    
-    process.exit(1);
+    logger.error("💥 Failed to start ArielSQL Suite:", error);
+    throw error;
   }
 }
 
 /**
- * Main startup function - Entry point
+ * Main application startup
  */
 async function start() {
   try {
-    console.log("🚀 Starting ArielMatrix2.0 + BwaeziChain...");
+    await startArielSQLSuite();
     
-    // Start the complete ArielSQL Suite
-    const suite = await startArielSQLSuite();
-    
-    console.log("✅ All systems operational and ready for production");
-    console.log(`🌐 Mainnet Mode: ${config.mainnet}`);
-    console.log(`🔗 Service Manager: http://localhost:${config.port}`);
-    console.log(`🩺 Health Checks: http://localhost:${config.healthPort}/health`);
-
-    return suite;
+    // Keep the process alive
+    setInterval(() => {
+      // Heartbeat logging
+      if (Math.random() < 0.01) { // Log approximately 1% of the time
+        logger.debug("💓 System heartbeat");
+      }
+    }, 60000); // Every minute
 
   } catch (error) {
-    console.error('❌ Failed to start application:', error);
+    logger.error("💥 Fatal error during startup:", error);
     process.exit(1);
   }
 }
 
 // Export for testing and module usage
-export { 
-  start, 
-  startArielSQLSuite, 
-  registerAllServices,
-  initializeBlockchain,
-  setupGracefulShutdown 
-};
-
-export default {
-  start,
-  startArielSQLSuite,
-  registerAllServices,
-  initializeBlockchain,
-  config
-};
+export { startArielSQLSuite, config, logger };
 
 // Start the application if this is the main module
-if (import.meta.url === `file://${process.argv[1]}` || require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   start().catch(error => {
-    console.error('💥 Critical startup failure:', error);
+    logger.error("💥 Unhandled startup error:", error);
     process.exit(1);
   });
 }
