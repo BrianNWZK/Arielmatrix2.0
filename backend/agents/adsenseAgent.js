@@ -929,7 +929,7 @@ class GlobalAdExchangeIntegrator {
 }
 
 // Enhanced AdSense Agent Class - FIXED: Proper constructor export
-export class AdSenseAgent {
+export class AdsenseAgent {
   constructor(config = {}, logger = console, db = null) {
     this.config = {
       REVENUE_SHARE: config.revenueShare || 0.75,
@@ -1302,4 +1302,4 @@ export const adsenseAgent = async (CONFIG, logger, db = null) => {
 };
 
 // Default export the class for proper instantiation
-export default AdSenseAgent;
+export default AdsenseAgent;
