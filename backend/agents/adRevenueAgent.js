@@ -921,4 +921,4 @@ export default class AdRevenueAgent {
 }
 
 // Export agent and status
-export { adRevenueStatus };
+export { AdRevenueAgent };
