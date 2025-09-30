@@ -14,49 +14,49 @@ export const configAgent = async (CONFIG) => {
 
     if (CONFIG.enableCrypto) {
       const cryptoResult = await cryptoAgent(CONFIG.crypto);
-      ServiceManager.register('cryptoAgent', cryptoResult);
+      serviceManager.register('cryptoAgent', cryptoResult);
       results.crypto = cryptoResult;
     }
 
     if (CONFIG.enableShopify) {
       const shopifyResult = await shopifyAgent(CONFIG.shopify);
-      ServiceManager.register('shopifyAgent', shopifyResult);
+      serviceManager.register('shopifyAgent', shopifyResult);
       results.shopify = shopifyResult;
     }
 
     if (CONFIG.enableSocial) {
       const socialResult = await socialAgent(CONFIG.social);
-      ServiceManager.register('socialAgent', socialResult);
+      serviceManager.register('socialAgent', socialResult);
       results.social = socialResult;
     }
 
     if (CONFIG.enableForex) {
       const forexResult = await forexSignalAgent(CONFIG.forex);
-      ServiceManager.register('forexSignalAgent', forexResult);
+      serviceManager.register('forexSignalAgent', forexResult);
       results.forex = forexResult;
     }
 
     if (CONFIG.enableData) {
       const dataResult = await dataAgent(CONFIG.data);
-      ServiceManager.register('dataAgent', dataResult);
+      serviceManager.register('dataAgent', dataResult);
       results.data = dataResult;
     }
 
     if (CONFIG.enableAdsense) {
       const adsenseResult = await adsenseAgent(CONFIG.adsense);
-      ServiceManager.register('adsenseAgent', adsenseResult);
+      serviceManager.register('adsenseAgent', adsenseResult);
       results.adsense = adsenseResult;
     }
 
     if (CONFIG.enableAdRevenue) {
       const adRevenueResult = await adRevenueAgent(CONFIG.adRevenue);
-      ServiceManager.register('adRevenueAgent', adRevenueResult);
+      serviceManager.register('adRevenueAgent', adRevenueResult);
       results.adRevenue = adRevenueResult;
     }
 
     if (CONFIG.enableAutonomousAI) {
       const aiResult = await autonomousAIEngine(CONFIG.autonomousAI);
-      ServiceManager.register('autonomousAIEngine', aiResult);
+      serviceManager.register('autonomousAIEngine', aiResult);
       results.autonomousAI = aiResult;
     }
 
