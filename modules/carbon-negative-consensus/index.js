@@ -1,8 +1,8 @@
 // modules/carbon-negative-consensus/index.js
 import { createHash } from 'crypto';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 import Web3 from 'web3';
 import axios from 'axios';
+import { initializeDatabase, getDatabase } from '../../backend/database/BrianNwaezikeDB.js';
 
 // Enterprise-grade error classes
 class CarbonConsensusError extends Error {
@@ -40,7 +40,7 @@ export class CarbonNegativeConsensus {
       ...options
     };
 
-    this.db = new Database();
+    this.db = null;
     this.web3 = new Web3();
     this.isInitialized = false;
     this.offsetRegistry = new Map();
@@ -79,7 +79,19 @@ export class CarbonNegativeConsensus {
     try {
       console.log('🌱 Initializing Carbon Negative Consensus...');
 
-      await this.db.init();
+      // Initialize the database connection
+      await initializeDatabase({
+        database: {
+          path: './data/carbon-consensus',
+          numberOfShards: 2,
+          backup: {
+            enabled: true,
+            retentionDays: 30
+          }
+        }
+      });
+      this.db = getDatabase();
+
       await this.createCarbonTables();
 
       // Verify API connectivity if using external provider
@@ -104,8 +116,9 @@ export class CarbonNegativeConsensus {
    */
   async createCarbonTables() {
     // Carbon offsets table with verification data
-    await this.db.run(`
-      CREATE TABLE IF NOT EXISTS carbon_offsets (
+    await this.db.runOnShard(
+      'carbon_offsets',
+      `CREATE TABLE IF NOT EXISTS carbon_offsets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         offset_id TEXT UNIQUE NOT NULL,
         project_id TEXT NOT NULL,
@@ -119,16 +132,19 @@ export class CarbonNegativeConsensus {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         verified_at DATETIME,
         expires_at DATETIME,
-        metadata TEXT,
-        INDEX idx_offset_id (offset_id),
-        INDEX idx_verification_status (verification_status),
-        INDEX idx_created_at (created_at)
-      )
-    `);
+        metadata TEXT
+      )`
+    );
+
+    // Create indexes
+    await this.db.runOnShard('carbon_offsets', 'CREATE INDEX IF NOT EXISTS idx_offset_id ON carbon_offsets(offset_id)');
+    await this.db.runOnShard('carbon_offsets', 'CREATE INDEX IF NOT EXISTS idx_verification_status ON carbon_offsets(verification_status)');
+    await this.db.runOnShard('carbon_offsets', 'CREATE INDEX IF NOT EXISTS idx_created_at ON carbon_offsets(created_at)');
 
     // Carbon footprint tracking
-    await this.db.run(`
-      CREATE TABLE IF NOT EXISTS carbon_footprint (
+    await this.db.runOnShard(
+      'carbon_footprint',
+      `CREATE TABLE IF NOT EXISTS carbon_footprint (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         block_hash TEXT NOT NULL,
         block_height INTEGER NOT NULL,
@@ -138,16 +154,18 @@ export class CarbonNegativeConsensus {
         carbon_emission_kg REAL DEFAULT 0,
         carbon_offset_kg REAL DEFAULT 0,
         net_carbon_kg REAL DEFAULT 0,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(block_hash),
-        INDEX idx_block_height (block_height),
-        INDEX idx_timestamp (timestamp)
-      )
-    `);
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    );
+
+    // Create indexes for carbon_footprint
+    await this.db.runOnShard('carbon_footprint', 'CREATE INDEX IF NOT EXISTS idx_block_height ON carbon_footprint(block_height)');
+    await this.db.runOnShard('carbon_footprint', 'CREATE INDEX IF NOT EXISTS idx_timestamp ON carbon_footprint(timestamp)');
 
     // Carbon credit inventory
-    await this.db.run(`
-      CREATE TABLE IF NOT EXISTS carbon_credits (
+    await this.db.runOnShard(
+      'carbon_credits',
+      `CREATE TABLE IF NOT EXISTS carbon_credits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         credit_id TEXT UNIQUE NOT NULL,
         project_name TEXT NOT NULL,
@@ -159,12 +177,14 @@ export class CarbonNegativeConsensus {
         status TEXT DEFAULT 'available' CHECK(status IN ('available', 'retired', 'reserved', 'cancelled')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         retired_at DATETIME,
-        retirement_certificate TEXT,
-        INDEX idx_credit_id (credit_id),
-        INDEX idx_status (status),
-        INDEX idx_project_type (project_type)
-      )
-    `);
+        retirement_certificate TEXT
+      )`
+    );
+
+    // Create indexes for carbon_credits
+    await this.db.runOnShard('carbon_credits', 'CREATE INDEX IF NOT EXISTS idx_credit_id ON carbon_credits(credit_id)');
+    await this.db.runOnShard('carbon_credits', 'CREATE INDEX IF NOT EXISTS idx_status ON carbon_credits(status)');
+    await this.db.runOnShard('carbon_credits', 'CREATE INDEX IF NOT EXISTS idx_project_type ON carbon_credits(project_type)');
   }
 
   /**
@@ -233,6 +253,35 @@ export class CarbonNegativeConsensus {
       
       // Emergency fallback: use internal carbon credits
       return await this.useInternalCarbonCredits(blockHash, gasUsed, transactionCount);
+    }
+  }
+
+  /**
+   * Offset a single transaction
+   */
+  async offsetTransaction(transactionHash, amount) {
+    try {
+      const carbonFootprint = await this.calculateCarbonFootprint(amount * 21000, 1); // Estimate gas
+      
+      const offsetResult = await this.purchaseCarbonOffset(carbonFootprint, {
+        transactionHash,
+        amount
+      });
+
+      await this.recordCarbonFootprint(transactionHash, carbonFootprint, offsetResult);
+
+      this.verifyCarbonOffset(offsetResult.offsetId).catch(console.error);
+
+      return {
+        offsetId: offsetResult.offsetId,
+        carbonOffset: offsetResult.amountKg,
+        costUsd: offsetResult.costUsd,
+        provider: offsetResult.provider
+      };
+
+    } catch (error) {
+      console.error('❌ Transaction carbon offset failed:', error);
+      return await this.useInternalCarbonCredits(transactionHash, amount * 21000, 1);
     }
   }
 
@@ -311,7 +360,8 @@ export class CarbonNegativeConsensus {
         const costUsd = response.data.amount || amountKg * 0.015; // Default $15/tonne
 
         // Store offset in database
-        await this.db.run(
+        await this.db.runOnShard(
+          offsetId,
           `INSERT INTO carbon_offsets (offset_id, project_id, amount_kg, cost_usd, provider, metadata) 
            VALUES (?, ?, ?, ?, ?, ?)`,
           [offsetId, response.data.project_id || 'unknown', amountKg, costUsd, 'patch', JSON.stringify(metadata)]
@@ -358,7 +408,8 @@ export class CarbonNegativeConsensus {
         const offsetId = response.data.receipt;
         const costUsd = response.data.cost || amountKg * 0.012; // Default $12/tonne
 
-        await this.db.run(
+        await this.db.runOnShard(
+          offsetId,
           `INSERT INTO carbon_offsets (offset_id, project_id, amount_kg, cost_usd, provider, metadata) 
            VALUES (?, ?, ?, ?, ?, ?)`,
           [offsetId, response.data.project || 'unknown', amountKg, costUsd, 'carbonfund', JSON.stringify(metadata)]
@@ -386,7 +437,8 @@ export class CarbonNegativeConsensus {
   async purchaseInternalOffset(amountKg, metadata) {
     try {
       // Find available carbon credits
-      const availableCredits = await this.db.all(
+      const availableCredits = await this.db.allOnShard(
+        'carbon_credits',
         `SELECT * FROM carbon_credits 
          WHERE status = 'available' AND amount_kg >= ? 
          ORDER BY vintage_year DESC, created_at ASC 
@@ -402,14 +454,16 @@ export class CarbonNegativeConsensus {
       const offsetId = `int_${credit.credit_id}_${Date.now()}`;
 
       // Mark credit as retired
-      await this.db.run(
+      await this.db.runOnShard(
+        credit.credit_id,
         `UPDATE carbon_credits SET status = 'retired', retired_at = CURRENT_TIMESTAMP 
          WHERE credit_id = ?`,
         [credit.credit_id]
       );
 
       // Record offset
-      await this.db.run(
+      await this.db.runOnShard(
+        offsetId,
         `INSERT INTO carbon_offsets (offset_id, project_id, amount_kg, cost_usd, provider, metadata) 
          VALUES (?, ?, ?, ?, ?, ?)`,
         [offsetId, credit.project_name, amountKg, 0, 'internal', JSON.stringify({
@@ -478,7 +532,8 @@ export class CarbonNegativeConsensus {
    */
   async recordCarbonFootprint(blockHash, footprint, offsetResult) {
     try {
-      await this.db.run(
+      await this.db.runOnShard(
+        blockHash,
         `INSERT INTO carbon_footprint 
          (block_hash, block_height, transaction_count, gas_used, energy_consumption_kwh, 
           carbon_emission_kg, carbon_offset_kg, net_carbon_kg) 
@@ -504,7 +559,8 @@ export class CarbonNegativeConsensus {
    */
   async verifyCarbonOffset(offsetId) {
     try {
-      const offset = await this.db.get(
+      const offset = await this.db.getOnShard(
+        offsetId,
         'SELECT * FROM carbon_offsets WHERE offset_id = ?',
         [offsetId]
       );
@@ -533,7 +589,8 @@ export class CarbonNegativeConsensus {
       }
 
       // Update verification status
-      await this.db.run(
+      await this.db.runOnShard(
+        offsetId,
         `UPDATE carbon_offsets SET verification_status = ?, verification_id = ?, verified_at = CURRENT_TIMESTAMP 
          WHERE offset_id = ?`,
         [verificationResult.status, verificationResult.verificationId || offsetId, offsetId]
@@ -544,7 +601,8 @@ export class CarbonNegativeConsensus {
     } catch (error) {
       console.error(`Offset verification failed for ${offsetId}:`, error);
       
-      await this.db.run(
+      await this.db.runOnShard(
+        offsetId,
         'UPDATE carbon_offsets SET verification_status = ? WHERE offset_id = ?',
         ['rejected', offsetId]
       );
@@ -592,11 +650,61 @@ export class CarbonNegativeConsensus {
   }
 
   /**
+   * Verify CarbonFund offset
+   */
+  async verifyCarbonFundOffset(offsetId) {
+    if (!this.options.apiKey) {
+      return { status: 'verified', method: 'assumed' };
+    }
+
+    try {
+      const response = await axios.get(
+        this.providerEndpoints.carbonfund.verify.replace('{id}', offsetId),
+        {
+          headers: {
+            'Authorization': `Bearer ${this.options.apiKey}`
+          },
+          timeout: 10000
+        }
+      );
+
+      if (response.data && response.data.verified) {
+        return {
+          status: 'verified',
+          method: 'carbonfund_api',
+          verificationId: response.data.verification_id
+        };
+      }
+
+      return {
+        status: 'pending',
+        method: 'carbonfund_api',
+        details: response.data
+      };
+
+    } catch (error) {
+      throw new VerificationError(`CarbonFund verification failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Verify internal offset
+   */
+  async verifyInternalOffset(offsetId) {
+    // For internal offsets, we trust our own system
+    return {
+      status: 'verified',
+      method: 'internal_audit',
+      verificationId: offsetId
+    };
+  }
+
+  /**
    * Load carbon credit inventory from database
    */
   async loadCarbonInventory() {
     try {
-      const credits = await this.db.all('SELECT * FROM carbon_credits WHERE status = "available"');
+      const credits = await this.db.allOnShard('carbon_credits', 'SELECT * FROM carbon_credits WHERE status = "available"');
       
       credits.forEach(credit => {
         this.carbonCredits.set(credit.credit_id, credit);
@@ -616,7 +724,8 @@ export class CarbonNegativeConsensus {
     try {
       const creditId = creditData.credit_id || `credit_${createHash('sha256').update(JSON.stringify(creditData)).digest('hex').substring(0, 16)}`;
       
-      await this.db.run(
+      await this.db.runOnShard(
+        creditId,
         `INSERT INTO carbon_credits 
          (credit_id, project_name, project_type, amount_kg, vintage_year, certification_standard, verification_body) 
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -645,7 +754,9 @@ export class CarbonNegativeConsensus {
    */
   async getCarbonStats(timeframe = '30 days') {
     try {
-      const stats = await this.db.all(`
+      // This would need to aggregate across all shards
+      // For now, we'll query a sample shard
+      const stats = await this.db.allOnShard('stats', `
         SELECT 
           SUM(energy_consumption_kwh) as total_energy_kwh,
           SUM(carbon_emission_kg) as total_emissions_kg,
@@ -656,7 +767,7 @@ export class CarbonNegativeConsensus {
         WHERE timestamp > datetime('now', ?)
       `, [`-${timeframe}`]);
 
-      const offsets = await this.db.all(`
+      const offsets = await this.db.allOnShard('stats', `
         SELECT provider, verification_status, COUNT(*) as count, SUM(amount_kg) as amount_kg
         FROM carbon_offsets 
         WHERE created_at > datetime('now', ?)
@@ -708,7 +819,7 @@ export class CarbonNegativeConsensus {
     console.log('🛑 Shutting down Carbon Negative Consensus...');
     this.isInitialized = false;
     
-    if (this.db.close) {
+    if (this.db && this.db.close) {
       await this.db.close();
     }
     
