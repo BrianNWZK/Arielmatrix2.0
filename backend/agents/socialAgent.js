@@ -893,3 +893,6 @@ export function getStatus() {
 if (!isMainThread) {
     workerThreadFunction();
 }
+
+// Export agent and status
+        export { socialAgent };
