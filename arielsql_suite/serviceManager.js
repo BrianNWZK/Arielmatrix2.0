@@ -32,7 +32,7 @@ import { QuantumBrowserManager } from "../backend/agents/browserManager.js";
 import ConfigAgent from "../backend/agents/configAgent.js";
 import ContractDeployAgent from "../backend/agents/contractDeployAgent.js";
 import { EnhancedCryptoAgent } from "../backend/agents/cryptoAgent.js";
-import DataAgent from "../backend/agents/dataAgent.js";
+import dataAgent from "../backend/agents/dataAgent.js";
 import ForexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
