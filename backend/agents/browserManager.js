@@ -1123,4 +1123,4 @@ class QuantumBrowserManager {
 }
 
 export { QuantumBrowserManager as browserManager, IntelligenceGradeCaptchaSolver };
- export { browserManager };
+ 
