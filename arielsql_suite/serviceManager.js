@@ -131,7 +131,7 @@ class ServiceManager {
       config: new ConfigAgent({ mainnet: this.config.mainnet }),
       contractDeploy: new ContractDeployAgent({ mainnet: this.config.mainnet }),
       crypto: new EnhancedCryptoAgent({ mainnet: this.config.mainnet }),
-      data: new DataAgent({ mainnet: this.config.mainnet }),
+      data: new dataAgent({ mainnet: this.config.mainnet }),
       forex: new ForexSignalAgent({ mainnet: this.config.mainnet }),
       health: new HealthAgent({ mainnet: this.config.mainnet }),
       payout: new PayoutAgent({ mainnet: this.config.mainnet }),
