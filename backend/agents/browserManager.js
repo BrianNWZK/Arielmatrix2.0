@@ -631,7 +631,7 @@ class IntelligenceGradeCaptchaSolver {
  * @class QuantumBrowserManager
  * @description Advanced browser management system with intelligence-grade CAPTCHA solving
  */
-class default QuantumBrowserManager {
+class QuantumBrowserManager {
   constructor(config, logger) {
     this.config = config || {};
     this.logger = logger;
@@ -1122,5 +1122,4 @@ class default QuantumBrowserManager {
   // ... (all other utility methods remain the same)
 }
 
-export { QuantumBrowserManager as browserManager, IntelligenceGradeCaptchaSolver };
- 
+export { QuantumBrowserManager, IntelligenceGradeCaptchaSolver };
