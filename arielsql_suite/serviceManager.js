@@ -33,7 +33,7 @@ import ConfigAgent from "../backend/agents/configAgent.js";
 import ContractDeployAgent from "../backend/agents/contractDeployAgent.js";
 import { EnhancedCryptoAgent } from "../backend/agents/cryptoAgent.js";
 import dataAgent from "../backend/agents/dataAgent.js";
-import ForexSignalAgent from "../backend/agents/forexSignalAgent.js";
+import forexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
 import EnhancedShopifyAgent from "../backend/agents/shopifyAgent.js";
@@ -132,7 +132,7 @@ class ServiceManager {
       contractDeploy: new ContractDeployAgent({ mainnet: this.config.mainnet }),
       crypto: new EnhancedCryptoAgent({ mainnet: this.config.mainnet }),
       data: new dataAgent({ mainnet: this.config.mainnet }),
-      forex: new ForexSignalAgent({ mainnet: this.config.mainnet }),
+      forex: new forexSignalAgent({ mainnet: this.config.mainnet }),
       health: new HealthAgent({ mainnet: this.config.mainnet }),
       payout: new PayoutAgent({ mainnet: this.config.mainnet }),
       shopify: new EnhancedShopifyAgent({ mainnet: this.config.mainnet }),
