@@ -191,7 +191,7 @@ export class configAgent {
 }
 
 export const configAgent = async (CONFIG) => {
-  const agentSystem = new ConfigAgent(CONFIG);
+  const agentSystem = new configAgent(CONFIG);
   return await agentSystem.initialize();
 };
 
