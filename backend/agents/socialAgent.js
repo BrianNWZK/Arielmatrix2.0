@@ -155,7 +155,7 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
     'Sustainable Luxury', 'Digital Art', 'Virtual Real Estate'
 ];
 
-class SocialAgent {
+class socialAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
