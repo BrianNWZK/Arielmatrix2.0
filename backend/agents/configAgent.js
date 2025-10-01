@@ -2,7 +2,7 @@ import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import { EnhancedShopifyAgent } from './shopifyAgent.js';
 import { SocialAgent } from './socialAgent.js';
 import { ForexSignalAgent } from './forexSignalAgent.js';
-import { DataAgent } from './dataAgent.js';
+import { dataAgent } from './dataAgent.js';
 import { AdsenseAgent } from './adsenseAgent.js';
 import { AdRevenueAgent } from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
@@ -36,7 +36,7 @@ export class ConfigAgent {
       }
 
       if (this.CONFIG.enableData) {
-        await this.initializeDataAgent();
+        await this.initializedataAgent();
       }
 
       if (this.CONFIG.enableAdsense) {
@@ -94,7 +94,7 @@ export class ConfigAgent {
   }
 
   async initializeDataAgent() {
-    const dataAgent = new DataAgent(this.CONFIG.data);
+    const dataAgent = new dataAgent(this.CONFIG.data);
     await dataAgent.initialize();
     this.serviceManager.register('dataAgent', dataAgent);
     this.initializedAgents.set('data', dataAgent);
