@@ -155,7 +155,7 @@ const NEWS_SOURCES = {
     }
 };
 
-export default class ForexSignalAgent {
+export default class forexSignalAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
