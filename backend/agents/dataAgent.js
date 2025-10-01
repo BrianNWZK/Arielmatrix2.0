@@ -83,7 +83,7 @@ const CONTENT_CATEGORIES = [
     'environment', 'global'
 ];
 
-export default class DataAgent {
+export default class dataAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
