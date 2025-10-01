@@ -1,6 +1,6 @@
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import { EnhancedShopifyAgent } from './shopifyAgent.js';
-import { SocialAgent } from './socialAgent.js';
+import { socialAgent } from './socialAgent.js';
 import { forexSignalAgent } from './forexSignalAgent.js';
 import { dataAgent } from './dataAgent.js';
 import { AdsenseAgent } from './adsenseAgent.js';
@@ -8,7 +8,7 @@ import { AdRevenueAgent } from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import { serviceManager } from '../../arielsql_suite/serviceManager.js';
 
-export class ConfigAgent {
+export class configAgent {
   constructor(CONFIG) {
     this.CONFIG = CONFIG;
     this.initializedAgents = new Map();
@@ -78,7 +78,7 @@ export class ConfigAgent {
   }
 
   async initializeSocialAgent() {
-    const socialAgent = new SocialAgent(this.CONFIG.social);
+    const socialAgent = new socialAgent(this.CONFIG.social);
     await socialAgent.initialize();
     this.serviceManager.register('socialAgent', socialAgent);
     this.initializedAgents.set('social', socialAgent);
