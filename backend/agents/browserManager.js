@@ -1122,4 +1122,5 @@ class QuantumBrowserManager {
   // ... (all other utility methods remain the same)
 }
 
-export { browserManager as QuantumBrowserManager, IntelligenceGradeCaptchaSolver };
+export { QuantumBrowserManager as browserManager, IntelligenceGradeCaptchaSolver };
+ export { browserManager };
