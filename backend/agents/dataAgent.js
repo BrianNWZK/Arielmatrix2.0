@@ -829,3 +829,5 @@ export default class dataAgent {
     }
 }
 
+        // Export agent and status
+        export { dataAgent };  
