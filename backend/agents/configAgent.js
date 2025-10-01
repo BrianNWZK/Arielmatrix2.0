@@ -12,143 +12,277 @@ export class configAgent {
   constructor(CONFIG) {
     this.CONFIG = CONFIG;
     this.initializedAgents = new Map();
+    this.failedAgents = new Map();
     this.serviceManager = serviceManager;
+    this.systemStatus = {
+      environment: 'MAINNET',
+      system: 'Brian Nwaezike Enterprise Agent Platform',
+      version: '2.0.0',
+      deploymentId: `deploy-${Date.now()}`
+    };
   }
 
   async initialize() {
     try {
       console.log('🚀 Initializing Global Enterprise Agent System...');
+      console.log(`📋 Environment: ${this.systemStatus.environment}`);
+      console.log(`🕒 Deployment ID: ${this.systemStatus.deploymentId}`);
       
+      const initializationQueue = [];
+
       if (this.CONFIG.enableCrypto) {
-        await this.initializeCryptoAgent();
+        initializationQueue.push(this.initializeCryptoAgent());
       }
 
       if (this.CONFIG.enableShopify) {
-        await this.initializeShopifyAgent();
+        initializationQueue.push(this.initializeShopifyAgent());
       }
 
       if (this.CONFIG.enableSocial) {
-        await this.initializeSocialAgent();
+        initializationQueue.push(this.initializeSocialAgent());
       }
 
       if (this.CONFIG.enableForex) {
-        await this.initializeforexAgent();
+        initializationQueue.push(this.initializeForexAgent());
       }
 
       if (this.CONFIG.enableData) {
-        await this.initializedataAgent();
+        initializationQueue.push(this.initializeDataAgent());
       }
 
       if (this.CONFIG.enableAdsense) {
-        await this.initializeAdsenseAgent();
+        initializationQueue.push(this.initializeAdsenseAgent());
       }
 
       if (this.CONFIG.enableAdRevenue) {
-        await this.initializeAdRevenueAgent();
+        initializationQueue.push(this.initializeAdRevenueAgent());
       }
 
       if (this.CONFIG.enableAutonomousAI) {
-        await this.initializeAutonomousAI();
+        initializationQueue.push(this.initializeAutonomousAI());
       }
 
+      // Execute all initializations with individual error handling
+      const results = await Promise.allSettled(initializationQueue);
+      
       await this.verifySystemHealth();
-      console.log('✅ All enterprise agents initialized successfully');
+      
+      const successfulAgents = this.initializedAgents.size;
+      const failedAgents = this.failedAgents.size;
+      
+      console.log(`✅ Enterprise Agent System Initialization Complete`);
+      console.log(`📊 Successfully initialized: ${successfulAgents} agents`);
+      if (failedAgents > 0) {
+        console.log(`⚠️  Partially initialized: ${failedAgents} agents failed`);
+        console.log(`🔧 Failed agents: ${Array.from(this.failedAgents.keys()).join(', ')}`);
+      } else {
+        console.log(`🎉 All agents initialized successfully`);
+      }
       
       return this.getAgentResults();
     } catch (error) {
-      console.error('🔴 ConfigAgent Initialization Error:', error);
+      console.error('🔴 ConfigAgent Critical System Error:', error);
       throw this.enhanceError(error);
     }
   }
 
   async initializeCryptoAgent() {
-    const cryptoAgent = new EnhancedCryptoAgent(this.CONFIG.crypto);
-    await cryptoAgent.initialize();
-    this.serviceManager.register('cryptoAgent', cryptoAgent);
-    this.initializedAgents.set('crypto', cryptoAgent);
-    console.log('✅ EnhancedCryptoAgent initialized for global trading');
+    try {
+      const cryptoAgent = new EnhancedCryptoAgent(this.CONFIG.crypto);
+      await cryptoAgent.initialize();
+      this.serviceManager.register('cryptoAgent', cryptoAgent);
+      this.initializedAgents.set('crypto', cryptoAgent);
+      console.log('✅ EnhancedCryptoAgent initialized for global trading');
+      return { agent: 'crypto', status: 'success' };
+    } catch (error) {
+      console.error('🔴 EnhancedCryptoAgent initialization failed:', error.message);
+      this.failedAgents.set('crypto', error);
+      return { agent: 'crypto', status: 'failed', error: error.message };
+    }
   }
 
   async initializeShopifyAgent() {
-    const shopifyAgent = new EnhancedShopifyAgent(this.CONFIG.shopify);
-    await shopifyAgent.initialize();
-    this.serviceManager.register('shopifyAgent', shopifyAgent);
-    this.initializedAgents.set('shopify', shopifyAgent);
-    console.log('✅ EnhancedShopifyAgent initialized for e-commerce operations');
+    try {
+      const shopifyAgent = new EnhancedShopifyAgent(this.CONFIG.shopify);
+      await shopifyAgent.initialize();
+      this.serviceManager.register('shopifyAgent', shopifyAgent);
+      this.initializedAgents.set('shopify', shopifyAgent);
+      console.log('✅ EnhancedShopifyAgent initialized for e-commerce operations');
+      return { agent: 'shopify', status: 'success' };
+    } catch (error) {
+      console.error('🔴 EnhancedShopifyAgent initialization failed:', error.message);
+      this.failedAgents.set('shopify', error);
+      return { agent: 'shopify', status: 'failed', error: error.message };
+    }
   }
 
   async initializeSocialAgent() {
-    const socialAgent = new socialAgent(this.CONFIG.social);
-    await socialAgent.initialize();
-    this.serviceManager.register('socialAgent', socialAgent);
-    this.initializedAgents.set('social', socialAgent);
-    console.log('✅ SocialAgent initialized for global revenue generation');
+    try {
+      const socialAgentInstance = new socialAgent(this.CONFIG.social);
+      await socialAgentInstance.initialize();
+      this.serviceManager.register('socialAgent', socialAgentInstance);
+      this.initializedAgents.set('social', socialAgentInstance);
+      console.log('✅ SocialAgent initialized for global revenue generation');
+      return { agent: 'social', status: 'success' };
+    } catch (error) {
+      console.error('🔴 SocialAgent initialization failed:', error.message);
+      this.failedAgents.set('social', error);
+      return { agent: 'social', status: 'failed', error: error.message };
+    }
   }
 
   async initializeForexAgent() {
-    const forexAgent = new ForexSignalAgent(this.CONFIG.forex);
-    await forexAgent.initialize();
-    this.serviceManager.register('forexSignalAgent', forexAgent);
-    this.initializedAgents.set('forex', forexAgent);
-    console.log('✅ ForexSignalAgent initialized for global trading signals');
+    try {
+      const forexAgentInstance = new forexSignalAgent(this.CONFIG.forex);
+      await forexAgentInstance.initialize();
+      this.serviceManager.register('forexSignalAgent', forexAgentInstance);
+      this.initializedAgents.set('forex', forexAgentInstance);
+      console.log('✅ ForexSignalAgent initialized for global trading signals');
+      return { agent: 'forex', status: 'success' };
+    } catch (error) {
+      console.error('🔴 ForexSignalAgent initialization failed:', error.message);
+      this.failedAgents.set('forex', error);
+      return { agent: 'forex', status: 'failed', error: error.message };
+    }
   }
 
   async initializeDataAgent() {
-    const dataAgent = new dataAgent(this.CONFIG.data);
-    await dataAgent.initialize();
-    this.serviceManager.register('dataAgent', dataAgent);
-    this.initializedAgents.set('data', dataAgent);
-    console.log('✅ DataAgent initialized for zero-cost data access');
+    try {
+      const dataAgentInstance = new dataAgent(this.CONFIG.data);
+      await dataAgentInstance.initialize();
+      this.serviceManager.register('dataAgent', dataAgentInstance);
+      this.initializedAgents.set('data', dataAgentInstance);
+      console.log('✅ DataAgent initialized for zero-cost data access');
+      return { agent: 'data', status: 'success' };
+    } catch (error) {
+      console.error('🔴 DataAgent initialization failed:', error.message);
+      this.failedAgents.set('data', error);
+      return { agent: 'data', status: 'failed', error: error.message };
+    }
   }
 
   async initializeAdsenseAgent() {
-    const adsenseAgent = new AdsenseAgent(this.CONFIG.adsense);
-    await adsenseAgent.initialize();
-    this.serviceManager.register('adsenseAgent', adsenseAgent);
-    this.initializedAgents.set('adsense', adsenseAgent);
-    console.log('✅ AdsenseAgent initialized for ad revenue optimization');
+    try {
+      const adsenseAgentInstance = new AdsenseAgent(this.CONFIG.adsense);
+      await adsenseAgentInstance.initialize();
+      this.serviceManager.register('adsenseAgent', adsenseAgentInstance);
+      this.initializedAgents.set('adsense', adsenseAgentInstance);
+      console.log('✅ AdsenseAgent initialized for ad revenue optimization');
+      return { agent: 'adsense', status: 'success' };
+    } catch (error) {
+      console.error('🔴 AdsenseAgent initialization failed:', error.message);
+      this.failedAgents.set('adsense', error);
+      return { agent: 'adsense', status: 'failed', error: error.message };
+    }
   }
 
   async initializeAdRevenueAgent() {
-    const adRevenueAgent = new AdRevenueAgent(this.CONFIG.adRevenue);
-    await adRevenueAgent.initialize();
-    this.serviceManager.register('adRevenueAgent', adRevenueAgent);
-    this.initializedAgents.set('adRevenue', adRevenueAgent);
-    console.log('✅ AdRevenueAgent initialized for revenue tracking');
+    try {
+      const adRevenueAgentInstance = new AdRevenueAgent(this.CONFIG.adRevenue);
+      await adRevenueAgentInstance.initialize();
+      this.serviceManager.register('adRevenueAgent', adRevenueAgentInstance);
+      this.initializedAgents.set('adRevenue', adRevenueAgentInstance);
+      console.log('✅ AdRevenueAgent initialized for revenue tracking');
+      return { agent: 'adRevenue', status: 'success' };
+    } catch (error) {
+      console.error('🔴 AdRevenueAgent initialization failed:', error.message);
+      this.failedAgents.set('adRevenue', error);
+      return { agent: 'adRevenue', status: 'failed', error: error.message };
+    }
   }
 
   async initializeAutonomousAI() {
-    const autonomousAI = new AutonomousAIEngine(this.CONFIG.autonomousAI);
-    await autonomousAI.initialize();
-    this.serviceManager.register('autonomousAIEngine', autonomousAI);
-    this.initializedAgents.set('autonomousAI', autonomousAI);
-    console.log('🧠 AutonomousAIEngine initialized for global AI operations');
+    try {
+      const autonomousAIInstance = new AutonomousAIEngine(this.CONFIG.autonomousAI);
+      await autonomousAIInstance.initialize();
+      this.serviceManager.register('autonomousAIEngine', autonomousAIInstance);
+      this.initializedAgents.set('autonomousAI', autonomousAIInstance);
+      console.log('🧠 AutonomousAIEngine initialized for global AI operations');
+      return { agent: 'autonomousAI', status: 'success' };
+    } catch (error) {
+      console.error('🔴 AutonomousAIEngine initialization failed:', error.message);
+      this.failedAgents.set('autonomousAI', error);
+      return { agent: 'autonomousAI', status: 'failed', error: error.message };
+    }
   }
 
   async verifySystemHealth() {
     const healthChecks = [];
+    const criticalAgents = ['crypto', 'shopify', 'autonomousAI']; // Define critical agents
     
     for (const [agentName, agent] of this.initializedAgents) {
-      if (typeof agent.healthCheck === 'function') {
-        const health = await agent.healthCheck();
-        healthChecks.push({ agent: agentName, status: health });
+      try {
+        if (typeof agent.healthCheck === 'function') {
+          const health = await agent.healthCheck();
+          healthChecks.push({ 
+            agent: agentName, 
+            status: health,
+            critical: criticalAgents.includes(agentName)
+          });
+        } else {
+          healthChecks.push({ 
+            agent: agentName, 
+            status: { healthy: true, message: 'No health check method' },
+            critical: criticalAgents.includes(agentName)
+          });
+        }
+      } catch (error) {
+        healthChecks.push({ 
+          agent: agentName, 
+          status: { healthy: false, message: error.message },
+          critical: criticalAgents.includes(agentName)
+        });
       }
     }
 
-    const failedChecks = healthChecks.filter(check => !check.status.healthy);
-    if (failedChecks.length > 0) {
-      throw new Error(`System health check failed for: ${failedChecks.map(f => f.agent).join(', ')}`);
+    const failedCriticalChecks = healthChecks.filter(
+      check => check.critical && !check.status.healthy
+    );
+    
+    const failedNonCriticalChecks = healthChecks.filter(
+      check => !check.critical && !check.status.healthy
+    );
+
+    if (failedCriticalChecks.length > 0) {
+      const criticalAgentNames = failedCriticalChecks.map(f => f.agent).join(', ');
+      throw new Error(`Critical system health check failed for: ${criticalAgentNames}`);
     }
 
-    console.log('📊 System Health: All agents operational');
+    if (failedNonCriticalChecks.length > 0) {
+      console.warn(`⚠️  Non-critical health check failures: ${failedNonCriticalChecks.map(f => f.agent).join(', ')}`);
+    }
+
+    const healthyCount = healthChecks.filter(check => check.status.healthy).length;
+    console.log(`📊 System Health: ${healthyCount}/${healthChecks.length} agents operational`);
+    
     return healthChecks;
   }
 
   getAgentResults() {
-    const results = {};
+    const results = {
+      system: this.getSystemStatus(),
+      agents: {}
+    };
+    
     for (const [key, agent] of this.initializedAgents) {
-      results[key] = agent.getStatus ? agent.getStatus() : { initialized: true, timestamp: new Date().toISOString() };
+      results.agents[key] = agent.getStatus ? agent.getStatus() : { 
+        initialized: true, 
+        timestamp: new Date().toISOString(),
+        status: 'operational'
+      };
     }
+    
+    if (this.failedAgents.size > 0) {
+      results.failedAgents = {};
+      for (const [key, error] of this.failedAgents) {
+        results.failedAgents[key] = {
+          initialized: false,
+          error: error.message,
+          timestamp: new Date().toISOString()
+        };
+      }
+    }
+    
     return results;
   }
 
@@ -157,17 +291,71 @@ export class configAgent {
     enhancedError.originalError = error;
     enhancedError.timestamp = new Date().toISOString();
     enhancedError.systemStatus = this.getSystemStatus();
+    enhancedError.failedAgents = Array.from(this.failedAgents.keys());
+    enhancedError.stack = error.stack;
     return enhancedError;
   }
 
   getSystemStatus() {
     return {
-      totalAgents: this.initializedAgents.size,
+      totalAgents: this.initializedAgents.size + this.failedAgents.size,
+      successfulAgents: this.initializedAgents.size,
+      failedAgents: this.failedAgents.size,
       activeAgents: Array.from(this.initializedAgents.keys()),
+      failedAgentNames: Array.from(this.failedAgents.keys()),
       timestamp: new Date().toISOString(),
-      environment: 'MAINNET',
-      system: 'Brian Nwaezike Enterprise Agent Platform'
+      ...this.systemStatus
     };
+  }
+
+  getAgent(agentName) {
+    return this.initializedAgents.get(agentName) || null;
+  }
+
+  isAgentHealthy(agentName) {
+    const agent = this.initializedAgents.get(agentName);
+    if (!agent) return false;
+    
+    if (typeof agent.healthCheck === 'function') {
+      return agent.healthCheck().then(health => health.healthy).catch(() => false);
+    }
+    
+    return true;
+  }
+
+  async restartAgent(agentName) {
+    console.log(`🔄 Attempting to restart agent: ${agentName}`);
+    
+    const agent = this.initializedAgents.get(agentName);
+    if (agent && typeof agent.shutdown === 'function') {
+      await agent.shutdown().catch(error => {
+        console.warn(`⚠️  Error during ${agentName} shutdown:`, error.message);
+      });
+    }
+    
+    this.initializedAgents.delete(agentName);
+    this.failedAgents.delete(agentName);
+    
+    switch (agentName) {
+      case 'crypto':
+        return this.initializeCryptoAgent();
+      case 'shopify':
+        return this.initializeShopifyAgent();
+      case 'social':
+        return this.initializeSocialAgent();
+      case 'forex':
+        return this.initializeForexAgent();
+      case 'data':
+        return this.initializeDataAgent();
+      case 'adsense':
+        return this.initializeAdsenseAgent();
+      case 'adRevenue':
+        return this.initializeAdRevenueAgent();
+      case 'autonomousAI':
+        return this.initializeAutonomousAI();
+      default:
+        throw new Error(`Unknown agent: ${agentName}`);
+    }
   }
 
   async shutdown() {
@@ -178,7 +366,7 @@ export class configAgent {
       if (typeof agent.shutdown === 'function') {
         shutdownPromises.push(
           agent.shutdown().catch(error => {
-            console.error(`Error shutting down ${agentName}:`, error);
+            console.error(`Error shutting down ${agentName}:`, error.message);
           })
         );
       }
@@ -186,6 +374,7 @@ export class configAgent {
 
     await Promise.allSettled(shutdownPromises);
     this.initializedAgents.clear();
+    this.failedAgents.clear();
     console.log('✅ Enterprise agent system shutdown complete');
   }
 }
