@@ -1032,94 +1032,484 @@ class QuantumBrowserManager {
     };
   }
 
-  // ... (rest of the existing methods remain the same with minor enhancements)
-
   /**
-   * @method _startUptimeMonitoring
-   * @description Enhanced uptime monitoring with CAPTCHA statistics
+   * @method acquireContext
+   * @description Acquire browser context for operations
    */
-  _startUptimeMonitoring() {
-    setInterval(async () => {
-      this.usageStats.uptime = Date.now() - this.usageStats.launchTime;
+  async acquireContext(operationType = 'default') {
+    const contextId = `ctx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    
+    try {
+      const context = await this.browser.createBrowserContext();
+      const page = await context.newPage();
       
-      // Calculate real performance metrics
-      if (this.usageStats.totalOperations > 0) {
-        this.usageStats.performanceMetrics.successRate = 
-          (this.usageStats.successfulOperations / this.usageStats.totalOperations) * 100;
-      }
+      // Apply stealth enhancements
+      await this._applyStealthEnhancements(page);
       
-      // Update CAPTCHA success rate
-      if (this.captchaStats.totalAttempts > 0) {
-        this.usageStats.performanceMetrics.captchaSuccessRate = 
-          (this.captchaStats.successful / this.captchaStats.totalAttempts) * 100;
-      }
+      this.contexts.set(contextId, { context, page, operationType, acquiredAt: Date.now() });
+      this.usageStats.activeContexts++;
+      this.usageStats.totalAcquired++;
       
-      // Record health status on blockchain
-      if (this.usageStats.performanceMetrics.successRate < 90 || 
-          this.usageStats.performanceMetrics.captchaSuccessRate < 80) {
-        this.logger.warn('⚠️ Performance degradation detected');
-        await this._recordOperationOnChain('performance_degradation', {
-          successRate: this.usageStats.performanceMetrics.successRate,
-          captchaSuccessRate: this.usageStats.performanceMetrics.captchaSuccessRate,
-          timestamp: Date.now()
-        });
-      }
-      
-    }, 60000);
+      return { page, contextId };
+    } catch (error) {
+      this.logger.error(`Failed to acquire context: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
-   * Enhanced usage statistics including CAPTCHA data
+   * @method releaseContext
+   * @description Release browser context
+   */
+  async releaseContext(contextId) {
+    try {
+      const contextData = this.contexts.get(contextId);
+      if (contextData) {
+        await contextData.context.close();
+        this.contexts.delete(contextId);
+        this.usageStats.activeContexts--;
+        this.usageStats.totalReleased++;
+        this.usageStats.lastOperationTime = Date.now();
+      }
+    } catch (error) {
+      this.logger.error(`Failed to release context ${contextId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * @method getUsageStatistics
+   * @description Get comprehensive usage statistics
    */
   getUsageStatistics() {
-    const captchaStats = this.getCaptchaStatistics();
+    const now = Date.now();
+    this.usageStats.uptime = now - this.usageStats.launchTime;
     
+    if (this.usageStats.totalOperations > 0) {
+      this.usageStats.performanceMetrics.successRate = 
+        (this.usageStats.successfulOperations / this.usageStats.totalOperations) * 100;
+    }
+
     return {
       ...this.usageStats,
-      currentTime: Date.now(),
-      uptime: this.usageStats.launchTime ? Date.now() - this.usageStats.launchTime : 0,
-      captchaPerformance: captchaStats
+      captchaStats: this.getCaptchaStatistics(),
+      contexts: Array.from(this.contexts.entries()).map(([id, data]) => ({
+        id,
+        operationType: data.operationType,
+        acquiredAt: data.acquiredAt,
+        duration: now - data.acquiredAt
+      }))
     };
   }
 
-  // ... (all other existing methods remain unchanged)
+  /**
+   * @method _applyStealthEnhancements
+   * @description Apply advanced stealth enhancements to page
+   */
+  async _applyStealthEnhancements(page) {
+    // Remove webdriver property
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+      });
+    });
 
+    // Remove automation controlled
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'automationControlled', {
+        get: () => undefined,
+      });
+    });
+
+    // Override permissions
+    await page.evaluateOnNewDocument(() => {
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (parameters) => (
+        parameters.name === 'notifications' ?
+          Promise.resolve({ state: Notification.permission }) :
+          originalQuery(parameters)
+      );
+    });
+
+    // Override plugins
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+    });
+
+    // Override languages
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+      });
+    });
+
+    // Override platform
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'platform', {
+        get: () => 'Win32',
+      });
+    });
+
+    // Mock chrome runtime
+    await page.evaluateOnNewDocument(() => {
+      window.chrome = {
+        runtime: {},
+      };
+    });
+  }
+
+  /**
+   * @method _generateFingerprintProfiles
+   * @description Generate realistic browser fingerprint profiles
+   */
   _generateFingerprintProfiles() {
     return [
       {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         viewport: { width: 1920, height: 1080 },
-        language: 'en-US,en',
+        language: 'en-US,en;q=0.9',
         timezone: 'America/New_York',
-        platform: 'Win32',
-        hardwareConcurrency: 8,
-        deviceMemory: 8,
-        screenResolution: '1920x1080'
+        platform: 'Win32'
       },
       {
         userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         viewport: { width: 1440, height: 900 },
-        language: 'en-US,en',
+        language: 'en-US,en;q=0.9',
         timezone: 'America/Los_Angeles',
-        platform: 'MacIntel',
-        hardwareConcurrency: 12,
-        deviceMemory: 16,
-        screenResolution: '1440x900'
+        platform: 'MacIntel'
       },
       {
         userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         viewport: { width: 1366, height: 768 },
-        language: 'en-US,en',
+        language: 'en-US,en;q=0.9',
         timezone: 'Europe/London',
-        platform: 'Linux x86_64',
-        hardwareConcurrency: 4,
-        deviceMemory: 4,
-        screenResolution: '1366x768'
+        platform: 'Linux x86_64'
       }
     ];
   }
 
-  // ... (all other utility methods remain the same)
+  /**
+   * @method _getNextFingerprint
+   * @description Get next fingerprint profile for rotation
+   */
+  _getNextFingerprint() {
+    const fingerprint = this.fingerprintProfiles[this.currentFingerprintIndex];
+    this.currentFingerprintIndex = (this.currentFingerprintIndex + 1) % this.fingerprintProfiles.length;
+    return fingerprint;
+  }
+
+  /**
+   * @method _getNextProxy
+   * @description Get next proxy for rotation
+   */
+  _getNextProxy() {
+    if (!this.config.PROXY_LIST) return 'direct://';
+    
+    const proxies = this.config.PROXY_LIST.split(',');
+    const proxy = proxies[this.proxyRotationIndex];
+    this.proxyRotationIndex = (this.proxyRotationIndex + 1) % proxies.length;
+    return proxy;
+  }
+
+  /**
+   * @method _rotateProxy
+   * @description Rotate proxy configuration
+   */
+  async _rotateProxy() {
+    if (!this.config.PROXY_LIST) return;
+    
+    const proxy = this._getNextProxy();
+    this.logger.info(`🔄 Rotating to proxy: ${proxy}`);
+    
+    // Update browser contexts with new proxy
+    for (const [contextId, contextData] of this.contexts.entries()) {
+      try {
+        await contextData.page.authenticate({
+          username: process.env.PROXY_USERNAME,
+          password: process.env.PROXY_PASSWORD
+        });
+      } catch (error) {
+        this.logger.error(`Failed to update proxy for context ${contextId}: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * @method _validateBrowserConnection
+   * @description Validate browser connection is active
+   */
+  async _validateBrowserConnection() {
+    try {
+      if (!this.browser) return false;
+      
+      const pages = await this.browser.pages();
+      return pages.length > 0;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * @method _verifyBlockchainConnectivity
+   * @description Verify blockchain connectivity
+   */
+  async _verifyBlockchainConnectivity() {
+    try {
+      const isConnected = await this.blockchain.testConnection();
+      if (!isConnected) {
+        throw new Error('Blockchain connectivity test failed');
+      }
+      this.logger.success('✅ Blockchain connectivity verified');
+    } catch (error) {
+      this.logger.error('❌ Blockchain connectivity test failed');
+      throw error;
+    }
+  }
+
+  /**
+   * @method _recordOperationOnChain
+   * @description Record operation on blockchain
+   */
+  async _recordOperationOnChain(operationType, data) {
+    try {
+      const operationHash = await this.blockchain.recordOperation({
+        type: operationType,
+        timestamp: Date.now(),
+        data: data,
+        browserId: this._getBrowserId(),
+        securityLevel: this._securityLevel
+      });
+      
+      return operationHash;
+    } catch (error) {
+      this.logger.warn(`Failed to record operation on blockchain: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * @method _executeEmergencyProtocol
+   * @description Execute emergency protocol for critical failures
+   */
+  async _executeEmergencyProtocol(error) {
+    this.logger.emergency('🚨 Executing emergency protocol');
+    
+    try {
+      // Close all contexts
+      for (const [contextId, contextData] of this.contexts.entries()) {
+        await contextData.context.close();
+      }
+      this.contexts.clear();
+
+      // Close browser
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
+      }
+
+      // Reset statistics
+      this.failureCount = 0;
+      this.usageStats.activeContexts = 0;
+
+      // Record emergency protocol execution
+      await this._recordOperationOnChain('emergency_protocol', {
+        error: error.message,
+        timestamp: Date.now(),
+        action: 'browser_reset'
+      });
+
+      this.logger.info('✅ Emergency protocol executed successfully');
+    } catch (protocolError) {
+      this.logger.error(`❌ Emergency protocol failed: ${protocolError.message}`);
+    }
+  }
+
+  /**
+   * @method _startUptimeMonitoring
+   * @description Start uptime monitoring
+   */
+  _startUptimeMonitoring() {
+    setInterval(() => {
+      this.usageStats.uptime = Date.now() - this.usageStats.launchTime;
+    }, 60000); // Update every minute
+  }
+
+  /**
+   * @method _getBrowserId
+   * @description Get unique browser identifier
+   */
+  _getBrowserId() {
+    return crypto.createHash('sha256')
+      .update(this.usageStats.launchTime + JSON.stringify(this.config))
+      .digest('hex');
+  }
+
+  /**
+   * @method _navigateWithEvasion
+   * @description Navigate with evasion techniques
+   */
+  async _navigateWithEvasion(page, url, options = {}) {
+    // Add random delays before navigation
+    await this._humanDelay(1000, 3000);
+    
+    // Use multiple navigation strategies
+    try {
+      await page.goto(url, {
+        waitUntil: options.waitUntil || 'networkidle2',
+        timeout: options.timeout || 30000
+      });
+    } catch (error) {
+      // Fallback navigation strategy
+      await page.evaluate((url) => window.location.href = url, url);
+      await page.waitForNavigation({ 
+        waitUntil: 'networkidle2', 
+        timeout: 30000 
+      });
+    }
+  }
+
+  /**
+   * @method _detectCaptcha
+   * @description Detect CAPTCHA presence on page
+   */
+  async _detectCaptcha(page) {
+    const captchaSelectors = [
+      '.g-recaptcha',
+      '.h-captcha',
+      'iframe[src*="recaptcha"]',
+      'iframe[src*="hcaptcha"]',
+      '.captcha-container',
+      '[class*="captcha"]'
+    ];
+
+    for (const selector of captchaSelectors) {
+      try {
+        const element = await page.$(selector);
+        if (element) {
+          return true;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @method _verifyLoginSuccess
+   * @description Verify login success
+   */
+  async _verifyLoginSuccess(page, serviceConfig) {
+    try {
+      // Check for dashboard elements
+      for (const selector of serviceConfig.selectors.dashboard) {
+        try {
+          await page.waitForSelector(selector, { timeout: 10000 });
+          return true;
+        } catch (error) {
+          continue;
+        }
+      }
+
+      // Check URL for success patterns
+      const currentUrl = page.url();
+      if (currentUrl.includes('dashboard') || 
+          currentUrl.includes('account') || 
+          !currentUrl.includes('login')) {
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * @method _humanDelay
+   * @description Generate human-like delay
+   */
+  async _humanDelay(min = 500, max = 2000) {
+    const delay = Math.random() * (max - min) + min;
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+
+  /**
+   * @method safeType
+   * @description Type text with error handling
+   */
+  async safeType(page, selectors, text) {
+    for (const selector of selectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        await page.click(selector, { delay: 100 });
+        await page.evaluate((selector) => {
+          document.querySelector(selector).value = '';
+        }, selector);
+        await page.type(selector, text, { delay: 50 + Math.random() * 50 });
+        return;
+      } catch (error) {
+        continue;
+      }
+    }
+    throw new Error(`No selector found for typing: ${selectors.join(', ')}`);
+  }
+
+  /**
+   * @method safeClick
+   * @description Click element with error handling
+   */
+  async safeClick(page, selectors) {
+    for (const selector of selectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        await page.click(selector, { 
+          delay: 50 + Math.random() * 100 
+        });
+        return;
+      } catch (error) {
+        continue;
+      }
+    }
+    throw new Error(`No selector found for clicking: ${selectors.join(', ')}`);
+  }
+
+  /**
+   * @method destroy
+   * @description Cleanup and destroy browser instance
+   */
+  async destroy() {
+    try {
+      // Close all contexts
+      for (const [contextId, contextData] of this.contexts.entries()) {
+        await contextData.context.close();
+      }
+      this.contexts.clear();
+
+      // Close browser
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
+      }
+
+      // Record shutdown
+      await this._recordOperationOnChain('browser_shutdown', {
+        timestamp: Date.now(),
+        uptime: this.usageStats.uptime,
+        totalOperations: this.usageStats.totalOperations
+      });
+
+      this.logger.info('✅ Quantum Browser destroyed successfully');
+    } catch (error) {
+      this.logger.error(`Failed to destroy browser: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
+// Export the class with proper ES module syntax
 export { QuantumBrowserManager, IntelligenceGradeCaptchaSolver };
+
+// Default export for convenience
+export default QuantumBrowserManager;
