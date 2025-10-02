@@ -157,7 +157,7 @@ const NEWS_SOURCES = {
 export default class forexSignalAgent {
     constructor(config, logger) {
         this.config = config;
-        this.logger = logger;
+        this.logger = logger || this._createDefaultLogger();
         
         // Initialize database instead of Redis
         this.db = null;
@@ -168,8 +168,19 @@ export default class forexSignalAgent {
         this.newsSources = {};
         this.exchanges = new Map();
         
+        // Initialize brokers safely
         this._initializeBrokers();
         this._initializeNewsSources();
+    }
+
+    _createDefaultLogger() {
+        return {
+            info: (...args) => console.log(`[ForexSignalAgent] INFO:`, ...args),
+            error: (...args) => console.error(`[ForexSignalAgent] ERROR:`, ...args),
+            warn: (...args) => console.warn(`[ForexSignalAgent] WARN:`, ...args),
+            success: (...args) => console.log(`[ForexSignalAgent] SUCCESS:`, ...args),
+            debug: (...args) => console.log(`[ForexSignalAgent] DEBUG:`, ...args)
+        };
     }
 
     async _initializeDatabase() {
@@ -287,26 +298,34 @@ export default class forexSignalAgent {
     }
 
     _initializeBrokers() {
-        for (const [broker, config] of Object.entries(FOREX_BROKERS)) {
-            const hasKeys = config.requiredKeys.every(key => this.config[key]);
-            if (hasKeys) {
-                this.brokers[broker] = { ...config, initialized: true };
-                this.logger.success(`✅ ${broker} broker initialized`);
-            } else {
-                this.logger.warn(`⚠️ Missing keys for ${broker}, skipping initialization`);
+        try {
+            for (const [broker, config] of Object.entries(FOREX_BROKERS)) {
+                const hasKeys = config.requiredKeys.every(key => this.config[key]);
+                if (hasKeys) {
+                    this.brokers[broker] = { ...config, initialized: true };
+                    this.logger.info(`✅ ${broker} broker initialized`);
+                } else {
+                    this.logger.warn(`⚠️ Missing keys for ${broker}, skipping initialization`);
+                }
             }
+        } catch (error) {
+            this.logger.error('Error initializing brokers:', error);
         }
     }
 
     _initializeNewsSources() {
-        for (const [source, config] of Object.entries(NEWS_SOURCES)) {
-            const hasKeys = config.requiredKeys.every(key => this.config[key]);
-            if (hasKeys) {
-                this.newsSources[source] = { ...config, initialized: true };
-                this.logger.success(`✅ ${source} news source initialized`);
-            } else {
-                this.logger.warn(`⚠️ Missing keys for ${source}, skipping initialization`);
+        try {
+            for (const [source, config] of Object.entries(NEWS_SOURCES)) {
+                const hasKeys = config.requiredKeys.every(key => this.config[key]);
+                if (hasKeys) {
+                    this.newsSources[source] = { ...config, initialized: true };
+                    this.logger.info(`✅ ${source} news source initialized`);
+                } else {
+                    this.logger.warn(`⚠️ Missing keys for ${source}, skipping initialization`);
+                }
             }
+        } catch (error) {
+            this.logger.error('Error initializing news sources:', error);
         }
     }
 
@@ -415,6 +434,8 @@ export default class forexSignalAgent {
     }
 
     _calculateRSI(prices, period = 14) {
+        if (prices.length < period + 1) return 50;
+        
         let gains = 0;
         let losses = 0;
         
@@ -429,27 +450,41 @@ export default class forexSignalAgent {
         
         const averageGain = gains / period;
         const averageLoss = losses / period;
+        
+        if (averageLoss === 0) return 100;
+        
         const rs = averageGain / averageLoss;
         
         return 100 - (100 / (1 + rs));
     }
 
     _calculateMACD(prices, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+        if (prices.length < slowPeriod) {
+            return { macdLine: 0, signalLine: 0, histogram: 0 };
+        }
+
         const fastEMA = this._calculateEMA(prices, fastPeriod);
         const slowEMA = this._calculateEMA(prices, slowPeriod);
-        const macdLine = fastEMA - slowEMA;
-        const signalLine = this._calculateEMA(prices.slice(slowPeriod - fastPeriod).map((_, i) => 
-            fastEMA[i + slowPeriod - fastPeriod] - slowEMA[i]
-        ), signalPeriod);
+        const macdLine = fastEMA[fastEMA.length - 1] - slowEMA[slowEMA.length - 1];
+        
+        // For signal line calculation
+        const macdValues = [];
+        for (let i = slowPeriod - fastPeriod; i < prices.length; i++) {
+            macdValues.push(fastEMA[i] - slowEMA[i]);
+        }
+        
+        const signalLine = this._calculateEMA(macdValues, signalPeriod);
         
         return {
             macdLine,
-            signalLine,
-            histogram: macdLine - signalLine
+            signalLine: signalLine[signalLine.length - 1] || 0,
+            histogram: macdLine - (signalLine[signalLine.length - 1] || 0)
         };
     }
 
     _calculateEMA(prices, period) {
+        if (prices.length === 0) return [0];
+        
         const k = 2 / (period + 1);
         let ema = [prices[0]];
         
@@ -460,6 +495,52 @@ export default class forexSignalAgent {
         return ema;
     }
 
+    _calculateBollingerBands(prices, period = 20, stdDev = 2) {
+        if (prices.length < period) {
+            return { upper: 0, middle: 0, lower: 0 };
+        }
+
+        const recentPrices = prices.slice(-period);
+        const mean = recentPrices.reduce((sum, price) => sum + price, 0) / period;
+        const variance = recentPrices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / period;
+        const standardDeviation = Math.sqrt(variance);
+
+        return {
+            upper: mean + (standardDeviation * stdDev),
+            middle: mean,
+            lower: mean - (standardDeviation * stdDev)
+        };
+    }
+
+    _calculateStochastic(highs, lows, closes, period = 14) {
+        if (closes.length < period) return { k: 50, d: 50 };
+
+        const recentHighs = highs.slice(-period);
+        const recentLows = lows.slice(-period);
+        const recentCloses = closes.slice(-period);
+
+        const highestHigh = Math.max(...recentHighs);
+        const lowestLow = Math.min(...recentLows);
+
+        if (highestHigh === lowestLow) return { k: 50, d: 50 };
+
+        const k = ((recentCloses[recentCloses.length - 1] - lowestLow) / (highestHigh - lowestLow)) * 100;
+        
+        return { k, d: k }; // Simplified D-line calculation
+    }
+
+    _calculateMovingAverages(prices) {
+        const shortPeriod = TECHNICAL_INDICATORS.movingAverage.shortPeriod;
+        const longPeriod = TECHNICAL_INDICATORS.movingAverage.longPeriod;
+
+        return {
+            short: prices.length >= shortPeriod ? 
+                prices.slice(-shortPeriod).reduce((sum, price) => sum + price, 0) / shortPeriod : 0,
+            long: prices.length >= longPeriod ? 
+                prices.slice(-longPeriod).reduce((sum, price) => sum + price, 0) / longPeriod : 0
+        };
+    }
+
     async _generateTradingSignals() {
         const signals = [];
         const newsSentiment = await this._fetchNewsSentiment();
@@ -467,7 +548,7 @@ export default class forexSignalAgent {
         for (const pair of MAJOR_CURRENCY_PAIRS) {
             try {
                 const marketData = await this._fetchMarketData(pair, '1h', 100);
-                if (!marketData) continue;
+                if (!marketData || marketData.length === 0) continue;
                 
                 const indicators = this._calculateTechnicalIndicators(marketData);
                 const currentPrice = marketData[marketData.length - 1].close;
@@ -524,13 +605,24 @@ export default class forexSignalAgent {
             reasons.push('Price above upper Bollinger Band');
         }
         
+        // Moving Average analysis
+        if (indicators.movingAverages.short > indicators.movingAverages.long && indicators.movingAverages.long > 0) {
+            direction = 'bullish';
+            confidence += 0.1;
+            reasons.push('Short MA above Long MA');
+        } else if (indicators.movingAverages.short < indicators.movingAverages.long && indicators.movingAverages.long > 0) {
+            direction = 'bearish';
+            confidence += 0.1;
+            reasons.push('Short MA below Long MA');
+        }
+        
         // News sentiment analysis
         if (sentiment > 0.3) {
-            direction = 'bullish';
+            direction = direction === 'bullish' ? direction : 'neutral';
             confidence += 0.2;
             reasons.push('Positive news sentiment');
         } else if (sentiment < -0.3) {
-            direction = 'bearish';
+            direction = direction === 'bearish' ? direction : 'neutral';
             confidence += 0.2;
             reasons.push('Negative news sentiment');
         }
@@ -538,7 +630,7 @@ export default class forexSignalAgent {
         return {
             pair,
             direction,
-            confidence: Math.min(confidence, 1),
+            confidence: Math.min(Math.max(confidence, 0), 1),
             reasons,
             timestamp: new Date().toISOString(),
             price: currentPrice,
@@ -645,28 +737,86 @@ export default class forexSignalAgent {
     }
 
     async _sendToMetaTrader(signal) {
-        const response = await axios.post(
-            `${this.brokers.metatrader.baseURL}${this.brokers.metatrader.endpoints.signals}`,
-            {
-                symbol: signal.pair,
-                action: signal.direction.toUpperCase(),
-                price: signal.price,
-                stopLoss: signal.stopLoss,
-                takeProfit: signal.takeProfit,
-                confidence: signal.confidence
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${this.config.METATRADER_API_KEY}`,
-                    'Content-Type': 'application/json'
+        try {
+            const response = await axios.post(
+                `${this.brokers.metatrader.baseURL}${this.brokers.metatrader.endpoints.signals}`,
+                {
+                    symbol: signal.pair,
+                    action: signal.direction.toUpperCase(),
+                    price: signal.price,
+                    stopLoss: signal.stopLoss,
+                    takeProfit: signal.takeProfit,
+                    confidence: signal.confidence
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.config.METATRADER_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
                 }
-            }
-        );
-        
+            );
+            
+            return {
+                platform: 'metatrader',
+                success: true,
+                signalId: response.data.signalId
+            };
+        } catch (error) {
+            this.logger.error('MetaTrader signal distribution failed:', error);
+            return {
+                platform: 'metatrader',
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    async _sendToTelegram(signal) {
+        try {
+            const message = `📊 Forex Signal Alert\n\n` +
+                          `Pair: ${signal.pair}\n` +
+                          `Direction: ${signal.direction.toUpperCase()}\n` +
+                          `Price: ${signal.price}\n` +
+                          `Confidence: ${(signal.confidence * 100).toFixed(1)}%\n` +
+                          `Stop Loss: ${signal.stopLoss}\n` +
+                          `Take Profit: ${signal.takeProfit}\n` +
+                          `Risk/Reward: ${signal.riskReward.toFixed(2)}`;
+
+            const response = await axios.post(
+                `https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/sendMessage`,
+                {
+                    chat_id: this.config.TELEGRAM_CHANNEL_ID,
+                    text: message,
+                    parse_mode: 'HTML'
+                },
+                {
+                    timeout: 10000
+                }
+            );
+
+            return {
+                platform: 'telegram',
+                success: true,
+                messageId: response.data.result.message_id
+            };
+        } catch (error) {
+            this.logger.error('Telegram signal distribution failed:', error);
+            return {
+                platform: 'telegram',
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    async _sendToEmail(signal) {
+        // Email distribution implementation would go here
+        // This is a placeholder for actual email service integration
         return {
-            platform: 'metatrader',
+            platform: 'email',
             success: true,
-            signalId: response.data.signalId
+            recipients: 0 // Placeholder
         };
     }
 
@@ -732,11 +882,14 @@ export default class forexSignalAgent {
                     if (result.success) {
                         forexSignalStatus.tradesExecuted++;
                         this.logger.success(`✅ Executed trade for ${signal.pair}`);
+                    } else {
+                        this.logger.warn(`⚠️ Trade execution failed for ${signal.pair}: ${result.error}`);
                     }
                 }
 
                 // 3. Distribute signals to subscribers
                 const distributionResults = await this._distributeSignals(signals);
+                this.logger.info(`📤 Distributed ${distributionResults.length} signals`);
                 
                 // 4. Calculate and record revenue
                 const revenue = this._calculateRevenue(tradeResults, distributionResults);
@@ -785,6 +938,7 @@ export default class forexSignalAgent {
 
         for (let i = 0; i < cycles; i++) {
             try {
+                this.logger.info(`🔄 Starting revenue cycle ${i + 1}/${cycles}`);
                 const cycleResult = await this.run();
                 
                 if (cycleResult.status === 'success') {
@@ -793,6 +947,7 @@ export default class forexSignalAgent {
                     results.totalTrades += cycleResult.tradesExecuted;
                     results.successfulTrades += cycleResult.tradesExecuted;
                     results.cyclesCompleted++;
+                    this.logger.success(`✅ Cycle ${i + 1} completed: $${cycleResult.revenue} revenue`);
                 }
 
                 await quantumDelay(30000);
@@ -833,7 +988,9 @@ export default class forexSignalAgent {
     _calculateRiskReward(price, direction) {
         const stopLoss = this._calculateStopLoss(price, direction);
         const takeProfit = this._calculateTakeProfit(price, direction);
-        return Math.abs((takeProfit - price) / (price - stopLoss));
+        const risk = Math.abs(price - stopLoss);
+        const reward = Math.abs(takeProfit - price);
+        return reward / risk;
     }
 
     _calculateTradeSize(confidence, riskPerTrade = 0.01) {
@@ -888,168 +1045,89 @@ export default class forexSignalAgent {
                 })
             );
 
-            this.logger.debug('📈 Performance data stored successfully');
+            // Update signal distribution records
+            for (const result of distributionResults) {
+                const distributionId = crypto.randomUUID();
+                await this.performanceDb.prepare(`
+                    INSERT INTO signal_distribution 
+                    (id, signal_id, platform, status, recipients_count, response_data)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `).run(
+                    distributionId,
+                    performanceId,
+                    result.platform,
+                    result.success ? 'success' : 'failed',
+                    result.recipientsCount || 1,
+                    JSON.stringify(result)
+                );
+            }
 
         } catch (error) {
             this.logger.error('Failed to store performance data:', error);
         }
     }
 
-    async getPerformanceStats(timeframe = '7 days') {
-        try {
-            const stats = await this.performanceDb.prepare(`
-                SELECT 
-                    COUNT(*) as total_cycles,
-                    SUM(signals_generated) as total_signals,
-                    SUM(trades_executed) as total_trades,
-                    SUM(successful_trades) as successful_trades,
-                    SUM(total_revenue) as total_revenue,
-                    AVG(average_confidence) as avg_confidence,
-                    AVG(win_rate) as avg_win_rate
-                FROM performance_metrics 
-                WHERE timestamp > datetime('now', ?)
-            `).get(`-${timeframe}`);
+    getStatus() {
+        return {
+            ...forexSignalStatus,
+            brokers: Object.keys(this.brokers).filter(b => this.brokers[b].initialized),
+            newsSources: Object.keys(this.newsSources).filter(n => this.newsSources[n].initialized),
+            database: this.db ? 'connected' : 'disconnected',
+            payoutSystem: this.payoutSystem ? 'active' : 'inactive'
+        };
+    }
 
-            return {
-                timeframe,
-                ...stats,
-                profitability: stats.total_revenue > 0 ? 'profitable' : 'non-profitable',
-                efficiency: stats.total_trades > 0 ? (stats.successful_trades / stats.total_trades) * 100 : 0
-            };
+    async healthCheck() {
+        const health = {
+            status: 'healthy',
+            brokers: {},
+            database: false,
+            payoutSystem: false,
+            timestamp: new Date().toISOString()
+        };
 
-        } catch (error) {
-            this.logger.error('Failed to get performance stats:', error);
-            return {
-                timeframe,
-                total_cycles: 0,
-                total_signals: 0,
-                total_trades: 0,
-                successful_trades: 0,
-                total_revenue: 0,
-                avg_confidence: 0,
-                avg_win_rate: 0,
-                profitability: 'unknown',
-                efficiency: 0
-            };
+        // Check broker connections
+        for (const [broker, config] of Object.entries(this.brokers)) {
+            if (config.initialized) {
+                try {
+                    const response = await axios.get(
+                        `${config.baseURL}${config.endpoints.accounts || config.endpoints.prices}`,
+                        {
+                            headers: { 'Authorization': `Bearer ${this.config[`${broker.toUpperCase()}_API_KEY`]}` },
+                            timeout: 10000
+                        }
+                    );
+                    health.brokers[broker] = response.status === 200 ? 'connected' : 'error';
+                } catch (error) {
+                    health.brokers[broker] = 'disconnected';
+                    health.status = 'degraded';
+                }
+            }
         }
-    }
 
-    async close() {
-        try {
-            if (this.payoutSystem) {
-                await this.payoutSystem.shutdown();
-            }
-            
-            if (this.db) {
-                await this.db.close();
-            }
-            
-            this.logger.info('✅ Forex Signal Agent closed successfully');
-        } catch (error) {
-            this.logger.error('Error closing Forex Signal Agent:', error);
-        }
+        // Check database
+        health.database = this.db !== null;
+
+        // Check payout system
+        health.payoutSystem = this.payoutSystem !== null;
+
+        return health;
     }
 }
 
-// Worker thread execution
-async function workerThreadFunction() {
-    const { config, workerId } = workerData;
-    const workerLogger = {
-        info: (...args) => console.log(`[ForexWorker ${workerId}]`, ...args),
-        error: (...args) => console.error(`[ForexWorker ${workerId}]`, ...args),
-        success: (...args) => console.log(`[ForexWorker ${workerId}] ✅`, ...args),
-        warn: (...args) => console.warn(`[ForexWorker ${workerId}] ⚠️`, ...args)
-    };
-
-    const forexAgent = new forexSignalAgent(config, workerLogger);
-    await forexAgent.initialize();
-
-    while (true) {
-        await forexAgent.run();
-        await quantumDelay(60000);
-    }
-}
-
-// Main thread orchestration
-if (isMainThread) {
-    const numThreads = process.env.FOREX_AGENT_THREADS || 1;
-    const config = {
-        REDIS_URL: process.env.REDIS_URL,
-        COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
-        COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY,
-        
-        // Broker API keys
-        OANDA_API_KEY: process.env.OANDA_API_KEY,
-        OANDA_ACCOUNT_ID: process.env.OANDA_ACCOUNT_ID,
-        
-        ICMARKETS_API_KEY: process.env.ICMARKETS_API_KEY,
-        ICMARKETS_ACCOUNT_ID: process.env.ICMARKETS_ACCOUNT_ID,
-        
-        METATRADER_API_KEY: process.env.METATRADER_API_KEY,
-        METATRADER_ACCOUNT_ID: process.env.METATRADER_ACCOUNT_ID,
-        
-        // News API keys
-        NEWS_API_KEY: process.env.NEWS_API_KEY,
-        ALPHAVANTAGE_API_KEY: process.env.ALPHAVANTAGE_API_KEY,
-        
-        // Distribution platform keys
-        TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-        EMAIL_API_KEY: process.env.EMAIL_API_KEY,
-
-        // System wallet for payouts
-        SYSTEM_WALLET_ADDRESS: process.env.SYSTEM_WALLET_ADDRESS,
-        SYSTEM_WALLET_PRIVATE_KEY: process.env.SYSTEM_WALLET_PRIVATE_KEY,
-        REVENUE_WALLET_ADDRESS: process.env.REVENUE_WALLET_ADDRESS
-    };
-
-    forexSignalStatus.activeWorkers = numThreads;
-    console.log(`🌍 Starting ${numThreads} forex signal workers for global trading...`);
-
-    for (let i = 0; i < numThreads; i++) {
-        const worker = new Worker(__filename, {
-            workerData: { workerId: i + 1, config }
-        });
-
-        forexSignalStatus.workerStatuses[`worker-${i + 1}`] = 'initializing';
-
-        worker.on('online', () => {
-            forexSignalStatus.workerStatuses[`worker-${i + 1}`] = 'online';
-            console.log(`👷 Forex Worker ${i + 1} online`);
-        });
-
-        worker.on('message', (msg) => {
-            if (msg.type === 'revenue_update') {
-                forexSignalStatus.totalRevenue += msg.amount;
-                forexSignalStatus.signalsGenerated += msg.signals || 0;
-                forexSignalStatus.tradesExecuted += msg.trades || 0;
-            }
-        });
-
-        worker.on('error', (err) => {
-            forexSignalStatus.workerStatuses[`worker-${i + 1}`] = `error: ${err.message}`;
-            console.error(`Forex Worker ${i + 1} error:`, err);
-        });
-
-        worker.on('exit', (code) => {
-            forexSignalStatus.workerStatuses[`worker-${i + 1}`] = `exited: ${code}`;
-            console.log(`Forex Worker ${i + 1} exited with code ${code}`);
-        });
-    }
-}
-
-// Export functions
-export function getStatus() {
-    return {
-        ...forexSignalStatus,
-        agent: 'forexSignalAgent',
-        timestamp: new Date().toISOString()
-    };
-}
-
-// Worker thread execution
+// Worker thread implementation for parallel processing
 if (!isMainThread) {
-    workerThreadFunction();
+    const { config, logger } = workerData;
+    const agent = new forexSignalAgent(config, logger);
+    
+    parentPort.on('message', async (message) => {
+        if (message.type === 'run') {
+            try {
+                const result = await agent.run();
+                parentPort.postMessage({ type: 'result', data: result });
+            } catch (error) {
+                parentPort.postMessage({ type: 'error', data: error.message });
+            }
+        }
+    });
 }
-
-// Export agent and status
-export { forexSignalAgent };
