@@ -1512,4 +1512,4 @@ class QuantumBrowserManager {
 export { QuantumBrowserManager as broswerManager, IntelligenceGradeCaptchaSolver };
 
 // Default export for convenience
-export default QuantumBrowserManager;
+export { QuantumBrowserManager };
