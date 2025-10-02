@@ -278,13 +278,13 @@ function setupGracefulShutdown(serviceManager, healthServer, blockchain, databas
       // Stop service manager
       if (serviceManager && typeof serviceManager.stop === 'function') {
         await serviceManager.stop();
-        logger.info("🔴 ServiceManager stopped");
+        logger.info("🔴 serviceManager stopped");
       }
 
       // Close database connections
       if (database && typeof database.close === 'function') {
         await database.close();
-        logger.info("🔴 Database connections closed");
+        logger.info("🔴 database connections closed");
       }
 
       // Close health server
