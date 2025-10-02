@@ -202,6 +202,65 @@ class ConnectionPool {
 const globalConnectionPool = new ConnectionPool(20);
 
 /**
+ * Simple Database Manager for non-sharded databases
+ */
+class SimpleDatabaseManager {
+  constructor(dbPath, options = {}) {
+    this.dbPath = dbPath;
+    this.options = options;
+    this.db = null;
+    
+    // Ensure directory exists
+    const dir = path.dirname(dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  async init() {
+    try {
+      this.db = betterSqlite3(this.dbPath, {
+        verbose: process.env.NODE_ENV === 'development' ? 
+          (msg) => logger.debug(`[SIMPLE-DB] ${msg}`) : undefined,
+        timeout: this.options.timeout || 10000,
+      });
+
+      // Optimize database settings
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('foreign_keys = ON');
+      this.db.pragma('busy_timeout = 15000');
+      this.db.pragma('cache_size = -64000'); // 64MB cache
+
+      logger.info(`[SIMPLE-DB] Database initialized at ${this.dbPath}`);
+      return this.db;
+    } catch (error) {
+      logger.error(`[SIMPLE-DB] Failed to initialize database at ${this.dbPath}`, { error: error.message });
+      throw new DatabaseError(`Failed to initialize database: ${error.message}`, error);
+    }
+  }
+
+  getDatabase() {
+    if (!this.db) {
+      throw new DatabaseError('Database not initialized. Call init() first.');
+    }
+    return this.db;
+  }
+
+  async close() {
+    if (this.db) {
+      try {
+        this.db.close();
+        logger.info(`[SIMPLE-DB] Database closed: ${this.dbPath}`);
+      } catch (error) {
+        logger.error(`[SIMPLE-DB] Error closing database: ${this.dbPath}`, { error: error.message });
+      }
+      this.db = null;
+    }
+  }
+}
+
+/**
  * ShardManager: Advanced sharding with health checks and failover
  */
 class ShardManager {
@@ -501,6 +560,7 @@ class BrianNwaezikeDB {
     };
 
     this.shardManager = null;
+    this.simpleDatabases = new Map();
     this.initialized = false;
   }
 
@@ -535,6 +595,39 @@ class BrianNwaezikeDB {
       logger.error('Failed to initialize database', { error: error.message });
       throw new DatabaseError('Database initialization failed', error);
     }
+  }
+
+  /**
+   * Create a simple database for agents and services
+   */
+  async createDatabase(dbPath, schemaInitFn = null) {
+    try {
+      const dbManager = new SimpleDatabaseManager(dbPath);
+      const db = await dbManager.init();
+      
+      // Initialize schema if provided
+      if (schemaInitFn && typeof schemaInitFn === 'function') {
+        await schemaInitFn(db);
+      }
+      
+      this.simpleDatabases.set(dbPath, dbManager);
+      logger.info(`[CREATE-DB] Database created successfully: ${dbPath}`);
+      return db;
+    } catch (error) {
+      logger.error(`[CREATE-DB] Failed to create database: ${dbPath}`, { error: error.message });
+      throw new DatabaseError(`Failed to create database: ${error.message}`, error);
+    }
+  }
+
+  /**
+   * Get a simple database instance
+   */
+  getSimpleDatabase(dbPath) {
+    const dbManager = this.simpleDatabases.get(dbPath);
+    if (!dbManager) {
+      throw new DatabaseError(`Database not found: ${dbPath}. Call createDatabase() first.`);
+    }
+    return dbManager.getDatabase();
   }
 
   /**
@@ -826,10 +919,25 @@ class BrianNwaezikeDB {
   }
 
   async close() {
+    // Close all simple databases
+    for (const [dbPath, dbManager] of this.simpleDatabases.entries()) {
+      try {
+        await dbManager.close();
+        logger.info(`[SIMPLE-DB] Closed database: ${dbPath}`);
+      } catch (error) {
+        logger.error(`[SIMPLE-DB] Error closing database: ${dbPath}`, { error: error.message });
+      }
+    }
+    this.simpleDatabases.clear();
+
+    // Close shard manager
     if (this.shardManager) {
       await this.shardManager.close();
     }
+
+    // Close global connection pool
     await globalConnectionPool.closeAll();
+    
     this.initialized = false;
     logger.info('BrianNwaezikeDB closed successfully');
   }
@@ -851,6 +959,14 @@ function getDatabase() {
     throw new DatabaseError('Database not initialized. Call initializeDatabase() first.');
   }
   return dbInstance;
+}
+
+/**
+ * CREATE DATABASE UTILITY - This is the missing function that was causing the error
+ */
+async function createDatabase(dbPath, schemaInitFn = null) {
+  const db = await getDatabase();
+  return db.createDatabase(dbPath, schemaInitFn);
 }
 
 // Graceful shutdown handling
@@ -877,7 +993,8 @@ export {
   ShardUnavailableError, 
   ConnectionTimeoutError,
   initializeDatabase, 
-  getDatabase 
+  getDatabase,
+  createDatabase  // Export the missing function
 };
 
 export default BrianNwaezikeDB;
