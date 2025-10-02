@@ -324,7 +324,7 @@ async function startArielSQLSuite() {
     logger.info("🔧 Configuration:", { port: config.port, healthPort: config.healthPort });
 
     // Step 1: Initialize core systems
-    logger.info("1. Initializing ServiceManager...");
+    logger.info("1. Initializing serviceManager...");
     const manager = new serviceManager();
     await manager.start();
 
