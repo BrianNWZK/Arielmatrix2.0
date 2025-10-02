@@ -128,7 +128,7 @@ class ServiceManager {
       adsense: new AdsenseAgent({ mainnet: this.config.mainnet }),
       apiScout: new ApiScoutAgent({ mainnet: this.config.mainnet }),
       browser: new QuantumBrowserManager({ mainnet: this.config.mainnet }),
-      config: new ConfigAgent({ mainnet: this.config.mainnet }),
+      config: new configAgent({ mainnet: this.config.mainnet }),
       contractDeploy: new ContractDeployAgent({ mainnet: this.config.mainnet }),
       crypto: new EnhancedCryptoAgent({ mainnet: this.config.mainnet }),
       data: new dataAgent({ mainnet: this.config.mainnet }),
