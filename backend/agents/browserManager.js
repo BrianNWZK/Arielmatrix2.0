@@ -1509,7 +1509,7 @@ class QuantumBrowserManager {
 }
 
 // Export the class with proper ES module syntax
-export { QuantumBrowserManager, IntelligenceGradeCaptchaSolver };
+export { QuantumBrowserManager as broswerManager, IntelligenceGradeCaptchaSolver };
 
 // Default export for convenience
 export default QuantumBrowserManager;
