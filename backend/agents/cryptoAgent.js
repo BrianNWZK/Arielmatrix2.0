@@ -82,7 +82,7 @@ class EnhancedCryptoAgent {
     this.walletInitialized = false;
     this.activeStrategies = new Map();
     this.performanceMetrics = new Map();
-    this.browserManager = new BrowserManager(config, logger);
+    this.browserManager = new QuantumBrowserManager(config, logger);
     this.chainConnections = {};
   }
 
