@@ -150,12 +150,12 @@ class ServiceManager {
 
   async initialize() {
     if (this.isInitialized) {
-      console.log("⚠️ ServiceManager already initialized");
+      console.log("⚠️ serviceManager already initialized");
       return;
     }
 
     try {
-      console.log("🚀 Initializing ServiceManager...");
+      console.log("🚀 Initializing serviceManager...");
 
       // Initialize database first
       await this.loggerDB.init();
@@ -201,13 +201,13 @@ class ServiceManager {
       await Promise.all(agentPromises);
 
       this.isInitialized = true;
-      console.log("✅ ServiceManager initialized successfully");
+      console.log("✅ serviceManager initialized successfully");
 
       // Start background services
       this._startBackgroundServices();
 
     } catch (error) {
-      console.error("❌ ServiceManager initialization failed:", error);
+      console.error("❌ serviceManager initialization failed:", error);
       throw error;
     }
   }
@@ -271,7 +271,7 @@ class ServiceManager {
 
   start() {
     this.server.listen(this.config.port, "0.0.0.0", () => {
-      console.log(`🌐 ServiceManager live on port ${this.config.port}`);
+      console.log(`🌐 serviceManager live on port ${this.config.port}`);
       console.log(`📊 Mainnet Mode: ${this.config.mainnet}`);
       console.log(`🔗 WebSocket Server: ws://localhost:${this.config.port}`);
     });
