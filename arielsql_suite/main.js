@@ -187,7 +187,7 @@ function startHealthServer() {
 }
 
 /**
- * Register all services with the ServiceManager
+ * Register all services with the serviceManager
  */
 async function registerAllServices(serviceManager) {
   const services = [
