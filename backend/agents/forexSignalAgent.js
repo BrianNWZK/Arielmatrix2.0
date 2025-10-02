@@ -1131,3 +1131,5 @@ if (!isMainThread) {
         }
     });
 }
+// Export agent and status
+export { forexSignalAgent };
