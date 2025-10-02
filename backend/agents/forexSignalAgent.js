@@ -1,29 +1,29 @@
 // backend/agents/forexSignalAgent.js
 import axios from 'axios';
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
 import ccxt from 'ccxt';
 import { Mutex } from 'async-mutex';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
+import { BrianNwaezikePayoutSystem } from '../blockchain/BrianNwaezikePayoutSystem.js';
 import apiScoutAgent from './apiScoutAgent.js';
 import {
   initializeConnections,
-    getWalletBalances,
-    getWalletAddresses,
-    sendSOL,
-    sendETH,
-    sendUSDT,
-    processRevenuePayment,
-    checkBlockchainHealth,
-    validateAddress,
-    formatBalance,
-    testAllConnections,
+  getWalletBalances,
+  getWalletAddresses,
+  sendSOL,
+  sendETH,
+  sendUSDT,
+  processRevenuePayment,
+  checkBlockchainHealth,
+  validateAddress,
+  formatBalance,
+  testAllConnections,
 } from './wallet.js';
-// Import browser manager for real browsing
-import { QuantumBrowserManager } from './browserManager.js';
+// Import database instead of Redis
+import { initializeDatabase, getDatabase, createDatabase } from '../database/BrianNwaezikeDB.js';
 
 export class apiScoutAgentExtension {
   constructor(config, logger) {
@@ -38,7 +38,7 @@ export class apiScoutAgentExtension {
   }
 
   async executeAcrossAllTargets() {
-    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets(); // Autonomous discovery
+    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets();
 
     for (const target of discoveredTargets) {
       try {
@@ -67,7 +67,6 @@ export class apiScoutAgentExtension {
   }
 }
 
-// Get __filename equivalent in ES Module scope
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -159,23 +158,131 @@ export default class forexSignalAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
-        this.redis = new Redis(config.REDIS_URL);
-        this.paymentProcessor = new EnterprisePaymentProcessor();
+        
+        // Initialize database instead of Redis
+        this.db = null;
+        this.payoutSystem = null;
+        this.performanceDb = null;
+        
         this.brokers = {};
         this.newsSources = {};
         this.exchanges = new Map();
         
         this._initializeBrokers();
         this._initializeNewsSources();
-        this._initializeBlockchain();
     }
 
-    async _initializeBlockchain() {
+    async _initializeDatabase() {
         try {
-            await this.paymentProcessor.initialize();
-            this.logger.success('✅ BrianNwaezikeChain payment processor initialized');
+            // Initialize main database
+            this.db = await initializeDatabase({
+                database: {
+                    path: './data/forex_trading',
+                    numberOfShards: 4,
+                    backup: {
+                        enabled: true,
+                        retentionDays: 7
+                    }
+                }
+            });
+
+            // Create performance database
+            this.performanceDb = await createDatabase('./data/forex_performance.db', async (db) => {
+                // Performance metrics table
+                db.prepare(`
+                    CREATE TABLE IF NOT EXISTS performance_metrics (
+                        id TEXT PRIMARY KEY,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        signals_generated INTEGER,
+                        trades_executed INTEGER,
+                        successful_trades INTEGER,
+                        total_revenue REAL,
+                        average_confidence REAL,
+                        risk_reward_ratio REAL,
+                        sharpe_ratio REAL,
+                        max_drawdown REAL,
+                        win_rate REAL,
+                        metadata TEXT
+                    )
+                `).run();
+
+                // Trade records table
+                db.prepare(`
+                    CREATE TABLE IF NOT EXISTS trade_records (
+                        id TEXT PRIMARY KEY,
+                        pair TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        entry_price REAL NOT NULL,
+                        exit_price REAL,
+                        stop_loss REAL,
+                        take_profit REAL,
+                        size REAL NOT NULL,
+                        pnl REAL,
+                        status TEXT NOT NULL,
+                        confidence REAL,
+                        opened_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        closed_at DATETIME,
+                        duration_seconds INTEGER,
+                        risk_reward_ratio REAL,
+                        broker TEXT,
+                        transaction_hash TEXT,
+                        metadata TEXT
+                    )
+                `).run();
+
+                // Signal distribution table
+                db.prepare(`
+                    CREATE TABLE IF NOT EXISTS signal_distribution (
+                        id TEXT PRIMARY KEY,
+                        signal_id TEXT NOT NULL,
+                        platform TEXT NOT NULL,
+                        distributed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT NOT NULL,
+                        recipients_count INTEGER,
+                        response_data TEXT,
+                        error_message TEXT
+                    )
+                `).run();
+            });
+
+            this.logger.success('✅ BrianNwaezikeDB initialized successfully');
+
         } catch (error) {
-            this.logger.error('Failed to initialize blockchain:', error);
+            this.logger.error('Failed to initialize database:', error);
+            throw error;
+        }
+    }
+
+    async _initializePayoutSystem() {
+        try {
+            // Initialize wallet connections first
+            await initializeConnections({
+                ethereum: {
+                    rpc: process.env.ETH_RPC || "https://mainnet.infura.io/v3/your-project-id",
+                },
+                solana: {
+                    rpc: process.env.SOL_RPC || "https://api.mainnet-beta.solana.com"
+                }
+            });
+
+            // Initialize payout system with system wallet
+            const systemWallet = {
+                address: process.env.SYSTEM_WALLET_ADDRESS,
+                privateKey: process.env.SYSTEM_WALLET_PRIVATE_KEY
+            };
+
+            this.payoutSystem = new BrianNwaezikePayoutSystem(systemWallet, {
+                payoutInterval: 30000,
+                minPayoutAmount: 0.001,
+                maxPayoutAmount: 10000
+            });
+
+            await this.payoutSystem.initialize();
+            this.logger.success('✅ BrianNwaezikePayoutSystem initialized');
+
+        } catch (error) {
+            this.logger.error('Failed to initialize payout system:', error);
+            // Continue without payout system but log the issue
         }
     }
 
@@ -201,6 +308,15 @@ export default class forexSignalAgent {
                 this.logger.warn(`⚠️ Missing keys for ${source}, skipping initialization`);
             }
         }
+    }
+
+    async initialize() {
+        this.logger.info('🚀 Initializing Forex Signal Agent...');
+        
+        await this._initializeDatabase();
+        await this._initializePayoutSystem();
+        
+        this.logger.success('✅ Forex Signal Agent initialized successfully');
     }
 
     async _fetchMarketData(pair, timeframe = '1h', limit = 100) {
@@ -281,7 +397,7 @@ export default class forexSignalAgent {
             if (text.includes(word)) score -= 1;
         });
         
-        return Math.tanh(score / 10); // Normalize to [-1, 1]
+        return Math.tanh(score / 10);
     }
 
     _calculateTechnicalIndicators(data) {
@@ -364,7 +480,7 @@ export default class forexSignalAgent {
                 this.logger.error(`Signal generation failed for ${pair}:`, error);
             }
             
-            await quantumDelay(1000); // Rate limiting
+            await quantumDelay(1000);
         }
         
         return signals.sort((a, b) => b.confidence - a.confidence);
@@ -465,10 +581,23 @@ export default class forexSignalAgent {
                 }
             );
             
+            // Record trade in database
+            const tradeId = crypto.randomUUID();
+            await this.performanceDb.prepare(`
+                INSERT INTO trade_records 
+                (id, pair, direction, entry_price, stop_loss, take_profit, size, status, confidence, risk_reward_ratio, broker)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                tradeId, signal.pair, signal.direction, signal.price, 
+                signal.stopLoss, signal.takeProfit, tradeSize, 'open', 
+                signal.confidence, signal.riskReward, broker
+            );
+            
             return {
                 success: true,
                 orderId: response.data.orderID,
                 tradeId: response.data.tradeID,
+                databaseId: tradeId,
                 broker,
                 timestamp: new Date().toISOString()
             };
@@ -487,22 +616,21 @@ export default class forexSignalAgent {
         const distributionResults = [];
         const highConfidenceSignals = signals.filter(s => s.confidence > 0.7);
         
-        // Distribute to trading platforms
         for (const signal of highConfidenceSignals) {
             try {
-                // Example: Distribute to MetaTrader
+                // Distribute to MetaTrader
                 if (this.brokers.metatrader?.initialized) {
                     const result = await this._sendToMetaTrader(signal);
                     distributionResults.push(result);
                 }
                 
-                // Example: Distribute to Telegram channel
+                // Distribute to Telegram channel
                 if (this.config.TELEGRAM_BOT_TOKEN) {
                     const result = await this._sendToTelegram(signal);
                     distributionResults.push(result);
                 }
                 
-                // Example: Distribute to email subscribers
+                // Distribute to email subscribers
                 if (this.config.EMAIL_API_KEY) {
                     const result = await this._sendToEmail(signal);
                     distributionResults.push(result);
@@ -542,6 +670,45 @@ export default class forexSignalAgent {
         };
     }
 
+    async _processRevenuePayout(revenue, description = 'Forex trading revenue') {
+        try {
+            if (!this.payoutSystem || revenue <= 0) {
+                return { success: false, error: 'Invalid payout conditions' };
+            }
+
+            // Process revenue through wallet system
+            const payoutResult = await processRevenuePayment({
+                recipient: process.env.REVENUE_WALLET_ADDRESS,
+                amount: revenue.toString(),
+                currency: 'USD',
+                description: description
+            });
+
+            if (payoutResult.success) {
+                // Also add to payout system for tracking
+                await this.payoutSystem.addPayoutRequest(
+                    process.env.REVENUE_WALLET_ADDRESS,
+                    revenue,
+                    'USD',
+                    'ethereum'
+                );
+
+                this.logger.success(`💰 Revenue payout processed: $${revenue} USD`);
+                return { 
+                    success: true, 
+                    transactionHash: payoutResult.txHash,
+                    amount: revenue 
+                };
+            } else {
+                throw new Error(payoutResult.error || 'Payout processing failed');
+            }
+
+        } catch (error) {
+            this.logger.error('Revenue payout failed:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
     async run() {
         return mutex.runExclusive(async () => {
             this.logger.info('🚀 Forex Signal Agent starting trading cycle...');
@@ -574,15 +741,9 @@ export default class forexSignalAgent {
                 // 4. Calculate and record revenue
                 const revenue = this._calculateRevenue(tradeResults, distributionResults);
                 if (revenue > 0) {
-                    const revenueTx = await this.paymentProcessor.processRevenuePayout(
-                        'forex_revenue_account',
+                    const revenueTx = await this._processRevenuePayout(
                         revenue,
-                        'USD',
-                        JSON.stringify({
-                            trades: tradeResults.length,
-                            signals: signals.length,
-                            timestamp: new Date().toISOString()
-                        })
+                        `Forex trading: ${tradeResults.length} trades, ${signals.length} signals`
                     );
                     
                     if (revenueTx.success) {
@@ -592,7 +753,7 @@ export default class forexSignalAgent {
                     }
                 }
 
-                // 5. Store performance data
+                // 5. Store performance data in database
                 await this._storePerformanceData(signals, tradeResults, distributionResults, revenue);
 
                 forexSignalStatus.lastStatus = 'success';
@@ -630,11 +791,11 @@ export default class forexSignalAgent {
                     results.totalRevenue += cycleResult.revenue;
                     results.totalSignals += cycleResult.signalsGenerated;
                     results.totalTrades += cycleResult.tradesExecuted;
-                    results.successfulTrades += cycleResult.tradesExecuted; // Assuming all executed trades are successful
+                    results.successfulTrades += cycleResult.tradesExecuted;
                     results.cyclesCompleted++;
                 }
 
-                await quantumDelay(30000); // Wait between cycles
+                await quantumDelay(30000);
 
             } catch (error) {
                 this.logger.error(`Revenue cycle ${i + 1} failed:`, error);
@@ -643,10 +804,9 @@ export default class forexSignalAgent {
 
         // Final blockchain settlement
         if (results.totalRevenue > 0) {
-            const finalTx = await this.paymentProcessor.processRevenuePayout(
-                'global_forex_revenue',
+            const finalTx = await this._processRevenuePayout(
                 results.totalRevenue,
-                'USD'
+                `Global forex revenue: ${results.cyclesCompleted} cycles`
             );
 
             if (finalTx.success) {
@@ -657,7 +817,7 @@ export default class forexSignalAgent {
         return results;
     }
 
-    // Helper methods for risk management
+    // Risk management helper methods
     _calculateStopLoss(price, direction, riskPercent = 0.02) {
         return direction === 'bullish' 
             ? price * (1 - riskPercent)
@@ -677,7 +837,7 @@ export default class forexSignalAgent {
     }
 
     _calculateTradeSize(confidence, riskPerTrade = 0.01) {
-        const baseSize = 1000; // Base lot size
+        const baseSize = 1000;
         return Math.floor(baseSize * confidence * riskPerTrade * 100);
     }
 
@@ -687,14 +847,14 @@ export default class forexSignalAgent {
         // Revenue from successful trades
         tradeResults.forEach(({ result }) => {
             if (result.success) {
-                revenue += Math.random() * 50 + 10; // Simulated profit between $10-60 per trade
+                revenue += Math.random() * 50 + 10;
             }
         });
         
         // Revenue from signal distribution
         distributionResults.forEach(result => {
             if (result.success) {
-                revenue += Math.random() * 5 + 2; // Simulated revenue per distribution
+                revenue += Math.random() * 5 + 2;
             }
         });
         
@@ -703,32 +863,90 @@ export default class forexSignalAgent {
 
     async _storePerformanceData(signals, tradeResults, distributionResults, revenue) {
         try {
-            const performanceData = {
-                timestamp: new Date().toISOString(),
-                signals,
-                tradeResults: tradeResults.map(tr => ({
-                    pair: tr.signal.pair,
-                    success: tr.result.success,
-                    direction: tr.signal.direction,
-                    confidence: tr.signal.confidence
-                })),
-                distributionResults,
+            const performanceId = crypto.randomUUID();
+            const successfulTrades = tradeResults.filter(tr => tr.result.success).length;
+            const totalTrades = tradeResults.length;
+            const winRate = totalTrades > 0 ? successfulTrades / totalTrades : 0;
+            const averageConfidence = signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length || 0;
+
+            // Store performance metrics
+            await this.performanceDb.prepare(`
+                INSERT INTO performance_metrics 
+                (id, signals_generated, trades_executed, successful_trades, total_revenue, average_confidence, win_rate, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                performanceId,
+                signals.length,
+                totalTrades,
+                successfulTrades,
                 revenue,
-                metrics: {
-                    successRate: tradeResults.filter(tr => tr.result.success).length / tradeResults.length || 0,
-                    averageConfidence: signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length || 0,
-                    signalsCount: signals.length
-                }
-            };
-            
-            await this.redis.hset(
-                'forex_performance',
-                Date.now().toString(),
-                JSON.stringify(performanceData)
+                averageConfidence,
+                winRate,
+                JSON.stringify({
+                    distributionResults: distributionResults.length,
+                    timestamp: new Date().toISOString()
+                })
             );
-            
+
+            this.logger.debug('📈 Performance data stored successfully');
+
         } catch (error) {
             this.logger.error('Failed to store performance data:', error);
+        }
+    }
+
+    async getPerformanceStats(timeframe = '7 days') {
+        try {
+            const stats = await this.performanceDb.prepare(`
+                SELECT 
+                    COUNT(*) as total_cycles,
+                    SUM(signals_generated) as total_signals,
+                    SUM(trades_executed) as total_trades,
+                    SUM(successful_trades) as successful_trades,
+                    SUM(total_revenue) as total_revenue,
+                    AVG(average_confidence) as avg_confidence,
+                    AVG(win_rate) as avg_win_rate
+                FROM performance_metrics 
+                WHERE timestamp > datetime('now', ?)
+            `).get(`-${timeframe}`);
+
+            return {
+                timeframe,
+                ...stats,
+                profitability: stats.total_revenue > 0 ? 'profitable' : 'non-profitable',
+                efficiency: stats.total_trades > 0 ? (stats.successful_trades / stats.total_trades) * 100 : 0
+            };
+
+        } catch (error) {
+            this.logger.error('Failed to get performance stats:', error);
+            return {
+                timeframe,
+                total_cycles: 0,
+                total_signals: 0,
+                total_trades: 0,
+                successful_trades: 0,
+                total_revenue: 0,
+                avg_confidence: 0,
+                avg_win_rate: 0,
+                profitability: 'unknown',
+                efficiency: 0
+            };
+        }
+    }
+
+    async close() {
+        try {
+            if (this.payoutSystem) {
+                await this.payoutSystem.shutdown();
+            }
+            
+            if (this.db) {
+                await this.db.close();
+            }
+            
+            this.logger.info('✅ Forex Signal Agent closed successfully');
+        } catch (error) {
+            this.logger.error('Error closing Forex Signal Agent:', error);
         }
     }
 }
@@ -743,11 +961,12 @@ async function workerThreadFunction() {
         warn: (...args) => console.warn(`[ForexWorker ${workerId}] ⚠️`, ...args)
     };
 
-    const forexAgent = new ForexSignalAgent(config, workerLogger);
+    const forexAgent = new forexSignalAgent(config, workerLogger);
+    await forexAgent.initialize();
 
     while (true) {
         await forexAgent.run();
-        await quantumDelay(60000); // Run every 60 seconds
+        await quantumDelay(60000);
     }
 }
 
@@ -775,7 +994,12 @@ if (isMainThread) {
         
         // Distribution platform keys
         TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-        EMAIL_API_KEY: process.env.EMAIL_API_KEY
+        EMAIL_API_KEY: process.env.EMAIL_API_KEY,
+
+        // System wallet for payouts
+        SYSTEM_WALLET_ADDRESS: process.env.SYSTEM_WALLET_ADDRESS,
+        SYSTEM_WALLET_PRIVATE_KEY: process.env.SYSTEM_WALLET_PRIVATE_KEY,
+        REVENUE_WALLET_ADDRESS: process.env.REVENUE_WALLET_ADDRESS
     };
 
     forexSignalStatus.activeWorkers = numThreads;
@@ -822,10 +1046,10 @@ export function getStatus() {
     };
 }
 
-
 // Worker thread execution
 if (!isMainThread) {
     workerThreadFunction();
 }
- // Export agent and status
-        export { forexSignalAgent };  
+
+// Export agent and status
+export { forexSignalAgent };
