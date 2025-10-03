@@ -133,7 +133,7 @@ class ServiceManager {
       crypto: new EnhancedCryptoAgent({ mainnet: this.config.mainnet }),
       data: new dataAgent({ mainnet: this.config.mainnet }),
       forex: new forexSignalAgent({ mainnet: this.config.mainnet }),
-      health: new HealthAgent({ mainnet: this.config.mainnet }),
+      health: HealthAgent,
       payout: new PayoutAgent({ mainnet: this.config.mainnet }),
       shopify: new EnhancedShopifyAgent({ mainnet: this.config.mainnet }),
       social: new SocialAgent({ mainnet: this.config.mainnet })
