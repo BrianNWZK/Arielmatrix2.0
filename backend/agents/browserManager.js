@@ -640,6 +640,16 @@ class QuantumBrowserManager {
     this.mutex = new Mutex();
     this.proxyRotationIndex = 0;
     this.pagePool = [];
+  }
+
+  /**
+   * @method launch
+   * @description Launches the Quantum Browser instance and sets this.browser (FIX for initialization error)
+   * @returns {Promise<Browser>} The launched Puppeteer browser instance
+   */
+  async launch() {
+    this.logger.info(`🌐 Initializing Quantum Browser in ${this.config.mainnet ? 'mainnet' : 'testnet'} mode...`);
+    
     
     // Initialize blockchain integration
     this.blockchain = new BrianNwaezikeChain(config);
