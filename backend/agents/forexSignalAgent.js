@@ -9,7 +9,7 @@ import path from 'path';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { BrianNwaezikePayoutSystem } from '../blockchain/BrianNwaezikePayoutSystem.js';
 import apiScoutAgent from './apiScoutAgent.js';
-import browserManager from './browserManager.js';
+import{ QuantumBrowserManager } from './browserManager.js';
 import {
   initializeConnections,
   getWalletBalances,
@@ -1645,3 +1645,6 @@ if (!isMainThread && parentPort) {
         parentPort.postMessage({ type: 'worker_ready' });
     });
 }
+
+// Export agent and status
+export { forexSignalAgent };
