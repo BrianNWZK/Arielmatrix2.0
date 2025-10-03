@@ -31,7 +31,7 @@ export class apiScoutAgentExtension {
     this.config = config;
     this.logger = logger;
     this.apiScout = new apiScoutAgent(config, logger);
-    this.browserManager = new browserManager(config, logger);
+    this.browserManager = new QuantumBrowserManager(config, logger);
   }
 
   async initialize() {
