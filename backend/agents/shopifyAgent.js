@@ -1070,7 +1070,7 @@ export default class EnhancedShopifyAgent {
   }
 
   initDatabases() {
-    this.db = yourSQLite.createDatabase('./data/shopify_agent.db');
+    this.coreDB = new ArielSQLiteEngine(this.config.dbPath, { encrypt: true });
     
     // Core tables
     this.db.run(`
