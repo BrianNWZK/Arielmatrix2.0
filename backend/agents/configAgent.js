@@ -1,7 +1,7 @@
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import { EnhancedShopifyAgent } from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
-import { forexSignalAgent } from './forexSignalAgent.js';
+import forexSignalAgent from './forexSignalAgent.js';
 import { dataAgent } from './dataAgent.js';
 import { AdsenseAgent } from './adsenseAgent.js';
 import { AdRevenueAgent } from './adRevenueAgent.js';
