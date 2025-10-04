@@ -1029,7 +1029,6 @@ class MarketingManager {
   }
 }
 
-// Main EnhancedShopifyAgent Class
 export default class EnhancedShopifyAgent {
   constructor(config, logger) {
     this.config = config;
@@ -1038,15 +1037,13 @@ export default class EnhancedShopifyAgent {
     this.quantumShield = new QuantumShield();
     this.threatDetector = new AIThreatDetector();
     this.walletInitialized = false;
-    
-    // Update base URL to use STORE_URL
+
     this.baseURL = this.config.STORE_URL || `https://${config.SHOPIFY_STORE_DOMAIN || DEFAULT_STORE_DOMAIN}.myshopify.com`;
     this.apiVersion = API_VERSION;
     this.lastExecutionTime = DEFAULT_LAST_EXECUTION;
     this.lastStatus = DEFAULT_STATUS;
     this.totalRevenue = DEFAULT_REVENUE;
-    
-    // Initialize specialized managers
+
     this.rateLimiter = new RateLimiter(config, logger);
     this.apiQueue = new ApiQueue(config, logger, this.rateLimiter);
     this.contentGenerator = new ContentGenerator(config, logger, this.apiQueue);
@@ -1054,9 +1051,6 @@ export default class EnhancedShopifyAgent {
     this.seoManager = new SEOManager(config, logger, this.apiQueue, this.backlinkBuilder);
     this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
 
-    class EnhancedShopifyAgent {
-  constructor(config) {
-    this.config = config;
     this.db = null;
   }
 
@@ -1070,6 +1064,16 @@ export default class EnhancedShopifyAgent {
     });
 
     await this.db.run(`
+      CREATE TABLE IF NOT EXISTS shopify_products (
+        id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
+        cost REAL, margin REAL, country_code TEXT, currency TEXT,
+        inventory_quantity INTEGER, quantum_signature TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
+    `);
+
+    await this.db.run(`
       CREATE TABLE IF NOT EXISTS seo_optimizations (
         id TEXT PRIMARY KEY,
         product_id TEXT,
@@ -1081,17 +1085,12 @@ export default class EnhancedShopifyAgent {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  }
-}
 
-    
-    // Initialize databases
-    this.initDatabases();
+    this.logger.info('✅ ShopifyAgent database initialized');
   }
 
   async initializeWalletConnections() {
     this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
-    
     try {
       await initializeConnections();
       this.walletInitialized = true;
@@ -1100,20 +1099,8 @@ export default class EnhancedShopifyAgent {
       this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
     }
   }
+}
 
-  initDatabases() {
-    this.coreDB = new ArielSQLiteEngine(this.config.dbPath, { encrypt: true });
-    
-    // Core tables
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS shopify_products (
-        id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
-        cost REAL, margin REAL, country_code TEXT, currency TEXT,
-        inventory_quantity INTEGER, quantum_signature TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
-    `);
     
     this.db.run(`
       CREATE TABLE IF NOT EXISTS shopify_orders (
