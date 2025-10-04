@@ -1053,42 +1053,35 @@ export default class EnhancedShopifyAgent {
     this.seoManager = new SEOManager(config, logger, this.apiQueue, this.backlinkBuilder);
     this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
     
-   constructor(config, logger) {
-  this.config = config;
-  this.logger = logger;
-  
-  // Initialize databases
-  this.coreDB = new ArielSQLiteEngine('shopify_core_db.sqlite', this.logger); 
-  this.db = this.coreDB.db; 
-  this.initDatabases();
-} 
-
-async initializeWalletConnections() {
-  this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
-  
-  try {
-    await initializeConnections();
-    this.walletInitialized = true;
-    this.logger.info('✅ Multi-chain wallet connections initialized successfully');
-  } catch (error) {
-    this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
+    // Initialize databases
+    this.initDatabases();
   }
-}
 
-initDatabases() {
-  this.logger.info('Initializing core and agent databases...');
-  
-  // Core tables
-  this.db.run(`
-    CREATE TABLE IF NOT EXISTS shopify_products (
-      id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
-      cost REAL, margin REAL, country_code TEXT, currency TEXT,
-      inventory_quantity INTEGER, quantum_signature TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
-  `);
-}
+  async initializeWalletConnections() {
+    this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
+    
+    try {
+      await initializeConnections();
+      this.walletInitialized = true;
+      this.logger.info('✅ Multi-chain wallet connections initialized successfully');
+    } catch (error) {
+      this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
+    }
+  }
+
+  initDatabases() {
+    this.coreDB = new ArielSQLiteEngine(this.config.dbPath, { encrypt: true });
+    
+    // Core tables
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS shopify_products (
+        id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
+        cost REAL, margin REAL, country_code TEXT, currency TEXT,
+        inventory_quantity INTEGER, quantum_signature TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
+    `);
     
     this.db.run(`
       CREATE TABLE IF NOT EXISTS shopify_orders (
