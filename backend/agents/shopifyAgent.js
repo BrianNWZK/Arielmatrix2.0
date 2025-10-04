@@ -4,6 +4,7 @@ import { QuantumShield } from '../../modules/quantum-shield/index.js';
 import { AIThreatDetector } from '../../modules/ai-threat-detector/index.js'; 
 import { AISecurityModule } from '../../modules/ai-security-module/index.js';
 import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
+import { initializeDatabase } from '../database/BrianNwaezikeDB.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import apiScoutAgent from './apiScoutAgent.js';
@@ -23,6 +24,29 @@ import {
     formatBalance,
     testAllConnections,
 } from './wallet.js'; // Consolidated import
+
+async initDatabases() {
+  this.db = await initializeDatabase({
+    database: {
+      path: './data/shopify_agent.db',
+      numberOfShards: 1,
+      backup: { enabled: true, retentionDays: 7 }
+    }
+  });
+
+  await this.db.run(`
+    CREATE TABLE IF NOT EXISTS seo_optimizations (
+      id TEXT PRIMARY KEY,
+      product_id TEXT,
+      country_code TEXT,
+      optimization_type TEXT,
+      details TEXT,
+      score REAL,
+      quantum_signature TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+}
 
 // Constants for configuration
 const DEFAULT_STORE_DOMAIN = 'store';
