@@ -1,5 +1,5 @@
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
-import { EnhancedShopifyAgent } from './shopifyAgent.js';
+import shopifyAgent from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
 import { dataAgent } from './dataAgent.js';
@@ -34,8 +34,8 @@ export class configAgent {
         initializationQueue.push(this.initializeCryptoAgent());
       }
 
-      if (this.CONFIG.enableShopify) {
-        initializationQueue.push(this.initializeShopifyAgent());
+      if (this.CONFIG.enableshopify) {
+        initializationQueue.push(this.initializeshopifyAgent());
       }
 
       if (this.CONFIG.enableSocial) {
@@ -103,14 +103,14 @@ export class configAgent {
 
   async initializeShopifyAgent() {
     try {
-      const shopifyAgent = new EnhancedShopifyAgent(this.CONFIG.shopify);
+      const shopifyAgent = new shopifyAgent(this.CONFIG.shopify);
       await shopifyAgent.initialize();
       this.serviceManager.register('shopifyAgent', shopifyAgent);
       this.initializedAgents.set('shopify', shopifyAgent);
-      console.log('✅ EnhancedShopifyAgent initialized for e-commerce operations');
+      console.log('✅ shopifyAgent initialized for e-commerce operations');
       return { agent: 'shopify', status: 'success' };
     } catch (error) {
-      console.error('🔴 EnhancedShopifyAgent initialization failed:', error.message);
+      console.error('🔴 shopifyAgent initialization failed:', error.message);
       this.failedAgents.set('shopify', error);
       return { agent: 'shopify', status: 'failed', error: error.message };
     }
@@ -340,7 +340,7 @@ export class configAgent {
       case 'crypto':
         return this.initializeCryptoAgent();
       case 'shopify':
-        return this.initializeShopifyAgent();
+        return this.initializeshopifyAgent();
       case 'social':
         return this.initializeSocialAgent();
       case 'forex':
