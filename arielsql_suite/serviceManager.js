@@ -36,10 +36,10 @@ import dataAgent from "../backend/agents/dataAgent.js";
 import forexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
-import EnhancedShopifyAgent from "../backend/agents/shopifyAgent.js";
+import shopifyAgent from "../backend/agents/shopifyAgent.js";
 import SocialAgent from "../backend/agents/socialAgent.js";
 
-class ServiceManager {
+class serviceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
@@ -135,7 +135,7 @@ class ServiceManager {
       forex: new forexSignalAgent({ mainnet: this.config.mainnet }),
       health: HealthAgent,
       payout: PayoutAgent,
-      shopify: new EnhancedShopifyAgent({ mainnet: this.config.mainnet }),
+      shopify: new shopifyAgent({ mainnet: this.config.mainnet }),
       social: new SocialAgent({ mainnet: this.config.mainnet })
     };
 
@@ -278,7 +278,7 @@ class ServiceManager {
   }
 
   async stop() {
-    console.log("🛑 Stopping ServiceManager...");
+    console.log("🛑 Stopping serviceManager...");
     
     // Close WebSocket connections
     this.connectedClients.forEach(client => {
@@ -708,5 +708,5 @@ class ServiceManager {
   }
 }
 
-export { ServiceManager as serviceManager };
-export default ServiceManager;
+export { serviceManager };
+
