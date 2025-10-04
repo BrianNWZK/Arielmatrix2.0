@@ -1289,36 +1289,40 @@ class shopifyAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
-    this.status = DEFAULT_STATUS;
-    this.lastExecution = DEFAULT_LAST_EXECUTION;
+    this.blockchain = new BrianNwaezikeChain(config);
+    this.quantumShield = new QuantumShield();
+    this.threatDetector = new AIThreatDetector();
+    this.walletInitialized = false;
+
+    this.baseURL = this.config.STORE_URL || `https://${config.SHOPIFY_STORE_DOMAIN || DEFAULT_STORE_DOMAIN}.myshopify.com`;
+    this.apiVersion = API_VERSION;
+    this.lastExecutionTime = DEFAULT_LAST_EXECUTION;
+    this.lastStatus = DEFAULT_STATUS;
     this.totalRevenue = DEFAULT_REVENUE;
+
     this.rateLimiter = new RateLimiter(config, logger);
     this.apiQueue = new ApiQueue(config, logger, this.rateLimiter);
     this.contentGenerator = new ContentGenerator(config, logger, this.apiQueue);
     this.backlinkBuilder = new BacklinkBuilder(config, logger, this.apiQueue, this.contentGenerator);
     this.seoManager = new SEOManager(config, logger, this.apiQueue, this.backlinkBuilder);
     this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
-    this.quantumShield = new QuantumShield();
-    this.aiThreatDetector = new AIThreatDetector();
-    this.aiSecurityModule = new AISecurityModule();
-    this.brianNwaezikeChain = new BrianNwaezikeChain(config);
-    this.arielSQLiteEngine = new ArielSQLiteEngine();
-    this.quantumBrowserManager = new QuantumBrowserManager(config, logger);
+    this.browserManager = new QuantumBrowserManager(config, logger);
     this.apiScout = new apiScoutAgent(config, logger);
-    this.platformRegistration = new AIPlatformRegistration(config, logger, this.quantumBrowserManager, this.apiScout);
-    
-    this.initializeDatabase();
-    this.initializePlatforms();
+    this.platformRegistrar = new AIPlatformRegistration(config, logger, this.browserManager, this.apiScout);
+
+    this.db = null;
   }
 
-  async initializeDatabase() {
+  async initDatabases() {
     try {
-      this.db = await initializeDatabase();
-      this.backlinkBuilder.initDatabase(this.db);
-      this.seoManager.initDatabase(this.db);
-      this.marketingManager.initDatabase(this.db);
-      
-      // Create additional tables
+      this.db = await initializeDatabase({
+        database: {
+          path: './data/shopify_agent.db',
+          numberOfShards: 1,
+          backup: { enabled: true, retentionDays: 7 }
+        }
+      });
+
       await this.db.run(`
         CREATE TABLE IF NOT EXISTS shopify_products (
           id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
@@ -1330,237 +1334,61 @@ class shopifyAgent {
       `);
 
       await this.db.run(`
-        CREATE TABLE IF NOT EXISTS shopify_orders (
-          id TEXT PRIMARY KEY, shopify_id TEXT, total_price REAL,
-          currency TEXT, financial_status TEXT, fulfillment_status TEXT,
-          customer_id TEXT, country_code TEXT, items TEXT, quantum_proof TEXT,
+        CREATE TABLE IF NOT EXISTS seo_optimizations (
+          id TEXT PRIMARY KEY,
+          product_id TEXT,
+          country_code TEXT,
+          optimization_type TEXT,
+          details TEXT,
+          score REAL,
+          quantum_signature TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) WITH INDEX=${QUANTUM_FAST_LOOKUP}
+        )
       `);
 
       await this.db.run(`
-        CREATE TABLE IF NOT EXISTS country_strategies (
-          id TEXT PRIMARY KEY, country_code TEXT, currency TEXT,
-          weight REAL, demand_factor REAL, success_rate REAL,
-          total_revenue REAL, quantum_seal TEXT,
-          last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        CREATE TABLE IF NOT EXISTS marketing_campaigns (
+          id TEXT PRIMARY KEY, product_id TEXT, country_code TEXT,
+          platform TEXT, campaign_type TEXT, budget REAL, spend REAL,
+          impressions INTEGER, clicks INTEGER, conversions INTEGER, roi REAL,
+          status TEXT, quantum_signature TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
       `);
 
-      this.logger.info('✅ Database initialized successfully');
-    } catch (error) {
-      this.logger.error(`Database initialization failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async initializePlatforms() {
-    try {
-      if (this.config.AI_EMAIL && this.config.AI_PASSWORD) {
-        await this.platformRegistration.autoRegisterPlatforms();
-        this.logger.info('✅ Platform auto-registration completed');
-      } else {
-        this.logger.info('ℹ️ AI credentials not configured for platform auto-registration');
-      }
-    } catch (error) {
-      this.logger.warn(`Platform initialization completed with limited features: ${error.message}`);
-    }
-  }
-
-  async executeMarketingStrategy(productId, countryCode) {
-    try {
-      this.status = 'executing';
-      this.logger.info(`🚀 Executing marketing strategy for product ${productId} in ${countryCode}`);
-      
-      const product = await this._fetchProduct(productId);
-      if (!product) throw new Error(`Product ${productId} not found`);
-      
-      await this._validateProductData(product);
-      await this._validateCountryCode(countryCode);
-      
-      await this.marketingManager.initializeWalletConnections();
-      
-      const results = await Promise.allSettled([
-        this.seoManager.optimizeProduct(product, countryCode),
-        this.marketingManager.executeStrategy(product, countryCode)
-      ]);
-      
-      const success = results.every(result => result.status === 'fulfilled');
-      if (success) {
-        this.lastExecution = new Date().toISOString();
-        this.totalRevenue += await this._calculateEstimatedRevenue(product, countryCode);
-        this.status = 'completed';
-        this.logger.info(`✅ Marketing strategy completed for ${product.title} in ${countryCode}`);
-      } else {
-        this.logger.warn('⚠️ Some marketing strategies completed with limited features');
-        this.status = 'completed_with_warnings';
-      }
-      
-      return success;
-    } catch (error) {
-      this.status = 'error';
-      this.logger.error(`Marketing strategy execution failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async _fetchProduct(productId) {
-    if (!this.config.ADMIN_SHOP_SECRET) {
-      throw new Error('Shopify Admin API secret not configured');
-    }
-    
-    const response = await this.apiQueue.enqueue(() =>
-      axios.get(`${this.config.STORE_URL}/admin/api/${API_VERSION}/products/${productId}.json`, {
-        headers: {
-          'X-Shopify-Access-Token': this.config.ADMIN_SHOP_SECRET,
-          'Content-Type': 'application/json'
-        }
-      }), 'shopify', 1
-    );
-    
-    return response.data.product;
-  }
-
-  async _validateProductData(product) {
-    const requiredFields = ['id', 'title', 'handle', 'variants'];
-    const missingFields = requiredFields.filter(field => !product[field]);
-    
-    if (missingFields.length > 0) {
-      throw new Error(`Product missing required fields: ${missingFields.join(', ')}`);
-    }
-    
-    if (!product.variants || product.variants.length === 0) {
-      throw new Error('Product has no variants');
-    }
-  }
-
-  async _validateCountryCode(countryCode) {
-    const validCountries = Object.keys(COUNTRY_WEIGHTS);
-    if (!validCountries.includes(countryCode)) {
-      this.logger.warn(`Country code ${countryCode} not in predefined weights, using default`);
-    }
-  }
-
-  async _calculateEstimatedRevenue(product, countryCode) {
-    const basePrice = parseFloat(product.variants[0].price);
-    const countryWeight = COUNTRY_WEIGHTS[countryCode] || 0.7;
-    const estimatedSales = Math.floor(Math.random() * 50) + 10;
-    return basePrice * estimatedSales * countryWeight;
-  }
-
-  async getStatus() {
-    return {
-      status: this.status,
-      lastExecution: this.lastExecution,
-      totalRevenue: this.totalRevenue,
-      queueLength: this.apiQueue.queue.length,
-      isProcessing: this.apiQueue.processing,
-      walletInitialized: this.marketingManager.walletInitialized
-    };
-  }
-
-  async getCampaignPerformance(productId, countryCode) {
-    try {
-      return await this.db.all(`
-        SELECT platform, campaign_type, budget, spend, impressions, clicks, conversions, roi
-        FROM marketing_campaigns 
-        WHERE product_id = ? AND country_code = ? AND status = 'active'
-      `, [productId, countryCode]);
-    } catch (error) {
-      this.logger.warn(`Campaign performance query failed: ${error.message}`);
-      return [];
-    }
-  }
-
-  async getRealSalesData(productId, countryCode, days = SALES_DATA_LOOKBACK_DAYS) {
-    try {
-      return await this.db.all(`
-        SELECT quantity, revenue, currency, source, sale_timestamp
-        FROM real_sales_data 
-        WHERE product_id = ? AND country_code = ? 
-        AND sale_timestamp >= datetime('now', '-${days} days')
-        ORDER BY sale_timestamp DESC
-        LIMIT ${SALES_DATA_LIMIT}
-      `, [productId, countryCode]);
-    } catch (error) {
-      this.logger.warn(`Sales data query failed: ${error.message}`);
-      return [];
-    }
-  }
-
-  async updateRealSalesData(salesData) {
-    const {
-      productId, countryCode, quantity, revenue, currency = 'USD',
-      source = 'direct', campaignId = null, customerId = null
-    } = salesData;
-    
-    try {
-      const quantumProof = this.quantumShield.generateQuantumProof(salesData);
-      const saleId = `sale_${crypto.randomBytes(8).toString('hex')}`;
-      
       await this.db.run(`
-        INSERT INTO real_sales_data 
-        (id, product_id, country_code, quantity, revenue, currency, source, campaign_id, customer_id, quantum_proof, sale_timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `, [saleId, productId, countryCode, quantity, revenue, currency, source, campaignId, customerId, quantumProof]);
-      
-      await this.marketingManager.updateCampaignPerformance(productId, countryCode, revenue, quantity);
-      
-      if (revenue > 0) {
-        await this.marketingManager.processRevenuePayment(revenue, currency, countryCode, productId);
-      }
-      
-      this.totalRevenue += revenue;
-      this.logger.info(`💰 Sales data updated: ${quantity} units, ${revenue} ${currency}`);
-    } catch (error) {
-      this.logger.error(`Sales data update failed: ${error.message}`);
-    }
-  }
+        CREATE TABLE IF NOT EXISTS revenue_streams (
+          id TEXT PRIMARY KEY, source TEXT, amount REAL, currency TEXT,
+          country_code TEXT, product_id TEXT, order_id TEXT,
+          blockchain_tx_hash TEXT, quantum_signature TEXT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) WITH INDEX=${QUANTUM_FAST_LOOKUP}
+      `);
 
-  async getWalletBalances() {
-    try {
-      if (!this.marketingManager.walletInitialized) {
-        await this.marketingManager.initializeWalletConnections();
-      }
-      return await getWalletBalances();
+      this.logger.info('✅ shopifyAgent database initialized');
     } catch (error) {
-      this.logger.error(`Failed to get wallet balances: ${error.message}`);
-      return {};
-    }
-  }
-
-  async testAllConnections() {
-    try {
-      const results = await testAllConnections();
-      this.logger.info('✅ All wallet connections tested successfully');
-      return results;
-    } catch (error) {
-      this.logger.error(`Connection test failed: ${error.message}`);
+      this.logger.error(`❌ Failed to initialize database: ${error.message}`);
       throw error;
     }
   }
 
-  async shutdown() {
-    this.status = 'shutting_down';
-    this.apiQueue.processing = false;
-    this.logger.info('🛑 ShopifyAgent shutting down gracefully');
+  async initializeWalletConnections() {
+    this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
+    try {
+      await initializeConnections();
+      this.walletInitialized = true;
+      this.logger.info('✅ Multi-chain wallet connections initialized successfully');
+    } catch (error) {
+      this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
+    }
   }
 
-  // New method to check platform registration status
-  getPlatformStatus() {
-    const platforms = [
-      'OPENAI_API_KEY', 'SENDGRID_API_KEY', 'MAILCHIMP_API_KEY',
-      'GOOGLE_ADS_API_KEY', 'FB_ADS_ACCESS_TOKEN', 'SEMRUSH_API_KEY',
-      'TWITTER_BEARER_TOKEN', 'LINKEDIN_ACCESS_TOKEN', 
-      'INSTAGRAM_ACCESS_TOKEN', 'TIKTOK_ACCESS_TOKEN', 'INFLUENCERDB_API_KEY'
-    ];
-    
-    const status = {};
-    platforms.forEach(platform => {
-      status[platform] = !!this.config[platform];
-    });
-    
-    return status;
+  async initialize() {
+    this.logger.info('🚀 Initializing shopifyAgent...');
+    await this.initDatabases();
+    await this.initializeWalletConnections();
+    await this.platformRegistrar.autoRegisterPlatforms();
+    this.logger.info('✅ shopifyAgent fully initialized');
   }
 }
 
