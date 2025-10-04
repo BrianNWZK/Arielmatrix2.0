@@ -1054,33 +1054,16 @@ export default class EnhancedShopifyAgent {
     this.db = null;
   }
 
- constructor(config, logger) {
-    this.config = config;
-    this.logger = logger;
-    
-    // Initialize databases
-    this.coreDB = new ArielSQLiteEngine('shopify_core_db.sqlite', this.logger); 
-    this.db = this.coreDB.db; 
-    this.initDatabases();
-  } 
+  async initDatabases() {
+    this.db = await initializeDatabase({
+      database: {
+        path: './data/shopify_agent.db',
+        numberOfShards: 1,
+        backup: { enabled: true, retentionDays: 7 }
+      }
+    });
 
-  async initializeWalletConnections() {
-    this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
-    
-    try {
-      await initializeConnections();
-      this.walletInitialized = true;
-      this.logger.info('✅ Multi-chain wallet connections initialized successfully');
-    } catch (error) {
-      this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
-    }
-  }
-
-  initDatabases() {
-    this.logger.info('Initializing core and agent databases...');
-    
-    // Core tables
-    this.db.run(`
+    await this.db.run(`
       CREATE TABLE IF NOT EXISTS shopify_products (
         id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
         cost REAL, margin REAL, country_code TEXT, currency TEXT,
@@ -1089,7 +1072,6 @@ export default class EnhancedShopifyAgent {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
     `);
-  }
 
     await this.db.run(`
       CREATE TABLE IF NOT EXISTS seo_optimizations (
