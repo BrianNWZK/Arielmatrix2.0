@@ -25,29 +25,6 @@ import {
     testAllConnections,
 } from './wallet.js'; // Consolidated import
 
-async initDatabases() {
-  this.db = await initializeDatabase({
-    database: {
-      path: './data/shopify_agent.db',
-      numberOfShards: 1,
-      backup: { enabled: true, retentionDays: 7 }
-    }
-  });
-
-  await this.db.run(`
-    CREATE TABLE IF NOT EXISTS seo_optimizations (
-      id TEXT PRIMARY KEY,
-      product_id TEXT,
-      country_code TEXT,
-      optimization_type TEXT,
-      details TEXT,
-      score REAL,
-      quantum_signature TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-}
-
 // Constants for configuration
 const DEFAULT_STORE_DOMAIN = 'store';
 const API_VERSION = '2024-01';
@@ -1076,6 +1053,37 @@ export default class EnhancedShopifyAgent {
     this.backlinkBuilder = new BacklinkBuilder(config, logger, this.apiQueue, this.contentGenerator);
     this.seoManager = new SEOManager(config, logger, this.apiQueue, this.backlinkBuilder);
     this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
+
+    class EnhancedShopifyAgent {
+  constructor(config) {
+    this.config = config;
+    this.db = null;
+  }
+
+  async initDatabases() {
+    this.db = await initializeDatabase({
+      database: {
+        path: './data/shopify_agent.db',
+        numberOfShards: 1,
+        backup: { enabled: true, retentionDays: 7 }
+      }
+    });
+
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS seo_optimizations (
+        id TEXT PRIMARY KEY,
+        product_id TEXT,
+        country_code TEXT,
+        optimization_type TEXT,
+        details TEXT,
+        score REAL,
+        quantum_signature TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  }
+}
+
     
     // Initialize databases
     this.initDatabases();
