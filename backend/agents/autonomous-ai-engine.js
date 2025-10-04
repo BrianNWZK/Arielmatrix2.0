@@ -49,7 +49,7 @@ import contractDeployAgent from './contractDeployAgent.js';
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import dataAgent from './dataAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
-import EnhancedShopifyAgent from './shopifyAgent.js';
+import shopifyAgent from './shopifyAgent.js';
 import socialAgent from './socialAgent.js';
 
 // Enhanced retry-axios implementation
@@ -1066,7 +1066,7 @@ class AutonomousAIEngine {
             { name: 'nft_marketplace', agent: adsenseAgent, weight: 0.15 },
             { name: 'data_services', agent: dataAgent, weight: 0.1 },
             { name: 'forex_trading', agent: forexSignalAgent, weight: 0.1 },
-            { name: 'ecommerce', agent: new EnhancedShopifyAgent(), weight: 0.05 },
+            { name: 'ecommerce', agent: new shopifyAgent(), weight: 0.05 },
             { name: 'social_platforms', agent: socialAgent, weight: 0.05 }
         ];
         
