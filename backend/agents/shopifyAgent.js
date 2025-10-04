@@ -1054,8 +1054,9 @@ export default class EnhancedShopifyAgent {
     this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
     
     // Initialize databases
-    this.initDatabases();
-  }
+    this.coreDB = new ArielSQLiteEngine('shopify_core_db.sqlite', this.logger); // Use a filename for the DB
+  this.initDatabases();
+}
 
   async initializeWalletConnections() {
     this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
@@ -1070,7 +1071,7 @@ export default class EnhancedShopifyAgent {
   }
 
   initDatabases() {
-    this.coreDB = new ArielSQLiteEngine(this.config.dbPath, { encrypt: true });
+    this.logger.info('Initializing core and agent databases...');
     
     // Core tables
     this.db.run(`
