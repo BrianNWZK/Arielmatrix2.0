@@ -373,7 +373,26 @@ class BacklinkBuilder {
     this.logger = logger;
     this.apiQueue = apiQueue;
     this.contentGenerator = contentGenerator;
-    this.authoritativeSites = this._loadAuthoritativeSites();
+    this.authoritativeSites = this._loadAuthoritativeSites(); // This line was causing the error
+  }
+
+  _loadAuthoritativeSites() {
+    // Return a default set of authoritative sites
+    return {
+      'US': [
+        { domain: 'forbes.com', domainAuthority: 95, contactEmail: 'tips@forbes.com' },
+        { domain: 'techcrunch.com', domainAuthority: 93, contactEmail: 'tips@techcrunch.com' },
+        { domain: 'entrepreneur.com', domainAuthority: 92, contactEmail: 'editorial@entrepreneur.com' }
+      ],
+      'GB': [
+        { domain: 'theguardian.com', domainAuthority: 94, contactEmail: 'national@theguardian.com' },
+        { domain: 'bbc.co.uk', domainAuthority: 96, contactEmail: 'newsonline@bbc.co.uk' }
+      ],
+      'default': [
+        { domain: 'medium.com', domainAuthority: 93, contactEmail: 'yourfriends@medium.com' },
+        { domain: 'linkedin.com', domainAuthority: 95, contactEmail: 'press@linkedin.com' }
+      ]
+    };
   }
 
   initDatabase(db) {
@@ -437,23 +456,12 @@ class BacklinkBuilder {
   }
 
   _getTemplateWebsites(category, country) {
-    const templateSites = {
-      'US': [
-        { domain: 'forbes.com', domainAuthority: 95, contactEmail: 'tips@forbes.com' },
-        { domain: 'techcrunch.com', domainAuthority: 93, contactEmail: 'tips@techcrunch.com' },
-        { domain: 'entrepreneur.com', domainAuthority: 92, contactEmail: 'editorial@entrepreneur.com' }
-      ],
-      'GB': [
-        { domain: 'theguardian.com', domainAuthority: 94, contactEmail: 'national@theguardian.com' },
-        { domain: 'bbc.co.uk', domainAuthority: 96, contactEmail: 'newsonline@bbc.co.uk' }
-      ],
-      'default': [
-        { domain: 'medium.com', domainAuthority: 93, contactEmail: 'yourfriends@medium.com' },
-        { domain: 'linkedin.com', domainAuthority: 95, contactEmail: 'press@linkedin.com' }
-      ]
-    };
-    
-    return templateSites[country] || templateSites.default;
+    const countrySites = this.authoritativeSites[country] || this.authoritativeSites.default;
+    return countrySites.map(site => ({
+      domain: site.domain,
+      domainAuthority: site.domainAuthority,
+      contactEmail: site.contactEmail
+    }));
   }
 
   async _conductStrategicOutreach(websites, product, country, content) {
