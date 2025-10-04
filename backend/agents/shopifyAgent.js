@@ -373,11 +373,10 @@ class BacklinkBuilder {
     this.logger = logger;
     this.apiQueue = apiQueue;
     this.contentGenerator = contentGenerator;
-    this.authoritativeSites = this._loadAuthoritativeSites(); // This line was causing the error
+    this.authoritativeSites = this._loadAuthoritativeSites();
   }
 
   _loadAuthoritativeSites() {
-    // Return a default set of authoritative sites
     return {
       'US': [
         { domain: 'forbes.com', domainAuthority: 95, contactEmail: 'tips@forbes.com' },
@@ -404,7 +403,7 @@ class BacklinkBuilder {
         outreach_date DATETIME, status TEXT, response_date DATETIME,
         notes TEXT, quantum_signature TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
+      )
     `);
   }
 
@@ -422,12 +421,11 @@ class BacklinkBuilder {
       return true;
     } catch (error) {
       this.logger.warn(`Backlink building completed with limited features: ${error.message}`);
-      return true; // Non-critical, continue execution
+      return true;
     }
   }
 
   async _findAuthoritativeWebsites(product, country) {
-    // Use template-based website discovery if SEMRush not available
     if (!this.config.SEMRUSH_API_KEY) {
       return this._getTemplateWebsites(product.category, country);
     }
@@ -467,7 +465,7 @@ class BacklinkBuilder {
   async _conductStrategicOutreach(websites, product, country, content) {
     let successfulOutreaches = 0;
     
-    for (const website of websites.slice(0, 5)) { // Reduced to 5 for efficiency
+    for (const website of websites.slice(0, 5)) {
       try {
         if (this.config.SENDGRID_API_KEY) {
           const outreachResult = await this._sendStrategicOutreach(website, product, country, content);
@@ -476,9 +474,9 @@ class BacklinkBuilder {
           }
         } else {
           this.logger.info(`📧 Outreach template ready for ${website.domain} (SendGrid not configured)`);
-          successfulOutreaches++; // Count as success for tracking
+          successfulOutreaches++;
         }
-        await this.delay(10000); // Reduced delay
+        await this.delay(10000);
       } catch (error) {
         this.logger.warn(`Outreach to ${website.domain} failed: ${error.message}`);
       }
@@ -531,9 +529,7 @@ class BacklinkBuilder {
 
     for (const directory of directories) {
       try {
-        // Log directory submission attempt
         this.logger.info(`📋 Directory submission template ready for ${directory}`);
-        // Actual submission would require API integration
       } catch (error) {
         this.logger.warn(`Directory submission failed for ${directory}: ${error.message}`);
       }
@@ -552,6 +548,7 @@ class SEOManager {
     this.logger = logger;
     this.apiQueue = apiQueue;
     this.backlinkBuilder = backlinkBuilder;
+    this.contentGenerator = new ContentGenerator(config, logger, apiQueue);
   }
 
   initDatabase(db) {
@@ -561,7 +558,7 @@ class SEOManager {
         id TEXT PRIMARY KEY, product_id TEXT, country_code TEXT,
         optimization_type TEXT, details TEXT, score REAL,
         quantum_signature TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
+      )
     `);
   }
 
@@ -576,7 +573,7 @@ class SEOManager {
       return true;
     } catch (error) {
       this.logger.warn(`SEO optimization completed with limited features: ${error.message}`);
-      return true; // Non-critical, continue execution
+      return true;
     }
   }
 
@@ -667,7 +664,7 @@ class SEOManager {
 
     try {
       await this.apiQueue.enqueue(() =>
-        axios.post('https://api.google.com/search/url', {
+        axios.post('https://indexing.googleapis.com/v3/urlNotifications:publish', {
           url: `${this.config.STORE_URL}/products/${product.handle}`,
           type: 'URL_UPDATED'
         }, {
@@ -730,6 +727,7 @@ class MarketingManager {
     this.logger = logger;
     this.apiQueue = apiQueue;
     this.walletInitialized = false;
+    this.contentGenerator = new ContentGenerator(config, logger, apiQueue);
   }
 
   async initializeWalletConnections() {
@@ -753,7 +751,7 @@ class MarketingManager {
         impressions INTEGER, clicks INTEGER, conversions INTEGER, roi REAL,
         status TEXT, quantum_signature TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
+      )
     `);
 
     this.db.run(`
@@ -762,7 +760,7 @@ class MarketingManager {
         quantity INTEGER, revenue REAL, currency TEXT, source TEXT,
         campaign_id TEXT, customer_id TEXT, quantum_proof TEXT,
         sale_timestamp DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) WITH INDEX=${QUANTUM_FAST_LOOKUP}
+      )
     `);
 
     this.db.run(`
@@ -771,7 +769,7 @@ class MarketingManager {
         country_code TEXT, product_id TEXT, order_id TEXT,
         blockchain_tx_hash TEXT, quantum_signature TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) WITH INDEX=${QUANTUM_FAST_LOOKUP}
+      )
     `);
   }
 
@@ -790,7 +788,7 @@ class MarketingManager {
       return campaigns;
     } catch (error) {
       this.logger.warn(`Marketing strategy executed with limited features: ${error.message}`);
-      return []; // Return empty array instead of throwing
+      return [];
     }
   }
 
@@ -930,7 +928,7 @@ class MarketingManager {
             successfulPosts++;
           } else {
             this.logger.info(`📱 Social media template prepared for ${platform}`);
-            successfulPosts++; // Count as success for tracking
+            successfulPosts++;
           }
           await this.delay(1000);
         } catch (error) {
@@ -962,74 +960,108 @@ class MarketingManager {
       }
       
       this.logger.info(`✅ Influencer outreach initiated for ${product.title}`);
-      return true;
+      return { contacted: influencers.slice(0, INFLUENCER_CONTACT_LIMIT).length };
     }, 'influencer', 2);
   }
 
-  async updateCampaignPerformance(productId, countryCode, revenue, units) {
+  async _generateEmailContent(product, country) {
     try {
-      await this.db.run(`
-        UPDATE marketing_campaigns 
-        SET conversions = conversions + ?, spend = spend + (budget * 0.1), roi = ?
-        WHERE product_id = ? AND country_code = ? AND status = 'active'
-      `, [units, revenue / (units * 0.1 || 1), productId, countryCode]);
+      return await this.contentGenerator.generateProductContent(product, country, 'email');
     } catch (error) {
-      this.logger.warn(`Campaign performance update failed: ${error.message}`);
+      return `
+        <h1>Discover ${product.title}!</h1>
+        <p>We're excited to introduce our latest product, perfect for ${country} customers.</p>
+        <p>${product.description}</p>
+        <a href="${this.config.STORE_URL}/products/${product.handle}">Shop Now</a>
+      `;
     }
   }
 
-  async processRevenuePayment(amount, currency, countryCode, productId) {
-    try {
-      if (!this.walletInitialized) {
-        await this.initializeWalletConnections();
-      }
+  _hasPlatformConfig(platform) {
+    const configKeys = {
+      'twitter': 'TWITTER_API_KEY',
+      'linkedin': 'LINKEDIN_API_KEY',
+      'instagram': 'INSTAGRAM_API_KEY',
+      'tiktok': 'TIKTOK_API_KEY'
+    };
+    return !!this.config[configKeys[platform]];
+  }
 
-      let settlementResult;
+  async _postToSocialPlatform(platform, product, country) {
+    const content = await this.contentGenerator.generateProductContent(product, country, 'ad_copy');
+    const apiConfig = this._getPlatformAPIConfig(platform);
+    
+    const response = await axios.post(apiConfig.endpoint, {
+      message: content,
+      link: `${this.config.STORE_URL}/products/${product.handle}`,
+      scheduled_time: Math.floor(Date.now() / 1000) + 3600
+    }, {
+      headers: apiConfig.headers
+    });
+    
+    return response.data;
+  }
+
+  _getPlatformAPIConfig(platform) {
+    const configs = {
+      'twitter': {
+        endpoint: 'https://api.twitter.com/2/tweets',
+        headers: { 'Authorization': `Bearer ${this.config.TWITTER_API_KEY}` }
+      },
+      'linkedin': {
+        endpoint: 'https://api.linkedin.com/v2/ugcPosts',
+        headers: { 'Authorization': `Bearer ${this.config.LINKEDIN_API_KEY}` }
+      }
+    };
+    return configs[platform] || configs.twitter;
+  }
+
+  async _findRelevantInfluencers(category, country) {
+    const response = await axios.get('https://api.influencerdb.com/v1/influencers', {
+      params: {
+        category: category,
+        country: country,
+        min_followers: 10000,
+        max_followers: 1000000
+      },
+      headers: {
+        'Authorization': `Bearer ${this.config.INFLUENCERDB_API_KEY}`
+      }
+    });
+    return response.data.data;
+  }
+
+  async _contactInfluencer(influencer, product, country) {
+    const emailContent = `
+      Hi ${influencer.name},
       
-      if (['USD', 'EUR', 'GBP'].includes(currency)) {
-        settlementResult = await sendUSDT(
-          this.config.COMPANY_WALLET_ADDRESS,
-          amount,
-          'eth'
-        );
-      } else {
-        const solAmount = await this._convertToSol(amount, currency);
-        settlementResult = await sendSOL(
-          this.config.COMPANY_WALLET_ADDRESS,
-          solAmount
-        );
+      I love your content about ${product.category} and think your audience in ${country} would be interested in ${product.title}.
+      
+      Would you be open to a collaboration?
+      
+      Best,
+      ${this.config.STORE_NAME} Team
+    `;
+    
+    await axios.post('https://api.influencerdb.com/v1/messages', {
+      influencer_id: influencer.id,
+      subject: `Collaboration Opportunity: ${product.title}`,
+      message: emailContent
+    }, {
+      headers: {
+        'Authorization': `Bearer ${this.config.INFLUENCERDB_API_KEY}`
       }
-
-      if (settlementResult.hash || settlementResult.signature) {
-        const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
-        await this.db.run(`
-          INSERT INTO revenue_streams 
-          (id, source, amount, currency, country_code, product_id, blockchain_tx_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [
-          revenueId, 'marketing_campaign', amount, currency, 
-          countryCode, productId, settlementResult.hash || settlementResult.signature
-        ]);
-
-        this.logger.info(`💰 Revenue payment processed: ${amount} ${currency}`);
-        return true;
-      }
-
-      return false;
-
-    } catch (error) {
-      this.logger.error(`Revenue payment processing failed: ${error.message}`);
-      return false;
-    }
+    });
   }
 
-  _calculateMarketingBudget(price, country) {
-    const weight = COUNTRY_WEIGHTS[country] || 0.7;
-    return Math.max(MINIMUM_MARKETING_BUDGET, price * MARKETING_BUDGET_PERCENTAGE * weight);
+  _calculateMarketingBudget(productPrice, country) {
+    const baseBudget = Math.max(productPrice * MARKETING_BUDGET_PERCENTAGE, MINIMUM_MARKETING_BUDGET);
+    const countryMultiplier = COUNTRY_WEIGHTS[country] || 0.7;
+    return Math.min(baseBudget * countryMultiplier, 1000);
   }
 
   _getGoogleAdsTargeting(country) {
-    return GOOGLE_ADS_TARGETING_PRESETS[country] || { locations: [country], languages: ['1000'] };
+    return GOOGLE_ADS_TARGETING_PRESETS[country] || GOOGLE_ADS_TARGETING_PRESETS.US;
   }
 
   _getCurrencyForCountry(country) {
@@ -1037,246 +1069,284 @@ class MarketingManager {
     return currencies[country] || 'USD';
   }
 
-  async _convertToSol(amount, currency) {
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+// Enhanced Shopify Agent with Comprehensive Error Handling
+class ShopifyAgent {
+  constructor(config, logger) {
+    this.config = config;
+    this.logger = logger;
+    this.status = DEFAULT_STATUS;
+    this.lastExecution = DEFAULT_LAST_EXECUTION;
+    this.totalRevenue = DEFAULT_REVENUE;
+    this.quantumShield = new QuantumShield();
+    this.aiThreatDetector = new AIThreatDetector();
+    this.aiSecurityModule = new AISecurityModule();
+    this.arielSQLiteEngine = new ArielSQLiteEngine();
+    this.brianNwaezikeChain = new BrianNwaezikeChain();
+    this.browserManager = new QuantumBrowserManager();
+    this.apiScout = apiScoutAgent;
+    this.rateLimiter = new RateLimiter(config, logger);
+    this.apiQueue = new ApiQueue(config, logger, this.rateLimiter);
+    this.backlinkBuilder = new BacklinkBuilder(config, logger, this.apiQueue);
+    this.seoManager = new SEOManager(config, logger, this.apiQueue, this.backlinkBuilder);
+    this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
+    this.platformRegistration = new AIPlatformRegistration(config, logger, this.browserManager, this.apiScout);
+    this.db = null;
+  }
+
+  async initialize() {
     try {
-      const response = await axios.get(
-        `https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=${currency.toLowerCase()}`
-      );
-      const rate = response.data.solana[currency.toLowerCase()];
-      return amount / rate;
+      this.logger.info('🚀 Initializing Enhanced Shopify Agent...');
+      
+      // Initialize database
+      this.db = await initializeDatabase();
+      this.backlinkBuilder.initDatabase(this.db);
+      this.seoManager.initDatabase(this.db);
+      this.marketingManager.initDatabase(this.db);
+      
+      // Initialize security modules
+      await this.quantumShield.initialize();
+      await this.aiThreatDetector.initialize();
+      await this.aiSecurityModule.initialize();
+      await this.arielSQLiteEngine.initialize();
+      
+      // Initialize wallet connections
+      await this.marketingManager.initializeWalletConnections();
+      
+      // Attempt platform auto-registration
+      await this.platformRegistration.autoRegisterPlatforms();
+      
+      // Test all connections
+      await this._testAllConnections();
+      
+      this.status = 'ready';
+      this.logger.info('✅ Enhanced Shopify Agent initialized successfully');
     } catch (error) {
-      this.logger.error('Currency conversion failed:', error);
-      return amount / 100;
+      this.logger.error(`❌ Initialization failed: ${error.message}`);
+      this.status = 'error';
+      throw error;
     }
   }
 
-  async _generateEmailContent(product, country) {
-    if (!this.config.OPENAI_API_KEY) {
-      return `
-        <h1>Discover ${product.title}!</h1>
-        <p>We're excited to introduce ${product.title} to our ${country} customers.</p>
-        <p>This premium product offers exceptional quality and value for the ${country} market.</p>
-        <p><strong>Special Offer:</strong> Limited time discount for ${country} customers!</p>
-        <a href="${this.config.STORE_URL}/products/${product.handle}">Shop Now</a>
-      `;
+  async _testAllConnections() {
+    try {
+      this.logger.info('🔗 Testing all external connections...');
+      
+      const connectionTests = [
+        this._testShopifyConnection(),
+        this._testDatabaseConnection(),
+        this._testBlockchainConnection(),
+        this._testSecurityModules()
+      ];
+
+      const results = await Promise.allSettled(connectionTests);
+      
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          this.logger.warn(`Connection test ${index} failed: ${result.reason.message}`);
+        }
+      });
+
+      this.logger.info('✅ Connection tests completed');
+    } catch (error) {
+      this.logger.warn(`Connection tests completed with warnings: ${error.message}`);
+    }
+  }
+
+  async _testShopifyConnection() {
+    if (!this.config.ADMIN_SHOP_SECRET) {
+      throw new Error('Shopify Admin API secret not configured');
     }
 
-    const prompt = `Create an engaging email about ${product.title} for customers in ${country}. Include special offers and compelling CTAs.`;
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1000
+    const response = await axios.get(`${this.config.STORE_URL}/admin/api/${API_VERSION}/products/count.json`, {
+      headers: {
+        'X-Shopify-Access-Token': this.config.ADMIN_SHOP_SECRET
       },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
+      timeout: 10000
+    });
+    
+    if (response.status !== 200) {
+      throw new Error(`Shopify API returned status ${response.status}`);
+    }
+  }
+
+  async _testDatabaseConnection() {
+    const testResult = await this.db.get('SELECT 1 as test');
+    if (!testResult || testResult.test !== 1) {
+      throw new Error('Database connection test failed');
+    }
+  }
+
+  async _testBlockchainConnection() {
+    await testAllConnections();
+  }
+
+  async _testSecurityModules() {
+    const securityTests = [
+      this.quantumShield.testConnection(),
+      this.aiThreatDetector.testConnection(),
+      this.aiSecurityModule.testConnection()
+    ];
+    
+    await Promise.allSettled(securityTests);
+  }
+
+  async executeFullMarketingStrategy(productId, targetCountries = ['US', 'GB', 'CA', 'AU']) {
+    try {
+      this.status = 'executing';
+      this.logger.info(`🎯 Starting full marketing strategy for product ${productId}`);
+      
+      const product = await this._getProductDetails(productId);
+      if (!product) {
+        throw new Error(`Product ${productId} not found`);
+      }
+
+      const results = [];
+      
+      for (const country of targetCountries) {
+        try {
+          this.logger.info(`🌍 Processing ${country} for ${product.title}`);
+          
+          const countryResults = await Promise.allSettled([
+            this.seoManager.optimizeProduct(product, country),
+            this.marketingManager.executeStrategy(product, country),
+            this._executeRevenueTracking(product, country)
+          ]);
+          
+          results.push({ country, results: countryResults });
+          this.logger.info(`✅ Completed ${country} for ${product.title}`);
+          
+          await this.delay(2000);
+        } catch (error) {
+          this.logger.error(`Failed processing ${country}: ${error.message}`);
         }
       }
-    );
-    return response.data.choices[0].message.content;
+      
+      this.lastExecution = new Date().toISOString();
+      this.status = 'completed';
+      
+      this.logger.info(`🎊 Full marketing strategy completed for ${product.title}`);
+      return { success: true, results };
+    } catch (error) {
+      this.status = 'error';
+      this.logger.error(`Full marketing strategy failed: ${error.message}`);
+      throw error;
+    }
   }
 
-  async _findRelevantInfluencers(category, country) {
-    if (!this.config.INFLUENCERDB_API_KEY) {
-      return [
-        { name: 'Tech Influencer', contact_email: 'contact@techinfluencer.com', followers: 50000 },
-        { name: 'Lifestyle Expert', contact_email: 'hello@lifestyleexpert.com', followers: 75000 }
-      ];
-    }
-
+  async _getProductDetails(productId) {
     try {
-      const response = await axios.get(
-        'https://api.influencerdb.com/v1/influencers',
-        {
+      const response = await this.apiQueue.enqueue(() =>
+        axios.get(`${this.config.STORE_URL}/admin/api/${API_VERSION}/products/${productId}.json`, {
+          headers: {
+            'X-Shopify-Access-Token': this.config.ADMIN_SHOP_SECRET
+          }
+        }), 'shopify', 1
+      );
+      return response.data.product;
+    } catch (error) {
+      this.logger.error(`Failed to fetch product details: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async _executeRevenueTracking(product, country) {
+    try {
+      const salesData = await this._fetchRecentSalesData(product.id, country);
+      const totalRevenue = salesData.reduce((sum, sale) => sum + sale.revenue, 0);
+      
+      if (totalRevenue > 0) {
+        await this._processRevenuePayment(totalRevenue, country);
+        this.totalRevenue += totalRevenue;
+      }
+      
+      return { salesCount: salesData.length, totalRevenue };
+    } catch (error) {
+      this.logger.warn(`Revenue tracking failed: ${error.message}`);
+      return { salesCount: 0, totalRevenue: 0 };
+    }
+  }
+
+  async _fetchRecentSalesData(productId, country) {
+    try {
+      const response = await this.apiQueue.enqueue(() =>
+        axios.get(`${this.config.STORE_URL}/admin/api/${API_VERSION}/orders.json`, {
           params: {
-            category,
-            country,
-            min_followers: 10000,
-            engagement_rate: '0.03+'
+            status: 'any',
+            limit: SALES_DATA_LIMIT,
+            created_at_min: new Date(Date.now() - SALES_DATA_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString()
           },
           headers: {
-            'Authorization': `Bearer ${this.config.INFLUENCERDB_API_KEY}`
+            'X-Shopify-Access-Token': this.config.ADMIN_SHOP_SECRET
+          }
+        }), 'shopify', 2
+      );
+
+      const orders = response.data.orders || [];
+      const productSales = [];
+      
+      for (const order of orders) {
+        if (order.shipping_address?.country_code === country) {
+          for (const lineItem of order.line_items || []) {
+            if (lineItem.product_id === parseInt(productId)) {
+              productSales.push({
+                order_id: order.id,
+                quantity: lineItem.quantity,
+                revenue: parseFloat(lineItem.price) * lineItem.quantity,
+                currency: order.currency,
+                customer_id: order.customer?.id
+              });
+            }
           }
         }
-      );
-      return response.data.data;
+      }
+      
+      return productSales;
     } catch (error) {
-      this.logger.warn(`Influencer search failed: ${error.message}`);
+      this.logger.warn(`Sales data fetch failed: ${error.message}`);
       return [];
     }
   }
 
-  async _contactInfluencer(influencer, product, country) {
-    if (!this.config.SENDGRID_API_KEY) {
-      this.logger.info(`📧 Influencer outreach template ready for ${influencer.name}`);
-      return;
+  async _processRevenuePayment(amount, country) {
+    try {
+      if (!this.marketingManager.walletInitialized) {
+        this.logger.warn('Wallet not initialized, skipping revenue payment');
+        return;
+      }
+      
+      const currency = this._getCurrencyForCountry(country);
+      await processRevenuePayment(amount, currency);
+      
+      this.logger.info(`💰 Processed revenue payment: ${amount} ${currency}`);
+    } catch (error) {
+      this.logger.warn(`Revenue payment processing failed: ${error.message}`);
     }
+  }
 
-    const emailContent = await this._generateInfluencerEmail(influencer, product, country);
+  _getCurrencyForCountry(country) {
+    const currencies = { 'US': 'USD', 'GB': 'GBP', 'CA': 'CAD', 'AU': 'AUD', 'EU': 'EUR' };
+    return currencies[country] || 'USD';
+  }
+
+  async getStatus() {
+    const walletBalances = this.marketingManager.walletInitialized ? await getWalletBalances() : {};
     
-    await axios.post(
-      'https://api.sendgrid.com/v3/mail/send',
-      {
-        personalizations: [{ to: [{ email: influencer.contact_email }] }],
-        from: { email: this.config.STORE_EMAIL, name: this.config.STORE_NAME },
-        subject: `Collaboration Opportunity: ${product.title}`,
-        content: [{ type: 'text/html', value: emailContent }]
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.config.SENDGRID_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+    return {
+      status: this.status,
+      lastExecution: this.lastExecution,
+      totalRevenue: this.totalRevenue,
+      walletBalances,
+      security: {
+        quantumShield: this.quantumShield.isActive(),
+        aiThreatDetector: this.aiThreatDetector.isActive(),
+        aiSecurityModule: this.aiSecurityModule.isActive()
       }
-    );
-  }
-
-  async _generateInfluencerEmail(influencer, product, country) {
-    if (!this.config.OPENAI_API_KEY) {
-      return `
-        <p>Hello ${influencer.name},</p>
-        <p>We admire your work and believe your audience would love ${product.title}.</p>
-        <p>We'd like to explore a collaboration opportunity to introduce this product to your ${country} followers.</p>
-        <p>Best regards,<br>${this.config.STORE_NAME} Team</p>
-      `;
-    }
-
-    const prompt = `Write a professional collaboration email to influencer ${influencer.name} about promoting ${product.title} to their ${country} audience.`;
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 800
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    return response.data.choices[0].message.content;
-  }
-
-  _hasPlatformConfig(platform) {
-    const configMap = {
-      'twitter': ['TWITTER_API_KEY', 'TWITTER_ACCESS_TOKEN'],
-      'linkedin': ['LINKEDIN_ACCESS_TOKEN'],
-      'instagram': ['INSTAGRAM_ACCESS_TOKEN'],
-      'tiktok': ['TIKTOK_ACCESS_TOKEN']
     };
-    
-    const requiredConfigs = configMap[platform] || [];
-    return requiredConfigs.every(config => this.config[config]);
-  }
-
-  async _postToSocialPlatform(platform, product, country) {
-    const content = await this._generateSocialMediaContent(platform, product, country);
-    
-    switch (platform) {
-      case 'twitter':
-        await this._postToTwitter(content, product);
-        break;
-      case 'linkedin':
-        await this._postToLinkedIn(content, product);
-        break;
-      case 'instagram':
-        await this._postToInstagram(content, product);
-        break;
-      case 'tiktok':
-        await this._postToTikTok(content, product);
-        break;
-    }
-  }
-
-  async _generateSocialMediaContent(platform, product, country) {
-    if (!this.config.OPENAI_API_KEY) {
-      const templates = {
-        'twitter': `🔥 New: ${product.title} is here! Perfect for ${country} customers. 🚀\n\n👉 Check it out: ${this.config.STORE_URL}/products/${product.handle}\n\n#${product.category} #${country} #ecommerce`,
-        'linkedin': `We're excited to introduce ${product.title} to the ${country} market. This innovative product represents the future of ${product.category}.\n\nLearn more: ${this.config.STORE_URL}/products/${product.handle}`,
-        'instagram': `🌟 Discover ${product.title} - now available for ${country}! ✨\n\nPerfect for those who demand quality and style.\n\nLink in bio! 👆\n\n#${product.category} #${country} #shopping`,
-        'tiktok': `Check out our new ${product.title}! 🎉\n\nAvailable now for ${country} customers!\n\n#${product.category} #${country} #product`
-      };
-      return templates[platform] || `Discover ${product.title} - available in ${country}!`;
-    }
-
-    const prompt = `Create a ${platform} post about ${product.title} for ${country} audience. Include relevant hashtags and engaging content.`;
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.config.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    return response.data.choices[0].message.content;
-  }
-
-  async _postToTwitter(content, product) {
-    await axios.post(
-      'https://api.twitter.com/2/tweets',
-      { text: content },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.config.TWITTER_BEARER_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-  }
-
-  async _postToLinkedIn(content, product) {
-    await axios.post(
-      'https://api.linkedin.com/v2/ugcPosts',
-      {
-        author: `urn:li:person:${this.config.LINKEDIN_PERSON_URN}`,
-        lifecycleState: 'PUBLISHED',
-        specificContent: {
-          'com.linkedin.ugc.ShareContent': {
-            shareCommentary: { text: content },
-            shareMediaCategory: 'NONE'
-          }
-        },
-        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.config.LINKEDIN_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-  }
-
-  async _postToInstagram(content, product) {
-    await axios.post(
-      `https://graph.facebook.com/v18.0/${this.config.INSTAGRAM_BUSINESS_ACCOUNT_ID}/media`,
-      {
-        caption: content,
-        access_token: this.config.INSTAGRAM_ACCESS_TOKEN
-      }
-    );
-  }
-
-  async _postToTikTok(content, product) {
-    await axios.post(
-      'https://open-api.tiktok.com/share/video/upload/',
-      {
-        open_id: this.config.TIKTOK_OPEN_ID,
-        access_token: this.config.TIKTOK_ACCESS_TOKEN,
-        post_info: JSON.stringify({ title: content })
-      }
-    );
   }
 
   delay(ms) {
@@ -1284,112 +1354,5 @@ class MarketingManager {
   }
 }
 
-// Main ShopifyAgent Class
-class shopifyAgent {
-  constructor(config, logger) {
-    this.config = config;
-    this.logger = logger;
-    this.blockchain = new BrianNwaezikeChain(config);
-    this.quantumShield = new QuantumShield();
-    this.threatDetector = new AIThreatDetector();
-    this.walletInitialized = false;
-
-    this.baseURL = this.config.STORE_URL || `https://${config.SHOPIFY_STORE_DOMAIN || DEFAULT_STORE_DOMAIN}.myshopify.com`;
-    this.apiVersion = API_VERSION;
-    this.lastExecutionTime = DEFAULT_LAST_EXECUTION;
-    this.lastStatus = DEFAULT_STATUS;
-    this.totalRevenue = DEFAULT_REVENUE;
-
-    this.rateLimiter = new RateLimiter(config, logger);
-    this.apiQueue = new ApiQueue(config, logger, this.rateLimiter);
-    this.contentGenerator = new ContentGenerator(config, logger, this.apiQueue);
-    this.backlinkBuilder = new BacklinkBuilder(config, logger, this.apiQueue, this.contentGenerator);
-    this.seoManager = new SEOManager(config, logger, this.apiQueue, this.backlinkBuilder);
-    this.marketingManager = new MarketingManager(config, logger, this.apiQueue);
-    this.browserManager = new QuantumBrowserManager(config, logger);
-    this.apiScout = new apiScoutAgent(config, logger);
-    this.platformRegistrar = new AIPlatformRegistration(config, logger, this.browserManager, this.apiScout);
-
-    this.db = null;
-  }
-
-  async initDatabases() {
-    try {
-      this.db = await initializeDatabase({
-        database: {
-          path: './data/shopify_agent.db',
-          numberOfShards: 1,
-          backup: { enabled: true, retentionDays: 7 }
-        }
-      });
-
-      await this.db.run(`
-        CREATE TABLE IF NOT EXISTS shopify_products (
-          id TEXT PRIMARY KEY, shopify_id TEXT, title TEXT, price REAL,
-          cost REAL, margin REAL, country_code TEXT, currency TEXT,
-          inventory_quantity INTEGER, quantum_signature TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
-      `);
-
-      await this.db.run(`
-        CREATE TABLE IF NOT EXISTS seo_optimizations (
-          id TEXT PRIMARY KEY,
-          product_id TEXT,
-          country_code TEXT,
-          optimization_type TEXT,
-          details TEXT,
-          score REAL,
-          quantum_signature TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      await this.db.run(`
-        CREATE TABLE IF NOT EXISTS marketing_campaigns (
-          id TEXT PRIMARY KEY, product_id TEXT, country_code TEXT,
-          platform TEXT, campaign_type TEXT, budget REAL, spend REAL,
-          impressions INTEGER, clicks INTEGER, conversions INTEGER, roi REAL,
-          status TEXT, quantum_signature TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) WITH OPTIMIZATION=${QUANTUM_COMPRESSION}
-      `);
-
-      await this.db.run(`
-        CREATE TABLE IF NOT EXISTS revenue_streams (
-          id TEXT PRIMARY KEY, source TEXT, amount REAL, currency TEXT,
-          country_code TEXT, product_id TEXT, order_id TEXT,
-          blockchain_tx_hash TEXT, quantum_signature TEXT,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) WITH INDEX=${QUANTUM_FAST_LOOKUP}
-      `);
-
-      this.logger.info('✅ shopifyAgent database initialized');
-    } catch (error) {
-      this.logger.error(`❌ Failed to initialize database: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async initializeWalletConnections() {
-    this.logger.info('🔗 Initializing multi-chain wallet connections for Shopify Agent...');
-    try {
-      await initializeConnections();
-      this.walletInitialized = true;
-      this.logger.info('✅ Multi-chain wallet connections initialized successfully');
-    } catch (error) {
-      this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
-    }
-  }
-
-  async initialize() {
-    this.logger.info('🚀 Initializing shopifyAgent...');
-    await this.initDatabases();
-    await this.initializeWalletConnections();
-    await this.platformRegistrar.autoRegisterPlatforms();
-    this.logger.info('✅ shopifyAgent fully initialized');
-  }
-}
-
-export default shopifyAgent;
+// Export the enhanced Shopify Agent
+export default ShopifyAgent;
