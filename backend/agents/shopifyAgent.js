@@ -1277,7 +1277,7 @@ class MarketingManager {
 }
 
 // Main ShopifyAgent Class
-class ShopifyAgent {
+class shopifyAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
@@ -1556,4 +1556,4 @@ class ShopifyAgent {
   }
 }
 
-export default ShopifyAgent;
+export default shopifyAgent;
