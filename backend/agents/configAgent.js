@@ -33,7 +33,7 @@ const logger = getGlobalLogger();
  * @description Global Enterprise Agent Manager. Manages initialization, 
  * dependencies, and graceful shutdown of all core business agents.
  */
-export default class configAgent {
+export class configAgent {
   constructor(CONFIG) {
     this.CONFIG = CONFIG; 
     this.initializedAgents = new Map();
@@ -136,3 +136,5 @@ export default class configAgent {
 
   // ... (reInitializeAgent and shutdown methods maintain all original integrations)
 }
+
+export default configAgent;
