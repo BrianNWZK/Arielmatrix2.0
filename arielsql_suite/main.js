@@ -51,6 +51,12 @@ const GLOBAL_CONFIG = {
     // AGENT ENABLEMENT FLAGS
     enableCrypto: true,
     enableShopify: true,
+    enableSocial: true,
+    enableForex: true,
+    enableData: true,
+    enableAdsense: true,
+    enableAdRevenue: true,
+    enableAutonomousAI: true,
 };
 
 /**
@@ -58,9 +64,11 @@ const GLOBAL_CONFIG = {
  * Returns { database, blockchain }
  */
 async function initializeCoreDependencies(config) {
-    const logger = getGlobalLogger(); // Access logger safely
-    
     try {
+        // 0. Initialize Logger First
+        await initializeGlobalLogger(GLOBAL_CONFIG.LOG_LEVEL);
+        const logger = getGlobalLogger();
+        
         // 1. Initialize Database (Synchronous and First)
         const database = await initializeDatabase(config); 
         logger.info('✅ Database Initialized Successfully');
@@ -76,7 +84,9 @@ async function initializeCoreDependencies(config) {
 
         return { database, blockchain };
     } catch (error) {
-        logger.error('💥 Failed to Initialize Core Dependencies:', error);
+        // Safely retrieve logger for final error log
+        const finalLogger = getGlobalLogger();
+        finalLogger.error('💥 Failed to get carbon stats:', error);
         throw error; // Halt deployment on failure
     }
 }
@@ -86,18 +96,17 @@ async function initializeCoreDependencies(config) {
  * Loads essentials, initializes core deps, agents, and services.
  */
 async function startArielSQLSuite() {
-    const logger = getGlobalLogger(); // Access logger safely
-    
     try {
         // 🏆 Step 0: Load Real Live Mainnet Essentials and merge them into the GLOBAL_CONFIG
         const bwaeziEssentials = await loadBwaeziMainnetEssentials();
         Object.assign(GLOBAL_CONFIG, bwaeziEssentials); 
         
         // **TEMPORARY CODE FOR INITIAL CONFIGURATION ONLY - REMOVE AFTER USE**
-        logger.warn('*** BWAEZI CHAIN ESSENTIALS RETRIEVED (LOGGING ONCE FOR CREATOR) ***');
-        logger.warn('RPC_URL: ' + GLOBAL_CONFIG.BWAEZI_RPC_URL);
-        logger.warn('CHAIN_ID: ' + GLOBAL_CONFIG.BWAEZI_CHAIN_ID);
-        logger.warn('CONTRACT_ADDRESS: ' + GLOBAL_CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10) + '...');
+        const tempLogger = getGlobalLogger();
+        tempLogger.warn('*** BWAEZI CHAIN ESSENTIALS RETRIEVED (LOGGING ONCE FOR CREATOR) ***');
+        tempLogger.warn('RPC_URL: ' + GLOBAL_CONFIG.BWAEZI_RPC_URL);
+        tempLogger.warn('CHAIN_ID: ' + GLOBAL_CONFIG.BWAEZI_CHAIN_ID);
+        tempLogger.warn('CONTRACT_ADDRESS: ' + GLOBAL_CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10) + '...');
         // Do not log the full ABI unless necessary
         // Do NOT log config.BWAEZI_ADMIN_KEY
         // *************************************************************************
@@ -116,6 +125,7 @@ async function startArielSQLSuite() {
         
         // ... (rest of the startup logic, e.g., health server, payout, graceful shutdown)
         
+        const logger = getGlobalLogger();
         logger.info("🎉 ArielSQL Suite started successfully!", {
             mainnet: GLOBAL_CONFIG.mainnet,
             blockchainContract: GLOBAL_CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10) + '...',
