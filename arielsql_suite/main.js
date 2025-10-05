@@ -129,6 +129,10 @@ async function startArielSQLSuite(config = GLOBAL_CONFIG) {
     }
 }
 
+// ------------------------------------------------------------------------------------------
+// SYNTAX FIX: Define 'start' function to resolve "Export 'start' is not defined" error.
+const start = () => startArielSQLSuite();
+
 // Ensure start() is called to run the application
 start();
 
