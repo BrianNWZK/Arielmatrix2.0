@@ -8,47 +8,36 @@
 import http from "http";
 import { serviceManager } from "./serviceManager.js";
 import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
-// Removed redundant 'winston' import
 import { initializeDatabase, DatabaseError } from '../backend/database/BrianNwaezikeDB.js';
 import { configAgent } from '../backend/agents/configAgent.js';
-// NEW LOGGER IMPORTS
 import { initializeGlobalLogger, enableDatabaseLogging, getGlobalLogger } from '../modules/enterprise-logger/index.js';
 
 // --- Placeholder for a Secure Bwaezi Config Loader (to satisfy the 'no simulation' rule) ---
-// NOTE: In a production environment, this function would perform a secure, synchronous 
-// lookup against a trusted config server or file.
 async function loadBwaeziMainnetEssentials() {
-    // 🥇 REAL LIVE OBJECTS: CONFIRMED MAINNET DETAILS
     const BWAEZI_MAINNET_DETAILS = {
-        BWAEZI_RPC_URL: "https://rpc.bwaezichain.org/v1/live/enterprise", 
+        BWAEZI_RPC_URL: "https://rpc.bwaezichain.org/v1/live/enterprise",
         BWAEZI_CHAIN_ID: 777777,
         BWAEZI_CONTRACT_ADDRESS: "0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1",
-        BWAEZI_ABI: [{ name: "transfer", type: "function", inputs: [{ type: "address" }, { type: "uint256" }] }], // Full production ABI object
-        BWAEZI_SECRET_REF: 'KMS_SECRET_ID_777777_AdminWallet' // Live KMS/Vault reference
+        BWAEZI_ABI: [{ name: "transfer", type: "function", inputs: [{ type: "address" }, { type: "uint256" }] }],
+        BWAEZI_SECRET_REF: 'KMS_SECRET_ID_777777_AdminWallet'
     };
     
-    // Critical validation
     if (!BWAEZI_MAINNET_DETAILS.BWAEZI_RPC_URL.includes('live')) {
         throw new Error("Bwaezi Chain RPC URL is not a confirmed production live object. Halting deployment.");
     }
     
-    // Simulating secure, real-time loading success
     return BWAEZI_MAINNET_DETAILS;
 }
 // ------------------------------------------------------------------------------------------
 
-// 🥇 GLOBAL ENTERPRISE GRADE CONFIGURATION OBJECT - Initialized with runtime environment defaults
+// 🥇 GLOBAL ENTERPRISE GRADE CONFIGURATION OBJECT
 const GLOBAL_CONFIG = {
     NODE_ENV: process.env.NODE_ENV || 'MAINNET',
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
     healthPort: process.env.HEALTH_PORT || 3000,
     mainnet: true,
-    
-    // DATABASE CONFIGURATION - Real live paths
     DB_PATH: process.env.DB_PATH || '/var/data/arielsql_mainnet.sqlite',
     DB_SHARD_STRATEGY: 'GEOGRAPHIC_REPLICATION',
-    
-    // AGENT ENABLEMENT FLAGS
     enableCrypto: true,
     enableShopify: true,
     enableSocial: true,
@@ -64,30 +53,23 @@ const GLOBAL_CONFIG = {
  * Returns { database, blockchain }
  */
 async function initializeCoreDependencies(config) {
+    const logger = getGlobalLogger();
     try {
-        // 0. Initialize Logger First
-        await initializeGlobalLogger(GLOBAL_CONFIG.LOG_LEVEL);
-        const logger = getGlobalLogger();
-        
-        // 1. Initialize Database (Synchronous and First)
-        const database = await initializeDatabase(config); 
+        // 1. Initialize Database
+        const database = await initializeDatabase(config);
         logger.info('✅ Database Initialized Successfully');
         
-        // 1b. Enable database logging *after* the database is ready
+        // 1b. Enable database logging
         await enableDatabaseLogging(database);
 
-        // 2. Initialize Blockchain (using loaded essentials)
-        const blockchain = new BrianNwaezikeChain(config.BWAEZI_RPC_URL, config.BWAEZI_CHAIN_ID); 
-        // NOTE: Assuming constructor initializes the chain. If there's an .initialize() method, call it here:
-        // await blockchain.initialize(); 
+        // 2. Initialize Blockchain
+        const blockchain = new BrianNwaezikeChain(config.BWAEZI_RPC_URL, config.BWAEZI_CHAIN_ID);
         logger.info('✅ Blockchain Initialized Successfully');
 
         return { database, blockchain };
     } catch (error) {
-        // Safely retrieve logger for final error log
-        const finalLogger = getGlobalLogger();
-        finalLogger.error('💥 Failed to get carbon stats:', error);
-        throw error; // Halt deployment on failure
+        logger.error('💥 Failed to Initialize Core Dependencies:', error);
+        throw error;
     }
 }
 
@@ -96,36 +78,46 @@ async function initializeCoreDependencies(config) {
  * Loads essentials, initializes core deps, agents, and services.
  */
 async function startArielSQLSuite() {
+    // Initialize logger first to prevent "Global logger not initialized" error
+    await initializeGlobalLogger(GLOBAL_CONFIG.LOG_LEVEL);
+    const logger = getGlobalLogger();
+    
     try {
-        // 🏆 Step 0: Load Real Live Mainnet Essentials and merge them into the GLOBAL_CONFIG
+        // Step 0: Load Bwaezi Mainnet Essentials
         const bwaeziEssentials = await loadBwaeziMainnetEssentials();
-        Object.assign(GLOBAL_CONFIG, bwaeziEssentials); 
+        Object.assign(GLOBAL_CONFIG, bwaeziEssentials);
         
-        // **TEMPORARY CODE FOR INITIAL CONFIGURATION ONLY - REMOVE AFTER USE**
-        const tempLogger = getGlobalLogger();
-        tempLogger.warn('*** BWAEZI CHAIN ESSENTIALS RETRIEVED (LOGGING ONCE FOR CREATOR) ***');
-        tempLogger.warn('RPC_URL: ' + GLOBAL_CONFIG.BWAEZI_RPC_URL);
-        tempLogger.warn('CHAIN_ID: ' + GLOBAL_CONFIG.BWAEZI_CHAIN_ID);
-        tempLogger.warn('CONTRACT_ADDRESS: ' + GLOBAL_CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10) + '...');
-        // Do not log the full ABI unless necessary
-        // Do NOT log config.BWAEZI_ADMIN_KEY
-        // *************************************************************************
-        
-        // Step 1: Initialize Core Dependencies (Database and Blockchain)
-        const { database, blockchain } = await initializeCoreDependencies(GLOBAL_CONFIG); 
-        
-        // Step 2: Initialize Enterprise Agents using the configuration
-        // This is where configAgent.js is called, now safe to use global logger
-        const agentManager = new configAgent(GLOBAL_CONFIG);
-        await agentManager.initialize(); 
+        // Temporary logging for debugging (REMOVE AFTER USE)
+        logger.warn('*** BWAEZI CHAIN ESSENTIALS RETRIEVED (LOGGING ONCE FOR CREATOR) ***');
+        logger.warn('RPC_URL: ' + GLOBAL_CONFIG.BWAEZI_RPC_URL);
+        logger.warn('CHAIN_ID: ' + GLOBAL_CONFIG.BWAEZI_CHAIN_ID);
+        logger.warn('CONTRACT_ADDRESS: ' + GLOBAL_CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10) + '...');
 
-        // Step 3: Initialize Service Manager 
+        // Step 1: Initialize Core Dependencies
+        const { database, blockchain } = await initializeCoreDependencies(GLOBAL_CONFIG);
+        
+        // Step 2: Initialize Enterprise Agents
+        const agentManager = new configAgent(GLOBAL_CONFIG);
+        await agentManager.initialize();
+
+        // Step 3: Initialize Service Manager
         const manager = new serviceManager(agentManager, database, blockchain);
         await manager.initializeServices();
-        
-        // ... (rest of the startup logic, e.g., health server, payout, graceful shutdown)
-        
-        const logger = getGlobalLogger();
+
+        // Step 4: Start Health Check Server for Render
+        const server = http.createServer((req, res) => {
+            if (req.url === '/health') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'healthy', mainnet: GLOBAL_CONFIG.mainnet }));
+            } else {
+                res.writeHead(404);
+                res.end();
+            }
+        });
+        server.listen(GLOBAL_CONFIG.healthPort, () => {
+            logger.info(`Health check server running on port ${GLOBAL_CONFIG.healthPort}`);
+        });
+
         logger.info("🎉 ArielSQL Suite started successfully!", {
             mainnet: GLOBAL_CONFIG.mainnet,
             blockchainContract: GLOBAL_CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10) + '...',
@@ -135,18 +127,22 @@ async function startArielSQLSuite() {
         return { serviceManager: manager, database, blockchain };
 
     } catch (error) {
-        // Safely retrieve logger for final error log
-        const finalLogger = getGlobalLogger();
-        finalLogger.error("💥 Failed to start ArielSQL Suite (FATAL MAINNET ERROR):", error);
+        logger.error("💥 Failed to start ArielSQL Suite (FATAL MAINNET ERROR):", error);
         process.exit(1);
     }
 }
 
-// ------------------------------------------------------------------------------------------
-// SYNTAX FIX: Define 'start' function to resolve "Export 'start' is not defined" error.
+// Global unhandled rejection handler
+process.on('unhandledRejection', (reason) => {
+    const logger = getGlobalLogger();
+    logger.error('Unhandled Rejection:', reason);
+    process.exit(1);
+});
+
+// SYNTAX FIX: Define 'start' function
 const start = () => startArielSQLSuite();
 
-// Ensure start() is called to run the application
+// Ensure start() is called
 start();
 
 // Export for testing and module usage
