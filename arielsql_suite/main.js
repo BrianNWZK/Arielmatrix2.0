@@ -8,19 +8,11 @@
 import http from "http";
 import { serviceManager } from "./serviceManager.js";
 import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
-import winston from 'winston';
+// Removed 'winston' import
 import { initializeDatabase, DatabaseError } from '../backend/database/BrianNwaezikeDB.js';
 import { configAgent } from '../backend/agents/configAgent.js';
-
-// --- Conceptual Logger Initialization (Required for logger.warn/info) ---
-const logger = winston.createLogger({ 
-    level: process.env.LOG_LEVEL || 'info',
-    // ... rest of logger config
-    transports: [
-        new winston.transports.Console()
-    ]
-});
-// -----------------------------------------------------------------------
+// NEW LOGGER IMPORTS
+import { initializeGlobalLogger, enableDatabaseLogging, getGlobalLogger } from '../modules/enterprise-logger/index.js';
 
 // --- Placeholder for a Secure Bwaezi Config Loader (to satisfy the 'no simulation' rule) ---
 // NOTE: In a production environment, this function would perform a secure, synchronous 
@@ -63,8 +55,9 @@ const GLOBAL_CONFIG = {
 
 /**
  * Core initialization sequence: loads config, database, and blockchain instance.
+ * MODIFIED: Accepts logger instance.
  */
-async function initializeCoreDependencies(config) {
+async function initializeCoreDependencies(config, logger) {
     // CRITICAL FIX: Initialize Database FIRST and await it to prevent race condition/log errors
     const database = await initializeDatabase({ 
         dbPath: config.DB_PATH,
@@ -87,6 +80,11 @@ async function initializeCoreDependencies(config) {
 
 async function startArielSQLSuite(config = GLOBAL_CONFIG) {
     try {
+        // 0a. Initialize the new Global Logger first
+        const logger = await initializeGlobalLogger('arielsql-suite', { 
+            logLevel: config.LOG_LEVEL 
+        });
+
         logger.info(`🌐 Starting ArielSQL Suite: Environment: ${config.NODE_ENV}`);
         
         // 🏆 Step 0: Load Real Live Mainnet Essentials and merge them into the GLOBAL_CONFIG
@@ -103,7 +101,11 @@ async function startArielSQLSuite(config = GLOBAL_CONFIG) {
         // *************************************************************************
         
         // Step 1: Initialize Core Dependencies (Database and Blockchain)
-        const { database, blockchain } = await initializeCoreDependencies(config);
+        // MODIFIED: Passing logger instance
+        const { database, blockchain } = await initializeCoreDependencies(config, logger); 
+        
+        // 1b. Enable database logging *after* the database is ready
+        await enableDatabaseLogging(database);
 
         // Step 2: Initialize Enterprise Agents using the configuration
         const agentManager = new configAgent(config);
@@ -124,7 +126,9 @@ async function startArielSQLSuite(config = GLOBAL_CONFIG) {
         return { serviceManager: manager, database, blockchain };
 
     } catch (error) {
-        logger.error("💥 Failed to start ArielSQL Suite (FATAL MAINNET ERROR):", error);
+        // Safely retrieve logger for final error log
+        const finalLogger = getGlobalLogger ? getGlobalLogger() : console;
+        finalLogger.error("💥 Failed to start ArielSQL Suite (FATAL MAINNET ERROR):", error);
         process.exit(1);
     }
 }
