@@ -13,9 +13,6 @@ import { serviceManager } from '../../arielsql_suite/serviceManager.js';
 // Global Logger: Access via getGlobalLogger() inside methods
 import { getGlobalLogger } from '../../modules/enterprise-logger/index.js'; 
 
-// CRITICAL FIX: All imports from './wallet.js' are REMOVED because 
-// EnhancedCryptoAgent.js handles them internally.
-
 /**
  * @class configAgent
  * @description Global Enterprise Agent Manager. Manages initialization, 
@@ -59,6 +56,7 @@ export class configAgent {
       await crypto.init(); 
 
       this.initializedAgents.set(agentName, crypto);
+      this.serviceManager.register('cryptoAgent', crypto);
       logger.info(`✅ Agent Initialized: ${agentName} (Bwaezi Contract: ${this.CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10)}...)`);
     } catch (error) {
       logger.error(`💥 Failed to initialize ${agentName} agent (FATAL):`, error);
@@ -68,20 +66,117 @@ export class configAgent {
   }
 
   // 🔄 Maintaining all other original agent initializers (using global logger safely)
-  async initializeshopifyAgent() { 
-    const agentName = 'shopify'; 
-    const logger = getGlobalLogger(); 
-    // ... live initialization logic ...
-    logger.info(`✅ Agent Initialized: ${agentName}`);
+  async initializeShopifyAgent() { 
+    const agentName = 'shopify';
+    const logger = getGlobalLogger();
+    try {
+      const shopify = new shopifyAgent(this.CONFIG.shopify);
+      await shopify.initialize();
+      this.initializedAgents.set(agentName, shopify);
+      this.serviceManager.register('shopifyAgent', shopify);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
   }
   
-  async initializeSocialAgent() { /* ... */ getGlobalLogger().info(`✅ Agent Initialized: social`); }
-  async initializeForexAgent() { /* ... */ getGlobalLogger().info(`✅ Agent Initialized: forex`); }
-  async initializeDataAgent() { /* ... */ getGlobalLogger().info(`✅ Agent Initialized: data`); }
-  async initializeAdsenseAgent() { /* ... */ getGlobalLogger().info(`✅ Agent Initialized: adsense`); }
-  async initializeAdRevenueAgent() { /* ... */ getGlobalLogger().info(`✅ Agent Initialized: adRevenue`); }
-  async initializeAutonomousAI() { /* ... */ getGlobalLogger().info(`✅ Agent Initialized: autonomousAI`); }
+  async initializeSocialAgent() {
+    const agentName = 'social';
+    const logger = getGlobalLogger();
+    try {
+      const social = new socialAgent(this.CONFIG.social);
+      await social.initialize();
+      this.initializedAgents.set(agentName, social);
+      this.serviceManager.register('socialAgent', social);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
   
+  async initializeForexAgent() {
+    const agentName = 'forex';
+    const logger = getGlobalLogger();
+    try {
+      const forex = new forexSignalAgent(this.CONFIG.forex);
+      await forex.initialize();
+      this.initializedAgents.set(agentName, forex);
+      this.serviceManager.register('forexSignalAgent', forex);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+  
+  async initializeDataAgent() {
+    const agentName = 'data';
+    const logger = getGlobalLogger();
+    try {
+      const data = new dataAgent(this.CONFIG.data);
+      await data.initialize();
+      this.initializedAgents.set(agentName, data);
+      this.serviceManager.register('dataAgent', data);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+  
+  async initializeAdsenseAgent() {
+    const agentName = 'adsense';
+    const logger = getGlobalLogger();
+    try {
+      const adsense = new AdsenseAgent(this.CONFIG.adsense);
+      await adsense.initialize();
+      this.initializedAgents.set(agentName, adsense);
+      this.serviceManager.register('adsenseAgent', adsense);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+  
+  async initializeAdRevenueAgent() {
+    const agentName = 'adRevenue';
+    const logger = getGlobalLogger();
+    try {
+      const adRevenue = new AdRevenueAgent(this.CONFIG.adRevenue);
+      await adRevenue.initialize();
+      this.initializedAgents.set(agentName, adRevenue);
+      this.serviceManager.register('adRevenueAgent', adRevenue);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+  
+  async initializeAutonomousAI() {
+    const agentName = 'autonomousAI';
+    const logger = getGlobalLogger();
+    try {
+      const autonomous = new AutonomousAIEngine(this.CONFIG.autonomousAI);
+      await autonomous.initialize();
+      this.initializedAgents.set(agentName, autonomous);
+      this.serviceManager.register('autonomousAIEngine', autonomous);
+      logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
   
   /**
    * Public method to run all agent initializations concurrently.
@@ -95,13 +190,13 @@ export class configAgent {
 
       // Add all agent initializations to the queue
       if (this.CONFIG.enableCrypto) initializationQueue.push(this.initializeCryptoAgent());
-      if (this.CONFIG.enableShopify) initializationQueue.push(this.initializeshopifyAgent());
-      initializationQueue.push(this.initializeSocialAgent());
-      initializationQueue.push(this.initializeForexAgent());
-      initializationQueue.push(this.initializeDataAgent());
-      initializationQueue.push(this.initializeAdsenseAgent());
-      initializationQueue.push(this.initializeAdRevenueAgent());
-      initializationQueue.push(this.initializeAutonomousAI());
+      if (this.CONFIG.enableShopify) initializationQueue.push(this.initializeShopifyAgent());
+      if (this.CONFIG.enableSocial) initializationQueue.push(this.initializeSocialAgent());
+      if (this.CONFIG.enableForex) initializationQueue.push(this.initializeForexAgent());
+      if (this.CONFIG.enableData) initializationQueue.push(this.initializeDataAgent());
+      if (this.CONFIG.enableAdsense) initializationQueue.push(this.initializeAdsenseAgent());
+      if (this.CONFIG.enableAdRevenue) initializationQueue.push(this.initializeAdRevenueAgent());
+      if (this.CONFIG.enableAutonomousAI) initializationQueue.push(this.initializeAutonomousAI());
 
       // Use Promise.allSettled to log all failures, but ensure re-throw if critical
       const results = await Promise.allSettled(initializationQueue);
