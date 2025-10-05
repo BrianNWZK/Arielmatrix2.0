@@ -1,5 +1,3 @@
-// backend/agents/configAgent.js (Full, Production-Ready)
-
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import shopifyAgent from './shopifyAgent.js';
 import { socialAgent } from './socialAgent.js';
@@ -9,9 +7,7 @@ import { AdsenseAgent } from './adsenseAgent.js';
 import { AdRevenueAgent } from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import { serviceManager } from '../../arielsql_suite/serviceManager.js';
-
-// Global Logger: Access via getGlobalLogger() inside methods
-import { getGlobalLogger } from '../../modules/enterprise-logger/index.js'; 
+import { getGlobalLogger } from '../../modules/enterprise-logger/index.js';
 
 /**
  * @class configAgent
@@ -20,7 +16,7 @@ import { getGlobalLogger } from '../../modules/enterprise-logger/index.js';
  */
 export class configAgent {
   constructor(CONFIG) {
-    this.CONFIG = CONFIG; 
+    this.CONFIG = CONFIG;
     this.initializedAgents = new Map();
     this.failedAgents = new Map();
     this.serviceManager = serviceManager;
@@ -33,44 +29,32 @@ export class configAgent {
     };
   }
 
-  /**
-   * @private
-   * Initializes the EnhancedCryptoAgent.
-   * CRITICAL CHANGE: The agent now self-manages its wallet connections 
-   * using the CONFIG provided here.
-   */
   async initializeCryptoAgent() {
     const agentName = 'crypto';
-    const logger = getGlobalLogger(); // <-- Access logger safely here
+    const logger = getGlobalLogger();
     try {
-      // 1. Instantiate the agent, passing the full configuration it needs.
-      // The agent will call initializeConnections() internally upon its own .init().
       const crypto = new EnhancedCryptoAgent({
-        CONFIG: this.CONFIG, // Pass full config to let the agent retrieve wallet details
-        contractAddress: this.CONFIG.BWAEZI_CONTRACT_ADDRESS, 
+        CONFIG: this.CONFIG,
+        contractAddress: this.CONFIG.BWAEZI_CONTRACT_ADDRESS,
         abi: this.CONFIG.BWAEZI_ABI,
-        // The 'wallet' property is REMOVED.
       });
       
-      // 2. Initialize the agent (this triggers its internal wallet and chain setup).
-      await crypto.init(); 
-
+      await crypto.init();
       this.initializedAgents.set(agentName, crypto);
       this.serviceManager.register('cryptoAgent', crypto);
       logger.info(`✅ Agent Initialized: ${agentName} (Bwaezi Contract: ${this.CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10)}...)`);
     } catch (error) {
       logger.error(`💥 Failed to initialize ${agentName} agent (FATAL):`, error);
       this.failedAgents.set(agentName, error);
-      throw error; // Halts mainnet deployment on failure
+      throw error;
     }
   }
 
-  // 🔄 Maintaining all other original agent initializers (using global logger safely)
   async initializeShopifyAgent() { 
     const agentName = 'shopify';
     const logger = getGlobalLogger();
     try {
-      const shopify = new shopifyAgent(this.CONFIG.shopify);
+      const shopify = new shopifyAgent(this.CONFIG.shopify || {});
       await shopify.initialize();
       this.initializedAgents.set(agentName, shopify);
       this.serviceManager.register('shopifyAgent', shopify);
@@ -86,7 +70,7 @@ export class configAgent {
     const agentName = 'social';
     const logger = getGlobalLogger();
     try {
-      const social = new socialAgent(this.CONFIG.social);
+      const social = new socialAgent(this.CONFIG.social || {});
       await social.initialize();
       this.initializedAgents.set(agentName, social);
       this.serviceManager.register('socialAgent', social);
@@ -102,7 +86,7 @@ export class configAgent {
     const agentName = 'forex';
     const logger = getGlobalLogger();
     try {
-      const forex = new forexSignalAgent(this.CONFIG.forex);
+      const forex = new forexSignalAgent(this.CONFIG.forex || {});
       await forex.initialize();
       this.initializedAgents.set(agentName, forex);
       this.serviceManager.register('forexSignalAgent', forex);
@@ -118,7 +102,7 @@ export class configAgent {
     const agentName = 'data';
     const logger = getGlobalLogger();
     try {
-      const data = new dataAgent(this.CONFIG.data);
+      const data = new dataAgent(this.CONFIG.data || {});
       await data.initialize();
       this.initializedAgents.set(agentName, data);
       this.serviceManager.register('dataAgent', data);
@@ -134,7 +118,7 @@ export class configAgent {
     const agentName = 'adsense';
     const logger = getGlobalLogger();
     try {
-      const adsense = new AdsenseAgent(this.CONFIG.adsense);
+      const adsense = new AdsenseAgent(this.CONFIG.adsense || {});
       await adsense.initialize();
       this.initializedAgents.set(agentName, adsense);
       this.serviceManager.register('adsenseAgent', adsense);
@@ -150,7 +134,7 @@ export class configAgent {
     const agentName = 'adRevenue';
     const logger = getGlobalLogger();
     try {
-      const adRevenue = new AdRevenueAgent(this.CONFIG.adRevenue);
+      const adRevenue = new AdRevenueAgent(this.CONFIG.adRevenue || {});
       await adRevenue.initialize();
       this.initializedAgents.set(agentName, adRevenue);
       this.serviceManager.register('adRevenueAgent', adRevenue);
@@ -166,7 +150,7 @@ export class configAgent {
     const agentName = 'autonomousAI';
     const logger = getGlobalLogger();
     try {
-      const autonomous = new AutonomousAIEngine(this.CONFIG.autonomousAI);
+      const autonomous = new AutonomousAIEngine(this.CONFIG.autonomousAI || {});
       await autonomous.initialize();
       this.initializedAgents.set(agentName, autonomous);
       this.serviceManager.register('autonomousAIEngine', autonomous);
@@ -182,13 +166,13 @@ export class configAgent {
    * Public method to run all agent initializations concurrently.
    */
   async initialize() {
-    const logger = getGlobalLogger(); // <-- Access logger safely here
+    const logger = getGlobalLogger();
     try {
       logger.info('🚀 Initializing Global Enterprise Agent System...');
       
       const initializationQueue = [];
 
-      // Add all agent initializations to the queue
+      // Add all agent initializations to the queue with config checks
       if (this.CONFIG.enableCrypto) initializationQueue.push(this.initializeCryptoAgent());
       if (this.CONFIG.enableShopify) initializationQueue.push(this.initializeShopifyAgent());
       if (this.CONFIG.enableSocial) initializationQueue.push(this.initializeSocialAgent());
@@ -198,7 +182,7 @@ export class configAgent {
       if (this.CONFIG.enableAdRevenue) initializationQueue.push(this.initializeAdRevenueAgent());
       if (this.CONFIG.enableAutonomousAI) initializationQueue.push(this.initializeAutonomousAI());
 
-      // Use Promise.allSettled to log all failures, but ensure re-throw if critical
+      // Use Promise.allSettled to log all failures
       const results = await Promise.allSettled(initializationQueue);
 
       results.forEach(result => {
@@ -207,16 +191,17 @@ export class configAgent {
           }
       });
       
+      if (this.failedAgents.size > 0) {
+          throw new Error(`Failed to initialize ${this.failedAgents.size} agents`);
+      }
+      
       logger.info('✅ All Enterprise Agents Initialized Successfully.');
       
     } catch (error) {
-      // Catches the re-thrown fatal error from initializeCryptoAgent
       logger.error('💥 Fatal Error during Agent System Initialization:', error);
-      throw error; 
+      throw error;
     }
   }
-
-  // ... (reInitializeAgent and shutdown methods maintain all original integrations)
 }
 
 export default configAgent;
