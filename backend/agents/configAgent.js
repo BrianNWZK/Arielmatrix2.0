@@ -11,8 +11,19 @@ import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import { serviceManager } from '../../arielsql_suite/serviceManager.js';
 // Removed old logger import
 import { getGlobalLogger } from '../../modules/enterprise-logger/index.js'; // <-- NEW
-// Assuming WalletManager is available at this path
-import { WalletManager } from './wallet.js'; 
+import {
+  initializeConnections,
+  getWalletBalances,
+  getWalletAddresses,
+  sendSOL,
+  sendETH,
+  sendUSDT,
+  processRevenuePayment,
+  checkBlockchainHealth,
+  validateAddress,
+  formatBalance,
+  testAllConnections,
+} from './wallet.js'; 
 
 // Replace old logger instantiation with the global instance
 const logger = getGlobalLogger(); 
@@ -39,12 +50,12 @@ export class configAgent {
 
   /**
    * @private
-   * Initializes the EnhancedCryptoAgent, integrating the new WalletManager and live Bwaezi config.
+   * Initializes the EnhancedCryptoAgent, integrating the new walletManager and live Bwaezi config.
    */
   async initializeCryptoAgent() {
     const agentName = 'crypto';
     try {
-      // 1. Initialize the secure WalletManager using the live KMS/Vault reference
+      // 1. Initialize the secure walletManager using the live KMS/Vault reference
       const walletManager = new WalletManager({
         BWAEZI_RPC_URL: this.CONFIG.BWAEZI_RPC_URL,
         BWAEZI_CHAIN_ID: this.CONFIG.BWAEZI_CHAIN_ID,
