@@ -284,6 +284,44 @@ class SimpleDatabaseManager {
     }
   }
 
+  // ADD THIS METHOD TO THE SimpleDatabaseManager CLASS (around line 200)
+  /**
+   * 🎯 CRITICAL FIX: Safe database operations for logging
+   * Prevents "this.db.get is not a function" and "this.db.run is not a function" errors
+   */
+  safeGet(sql, params = []) {
+    try {
+      if (!this.db) {
+        throw new DatabaseError('Database not initialized');
+      }
+      return this.db.prepare(sql).get(...params);
+    } catch (error) {
+      throw new DatabaseError(`Safe get operation failed: ${error.message}`, error);
+    }
+  }
+
+  safeRun(sql, params = []) {
+    try {
+      if (!this.db) {
+        throw new DatabaseError('Database not initialized');
+      }
+      return this.db.prepare(sql).run(...params);
+    } catch (error) {
+      throw new DatabaseError(`Safe run operation failed: ${error.message}`, error);
+    }
+  }
+
+  safeAll(sql, params = []) {
+    try {
+      if (!this.db) {
+        throw new DatabaseError('Database not initialized');
+      }
+      return this.db.prepare(sql).all(...params);
+    } catch (error) {
+      throw new DatabaseError(`Safe all operation failed: ${error.message}`, error);
+    }
+  }
+
   async close() {
     if (this.db) {
       try {
