@@ -962,3 +962,4 @@ export {
     QuantumResistantCrypto,
     MAINNET_RPC
 };
+export { BrianNwaezikeChain };
