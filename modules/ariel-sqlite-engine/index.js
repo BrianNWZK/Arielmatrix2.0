@@ -602,6 +602,43 @@ export class ArielSQLiteEngine {
     }
   }
 
+  // NOVEL ENHANCEMENT: Direct database connection for external services
+  async connect() {
+    if (this.isInitialized) {
+      return this;
+    }
+    await this.init();
+    return this;
+  }
+
+  // NOVEL ENHANCEMENT: Create database utility for external services
+  async createDatabase(dbPath, schemaInitFn = null) {
+    try {
+      const dataDir = path.dirname(dbPath);
+      await fs.mkdir(dataDir, { recursive: true });
+
+      const db = new Database(dbPath);
+      
+      // Configure database
+      db.pragma('journal_mode = WAL');
+      db.pragma('synchronous = NORMAL');
+      db.pragma('foreign_keys = ON');
+      db.pragma('busy_timeout = 15000');
+      db.pragma('cache_size = -64000');
+
+      // Initialize schema if provided
+      if (schemaInitFn && typeof schemaInitFn === 'function') {
+        await schemaInitFn(db);
+      }
+
+      console.log(`✅ Database created successfully: ${dbPath}`);
+      return db;
+    } catch (error) {
+      console.error(`❌ Failed to create database: ${dbPath}`, error);
+      throw new DatabaseError(`Failed to create database: ${error.message}`);
+    }
+  }
+
   // Redis-like functionality
   async publish(channel, message) {
     if (!this.pubSub) throw new PubSubError('PubSub is not enabled');
@@ -1183,8 +1220,7 @@ export class ArielSQLiteEngine {
         console.debug(`📊 Query executed (all): ${sql.substring(0, 100)}...`, {
           queryId,
           duration: `${duration}ms`,
-          rowCount: results.length,
-          memoryUsage: this._getMemoryUsage(results)
+          rowCount: results.length
         });
       }
 
@@ -1212,53 +1248,29 @@ export class ArielSQLiteEngine {
     }
   }
 
-  _getMemoryUsage(data) {
-    try {
-      const str = JSON.stringify(data);
-      return Buffer.byteLength(str, 'utf8');
-    } catch {
-      return 0;
-    }
-  }
-
   async configureDatabase() {
-    // Enable WAL mode for better concurrency
-    if (this.options.wal) {
-      this.db.pragma(`journal_mode = ${this.options.journalMode}`);
-    }
-
-    // Set cache size
-    this.db.pragma(`cache_size = ${this.options.cacheSize}`);
-
-    // Set busy timeout
-    this.db.pragma(`busy_timeout = ${this.options.busyTimeout}`);
-
-    // Enable foreign keys
-    this.db.pragma('foreign_keys = ON');
-
-    // Set synchronous mode for durability vs performance
+    // Production database configuration
+    this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
-
-    // Set temp store to memory
-    this.db.pragma('temp_store = MEMORY');
-
-    // Set page size for optimization
-    this.db.pragma('page_size = 4096');
-
-    // Enable auto-vacuum
+    this.db.pragma('foreign_keys = ON');
+    this.db.pragma('busy_timeout = 15000');
+    this.db.pragma('cache_size = -64000');
+    this.db.pragma('temp_store = memory');
+    this.db.pragma('mmap_size = 268435456');
     this.db.pragma('auto_vacuum = INCREMENTAL');
+    this.db.pragma('secure_delete = OFF');
+    this.db.pragma('locking_mode = NORMAL');
+    
+    console.log('✅ Database configured for production');
   }
 
   async testConnection() {
-    const startTime = Date.now();
     try {
       const result = this.db.prepare('SELECT 1 as test').get();
-      if (!result || result.test !== 1) {
-        throw new ConnectionError('Connection test failed');
+      if (result.test !== 1) {
+        throw new Error('Connection test failed');
       }
-      const duration = Date.now() - startTime;
-      await this.performanceMonitor.recordMetric('queryTimes', 'connection_test', duration);
-      return true;
+      console.log('✅ Database connection test passed');
     } catch (error) {
       throw new ConnectionError(`Connection test failed: ${error.message}`);
     }
@@ -1266,28 +1278,48 @@ export class ArielSQLiteEngine {
 
   async getDatabaseSize() {
     try {
-      const result = this.db.prepare("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()").get();
-      return result ? result.size : 0;
+      const result = this.db.prepare(`
+        SELECT page_count * page_size as size_bytes 
+        FROM pragma_page_count(), pragma_page_size()
+      `).get();
+      return result.size_bytes;
     } catch (error) {
+      console.error('Failed to get database size:', error);
       return 0;
     }
   }
 
   async getTableStats() {
     try {
-      return this.db.prepare(`
-        SELECT name, 
-               (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table') as table_count,
-               (SELECT COUNT(*) FROM sqlite_master WHERE type = 'index') as index_count
-        FROM sqlite_master 
-        WHERE type = 'table'
+      const tables = this.db.prepare(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name NOT LIKE 'sqlite_%'
       `).all();
+
+      const stats = {};
+      for (const table of tables) {
+        const count = this.db.prepare(`SELECT COUNT(*) as count FROM ${table.name}`).get();
+        stats[table.name] = { rowCount: count.count };
+      }
+
+      return stats;
     } catch (error) {
-      return [];
+      console.error('Failed to get table stats:', error);
+      return {};
     }
   }
 }
 
-// Export error classes
-export { DatabaseError, ConnectionError, QueryError, CacheError, PubSubError };
+// Enhanced export with backward compatibility
 export default ArielSQLiteEngine;
+
+// Utility functions for external use
+export async function createDatabase(dbPath, schemaInitFn = null) {
+  const engine = new ArielSQLiteEngine({ path: dbPath });
+  return engine.createDatabase(dbPath, schemaInitFn);
+}
+
+export async function connectDatabase(options = {}) {
+  const engine = new ArielSQLiteEngine(options);
+  return engine.connect();
+}
