@@ -240,11 +240,48 @@ class SimpleDatabaseManager {
     }
   }
 
-  getDatabase() {
+  /**
+   * NOVEL ENHANCEMENT: Expose direct database client for raw operations
+   */
+  getClient() {
     if (!this.db) {
       throw new DatabaseError('Database not initialized. Call init() first.');
     }
     return this.db;
+  }
+
+  getDatabase() {
+    return this.getClient();
+  }
+
+  /**
+   * NOVEL ENHANCEMENT: Direct database operations for external services
+   */
+  async run(sql, params = []) {
+    const db = this.getClient();
+    try {
+      return db.prepare(sql).run(...params);
+    } catch (error) {
+      throw new DatabaseError(`Failed to execute run operation: ${error.message}`, error);
+    }
+  }
+
+  async get(sql, params = []) {
+    const db = this.getClient();
+    try {
+      return db.prepare(sql).get(...params);
+    } catch (error) {
+      throw new DatabaseError(`Failed to execute get operation: ${error.message}`, error);
+    }
+  }
+
+  async all(sql, params = []) {
+    const db = this.getClient();
+    try {
+      return db.prepare(sql).all(...params);
+    } catch (error) {
+      throw new DatabaseError(`Failed to execute all operation: ${error.message}`, error);
+    }
   }
 
   async close() {
@@ -628,6 +665,17 @@ class BrianNwaezikeDB {
       throw new DatabaseError(`Database not found: ${dbPath}. Call createDatabase() first.`);
     }
     return dbManager.getDatabase();
+  }
+
+  /**
+   * NOVEL ENHANCEMENT: Get database manager for direct operations
+   */
+  getDatabaseManager(dbPath) {
+    const dbManager = this.simpleDatabases.get(dbPath);
+    if (!dbManager) {
+      throw new DatabaseError(`Database not found: ${dbPath}. Call createDatabase() first.`);
+    }
+    return dbManager;
   }
 
   /**
