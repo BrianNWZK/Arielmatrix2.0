@@ -1,4 +1,4 @@
-// backend/agents/configAgent.js (Full, Production-Ready)
+// backend/agents/configAgent.js (Full, Production-Ready, Enhanced)
 
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import shopifyAgent from './shopifyAgent.js';
@@ -10,25 +10,18 @@ import { AdRevenueAgent } from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
 import { serviceManager } from '../../arielsql_suite/serviceManager.js';
 
-// CRITICAL FIX: The Global Logger is NO LONGER imported here to prevent dependency cycle crashes.
-
 /**
  * @class configAgent
- * @description Global Enterprise Agent Manager. Manages initialization, 
- * dependencies, and graceful shutdown of all core business agents.
+ * @description Global Enterprise Agent Manager.
+ * Manages initialization, dependencies, and graceful shutdown of all core business agents.
  */
 export class configAgent {
-  /**
-   * @param {object} CONFIG - The global configuration object.
-   * @param {object} logger - The EnterpriseLogger instance (INJECTED).
-   */
-  constructor(CONFIG, logger) { // NOVEL: Logger is injected.
-    this.CONFIG = CONFIG; 
-    this.logger = logger; // Store the injected logger instance.
+  constructor(CONFIG, logger) {
+    this.CONFIG = CONFIG;
+    this.logger = logger;
     this.initializedAgents = new Map();
     this.failedAgents = new Map();
     this.serviceManager = serviceManager;
-    
     this.systemStatus = {
       environment: CONFIG.NODE_ENV || 'MAINNET',
       system: 'Brian Nwaezike Enterprise Agent Platform',
@@ -40,20 +33,23 @@ export class configAgent {
   /**
    * @private
    * Initializes the EnhancedCryptoAgent.
+   * CRITICAL CHANGE: The agent now self-manages its wallet connections
+   * using the CONFIG provided here.
    */
   async initializeCryptoAgent() {
     const agentName = 'crypto';
     try {
+      // 1. Instantiate the agent, passing the full configuration it needs.
       const crypto = new EnhancedCryptoAgent({
-        CONFIG: this.CONFIG, 
-        contractAddress: this.CONFIG.BWAEZI_CONTRACT_ADDRESS, 
+        CONFIG: this.CONFIG, // Pass full config to let the agent retrieve wallet details
+        contractAddress: this.CONFIG.BWAEZI_CONTRACT_ADDRESS,
         abi: this.CONFIG.BWAEZI_ABI,
-        logger: this.logger, // Inject logger into the agent
       });
-      
-      await crypto.init(); 
+      // 2. Initialize the agent (this triggers its internal wallet and chain setup).
+      await crypto.init();
 
       this.initializedAgents.set(agentName, crypto);
+      this.serviceManager.register('cryptoAgent', crypto);
       this.logger.info(`✅ Agent Initialized: ${agentName} (Bwaezi Contract: ${this.CONFIG.BWAEZI_CONTRACT_ADDRESS.substring(0, 10)}...)`);
     } catch (error) {
       this.logger.error(`💥 Failed to initialize ${agentName} agent (FATAL):`, error);
@@ -62,66 +58,161 @@ export class configAgent {
     }
   }
 
-  async initializeshopifyAgent() { 
-    const agentName = 'shopify'; 
+  async initializeShopifyAgent() {
+    const agentName = 'shopify';
     try {
-        // Placeholder for real initialization logic that must use injected logger
-        this.logger.info(`✅ Agent Initialized: ${agentName}`);
+      const shopify = new shopifyAgent(this.CONFIG.shopify || {});
+      await shopify.initialize();
+      this.initializedAgents.set(agentName, shopify);
+      this.serviceManager.register('shopifyAgent', shopify);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
     } catch (error) {
-        this.logger.error(`💥 Failed to initialize ${agentName} agent:`, error);
-        this.failedAgents.set(agentName, error);
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
     }
   }
-  
-  async initializeSocialAgent() { this.logger.info(`✅ Agent Initialized: social`); }
-  async initializeForexAgent() { this.logger.info(`✅ Agent Initialized: forex`); }
-  async initializeDataAgent() { this.logger.info(`✅ Agent Initialized: data`); }
-  async initializeAdsenseAgent() { this.logger.info(`✅ Agent Initialized: adsense`); }
-  async initializeAdRevenueAgent() { this.logger.info(`✅ Agent Initialized: adRevenue`); }
-  async initializeAutonomousAI() { this.logger.info(`✅ Agent Initialized: autonomousAI`); }
-  
-  
+
+  async initializeSocialAgent() {
+    const agentName = 'social';
+    try {
+      const social = new socialAgent(this.CONFIG.social || {});
+      await social.initialize();
+      this.initializedAgents.set(agentName, social);
+      this.serviceManager.register('socialAgent', social);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+
+  async initializeForexAgent() {
+    const agentName = 'forex';
+    try {
+      const forex = new forexSignalAgent(this.CONFIG.forex || {});
+      await forex.initialize();
+      this.initializedAgents.set(agentName, forex);
+      this.serviceManager.register('forexSignalAgent', forex);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+
+  async initializeDataAgent() {
+    const agentName = 'data';
+    try {
+      const data = new dataAgent(this.CONFIG.data || {});
+      await data.initialize();
+      this.initializedAgents.set(agentName, data);
+      this.serviceManager.register('dataAgent', data);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+
+  async initializeAdsenseAgent() {
+    const agentName = 'adsense';
+    try {
+      const adsense = new AdsenseAgent(this.CONFIG.adsense || {});
+      await adsense.initialize();
+      this.initializedAgents.set(agentName, adsense);
+      this.serviceManager.register('adsenseAgent', adsense);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+
+  async initializeAdRevenueAgent() {
+    const agentName = 'adRevenue';
+    try {
+      const adRevenue = new AdRevenueAgent(this.CONFIG.adRevenue || {});
+      await adRevenue.initialize();
+      this.initializedAgents.set(agentName, adRevenue);
+      this.serviceManager.register('adRevenueAgent', adRevenue);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+
+  async initializeAutonomousAI() {
+    const agentName = 'autonomousAI';
+    try {
+      const autonomous = new AutonomousAIEngine(this.CONFIG.autonomousAI || {});
+      await autonomous.initialize();
+      this.initializedAgents.set(agentName, autonomous);
+      this.serviceManager.register('autonomousAIEngine', autonomous);
+      this.logger.info(`✅ Agent Initialized: ${agentName}`);
+    } catch (error) {
+      this.logger.error(`💥 Failed to initialize ${agentName}:`, error);
+      this.failedAgents.set(agentName, error);
+      throw error;
+    }
+  }
+
   /**
    * Public method to run all agent initializations concurrently.
    */
   async initialize() {
     try {
       this.logger.info('🚀 Initializing Global Enterprise Agent System...');
-      
       const initializationQueue = [];
+      const agentInitializers = {
+          crypto: { fn: () => this.initializeCryptoAgent(), enabled: this.CONFIG.enableCrypto },
+          shopify: { fn: () => this.initializeShopifyAgent(), enabled: this.CONFIG.enableShopify },
+          social: { fn: () => this.initializeSocialAgent(), enabled: this.CONFIG.enableSocial },
+          forex: { fn: () => this.initializeForexAgent(), enabled: this.CONFIG.enableForex },
+          data: { fn: () => this.initializeDataAgent(), enabled: this.CONFIG.enableData },
+          adsense: { fn: () => this.initializeAdsenseAgent(), enabled: this.CONFIG.enableAdsense },
+          adRevenue: { fn: () => this.initializeAdRevenueAgent(), enabled: this.CONFIG.enableAdRevenue },
+          autonomousAI: { fn: () => this.initializeAutonomousAI(), enabled: this.CONFIG.enableAutonomousAI },
+      };
 
-      if (this.CONFIG.enableCrypto) initializationQueue.push(this.initializeCryptoAgent());
-      if (this.CONFIG.enableShopify) initializationQueue.push(this.initializeshopifyAgent());
-      if (this.CONFIG.enableSocial) initializationQueue.push(this.initializeSocialAgent());
-      if (this.CONFIG.enableForex) initializationQueue.push(this.initializeForexAgent());
-      if (this.CONFIG.enableData) initializationQueue.push(this.initializeDataAgent());
-      if (this.CONFIG.enableAdsense) initializationQueue.push(this.initializeAdsenseAgent());
-      if (this.CONFIG.enableAdRevenue) initializationQueue.push(this.initializeAdRevenueAgent());
-      if (this.CONFIG.enableAutonomousAI) initializationQueue.push(this.initializeAutonomousAI());
-
-      const results = await Promise.allSettled(initializationQueue);
-
-      results.forEach(result => {
-          if (result.status === 'rejected') {
-              this.logger.error('An agent failed during initialization:', result.reason.message);
+      // ENHANCEMENT: Log skipped agents and build the queue dynamically
+      for (const [name, agent] of Object.entries(agentInitializers)) {
+          if (agent.enabled) {
+              initializationQueue.push(agent.fn());
+              this.logger.info(`  -> Queuing agent: ${name}`);
+          } else {
+              this.logger.warn(`  -> Skipping agent: ${name} (disabled by config)`);
           }
-      });
-      
-      if (this.failedAgents.size > 0) {
-          throw new Error(`Failed to initialize ${this.failedAgents.size} critical agents.`);
       }
       
-      this.logger.info('✅ All Enterprise Agents Initialized Successfully.');
-      
+      if (initializationQueue.length === 0) {
+        this.logger.warn("⚠️ No agents were enabled for initialization.");
+        return;
+      }
+
+      // Use Promise.allSettled to attempt all initializations and log all failures
+      const results = await Promise.allSettled(initializationQueue);
+      results.forEach(result => {
+        if (result.status === 'rejected') {
+          this.logger.error('An agent failed during concurrent initialization:', result.reason.message);
+        }
+      });
+
+      if (this.failedAgents.size > 0) {
+        throw new Error(`Failed to initialize ${this.failedAgents.size} critical agent(s): [${Array.from(this.failedAgents.keys()).join(', ')}]`);
+      }
+
+      this.logger.info('✅ All Enabled Enterprise Agents Initialized Successfully.');
     } catch (error) {
       this.logger.error('💥 Fatal Error during Agent System Initialization:', error);
-      throw error; 
+      throw error;
     }
-  }
-
-  async shutdown() {
-      this.logger.info('🛑 Shutting down enterprise agent system...');
-      // ... Shutdown logic using this.logger ...
   }
 }
 
