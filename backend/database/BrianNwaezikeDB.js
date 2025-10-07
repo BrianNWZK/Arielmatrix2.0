@@ -284,11 +284,7 @@ class SimpleDatabaseManager {
     }
   }
 
-  // ADD THIS METHOD TO THE SimpleDatabaseManager CLASS (around line 200)
-  /**
-   * 🎯 CRITICAL FIX: Safe database operations for logging
-   * Prevents "this.db.get is not a function" and "this.db.run is not a function" errors
-   */
+  // 🎯 CRITICAL FIX: Safe database operations for logging
   safeGet(sql, params = []) {
     try {
       if (!this.db) {
@@ -320,6 +316,16 @@ class SimpleDatabaseManager {
     } catch (error) {
       throw new DatabaseError(`Safe all operation failed: ${error.message}`, error);
     }
+  }
+
+  /**
+   * 🎯 CRITICAL FIX: Connect method for external services
+   */
+  async connect() {
+    if (!this.db) {
+      await this.init();
+    }
+    return this;
   }
 
   async close() {
@@ -687,7 +693,7 @@ class BrianNwaezikeDB {
       
       this.simpleDatabases.set(dbPath, dbManager);
       logger.info(`[CREATE-DB] Database created successfully: ${dbPath}`);
-      return db;
+      return dbManager; // Return the manager, not the raw db
     } catch (error) {
       logger.error(`[CREATE-DB] Failed to create database: ${dbPath}`, { error: error.message });
       throw new DatabaseError(`Failed to create database: ${error.message}`, error);
@@ -714,6 +720,16 @@ class BrianNwaezikeDB {
       throw new DatabaseError(`Database not found: ${dbPath}. Call createDatabase() first.`);
     }
     return dbManager;
+  }
+
+  /**
+   * 🎯 CRITICAL FIX: Connect method for external services
+   */
+  async connect() {
+    if (!this.initialized) {
+      await this.init();
+    }
+    return this;
   }
 
   /**
