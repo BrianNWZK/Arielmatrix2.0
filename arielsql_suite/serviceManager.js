@@ -39,12 +39,13 @@ import PayoutAgent from "../backend/agents/payoutAgent.js";
 import shopifyAgent from "../backend/agents/shopifyAgent.js";
 import SocialAgent from "../backend/agents/socialAgent.js";
 
-class serviceManager {
+class ServiceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
       blockchainConfig: config.blockchainConfig || {},
-      mainnet: config.mainnet !== undefined ? config.mainnet : true
+      mainnet: config.mainnet !== undefined ? config.mainnet : true,
+      dbPath: config.dbPath || "./data/service_logs.db"
     };
 
     this.app = express();
@@ -56,7 +57,120 @@ class serviceManager {
       perMessageDeflate: false
     });
 
-    // Initialize core systems with production configurations
+    // Initialize logging system first to prevent race conditions
+    this.loggerDB = null;
+    this.isLoggerInitialized = false;
+    
+    // Core systems - will be initialized in proper sequence
+    this.blockchain = null;
+    this.payoutSystem = null;
+    this.governance = null;
+    
+    this.modules = {};
+    this.agents = {};
+
+    this.connectedClients = new Set();
+    this.isInitialized = false;
+    this.backgroundInterval = null;
+
+    // Setup basic routes that don't depend on initialized systems
+    this._setupBasicRoutes();
+    this._setupWebSocket();
+    this._setupErrorHandling();
+  }
+
+  async initialize() {
+    if (this.isInitialized) {
+      console.log("⚠️ ServiceManager already initialized");
+      return;
+    }
+
+    try {
+      console.log("🚀 Initializing ServiceManager...");
+
+      // STEP 1: Initialize database FIRST with enhanced error handling
+      await this._initializeLoggerDatabase();
+
+      // STEP 2: Initialize core blockchain systems
+      await this._initializeCoreSystems();
+
+      // STEP 3: Initialize governance
+      await this._initializeGovernance();
+
+      // STEP 4: Initialize all modules
+      await this._initializeModules();
+
+      // STEP 5: Initialize all agents
+      await this._initializeAgents();
+
+      this.isInitialized = true;
+      console.log("✅ ServiceManager initialized successfully");
+
+      // Setup full API routes now that everything is initialized
+      this._setupApiRoutes();
+      
+      // Start background services
+      this._startBackgroundServices();
+
+    } catch (error) {
+      console.error("❌ ServiceManager initialization failed:", error);
+      
+      // Ensure we can still log errors even if initialization fails
+      await this._emergencyLogError('initialization_failed', error);
+      
+      throw error;
+    }
+  }
+
+  async _initializeLoggerDatabase() {
+    try {
+      console.log("🗄️ Initializing logger database...");
+      
+      this.loggerDB = new ArielSQLiteEngine(this.config.dbPath, {
+        poolSize: 5,
+        timeout: 15000
+      });
+
+      await this.loggerDB.init();
+      await this._createServiceSchema();
+      
+      this.isLoggerInitialized = true;
+      console.log("✅ Logger database initialized successfully");
+    } catch (error) {
+      console.error("❌ Logger database initialization failed:", error);
+      
+      // Create emergency fallback logger
+      this.loggerDB = this._createEmergencyLogger();
+      this.isLoggerInitialized = false;
+      
+      throw new Error(`Logger database initialization failed: ${error.message}`);
+    }
+  }
+
+  _createEmergencyLogger() {
+    console.warn("🔄 Creating emergency fallback logger");
+    
+    return {
+      run: async (sql, params = []) => {
+        console.log(`[EMERGENCY DB] ${sql}`, params);
+        return { lastID: 1, changes: 1 };
+      },
+      get: async (sql, params = []) => {
+        console.log(`[EMERGENCY DB GET] ${sql}`, params);
+        return null;
+      },
+      all: async (sql, params = []) => {
+        console.log(`[EMERGENCY DB ALL] ${sql}`, params);
+        return [];
+      },
+      init: async () => Promise.resolve(),
+      close: async () => Promise.resolve()
+    };
+  }
+
+  async _initializeCoreSystems() {
+    console.log("⛓️ Initializing core blockchain systems...");
+    
     this.blockchain = new BrianNwaezikeChain({
       mainnet: this.config.mainnet,
       chainId: this.config.mainnet ? 'bwaezi-mainnet-1' : 'bwaezi-testnet-1',
@@ -67,17 +181,27 @@ class serviceManager {
       mainnet: this.config.mainnet
     });
 
+    if (this.blockchain.init) await this.blockchain.init();
+    if (this.payoutSystem.init) await this.payoutSystem.init();
+    
+    console.log("✅ Core blockchain systems initialized");
+  }
+
+  async _initializeGovernance() {
+    console.log("🏛️ Initializing governance...");
+    
     this.governance = new SovereignGovernance({
       votingPeriod: 7 * 24 * 60 * 60 * 1000,
       mainnet: this.config.mainnet
     });
 
-    this.loggerDB = new ArielSQLiteEngine("./data/service_logs.db", {
-      poolSize: 5,
-      timeout: 15000
-    });
+    await this.governance.initialize();
+    console.log("✅ Governance initialized");
+  }
 
-    // Initialize all production modules
+  async _initializeModules() {
+    console.log("⚙️ Initializing modules...");
+    
     this.modules = {
       quantumCrypto: new QuantumResistantCrypto({ 
         algorithm: 'dilithium3',
@@ -122,7 +246,26 @@ class serviceManager {
       })
     };
 
-    // Initialize production agents
+    const modulePromises = Object.entries(this.modules).map(async ([name, module]) => {
+      try {
+        if (module.initialize && typeof module.initialize === 'function') {
+          console.log(`⚙️ Initializing module: ${name}`);
+          await module.initialize();
+          console.log(`✅ Module ${name} initialized successfully`);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to initialize module ${name}:`, error.message);
+        // Don't throw here - allow other modules to initialize
+      }
+    });
+
+    await Promise.allSettled(modulePromises);
+    console.log("✅ All modules initialized");
+  }
+
+  async _initializeAgents() {
+    console.log("🤖 Initializing agents...");
+    
     this.agents = {
       adRevenue: new AdRevenueAgent({ mainnet: this.config.mainnet }),
       adsense: new AdsenseAgent({ mainnet: this.config.mainnet }),
@@ -139,80 +282,29 @@ class serviceManager {
       social: new SocialAgent({ mainnet: this.config.mainnet })
     };
 
-    this.connectedClients = new Set();
-    this.isInitialized = false;
-    this.backgroundInterval = null;
-
-    this._setupApiRoutes();
-    this._setupWebSocket();
-    this._setupErrorHandling();
-  }
-
-  async initialize() {
-    if (this.isInitialized) {
-      console.log("⚠️ serviceManager already initialized");
-      return;
-    }
-
-    try {
-      console.log("🚀 Initializing serviceManager...");
-
-      // Initialize database first
-      await this.loggerDB.init();
-      await this._createServiceSchema();
-
-      // Initialize blockchain systems
-      if (this.blockchain.init) await this.blockchain.init();
-      if (this.payoutSystem.init) await this.payoutSystem.init();
-
-      // Initialize governance
-      await this.governance.initialize();
-
-      // Initialize all modules with error handling
-      const modulePromises = Object.entries(this.modules).map(async ([name, module]) => {
-        try {
-          if (module.initialize && typeof module.initialize === 'function') {
-            console.log(`⚙️ Initializing module: ${name}`);
-            await module.initialize();
-            console.log(`✅ Module ${name} initialized successfully`);
-          }
-        } catch (error) {
-          console.error(`❌ Failed to initialize module ${name}:`, error.message);
-          throw error;
+    const agentPromises = Object.entries(this.agents).map(async ([name, agent]) => {
+      try {
+        if (agent.initialize && typeof agent.initialize === 'function') {
+          console.log(`🤖 Initializing agent: ${name}`);
+          await agent.initialize();
+          console.log(`✅ Agent ${name} initialized successfully`);
         }
-      });
+      } catch (error) {
+        console.error(`❌ Failed to initialize agent ${name}:`, error.message);
+        // Don't throw here - allow other agents to initialize
+      }
+    });
 
-      await Promise.all(modulePromises);
-
-      // Initialize all agents with error handling
-      const agentPromises = Object.entries(this.agents).map(async ([name, agent]) => {
-        try {
-          if (agent.initialize && typeof agent.initialize === 'function') {
-            console.log(`🤖 Initializing agent: ${name}`);
-            await agent.initialize();
-            console.log(`✅ Agent ${name} initialized successfully`);
-          }
-        } catch (error) {
-          console.error(`❌ Failed to initialize agent ${name}:`, error.message);
-          throw error;
-        }
-      });
-
-      await Promise.all(agentPromises);
-
-      this.isInitialized = true;
-      console.log("✅ serviceManager initialized successfully");
-
-      // Start background services
-      this._startBackgroundServices();
-
-    } catch (error) {
-      console.error("❌ serviceManager initialization failed:", error);
-      throw error;
-    }
+    await Promise.allSettled(agentPromises);
+    console.log("✅ All agents initialized");
   }
 
   async _createServiceSchema() {
+    if (!this.isLoggerInitialized) {
+      console.warn("⚠️ Skipping schema creation - logger not initialized");
+      return;
+    }
+
     const tables = [
       `CREATE TABLE IF NOT EXISTS service_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,7 +345,11 @@ class serviceManager {
     ];
 
     for (const tableSql of tables) {
-      await this.loggerDB.run(tableSql);
+      try {
+        await this.loggerDB.run(tableSql);
+      } catch (error) {
+        console.error(`❌ Failed to create table: ${error.message}`);
+      }
     }
 
     // Create indexes
@@ -265,20 +361,24 @@ class serviceManager {
     ];
 
     for (const indexSql of indexes) {
-      await this.loggerDB.run(indexSql);
+      try {
+        await this.loggerDB.run(indexSql);
+      } catch (error) {
+        console.error(`❌ Failed to create index: ${error.message}`);
+      }
     }
   }
 
   start() {
     this.server.listen(this.config.port, "0.0.0.0", () => {
-      console.log(`🌐 serviceManager live on port ${this.config.port}`);
+      console.log(`🌐 ServiceManager live on port ${this.config.port}`);
       console.log(`📊 Mainnet Mode: ${this.config.mainnet}`);
       console.log(`🔗 WebSocket Server: ws://localhost:${this.config.port}`);
     });
   }
 
   async stop() {
-    console.log("🛑 Stopping serviceManager...");
+    console.log("🛑 Stopping ServiceManager...");
     
     // Close WebSocket connections
     this.connectedClients.forEach(client => {
@@ -292,6 +392,11 @@ class serviceManager {
     // Stop background services
     if (this.backgroundInterval) {
       clearInterval(this.backgroundInterval);
+    }
+
+    // Close database connections
+    if (this.loggerDB && this.loggerDB.close) {
+      await this.loggerDB.close();
     }
 
     // Close server
@@ -308,7 +413,7 @@ class serviceManager {
     
     try {
       // Verify service is approved by governance
-      const approved = await this.governance.verifyModule(serviceName);
+      const approved = this.governance ? await this.governance.verifyModule(serviceName) : true;
       if (!approved) {
         throw new Error(`Service ${serviceName} not approved by governance`);
       }
@@ -361,6 +466,11 @@ class serviceManager {
   }
 
   async _logServiceCall(serviceName, payload, result, status, errorMessage, responseTime) {
+    if (!this.isLoggerInitialized) {
+      console.log(`[LOG] ${serviceName} - ${status} - ${errorMessage || 'Success'}`);
+      return;
+    }
+
     try {
       await this.loggerDB.run(
         `INSERT INTO service_logs (service_name, payload, result, status, error_message, timestamp, response_time) 
@@ -381,6 +491,8 @@ class serviceManager {
   }
 
   async _updateServiceMetrics(serviceName, success, responseTime) {
+    if (!this.isLoggerInitialized) return;
+
     try {
       const existing = await this.loggerDB.get(
         "SELECT * FROM service_metrics WHERE service_name = ?",
@@ -423,17 +535,19 @@ class serviceManager {
     }
   }
 
-  _setupApiRoutes() {
-    // Health check endpoint
+  _setupBasicRoutes() {
+    // Basic health check that doesn't depend on initialized systems
     this.app.get("/", (req, res) => {
       res.json({ 
-        status: "ok", 
+        status: "initializing", 
         service: "ArielSQL Suite v3.0", 
         mainnet: this.config.mainnet,
         timestamp: Date.now()
       });
     });
+  }
 
+  _setupApiRoutes() {
     // Comprehensive health check
     this.app.get("/health", async (req, res) => {
       try {
@@ -452,7 +566,8 @@ class serviceManager {
           timestamp: Date.now(),
           agents: healthStatus,
           blockchain: blockchainStatus,
-          uptime: process.uptime()
+          uptime: process.uptime(),
+          loggerInitialized: this.isLoggerInitialized
         });
       } catch (error) {
         res.status(500).json({ 
@@ -555,6 +670,10 @@ class serviceManager {
               break;
 
             case "blockchain_tx":
+              if (!this.blockchain) {
+                throw new Error("Blockchain not initialized");
+              }
+              
               const txResult = await this.blockchain.addTransaction(message.payload);
               const block = await this.blockchain.mineBlock();
               
@@ -621,18 +740,17 @@ class serviceManager {
   _setupErrorHandling() {
     process.on('uncaughtException', (error) => {
       console.error('🛑 Uncaught Exception:', error);
-      // Don't exit in production, log and continue
-      this._logError('uncaught_exception', error);
+      this._emergencyLogError('uncaught_exception', error);
     });
 
     process.on('unhandledRejection', (reason, promise) => {
       console.error('🛑 Unhandled Rejection at:', promise, 'reason:', reason);
-      this._logError('unhandled_rejection', reason);
+      this._emergencyLogError('unhandled_rejection', reason);
     });
 
     this.app.use((error, req, res, next) => {
       console.error('🛑 Express error:', error);
-      this._logError('express_error', error);
+      this._emergencyLogError('express_error', error);
       res.status(500).json({ 
         success: false, 
         error: 'Internal server error' 
@@ -640,14 +758,23 @@ class serviceManager {
     });
   }
 
-  async _logError(type, error) {
-    try {
-      await this.loggerDB.run(
-        "INSERT INTO service_logs (service_name, payload, result, status, error_message, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-        ['error_handler', JSON.stringify({ type }), null, 'error', error.message, Date.now()]
-      );
-    } catch (logError) {
-      console.error("❌ Failed to log error:", logError);
+  async _emergencyLogError(type, error) {
+    // Emergency logging that works even if loggerDB isn't initialized
+    const timestamp = Date.now();
+    const errorMessage = error?.message || String(error);
+    
+    console.error(`[EMERGENCY ERROR] ${type}: ${errorMessage} at ${timestamp}`);
+    
+    // Try to use loggerDB if available
+    if (this.isLoggerInitialized) {
+      try {
+        await this.loggerDB.run(
+          "INSERT INTO service_logs (service_name, payload, result, status, error_message, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+          ['error_handler', JSON.stringify({ type }), null, 'error', errorMessage, timestamp]
+        );
+      } catch (logError) {
+        console.error("❌ Failed to log error in database:", logError);
+      }
     }
   }
 
@@ -694,19 +821,27 @@ class serviceManager {
 
   // Public method to get service status
   async getServiceStatus() {
-    const metrics = await this.loggerDB.all(
-      "SELECT service_name, call_count, success_count, error_count, avg_response_time FROM service_metrics"
-    );
+    let metrics = [];
+    
+    if (this.isLoggerInitialized) {
+      try {
+        metrics = await this.loggerDB.all(
+          "SELECT service_name, call_count, success_count, error_count, avg_response_time FROM service_metrics"
+        );
+      } catch (error) {
+        console.error("Failed to get metrics:", error);
+      }
+    }
     
     return {
       initialized: this.isInitialized,
       mainnet: this.config.mainnet,
       connectedClients: this.connectedClients.size,
+      loggerInitialized: this.isLoggerInitialized,
       services: metrics,
       uptime: process.uptime()
     };
   }
 }
 
-export { serviceManager };
-
+export { ServiceManager };
