@@ -5,51 +5,11 @@ import { Mutex } from 'async-mutex';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import crypto from 'crypto';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
+import { createDatabase, BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
 import apiScoutAgent from './apiScoutAgent.js';
-
-export default class apiScoutAgentExtension {
-  constructor(config, logger) {
-    this.config = config;
-    this.logger = logger;
-    this.apiScout = new apiScoutAgent(config, logger);
-  }
-
-  async initialize() {
-    this.logger.info('🧠 Initializing apiScoutAgentExtension...');
-    await this.apiScout.initialize();
-  }
-
-  async executeAcrossAllTargets() {
-    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets(); // Autonomous discovery
-
-    for (const target of discoveredTargets) {
-      try {
-        const credentials = await this.apiScout.discoverCredentials(target.type, target.domain);
-
-        if (credentials?.apiKey) {
-          this.logger.info(`🔑 Retrieved API key for ${target.type}: ${credentials.apiKey}`);
-          await this._executeTargetLogic(target, credentials.apiKey);
-        } else {
-          this.logger.warn(`⚠️ No valid API key retrieved for ${target.type}`);
-        }
-      } catch (error) {
-        this.logger.error(`❌ Error executing ${target.type}: ${error.message}`);
-      }
-    }
-  }
-
-  async _executeTargetLogic(target, apiKey) {
-    const handler = await this.apiScout.loadHandlerFor(target.type);
-    if (!handler || typeof handler.execute !== 'function') {
-      throw new Error(`No executable handler found for ${target.type}`);
-    }
-
-    const result = await handler.execute(apiKey);
-    this.logger.info(`📊 Execution result for ${target.type}: ${JSON.stringify(result)}`);
-  }
-}
 
 // Import browser manager for real browsing
 import { QuantumBrowserManager } from './browserManager.js';
@@ -57,16 +17,16 @@ import { QuantumBrowserManager } from './browserManager.js';
 // Import wallet functions
 import {
   initializeConnections,
-    getWalletBalances,
-    getWalletAddresses,
-    sendSOL,
-    sendETH,
-    sendUSDT,
-    processRevenuePayment,
-    checkBlockchainHealth,
-    validateAddress,
-    formatBalance,
-    testAllConnections,
+  getWalletBalances,
+  getWalletAddresses,
+  sendSOL,
+  sendETH,
+  sendUSDT,
+  processRevenuePayment,
+  checkBlockchainHealth,
+  validateAddress,
+  formatBalance,
+  testAllConnections,
 } from './wallet.js';
 
 // Get __filename equivalent in ES Module scope
@@ -155,7 +115,7 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
     'Sustainable Luxury', 'Digital Art', 'Virtual Real Estate'
 ];
 
-class socialAgent {
+class SocialAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
@@ -164,10 +124,28 @@ class socialAgent {
         this.paymentProcessor = new EnterprisePaymentProcessor();
         this.analytics = new SocialAnalytics(config.ANALYTICS_WRITE_KEY);
         this.walletInitialized = false;
+        this.initialized = false;
         
         this._initializeDatabase();
         this._initializePlatformClients();
         this._initializeBlockchain();
+    }
+
+    async initialize() {
+        if (this.initialized) return;
+        
+        try {
+            await this.db.connect();
+            await this._initializeDatabase();
+            await this._initializeBlockchain();
+            await this.initializeWalletConnections();
+            
+            this.initialized = true;
+            this.logger.success('✅ Social Agent fully initialized with database, blockchain, and wallet integration');
+        } catch (error) {
+            this.logger.error('Failed to initialize Social Agent:', error);
+            throw error;
+        }
     }
 
     async _initializeDatabase() {
@@ -290,6 +268,7 @@ class socialAgent {
                         });
                     }
                     // Other platform initializations would go here
+                    this.platformClients[platform] = config;
                     this.logger.success(`✅ ${platform} client initialized`);
                 } catch (error) {
                     this.logger.error(`Failed to initialize ${platform}:`, error);
@@ -705,7 +684,7 @@ Send ${content.currency} to: ${paymentAddress}
     // Additional wallet utility methods
     async checkWalletBalances() {
         try {
-            return await checkWalletBalances();
+            return await getWalletBalances();
         } catch (error) {
             this.logger.error(`Error checking wallet balances: ${error.message}`);
             return {};
@@ -887,12 +866,10 @@ export function getStatus() {
     };
 }
 
-
-
 // Worker thread execution
 if (!isMainThread) {
     workerThreadFunction();
 }
 
 // Export agent and status
-        export { socialAgent };
+export { SocialAgent };
