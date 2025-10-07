@@ -859,4 +859,5 @@ export function getArielSQLiteEngine(options = {}) {
   return arielInstance;
 }
 
-export default ArielSQLiteEngine;
+export { ArielSQLiteEngine };
+
