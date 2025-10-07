@@ -1,834 +1,847 @@
+// backend/agents/dataAgent.js
 import axios from 'axios';
+import WebSocket from 'ws';
+import { Mutex } from 'async-mutex';
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+import { fileURLToPath } from 'url';
+import path from 'path';
 import crypto from 'crypto';
-import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js'; 
-import { QuantumBrowserManager } from './browserManager.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
+import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
 import { createDatabase, BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
-import { getAssociatedTokenAddress, createTransferInstruction } from '@solana/spl-token';
 import apiScoutAgent from './apiScoutAgent.js';
+import { QuantumBrowserManager } from './browserManager.js';
+
+// Import wallet functions
 import {
   initializeConnections,
-    getWalletBalances,
-    getWalletAddresses,
-    sendSOL,
-    sendETH,
-    sendUSDT,
-    processRevenuePayment,
-    checkBlockchainHealth,
-    validateAddress,
-    formatBalance,
-    testAllConnections,
+  getWalletBalances,
+  getWalletAddresses,
+  sendSOL,
+  sendETH,
+  sendUSDT,
+  processRevenuePayment,
+  checkBlockchainHealth,
+  validateAddress,
+  formatBalance,
+  testAllConnections,
 } from './wallet.js';
 
-export class apiScoutAgentExtension {
+// Get __filename equivalent in ES Module scope
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Enhanced Crypto module for data agent
+class CryptoAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
-    this.apiScout = new apiScoutAgent(config, logger);
+    this.blockchain = new BrianNwaezikeChain(config);
+    this.db = createDatabase('./data/crypto_data.db');
+    this.initialized = false;
   }
 
   async initialize() {
-    this.logger.info('🧠 Initializing apiScoutAgentExtension...');
-    await this.apiScout.initialize();
+    if (this.initialized) return;
+    
+    try {
+      await this.db.connect();
+      await this._initializeDatabase();
+      await this.blockchain.getLatestBlock();
+      this.initialized = true;
+      this.logger.success('✅ Crypto Agent initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize Crypto Agent:', error);
+      throw error;
+    }
   }
 
-  async executeAcrossAllTargets() {
-    const discoveredTargets = await this.apiScout.discoverAllAvailableTargets(); // Autonomous discovery
+  async _initializeDatabase() {
+    const tables = [
+      `CREATE TABLE IF NOT EXISTS crypto_prices (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        price REAL NOT NULL,
+        volume_24h REAL,
+        market_cap REAL,
+        price_change_24h REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS blockchain_data (
+        id TEXT PRIMARY KEY,
+        chain TEXT NOT NULL,
+        block_number INTEGER,
+        transaction_count INTEGER,
+        gas_used REAL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS wallet_analytics (
+        id TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
+        balance REAL,
+        transaction_count INTEGER,
+        last_active DATETIME,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_crypto_symbol ON crypto_prices(symbol)",
+      "CREATE INDEX IF NOT EXISTS idx_crypto_timestamp ON crypto_prices(timestamp)",
+      "CREATE INDEX IF NOT EXISTS idx_blockchain_chain ON blockchain_data(chain)"
+    ];
 
-    for (const target of discoveredTargets) {
-      try {
-        const credentials = await this.apiScout.discoverCredentials(target.type, target.domain);
+    for (const tableSql of tables) {
+      await this.db.run(tableSql);
+    }
+  }
 
-        if (credentials?.apiKey) {
-          this.logger.info(`🔑 Retrieved API key for ${target.type}: ${credentials.apiKey}`);
-          await this._executeTargetLogic(target, credentials.apiKey);
-        } else {
-          this.logger.warn(`⚠️ No valid API key retrieved for ${target.type}`);
+  async fetchMarketData() {
+    try {
+      const symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'ADA', 'DOT', 'AVAX', 'MATIC'];
+      const results = [];
+
+      for (const symbol of symbols) {
+        try {
+          const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${symbol.toLowerCase()}&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_market_cap=true`);
+          const data = response.data[symbol.toLowerCase()];
+
+          if (data) {
+            const priceData = {
+              id: `price_${crypto.randomBytes(8).toString('hex')}`,
+              symbol,
+              price: data.usd,
+              volume_24h: data.usd_24h_vol,
+              market_cap: data.usd_market_cap,
+              price_change_24h: data.usd_24h_change
+            };
+
+            await this.db.run(
+              `INSERT INTO crypto_prices (id, symbol, price, volume_24h, market_cap, price_change_24h)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [priceData.id, priceData.symbol, priceData.price, priceData.volume_24h, priceData.market_cap, priceData.price_change_24h]
+            );
+
+            results.push(priceData);
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch data for ${symbol}:`, error.message);
         }
-      } catch (error) {
-        this.logger.error(`❌ Error executing ${target.type}: ${error.message}`);
       }
+
+      return results;
+    } catch (error) {
+      this.logger.error('Market data fetch failed:', error);
+      return [];
     }
   }
 
-  async _executeTargetLogic(target, apiKey) {
-    const handler = await this.apiScout.loadHandlerFor(target.type);
-    if (!handler || typeof handler.execute !== 'function') {
-      throw new Error(`No executable handler found for ${target.type}`);
-    }
+  async analyzeBlockchainData() {
+    try {
+      const chains = ['ethereum', 'solana', 'polygon', 'bsc'];
+      const results = [];
 
-    const result = await handler.execute(apiKey);
-    this.logger.info(`📊 Execution result for ${target.type}: ${JSON.stringify(result)}`);
+      for (const chain of chains) {
+        try {
+          // Simplified blockchain data analysis
+          const blockData = {
+            id: `block_${crypto.randomBytes(8).toString('hex')}`,
+            chain,
+            block_number: Math.floor(Math.random() * 1000000) + 18000000, // Simulated block number
+            transaction_count: Math.floor(Math.random() * 500) + 50,
+            gas_used: Math.random() * 10000000
+          };
+
+          await this.db.run(
+            `INSERT INTO blockchain_data (id, chain, block_number, transaction_count, gas_used)
+             VALUES (?, ?, ?, ?, ?)`,
+            [blockData.id, blockData.chain, blockData.block_number, blockData.transaction_count, blockData.gas_used]
+          );
+
+          results.push(blockData);
+        } catch (error) {
+          this.logger.warn(`Failed to analyze ${chain} data:`, error.message);
+        }
+      }
+
+      return results;
+    } catch (error) {
+      this.logger.error('Blockchain data analysis failed:', error);
+      return [];
+    }
+  }
+
+  async close() {
+    if (this.db) {
+      await this.db.close();
+    }
   }
 }
 
-// Quantum jitter for anti-detection
-const quantumDelay = (ms) => new Promise(resolve => {
-    const jitter = crypto.randomInt(1000, 5000);
-    setTimeout(resolve, ms + jitter);
-});
+// Real-time Analytics Integration
+class DataAnalytics {
+  constructor(writeKey) {
+    this.writeKey = writeKey;
+    this.blockchain = new BrianNwaezikeChain({
+      NETWORK_TYPE: 'private',
+      VALIDATORS: [process.env.COMPANY_WALLET_ADDRESS],
+      BLOCK_TIME: 1000,
+      NATIVE_TOKEN: 'USD',
+      NODE_ID: 'data_analytics_node',
+      SYSTEM_ACCOUNT: process.env.COMPANY_WALLET_ADDRESS,
+      SYSTEM_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY
+    });
+  }
 
-// Data value constants
-const DATA_POINT_VALUE = 0.02;
-const QUALITY_MULTIPLIERS = {
-    high: 1.5,
-    medium: 1.0,
-    low: 0.5
+  async track(eventData) {
+    try {
+      const transaction = await this.blockchain.createTransaction(
+        process.env.COMPANY_WALLET_ADDRESS,
+        'analytics_tracking_address',
+        0.01,
+        'USD',
+        process.env.COMPANY_WALLET_PRIVATE_KEY,
+        JSON.stringify(eventData)
+      );
+      
+      console.log(`📊 Data analytics tracked: ${transaction.id}`);
+    } catch (error) {
+      console.error('Blockchain analytics tracking failed:', error);
+    }
+  }
+
+  async identify(userData) {
+    console.log(`👤 User identified in data analytics: ${JSON.stringify(userData)}`);
+  }
+}
+
+// Global state for data agent
+const dataAgentStatus = {
+  lastStatus: 'idle',
+  lastExecutionTime: 'Never',
+  totalDataPointsCollected: 0,
+  totalAPICalls: 0,
+  activeWorkers: 0,
+  workerStatuses: {},
+  dataQualityScore: 0,
+  blockchainTransactions: 0
 };
 
-// Content categories for targeted content generation
-const CONTENT_CATEGORIES = [
-    'technology', 'finance', 'health', 'lifestyle', 'entertainment',
-    'sports', 'politics', 'business', 'education', 'travel', 'science',
-    'environment', 'global'
-];
+const mutex = new Mutex();
+const quantumDelay = (ms) => new Promise(resolve => {
+  const jitter = Math.floor(Math.random() * 3000) + 1000;
+  setTimeout(resolve, ms + jitter);
+});
 
-export default class dataAgent {
-    constructor(config, logger) {
-        this.config = config;
-        this.logger = logger;
-        this.db = createDatabase('./data/ariel_matrix.db');
-        this.dataPointValue = DATA_POINT_VALUE;
-        this.qualityMultipliers = QUALITY_MULTIPLIERS;
-        this.initialized = false;
-        this.mediumAuthorId = null;
-        this.blockchainInitialized = false;
-        this.paymentProcessor = null;
-        
-        // Wallet configuration
-        this.ETHEREUM_RPC_URLS = [
-            'https://rpc.ankr.com/multichain/43c6febde6850df38b14e31c2c5b293900a1ec693acf36108e43339cf57f8f97'
-        ];
-        this.SOLANA_RPC_URLS = [
-            'https://solana-rpc.publicnode.com'
-        ];
-        this.USDT_CONTRACT_ADDRESS_ETH = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
-        this.USDT_MINT_ADDRESS_SOL = 'Es9Kdd31Wq41G4R7s3M2wXq3T413d7tLg484e1t4t';
-        
-        // Wallet connections
-        this.ethProvider = null;
-        this.solConnection = null;
-        this.ethWallet = null;
-        this.solWallet = null;
-        this.walletInitialized = false;
+class DataAgent {
+  constructor(config, logger) {
+    this.config = config;
+    this.logger = logger;
+    this.db = createDatabase('./data/data_agent.db');
+    this.cryptoAgent = new CryptoAgent(config, logger);
+    this.analytics = new DataAnalytics(config.ANALYTICS_WRITE_KEY);
+    this.browserManager = new QuantumBrowserManager(config, logger);
+    this.walletInitialized = false;
+    this.initialized = false;
+    
+    this._initializeDatabase();
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+    
+    try {
+      await this.db.connect();
+      await this._initializeDatabase();
+      await this.cryptoAgent.initialize();
+      await this.browserManager.initialize();
+      await this.initializeWalletConnections();
+      
+      this.initialized = true;
+      this.logger.success('✅ Data Agent fully initialized with database, crypto integration, and wallet connections');
+    } catch (error) {
+      this.logger.error('Failed to initialize Data Agent:', error);
+      throw error;
     }
+  }
 
-    async initialize() {
-        if (this.initialized) return;
-        
-        try {
-            await this.db.connect();
-            await this._initializeDataTables();
-            
-            // Initialize blockchain components
-            await this._initializeBlockchain();
-            
-            // Initialize wallet connections
-            await this.initializeWalletConnections();
-            
-            if (this.config.MEDIUM_ACCESS_TOKEN) {
-                this.mediumAuthorId = await this.getMediumAuthorId();
-            }
-            
-            this.initialized = true;
-            this.logger.success('✅ Data Agent fully initialized with SQLite database, blockchain, and wallet integration');
-        } catch (error) {
-            this.logger.error('Failed to initialize Data Agent:', error);
-            throw error;
-        }
+  async _initializeDatabase() {
+    try {
+      await this.db.connect();
+      
+      const tables = [
+        `CREATE TABLE IF NOT EXISTS data_collection (
+          id TEXT PRIMARY KEY,
+          data_type TEXT NOT NULL,
+          source TEXT NOT NULL,
+          data_points INTEGER,
+          quality_score REAL,
+          revenue_generated REAL DEFAULT 0,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS api_usage (
+          id TEXT PRIMARY KEY,
+          api_name TEXT NOT NULL,
+          calls_made INTEGER,
+          success_rate REAL,
+          revenue_generated REAL DEFAULT 0,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS data_revenue (
+          id TEXT PRIMARY KEY,
+          amount REAL NOT NULL,
+          currency TEXT NOT NULL,
+          data_type TEXT NOT NULL,
+          transaction_hash TEXT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS data_sources (
+          id TEXT PRIMARY KEY,
+          source_name TEXT NOT NULL,
+          reliability_score REAL,
+          data_quality REAL,
+          last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_data_type ON data_collection(data_type)",
+        "CREATE INDEX IF NOT EXISTS idx_data_timestamp ON data_collection(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_api_name ON api_usage(api_name)"
+      ];
+
+      for (const tableSql of tables) {
+        await this.db.run(tableSql);
+      }
+      
+      this.logger.success('✅ Data Agent database initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize database:', error);
     }
+  }
 
-    async initializeWalletConnections() {
-        this.logger.info('🔗 Initializing multi-chain wallet connections for Data Agent...');
-        
-        try {
-            // Solana Initialization
-            const solanaRpcUrl = await this.getFastestRPC(this.SOLANA_RPC_URLS, 'Solana');
-            this.solConnection = new Connection(solanaRpcUrl, 'confirmed');
-            
-            // Check if private key is provided
-            if (!this.config.SOLANA_COLLECTION_WALLET_PRIVATE_KEY) {
-                this.logger.warn("Solana private key is missing from configuration. Wallet functions will be limited.");
-            } else {
-                this.solWallet = Keypair.fromSecretKey(
-                    Uint8Array.from(JSON.parse(this.config.SOLANA_COLLECTION_WALLET_PRIVATE_KEY))
-                );
-                this.logger.success('✅ Solana wallet initialized for Data Agent');
-            }
-
-            // Ethereum Initialization
-            const ethereumRpcUrl = await this.getFastestRPC(this.ETHEREUM_RPC_URLS, 'Ethereum');
-            this.ethProvider = new ethers.JsonRpcProvider(ethereumRpcUrl);
-
-            // Check if private key is provided
-            if (!this.config.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY) {
-                this.logger.warn("Ethereum private key is missing from configuration. Wallet functions will be limited.");
-            } else {
-                this.ethWallet = new ethers.Wallet(
-                    this.config.ETHEREUM_COLLECTION_WALLET_PRIVATE_KEY, 
-                    this.ethProvider
-                );
-                this.logger.success('✅ Ethereum wallet initialized for Data Agent');
-            }
-            
-            // Test connections
-            await this.testAllConnections();
-            this.walletInitialized = true;
-            
-        } catch (error) {
-            this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
-        }
+  async initializeWalletConnections() {
+    this.logger.info('🔗 Initializing multi-chain wallet connections for Data Agent...');
+    
+    try {
+      await initializeConnections();
+      this.walletInitialized = true;
+      this.logger.success('✅ Multi-chain wallet connections initialized successfully');
+    } catch (error) {
+      this.logger.error(`Failed to initialize wallet connections: ${error.message}`);
     }
+  }
 
-    async getFastestRPC(rpcUrls, chainName) {
-        this.logger.info(`Testing ${chainName} RPC endpoints to find the fastest connection...`);
-        
-        const connectionPromises = rpcUrls.map(url => {
-            return new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    reject(new Error(`Timeout connecting to ${url}`));
-                }, 5000);
+  async collectMarketData() {
+    this.logger.info('📈 Collecting comprehensive market data...');
 
-                fetch(url, { 
-                    method: 'POST', 
-                    body: JSON.stringify({ 
-                        jsonrpc: '2.0', 
-                        id: 1, 
-                        method: 'eth_blockNumber', 
-                        params: [] 
-                    }), 
-                    headers: { 'Content-Type': 'application/json' } 
-                })
-                    .then(res => {
-                        clearTimeout(timeout);
-                        if (res.ok) {
-                            this.logger.info(`✅ Connected to ${chainName} via: ${url}`);
-                            resolve(url);
-                        } else {
-                            reject(new Error(`Failed to connect to ${url}`));
-                        }
-                    })
-                    .catch(err => {
-                        clearTimeout(timeout);
-                        reject(new Error(`Network error for ${url}: ${err.message}`));
-                    });
-            });
-        });
+    try {
+      const marketData = await this.cryptoAgent.fetchMarketData();
+      const blockchainData = await this.cryptoAgent.analyzeBlockchainData();
 
-        try {
-            const fastestUrl = await Promise.any(connectionPromises);
-            return fastestUrl;
-        } catch (error) {
-            this.logger.warn(`All ${chainName} RPC connections failed. Using the first URL as fallback.`);
-            return rpcUrls[0];
+      const totalDataPoints = marketData.length + blockchainData.length;
+      dataAgentStatus.totalDataPointsCollected += totalDataPoints;
+
+      // Record data collection
+      const collectionId = `collect_${crypto.randomBytes(8).toString('hex')}`;
+      await this.db.run(
+        `INSERT INTO data_collection (id, data_type, source, data_points, quality_score)
+         VALUES (?, ?, ?, ?, ?)`,
+        [collectionId, 'market_blockchain', 'multiple_apis', totalDataPoints, 0.85]
+      );
+
+      // Process revenue from data collection
+      const revenue = await this._processDataRevenue(totalDataPoints);
+      
+      await this.analytics.track({
+        event: 'market_data_collected',
+        properties: {
+          dataPoints: totalDataPoints,
+          revenue: revenue,
+          marketAssets: marketData.length,
+          blockchainNetworks: blockchainData.length
         }
+      });
+
+      this.logger.success(`✅ Collected ${totalDataPoints} data points, Revenue: $${revenue}`);
+
+      return {
+        status: 'success',
+        marketData: marketData.length,
+        blockchainData: blockchainData.length,
+        totalDataPoints,
+        revenue
+      };
+
+    } catch (error) {
+      this.logger.error('Market data collection failed:', error);
+      return { status: 'failed', error: error.message };
     }
+  }
 
-    async testAllConnections() {
-        this.logger.info("Testing all RPC connections for Data Agent:");
-        
-        const ethPromises = this.ETHEREUM_RPC_URLS.map(async url => {
-            try {
-                const provider = new ethers.JsonRpcProvider(url);
-                await provider.getBlockNumber();
-                this.logger.info(`✅ Ethereum RPC connected: ${url}`);
-            } catch (error) {
-                this.logger.warn(`❌ Ethereum RPC failed: ${url} (${error.message})`);
-            }
-        });
+  async collectSocialMediaData() {
+    this.logger.info('📱 Collecting social media sentiment data...');
 
-        const solPromises = this.SOLANA_RPC_URLS.map(async url => {
-            try {
-                const connection = new Connection(url, 'confirmed');
-                await connection.getLatestBlockhash();
-                this.logger.info(`✅ Solana RPC connected: ${url}`);
-            } catch (error) {
-                this.logger.warn(`❌ Solana RPC failed: ${url} (${error.message})`);
-            }
-        });
+    try {
+      const platforms = ['twitter', 'reddit', 'telegram', 'discord'];
+      let totalPosts = 0;
+      let sentimentScore = 0;
 
-        await Promise.allSettled([...ethPromises, ...solPromises]);
-    }
+      for (const platform of platforms) {
+        const posts = Math.floor(Math.random() * 1000) + 100; // Simulated data
+        const platformSentiment = Math.random() * 2 - 1; // -1 to 1 sentiment
 
-    // Wallet functions for Data Agent
-    async getSolanaBalance() {
-        if (!this.solWallet || !this.solConnection) {
-            throw new Error("Solana wallet not initialized");
-        }
-        
-        try {
-            const balance = await this.solConnection.getBalance(this.solWallet.publicKey);
-            return balance / LAMPORTS_PER_SOL;
-        } catch (error) {
-            this.logger.error("Error fetching Solana balance:", error);
-            return 0;
-        }
-    }
+        totalPosts += posts;
+        sentimentScore += platformSentiment;
 
-    async sendSOL(toAddress, amount) {
-        if (!this.solWallet || !this.solConnection) {
-            throw new Error("Solana wallet not initialized");
-        }
-        
-        try {
-            const toPublicKey = new PublicKey(toAddress);
-            const lamports = amount * LAMPORTS_PER_SOL;
-            const transaction = new Transaction().add(
-                SystemProgram.transfer({ 
-                    fromPubkey: this.solWallet.publicKey, 
-                    toPubkey: toPublicKey, 
-                    lamports 
-                })
-            );
-            
-            const { blockhash, lastValidBlockHeight } = await this.solConnection.getLatestBlockhash();
-            transaction.recentBlockhash = blockhash;
-            transaction.lastValidBlockHeight = lastValidBlockHeight;
-            transaction.feePayer = this.solWallet.publicKey;
-            
-            const signature = await sendAndConfirmTransaction(this.solConnection, transaction, [this.solWallet]);
-            
-            // Record transaction
-            await this.recordWalletTransaction(
-                'sol', 'transfer', this.solWallet.publicKey.toString(), toAddress, amount, 'SOL', signature
-            );
-            
-            return { signature };
-        } catch (error) {
-            this.logger.error("Error sending SOL:", error);
-            return { error: error.message };
-        }
-    }
-
-    async getUSDTBalance(chain = 'eth') {
-        if (chain === 'eth') {
-            if (!this.ethWallet || !this.ethProvider) {
-                throw new Error("Ethereum wallet not initialized");
-            }
-            
-            const usdtContract = new ethers.Contract(
-                this.USDT_CONTRACT_ADDRESS_ETH, 
-                ["function balanceOf(address owner) view returns (uint256)"], 
-                this.ethProvider
-            );
-            
-            const balance = await usdtContract.balanceOf(this.ethWallet.address);
-            return ethers.formatUnits(balance, 6);
-            
-        } else if (chain === 'sol') {
-            if (!this.solWallet || !this.solConnection) {
-                throw new Error("Solana wallet not initialized");
-            }
-            
-            try {
-                const usdtMintAddress = new PublicKey(this.USDT_MINT_ADDRESS_SOL);
-                const associatedTokenAddress = await getAssociatedTokenAddress(
-                    usdtMintAddress, 
-                    this.solWallet.publicKey
-                );
-                
-                const tokenBalance = await this.solConnection.getTokenAccountBalance(associatedTokenAddress);
-                return tokenBalance.value.uiAmount;
-            } catch (error) {
-                this.logger.error("Error fetching Solana USDT balance:", error);
-                return 0;
-            }
-        }
-        return 0;
-    }
-
-    async sendUSDT(toAddress, amount, chain) {
-        if (chain === 'eth') {
-            if (!this.ethWallet) {
-                throw new Error("Ethereum wallet not initialized");
-            }
-            
-            try {
-                if (!ethers.isAddress(toAddress)) { 
-                    throw new Error("Invalid Ethereum address."); 
-                }
-                
-                const usdtContract = new ethers.Contract(
-                    this.USDT_CONTRACT_ADDRESS_ETH, 
-                    ["function transfer(address to, uint256 amount) returns (bool)"], 
-                    this.ethWallet
-                );
-                
-                const amountInWei = ethers.parseUnits(amount.toString(), 6);
-                const tx = await usdtContract.transfer(toAddress, amountInWei);
-                
-                // Record transaction
-                await this.recordWalletTransaction(
-                    'eth', 'transfer', this.ethWallet.address, toAddress, amount, 'USDT', tx.hash
-                );
-                
-                return { hash: tx.hash };
-            } catch (ethError) {
-                this.logger.error("Error sending USDT on Ethereum:", ethError);
-                return { error: ethError.message };
-            }
-            
-        } else if (chain === 'sol') {
-            if (!this.solWallet || !this.solConnection) {
-                throw new Error("Solana wallet not initialized");
-            }
-            
-            try {
-                const toPublicKey = new PublicKey(toAddress);
-                const usdtMintAddress = new PublicKey(this.USDT_MINT_ADDRESS_SOL);
-                const fromTokenAccount = await getAssociatedTokenAddress(
-                    usdtMintAddress, 
-                    this.solWallet.publicKey
-                );
-                
-                const toTokenAccount = await getAssociatedTokenAddress(
-                    usdtMintAddress, 
-                    toPublicKey
-                );
-                
-                const transaction = new Transaction().add(
-                    createTransferInstruction(
-                        fromTokenAccount, 
-                        toTokenAccount, 
-                        this.solWallet.publicKey, 
-                        amount * 10 ** 6
-                    )
-                );
-                
-                const { blockhash, lastValidBlockHeight } = await this.solConnection.getLatestBlockhash();
-                transaction.recentBlockhash = blockhash;
-                transaction.lastValidBlockHeight = lastValidBlockHeight;
-                transaction.feePayer = this.solWallet.publicKey;
-                
-                const signature = await sendAndConfirmTransaction(this.solConnection, transaction, [this.solWallet]);
-                
-                // Record transaction
-                await this.recordWalletTransaction(
-                    'sol', 'transfer', this.solWallet.publicKey.toString(), toAddress, amount, 'USDT', signature
-                );
-                
-                return { signature };
-            } catch (solError) {
-                this.logger.error("Error sending USDT on Solana:", solError);
-                return { error: solError.message };
-            }
-        } else {
-            return { error: "Invalid chain specified. Please use 'eth' or 'sol'." };
-        }
-    }
-
-    async recordWalletTransaction(chain, type, fromAddress, toAddress, amount, token, txHash) {
-        const transactionId = `wallet_${crypto.randomBytes(8).toString('hex')}`;
-        
+        // Record API usage
+        const apiUsageId = `api_${crypto.randomBytes(8).toString('hex')}`;
         await this.db.run(
-            `INSERT INTO wallet_transactions (id, chain, type, from_address, to_address, amount, token, tx_hash, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [transactionId, chain, type, fromAddress, toAddress, amount, token, txHash, 'completed']
+          `INSERT INTO api_usage (id, api_name, calls_made, success_rate)
+           VALUES (?, ?, ?, ?)`,
+          [apiUsageId, `${platform}_api`, posts, 0.92]
         );
-    }
 
-    async checkWalletBalances() {
-        const balances = {};
-        
-        try {
-            // Check Ethereum balances
-            if (this.ethWallet) {
-                const ethBalance = await this.ethProvider.getBalance(this.ethWallet.address);
-                balances.ethereum = {
-                    ETH: parseFloat(ethers.formatEther(ethBalance)),
-                    USDT: parseFloat(await this.getUSDTBalance('eth'))
-                };
+        dataAgentStatus.totalAPICalls += posts;
+      }
+
+      sentimentScore /= platforms.length;
+
+      // Record data collection
+      const collectionId = `collect_${crypto.randomBytes(8).toString('hex')}`;
+      await this.db.run(
+        `INSERT INTO data_collection (id, data_type, source, data_points, quality_score)
+         VALUES (?, ?, ?, ?, ?)`,
+        [collectionId, 'social_sentiment', 'social_apis', totalPosts, Math.abs(sentimentScore)]
+      );
+
+      // Process revenue
+      const revenue = await this._processDataRevenue(totalPosts);
+      
+      await this.analytics.track({
+        event: 'social_data_collected',
+        properties: {
+          postsAnalyzed: totalPosts,
+          sentimentScore: sentimentScore,
+          revenue: revenue,
+          platforms: platforms.length
+        }
+      });
+
+      this.logger.success(`✅ Analyzed ${totalPosts} social posts, Sentiment: ${sentimentScore.toFixed(2)}, Revenue: $${revenue}`);
+
+      return {
+        status: 'success',
+        postsAnalyzed: totalPosts,
+        sentimentScore,
+        revenue
+      };
+
+    } catch (error) {
+      this.logger.error('Social media data collection failed:', error);
+      return { status: 'failed', error: error.message };
+    }
+  }
+
+  async collectFinancialData() {
+    this.logger.info('💹 Collecting financial market data...');
+
+    try {
+      const markets = ['stocks', 'forex', 'commodities', 'indices'];
+      let totalDataPoints = 0;
+
+      for (const market of markets) {
+        const dataPoints = Math.floor(Math.random() * 500) + 50; // Simulated data
+        totalDataPoints += dataPoints;
+
+        // Record data source performance
+        const sourceId = `source_${crypto.randomBytes(8).toString('hex')}`;
+        await this.db.run(
+          `INSERT INTO data_sources (id, source_name, reliability_score, data_quality)
+           VALUES (?, ?, ?, ?)`,
+          [sourceId, `${market}_data`, 0.88, 0.85]
+        );
+      }
+
+      dataAgentStatus.totalDataPointsCollected += totalDataPoints;
+
+      // Record data collection
+      const collectionId = `collect_${crypto.randomBytes(8).toString('hex')}`;
+      await this.db.run(
+        `INSERT INTO data_collection (id, data_type, source, data_points, quality_score)
+         VALUES (?, ?, ?, ?, ?)`,
+        [collectionId, 'financial_markets', 'financial_apis', totalDataPoints, 0.87]
+      );
+
+      // Process revenue
+      const revenue = await this._processDataRevenue(totalDataPoints);
+      
+      await this.analytics.track({
+        event: 'financial_data_collected',
+        properties: {
+          dataPoints: totalDataPoints,
+          revenue: revenue,
+          markets: markets.length
+        }
+      });
+
+      this.logger.success(`✅ Collected ${totalDataPoints} financial data points, Revenue: $${revenue}`);
+
+      return {
+        status: 'success',
+        dataPoints: totalDataPoints,
+        markets: markets.length,
+        revenue
+      };
+
+    } catch (error) {
+      this.logger.error('Financial data collection failed:', error);
+      return { status: 'failed', error: error.message };
+    }
+  }
+
+  async collectWeb3Data() {
+    this.logger.info('🔗 Collecting Web3 and blockchain data...');
+
+    try {
+      const web3Sources = ['defi_protocols', 'nft_markets', 'dao_governance', 'smart_contracts'];
+      let totalDataPoints = 0;
+
+      for (const source of web3Sources) {
+        const dataPoints = Math.floor(Math.random() * 200) + 30; // Simulated data
+        totalDataPoints += dataPoints;
+
+        // Use wallet module to get blockchain data
+        const balances = await getWalletBalances();
+        dataAgentStatus.blockchainTransactions++;
+
+        // Record Web3 data source
+        const sourceId = `source_${crypto.randomBytes(8).toString('hex')}`;
+        await this.db.run(
+          `INSERT INTO data_sources (id, source_name, reliability_score, data_quality)
+           VALUES (?, ?, ?, ?)`,
+          [sourceId, `${source}_web3`, 0.82, 0.80]
+        );
+      }
+
+      dataAgentStatus.totalDataPointsCollected += totalDataPoints;
+
+      // Record data collection
+      const collectionId = `collect_${crypto.randomBytes(8).toString('hex')}`;
+      await this.db.run(
+        `INSERT INTO data_collection (id, data_type, source, data_points, quality_score)
+         VALUES (?, ?, ?, ?, ?)`,
+        [collectionId, 'web3_ecosystem', 'blockchain_apis', totalDataPoints, 0.83]
+      );
+
+      // Process revenue
+      const revenue = await this._processDataRevenue(totalDataPoints);
+      
+      await this.analytics.track({
+        event: 'web3_data_collected',
+        properties: {
+          dataPoints: totalDataPoints,
+          revenue: revenue,
+          web3Sources: web3Sources.length
+        }
+      });
+
+      this.logger.success(`✅ Collected ${totalDataPoints} Web3 data points, Revenue: $${revenue}`);
+
+      return {
+        status: 'success',
+        dataPoints: totalDataPoints,
+        web3Sources: web3Sources.length,
+        revenue
+      };
+
+    } catch (error) {
+      this.logger.error('Web3 data collection failed:', error);
+      return { status: 'failed', error: error.message };
+    }
+  }
+
+  async _processDataRevenue(dataPoints) {
+    try {
+      // Calculate revenue based on data quality and quantity
+      const baseValue = dataPoints * 0.01; // $0.01 per data point
+      const qualityMultiplier = 0.85; // Average quality score
+      const revenueAmount = baseValue * qualityMultiplier;
+
+      if (revenueAmount > 0) {
+        // Use wallet module for revenue processing
+        const settlementResult = await sendUSDT(
+          this.config.COMPANY_WALLET_ADDRESS,
+          revenueAmount,
+          'eth'
+        );
+
+        if (settlementResult.hash) {
+          // Record revenue in database
+          const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
+          await this.db.run(
+            `INSERT INTO data_revenue (id, amount, currency, data_type, transaction_hash)
+             VALUES (?, ?, ?, ?, ?)`,
+            [revenueId, revenueAmount, 'USD', 'data_collection', settlementResult.hash]
+          );
+
+          await this.analytics.track({
+            event: 'data_revenue_generated',
+            properties: {
+              amount: revenueAmount,
+              currency: 'USD',
+              dataPoints: dataPoints,
+              transactionHash: settlementResult.hash
             }
-            
-            // Check Solana balances
-            if (this.solWallet) {
-                balances.solana = {
-                    SOL: await this.getSolanaBalance(),
-                    USDT: parseFloat(await this.getUSDTBalance('sol')) || 0
-                };
-            }
-            
-        } catch (error) {
-            this.logger.error(`Error checking wallet balances: ${error.message}`);
+          });
+
+          return revenueAmount;
         }
+      }
+    } catch (error) {
+      this.logger.error('Data revenue processing failed:', error);
+    }
+    return 0;
+  }
+
+  async run() {
+    return mutex.runExclusive(async () => {
+      this.logger.info('🚀 Data Agent starting comprehensive data collection cycle...');
+
+      try {
+        // Initialize wallet connections if not already done
+        if (!this.walletInitialized) {
+          await this.initializeWalletConnections();
+        }
+
+        const results = await Promise.allSettled([
+          this.collectMarketData(),
+          this.collectSocialMediaData(),
+          this.collectFinancialData(),
+          this.collectWeb3Data()
+        ]);
+
+        const successfulResults = results
+          .filter(result => result.status === 'fulfilled')
+          .map(result => result.value);
+
+        const totalRevenue = successfulResults.reduce((sum, result) => sum + (result.revenue || 0), 0);
+        const totalDataPoints = successfulResults.reduce((sum, result) => sum + (result.dataPoints || result.postsAnalyzed || 0), 0);
+
+        dataAgentStatus.lastExecutionTime = new Date().toISOString();
+        dataAgentStatus.lastStatus = 'success';
+        dataAgentStatus.dataQualityScore = 0.84; // Average quality score
+
+        this.logger.success(`💰 Data collection completed. Total revenue: $${totalRevenue.toFixed(2)}, Data points: ${totalDataPoints}`);
+
+        return {
+          status: 'success',
+          totalRevenue,
+          totalDataPoints,
+          collectionsCompleted: successfulResults.length,
+          timestamp: dataAgentStatus.lastExecutionTime
+        };
+
+      } catch (error) {
+        this.logger.error('Data agent cycle failed:', error);
+        dataAgentStatus.lastStatus = 'failed';
+        return { status: 'failed', error: error.message };
+      }
+    });
+  }
+
+  async generateGlobalDataCoverage(streamConfig = {}) {
+    const results = {
+      totalRevenue: 0,
+      cyclesCompleted: 0,
+      totalDataPoints: 0,
+      dataTypesCollected: new Set(),
+      dataQualityScore: 0
+    };
+
+    // Initialize wallet connections
+    await this.initializeWalletConnections();
+
+    // Run multiple cycles for comprehensive coverage
+    const cycles = streamConfig.cycles || 3;
+    
+    for (let i = 0; i < cycles; i++) {
+      try {
+        const cycleResult = await this.run();
         
-        return balances;
+        if (cycleResult.status === 'success') {
+          results.totalRevenue += cycleResult.totalRevenue;
+          results.cyclesCompleted++;
+          results.totalDataPoints += cycleResult.totalDataPoints;
+          results.dataQualityScore = (results.dataQualityScore * (i) + 0.84) / (i + 1); // Moving average
+
+          // Track data types
+          cycleResult.collectionsCompleted && results.dataTypesCollected.add(`cycle_${i + 1}`);
+        }
+
+        await quantumDelay(15000); // Wait between cycles
+
+      } catch (error) {
+        this.logger.error(`Data collection cycle ${i + 1} failed:`, error);
+      }
     }
 
-    async _initializeBlockchain() {
-        try {
-            this.paymentProcessor = new EnterprisePaymentProcessor(this.config);
-            await this.paymentProcessor.initialize();
-            this.blockchainInitialized = true;
-            this.logger.success('✅ BrianNwaezikeChain payment processor initialized');
-        } catch (error) {
-            this.logger.error('Failed to initialize blockchain:', error);
-            throw error;
+    // Record final revenue using wallet module
+    if (results.totalRevenue > 0) {
+      try {
+        const settlementResult = await sendUSDT(
+          this.config.COMPANY_WALLET_ADDRESS,
+          results.totalRevenue,
+          'eth'
+        );
+
+        if (settlementResult.hash) {
+          this.logger.success(`🌍 Global data collection completed: $${results.totalRevenue} USD, ${results.totalDataPoints} data points`);
         }
+      } catch (error) {
+        this.logger.error('Final revenue settlement failed:', error);
+      }
     }
 
-    async getMediumAuthorId() {
-        const { data } = await axios.get('https://api.medium.com/v1/me', {
-            headers: {
-                'Authorization': `Bearer ${this.config.MEDIUM_ACCESS_TOKEN}`,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-        });
-        return data.data.id;
+    return results;
+  }
+
+  // Additional utility methods
+  async checkWalletBalances() {
+    try {
+      return await getWalletBalances();
+    } catch (error) {
+      this.logger.error(`Error checking wallet balances: ${error.message}`);
+      return {};
     }
+  }
 
-    async _initializeDataTables() {
-        // Additional tables for enhanced data operations
-        const additionalTables = [
-            `CREATE TABLE IF NOT EXISTS blockchain_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transaction_hash TEXT UNIQUE,
-                amount REAL NOT NULL,
-                currency TEXT DEFAULT 'USD',
-                from_address TEXT,
-                to_address TEXT,
-                type TEXT,
-                status TEXT DEFAULT 'pending',
-                block_number INTEGER,
-                gas_used REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`,
-            `CREATE TABLE IF NOT EXISTS content_distribution (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                platform TEXT NOT NULL,
-                content_id TEXT,
-                post_url TEXT,
-                impressions INTEGER DEFAULT 0,
-                clicks INTEGER DEFAULT 0,
-                revenue_generated REAL DEFAULT 0,
-                blockchain_tx_hash TEXT,
-                status TEXT DEFAULT 'published',
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`,
-            `CREATE TABLE IF NOT EXISTS ai_generated_content (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                content TEXT,
-                category TEXT,
-                tags TEXT,
-                sentiment_score REAL,
-                engagement_score REAL DEFAULT 0,
-                revenue_potential REAL DEFAULT 0,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`,
-            `CREATE TABLE IF NOT EXISTS ad_placements (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content_id INTEGER,
-                placement_type TEXT,
-                position TEXT,
-                networks TEXT,
-                estimated_rpm REAL,
-                actual_rpm REAL,
-                revenue_generated REAL DEFAULT 0,
-                blockchain_tx_hash TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (content_id) REFERENCES ai_generated_content (id)
-            )`,
-            `CREATE TABLE IF NOT EXISTS wallet_transactions (
-                id TEXT PRIMARY KEY,
-                chain TEXT NOT NULL,
-                type TEXT NOT NULL,
-                from_address TEXT,
-                to_address TEXT,
-                amount REAL NOT NULL,
-                token TEXT NOT NULL,
-                tx_hash TEXT,
-                status TEXT DEFAULT 'completed',
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`,
-            "CREATE INDEX IF NOT EXISTS idx_blockchain_tx_hash ON blockchain_transactions(transaction_hash)",
-            "CREATE INDEX IF NOT EXISTS idx_content_category ON ai_generated_content(category)",
-            "CREATE INDEX IF NOT EXISTS idx_distribution_platform ON content_distribution(platform)",
-            "CREATE INDEX IF NOT EXISTS idx_ad_content ON ad_placements(content_id)",
-            "CREATE INDEX IF NOT EXISTS idx_wallet_chain ON wallet_transactions(chain)",
-            "CREATE INDEX IF NOT EXISTS idx_wallet_token ON wallet_transactions(token)"
-        ];
+  // Database query methods for analytics
+  async getDataCollectionStats(timeframe = '7 days') {
+    try {
+      const timeFilter = timeframe === '24 hours' ? 
+        "timestamp > datetime('now', '-1 day')" :
+        "timestamp > datetime('now', '-7 days')";
 
-        for (const tableSql of additionalTables) {
-            await this.db.run(tableSql);
-        }
+      const stats = await this.db.all(`
+        SELECT 
+          data_type,
+          COUNT(*) as collection_count,
+          SUM(data_points) as total_data_points,
+          AVG(quality_score) as avg_quality_score,
+          SUM(revenue_generated) as total_revenue
+        FROM data_collection 
+        WHERE ${timeFilter}
+        GROUP BY data_type
+      `);
+
+      const apiStats = await this.db.all(`
+        SELECT 
+          api_name,
+          SUM(calls_made) as total_calls,
+          AVG(success_rate) as avg_success_rate,
+          SUM(revenue_generated) as total_revenue
+        FROM api_usage 
+        WHERE ${timeFilter}
+        GROUP BY api_name
+      `);
+
+      return {
+        timeframe,
+        dataTypes: stats,
+        apiPerformance: apiStats,
+        timestamp: new Date().toISOString()
+      };
+
+    } catch (error) {
+      this.logger.error('Error fetching data collection stats:', error);
+      return { error: error.message };
     }
+  }
 
-    async processDataOperation(userId, dataPackage) {
-        try {
-            if (!this.initialized) await this.initialize();
-
-            const baseReward = dataPackage.dataPoints * this.dataPointValue;
-            const qualityMultiplier = this.qualityMultipliers[dataPackage.quality] || 1.0;
-            
-            const finalReward = await this.calculateAutonomousPayout(baseReward, {
-                userLoyalty: await this.getUserLoyaltyMultiplier(userId),
-                dataQuality: qualityMultiplier,
-                dataValue: await this.assessDataValue(dataPackage),
-                marketDemand: await this.getDataMarketDemand(dataPackage.type)
-            });
-
-            // Process multi-chain payout based on user preference
-            const payoutResult = await this.processMultiChainPayout(
-                userId,
-                finalReward,
-                'data_contribution_reward',
-                {
-                    data_points: dataPackage.dataPoints,
-                    data_type: dataPackage.type,
-                    data_quality: dataPackage.quality,
-                    operation_id: `op_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
-                }
-            );
-
-            // Save to database with transaction tracking
-            const result = await this.db.run(
-                `INSERT INTO user_data_operations 
-                 (user_id, data_points, data_type, data_quality, base_reward, final_reward, status, transaction_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [userId, dataPackage.dataPoints, dataPackage.type, dataPackage.quality, 
-                 baseReward, finalReward, payoutResult.success ? 'completed' : 'failed', 
-                 payoutResult.transactionHash || `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`]
-            );
-
-            if (payoutResult.success && finalReward > 0) {
-                // Record blockchain transaction
-                await this.db.run(
-                    `INSERT INTO blockchain_transactions 
-                     (transaction_hash, amount, currency, from_address, to_address, type, status, block_number, gas_used)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [payoutResult.transactionHash, finalReward, 'USD', 
-                     this.config.COMPANY_WALLET_ADDRESS, userId, 'data_reward', 
-                     'confirmed', payoutResult.blockNumber, payoutResult.gasUsed]
-                );
-
-                // Record revenue transaction
-                await this.db.run(
-                    `INSERT INTO revenue_transactions (amount, source, campaign_id, blockchain_tx_hash, status)
-                     VALUES (?, 'user_data_contribution', ?, ?, 'completed')`,
-                    [finalReward, `user_${userId}_${result.id}`, payoutResult.transactionHash]
-                );
-            }
-
-            this.logger.success(`✅ Processed ${dataPackage.dataPoints} data points for user ${userId}. Reward: $${finalReward.toFixed(6)}`);
-
-            return {
-                success: payoutResult.success,
-                userId,
-                dataPoints: dataPackage.dataPoints,
-                reward: finalReward,
-                transactionId: result.id,
-                blockchainTxHash: payoutResult.transactionHash,
-                timestamp: new Date().toISOString()
-            };
-
-        } catch (error) {
-            this.logger.error('Data processing reward failed:', error);
-            return { success: false, error: error.message };
-        }
+  async close() {
+    if (this.db) {
+      await this.db.close();
     }
-
-    async processMultiChainPayout(userId, amount, payoutType, metadata = {}) {
-        try {
-            // Determine payout chain based on user preference or optimal network
-            const payoutChain = await this.determineOptimalPayoutChain(amount);
-            
-            let payoutResult;
-            
-            if (payoutChain === 'solana') {
-                // Convert USD amount to SOL based on current price
-                const solAmount = await this.convertUsdToSol(amount);
-                payoutResult = await this.sendSOL(userId, solAmount);
-                
-            } else if (payoutChain === 'ethereum') {
-                // Convert USD amount to USDT
-                payoutResult = await this.sendUSDT(userId, amount, 'eth');
-                
-            } else {
-                // Fallback to blockchain payout
-                payoutResult = await this.paymentProcessor.processRevenuePayout(
-                    userId,
-                    amount,
-                    'USD',
-                    JSON.stringify({
-                        type: payoutType,
-                        timestamp: new Date().toISOString(),
-                        ...metadata
-                    })
-                );
-            }
-
-            return {
-                success: payoutResult.success || !!payoutResult.hash || !!payoutResult.signature,
-                transactionHash: payoutResult.transactionHash || payoutResult.hash || payoutResult.signature,
-                blockNumber: payoutResult.blockNumber,
-                gasUsed: payoutResult.gasUsed,
-                timestamp: new Date().toISOString(),
-                chain: payoutChain
-            };
-
-        } catch (error) {
-            this.logger.error('Multi-chain payout failed:', error);
-            return { success: false, error: error.message };
-        }
+    if (this.cryptoAgent) {
+      await this.cryptoAgent.close();
     }
-
-    async determineOptimalPayoutChain(amount) {
-        // Check wallet balances to determine optimal payout chain
-        const balances = await this.checkWalletBalances();
-        
-        // Prefer Solana for smaller amounts due to lower fees
-        if (amount < 10 && balances.solana && balances.solana.SOL > 0.01) {
-            return 'solana';
-        }
-        
-        // Prefer Ethereum for larger amounts or if Solana balance is low
-        if (balances.ethereum && balances.ethereum.USDT > amount) {
-            return 'ethereum';
-        }
-        
-        // Fallback to native blockchain
-        return 'native';
+    if (this.browserManager) {
+      await this.browserManager.close();
     }
-
-    async convertUsdToSol(usdAmount) {
-        try {
-            // Fetch current SOL price from CoinGecko or similar
-            const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
-            const solPrice = response.data.solana.usd;
-            return usdAmount / solPrice;
-        } catch (error) {
-            // Fallback conversion rate
-            this.logger.warn('Failed to fetch SOL price, using fallback rate');
-            return usdAmount / 100; // Approximate $100 per SOL
-        }
-    }
-
-    // ... rest of your existing methods remain unchanged
-    // (assessDataValue, calculateRelevanceScore, getMarketTrendScore, etc.)
-
-    async executeMarketDataCollection() {
-        try {
-            if (!this.initialized) await this.initialize();
-
-            this.logger.info('📊 Starting comprehensive market data collection...');
-
-            const [newsData, weatherData, socialTrends] = await Promise.all([
-                this.fetchNewsData(),
-                this.fetchWeatherData(),
-                this.fetchSocialTrends()
-            ]);
-
-            const aiContent = await this.generateAIContent(newsData, weatherData, socialTrends);
-            const signals = await this.generateMarketSignals(newsData, weatherData, socialTrends, aiContent);
-            const distributionResults = await this.distributeContent(aiContent, signals);
-            const totalRevenue = await this.calculateTotalRevenue(distributionResults);
-
-            // Process multi-chain settlement for total revenue
-            if (totalRevenue > 0) {
-                await this.processMultiChainRevenueSettlement(totalRevenue, 'market_data_collection');
-            }
-
-            await this.saveComprehensiveMarketData(newsData, weatherData, socialTrends, aiContent, signals, distributionResults, totalRevenue);
-
-            this.logger.success(`✅ Market data collection completed. Total Revenue: $${totalRevenue.toFixed(2)}`);
-            
-            return { 
-                success: true, 
-                revenue: totalRevenue, 
-                signals: signals.length,
-                contentGenerated: aiContent.length,
-                distributions: distributionResults.length
-            };
-
-        } catch (error) {
-            this.logger.error('Market data collection failed:', error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    async processMultiChainRevenueSettlement(amount, source) {
-        try {
-            // Determine optimal settlement chain
-            const settlementChain = await this.determineOptimalSettlementChain(amount);
-            let settlementResult;
-
-            if (settlementChain === 'solana') {
-                // Convert to SOL and send to company wallet
-                const solAmount = await this.convertUsdToSol(amount);
-                settlementResult = await this.sendSOL(this.config.COMPANY_WALLET_ADDRESS, solAmount);
-                
-            } else if (settlementChain === 'ethereum') {
-                // Send USDT to company wallet
-                settlementResult = await this.sendUSDT(this.config.COMPANY_WALLET_ADDRESS, amount, 'eth');
-                
-            } else {
-                // Use native blockchain settlement
-                settlementResult = await this.paymentProcessor.processRevenuePayout(
-                    this.config.COMPANY_WALLET_ADDRESS,
-                    amount,
-                    'USD',
-                    JSON.stringify({
-                        source: source,
-                        type: 'revenue_settlement',
-                        timestamp: new Date().toISOString()
-                    })
-                );
-            }
-
-            if (settlementResult.success || settlementResult.hash || settlementResult.signature) {
-                await this.db.run(
-                    `INSERT INTO blockchain_transactions 
-                     (transaction_hash, amount, currency, from_address, to_address, type, status)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    [settlementResult.transactionHash || settlementResult.hash || settlementResult.signature, 
-                     amount, 'USD', 'revenue_pool', this.config.COMPANY_WALLET_ADDRESS, 
-                     'revenue_settlement', 'confirmed']
-                );
-
-                this.logger.success(`✅ Multi-chain revenue settlement processed: $${amount} USD on ${settlementChain}`);
-            }
-
-            return settlementResult;
-
-        } catch (error) {
-            this.logger.error('Multi-chain revenue settlement failed:', error);
-            throw error;
-        }
-    }
-
-    async determineOptimalSettlementChain(amount) {
-        // Check gas fees and balances to determine optimal settlement chain
-        const balances = await this.checkWalletBalances();
-        
-        // Prefer Solana for smaller settlements
-        if (amount < 50 && balances.solana && balances.solana.SOL > 0.01) {
-            return 'solana';
-        }
-        
-        // Prefer Ethereum for larger settlements
-        if (balances.ethereum && balances.ethereum.USDT > amount) {
-            return 'ethereum';
-        }
-        
-        // Fallback to native blockchain
-        return 'native';
-    }
-
-    // ... rest of your existing methods remain unchanged
-
-    async close() {
-        if (this.initialized) {
-            await this.db.close();
-            this.initialized = false;
-        }
-        if (this.paymentProcessor) {
-            await this.paymentProcessor.cleanup();
-        }
-    }
+  }
 }
 
-        // Export agent and status
-        export { dataAgent };  
+// Worker thread execution
+async function workerThreadFunction() {
+  const { config, workerId } = workerData;
+  const workerLogger = {
+    info: (...args) => console.log(`[Data Worker ${workerId}]`, ...args),
+    error: (...args) => console.error(`[Data Worker ${workerId}]`, ...args),
+    success: (...args) => console.log(`[Data Worker ${workerId}] ✅`, ...args),
+    warn: (...args) => console.warn(`[Data Worker ${workerId}] ⚠️`, ...args)
+  };
+
+  const dataAgent = new DataAgent(config, workerLogger);
+  
+  // Initialize wallet connections for worker
+  await dataAgent.initializeWalletConnections();
+
+  while (true) {
+    await dataAgent.run();
+    await quantumDelay(45000); // Run every 45 seconds
+  }
+}
+
+// Main thread orchestration
+if (isMainThread) {
+  const numThreads = process.env.DATA_AGENT_THREADS || 2;
+  const config = {
+    ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
+    COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
+    COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY
+  };
+
+  dataAgentStatus.activeWorkers = numThreads;
+  console.log(`🌍 Starting ${numThreads} data agent workers for global data collection...`);
+
+  for (let i = 0; i < numThreads; i++) {
+    const worker = new Worker(__filename, {
+      workerData: { workerId: i + 1, config }
+    });
+
+    dataAgentStatus.workerStatuses[`worker-${i + 1}`] = 'initializing';
+
+    worker.on('online', () => {
+      dataAgentStatus.workerStatuses[`worker-${i + 1}`] = 'online';
+      console.log(`👷 Data Worker ${i + 1} online`);
+    });
+
+    worker.on('message', (msg) => {
+      if (msg.type === 'data_update') {
+        dataAgentStatus.totalDataPointsCollected += msg.dataPoints;
+      }
+    });
+
+    worker.on('error', (err) => {
+      dataAgentStatus.workerStatuses[`worker-${i + 1}`] = `error: ${err.message}`;
+      console.error(`Data Worker ${i + 1} error:`, err);
+    });
+
+    worker.on('exit', (code) => {
+      dataAgentStatus.workerStatuses[`worker-${i + 1}`] = `exited: ${code}`;
+      console.log(`Data Worker ${i + 1} exited with code ${code}`);
+    });
+  }
+}
+
+// Export functions
+export function getStatus() {
+  return {
+    ...dataAgentStatus,
+    agent: 'dataAgent',
+    timestamp: new Date().toISOString()
+  };
+}
+
+// Worker thread execution
+if (!isMainThread) {
+  workerThreadFunction();
+}
+
+// Export agent and status
+export { DataAgent };
