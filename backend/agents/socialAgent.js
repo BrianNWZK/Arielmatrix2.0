@@ -34,7 +34,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- Real-Time Analytics Integration ---
-class SocialAnalytics {
+class socialAnalytics {
     constructor(writeKey) {
         this.writeKey = writeKey;
         this.blockchain = new BrianNwaezikeChain({
@@ -115,7 +115,7 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
     'Sustainable Luxury', 'Digital Art', 'Virtual Real Estate'
 ];
 
-class SocialAgent {
+class socialAgent {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
@@ -872,4 +872,4 @@ if (!isMainThread) {
 }
 
 // Export agent and status
-export { SocialAgent };
+export { socialAgent };
