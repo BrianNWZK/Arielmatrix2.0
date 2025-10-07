@@ -610,4 +610,4 @@ export function getStatus() {
 }
 
 // Export the main class
-export { EnhancedCryptoAgent as CryptoAgent };
+export { EnhancedCryptoAgent };
