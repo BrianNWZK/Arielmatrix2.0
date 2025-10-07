@@ -14,7 +14,7 @@ import {
   privateDecrypt,
   constants
 } from 'crypto';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 
 // Import Kyber functions - check what's actually exported
 import * as kyberModule from '../pqc-kyber/index.js';
