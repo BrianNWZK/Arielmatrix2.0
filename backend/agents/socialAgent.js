@@ -872,4 +872,4 @@ if (!isMainThread) {
 }
 
 // Export agent and status
-export { socialAgent };
+export default socialAgent;
