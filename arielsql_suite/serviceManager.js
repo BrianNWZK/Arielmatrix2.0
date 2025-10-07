@@ -37,9 +37,9 @@ import forexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
 import shopifyAgent from "../backend/agents/shopifyAgent.js";
-import SocialAgent from "../backend/agents/socialAgent.js";
+import socialAgent from "../backend/agents/socialAgent.js";
 
-class ServiceManager {
+class serviceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
@@ -81,7 +81,7 @@ class ServiceManager {
 
   async initialize() {
     if (this.isInitialized) {
-      console.log("⚠️ ServiceManager already initialized");
+      console.log("⚠️ serviceManager already initialized");
       return;
     }
 
@@ -104,7 +104,7 @@ class ServiceManager {
       await this._initializeAgents();
 
       this.isInitialized = true;
-      console.log("✅ ServiceManager initialized successfully");
+      console.log("✅ serviceManager initialized successfully");
 
       // Setup full API routes now that everything is initialized
       this._setupApiRoutes();
@@ -113,7 +113,7 @@ class ServiceManager {
       this._startBackgroundServices();
 
     } catch (error) {
-      console.error("❌ ServiceManager initialization failed:", error);
+      console.error("❌ serviceManager initialization failed:", error);
       
       // Ensure we can still log errors even if initialization fails
       await this._emergencyLogError('initialization_failed', error);
@@ -267,9 +267,9 @@ class ServiceManager {
     console.log("🤖 Initializing agents...");
     
     this.agents = {
-      adRevenue: new AdRevenueAgent({ mainnet: this.config.mainnet }),
-      adsense: new AdsenseAgent({ mainnet: this.config.mainnet }),
-      apiScout: new ApiScoutAgent({ mainnet: this.config.mainnet }),
+      adRevenue: new adRevenueAgent({ mainnet: this.config.mainnet }),
+      adsense: new adsenseAgent({ mainnet: this.config.mainnet }),
+      apiScout: new apiScoutAgent({ mainnet: this.config.mainnet }),
       browser: new QuantumBrowserManager({ mainnet: this.config.mainnet }),
       config: new configAgent({ mainnet: this.config.mainnet }),
       contractDeploy: new ContractDeployAgent({ mainnet: this.config.mainnet }),
@@ -279,7 +279,7 @@ class ServiceManager {
       health: HealthAgent,
       payout: PayoutAgent,
       shopify: new shopifyAgent({ mainnet: this.config.mainnet }),
-      social: new SocialAgent({ mainnet: this.config.mainnet })
+      social: new socialAgent({ mainnet: this.config.mainnet })
     };
 
     const agentPromises = Object.entries(this.agents).map(async ([name, agent]) => {
@@ -371,14 +371,14 @@ class ServiceManager {
 
   start() {
     this.server.listen(this.config.port, "0.0.0.0", () => {
-      console.log(`🌐 ServiceManager live on port ${this.config.port}`);
+      console.log(`🌐 serviceManager live on port ${this.config.port}`);
       console.log(`📊 Mainnet Mode: ${this.config.mainnet}`);
       console.log(`🔗 WebSocket Server: ws://localhost:${this.config.port}`);
     });
   }
 
   async stop() {
-    console.log("🛑 Stopping ServiceManager...");
+    console.log("🛑 Stopping serviceManager...");
     
     // Close WebSocket connections
     this.connectedClients.forEach(client => {
@@ -402,7 +402,7 @@ class ServiceManager {
     // Close server
     return new Promise((resolve) => {
       this.server.close(() => {
-        console.log("✅ ServiceManager stopped successfully");
+        console.log("✅ serviceManager stopped successfully");
         resolve();
       });
     });
@@ -844,4 +844,4 @@ class ServiceManager {
   }
 }
 
-export { ServiceManager };
+export { serviceManager };
