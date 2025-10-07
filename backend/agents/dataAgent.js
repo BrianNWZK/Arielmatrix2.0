@@ -844,4 +844,4 @@ if (!isMainThread) {
 }
 
 // Export agent and status
-export dataAgent;
+export default dataAgent;
