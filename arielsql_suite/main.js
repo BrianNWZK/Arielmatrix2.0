@@ -8,7 +8,7 @@
  */
 
 import http from "http";
-import { ServiceManager } from "./serviceManager.js";
+import { serviceManager } from "./serviceManager.js";
 import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
 import { initializeDatabase, DatabaseError } from '../backend/database/BrianNwaezikeDB.js';
 import { configAgent } from '../backend/agents/configAgent.js';
@@ -242,9 +242,9 @@ async function initializeArielSQLSuite() {
         logger.info('🗄️ STEP 2: Initializing databases...');
         const applicationDB = await initializeApplicationDatabase();
         
-        // STEP 3: Initialize ServiceManager with verified configuration
+        // STEP 3: Initialize serviceManager with verified configuration
         logger.info('⚙️ STEP 3: Initializing ServiceManager...');
-        const serviceManager = new ServiceManager({
+        const serviceManager = new serviceManager({
             port: process.env.PORT || 10000,
             mainnet: true,
             blockchainConfig: {
@@ -256,9 +256,9 @@ async function initializeArielSQLSuite() {
             dbPath: './data/enterprise_logs.db'
         });
         
-        // STEP 4: Initialize ServiceManager with proper error handling
+        // STEP 4: Initialize serviceManager with proper error handling
         await serviceManager.initialize();
-        logger.info('✅ ServiceManager initialized successfully');
+        logger.info('✅ serviceManager initialized successfully');
         
         // STEP 5: Start the server
         serviceManager.start();
@@ -279,7 +279,7 @@ async function initializeArielSQLSuite() {
         // Emergency recovery attempt
         try {
             logger.warn('🔄 Attempting emergency recovery...');
-            const emergencyManager = new ServiceManager({
+            const emergencyManager = new serviceManager({
                 port: process.env.PORT || 10000,
                 mainnet: false, // Fallback to testnet mode
                 dbPath: './data/emergency_logs.db'
