@@ -32,7 +32,7 @@ const __dirname = dirname(__filename);
 
 /**
  * @class IntelligenceGradeCaptchaSolver
- * @description NSA/NASA-grade CAPTCHA solving integrated into browser manager
+ * @description Highgrade CAPTCHA solving integrated into browser manager
  */
 class IntelligenceGradeCaptchaSolver {
   constructor(logger) {
