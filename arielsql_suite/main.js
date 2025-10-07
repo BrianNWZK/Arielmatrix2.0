@@ -314,19 +314,21 @@ process.on('unhandledRejection', (reason, promise) => {
     logger.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
 });
 
-// --- Application Startup ---
-let serviceManager;
+// Renamed to 'initializedserviceManager' to avoid conflict with the import.
+let initializedserviceManager; 
 
 async function startApplication() {
     try {
-        serviceManager = await initializeArielSQLSuite();
+        // Assign the new instance to the renamed variable
+        initializedserviceManager = await initializeArielSQLSuite();
         
         // Graceful shutdown handler
         const shutdown = async (signal) => {
             console.log(`\n${signal} received. Shutting down gracefully...`);
             
-            if (serviceManager) {
-                await serviceManager.stop();
+            // Reference the renamed variable here
+            if (initializedserviceManager) {
+                await initializedserviceManager.stop();
             }
             
             process.exit(0);
