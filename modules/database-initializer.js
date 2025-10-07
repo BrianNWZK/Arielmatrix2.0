@@ -1,5 +1,5 @@
 // modules/database-initializer.js
-import { initializeDatabase, getDatabase, createDatabase } from '../database/BrianNwaezikeDB.js';
+import { initializeDatabase, getDatabase, createDatabase } from '../../database/BrianNwaezikeDB.js';
 import { getArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { createLogger, format, transports } from 'winston';
 import path from 'path';
