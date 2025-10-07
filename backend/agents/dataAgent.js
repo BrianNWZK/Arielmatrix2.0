@@ -1,6 +1,6 @@
 import axios from 'axios';
 import crypto from 'crypto';
-import { ArielSQLiteEngine } from '../../modules/your-sqlite/index.js'; 
+import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js'; 
 import { QuantumBrowserManager } from './browserManager.js';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { createDatabase, BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
