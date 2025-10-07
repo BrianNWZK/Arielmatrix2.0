@@ -176,7 +176,7 @@ class CryptoAgent {
 }
 
 // Real-time Analytics Integration
-class DataAnalytics {
+class dataAnalytics {
   constructor(writeKey) {
     this.writeKey = writeKey;
     this.blockchain = new BrianNwaezikeChain({
@@ -230,7 +230,7 @@ const quantumDelay = (ms) => new Promise(resolve => {
   setTimeout(resolve, ms + jitter);
 });
 
-class DataAgent {
+class dataAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
@@ -844,4 +844,4 @@ if (!isMainThread) {
 }
 
 // Export agent and status
-export { DataAgent };
+export { dataAgent };
