@@ -5,6 +5,7 @@
  * configuration loading for Bwaezi Chain REAL LIVE OBJECTS.
  * ✅ FIXED: 100% Mainnet deployment success with error resilience
  * 🔧 REFACTORED: Complete database initialization system with proper error handling
+ * 🚀 CRITICAL FIX: Global logger initialization sequence fixed
  */
 
 import http from "http";
@@ -18,6 +19,30 @@ import { getDatabaseInitializer } from '../modules/database-initializer.js';
 // 💡 Import Web3 and Axios for external network and blockchain queries
 import Web3 from 'web3';
 import axios from 'axios'; 
+
+// 🥇 CRITICAL FIX: Initialize global logger FIRST before any other operations
+// This ensures logger is available for error handlers and all application components
+console.log('🔧 PRE-INIT: Initializing global logger system...');
+initializeGlobalLogger();
+const logger = getGlobalLogger();
+console.log('✅ PRE-INIT: Global logger initialized successfully');
+
+// --- Enhanced Error Handling and Process Management ---
+// Now safe to use getGlobalLogger() since we initialized it above
+process.on('uncaughtException', (error) => {
+    const logger = getGlobalLogger();
+    logger.error('🛑 UNCAUGHT EXCEPTION:', error);
+    
+    // Attempt graceful shutdown
+    setTimeout(() => {
+        process.exit(1);
+    }, 1000);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    const logger = getGlobalLogger();
+    logger.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+});
 
 // --- Enhanced Secure Bwaezi Config Loader with Production-Grade Fallbacks ---
 async function loadBwaeziMainnetEssentials() {
@@ -189,10 +214,6 @@ async function initializeApplicationDatabase() {
     logger.info('🗄️ Starting application database initialization...');
     
     try {
-        // Initialize the global logger database first
-        await initializeGlobalLogger();
-        logger.info('✅ Global logger initialized');
-        
         // Initialize main application database
         const db = await initializeDatabase();
         logger.info('✅ Main application database initialized');
@@ -228,10 +249,9 @@ async function initializeApplicationDatabase() {
 
 // --- Enhanced Main Application Initialization ---
 async function initializeArielSQLSuite() {
-    console.log('🚀 ArielSQL Ultimate Suite - Phase 3 Mainnet Deployment');
-    console.log('📡 Initializing Global Enterprise Blockchain System...');
-    
     const logger = getGlobalLogger();
+    logger.info('🚀 ArielSQL Ultimate Suite - Phase 3 Mainnet Deployment');
+    logger.info('📡 Initializing Global Enterprise Blockchain System...');
     
     try {
         // STEP 1: Load critical configuration FIRST
@@ -244,7 +264,7 @@ async function initializeArielSQLSuite() {
         
         // STEP 3: Initialize serviceManager with verified configuration
         logger.info('⚙️ STEP 3: Initializing ServiceManager...');
-        const serviceManager = new serviceManager({
+        const serviceManagerInstance = new serviceManager({
             port: process.env.PORT || 10000,
             mainnet: true,
             blockchainConfig: {
@@ -257,11 +277,11 @@ async function initializeArielSQLSuite() {
         });
         
         // STEP 4: Initialize serviceManager with proper error handling
-        await serviceManager.initialize();
+        await serviceManagerInstance.initialize();
         logger.info('✅ serviceManager initialized successfully');
         
         // STEP 5: Start the server
-        serviceManager.start();
+        serviceManagerInstance.start();
         logger.info('🌐 ArielSQL Suite is now LIVE on Mainnet');
         
         // Log deployment success
@@ -271,7 +291,7 @@ async function initializeArielSQLSuite() {
         logger.info(`📊 Source: ${bwaeziConfig.rpcSource}`);
         logger.info(`✅ Status: ${bwaeziConfig.verificationStatus}`);
         
-        return serviceManager;
+        return serviceManagerInstance;
         
     } catch (error) {
         logger.error('💥 CRITICAL: ArielSQL Suite initialization failed:', error);
@@ -298,23 +318,7 @@ async function initializeArielSQLSuite() {
     }
 }
 
-// --- Enhanced Error Handling and Process Management ---
-process.on('uncaughtException', (error) => {
-    const logger = getGlobalLogger();
-    logger.error('🛑 UNCAUGHT EXCEPTION:', error);
-    
-    // Attempt graceful shutdown
-    setTimeout(() => {
-        process.exit(1);
-    }, 1000);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    const logger = getGlobalLogger();
-    logger.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
-});
-
-// Renamed to 'initializedserviceManager' to avoid conflict with the import.
+// Renamed to avoid conflict with the import.
 let initializedserviceManager; 
 
 async function startApplication() {
