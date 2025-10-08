@@ -114,7 +114,8 @@ class DatabaseInitializer {
           unifiedInterfaces: Object.fromEntries(this.unifiedInterfaces),
         };
       } catch (error) {
-        initLogger.fatal('💀 Comprehensive database initialization failed', {
+        // CRITICAL FIX: Replace fatal with error since winston doesn't have fatal level
+        initLogger.error('💀 Comprehensive database initialization failed', {
           error: error.message,
           stack: error.stack
         });
@@ -128,99 +129,199 @@ class DatabaseInitializer {
 
   /**
    * 🎯 NOVEL/FIX: Creates all necessary specialized production service databases.
+   * FIXED: Path argument must be string, not object
    */
   async createSpecializedDatabases() {
-      // These are the real, non-placeholder databases for services
-      const dbConfigs = [
-          { name: 'ai-security-module', dbPath: './data/services/security-module.db' },
-          { name: 'ai-threat-detector', dbPath: './data/services/threat-detector.db' },
-          { name: 'quantum-shield', dbPath: './data/services/quantum-shield.db' },
-      ];
-
-      for (const config of dbConfigs) {
-          try {
-              const dbInstance = await createDatabase({ path: config.dbPath }); // Uses BrianNwaezikeDB's simple creation utility
-              this.serviceDatabases.set(config.name, dbInstance);
-              initLogger.info(`Created specialized DB: ${config.name}`);
-          } catch (error) {
-              initLogger.error(`Failed to create specialized DB ${config.name}`, { error: error.message });
-              throw error; // Fail fast if a core DB cannot be created
-          }
+    // Production service databases for global enterprise deployment
+    const dbConfigs = [
+      { 
+        name: 'ai-security-module', 
+        dbPath: './data/services/ai-security-module.db',
+        description: 'AI Security Module Database - Threat detection and security analytics'
+      },
+      { 
+        name: 'ai-threat-detector', 
+        dbPath: './data/services/ai-threat-detector.db',
+        description: 'AI Threat Detector Database - Real-time threat intelligence'
+      },
+      { 
+        name: 'quantum-shield', 
+        dbPath: './data/services/quantum-shield.db',
+        description: 'Quantum Shield Database - Cryptographic security operations'
+      },
+      { 
+        name: 'cross-chain-bridge', 
+        dbPath: './data/services/cross-chain-bridge.db',
+        description: 'Cross-Chain Bridge Database - Multi-chain interoperability'
+      },
+      { 
+        name: 'mainnet-oracle', 
+        dbPath: './data/services/mainnet-oracle.db',
+        description: 'Mainnet Oracle Database - Real-time blockchain data feeds'
+      },
+      { 
+        name: 'enterprise-wallet', 
+        dbPath: './data/services/enterprise-wallet.db',
+        description: 'Enterprise Wallet Database - Secure key management'
       }
+    ];
+
+    // Ensure data directories exist
+    await this.ensureDataDirectories();
+
+    for (const config of dbConfigs) {
+      try {
+        // CRITICAL FIX: Pass string path directly, not object
+        const dbInstance = await createDatabase(config.dbPath);
+        this.serviceDatabases.set(config.name, dbInstance);
+        initLogger.info(`Created specialized DB: ${config.name}`, { 
+          path: config.dbPath,
+          description: config.description 
+        });
+      } catch (error) {
+        initLogger.error(`Failed to create specialized DB ${config.name}`, { 
+          error: error.message,
+          path: config.dbPath 
+        });
+        throw error; // Fail fast if a core DB cannot be created
+      }
+    }
   }
-  
+
+  /**
+   * 🎯 ENTERPRISE: Ensure all required data directories exist
+   */
+  async ensureDataDirectories() {
+    const directories = [
+      './data',
+      './data/services',
+      './data/ariel',
+      './data/main',
+      './backups',
+      './backups/ariel',
+      './logs'
+    ];
+
+    for (const dir of directories) {
+      try {
+        await fs.promises.mkdir(dir, { recursive: true });
+        initLogger.debug(`Ensured directory exists: ${dir}`);
+      } catch (error) {
+        initLogger.warn(`Could not create directory ${dir}`, { error: error.message });
+      }
+    }
+  }
+
   /**
    * 🎯 SYNTAX FIX & ENTERPRISE VERIFICATION: Verifies all database connections.
    * FIX: Renames the reserved word 'interface' to 'dbInterface' to resolve SyntaxError.
    */
   async verifyConnections() {
-      initLogger.info('Starting unified interface connection health checks...');
-      
-      // Syntax Fix: Renamed 'interface' to 'dbInterface'
-      for (const [name, dbInterface] of this.unifiedInterfaces) { 
-          try {
-              if (typeof dbInterface.healthCheck !== 'function') {
-                  throw new Error('Unified interface is missing a healthCheck method.');
-              }
-              const health = await dbInterface.healthCheck(); 
-              if (!health.healthy) {
-                  throw new Error(`Health check failed: ${health.error}`);
-              }
-              initLogger.info(`Verified connection for: ${name}`, { status: 'healthy', latency: health.latency });
-          } catch (error) {
-              initLogger.error(`Connection verification FAILED for: ${name}`, { error: error.message });
-              throw new Error(`Critical database connection failure on startup: ${name} (${error.message})`);
-          }
+    initLogger.info('Starting unified interface connection health checks...');
+    
+    // Syntax Fix: Renamed 'interface' to 'dbInterface'
+    for (const [name, dbInterface] of this.unifiedInterfaces) { 
+      try {
+        if (typeof dbInterface.healthCheck !== 'function') {
+          throw new Error('Unified interface is missing a healthCheck method.');
+        }
+        const health = await dbInterface.healthCheck(); 
+        if (!health.healthy) {
+          throw new Error(`Health check failed: ${health.error}`);
+        }
+        initLogger.info(`Verified connection for: ${name}`, { status: 'healthy', latency: health.latency });
+      } catch (error) {
+        initLogger.error(`Connection verification FAILED for: ${name}`, { error: error.message });
+        throw new Error(`Critical database connection failure on startup: ${name} (${error.message})`);
       }
-      initLogger.info('All database connections verified successfully.');
+    }
+    initLogger.info('All database connections verified successfully.');
   }
 
   /**
    * 🎯 NOVEL: Starts the enterprise-grade periodic health monitoring loop.
    */
   startHealthMonitoring() {
-      if (this.healthCheckInterval) {
-          clearInterval(this.healthCheckInterval);
-      }
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
 
-      this.healthCheckInterval = setInterval(async () => {
-          for (const [name, dbInterface] of this.unifiedInterfaces) {
-              try {
-                  const health = await dbInterface.healthCheck();
-                  if (!health.healthy) {
-                      initLogger.warn(`🚨 Health Monitor Alert: ${name} is unhealthy`, { error: health.error });
-                      // Add logic here to trigger automatic failover/recovery if necessary
-                  } else {
-                      initLogger.debug(`Health check OK for ${name}`, { latency: health.latency });
-                  }
-              } catch (error) {
-                  initLogger.error(`Monitoring failed for ${name}: ${error.message}`);
-              }
+    this.healthCheckInterval = setInterval(async () => {
+      for (const [name, dbInterface] of this.unifiedInterfaces) {
+        try {
+          const health = await dbInterface.healthCheck();
+          if (!health.healthy) {
+            initLogger.warn(`🚨 Health Monitor Alert: ${name} is unhealthy`, { error: health.error });
+            // Add logic here to trigger automatic failover/recovery if necessary
+          } else {
+            initLogger.debug(`Health check OK for ${name}`, { latency: health.latency });
           }
-      }, this.HEALTH_CHECK_CADENCE);
-      initLogger.info(`Continuous health monitoring started (Every ${this.HEALTH_CHECK_CADENCE / 1000}s)`);
+        } catch (error) {
+          initLogger.error(`Monitoring failed for ${name}: ${error.message}`);
+        }
+      }
+    }, this.HEALTH_CHECK_CADENCE);
+    initLogger.info(`Continuous health monitoring started (Every ${this.HEALTH_CHECK_CADENCE / 1000}s)`);
   }
-
-  // NOTE: createUnifiedInterfaces and createUnifiedInterface logic remain largely correct,
-  // but are included below for completeness and to fix the cut-off case.
 
   /**
    * 🎯 UNIFIED INTERFACE CREATION - Ensures a common API for all service consumers.
    */
   async createUnifiedInterfaces() {
-    // ... (logic remains the same)
+    // Production service configurations for global enterprise deployment
     const serviceConfigs = [
-      { name: 'ai-security-module', type: 'specialized', methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'] },
-      { name: 'ai-threat-detector', type: 'specialized', methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'] },
-      { name: 'quantum-shield', type: 'specialized', methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'] },
-      { name: 'quantum-crypto', type: 'ariel', methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'] },
-      { name: 'cross-chain-bridge', type: 'main', methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'] }
+      { 
+        name: 'ai-security-module', 
+        type: 'specialized', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'AI Security Module - Advanced threat detection and prevention'
+      },
+      { 
+        name: 'ai-threat-detector', 
+        type: 'specialized', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'AI Threat Detector - Real-time security intelligence'
+      },
+      { 
+        name: 'quantum-shield', 
+        type: 'specialized', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'Quantum Shield - Post-quantum cryptographic protection'
+      },
+      { 
+        name: 'cross-chain-bridge', 
+        type: 'specialized', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'Cross-Chain Bridge - Multi-blockchain interoperability'
+      },
+      { 
+        name: 'quantum-crypto', 
+        type: 'ariel', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'Quantum Crypto - Advanced cryptographic operations'
+      },
+      { 
+        name: 'mainnet-oracle', 
+        type: 'main', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'Mainnet Oracle - Real-time blockchain data provider'
+      },
+      { 
+        name: 'enterprise-wallet', 
+        type: 'specialized', 
+        methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
+        description: 'Enterprise Wallet - Institutional-grade asset management'
+      }
     ];
 
     for (const config of serviceConfigs) {
       try {
         const unifiedInterface = this.createUnifiedInterface(config);
         this.unifiedInterfaces.set(config.name, unifiedInterface);
+        initLogger.info(`Created unified interface for: ${config.name}`, {
+          type: config.type,
+          description: config.description
+        });
       } catch (error) {
         initLogger.error(`Failed to create unified interface for: ${config.name}`, { error: error.message });
       }
@@ -238,32 +339,66 @@ class DatabaseInitializer {
         return db;
       },
       // STANDARDIZED DATABASE METHODS (Run, All, Get, Close)
-      run: async (sql, params = []) => { const db = await this.getDatabaseInstance(config); return db.run(sql, params); }, 
-      all: async (sql, params = []) => { const db = await this.getDatabaseInstance(config); return db.all(sql, params); },
-      get: async (sql, params = []) => { const db = await this.getDatabaseInstance(config); return db.get(sql, params); }, 
+      run: async (sql, params = []) => { 
+        const db = await this.getDatabaseInstance(config); 
+        return db.run(sql, params); 
+      }, 
+      all: async (sql, params = []) => { 
+        const db = await this.getDatabaseInstance(config); 
+        return db.all(sql, params); 
+      },
+      get: async (sql, params = []) => { 
+        const db = await this.getDatabaseInstance(config); 
+        return db.get(sql, params); 
+      }, 
       close: async () => { 
         try {
           const db = await this.getDatabaseInstance(config);
-          if (typeof db.close === 'function') { await db.close(); } 
+          if (typeof db.close === 'function') { 
+            await db.close(); 
+          } 
           initLogger.info(`Database connection closed for: ${config.name}`);
         } catch (error) {
           initLogger.warn(`Error closing database for ${config.name}:`, error.message);
         }
       },
-      // Health check method
+      // Enhanced health check method with detailed diagnostics
       healthCheck: async () => { 
-          const startTime = process.hrtime();
-          const db = await this.getDatabaseInstance(config);
-          try {
-              // Perform a simple read operation to verify connection integrity
-              const result = await db.get('SELECT 1 as health_check');
-              const diff = process.hrtime(startTime);
-              const latency = (diff[0] * 1e9 + diff[1]) / 1e6; // Convert to milliseconds
-              return { healthy: true, service: config.name, latency: latency.toFixed(2) + 'ms' };
-          } catch (error) {
-              return { healthy: false, service: config.name, error: error.message };
-          }
-      } 
+        const startTime = process.hrtime();
+        const db = await this.getDatabaseInstance(config);
+        try {
+          // Perform a simple read operation to verify connection integrity
+          const result = await db.get('SELECT 1 as health_check');
+          const diff = process.hrtime(startTime);
+          const latency = (diff[0] * 1e9 + diff[1]) / 1e6; // Convert to milliseconds
+          
+          return { 
+            healthy: true, 
+            service: config.name, 
+            latency: latency.toFixed(2) + 'ms',
+            timestamp: new Date().toISOString(),
+            type: config.type
+          };
+        } catch (error) {
+          return { 
+            healthy: false, 
+            service: config.name, 
+            error: error.message,
+            timestamp: new Date().toISOString(),
+            type: config.type
+          };
+        }
+      },
+      // Additional enterprise methods
+      getStatus: async () => {
+        const db = await this.getDatabaseInstance(config);
+        return {
+          name: config.name,
+          type: config.type,
+          initialized: true,
+          timestamp: new Date().toISOString()
+        };
+      }
     };
     return interfaceMethods; 
   }
@@ -274,14 +409,20 @@ class DatabaseInitializer {
   async getDatabaseInstance(config) {
     switch (config.type) {
       case 'main':
-        if (!this.mainDb) { throw new Error('Main BrianNwaezikeDB not initialized'); }
+        if (!this.mainDb) { 
+          throw new Error('Main BrianNwaezikeDB not initialized'); 
+        }
         return this.mainDb;
       case 'ariel':
-        if (!this.arielEngine) { throw new Error('Ariel engine not initialized'); }
+        if (!this.arielEngine) { 
+          throw new Error('Ariel engine not initialized'); 
+        }
         return this.arielEngine;
       case 'specialized':
         const specializedDb = this.serviceDatabases.get(config.name);
-        if (!specializedDb) { throw new Error(`Specialized database not found: ${config.name}`); }
+        if (!specializedDb) { 
+          throw new Error(`Specialized database not found: ${config.name}`); 
+        }
         return specializedDb;
       default:
         throw new Error(`Unknown database type: ${config.type}`);
@@ -292,24 +433,44 @@ class DatabaseInitializer {
    * 🎯 NOVEL: Ensures all connections are forcefully closed during a crash/shutdown.
    */
   async emergencyCleanup() {
-      initLogger.warn('Initiating Emergency Database Cleanup...');
-      
-      if (this.healthCheckInterval) {
-          clearInterval(this.healthCheckInterval);
-      }
+    initLogger.warn('Initiating Emergency Database Cleanup...');
+    
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
 
-      // Close all unified interfaces
-      for (const [name, dbInterface] of this.unifiedInterfaces) { // Fixed variable name
-          try {
-              await dbInterface.close(); // Use the standardized close method
-          } catch (error) {
-              initLogger.warn(`Failed to close connection ${name} during emergency cleanup: ${error.message}`);
-          }
+    // Close all unified interfaces
+    for (const [name, dbInterface] of this.unifiedInterfaces) {
+      try {
+        await dbInterface.close(); // Use the standardized close method
+        initLogger.info(`Closed connection for: ${name}`);
+      } catch (error) {
+        initLogger.warn(`Failed to close connection ${name} during emergency cleanup: ${error.message}`);
       }
-      
-      this.initialized = false;
-      this.initializationPromise = null;
-      initLogger.warn('Emergency Cleanup Complete. All database connections terminated.');
+    }
+    
+    // Close main database connections
+    try {
+      if (this.mainDb && typeof this.mainDb.close === 'function') {
+        await this.mainDb.close();
+      }
+    } catch (error) {
+      initLogger.warn('Error closing main database:', error.message);
+    }
+
+    // Close Ariel engine
+    try {
+      if (this.arielEngine && typeof this.arielEngine.close === 'function') {
+        await this.arielEngine.close();
+      }
+    } catch (error) {
+      initLogger.warn('Error closing Ariel engine:', error.message);
+    }
+    
+    this.initialized = false;
+    this.initializationPromise = null;
+    initLogger.warn('Emergency Cleanup Complete. All database connections terminated.');
   }
 
   /**
@@ -328,9 +489,11 @@ class DatabaseInitializer {
     try {
       if (this.mainDb && typeof this.mainDb.backup === 'function') {
         await this.mainDb.backup();
+        initLogger.info('Main database backup completed');
       }
       if (this.arielEngine && typeof this.arielEngine.backup === 'function') {
         await this.arielEngine.backup();
+        initLogger.info('Ariel engine backup completed');
       }
       initLogger.info('Final database backups completed');
     } catch (error) {
@@ -347,15 +510,62 @@ class DatabaseInitializer {
    * 🎯 ENHANCED STATUS CHECK WITH UNIFIED INTERFACE INFO
    */
   getStatus() {
-    return {
+    const status = {
       initialized: this.initialized,
       mainDb: !!this.mainDb,
       arielEngine: !!this.arielEngine,
       specializedDatabases: this.serviceDatabases.size,
       unifiedInterfaces: Array.from(this.unifiedInterfaces.keys()),
       healthMonitoring: !!this.healthCheckInterval,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      version: '1.0.0-production'
     };
+
+    // Add detailed service information
+    status.services = Array.from(this.unifiedInterfaces.entries()).map(([name, interface]) => ({
+      name,
+      methods: Object.keys(interface).filter(key => typeof interface[key] === 'function')
+    }));
+
+    return status;
+  }
+
+  /**
+   * 🎯 ENTERPRISE: Get unified interface for specific service
+   */
+  getServiceInterface(serviceName) {
+    const interface = this.unifiedInterfaces.get(serviceName);
+    if (!interface) {
+      throw new Error(`Service interface not found: ${serviceName}`);
+    }
+    return interface;
+  }
+
+  /**
+   * 🎯 ENTERPRISE: List all available services
+   */
+  listServices() {
+    return Array.from(this.unifiedInterfaces.keys()).map(serviceName => ({
+      name: serviceName,
+      type: this.getServiceConfig(serviceName)?.type || 'unknown',
+      available: true
+    }));
+  }
+
+  /**
+   * 🎯 UTILITY: Get service configuration
+   */
+  getServiceConfig(serviceName) {
+    const serviceConfigs = [
+      { name: 'ai-security-module', type: 'specialized' },
+      { name: 'ai-threat-detector', type: 'specialized' },
+      { name: 'quantum-shield', type: 'specialized' },
+      { name: 'cross-chain-bridge', type: 'specialized' },
+      { name: 'quantum-crypto', type: 'ariel' },
+      { name: 'mainnet-oracle', type: 'main' },
+      { name: 'enterprise-wallet', type: 'specialized' }
+    ];
+    return serviceConfigs.find(config => config.name === serviceName);
   }
 }
 
