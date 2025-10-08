@@ -1445,3 +1445,6 @@ export {
   MonitoringService,
   AuditLogger
 };
+
+/ Export the enhanced class as default
+export { EnterpriseQuantumResistantCrypto as QuantumResistantCrypto };
