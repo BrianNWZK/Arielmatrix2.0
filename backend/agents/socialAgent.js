@@ -784,7 +784,7 @@ async function workerThreadFunction() {
         warn: (...args) => console.warn(`[Worker ${workerId}] ⚠️`, ...args)
     };
 
-    const socialAgent = new SocialAgent(config, workerLogger);
+    const socialAgent = new socialAgent(config, workerLogger);
     
     // Initialize wallet connections for worker
     await socialAgent.initializeWalletConnections();
