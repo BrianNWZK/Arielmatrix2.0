@@ -20,30 +20,32 @@ import { getDatabaseInitializer } from '../modules/database-initializer.js';
 import Web3 from 'web3';
 import axios from 'axios'; 
 
+// Global service manager instance
+let globalServiceManager; 
+
 // --- Enhanced Secure Bwaezi Config Loader with Real Credential Extraction ---
 async function loadBwaeziMainnetEssentials() {
-    const logger = getGlobalLogger();
-    
-    logger.warn('*** MAINNET DEPLOYMENT: EXTRACTING REAL BWAEZI CHAIN CREDENTIALS FROM LIVE BLOCKCHAIN INSTANCE ***');
+    // Use console.log initially since logger might not be available yet
+    console.log('*** MAINNET DEPLOYMENT: EXTRACTING REAL BWAEZI CHAIN CREDENTIALS FROM LIVE BLOCKCHAIN INSTANCE ***');
 
     try {
         // METHOD 1: Extract from already initialized BrianNwaezikeChain
         if (isChainInitialized()) {
-            logger.info('🔍 Extracting credentials from running BrianNwaezikeChain instance...');
+            console.log('🔍 Extracting credentials from running BrianNwaezikeChain instance...');
             const credentials = getRealBwaeziCredentials();
             
-            logger.info('✅ SUCCESS: Real credentials extracted from live blockchain instance');
-            logger.info(`🔗 ACTUAL RPC URL: ${credentials.BWAEZI_RPC_URL}`);
-            logger.info(`🆔 ACTUAL CHAIN ID: ${credentials.BWAEZI_CHAIN_ID}`);
-            logger.info(`📊 LATEST BLOCK: ${credentials.blockNumber}`);
-            logger.info(`📝 CONTRACT: ${credentials.BWAEZI_CONTRACT_ADDRESS}`);
-            logger.info(`❤️ HEALTH: ${credentials.healthStatus}`);
+            console.log('✅ SUCCESS: Real credentials extracted from live blockchain instance');
+            console.log(`🔗 ACTUAL RPC URL: ${credentials.BWAEZI_RPC_URL}`);
+            console.log(`🆔 ACTUAL CHAIN ID: ${credentials.BWAEZI_CHAIN_ID}`);
+            console.log(`📊 LATEST BLOCK: ${credentials.blockNumber}`);
+            console.log(`📝 CONTRACT: ${credentials.BWAEZI_CONTRACT_ADDRESS}`);
+            console.log(`❤️ HEALTH: ${credentials.healthStatus}`);
             
             return credentials;
         }
 
         // METHOD 2: Initialize new blockchain instance and extract credentials
-        logger.info('🚀 Initializing new BrianNwaezikeChain instance for credential extraction...');
+        console.log('🚀 Initializing new BrianNwaezikeChain instance for credential extraction...');
         
         const blockchainConfig = {
             network: 'mainnet',
@@ -56,20 +58,20 @@ async function loadBwaeziMainnetEssentials() {
         const chainInstance = await createBrianNwaezikeChain(blockchainConfig);
         const credentials = chainInstance.getRealCredentials();
         
-        logger.info('✅ SUCCESS: New blockchain instance initialized and credentials extracted');
+        console.log('✅ SUCCESS: New blockchain instance initialized and credentials extracted');
         return credentials;
 
     } catch (extractionError) {
-        logger.error(`❌ Failed to extract credentials from blockchain instance: ${extractionError.message}`);
+        console.error(`❌ Failed to extract credentials from blockchain instance: ${extractionError.message}`);
         
         // METHOD 3: Fallback to dynamic discovery
-        return await discoverBwaeziChainDynamically(logger);
+        return await discoverBwaeziChainDynamically();
     }
 }
 
 // --- Dynamic Chain Discovery Fallback ---
-async function discoverBwaeziChainDynamically(logger) {
-    logger.warn('🔄 Falling back to dynamic chain discovery...');
+async function discoverBwaeziChainDynamically() {
+    console.log('🔄 Falling back to dynamic chain discovery...');
     
     const KNOWN_BWAEZI_CHAIN_ID = 777777;
     
@@ -82,18 +84,18 @@ async function discoverBwaeziChainDynamically(logger) {
     
     for (const method of discoveryMethods) {
         try {
-            const result = await method(KNOWN_BWAEZI_CHAIN_ID, logger);
+            const result = await method(KNOWN_BWAEZI_CHAIN_ID);
             if (result) {
-                logger.info(`✅ Dynamic discovery successful via ${method.name}`);
+                console.log(`✅ Dynamic discovery successful via ${method.name}`);
                 return result;
             }
         } catch (error) {
-            logger.warn(`⚠️ Discovery method ${method.name} failed: ${error.message}`);
+            console.warn(`⚠️ Discovery method ${method.name} failed: ${error.message}`);
         }
     }
     
     // Ultimate fallback with working configuration
-    logger.warn('🎯 Using ultimate fallback configuration...');
+    console.log('🎯 Using ultimate fallback configuration...');
     return {
         BWAEZI_RPC_URL: "https://rpc.winr.games",
         BWAEZI_CHAIN_ID: 777777,
@@ -108,8 +110,8 @@ async function discoverBwaeziChainDynamically(logger) {
 }
 
 // --- Discovery Method: Direct Connection ---
-async function discoverViaDirectConnection(chainId, logger) {
-    logger.info('🔍 Attempting direct connection to known endpoints...');
+async function discoverViaDirectConnection(chainId) {
+    console.log('🔍 Attempting direct connection to known endpoints...');
     
     const DIRECT_ENDPOINTS = [
         "https://rpc.winr.games",
@@ -124,7 +126,7 @@ async function discoverViaDirectConnection(chainId, logger) {
             const blockNumber = await web3.eth.getBlockNumber();
             
             if (Number(testChainId) === chainId) {
-                logger.info(`✅ Direct connection successful: ${endpoint}`);
+                console.log(`✅ Direct connection successful: ${endpoint}`);
                 return {
                     BWAEZI_RPC_URL: endpoint,
                     BWAEZI_CHAIN_ID: chainId,
@@ -138,7 +140,7 @@ async function discoverViaDirectConnection(chainId, logger) {
                 };
             }
         } catch (error) {
-            logger.warn(`⚠️ Direct connection failed: ${endpoint}`);
+            console.warn(`⚠️ Direct connection failed: ${endpoint}`);
             continue;
         }
     }
@@ -147,8 +149,8 @@ async function discoverViaDirectConnection(chainId, logger) {
 }
 
 // --- Discovery Method: ChainList API ---
-async function discoverViaChainList(chainId, logger) {
-    logger.info('🔍 Searching via ChainList API...');
+async function discoverViaChainList(chainId) {
+    console.log('🔍 Searching via ChainList API...');
     
     try {
         const response = await axios.get('https://chainid.network/chains.json', { timeout: 10000 });
@@ -192,8 +194,8 @@ async function discoverViaChainList(chainId, logger) {
 }
 
 // --- Discovery Method: RPC Providers ---
-async function discoverViaRPCProviders(chainId, logger) {
-    logger.info('🔍 Trying known RPC providers...');
+async function discoverViaRPCProviders(chainId) {
+    console.log('🔍 Trying known RPC providers...');
     
     const PROVIDERS = [
         "https://rpc.winr.games",
@@ -230,44 +232,42 @@ async function discoverViaRPCProviders(chainId, logger) {
 
 // --- Enhanced Database Initialization with Guaranteed Synchronous Flow ---
 async function initializeApplicationDatabase() {
-    const logger = getGlobalLogger();
-    
-    logger.info('🗄️ Starting application database initialization...');
+    console.log('🗄️ Starting application database initialization...');
     
     try {
         // Initialize the global logger database first
         await initializeGlobalLogger();
-        logger.info('✅ Global logger initialized');
+        console.log('✅ Global logger initialized');
         
         // Initialize main application database
         const db = await initializeDatabase();
-        logger.info('✅ Main application database initialized');
+        console.log('✅ Main application database initialized');
         
         // Enable database logging
         await enableDatabaseLogging();
-        logger.info('✅ Database logging enabled');
+        console.log('✅ Database logging enabled');
         
         return db;
     } catch (error) {
-        logger.error('❌ Database initialization failed:', error);
+        console.error('❌ Database initialization failed:', error);
         
         // Create emergency database instance
         const emergencyDb = {
             run: (sql, params) => {
-                logger.warn(`[EMERGENCY DB] ${sql}`, params);
+                console.warn(`[EMERGENCY DB] ${sql}`, params);
                 return Promise.resolve({ lastID: 1, changes: 1 });
             },
             get: (sql, params) => {
-                logger.warn(`[EMERGENCY DB GET] ${sql}`, params);
+                console.warn(`[EMERGENCY DB GET] ${sql}`, params);
                 return Promise.resolve(null);
             },
             all: (sql, params) => {
-                logger.warn(`[EMERGENCY DB ALL] ${sql}`, params);
+                console.warn(`[EMERGENCY DB ALL] ${sql}`, params);
                 return Promise.resolve([]);
             }
         };
         
-        logger.warn('🔄 Using emergency database fallback');
+        console.warn('🔄 Using emergency database fallback');
         return emergencyDb;
     }
 }
@@ -277,9 +277,13 @@ async function initializeArielSQLSuite() {
     console.log('🚀 ArielSQL Ultimate Suite - Phase 3 Mainnet Deployment');
     console.log('📡 Initializing Global Enterprise Blockchain System...');
     
-    const logger = getGlobalLogger();
-    
     try {
+        // STEP 0: Initialize global logger FIRST before any other operations
+        console.log('📝 STEP 0: Initializing global logger...');
+        await initializeGlobalLogger();
+        const logger = getGlobalLogger();
+        console.log('✅ Global logger initialized successfully');
+
         // STEP 1: Load critical configuration FIRST with real credential extraction
         logger.info('🔧 STEP 1: Loading mainnet configuration with real credential extraction...');
         const bwaeziConfig = await loadBwaeziMainnetEssentials();
@@ -322,11 +326,11 @@ async function initializeArielSQLSuite() {
         return serviceManagerInstance;
         
     } catch (error) {
-        logger.error('💥 CRITICAL: ArielSQL Suite initialization failed:', error);
+        console.error('💥 CRITICAL: ArielSQL Suite initialization failed:', error);
         
         // Emergency recovery attempt
         try {
-            logger.warn('🔄 Attempting emergency recovery...');
+            console.warn('🔄 Attempting emergency recovery...');
             const emergencyManager = new serviceManager({
                 port: process.env.PORT || 10000,
                 mainnet: false, // Fallback to testnet mode
@@ -336,11 +340,11 @@ async function initializeArielSQLSuite() {
             await emergencyManager.initialize();
             emergencyManager.start();
             
-            logger.info('🆘 EMERGENCY MODE: Running in fallback configuration');
+            console.log('🆘 EMERGENCY MODE: Running in fallback configuration');
             return emergencyManager;
             
         } catch (recoveryError) {
-            logger.error('💀 COMPLETE FAILURE: Emergency recovery also failed:', recoveryError);
+            console.error('💀 COMPLETE FAILURE: Emergency recovery also failed:', recoveryError);
             process.exit(1);
         }
     }
@@ -348,8 +352,8 @@ async function initializeArielSQLSuite() {
 
 // --- Enhanced Error Handling and Process Management ---
 process.on('uncaughtException', (error) => {
-    const logger = getGlobalLogger();
-    logger.error('🛑 UNCAUGHT EXCEPTION:', error);
+    // Use console.error for uncaught exceptions since logger might not be available
+    console.error('🛑 UNCAUGHT EXCEPTION:', error);
     
     // Attempt graceful shutdown
     setTimeout(() => {
@@ -358,12 +362,9 @@ process.on('uncaughtException', (error) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    const logger = getGlobalLogger();
-    logger.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+    // Use console.error for unhandled rejections since logger might not be available
+    console.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
 });
-
-// Global service manager instance
-let globalServiceManager; 
 
 async function startApplication() {
     try {
