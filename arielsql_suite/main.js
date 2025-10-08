@@ -1,8 +1,8 @@
 /**
- * ArielSQL Ultimate Suite - Production Mainnet v4.1
- * 🚀 ENHANCED: Fixed initialization sequence and global logger dependency
- * ✅ FIXED: Global logger initialization order
- * 🔧 REFACTORED: Proper dependency management
+ * ArielSQL Ultimate Suite - Production Mainnet v4.2
+ * 🚀 ENHANCED: Fixed ES module compatibility and removed all CommonJS syntax
+ * ✅ FIXED: ES module scope issues and import/exports
+ * 🔧 REFACTORED: Pure ES module syntax throughout
  * 🛡️ SECURE: Production-grade blockchain integration
  */
 
@@ -62,7 +62,7 @@ class DataAnalytics {
     async trackEvent(eventName, properties = {}) {
         this.logger.info(`📈 Event tracked: ${eventName}`, properties);
         return {
-            eventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
             trackedAt: new Date().toISOString(),
             eventName,
             properties
@@ -263,7 +263,7 @@ async function discoverViaChainList(chainId, logger) {
     try {
         const response = await axios.get('https://chainid.network/chains.json', { 
             timeout: 15000,
-            headers: { 'User-Agent': 'ArielSQL-Production/4.1' }
+            headers: { 'User-Agent': 'ArielSQL-Production/4.2' }
         });
         
         const chain = response.data.find(c => c.chainId === chainId);
@@ -440,7 +440,7 @@ async function initializeServiceManagerWithDependencies(bwaeziConfig, applicatio
 
 // --- Enhanced Main Application Initialization ---
 async function initializeArielSQLSuite() {
-    console.log('🚀 ArielSQL Ultimate Suite - Production Mainnet v4.1');
+    console.log('🚀 ArielSQL Ultimate Suite - Production Mainnet v4.2');
     console.log('📡 Initializing Global Enterprise Blockchain System...');
     
     // STEP 0: Initialize core systems FIRST (CRITICAL FIX)
@@ -474,7 +474,7 @@ async function initializeArielSQLSuite() {
         logger.info('🌐 ArielSQL Suite is now LIVE on Production Mainnet');
         
         // Log deployment success with REAL credentials
-        logger.info('🎉 DEPLOYMENT SUCCESS: ArielSQL Suite Production Mainnet v4.1');
+        logger.info('🎉 DEPLOYMENT SUCCESS: ArielSQL Suite Production Mainnet v4.2');
         logger.info(`🔗 RPC: ${bwaeziConfig.BWAEZI_RPC_URL}`);
         logger.info(`🆔 Chain ID: ${bwaeziConfig.BWAEZI_CHAIN_ID}`);
         logger.info(`📊 Source: ${bwaeziConfig.rpcSource}`);
@@ -518,7 +518,7 @@ async function initializeArielSQLSuite() {
                     status: 'minimal_mode',
                     message: 'ArielSQL in diagnostic mode',
                     timestamp: new Date().toISOString(),
-                    version: 'v4.1',
+                    version: 'v4.2',
                     endpoints: VALIDATED_ENDPOINTS
                 }));
             });
@@ -560,7 +560,7 @@ let globalServiceManager;
 
 async function startApplication() {
     try {
-        console.log('🔧 Starting ArielSQL Production Suite v4.1...');
+        console.log('🔧 Starting ArielSQL Production Suite v4.2...');
         
         // Assign the new instance to the global variable
         globalServiceManager = await initializeArielSQLSuite();
@@ -601,8 +601,11 @@ async function startApplication() {
     }
 }
 
-// Start the application
-if (require.main === module) {
+// 💡 FIX: ES Module entry point detection without require
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+
+// Start the application if this is the main module
+if (isMainModule) {
     startApplication();
 }
 
