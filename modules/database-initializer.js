@@ -81,7 +81,7 @@ class DatabaseInitializer {
 
         // Initialize Ariel SQLite Engine
         initLogger.info('Initializing Ariel SQLite Engine...');
-        this.arielEngine = ArielSQLiteEngine({
+        this.arielEngine = new ArielSQLiteEngine({
           dbPath: './data/ariel/transactions.db',
           backupPath: './backups/ariel',
           autoBackup: true,
