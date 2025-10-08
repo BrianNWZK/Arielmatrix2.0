@@ -81,7 +81,7 @@ class DatabaseInitializer {
 
         // Initialize Ariel SQLite Engine
         initLogger.info('Initializing Ariel SQLite Engine...');
-        this.arielEngine = getArielSQLiteEngine({
+        this.arielEngine = ArielSQLiteEngine({
           dbPath: './data/ariel/transactions.db',
           backupPath: './backups/ariel',
           autoBackup: true,
@@ -361,7 +361,7 @@ class DatabaseInitializer {
         
         if (config.type === 'bwaezi-chain') {
           try {
-            const chainInstance = getInitializedChain();
+            const chainInstance = BrianNwaezikeChain();
             if (!chainInstance) {
               throw new Error("BrianNwaezikeChain instance not initialized");
             }
@@ -448,7 +448,7 @@ class DatabaseInitializer {
         }
         return specializedDb;
       case 'bwaezi-chain':
-        const chainInstance = getInitializedChain();
+        const chainInstance = BrianNwaezikeChain();
         if (!chainInstance) { 
           throw new Error('BrianNwaezikeChain not initialized'); 
         }
