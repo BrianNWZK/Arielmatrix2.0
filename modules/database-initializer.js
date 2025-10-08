@@ -88,21 +88,21 @@ class DatabaseInitializer {
           backupInterval: 3600000,
           maxBackups: 10
         });
-        await this.arielEngine.connect(); // Use connect() if available, or init()
+        await this.arielEngine.connect();
 
         // Step 3: Create specialized production-ready databases
         initLogger.info('Creating specialized production service databases...');
-        await this.createSpecializedDatabases(); // NOVEL: Added full creation logic
+        await this.createSpecializedDatabases();
 
         // Step 4: Create unified interfaces for all modules
         await this.createUnifiedInterfaces();
 
         // Step 5: Verify all connections (CRITICAL step before deployment)
         initLogger.info('Verifying all unified database connections...');
-        await this.verifyConnections(); // FIXED: Uses the verified method below
+        await this.verifyConnections();
 
         // Step 6: Start health monitoring
-        this.startHealthMonitoring(); // NOVEL: Added continuous monitoring
+        this.startHealthMonitoring();
 
         this.initialized = true;
         initLogger.info('✅ All databases initialized successfully with unified interfaces');
@@ -114,7 +114,6 @@ class DatabaseInitializer {
           unifiedInterfaces: Object.fromEntries(this.unifiedInterfaces),
         };
       } catch (error) {
-        // CRITICAL FIX: Replace fatal with error since winston doesn't have fatal level
         initLogger.error('💀 Comprehensive database initialization failed', {
           error: error.message,
           stack: error.stack
@@ -163,6 +162,11 @@ class DatabaseInitializer {
         name: 'enterprise-wallet', 
         dbPath: './data/services/enterprise-wallet.db',
         description: 'Enterprise Wallet Database - Secure key management'
+      },
+      { 
+        name: 'quantum-crypto', 
+        dbPath: './data/services/quantum-crypto.db',
+        description: 'Quantum Crypto Database - Advanced cryptographic operations'
       }
     ];
 
@@ -183,7 +187,7 @@ class DatabaseInitializer {
           error: error.message,
           path: config.dbPath 
         });
-        throw error; // Fail fast if a core DB cannot be created
+        throw error;
       }
     }
   }
@@ -214,12 +218,10 @@ class DatabaseInitializer {
 
   /**
    * 🎯 SYNTAX FIX & ENTERPRISE VERIFICATION: Verifies all database connections.
-   * FIX: Renames the reserved word 'interface' to 'dbInterface' to resolve SyntaxError.
    */
   async verifyConnections() {
     initLogger.info('Starting unified interface connection health checks...');
     
-    // Syntax Fix: Renamed 'interface' to 'dbInterface'
     for (const [name, dbInterface] of this.unifiedInterfaces) { 
       try {
         if (typeof dbInterface.healthCheck !== 'function') {
@@ -252,7 +254,6 @@ class DatabaseInitializer {
           const health = await dbInterface.healthCheck();
           if (!health.healthy) {
             initLogger.warn(`🚨 Health Monitor Alert: ${name} is unhealthy`, { error: health.error });
-            // Add logic here to trigger automatic failover/recovery if necessary
           } else {
             initLogger.debug(`Health check OK for ${name}`, { latency: health.latency });
           }
@@ -296,7 +297,7 @@ class DatabaseInitializer {
       },
       { 
         name: 'quantum-crypto', 
-        type: 'ariel', 
+        type: 'specialized', 
         methods: ['run', 'all', 'get', 'init', 'close', 'healthCheck'],
         description: 'Quantum Crypto - Advanced cryptographic operations'
       },
@@ -443,7 +444,7 @@ class DatabaseInitializer {
     // Close all unified interfaces
     for (const [name, dbInterface] of this.unifiedInterfaces) {
       try {
-        await dbInterface.close(); // Use the standardized close method
+        await dbInterface.close();
         initLogger.info(`Closed connection for: ${name}`);
       } catch (error) {
         initLogger.warn(`Failed to close connection ${name} during emergency cleanup: ${error.message}`);
@@ -521,10 +522,10 @@ class DatabaseInitializer {
       version: '1.0.0-production'
     };
 
-    // Add detailed service information
-    status.services = Array.from(this.unifiedInterfaces.entries()).map(([name, interface]) => ({
+    // CRITICAL FIX: Renamed 'interface' to 'dbInterface' to avoid reserved word
+    status.services = Array.from(this.unifiedInterfaces.entries()).map(([name, dbInterface]) => ({
       name,
-      methods: Object.keys(interface).filter(key => typeof interface[key] === 'function')
+      methods: Object.keys(dbInterface).filter(key => typeof dbInterface[key] === 'function')
     }));
 
     return status;
@@ -534,11 +535,11 @@ class DatabaseInitializer {
    * 🎯 ENTERPRISE: Get unified interface for specific service
    */
   getServiceInterface(serviceName) {
-    const interface = this.unifiedInterfaces.get(serviceName);
-    if (!interface) {
+    const dbInterface = this.unifiedInterfaces.get(serviceName);
+    if (!dbInterface) {
       throw new Error(`Service interface not found: ${serviceName}`);
     }
-    return interface;
+    return dbInterface;
   }
 
   /**
@@ -561,11 +562,66 @@ class DatabaseInitializer {
       { name: 'ai-threat-detector', type: 'specialized' },
       { name: 'quantum-shield', type: 'specialized' },
       { name: 'cross-chain-bridge', type: 'specialized' },
-      { name: 'quantum-crypto', type: 'ariel' },
+      { name: 'quantum-crypto', type: 'specialized' },
       { name: 'mainnet-oracle', type: 'main' },
       { name: 'enterprise-wallet', type: 'specialized' }
     ];
     return serviceConfigs.find(config => config.name === serviceName);
+  }
+
+  /**
+   * 🎯 ENTERPRISE: Perform comprehensive system diagnostics
+   */
+  async performSystemDiagnostics() {
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      overallHealth: 'checking',
+      services: [],
+      issues: []
+    };
+
+    for (const [name, dbInterface] of this.unifiedInterfaces) {
+      try {
+        const health = await dbInterface.healthCheck();
+        diagnostics.services.push({
+          name,
+          healthy: health.healthy,
+          latency: health.latency,
+          type: health.type
+        });
+
+        if (!health.healthy) {
+          diagnostics.issues.push({
+            service: name,
+            issue: health.error,
+            severity: 'high'
+          });
+        }
+      } catch (error) {
+        diagnostics.services.push({
+          name,
+          healthy: false,
+          error: error.message
+        });
+        diagnostics.issues.push({
+          service: name,
+          issue: `Health check failed: ${error.message}`,
+          severity: 'critical'
+        });
+      }
+    }
+
+    // Determine overall health
+    const unhealthyServices = diagnostics.services.filter(s => !s.healthy);
+    if (unhealthyServices.length === 0) {
+      diagnostics.overallHealth = 'healthy';
+    } else if (unhealthyServices.length < diagnostics.services.length / 2) {
+      diagnostics.overallHealth = 'degraded';
+    } else {
+      diagnostics.overallHealth = 'unhealthy';
+    }
+
+    return diagnostics;
   }
 }
 
