@@ -47,7 +47,7 @@ import adRevenueAgent from './adRevenueAgent.js';
 import adsenseAgent from './adsenseAgent.js';
 import contractDeployAgent from './contractDeployAgent.js';
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
-import dataAgent from './dataAgent.js';
+import DataAgent from './dataAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
 import shopifyAgent from './shopifyAgent.js';
 import socialAgent from './socialAgent.js';
