@@ -361,7 +361,7 @@ class DatabaseInitializer {
         
         if (config.type === 'bwaezi-chain') {
           try {
-            const chainInstance = BrianNwaezikeChain();
+            const chainInstance = new BrianNwaezikeChain();
             if (!chainInstance) {
               throw new Error("BrianNwaezikeChain instance not initialized");
             }
@@ -448,7 +448,7 @@ class DatabaseInitializer {
         }
         return specializedDb;
       case 'bwaezi-chain':
-        const chainInstance = BrianNwaezikeChain();
+        const chainInstance = new BrianNwaezikeChain();
         if (!chainInstance) { 
           throw new Error('BrianNwaezikeChain not initialized'); 
         }
