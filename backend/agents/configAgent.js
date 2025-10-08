@@ -1,7 +1,7 @@
 // backend/agents/configAgent.js (FIXED - Production-Ready)
 import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import shopifyAgent from './shopifyAgent.js';
-import { socialAgent } from './socialAgent.js';
+import socialAgent from './socialAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
 import dataAgent from './dataAgent.js';
 import { AdsenseAgent } from './adsenseAgent.js';
