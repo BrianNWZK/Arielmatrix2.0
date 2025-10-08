@@ -1435,6 +1435,7 @@ export class EnterpriseQuantumResistantCrypto {
 }
 
 // Export the main class and utilities
+export { EnterpriseQuantumResistantCrypto as QuantumResistantCrypto };
 export { 
   ALGORITHMS, 
   KEY_TYPES, 
@@ -1444,6 +1445,3 @@ export {
   MonitoringService,
   AuditLogger
 };
-
-/ Export the enhanced class as default
-export { EnterpriseQuantumResistantCrypto as QuantumResistantCrypto };
