@@ -3,7 +3,7 @@
 // PRODUCTION-READY DEPENDENCIES
 import { initializeDatabase, getDatabase, createDatabase } from '../backend/database/BrianNwaezikeDB.js';
 import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
-import { getInitializedChain } from '../backend/blockchain/BrianNwaezikeChain.js';
+import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
 import { createLogger, format, transports } from 'winston';
 import path from 'path';
 import { fileURLToPath } from 'url';
