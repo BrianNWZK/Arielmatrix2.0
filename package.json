@@ -5,6 +5,13 @@
   "engines": {
     "node": "22.x"
   },
+  "performanceMetrics": {
+    "transactionsProcessed": 0,
+    "blocksValidated": 0,
+    "threatsDetected": 0,
+    "carbonOffset": 0,
+    "averageGasUsed": 0
+  },
   "scripts": {
     "start": "node arielsql_suite/main.js",
     "dev": "nodemon backend/server.js",
