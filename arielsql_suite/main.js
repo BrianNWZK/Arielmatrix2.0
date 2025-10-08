@@ -1,8 +1,8 @@
 /**
- * ArielSQL Ultimate Suite - Production Mainnet v4.0
- * 🚀 ENHANCED: Permanent fixes for all identified errors with real credential extraction
- * ✅ FIXED: Database initialization, missing imports, and credential retrieval
- * 🔧 REFACTORED: Robust error handling with guaranteed fallbacks
+ * ArielSQL Ultimate Suite - Production Mainnet v4.1
+ * 🚀 ENHANCED: Fixed initialization sequence and global logger dependency
+ * ✅ FIXED: Global logger initialization order
+ * 🔧 REFACTORED: Proper dependency management
  * 🛡️ SECURE: Production-grade blockchain integration
  */
 
@@ -18,12 +18,29 @@ import { getDatabaseInitializer } from '../modules/database-initializer.js';
 import Web3 from 'web3';
 import axios from 'axios';
 
-// 💡 FIX: Create DataAnalytics stub if module doesn't exist
+// 💡 FIX: Create DataAnalytics stub with lazy logger initialization
 class DataAnalytics {
     constructor(config = {}) {
         this.config = config;
         this.initialized = false;
-        this.logger = getGlobalLogger();
+        this._logger = null;
+    }
+
+    // Lazy getter for logger to avoid initialization order issues
+    get logger() {
+        if (!this._logger) {
+            try {
+                this._logger = getGlobalLogger();
+            } catch (error) {
+                // Fallback to console if global logger not available
+                this._logger = {
+                    info: (...args) => console.log('📊 [DataAnalytics]', ...args),
+                    warn: (...args) => console.warn('⚠️ [DataAnalytics]', ...args),
+                    error: (...args) => console.error('❌ [DataAnalytics]', ...args)
+                };
+            }
+        }
+        return this._logger;
     }
 
     async initialize() {
@@ -61,7 +78,7 @@ class DataAnalytics {
     }
 }
 
-// Create global instance
+// Create global instance (but don't initialize logger immediately)
 const dataAnalyticsInstance = new DataAnalytics();
 
 // --- Global configuration with validated endpoints ---
@@ -76,6 +93,23 @@ const VALIDATED_ENDPOINTS = {
         "https://mainnet.bwaezi.org"
     ]
 };
+
+// --- Initialize Global Logger First (CRITICAL FIX) ---
+async function initializeCoreSystems() {
+    console.log('🔧 Initializing core systems...');
+    
+    try {
+        // STEP 0: Initialize global logger FIRST
+        console.log('📝 STEP 0: Initializing global logger...');
+        await initializeGlobalLogger();
+        console.log('✅ Global logger initialized successfully');
+        
+        return true;
+    } catch (error) {
+        console.error('❌ Core system initialization failed:', error);
+        return false;
+    }
+}
 
 // --- Enhanced Secure Bwaezi Config Loader with Real Credential Extraction ---
 async function loadBwaeziMainnetEssentials() {
@@ -229,7 +263,7 @@ async function discoverViaChainList(chainId, logger) {
     try {
         const response = await axios.get('https://chainid.network/chains.json', { 
             timeout: 15000,
-            headers: { 'User-Agent': 'ArielSQL-Production/4.0' }
+            headers: { 'User-Agent': 'ArielSQL-Production/4.1' }
         });
         
         const chain = response.data.find(c => c.chainId === chainId);
@@ -323,10 +357,6 @@ async function initializeApplicationDatabase() {
     logger.info('🗄️ Starting enhanced application database initialization...');
     
     try {
-        // Initialize the global logger database first
-        await initializeGlobalLogger();
-        logger.info('✅ Global logger initialized');
-        
         // Initialize main application database with enhanced error handling
         const db = await initializeDatabase();
         
@@ -374,7 +404,7 @@ async function initializeServiceManagerWithDependencies(bwaeziConfig, applicatio
     logger.info('⚙️ Initializing ServiceManager with all dependencies...');
     
     try {
-        // Initialize DataAnalytics stub
+        // Initialize DataAnalytics stub (now safe because logger is available)
         await dataAnalyticsInstance.initialize();
         logger.info('✅ DataAnalytics stub initialized');
         
@@ -410,8 +440,14 @@ async function initializeServiceManagerWithDependencies(bwaeziConfig, applicatio
 
 // --- Enhanced Main Application Initialization ---
 async function initializeArielSQLSuite() {
-    console.log('🚀 ArielSQL Ultimate Suite - Production Mainnet v4.0');
+    console.log('🚀 ArielSQL Ultimate Suite - Production Mainnet v4.1');
     console.log('📡 Initializing Global Enterprise Blockchain System...');
+    
+    // STEP 0: Initialize core systems FIRST (CRITICAL FIX)
+    const coreInitialized = await initializeCoreSystems();
+    if (!coreInitialized) {
+        throw new Error('Failed to initialize core systems');
+    }
     
     const logger = getGlobalLogger();
     
@@ -438,7 +474,7 @@ async function initializeArielSQLSuite() {
         logger.info('🌐 ArielSQL Suite is now LIVE on Production Mainnet');
         
         // Log deployment success with REAL credentials
-        logger.info('🎉 DEPLOYMENT SUCCESS: ArielSQL Suite Production Mainnet v4.0');
+        logger.info('🎉 DEPLOYMENT SUCCESS: ArielSQL Suite Production Mainnet v4.1');
         logger.info(`🔗 RPC: ${bwaeziConfig.BWAEZI_RPC_URL}`);
         logger.info(`🆔 Chain ID: ${bwaeziConfig.BWAEZI_CHAIN_ID}`);
         logger.info(`📊 Source: ${bwaeziConfig.rpcSource}`);
@@ -482,7 +518,7 @@ async function initializeArielSQLSuite() {
                     status: 'minimal_mode',
                     message: 'ArielSQL in diagnostic mode',
                     timestamp: new Date().toISOString(),
-                    version: 'v4.0',
+                    version: 'v4.1',
                     endpoints: VALIDATED_ENDPOINTS
                 }));
             });
@@ -504,8 +540,7 @@ async function initializeArielSQLSuite() {
 
 // --- Enhanced Error Handling and Process Management ---
 process.on('uncaughtException', (error) => {
-    const logger = getGlobalLogger();
-    logger.error('🛑 UNCAUGHT EXCEPTION:', error);
+    console.error('🛑 UNCAUGHT EXCEPTION:', error);
     
     // Enhanced graceful shutdown
     setTimeout(() => {
@@ -514,8 +549,7 @@ process.on('uncaughtException', (error) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    const logger = getGlobalLogger();
-    logger.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+    console.error('🛑 UNHANDLED REJECTION at:', promise, 'reason:', reason);
 });
 
 // Increase max listeners for production
@@ -526,7 +560,7 @@ let globalServiceManager;
 
 async function startApplication() {
     try {
-        console.log('🔧 Starting ArielSQL Production Suite...');
+        console.log('🔧 Starting ArielSQL Production Suite v4.1...');
         
         // Assign the new instance to the global variable
         globalServiceManager = await initializeArielSQLSuite();
