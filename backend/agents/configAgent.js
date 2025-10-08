@@ -3,7 +3,7 @@ import { EnhancedCryptoAgent } from './cryptoAgent.js';
 import shopifyAgent from './shopifyAgent.js';
 import socialAgent from './socialAgent.js';
 import forexSignalAgent from './forexSignalAgent.js';
-import dataAgent from './dataAgent.js';
+import DataAgent from './dataAgent.js';
 import { AdsenseAgent } from './adsenseAgent.js';
 import { AdRevenueAgent } from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
@@ -252,7 +252,7 @@ export class configAgent {
         shopify: { fn: () => this.initializeShopifyAgent(), enabled: this.CONFIG.enableShopify, critical: false },
         social: { fn: () => this.initializeSocialAgent(), enabled: this.CONFIG.enableSocial, critical: false },
         forex: { fn: () => this.initializeForexAgent(), enabled: this.CONFIG.enableForex, critical: false },
-        data: { fn: () => this.initializeDataAgent(), enabled: this.CONFIG.enableData, critical: false },
+        Data: { fn: () => this.initializeDataAgent(), enabled: this.CONFIG.enableData, critical: false },
         adsense: { fn: () => this.initializeAdsenseAgent(), enabled: this.CONFIG.enableAdsense, critical: false },
         adRevenue: { fn: () => this.initializeAdRevenueAgent(), enabled: this.CONFIG.enableAdRevenue, critical: false },
         autonomousAI: { fn: () => this.initializeAutonomousAI(), enabled: this.CONFIG.enableAutonomousAI, critical: false },
