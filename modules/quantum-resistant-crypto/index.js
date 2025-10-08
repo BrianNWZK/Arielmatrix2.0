@@ -1435,7 +1435,6 @@ export class EnterpriseQuantumResistantCrypto {
 }
 
 // Export the main class and utilities
-export default EnterpriseQuantumResistantCrypto;
 export { 
   ALGORITHMS, 
   KEY_TYPES, 
