@@ -323,7 +323,7 @@ class serviceManager {
       config: new configAgent({ mainnet: this.config.mainnet }),
       contractDeploy: new ContractDeployAgent({ mainnet: this.config.mainnet }),
       crypto: new EnhancedCryptoAgent({ mainnet: this.config.mainnet }),
-      data: new dataAgent({ mainnet: this.config.mainnet }),
+      data: new DataAgent({ mainnet: this.config.mainnet }),
       forex: new forexSignalAgent({ mainnet: this.config.mainnet }),
       health: HealthAgent,
       payout: PayoutAgent,
