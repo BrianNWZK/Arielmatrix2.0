@@ -83,12 +83,12 @@ const dataAnalyticsInstance = new DataAnalytics();
 
 // --- Global configuration with validated endpoints ---
 const VALIDATED_ENDPOINTS = {
-    BWAEZI_RPC_URL: process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-dxbr.onrender.com/bwaezi-rpc",
+    BWAEZI_RPC_URL: process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc",
     BWAEZI_CHAIN_ID: 777777,
     BWAEZI_CONTRACT_ADDRESS: "0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1",
     SOLANA_RPC_URL: "https://api.mainnet-beta.solana.com",
     FALLBACK_RPC_URLS: [
-        process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-dxbr.onrender.com/bwaezi-rpc",
+        process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc",
         "https://rpc.winr.games"
     ]
 };
