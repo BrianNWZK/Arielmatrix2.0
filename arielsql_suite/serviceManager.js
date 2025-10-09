@@ -62,7 +62,7 @@ class serviceManager {
     });
 
     // Initialize database initializer FIRST
-    this.databaseInitializer = getDatabaseInitializer();
+    this.databaseInitializer = new DatabaseInitializer();
     this.unifiedDatabaseInterfaces = new Map();
     
     // Core systems - will be initialized in proper sequence
