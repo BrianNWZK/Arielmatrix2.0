@@ -28,7 +28,7 @@ async function initializeCoreSystems() {
         // Initialize blockchain only
         console.log('🔗 Initializing Bwaezi Blockchain...');
         blockchainInstance = await createBrianNwaezikeChain({
-            rpcUrl: process.env.BWAEZI_RPC_URL || 'https://arielmatrix2-0-dxbr.onrender.com/bwaezi-rpc',
+            rpcUrl: process.env.BWAEZI_RPC_URL || 'https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc',
             chainId: 777777,
             contractAddress: '0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1',
             network: 'mainnet'
