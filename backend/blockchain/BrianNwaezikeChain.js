@@ -32,15 +32,20 @@ const BWAEZI_MAINNET_CONFIG = {
 let globalChainInstance = null;
 
 class BrianNwaezikeChain {
-   this.config = {
-    network: config.network || 'mainnet',
-    rpcUrl: config.rpcUrl || BWAEZI_MAINNET_CONFIG.RPC_URLS[0],
-    chainId: config.chainId || BWAEZI_MAINNET_CONFIG.CHAIN_ID,
-    contractAddress: config.contractAddress || BWAEZI_MAINNET_CONFIG.CONTRACT_ADDRESS,
-    abi: config.abi || [],
-    solanaRpcUrl: config.solanaRpcUrl || 'https://api.mainnet-beta.solana.com',
-    ...config
+  const defaultConfig = {
+  network: 'mainnet',
+  rpcUrl: BWAEZI_MAINNET_CONFIG.RPC_URLS[0],
+  chainId: BWAEZI_MAINNET_CONFIG.CHAIN_ID,
+  contractAddress: BWAEZI_MAINNET_CONFIG.CONTRACT_ADDRESS,
+  abi: [],
+  solanaRpcUrl: 'https://api.mainnet-beta.solana.com'
 };
+
+this.config = {
+  ...defaultConfig,
+  ...(config || {})
+};
+
 
 
         this.web3 = null;
