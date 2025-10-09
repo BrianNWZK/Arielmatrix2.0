@@ -95,18 +95,25 @@ class CryptoAgent {
 
   async fetchMarketData() {
     try {
-      const symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'ADA', 'DOT', 'AVAX', 'MATIC'];
+      const symbols = ['bitcoin', 'ethereum', 'solana', 'binancecoin', 'cardano', 'polkadot', 'avalanche-2', 'matic-network'];
       const results = [];
 
       for (const symbol of symbols) {
         try {
-          const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${symbol.toLowerCase()}&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_market_cap=true`);
-          const data = response.data[symbol.toLowerCase()];
+          const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${symbol}&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true&include_market_cap=true`, {
+            timeout: 10000,
+            headers: {
+              'User-Agent': 'ArielMatrix/2.0',
+              'Accept': 'application/json'
+            }
+          });
+          
+          const data = response.data[symbol];
 
           if (data) {
             const priceData = {
               id: `price_${crypto.randomBytes(8).toString('hex')}`,
-              symbol,
+              symbol: symbol.toUpperCase(),
               price: data.usd,
               volume_24h: data.usd_24h_vol,
               market_cap: data.usd_market_cap,
@@ -141,29 +148,64 @@ class CryptoAgent {
       for (const chain of chains) {
         try {
           const chainConfig = {
-            ethereum: { rpc: process.env.ETH_RPC_URL || 'https://mainnet.infura.io/v3/' + process.env.INFURA_PROJECT_ID },
-            solana: { rpc: process.env.SOL_RPC_URL || 'https://api.mainnet-beta.solana.com' },
-            polygon: { rpc: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com' },
-            bsc: { rpc: process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org' }
+            ethereum: { 
+              rpc: process.env.ETH_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/' + (process.env.ALCHEMY_API_KEY || 'demo'),
+              fallback: 'https://cloudflare-eth.com'
+            },
+            solana: { 
+              rpc: process.env.SOL_RPC_URL || 'https://api.mainnet-beta.solana.com',
+              fallback: 'https://solana-api.projectserum.com'
+            },
+            polygon: { 
+              rpc: process.env.POLYGON_RPC_URL || 'https://polygon-mainnet.g.alchemy.com/v2/' + (process.env.ALCHEMY_API_KEY || 'demo'),
+              fallback: 'https://polygon-rpc.com'
+            },
+            bsc: { 
+              rpc: process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org',
+              fallback: 'https://bsc-dataseed1.defibit.io'
+            }
           };
 
           const config = chainConfig[chain];
           if (!config) continue;
 
           let blockData;
-          switch (chain) {
-            case 'ethereum':
-              blockData = await this._fetchEthereumData(config.rpc);
-              break;
-            case 'solana':
-              blockData = await this._fetchSolanaData(config.rpc);
-              break;
-            case 'polygon':
-              blockData = await this._fetchPolygonData(config.rpc);
-              break;
-            case 'bsc':
-              blockData = await this._fetchBSCData(config.rpc);
-              break;
+          try {
+            switch (chain) {
+              case 'ethereum':
+                blockData = await this._fetchEthereumData(config.rpc);
+                break;
+              case 'solana':
+                blockData = await this._fetchSolanaData(config.rpc);
+                break;
+              case 'polygon':
+                blockData = await this._fetchPolygonData(config.rpc);
+                break;
+              case 'bsc':
+                blockData = await this._fetchBSCData(config.rpc);
+                break;
+            }
+          } catch (primaryError) {
+            this.logger.warn(`Primary RPC failed for ${chain}, trying fallback:`, primaryError.message);
+            try {
+              switch (chain) {
+                case 'ethereum':
+                  blockData = await this._fetchEthereumData(config.fallback);
+                  break;
+                case 'solana':
+                  blockData = await this._fetchSolanaData(config.fallback);
+                  break;
+                case 'polygon':
+                  blockData = await this._fetchPolygonData(config.fallback);
+                  break;
+                case 'bsc':
+                  blockData = await this._fetchBSCData(config.fallback);
+                  break;
+              }
+            } catch (fallbackError) {
+              this.logger.error(`All RPC endpoints failed for ${chain}:`, fallbackError.message);
+              continue;
+            }
           }
 
           if (blockData) {
@@ -192,9 +234,15 @@ class CryptoAgent {
       const response = await axios.post(rpcUrl, {
         jsonrpc: "2.0",
         method: "eth_getBlockByNumber",
-        params: ["latest", true],
+        params: ["latest", false],
         id: 1
+      }, {
+        timeout: 15000
       });
+
+      if (!response.data || !response.data.result) {
+        throw new Error('Invalid RPC response');
+      }
 
       const block = response.data.result;
       return {
@@ -215,14 +263,20 @@ class CryptoAgent {
         method: "getRecentPerformanceSamples",
         params: [1],
         id: 1
+      }, {
+        timeout: 15000
       });
+
+      if (!response.data || !response.data.result || !response.data.result[0]) {
+        throw new Error('Invalid RPC response');
+      }
 
       const data = response.data.result[0];
       return {
         id: `sol_${crypto.randomBytes(8).toString('hex')}`,
         block_number: data.slot,
         transaction_count: data.numTransactions,
-        gas_used: 0 // Solana doesn't use gas
+        gas_used: 0
       };
     } catch (error) {
       throw new Error(`Solana data fetch failed: ${error.message}`);
@@ -234,9 +288,15 @@ class CryptoAgent {
       const response = await axios.post(rpcUrl, {
         jsonrpc: "2.0",
         method: "eth_getBlockByNumber",
-        params: ["latest", true],
+        params: ["latest", false],
         id: 1
+      }, {
+        timeout: 15000
       });
+
+      if (!response.data || !response.data.result) {
+        throw new Error('Invalid RPC response');
+      }
 
       const block = response.data.result;
       return {
@@ -255,9 +315,15 @@ class CryptoAgent {
       const response = await axios.post(rpcUrl, {
         jsonrpc: "2.0",
         method: "eth_getBlockByNumber",
-        params: ["latest", true],
+        params: ["latest", false],
         id: 1
+      }, {
+        timeout: 15000
       });
+
+      if (!response.data || !response.data.result) {
+        throw new Error('Invalid RPC response');
+      }
 
       const block = response.data.result;
       return {
@@ -278,7 +344,7 @@ class CryptoAgent {
   }
 }
 
-// Real-time Analytics Integration - FIXED: Correct class name
+// Real-time Analytics Integration
 class DataAnalytics {
   constructor(writeKey) {
     this.writeKey = writeKey;
@@ -481,10 +547,26 @@ class DataAgent {
 
     try {
       const platforms = [
-        { name: 'twitter', api: process.env.TWITTER_API_URL },
-        { name: 'reddit', api: process.env.REDDIT_API_URL },
-        { name: 'telegram', api: process.env.TELEGRAM_API_URL },
-        { name: 'discord', api: process.env.DISCORD_API_URL }
+        { 
+          name: 'twitter', 
+          api: process.env.TWITTER_API_URL || 'https://api.twitter.com/2/tweets/search/recent',
+          enabled: !!process.env.TWITTER_API_KEY
+        },
+        { 
+          name: 'reddit', 
+          api: process.env.REDDIT_API_URL || 'https://www.reddit.com/r/cryptocurrency/hot.json',
+          enabled: true // Public API
+        },
+        { 
+          name: 'telegram', 
+          api: process.env.TELEGRAM_API_URL,
+          enabled: !!process.env.TELEGRAM_API_KEY
+        },
+        { 
+          name: 'discord', 
+          api: process.env.DISCORD_API_URL,
+          enabled: !!process.env.DISCORD_API_KEY
+        }
       ];
       
       let totalPosts = 0;
@@ -493,23 +575,42 @@ class DataAgent {
 
       for (const platform of platforms) {
         try {
-          if (!platform.api) {
-            this.logger.warn(`No API configured for ${platform.name}`);
+          if (!platform.enabled) {
+            this.logger.warn(`Platform ${platform.name} not enabled or configured`);
             continue;
           }
 
-          // Real API calls to social media platforms
-          const response = await axios.get(platform.api, {
-            headers: {
-              'Authorization': `Bearer ${process.env[`${platform.name.toUpperCase()}_API_KEY`]}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 10000
-          });
+          let response;
+          if (platform.name === 'reddit') {
+            // Public Reddit API
+            response = await axios.get(platform.api, {
+              timeout: 10000,
+              headers: {
+                'User-Agent': 'ArielMatrix/2.0'
+              }
+            });
+          } else {
+            // Authenticated APIs
+            response = await axios.get(platform.api, {
+              headers: {
+                'Authorization': `Bearer ${process.env[`${platform.name.toUpperCase()}_API_KEY`]}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 10000
+            });
+          }
 
           if (response.data) {
-            const posts = response.data.posts?.length || response.data.messages?.length || 0;
-            const platformSentiment = response.data.sentiment || Math.random() * 2 - 1;
+            let posts = 0;
+            let platformSentiment = 0;
+
+            if (platform.name === 'reddit') {
+              posts = response.data.data?.children?.length || 0;
+              platformSentiment = Math.random() * 2 - 1; // Placeholder sentiment analysis
+            } else {
+              posts = response.data.posts?.length || response.data.messages?.length || response.data.data?.length || 0;
+              platformSentiment = response.data.sentiment || Math.random() * 2 - 1;
+            }
 
             totalPosts += posts;
             sentimentScore += platformSentiment;
@@ -574,26 +675,58 @@ class DataAgent {
 
     try {
       const markets = [
-        { name: 'stocks', api: process.env.STOCKS_API_URL || 'https://api.twelvedata.com/quote' },
-        { name: 'forex', api: process.env.FOREX_API_URL || 'https://api.exchangerate.host/latest' },
-        { name: 'commodities', api: process.env.COMMODITIES_API_URL || 'https://api.metalpriceapi.com/v1/latest' },
-        { name: 'indices', api: process.env.INDICES_API_URL || 'https://financialmodelingprep.com/api/v3/quote' }
+        { 
+          name: 'stocks', 
+          api: process.env.STOCKS_API_URL || 'https://api.twelvedata.com/quote',
+          symbols: ['AAPL', 'GOOGL', 'MSFT', 'TSLA'],
+          enabled: !!process.env.STOCKS_API_KEY
+        },
+        { 
+          name: 'forex', 
+          api: process.env.FOREX_API_URL || 'https://api.exchangerate.host/latest',
+          symbols: ['EUR', 'GBP', 'JPY', 'CAD'],
+          enabled: true
+        },
+        { 
+          name: 'commodities', 
+          api: process.env.COMMODITIES_API_URL || 'https://api.metalpriceapi.com/v1/latest',
+          enabled: !!process.env.COMMODITIES_API_KEY
+        },
+        { 
+          name: 'indices', 
+          api: process.env.INDICES_API_URL || 'https://financialmodelingprep.com/api/v3/quote',
+          symbols: ['^GSPC', '^DJI', '^IXIC'],
+          enabled: !!process.env.INDICES_API_KEY
+        }
       ];
       
       let totalDataPoints = 0;
 
       for (const market of markets) {
         try {
-          const response = await axios.get(market.api, {
-            params: market.name === 'forex' ? { base: 'USD' } : {},
-            headers: {
-              'Authorization': `Bearer ${process.env[`${market.name.toUpperCase()}_API_KEY`]}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 10000
-          });
+          if (!market.enabled && market.name !== 'forex') {
+            this.logger.warn(`Market ${market.name} not enabled or configured`);
+            continue;
+          }
 
-          const dataPoints = Object.keys(response.data).length;
+          let response;
+          if (market.name === 'forex') {
+            response = await axios.get(market.api, {
+              params: { base: 'USD' },
+              timeout: 10000
+            });
+          } else {
+            response = await axios.get(market.api, {
+              params: market.symbols ? { symbol: market.symbols.join(',') } : {},
+              headers: {
+                'Authorization': `Bearer ${process.env[`${market.name.toUpperCase()}_API_KEY`]}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 10000
+            });
+          }
+
+          const dataPoints = response.data ? Object.keys(response.data).length : 0;
           totalDataPoints += dataPoints;
 
           // Record data source performance
@@ -650,36 +783,68 @@ class DataAgent {
 
     try {
       const web3Sources = [
-        { name: 'defi_protocols', api: process.env.DEFI_PULSE_API || 'https://api.llama.fi/protocols' },
-        { name: 'nft_markets', api: process.env.NFT_API_URL || 'https://api.opensea.io/api/v1/collections' },
-        { name: 'dao_governance', api: process.env.DAO_API_URL || 'https://api.tally.xyz/proposals' },
-        { name: 'smart_contracts', api: process.env.ETHERSCAN_API || 'https://api.etherscan.io/api' }
+        { 
+          name: 'defi_protocols', 
+          api: process.env.DEFI_PULSE_API || 'https://api.llama.fi/protocols',
+          enabled: true
+        },
+        { 
+          name: 'nft_markets', 
+          api: process.env.NFT_API_URL || 'https://api.opensea.io/api/v1/collections',
+          enabled: !!process.env.OPENSEA_API_KEY
+        },
+        { 
+          name: 'dao_governance', 
+          api: process.env.DAO_API_URL || 'https://api.tally.xyz/proposals',
+          enabled: true
+        },
+        { 
+          name: 'smart_contracts', 
+          api: process.env.ETHERSCAN_API || 'https://api.etherscan.io/api',
+          enabled: !!process.env.ETHERSCAN_API_KEY
+        }
       ];
       
       let totalDataPoints = 0;
 
       for (const source of web3Sources) {
         try {
-          const response = await axios.get(source.api, {
-            params: source.name === 'smart_contracts' ? {
-              module: 'stats',
-              action: 'tokensupply',
-              contractaddress: '0x...',
-              apikey: process.env.ETHERSCAN_API_KEY
-            } : {},
-            headers: {
-              'Authorization': `Bearer ${process.env[`${source.name.toUpperCase()}_API_KEY`]}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 15000
-          });
+          if (!source.enabled) {
+            this.logger.warn(`Web3 source ${source.name} not enabled or configured`);
+            continue;
+          }
+
+          let response;
+          if (source.name === 'smart_contracts') {
+            response = await axios.get(source.api, {
+              params: {
+                module: 'stats',
+                action: 'ethsupply',
+                apikey: process.env.ETHERSCAN_API_KEY
+              },
+              timeout: 15000
+            });
+          } else {
+            response = await axios.get(source.api, {
+              headers: {
+                'Authorization': `Bearer ${process.env[`${source.name.toUpperCase()}_API_KEY`]}`,
+                'Content-Type': 'application/json',
+                'User-Agent': 'ArielMatrix/2.0'
+              },
+              timeout: 15000
+            });
+          }
 
           const dataPoints = response.data ? (Array.isArray(response.data) ? response.data.length : Object.keys(response.data).length) : 0;
           totalDataPoints += dataPoints;
 
           // Use wallet module to get blockchain data
-          const balances = await getWalletBalances();
-          dataAgentStatus.blockchainTransactions++;
+          try {
+            const balances = await getWalletBalances();
+            dataAgentStatus.blockchainTransactions++;
+          } catch (walletError) {
+            this.logger.warn('Wallet balance check failed:', walletError.message);
+          }
 
           // Record Web3 data source
           const sourceId = `source_${crypto.randomBytes(8).toString('hex')}`;
@@ -733,11 +898,11 @@ class DataAgent {
   async _processDataRevenue(dataPoints) {
     try {
       // Calculate revenue based on data quality and quantity
-      const baseValue = dataPoints * 0.01; // $0.01 per data point
-      const qualityMultiplier = 0.85; // Average quality score
+      const baseValue = dataPoints * 0.01;
+      const qualityMultiplier = 0.85;
       const revenueAmount = baseValue * qualityMultiplier;
 
-      if (revenueAmount > 0) {
+      if (revenueAmount > 0 && this.walletInitialized) {
         // Use wallet module for revenue processing
         const settlementResult = await sendUSDT(
           this.config.COMPANY_WALLET_ADDRESS,
@@ -745,7 +910,7 @@ class DataAgent {
           'eth'
         );
 
-        if (settlementResult.hash) {
+        if (settlementResult && settlementResult.hash) {
           // Record revenue in database
           const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
           await this.db.run(
@@ -799,7 +964,7 @@ class DataAgent {
 
         dataAgentStatus.lastExecutionTime = new Date().toISOString();
         dataAgentStatus.lastStatus = 'success';
-        dataAgentStatus.dataQualityScore = 0.84; // Average quality score
+        dataAgentStatus.dataQualityScore = 0.84;
 
         this.logger.success(`💰 Data collection completed. Total revenue: $${totalRevenue.toFixed(2)}, Data points: ${totalDataPoints}`);
 
@@ -842,13 +1007,13 @@ class DataAgent {
           results.totalRevenue += cycleResult.totalRevenue;
           results.cyclesCompleted++;
           results.totalDataPoints += cycleResult.totalDataPoints;
-          results.dataQualityScore = (results.dataQualityScore * (i) + 0.84) / (i + 1); // Moving average
+          results.dataQualityScore = (results.dataQualityScore * (i) + 0.84) / (i + 1);
 
           // Track data types
           cycleResult.collectionsCompleted && results.dataTypesCollected.add(`cycle_${i + 1}`);
         }
 
-        await quantumDelay(15000); // Wait between cycles
+        await quantumDelay(15000);
 
       } catch (error) {
         this.logger.error(`Data collection cycle ${i + 1} failed:`, error);
@@ -856,7 +1021,7 @@ class DataAgent {
     }
 
     // Record final revenue using wallet module
-    if (results.totalRevenue > 0) {
+    if (results.totalRevenue > 0 && this.walletInitialized) {
       try {
         const settlementResult = await sendUSDT(
           this.config.COMPANY_WALLET_ADDRESS,
@@ -864,7 +1029,7 @@ class DataAgent {
           'eth'
         );
 
-        if (settlementResult.hash) {
+        if (settlementResult && settlementResult.hash) {
           this.logger.success(`🌍 Global data collection completed: $${results.totalRevenue} USD, ${results.totalDataPoints} data points`);
         }
       } catch (error) {
@@ -902,121 +1067,78 @@ class DataAgent {
         FROM data_collection 
         WHERE ${timeFilter}
         GROUP BY data_type
+        ORDER BY total_revenue DESC
       `);
 
-      const apiStats = await this.db.all(`
-        SELECT 
-          api_name,
-          SUM(calls_made) as total_calls,
-          AVG(success_rate) as avg_success_rate,
-          SUM(revenue_generated) as total_revenue
-        FROM api_usage 
-        WHERE ${timeFilter}
-        GROUP BY api_name
-      `);
-
-      return {
-        timeframe,
-        dataTypes: stats,
-        apiPerformance: apiStats,
-        timestamp: new Date().toISOString()
-      };
-
+      return stats;
     } catch (error) {
-      this.logger.error('Error fetching data collection stats:', error);
-      return { error: error.message };
+      this.logger.error('Failed to get data collection stats:', error);
+      return [];
+    }
+  }
+
+  async getRevenueAnalytics(timeframe = '7 days') {
+    try {
+      const timeFilter = timeframe === '24 hours' ? 
+        "timestamp > datetime('now', '-1 day')" :
+        "timestamp > datetime('now', '-7 days')";
+
+      const revenueData = await this.db.all(`
+        SELECT 
+          currency,
+          SUM(amount) as total_amount,
+          COUNT(*) as transaction_count,
+          data_type
+        FROM data_revenue 
+        WHERE ${timeFilter}
+        GROUP BY currency, data_type
+        ORDER BY total_amount DESC
+      `);
+
+      return revenueData;
+    } catch (error) {
+      this.logger.error('Failed to get revenue analytics:', error);
+      return [];
     }
   }
 
   async close() {
-    if (this.db) {
-      await this.db.close();
-    }
-    if (this.cryptoAgent) {
-      await this.cryptoAgent.close();
-    }
-    if (this.browserManager) {
-      await this.browserManager.close();
-    }
-  }
-}
-
-// Worker thread execution - FIXED: Correct class name
-async function workerThreadFunction() {
-  const { config, workerId } = workerData;
-  const workerLogger = {
-    info: (...args) => console.log(`[Data Worker ${workerId}]`, ...args),
-    error: (...args) => console.error(`[Data Worker ${workerId}]`, ...args),
-    success: (...args) => console.log(`[Data Worker ${workerId}] ✅`, ...args),
-    warn: (...args) => console.warn(`[Data Worker ${workerId}] ⚠️`, ...args)
-  };
-
-  const DataAgent = new DataAgent(config, workerLogger);
-  
-  // Initialize wallet connections for worker
-  await DataAgent.initializeWalletConnections();
-
-  while (true) {
-    await DataAgent.run();
-    await quantumDelay(45000); // Run every 45 seconds
-  }
-}
-
-// Main thread orchestration
-if (isMainThread) {
-  const numThreads = process.env.DATA_AGENT_THREADS || 2;
-  const config = {
-    ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
-    COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
-    COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY
-  };
-
-  dataAgentStatus.activeWorkers = numThreads;
-  console.log(`🌍 Starting ${numThreads} data agent workers for global data collection...`);
-
-  for (let i = 0; i < numThreads; i++) {
-    const worker = new Worker(__filename, {
-      workerData: { workerId: i + 1, config }
-    });
-
-    dataAgentStatus.workerStatuses[`worker-${i + 1}`] = 'initializing';
-
-    worker.on('online', () => {
-      dataAgentStatus.workerStatuses[`worker-${i + 1}`] = 'online';
-      console.log(`👷 Data Worker ${i + 1} online`);
-    });
-
-    worker.on('message', (msg) => {
-      if (msg.type === 'data_update') {
-        dataAgentStatus.totalDataPointsCollected += msg.dataPoints;
+    try {
+      if (this.db) {
+        await this.db.close();
       }
-    });
-
-    worker.on('error', (err) => {
-      dataAgentStatus.workerStatuses[`worker-${i + 1}`] = `error: ${err.message}`;
-      console.error(`Data Worker ${i + 1} error:`, err);
-    });
-
-    worker.on('exit', (code) => {
-      dataAgentStatus.workerStatuses[`worker-${i + 1}`] = `exited: ${code}`;
-      console.log(`Data Worker ${i + 1} exited with code ${code}`);
-    });
+      if (this.cryptoAgent) {
+        await this.cryptoAgent.close();
+      }
+      if (this.browserManager) {
+        await this.browserManager.close();
+      }
+      this.logger.info('✅ Data Agent resources closed successfully');
+    } catch (error) {
+      this.logger.error('Error closing Data Agent:', error);
+    }
   }
 }
 
-// Export functions
-export function getStatus() {
-  return {
-    ...dataAgentStatus,
-    agent: 'DataAgent',
-    timestamp: new Date().toISOString()
-  };
+// Worker thread implementation for parallel data processing
+if (!isMainThread && parentPort) {
+  const { task, config, logger } = workerData;
+  
+  const dataAgent = new DataAgent(config, logger);
+  
+  parentPort.on('message', async (message) => {
+    if (message.type === 'execute') {
+      try {
+        await dataAgent.initialize();
+        const result = await dataAgent[message.task]();
+        parentPort.postMessage({ status: 'success', result });
+      } catch (error) {
+        parentPort.postMessage({ status: 'error', error: error.message });
+      }
+    }
+  });
 }
 
-// Worker thread execution
-if (!isMainThread) {
-  workerThreadFunction();
-}
-
-// Export agent and status - FIXED: Correct class name
+// Export the main DataAgent class
+export { DataAgent, dataAgentStatus, CryptoAgent };
 export default DataAgent;
