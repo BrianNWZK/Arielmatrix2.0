@@ -951,13 +951,13 @@ async function workerThreadFunction() {
     warn: (...args) => console.warn(`[Data Worker ${workerId}] ⚠️`, ...args)
   };
 
-  const dataAgent = new DataAgent(config, workerLogger);
+  const DataAgent = new DataAgent(config, workerLogger);
   
   // Initialize wallet connections for worker
-  await dataAgent.initializeWalletConnections();
+  await DataAgent.initializeWalletConnections();
 
   while (true) {
-    await dataAgent.run();
+    await DataAgent.run();
     await quantumDelay(45000); // Run every 45 seconds
   }
 }
@@ -1008,7 +1008,7 @@ if (isMainThread) {
 export function getStatus() {
   return {
     ...dataAgentStatus,
-    agent: 'dataAgent',
+    agent: 'DataAgent',
     timestamp: new Date().toISOString()
   };
 }
