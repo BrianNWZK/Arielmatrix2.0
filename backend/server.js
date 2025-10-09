@@ -2,7 +2,6 @@
  * ArielSQL Server Entrypoint: Loads ServiceManager and GraphQL Server
  */
 
-import { ServiceManager } from './serviceManager.js';
 import { ApolloServer } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
 import { typeDefs } from './graphql/schema.js';
@@ -12,7 +11,7 @@ import 'dotenv/config'; // Loads environment variables from .env file
 // backend/server.js
 import path from 'path';
 import { fileURLToPath } from 'url';
-import ServiceManager from '../arielsql_suite/ServiceManager.js';
+import { serviceManager } from '../arielsql_suite/serviceManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,7 +20,7 @@ const config = {
   dbPath: path.join(__dirname, '..', 'data', 'bwaezi.db'),
 };
 
-const serviceManager = new ServiceManager(config);
+const serviceManager = new serviceManager(config);
 
 (async () => {
   try {
