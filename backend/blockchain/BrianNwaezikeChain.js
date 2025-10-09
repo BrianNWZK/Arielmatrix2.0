@@ -13,7 +13,7 @@ import axios from 'axios';
 const BWAEZI_MAINNET_CONFIG = {
     CHAIN_ID: 777777,
     RPC_URLS: [
-        process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-dxbr.onrender.com/bwaezi-rpc",
+        process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc",
         "https://rpc.winr.games",
         "https://bwaezi-rpc.arielmatrix.com"
     ],
