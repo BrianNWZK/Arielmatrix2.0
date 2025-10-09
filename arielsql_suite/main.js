@@ -101,7 +101,7 @@ async function initializeCoreSystems() {
     try {
         // STEP 0: Initialize global logger FIRST
         console.log('📝 STEP 0: Initializing global logger...');
-        await initializeGlobalLogger();
+        await new initializeGlobalLogger();
         console.log('✅ Global logger initialized successfully');
         
         return true;
@@ -501,7 +501,7 @@ async function initializeArielSQLSuite() {
                 healthStatus: 'RECOVERY_MODE'
             };
             
-            const emergencyManager = await initializeServiceManagerWithDependencies(emergencyConfig, null);
+            const emergencyManager = await new initializeServiceManagerWithDependencies(emergencyConfig, null);
             emergencyManager.start();
             
             logger.info('🆘 EMERGENCY MODE: Running in validated fallback configuration');
@@ -563,7 +563,7 @@ async function startApplication() {
         console.log('🔧 Starting ArielSQL Production Suite v4.2...');
         
         // Assign the new instance to the global variable
-        globalServiceManager = await initializeArielSQLSuite();
+        globalServiceManager = await new initializeArielSQLSuite();
         
         // Enhanced graceful shutdown handler
         const shutdown = async (signal) => {
