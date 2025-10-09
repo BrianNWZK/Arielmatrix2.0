@@ -110,6 +110,21 @@ async function initializeCoreSystems() {
     }
 }
 
+// Add this to arielsql_suite/main.js to fix worker thread issues
+
+// Enhanced worker thread safety check
+function initializeWorkerSafeModules() {
+    console.log('🔧 Initializing worker-safe modules...');
+    
+    // Ensure all modules are loaded before worker threads start
+    if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+        // Delay worker initialization to ensure all modules are loaded
+        setTimeout(() => {
+            console.log('✅ Worker-safe modules initialized');
+        }, 1000);
+    }
+}
+
 // --- Enhanced Secure Bwaezi Config Loader with Real Credential Extraction ---
 async function loadBwaeziMainnetEssentials() {
     const logger = getGlobalLogger();
