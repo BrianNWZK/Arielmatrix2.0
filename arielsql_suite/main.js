@@ -563,7 +563,7 @@ async function startApplication() {
         console.log('🔧 Starting ArielSQL Production Suite v4.2...');
         
         // Assign the new instance to the global variable
-        globalServiceManager = await new initializeArielSQLSuite();
+        globalServiceManager = await initializeArielSQLSuite();
         
         // Enhanced graceful shutdown handler
         const shutdown = async (signal) => {
