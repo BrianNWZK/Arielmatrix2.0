@@ -357,10 +357,11 @@ async function initializeApplicationDatabase() {
     logger.info('🗄️ Starting enhanced application database initialization...');
     
     try {
-        // Initialize main application database with enhanced error handling
-        const db = await initializeDatabase();
+        // 🏆 CRITICAL FIX: Use getDatabaseInitializer() function instead of direct variable
+        const initializer = getDatabaseInitializer();
+        const initResult = await initializer.initializeAllDatabases();
         
-        if (!db || typeof db.run !== 'function') {
+        if (!initResult || !initResult.success) {
             throw new Error('Database initialization returned invalid database object');
         }
         
@@ -370,7 +371,8 @@ async function initializeApplicationDatabase() {
         await enableDatabaseLogging();
         logger.info('✅ Database logging enabled');
         
-        return db;
+        // 🏆 CRITICAL FIX: Return the database initializer instance
+        return initializer;
     } catch (error) {
         logger.error('❌ Database initialization failed:', error);
         
@@ -501,7 +503,8 @@ async function initializeArielSQLSuite() {
                 healthStatus: 'RECOVERY_MODE'
             };
             
-            const emergencyManager = await new initializeServiceManagerWithDependencies(emergencyConfig, null);
+            // 🏆 CRITICAL FIX: Don't use 'new' with function
+            const emergencyManager = await initializeServiceManagerWithDependencies(emergencyConfig, null);
             emergencyManager.start();
             
             logger.info('🆘 EMERGENCY MODE: Running in validated fallback configuration');
