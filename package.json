@@ -24,7 +24,8 @@
     "payout-agent": "node backend/agents/payoutAgent.js",
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
     "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
-    "node --env-file=.env arielsql_suite/main.js"
+    "start": "dotenv -e .env -- node arielsql_suite/main.js"
+
   },
   "dependencies": {
     "express": "^4.21.0",
