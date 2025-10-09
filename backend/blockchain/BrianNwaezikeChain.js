@@ -13,9 +13,8 @@ import axios from 'axios';
 const BWAEZI_MAINNET_CONFIG = {
     CHAIN_ID: 777777,
     RPC_URLS: [
-        "https://rpc.winr.games",
-        "https://bwaezi-mainnet.rpc.com", 
-        "https://mainnet.bwaezi.org"
+        process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-dxbr.onrender.com",
+        "https://rpc.winr.games"
     ],
     CONTRACT_ADDRESS: "0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1",
     EXPLORER_URL: "https://explorer.winr.games",
@@ -24,24 +23,25 @@ const BWAEZI_MAINNET_CONFIG = {
         symbol: "BWAEZI",
         decimals: 18
     },
-    BLOCK_TIME: 3, // seconds
+    BLOCK_TIME: 3,
     CHAIN_NAME: "Bwaezi Mainnet"
 };
+
 
 // Global chain instance
 let globalChainInstance = null;
 
 class BrianNwaezikeChain {
-    constructor(config = {}) {
-        this.config = {
-            network: config.network || 'mainnet',
-            rpcUrl: config.rpcUrl || BWAEZI_MAINNET_CONFIG.RPC_URLS[0],
-            chainId: config.chainId || BWAEZI_MAINNET_CONFIG.CHAIN_ID,
-            contractAddress: config.contractAddress || BWAEZI_MAINNET_CONFIG.CONTRACT_ADDRESS,
-            abi: config.abi || [],
-            solanaRpcUrl: config.solanaRpcUrl || 'https://api.mainnet-beta.solana.com',
-            ...config
-        };
+   this.config = {
+    network: config.network || 'mainnet',
+    rpcUrl: config.rpcUrl || BWAEZI_MAINNET_CONFIG.RPC_URLS[0],
+    chainId: config.chainId || BWAEZI_MAINNET_CONFIG.CHAIN_ID,
+    contractAddress: config.contractAddress || BWAEZI_MAINNET_CONFIG.CONTRACT_ADDRESS,
+    abi: config.abi || [],
+    solanaRpcUrl: config.solanaRpcUrl || 'https://api.mainnet-beta.solana.com',
+    ...config
+};
+
 
         this.web3 = null;
         this.contract = null;
