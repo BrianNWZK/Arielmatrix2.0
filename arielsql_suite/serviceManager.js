@@ -838,4 +838,4 @@ class serviceManager {
   }
 }
 
-export default serviceManager;
+export { serviceManager };
