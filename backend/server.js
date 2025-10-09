@@ -15,7 +15,8 @@ const HOST = '0.0.0.0';
 app.get('/bwaezi-rpc', async (req, res) => {
   try {
     const chain = await createBrianNwaezikeChain({
-      rpcUrl: 'https://arielmatrix2-0-dxbr.onrender.com',
+     rpcUrl: 'https://arielmatrix2-0-dxbr.onrender.com/bwaezi-rpc'
+
       chainId: 777777,
       contractAddress: '0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1'
     });
