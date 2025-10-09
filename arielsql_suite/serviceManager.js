@@ -13,7 +13,8 @@ import { SovereignGovernance } from "../modules/governance-engine/index.js";
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 
 // === Database Initializer ===
-import {  DatabaseInitializer  } from "../modules/database-initializer.js";
+// 🏆 CRITICAL FIX: Import the getter function instead of the class directly
+import { getDatabaseInitializer } from "../modules/database-initializer.js";
 
 // === Phase 3 Advanced Modules ===
 import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
@@ -49,7 +50,9 @@ class serviceManager {
       blockchainConfig: config.blockchainConfig || {},
       mainnet: config.mainnet !== undefined ? config.mainnet : true,
       dbPath: config.dbPath || "./data/service_logs.db",
-      databaseConfig: config.databaseConfig || {}
+      databaseConfig: config.databaseConfig || {},
+      // 🏆 CRITICAL FIX: Store dataAnalytics for agent initialization
+      dataAnalytics: config.dataAnalytics || null
     };
 
     this.app = express();
@@ -61,8 +64,8 @@ class serviceManager {
       perMessageDeflate: false
     });
 
-    // Initialize database initializer FIRST
-    this.databaseInitializer = new databaseInitializer();
+    // 🏆 CRITICAL FIX: Use getDatabaseInitializer() function instead of direct instantiation
+    this.databaseInitializer = getDatabaseInitializer();
     this.unifiedDatabaseInterfaces = new Map();
     
     // Core systems - will be initialized in proper sequence
@@ -132,6 +135,10 @@ class serviceManager {
       
       // Initialize all databases through the database initializer
       const initResult = await this.databaseInitializer.initializeAllDatabases(this.config.databaseConfig);
+      
+      if (!initResult || !initResult.success) {
+        throw new Error('Database initialization returned invalid database object');
+      }
       
       // Store unified interfaces for all modules and agents
       this.unifiedDatabaseInterfaces = new Map(Object.entries(initResult.unifiedInterfaces));
@@ -299,530 +306,252 @@ class serviceManager {
       }),
       omnichainInterop: new OmnichainInteroperabilityEngine({
         mainnet: this.config.mainnet,
-        database: crossChainDb,
-        supportedChains: ['ethereum', 'solana', 'binance', 'polygon', 'avalanche']
+        database: crossChainDb
       }),
-      shardingManager: new ShardingManager(4, {
-        autoRebalance: true,
+      shardingManager: new ShardingManager({
+        shardCount: 4,
         mainnet: this.config.mainnet,
-        database: this.loggerDB
+        database: crossChainDb
       }),
-      scalabilityEngine: new InfiniteScalabilityEngine({
-        maxTps: 100000,
+      infiniteScalability: new InfiniteScalabilityEngine({
+        autoScale: true,
         mainnet: this.config.mainnet,
-        database: this.loggerDB
+        database: crossChainDb
       }),
-      consensusEngine: new EnergyEfficientConsensus({
-        zeroCost: true,
+      energyEfficientConsensus: new EnergyEfficientConsensus({
+        algorithm: 'proof-of-stake',
         mainnet: this.config.mainnet,
-        database: this.loggerDB
+        database: crossChainDb
       }),
-      carbonConsensus: new CarbonNegativeConsensus({
+      carbonNegativeConsensus: new CarbonNegativeConsensus({
+        carbonOffset: true,
         mainnet: this.config.mainnet,
-        database: this.loggerDB
+        database: crossChainDb
       })
     };
 
-    const modulePromises = Object.entries(this.modules).map(async ([name, module]) => {
+    // Initialize modules with governance approval
+    for (const [moduleName, module] of Object.entries(this.modules)) {
       try {
-        if (module.initialize && typeof module.initialize === 'function') {
-          console.log(`⚙️ Initializing module: ${name}`);
-          await module.initialize();
-          console.log(`✅ Module ${name} initialized successfully`);
-        } else {
-          console.log(`⚙️ Module ${name} auto-initialized (no init method)`);
+        const approved = await this.governance.verifyModule(moduleName);
+        if (!approved) {
+          console.warn(`⚠️ Governance rejected module: ${moduleName}`);
+          continue;
         }
-      } catch (error) {
-        console.error(`❌ Failed to initialize module ${name}:`, error.message);
-        // Don't throw here - allow other modules to initialize
-      }
-    });
 
-    await Promise.allSettled(modulePromises);
-    console.log("✅ All modules initialized with database interfaces");
+        if (module.init) await module.init();
+        console.log(`✅ Module initialized: ${moduleName}`);
+        
+      } catch (error) {
+        console.error(`❌ Module initialization failed: ${moduleName}`, error);
+        // Continue with other modules even if one fails
+      }
+    }
   }
 
   async _initializeAgents() {
     console.log("🤖 Initializing agents with unified database interfaces...");
     
-    // Get database interface for agents
-    const agentDb = this.unifiedDatabaseInterfaces.get('agent-registry') || this.loggerDB;
+    // Get appropriate database interfaces for each agent
+    const adRevenueDb = this.unifiedDatabaseInterfaces.get('ad-revenue') || this.loggerDB;
+    const adsenseDb = this.unifiedDatabaseInterfaces.get('adsense') || this.loggerDB;
+    const apiScoutDb = this.unifiedDatabaseInterfaces.get('api-scout') || this.loggerDB;
+    const browserManagerDb = this.unifiedDatabaseInterfaces.get('browser-manager') || this.loggerDB;
+    const configAgentDb = this.unifiedDatabaseInterfaces.get('config-agent') || this.loggerDB;
+    const contractDeployDb = this.unifiedDatabaseInterfaces.get('contract-deploy') || this.loggerDB;
+    const cryptoAgentDb = this.unifiedDatabaseInterfaces.get('crypto-agent') || this.loggerDB;
+    const dataAgentDb = this.unifiedDatabaseInterfaces.get('data-agent') || this.loggerDB;
+    const forexSignalDb = this.unifiedDatabaseInterfaces.get('forex-signal') || this.loggerDB;
+    const healthAgentDb = this.unifiedDatabaseInterfaces.get('health-agent') || this.loggerDB;
+    const payoutAgentDb = this.unifiedDatabaseInterfaces.get('payout-agent') || this.loggerDB;
+    const shopifyAgentDb = this.unifiedDatabaseInterfaces.get('shopify-agent') || this.loggerDB;
+    const socialAgentDb = this.unifiedDatabaseInterfaces.get('social-agent') || this.loggerDB;
+
+    // 🏆 CRITICAL FIX: Pass dataAnalytics to agents that need it
+    const dataAnalytics = this.config.dataAnalytics;
 
     this.agents = {
-      adRevenue: new AdRevenueAgent({ 
+      adRevenueAgent: new AdRevenueAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: adRevenueDb,
+        dataAnalytics: dataAnalytics
       }),
-      adsense: new AdsenseAgent({ 
+      adsenseAgent: new AdsenseAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: adsenseDb,
+        dataAnalytics: dataAnalytics
       }),
-      apiScout: new ApiScoutAgent({ 
+      apiScoutAgent: new ApiScoutAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: apiScoutDb,
+        dataAnalytics: dataAnalytics
       }),
-      browser: new QuantumBrowserManager({ 
+      browserManager: new QuantumBrowserManager({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: browserManagerDb
       }),
-      config: new configAgent({ 
+      configAgent: new configAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: configAgentDb
       }),
-      contractDeploy: new ContractDeployAgent({ 
+      contractDeployAgent: new ContractDeployAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: contractDeployDb
       }),
-      crypto: new EnhancedCryptoAgent({ 
+      cryptoAgent: new EnhancedCryptoAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: cryptoAgentDb,
+        dataAnalytics: dataAnalytics
       }),
-      data: new DataAgent({ 
+      dataAgent: new DataAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: dataAgentDb,
+        dataAnalytics: dataAnalytics
       }),
-      forex: new forexSignalAgent({ 
+      forexSignalAgent: new forexSignalAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: forexSignalDb,
+        dataAnalytics: dataAnalytics
       }),
-      health: HealthAgent,
-      payout: PayoutAgent,
-      shopify: new shopifyAgent({ 
+      healthAgent: new HealthAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: healthAgentDb
       }),
-      social: new socialAgent({ 
+      payoutAgent: new PayoutAgent({
         mainnet: this.config.mainnet,
-        database: agentDb
+        database: payoutAgentDb
+      }),
+      shopifyAgent: new shopifyAgent({
+        mainnet: this.config.mainnet,
+        database: shopifyAgentDb,
+        dataAnalytics: dataAnalytics
+      }),
+      socialAgent: new socialAgent({
+        mainnet: this.config.mainnet,
+        database: socialAgentDb,
+        dataAnalytics: dataAnalytics
       })
     };
 
-    const agentPromises = Object.entries(this.agents).map(async ([name, agent]) => {
+    // Initialize agents
+    for (const [agentName, agent] of Object.entries(this.agents)) {
       try {
-        if (agent.initialize && typeof agent.initialize === 'function') {
-          console.log(`🤖 Initializing agent: ${name}`);
-          await agent.initialize();
-          console.log(`✅ Agent ${name} initialized successfully`);
-        } else {
-          console.log(`🤖 Agent ${name} auto-initialized (no init method)`);
-        }
+        if (agent.init) await agent.init();
+        console.log(`✅ Agent initialized: ${agentName}`);
+        
       } catch (error) {
-        console.error(`❌ Failed to initialize agent ${name}:`, error.message);
-        // Don't throw here - allow other agents to initialize
+        console.error(`❌ Agent initialization failed: ${agentName}`, error);
+        // Continue with other agents even if one fails
       }
-    });
-
-    await Promise.allSettled(agentPromises);
-    console.log("✅ All agents initialized with database interfaces");
-  }
-
-  async _createServiceSchema() {
-    if (!this.isLoggerInitialized) {
-      console.warn("⚠️ Skipping schema creation - logger not initialized");
-      return;
-    }
-
-    const tables = [
-      `CREATE TABLE IF NOT EXISTS service_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        service_name TEXT NOT NULL,
-        payload TEXT,
-        result TEXT,
-        status TEXT DEFAULT 'completed',
-        error_message TEXT,
-        timestamp INTEGER NOT NULL,
-        response_time INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      
-      `CREATE TABLE IF NOT EXISTS service_metrics (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        service_name TEXT NOT NULL,
-        call_count INTEGER DEFAULT 0,
-        success_count INTEGER DEFAULT 0,
-        error_count INTEGER DEFAULT 0,
-        avg_response_time REAL DEFAULT 0,
-        last_called INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      
-      `CREATE TABLE IF NOT EXISTS blockchain_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_type TEXT NOT NULL,
-        block_height INTEGER,
-        transaction_hash TEXT,
-        from_address TEXT,
-        to_address TEXT,
-        amount REAL,
-        status TEXT,
-        timestamp INTEGER NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`
-    ];
-
-    for (const tableSql of tables) {
-      try {
-        await this.loggerDB.run(tableSql);
-        console.log(`✅ Created table: ${tableSql.split(' ')[5]}`); // Extract table name
-      } catch (error) {
-        console.error(`❌ Failed to create table: ${error.message}`);
-      }
-    }
-
-    // Create indexes
-    const indexes = [
-      "CREATE INDEX IF NOT EXISTS idx_service_logs_name ON service_logs(service_name)",
-      "CREATE INDEX IF NOT EXISTS idx_service_logs_time ON service_logs(timestamp)",
-      "CREATE INDEX IF NOT EXISTS idx_blockchain_events_type ON blockchain_events(event_type)",
-      "CREATE INDEX IF NOT EXISTS idx_blockchain_events_time ON blockchain_events(timestamp)"
-    ];
-
-    for (const indexSql of indexes) {
-      try {
-        await this.loggerDB.run(indexSql);
-      } catch (error) {
-        console.error(`❌ Failed to create index: ${error.message}`);
-      }
-    }
-
-    console.log("✅ Database schema initialized successfully");
-  }
-
-  start() {
-    this.server.listen(this.config.port, "0.0.0.0", () => {
-      console.log(`🌐 serviceManager live on port ${this.config.port}`);
-      console.log(`📊 Mainnet Mode: ${this.config.mainnet}`);
-      console.log(`🔗 WebSocket Server: ws://localhost:${this.config.port}`);
-      console.log(`🗄️ Database Path: ${this.config.dbPath}`);
-      console.log(`🎯 Unified Database Interfaces: ${this.unifiedDatabaseInterfaces.size}`);
-      console.log(`🚀 ArielSQL Suite - Global Enterprise System OPERATIONAL`);
-    });
-  }
-
-  async stop() {
-    console.log("🛑 Stopping serviceManager...");
-    
-    // Close WebSocket connections
-    this.connectedClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.close(1000, "Server shutdown");
-      }
-    });
-    
-    this.connectedClients.clear();
-
-    // Stop background services
-    if (this.backgroundInterval) {
-      clearInterval(this.backgroundInterval);
-    }
-
-    // Close all database connections through database initializer
-    if (this.databaseInitializer) {
-      try {
-        await this.databaseInitializer.shutdown();
-        console.log("✅ All database connections closed");
-      } catch (error) {
-        console.error("❌ Error closing databases:", error);
-      }
-    }
-
-    // Close server
-    return new Promise((resolve) => {
-      this.server.close(() => {
-        console.log("✅ serviceManager stopped successfully");
-        resolve();
-      });
-    });
-  }
-
-  async routeServiceCall(serviceName, payload) {
-    const startTime = Date.now();
-    
-    try {
-      // Verify service is approved by governance
-      const approved = this.governance ? await this.governance.verifyModule(serviceName) : true;
-      if (!approved) {
-        throw new Error(`Service ${serviceName} not approved by governance`);
-      }
-
-      // Find handler
-      const handler = this.agents[serviceName] || this.modules[serviceName];
-      if (!handler) {
-        throw new Error(`No handler found for service: ${serviceName}`);
-      }
-
-      if (typeof handler.execute !== "function") {
-        throw new Error(`Handler for ${serviceName} does not have execute method`);
-      }
-
-      // Execute service
-      const result = await handler.execute(payload);
-      const responseTime = Date.now() - startTime;
-
-      // Log successful call
-      await this._logServiceCall(serviceName, payload, result, 'completed', null, responseTime);
-
-      // Update metrics
-      await this._updateServiceMetrics(serviceName, true, responseTime);
-
-      return { 
-        success: true, 
-        result,
-        responseTime,
-        service: serviceName
-      };
-
-    } catch (error) {
-      const responseTime = Date.now() - startTime;
-      
-      console.error(`❌ Service call failed: ${serviceName}`, error.message);
-
-      // Log failed call
-      await this._logServiceCall(serviceName, payload, null, 'failed', error.message, responseTime);
-
-      // Update metrics
-      await this._updateServiceMetrics(serviceName, false, responseTime);
-
-      return { 
-        success: false, 
-        error: error.message,
-        service: serviceName,
-        responseTime
-      };
-    }
-  }
-
-  async _logServiceCall(serviceName, payload, result, status, errorMessage, responseTime) {
-    if (!this.isLoggerInitialized) {
-      console.log(`[LOG] ${serviceName} - ${status} - ${errorMessage || 'Success'}`);
-      return;
-    }
-
-    try {
-      await this.loggerDB.run(
-        `INSERT INTO service_logs (service_name, payload, result, status, error_message, timestamp, response_time) 
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          serviceName, 
-          JSON.stringify(payload), 
-          result ? JSON.stringify(result) : null,
-          status,
-          errorMessage,
-          Date.now(),
-          responseTime
-        ]
-      );
-    } catch (error) {
-      console.error("❌ Failed to log service call:", error.message);
-    }
-  }
-
-  async _updateServiceMetrics(serviceName, success, responseTime) {
-    if (!this.isLoggerInitialized) return;
-
-    try {
-      const existing = await this.loggerDB.get(
-        "SELECT * FROM service_metrics WHERE service_name = ?",
-        [serviceName]
-      );
-
-      if (existing) {
-        await this.loggerDB.run(
-          `UPDATE service_metrics 
-           SET call_count = call_count + 1,
-               success_count = success_count + ?,
-               error_count = error_count + ?,
-               avg_response_time = ((avg_response_time * call_count) + ?) / (call_count + 1),
-               last_called = ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE service_name = ?`,
-          [
-            success ? 1 : 0,
-            success ? 0 : 1,
-            responseTime,
-            Date.now(),
-            serviceName
-          ]
-        );
-      } else {
-        await this.loggerDB.run(
-          `INSERT INTO service_metrics (service_name, call_count, success_count, error_count, avg_response_time, last_called)
-           VALUES (?, 1, ?, ?, ?, ?)`,
-          [
-            serviceName,
-            success ? 1 : 0,
-            success ? 0 : 1,
-            responseTime,
-            Date.now()
-          ]
-        );
-      }
-    } catch (error) {
-      console.error("❌ Failed to update service metrics:", error.message);
     }
   }
 
   _setupBasicRoutes() {
-    // Basic health check that doesn't depend on initialized systems
-    this.app.get("/", (req, res) => {
-      res.json({ 
-        status: "initializing", 
-        service: "ArielSQL Suite v3.0", 
+    // Basic health check that works even if systems aren't fully initialized
+    this.app.get("/health", (req, res) => {
+      res.json({
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        version: "v4.2",
         mainnet: this.config.mainnet,
-        timestamp: Date.now(),
-        version: "3.0.0",
-        databaseInterfaces: this.unifiedDatabaseInterfaces.size
+        initialized: this.isInitialized,
+        systems: {
+          database: !!this.loggerDB,
+          blockchain: !!this.blockchain,
+          governance: !!this.governance,
+          modules: Object.keys(this.modules).length,
+          agents: Object.keys(this.agents).length
+        }
       });
     });
 
-    // Basic health endpoint
-    this.app.get("/health/basic", (req, res) => {
+    // Basic info endpoint
+    this.app.get("/", (req, res) => {
       res.json({
-        status: "alive",
-        service: "ArielSQL Suite",
-        timestamp: Date.now(),
-        mainnet: this.config.mainnet,
-        loggerInitialized: this.isLoggerInitialized,
-        databaseInterfaces: this.unifiedDatabaseInterfaces.size
+        name: "ArielSQL Ultimate Suite",
+        version: "Production Mainnet v4.2",
+        status: this.isInitialized ? "operational" : "initializing",
+        timestamp: new Date().toISOString(),
+        mainnet: this.config.mainnet
       });
     });
   }
 
   _setupApiRoutes() {
-    // Comprehensive health check
-    this.app.get("/health", async (req, res) => {
+    // Only setup full API routes if systems are initialized
+    if (!this.isInitialized) {
+      console.warn("⚠️ Skipping API route setup - systems not initialized");
+      return;
+    }
+
+    console.log("🌐 Setting up full API routes...");
+
+    // Blockchain endpoints
+    this.app.get("/api/blockchain/status", async (req, res) => {
       try {
-        const healthStatus = this.agents.health ? 
-          await this.agents.health.getStatus() : 
-          { status: 'unknown', agents: Object.keys(this.agents) };
-        
-        const blockchainStatus = this.blockchain ? 
-          await this.blockchain.getNetworkStats() : 
-          { status: 'unknown' };
-
-        // Get database health status
-        const dbHealth = this.databaseInitializer ? 
-          await this.databaseInitializer.performHealthCheck() : 
-          { overall: 'unknown' };
-
-        res.json({
-          service: "ArielSQL Suite",
-          status: "healthy",
-          mainnet: this.config.mainnet,
-          timestamp: Date.now(),
-          agents: healthStatus,
-          blockchain: blockchainStatus,
-          database: dbHealth,
-          uptime: process.uptime(),
-          loggerInitialized: this.isLoggerInitialized,
-          connectedClients: this.connectedClients.size,
-          unifiedInterfaces: this.unifiedDatabaseInterfaces.size
-        });
-      } catch (error) {
-        res.status(500).json({ 
-          status: "degraded", 
-          error: error.message 
-        });
-      }
-    });
-
-    // Service execution endpoint
-    this.app.post("/service/:name", async (req, res) => {
-      const { name } = req.params;
-      const payload = req.body;
-
-      if (!name || !payload) {
-        return res.status(400).json({ 
-          success: false, 
-          error: "Service name and payload are required" 
-        });
-      }
-
-      const result = await this.routeServiceCall(name, payload);
-      res.json(result);
-    });
-
-    // Database status endpoint
-    this.app.get("/database/status", async (req, res) => {
-      try {
-        const dbStatus = this.databaseInitializer ? 
-          this.databaseInitializer.getStatus() : 
-          { error: "Database initializer not available" };
-        
-        res.json({
-          database: dbStatus,
-          unifiedInterfaces: Array.from(this.unifiedDatabaseInterfaces.keys()),
-          timestamp: Date.now()
-        });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Payouts endpoint
-    this.app.post("/payouts", async (req, res) => {
-      const { wallet, amount, currency = 'bwzC' } = req.body;
-      
-      if (!wallet || !amount) {
-        return res.status(400).json({ 
-          error: "Wallet and amount are required" 
-        });
-      }
-
-      try {
-        const result = await this.payoutSystem.recordPayout(wallet, amount, currency);
-        
-        // Broadcast payout event via WebSocket
-        this._broadcastToClients({
-          type: "payout_processed",
-          data: { wallet, amount, currency, timestamp: Date.now() }
-        });
-
-        res.json(result);
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-
-    // Blockchain info endpoint
-    this.app.get("/blockchain/info", async (req, res) => {
-      try {
-        const stats = await this.blockchain.getNetworkStats();
-        const blockHeight = await this.blockchain.getBlockCount();
-        const pendingTxs = await this.blockchain.getPendingTransactions();
-        
-        res.json({
-          blockHeight,
-          pendingTransactions: pendingTxs.length,
-          networkStats: stats,
-          mainnet: this.config.mainnet
-        });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Service metrics endpoint
-    this.app.get("/metrics/services", async (req, res) => {
-      try {
-        const metrics = await this.loggerDB.all(
-          "SELECT * FROM service_metrics ORDER BY call_count DESC"
-        );
-        res.json({ metrics });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // System status endpoint
-    this.app.get("/status", async (req, res) => {
-      try {
-        const status = await this.getServiceStatus();
+        const status = await this.blockchain.getStatus();
         res.json(status);
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
+    });
+
+    // Payout endpoints
+    this.app.post("/api/payouts/process", async (req, res) => {
+      try {
+        const result = await this.payoutSystem.processPayouts(req.body);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Governance endpoints
+    this.app.get("/api/governance/proposals", async (req, res) => {
+      try {
+        const proposals = await this.governance.getProposals();
+        res.json(proposals);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Module status endpoints
+    this.app.get("/api/modules/status", async (req, res) => {
+      try {
+        const status = {};
+        for (const [name, module] of Object.entries(this.modules)) {
+          status[name] = module.getStatus ? await module.getStatus() : { status: "unknown" };
+        }
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Agent endpoints
+    this.app.get("/api/agents/status", async (req, res) => {
+      try {
+        const status = {};
+        for (const [name, agent] of Object.entries(this.agents)) {
+          status[name] = agent.getStatus ? await agent.getStatus() : { status: "unknown" };
+        }
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Unified database interface endpoint
+    this.app.get("/api/databases/interfaces", (req, res) => {
+      const interfaces = {};
+      for (const [name, db] of this.unifiedDatabaseInterfaces) {
+        interfaces[name] = {
+          type: typeof db,
+          methods: Object.keys(db).filter(key => typeof db[key] === 'function')
+        };
+      }
+      res.json(interfaces);
     });
   }
 
@@ -831,86 +560,13 @@ class serviceManager {
       console.log("🔗 New WebSocket connection");
       this.connectedClients.add(ws);
 
-      ws.send(JSON.stringify({ 
-        type: "connected",
-        message: "Connected to ArielSQL Suite WebSocket",
-        timestamp: Date.now(),
-        mainnet: this.config.mainnet,
-        databaseInterfaces: this.unifiedDatabaseInterfaces.size
-      }));
-
-      ws.on("message", async (data) => {
+      ws.on("message", (message) => {
         try {
-          const message = JSON.parse(data);
-          
-          switch (message.type) {
-            case "ping":
-              ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
-              break;
-
-            case "blockchain_tx":
-              if (!this.blockchain) {
-                throw new Error("Blockchain not initialized");
-              }
-              
-              const txResult = await this.blockchain.addTransaction(message.payload);
-              const block = await this.blockchain.mineBlock();
-              
-              ws.send(JSON.stringify({ 
-                type: "block_mined", 
-                block,
-                transaction: txResult 
-              }));
-
-              // Broadcast to all clients
-              this._broadcastToClients({
-                type: "new_block",
-                data: block
-              });
-              break;
-
-            case "service_call":
-              const serviceResult = await this.routeServiceCall(
-                message.service, 
-                message.payload
-              );
-              ws.send(JSON.stringify({
-                type: "service_result",
-                service: message.service,
-                result: serviceResult
-              }));
-              break;
-
-            case "interop":
-              const interopResult = await this.modules.omnichainInterop.executeCrossChainOperation(message.payload);
-              ws.send(JSON.stringify({ 
-                type: "interop_result", 
-                result: interopResult 
-              }));
-              break;
-
-            case "database_status":
-              const dbStatus = this.databaseInitializer ? 
-                this.databaseInitializer.getStatus() : 
-                { error: "Database initializer not available" };
-              ws.send(JSON.stringify({
-                type: "database_status",
-                status: dbStatus
-              }));
-              break;
-
-            default:
-              ws.send(JSON.stringify({ 
-                type: "error", 
-                message: "Unknown message type" 
-              }));
-          }
+          const data = JSON.parse(message);
+          this._handleWebSocketMessage(ws, data);
         } catch (error) {
-          console.error("WebSocket message error:", error);
-          ws.send(JSON.stringify({ 
-            type: "error", 
-            message: error.message 
-          }));
+          console.error("❌ WebSocket message parsing error:", error);
+          ws.send(JSON.stringify({ error: "Invalid message format" }));
         }
       });
 
@@ -920,147 +576,266 @@ class serviceManager {
       });
 
       ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
+        console.error("❌ WebSocket error:", error);
         this.connectedClients.delete(ws);
       });
+
+      // Send welcome message
+      ws.send(JSON.stringify({
+        type: "welcome",
+        message: "Connected to ArielSQL Ultimate Suite",
+        version: "v4.2",
+        timestamp: new Date().toISOString()
+      }));
     });
   }
 
-  _setupErrorHandling() {
-    process.on('uncaughtException', (error) => {
-      console.error('🛑 Uncaught Exception:', error);
-      this._emergencyLogError('uncaught_exception', error);
-    });
+  _handleWebSocketMessage(ws, data) {
+    const { type, payload } = data;
 
-    process.on('unhandledRejection', (reason, promise) => {
-      console.error('🛑 Unhandled Rejection at:', promise, 'reason:', reason);
-      this._emergencyLogError('unhandled_rejection', reason);
-    });
+    switch (type) {
+      case "ping":
+        ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
+        break;
 
-    this.app.use((error, req, res, next) => {
-      console.error('🛑 Express error:', error);
-      this._emergencyLogError('express_error', error);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Internal server error' 
-      });
-    });
-  }
+      case "get_status":
+        const status = {
+          type: "status",
+          systems: {
+            database: !!this.loggerDB,
+            blockchain: !!this.blockchain,
+            governance: !!this.governance,
+            modules: Object.keys(this.modules).length,
+            agents: Object.keys(this.agents).length
+          },
+          timestamp: new Date().toISOString()
+        };
+        ws.send(JSON.stringify(status));
+        break;
 
-  async _emergencyLogError(type, error) {
-    // Emergency logging that works even if loggerDB isn't initialized
-    const timestamp = Date.now();
-    const errorMessage = error?.message || String(error);
-    
-    console.error(`[EMERGENCY ERROR] ${type}: ${errorMessage} at ${timestamp}`);
-    
-    // Try to use loggerDB if available
-    if (this.isLoggerInitialized) {
-      try {
-        await this.loggerDB.run(
-          "INSERT INTO service_logs (service_name, payload, result, status, error_message, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-          ['error_handler', JSON.stringify({ type }), null, 'error', errorMessage, timestamp]
-        );
-      } catch (logError) {
-        console.error("❌ Failed to log error in database:", logError);
-      }
+      default:
+        ws.send(JSON.stringify({ 
+          type: "error", 
+          message: `Unknown message type: ${type}` 
+        }));
     }
   }
 
-  _broadcastToClients(message) {
-    const messageStr = JSON.stringify(message);
-    this.connectedClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        try {
-          client.send(messageStr);
-        } catch (error) {
-          console.error("Failed to broadcast to client:", error);
-          this.connectedClients.delete(client);
-        }
-      }
+  _setupErrorHandling() {
+    this.app.use((err, req, res, next) => {
+      console.error("❌ Unhandled error:", err);
+      res.status(500).json({ 
+        error: "Internal server error",
+        message: err.message,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    // 404 handler
+    this.app.use((req, res) => {
+      res.status(404).json({ 
+        error: "Endpoint not found",
+        path: req.path,
+        timestamp: new Date().toISOString()
+      });
     });
   }
 
   _startBackgroundServices() {
-    // Background health monitoring
+    console.log("🔄 Starting background services...");
+
+    // Clear any existing interval
+    if (this.backgroundInterval) {
+      clearInterval(this.backgroundInterval);
+    }
+
+    // Start new background interval (every 30 seconds)
     this.backgroundInterval = setInterval(async () => {
       try {
-        // Update network stats
-        if (this.blockchain && this.blockchain.getNetworkStats) {
-          const stats = await this.blockchain.getNetworkStats();
-          this._broadcastToClients({
-            type: "network_stats",
-            data: stats,
-            timestamp: Date.now()
-          });
-        }
-
-        // Update database health
-        if (this.databaseInitializer) {
-          const dbHealth = await this.databaseInitializer.performHealthCheck();
-          this._broadcastToClients({
-            type: "database_health",
-            data: dbHealth,
-            timestamp: Date.now()
-          });
-        }
-
-        // Clean up old connections
-        this.connectedClients.forEach(client => {
-          if (client.readyState === WebSocket.CLOSED || 
-              client.readyState === WebSocket.CLOSING) {
-            this.connectedClients.delete(client);
-          }
-        });
-
-        // Log system heartbeat
-        if (this.isLoggerInitialized) {
-          await this._logServiceCall('heartbeat', {}, { status: 'alive' }, 'completed', null, 0);
-        }
+        await this._runBackgroundTasks();
       } catch (error) {
-        console.error("Background service error:", error);
+        console.error("❌ Background task error:", error);
       }
-    }, 30000); // Every 30 seconds
+    }, 30000);
+
+    // Run immediately once
+    this._runBackgroundTasks();
   }
 
-  // Public method to get service status
-  async getServiceStatus() {
-    let metrics = [];
-    
-    if (this.isLoggerInitialized) {
-      try {
-        metrics = await this.loggerDB.all(
-          "SELECT service_name, call_count, success_count, error_count, avg_response_time FROM service_metrics"
+  async _runBackgroundTasks() {
+    const tasks = [];
+
+    // Update blockchain status
+    if (this.blockchain && this.blockchain.getStatus) {
+      tasks.push(this.blockchain.getStatus().catch(err => 
+        console.error("❌ Blockchain status update failed:", err)
+      ));
+    }
+
+    // Run agent background tasks
+    for (const [name, agent] of Object.entries(this.agents)) {
+      if (agent.runBackgroundTask) {
+        tasks.push(
+          agent.runBackgroundTask().catch(err =>
+            console.error(`❌ Agent ${name} background task failed:`, err)
+          )
         );
-      } catch (error) {
-        console.error("Failed to get metrics:", error);
       }
     }
-    
-    const dbStatus = this.databaseInitializer ? this.databaseInitializer.getStatus() : { error: "Not available" };
-    
-    return {
-      initialized: this.isInitialized,
-      mainnet: this.config.mainnet,
-      connectedClients: this.connectedClients.size,
-      loggerInitialized: this.isLoggerInitialized,
-      databaseInitializer: dbStatus,
-      unifiedInterfaces: this.unifiedDatabaseInterfaces.size,
-      services: metrics,
-      uptime: process.uptime(),
-      timestamp: Date.now()
+
+    // Run module background tasks
+    for (const [name, module] of Object.entries(this.modules)) {
+      if (module.runBackgroundTask) {
+        tasks.push(
+          module.runBackgroundTask().catch(err =>
+            console.error(`❌ Module ${name} background task failed:`, err)
+          )
+        );
+      }
+    }
+
+    // Wait for all tasks to complete
+    await Promise.allSettled(tasks);
+
+    // Broadcast status to WebSocket clients
+    this._broadcastStatus();
+  }
+
+  _broadcastStatus() {
+    if (this.connectedClients.size === 0) return;
+
+    const status = {
+      type: "system_status",
+      timestamp: new Date().toISOString(),
+      systems: {
+        database: !!this.loggerDB,
+        blockchain: !!this.blockchain,
+        governance: !!this.governance,
+        modules: Object.keys(this.modules).length,
+        agents: Object.keys(this.agents).length
+      }
     };
+
+    const message = JSON.stringify(status);
+
+    this.connectedClients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
   }
 
-  // Method to get unified database interface for external use
-  getDatabaseInterface(serviceName) {
-    return this.unifiedDatabaseInterfaces.get(serviceName) || this.loggerDB;
+  async _emergencyLogError(context, error) {
+    try {
+      // Try to log to database first
+      if (this.loggerDB && this.loggerDB.run) {
+        await this.loggerDB.run(
+          "INSERT INTO error_logs (context, error, timestamp) VALUES (?, ?, ?)",
+          [context, error.message, new Date().toISOString()]
+        );
+      }
+    } catch (dbError) {
+      // Fallback to console if database logging fails
+      console.error(`💀 EMERGENCY LOG FAILED [${context}]:`, error);
+      console.error(`💀 DATABASE LOG ALSO FAILED:`, dbError);
+    }
   }
 
-  // Method to get database initializer for advanced operations
-  getDatabaseInitializer() {
-    return this.databaseInitializer;
+  start() {
+    if (!this.isInitialized) {
+      console.warn("⚠️ ServiceManager not initialized. Call initialize() first.");
+      return;
+    }
+
+    this.server.listen(this.config.port, () => {
+      console.log(`🚀 ArielSQL Ultimate Suite running on port ${this.config.port}`);
+      console.log(`🌐 Mainnet: ${this.config.mainnet}`);
+      console.log(`📊 Database interfaces: ${this.unifiedDatabaseInterfaces.size}`);
+      console.log(`⚙️ Modules: ${Object.keys(this.modules).length}`);
+      console.log(`🤖 Agents: ${Object.keys(this.agents).length}`);
+    });
+
+    this.server.on("error", (error) => {
+      console.error("❌ Server error:", error);
+    });
+  }
+
+  async stop() {
+    console.log("🛑 Stopping ServiceManager...");
+
+    // Clear background interval
+    if (this.backgroundInterval) {
+      clearInterval(this.backgroundInterval);
+      this.backgroundInterval = null;
+    }
+
+    // Close WebSocket connections
+    this.connectedClients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.close();
+      }
+    });
+    this.connectedClients.clear();
+
+    // Stop agents
+    for (const [name, agent] of Object.entries(this.agents)) {
+      try {
+        if (agent.stop) await agent.stop();
+        console.log(`✅ Agent stopped: ${name}`);
+      } catch (error) {
+        console.error(`❌ Failed to stop agent ${name}:`, error);
+      }
+    }
+
+    // Stop modules
+    for (const [name, module] of Object.entries(this.modules)) {
+      try {
+        if (module.stop) await module.stop();
+        console.log(`✅ Module stopped: ${name}`);
+      } catch (error) {
+        console.error(`❌ Failed to stop module ${name}:`, error);
+      }
+    }
+
+    // Stop core systems
+    if (this.payoutSystem && this.payoutSystem.stop) {
+      try {
+        await this.payoutSystem.stop();
+        console.log("✅ Payout system stopped");
+      } catch (error) {
+        console.error("❌ Failed to stop payout system:", error);
+      }
+    }
+
+    if (this.blockchain && this.blockchain.stop) {
+      try {
+        await this.blockchain.stop();
+        console.log("✅ Blockchain system stopped");
+      } catch (error) {
+        console.error("❌ Failed to stop blockchain system:", error);
+      }
+    }
+
+    // Close database connections
+    if (this.databaseInitializer && this.databaseInitializer.closeAll) {
+      try {
+        await this.databaseInitializer.closeAll();
+        console.log("✅ Database connections closed");
+      } catch (error) {
+        console.error("❌ Failed to close database connections:", error);
+      }
+    }
+
+    // Close HTTP server
+    if (this.server) {
+      this.server.close(() => {
+        console.log("✅ HTTP server stopped");
+      });
+    }
+
+    this.isInitialized = false;
+    console.log("🛑 ServiceManager stopped successfully");
   }
 }
 
-export { serviceManager };
+export default serviceManager;
