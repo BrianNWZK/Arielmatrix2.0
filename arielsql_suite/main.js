@@ -101,7 +101,7 @@ async function initializeCoreSystems() {
     try {
         // STEP 0: Initialize global logger FIRST
         console.log('📝 STEP 0: Initializing global logger...');
-        await new initializeGlobalLogger();
+        await initializeGlobalLogger();
         console.log('✅ Global logger initialized successfully');
         
         return true;
