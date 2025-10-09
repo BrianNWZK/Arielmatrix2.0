@@ -13,7 +13,7 @@ import { SovereignGovernance } from "../modules/governance-engine/index.js";
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 
 // === Database Initializer ===
-import { getDatabaseInitializer } from "../modules/database-initializer.js";
+import {  DatabaseInitializer  } from "../modules/database-initializer.js";
 
 // === Phase 3 Advanced Modules ===
 import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
