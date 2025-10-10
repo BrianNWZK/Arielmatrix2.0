@@ -9,7 +9,6 @@
 import http from "http";
 import express from "express";
 import { serviceManager } from "./serviceManager.js";
-import { createBrianNwaezikeChain, getInitializedChain, getRealBwaeziCredentials, isChainInitialized } from '../backend/blockchain/BrianNwaezikeChain.js';
 import { initializeDatabase } from '../backend/database/BrianNwaezikeDB.js';
 import { configAgent } from '../backend/agents/configAgent.js';
 import { initializeGlobalLogger, enableDatabaseLogging, getGlobalLogger } from '../modules/enterprise-logger/index.js';
