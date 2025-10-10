@@ -1,8 +1,10 @@
+// serviceManager.js - PRODUCTION READY v4.3
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
+import crypto from "crypto";
 
 // === Core Blockchain Systems ===
 import BrianNwaezikeChain from "../backend/blockchain/BrianNwaezikeChain.js";
@@ -13,7 +15,6 @@ import { SovereignGovernance } from "../modules/governance-engine/index.js";
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 
 // === Database Initializer ===
-// 🏆 CRITICAL FIX: Import the getter function instead of the class directly
 import { getDatabaseInitializer } from "../modules/database-initializer.js";
 
 // === Phase 3 Advanced Modules ===
@@ -41,9 +42,9 @@ import forexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
 import shopifyAgent from "../backend/agents/shopifyAgent.js";
-import socialAgent from "../backend/agents/socialAgent.js";
+import SocialAgent from "../backend/agents/socialAgent.js"; // 🏆 FIX: Use proper import
 
-class serviceManager {
+class ServiceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
@@ -51,7 +52,7 @@ class serviceManager {
       mainnet: config.mainnet !== undefined ? config.mainnet : true,
       dbPath: config.dbPath || "./data/service_logs.db",
       databaseConfig: config.databaseConfig || {},
-      // 🏆 CRITICAL FIX: Store dataAnalytics for agent initialization
+      // Store dataAnalytics for agent initialization
       dataAnalytics: config.dataAnalytics || null
     };
 
@@ -64,7 +65,7 @@ class serviceManager {
       perMessageDeflate: false
     });
 
-    // 🏆 CRITICAL FIX: Use getDatabaseInitializer() function instead of direct instantiation
+    // Use getDatabaseInitializer() function instead of direct instantiation
     this.databaseInitializer = getDatabaseInitializer();
     this.unifiedDatabaseInterfaces = new Map();
     
@@ -88,7 +89,7 @@ class serviceManager {
 
   async initialize() {
     if (this.isInitialized) {
-      console.log("⚠️ serviceManager already initialized");
+      console.log("⚠️ ServiceManager already initialized");
       return;
     }
 
@@ -111,7 +112,7 @@ class serviceManager {
       await this._initializeAgents();
 
       this.isInitialized = true;
-      console.log("✅ serviceManager initialized successfully");
+      console.log("✅ ServiceManager initialized successfully");
 
       // Setup full API routes now that everything is initialized
       this._setupApiRoutes();
@@ -120,7 +121,7 @@ class serviceManager {
       this._startBackgroundServices();
 
     } catch (error) {
-      console.error("❌ serviceManager initialization failed:", error);
+      console.error("❌ ServiceManager initialization failed:", error);
       
       // Ensure we can still log errors even if initialization fails
       await this._emergencyLogError('initialization_failed', error);
@@ -367,9 +368,10 @@ class serviceManager {
     const shopifyAgentDb = this.unifiedDatabaseInterfaces.get('shopify-agent') || this.loggerDB;
     const socialAgentDb = this.unifiedDatabaseInterfaces.get('social-agent') || this.loggerDB;
 
-    // 🏆 CRITICAL FIX: Pass dataAnalytics to agents that need it
+    // Pass dataAnalytics to agents that need it
     const dataAnalytics = this.config.dataAnalytics;
 
+    // 🏆 CRITICAL FIX: Use proper SocialAgent class with enhanced initialization
     this.agents = {
       adRevenueAgent: new AdRevenueAgent({
         mainnet: this.config.mainnet,
@@ -426,17 +428,30 @@ class serviceManager {
         database: shopifyAgentDb,
         dataAnalytics: dataAnalytics
       }),
-      socialAgent: new socialAgent({
+      socialAgent: new SocialAgent({ // 🏆 FIX: Use proper class
         mainnet: this.config.mainnet,
         database: socialAgentDb,
-        dataAnalytics: dataAnalytics
+        dataAnalytics: dataAnalytics,
+        // Enhanced configuration for social agent
+        ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
+        COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
+        COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY,
+        X_API_KEY: process.env.X_API_KEY,
+        X_API_SECRET: process.env.X_API_SECRET,
+        X_ACCESS_TOKEN: process.env.X_ACCESS_TOKEN,
+        X_ACCESS_SECRET: process.env.X_ACCESS_SECRET
       })
     };
 
-    // Initialize agents
+    // Initialize agents with enhanced error handling
     for (const [agentName, agent] of Object.entries(this.agents)) {
       try {
+        // 🏆 CRITICAL FIX: Add delay between agent initializations to prevent race conditions
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         if (agent.init) await agent.init();
+        else if (agent.initialize) await agent.initialize();
+        
         console.log(`✅ Agent initialized: ${agentName}`);
         
       } catch (error) {
@@ -452,7 +467,7 @@ class serviceManager {
       res.json({
         status: "ok",
         timestamp: new Date().toISOString(),
-        version: "v4.2",
+        version: "v4.3",
         mainnet: this.config.mainnet,
         initialized: this.isInitialized,
         systems: {
@@ -469,10 +484,24 @@ class serviceManager {
     this.app.get("/", (req, res) => {
       res.json({
         name: "ArielSQL Ultimate Suite",
-        version: "Production Mainnet v4.2",
+        version: "Production Mainnet v4.3",
         status: this.isInitialized ? "operational" : "initializing",
         timestamp: new Date().toISOString(),
-        mainnet: this.config.mainnet
+        mainnet: this.config.mainnet,
+        port: this.config.port
+      });
+    });
+
+    // System status endpoint
+    this.app.get("/api/system/status", (req, res) => {
+      res.json({
+        service: "ArielSQL Ultimate Suite",
+        version: "v4.3",
+        status: "running",
+        port: this.config.port,
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
       });
     });
   }
@@ -534,9 +563,27 @@ class serviceManager {
       try {
         const status = {};
         for (const [name, agent] of Object.entries(this.agents)) {
-          status[name] = agent.getStatus ? await agent.getStatus() : { status: "unknown" };
+          try {
+            status[name] = agent.getStatus ? await agent.getStatus() : { status: "unknown" };
+          } catch (agentError) {
+            status[name] = { status: "error", error: agentError.message };
+          }
         }
         res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Social agent specific endpoints
+    this.app.get("/api/agents/social/performance", async (req, res) => {
+      try {
+        if (this.agents.socialAgent && this.agents.socialAgent.getPerformanceStats) {
+          const stats = await this.agents.socialAgent.getPerformanceStats(req.query.timeframe);
+          res.json(stats);
+        } else {
+          res.status(404).json({ error: "Social agent not available" });
+        }
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -584,7 +631,7 @@ class serviceManager {
       ws.send(JSON.stringify({
         type: "welcome",
         message: "Connected to ArielSQL Ultimate Suite",
-        version: "v4.2",
+        version: "v4.3",
         timestamp: new Date().toISOString()
       }));
     });
@@ -611,6 +658,20 @@ class serviceManager {
           timestamp: new Date().toISOString()
         };
         ws.send(JSON.stringify(status));
+        break;
+
+      case "get_agent_status":
+        if (payload && payload.agentName && this.agents[payload.agentName]) {
+          try {
+            const agentStatus = this.agents[payload.agentName].getStatus ? 
+              this.agents[payload.agentName].getStatus() : { status: "unknown" };
+            ws.send(JSON.stringify({ type: "agent_status", agent: payload.agentName, ...agentStatus }));
+          } catch (error) {
+            ws.send(JSON.stringify({ type: "error", message: `Failed to get status for ${payload.agentName}` }));
+          }
+        } else {
+          ws.send(JSON.stringify({ type: "error", message: `Agent ${payload?.agentName} not found` }));
+        }
         break;
 
       default:
@@ -713,6 +774,11 @@ class serviceManager {
         governance: !!this.governance,
         modules: Object.keys(this.modules).length,
         agents: Object.keys(this.agents).length
+      },
+      metrics: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        connectedClients: this.connectedClients.size
       }
     };
 
@@ -753,6 +819,7 @@ class serviceManager {
       console.log(`📊 Database interfaces: ${this.unifiedDatabaseInterfaces.size}`);
       console.log(`⚙️ Modules: ${Object.keys(this.modules).length}`);
       console.log(`🤖 Agents: ${Object.keys(this.agents).length}`);
+      console.log(`🔗 WebSocket clients: ${this.connectedClients.size}`);
     });
 
     this.server.on("error", (error) => {
@@ -781,6 +848,7 @@ class serviceManager {
     for (const [name, agent] of Object.entries(this.agents)) {
       try {
         if (agent.stop) await agent.stop();
+        else if (agent.close) await agent.close();
         console.log(`✅ Agent stopped: ${name}`);
       } catch (error) {
         console.error(`❌ Failed to stop agent ${name}:`, error);
@@ -838,4 +906,4 @@ class serviceManager {
   }
 }
 
-export { serviceManager };
+export { ServiceManager as serviceManager };
