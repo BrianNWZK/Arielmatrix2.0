@@ -1016,7 +1016,7 @@ if (isMainThread) {
   }
 
   // Export the main SocialAgent class for single-threaded use
-  export { SocialAgent, socialAgentStatus };
+  export { SocialAgent as socialAgent, socialAgentStatus };
 } else {
   // Worker thread execution
   workerThreadFunction().catch(error => {
@@ -1025,4 +1025,4 @@ if (isMainThread) {
   });
 }
 
-export SocialAgent as socialAgent;
+export default socialAgent;
