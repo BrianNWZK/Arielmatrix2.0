@@ -103,7 +103,7 @@ class EnterprisePaymentProcessor {
 }
 
 // --- Real-Time Analytics Integration ---
-class SocialAnalytics {
+class socialAnalytics {
   constructor(writeKey) {
     this.writeKey = writeKey;
     this.blockchain = new BrianNwaezikeChain({
@@ -198,7 +198,7 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
 ];
 
 // 🏆 CRITICAL FIX: Enhanced SocialAgent class with proper database initialization
-class SocialAgent {
+class socialAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
@@ -894,7 +894,7 @@ async function workerThreadFunction() {
     }
 
     // Create social agent instance
-    const socialAgent = new SocialAgent(config, workerLogger);
+    const socialAgent = new socialAgent(config, workerLogger);
     
     // Initialize the agent with proper error handling
     await socialAgent.initialize();
@@ -1016,7 +1016,7 @@ if (isMainThread) {
   }
 
   // Export the main SocialAgent class for single-threaded use
-  export { SocialAgent as socialAgent };
+ export { socialAgent, socialAgentStatus };
 } else {
   // Worker thread execution
   workerThreadFunction().catch(error => {
