@@ -193,7 +193,7 @@ const VALIDATED_ENDPOINTS = {
   SOLANA_RPC_URL: "https://api.mainnet-beta.solana.com",
   FALLBACK_RPC_URLS: [
     process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc",
-    "https://rpc.winr.games", "https://arielmatrix2-0-dxbr.onrender.com"
+    "https://rpc.winr.games"
   ]
 };
 
