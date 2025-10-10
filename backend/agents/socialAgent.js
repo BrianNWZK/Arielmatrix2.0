@@ -1,4 +1,4 @@
-// backend/agents/socialAgent.js - PRODUCTION READY v4.3
+// backend/agents/socialAgent.js - PRODUCTION READY v4.3 - FIXED
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
 import { Mutex } from 'async-mutex';
@@ -8,7 +8,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { BrianNwaezikeChain } from '../blockchain/BrianNwaezikeChain.js';
 import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine/index.js';
-import { createDatabase, BrianNwaezikeDB } from '../database/BrianNwaezikeDB.js';
+import { createDatabase, BrianNwaezikeDB, initializeDatabase, getDatabase } from '../database/BrianNwaezikeDB.js';
 import apiScoutAgent from './apiScoutAgent.js';
 
 // Import browser manager for real browsing
@@ -32,6 +32,9 @@ import {
 // Get __filename equivalent in ES Module scope
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Global database instance
+let globalDatabaseInstance = null;
 
 // --- Real Enterprise Payment Processor ---
 class EnterprisePaymentProcessor {
@@ -194,25 +197,23 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
   'Sustainable Luxury', 'Digital Art', 'Virtual Real Estate'
 ];
 
-// 🏆 CRITICAL FIX: Define class before any usage
+// 🏆 CRITICAL FIX: Enhanced SocialAgent class with proper database initialization
 class SocialAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
-    this.db = createDatabase('./data/social_agent.db');
+    this.db = null; // Will be initialized properly
     this.platformClients = {};
     this.paymentProcessor = new EnterprisePaymentProcessor();
     this.analytics = new SocialAnalytics(config.ANALYTICS_WRITE_KEY);
     this.walletInitialized = false;
     this.initialized = false;
-    
-    // Initialize in proper sequence
-    this._initializeComponents();
+    this.initializationPromise = null;
   }
 
   async _initializeComponents() {
     try {
-      await this.db.connect();
+      // 🏆 CRITICAL FIX: Initialize database first using global instance
       await this._initializeDatabase();
       await this._initializePlatformClients();
       await this.paymentProcessor.initialize();
@@ -222,12 +223,22 @@ class SocialAgent {
       this.logger.success('✅ Social Agent components initialized successfully');
     } catch (error) {
       this.logger.error('Component initialization failed:', error);
+      throw error;
     }
   }
 
   async initialize() {
     if (this.initialized) return;
     
+    // Prevent multiple simultaneous initializations
+    if (!this.initializationPromise) {
+      this.initializationPromise = this._initializeWithLock();
+    }
+    
+    return this.initializationPromise;
+  }
+
+  async _initializeWithLock() {
     try {
       await this._initializeComponents();
       await this.initializeWalletConnections();
@@ -236,14 +247,23 @@ class SocialAgent {
       this.logger.success('✅ Social Agent fully initialized with database, blockchain, and wallet integration');
     } catch (error) {
       this.logger.error('Failed to initialize Social Agent:', error);
+      this.initializationPromise = null;
       throw error;
     }
   }
 
   async _initializeDatabase() {
     try {
-      await this.db.connect();
+      // 🏆 CRITICAL FIX: Use global database instance or create new one
+      if (!globalDatabaseInstance) {
+        globalDatabaseInstance = await initializeDatabase('./data/social_agent.db');
+      }
+      this.db = globalDatabaseInstance;
       
+      if (!this.db) {
+        throw new Error('Database initialization failed - null database instance');
+      }
+
       // Create social agent specific tables
       const tables = [
         `CREATE TABLE IF NOT EXISTS social_posts (
@@ -295,6 +315,7 @@ class SocialAgent {
       this.logger.success('✅ Social Agent database initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize database:', error);
+      throw error;
     }
   }
 
@@ -624,6 +645,11 @@ Send ${content.currency} to: ${paymentAddress}
       this.logger.info('🚀 Social Agent starting revenue generation cycle...');
 
       try {
+        // Ensure agent is initialized
+        if (!this.initialized) {
+          await this.initialize();
+        }
+
         // Initialize wallet connections if not already done
         if (!this.walletInitialized) {
           await this.initializeWalletConnections();
@@ -826,16 +852,29 @@ Send ${content.currency} to: ${paymentAddress}
   }
 
   async close() {
-    if (this.db) {
+    if (this.db && typeof this.db.close === 'function') {
       await this.db.close();
     }
     if (this.paymentProcessor) {
       await this.paymentProcessor.cleanup();
     }
+    this.initialized = false;
+    this.initializationPromise = null;
+  }
+
+  getStatus() {
+    return {
+      ...socialAgentStatus,
+      initialized: this.initialized,
+      walletInitialized: this.walletInitialized,
+      databaseConnected: !!this.db,
+      activePlatforms: Object.keys(this.platformClients).filter(p => this.platformClients[p].client).length,
+      timestamp: new Date().toISOString()
+    };
   }
 }
 
-// 🏆 CRITICAL FIX: Worker thread function defined AFTER class declaration
+// 🏆 CRITICAL FIX: Enhanced worker thread function with proper initialization
 async function workerThreadFunction() {
   const { config, workerId } = workerData;
   const workerLogger = {
@@ -845,20 +884,36 @@ async function workerThreadFunction() {
     warn: (...args) => console.warn(`[Worker ${workerId}] ⚠️`, ...args)
   };
 
-  // 🏆 CRITICAL FIX: Use SocialAgent class (now properly defined)
-  const socialAgent = new SocialAgent(config, workerLogger);
-  
-  // Initialize the agent
-  await socialAgent.initialize();
-
-  while (true) {
-    try {
-      await socialAgent.run();
-      await quantumDelay(30000); // Run every 30 seconds
-    } catch (error) {
-      workerLogger.error('Worker execution error:', error);
-      await quantumDelay(10000); // Shorter delay on error
+  try {
+    workerLogger.info('🚀 Starting social agent worker thread...');
+    
+    // 🏆 CRITICAL FIX: Initialize database first before creating SocialAgent
+    if (!globalDatabaseInstance) {
+      workerLogger.info('🗄️ Initializing database for worker thread...');
+      globalDatabaseInstance = await initializeDatabase('./data/social_agent.db');
     }
+
+    // Create social agent instance
+    const socialAgent = new SocialAgent(config, workerLogger);
+    
+    // Initialize the agent with proper error handling
+    await socialAgent.initialize();
+
+    workerLogger.success('✅ Social agent worker thread initialized successfully');
+
+    // Main worker loop
+    while (true) {
+      try {
+        await socialAgent.run();
+        await quantumDelay(30000); // Run every 30 seconds
+      } catch (error) {
+        workerLogger.error('Worker execution error:', error);
+        await quantumDelay(10000); // Shorter delay on error
+      }
+    }
+  } catch (error) {
+    workerLogger.error('💀 Worker thread fatal error:', error);
+    process.exit(1);
   }
 }
 
@@ -921,14 +976,14 @@ if (isMainThread) {
       socialAgentStatus.workerStatuses[`worker-${i + 1}`] = `exited: ${code}`;
       console.log(`Worker ${i + 1} exited with code ${code}`);
       
-      // Auto-restart worker
+      // Auto-restart worker with delay
       setTimeout(() => {
         console.log(`🔄 Restarting Worker ${i + 1}`);
         const newWorker = new Worker(__filename, {
           workerData: { workerId: i + 1, config }
         });
         setupWorkerEvents(newWorker, i + 1);
-      }, 5000);
+      }, 10000); // Increased delay to 10 seconds
     });
 
     function setupWorkerEvents(worker, workerId) {
@@ -947,27 +1002,27 @@ if (isMainThread) {
       worker.on('exit', (code) => {
         socialAgentStatus.workerStatuses[`worker-${workerId}`] = `exited: ${code}`;
         console.log(`Worker ${workerId} exited with code ${code}`);
+        
+        // Auto-restart worker with delay
+        setTimeout(() => {
+          console.log(`🔄 Restarting Worker ${workerId}`);
+          const newWorker = new Worker(__filename, {
+            workerData: { workerId, config }
+          });
+          setupWorkerEvents(newWorker, workerId);
+        }, 10000);
       });
     }
   }
-}
 
-// Export functions
-export function getStatus() {
-  return {
-    ...socialAgentStatus,
-    agent: 'socialAgent',
-    timestamp: new Date().toISOString()
-  };
-}
-
-// Worker thread execution
-if (!isMainThread) {
+  // Export the main SocialAgent class for single-threaded use
+  export { SocialAgent, socialAgentStatus };
+} else {
+  // Worker thread execution
   workerThreadFunction().catch(error => {
     console.error('Worker thread fatal error:', error);
     process.exit(1);
   });
 }
 
-// Export agent and status
 export default SocialAgent;
