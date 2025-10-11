@@ -1,7 +1,7 @@
 /**
  * Backend Server Module - Exports RPC and blockchain functionality
  * 🚀 MODULE ONLY: No server startup - exports functions for main.js
- * 🔗 RPC EXPOSURE: Provides Bwaezi chain RPC endpoints
+ * 🔗 RPC EXPOSURE: Provides Bwaezi chain RPC endpoints using centralized credentials
  * 📊 DATA AGENT: Exports data collection and analytics functions
  */
 
@@ -17,18 +17,32 @@ import { createDatabase } from './database/BrianNwaezikeDB.js';
 
 // Global instances
 let blockchainInstance = null;
+let currentCredentials = null;
 
-// Initialize core systems - DataAgent initialization removed
+// 🎯 SET CREDENTIALS FROM MAIN.JS
+export function setBackendCredentials(credentials) {
+    currentCredentials = credentials;
+    console.log('✅ Backend credentials set from main.js');
+    if (credentials && credentials.BWAEZI_CHAIN_ID) {
+        console.log(`🔗 Chain ID: ${credentials.BWAEZI_CHAIN_ID}`);
+        console.log(`📝 Contract: ${credentials.BWAEZI_CONTRACT_ADDRESS}`);
+    }
+}
+
+// Initialize core systems
 export async function initializeBackendSystems() {
     console.log('🚀 Initializing Backend Systems Module...');
     
     try {
-        // Initialize blockchain only
-        console.log('🔗 Initializing Bwaezi Blockchain...');
-        blockchainInstance = await createBrianNwaezikeChain({
-            rpcUrl: 'https://rpc.winr.games',
-            network: 'mainnet'
-        });
+        // Initialize blockchain only if not already initialized by main.js
+        if (!blockchainInstance) {
+            console.log('🔗 Initializing Bwaezi Blockchain in backend module...');
+            blockchainInstance = await createBrianNwaezikeChain({
+                rpcUrl: 'https://rpc.winr.games',
+                network: 'mainnet'
+            });
+            await blockchainInstance.init();
+        }
         
         console.log('✅ Backend systems initialized successfully');
         return true;
@@ -38,33 +52,36 @@ export async function initializeBackendSystems() {
     }
 }
 
-// 🌐 Public RPC Broadcast Function - Enhanced with real blockchain data
+// 🌐 Public RPC Broadcast Function - Uses centralized credentials
 export async function getBwaeziRPCData() {
     try {
-        if (!blockchainInstance) {
-            throw new Error('Blockchain service initializing');
+        if (!currentCredentials) {
+            throw new Error('Credentials not set - call setBackendCredentials() first');
         }
 
-        const credentials = await blockchainInstance.getRealCredentials();
-        const status = await blockchainInstance.getStatus();
+        let status = {};
+        if (blockchainInstance) {
+            status = await blockchainInstance.getStatus();
+        }
         
         return {
             status: 'LIVE',
             rpcUrl: 'https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc',
-            chainId: credentials.BWAEZI_CHAIN_ID,
+            chainId: currentCredentials.BWAEZI_CHAIN_ID,
             chainName: 'Bwaezi Mainnet',
-            blockNumber: status.lastBlockNumber,
-            gasPrice: status.gasPrice,
+            blockNumber: status.lastBlockNumber || currentCredentials.blockNumber || 0,
+            gasPrice: status.gasPrice || '0',
             health: status.connected ? 'HEALTHY' : 'UNHEALTHY',
             peerCount: status.metrics?.peerCount || 0,
             timestamp: new Date().toISOString(),
-            version: 'ArielMatrix 2.0',
+            version: 'ArielSQL Ultimate Suite v4.3',
             networkId: 777777,
             nativeCurrency: {
                 name: 'Bwaezi',
                 symbol: 'BWAEZI',
                 decimals: 18
-            }
+            },
+            credentialSource: 'Centralized from main.js'
         };
     } catch (error) {
         throw new Error(`RPC data error: ${error.message}`);
@@ -82,7 +99,8 @@ export async function getBlockchainStatus() {
         return {
             status: 'SUCCESS',
             data: status,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            credentialSource: 'Centralized from main.js'
         };
     } catch (error) {
         throw new Error(`Blockchain status error: ${error.message}`);
@@ -184,11 +202,20 @@ export async function getBackendHealth() {
         version: 'ArielMatrix 2.0',
         services: {
             blockchain: !!blockchainInstance && blockchainInstance.isConnected,
+            credentials: !!currentCredentials,
             server: true
         },
         uptime: process.uptime(),
         memory: process.memoryUsage(),
-        environment: process.env.NODE_ENV || 'development'
+        environment: process.env.NODE_ENV || 'development',
+        credentialInfo: currentCredentials ? {
+            hasCredentials: true,
+            chainId: currentCredentials.BWAEZI_CHAIN_ID,
+            source: 'Centralized from main.js'
+        } : {
+            hasCredentials: false,
+            source: 'Not set'
+        }
     };
 
     // Check Data Agent status separately without blocking
@@ -217,7 +244,8 @@ export function getRootEndpointData() {
             health: '/health',
             revenue: '/revenue-analytics'
         },
-        documentation: 'https://github.com/arielmatrix/arielmatrix2.0'
+        documentation: 'https://github.com/arielmatrix/arielmatrix2.0',
+        credentialSource: 'Centralized from main.js'
     };
 }
 
@@ -408,7 +436,7 @@ process.on('SIGTERM', async () => {
 
 // Export initialization status
 export function isBackendInitialized() {
-    return !!blockchainInstance;
+    return !!blockchainInstance && !!currentCredentials;
 }
 
 // Note: Server startup code has been removed - this is now a pure module
