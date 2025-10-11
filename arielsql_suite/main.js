@@ -17,7 +17,15 @@ import { configAgent } from '../backend/agents/configAgent.js';
 import { initializeGlobalLogger, enableDatabaseLogging, getGlobalLogger } from '../modules/enterprise-logger/index.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
 
-// Real Enterprise Data Analytics (Blockchain operations removed - delegated to BrianNwaezikeChain)
+// Import backend module functions
+import { 
+    initializeBackendSystems,
+    getBackendRouteHandlers,
+    setBackendCredentials,
+    shutdownBackendSystems
+} from '../backend/server.js';
+
+// Real Enterprise Data Analytics
 class EnterpriseDataAnalytics {
   constructor(config = {}) {
     this.config = config;
@@ -189,6 +197,7 @@ const enterpriseDataAnalytics = new EnterpriseDataAnalytics();
 
 // Global blockchain instance for the server
 let blockchainInstance = null;
+let currentCredentials = null;
 
 // --- Global configuration with validated endpoints ---
 const VALIDATED_ENDPOINTS = {
@@ -236,7 +245,20 @@ async function initializeBlockchainSystem() {
     });
     
     await blockchainInstance.init();
-    console.log('✅ Blockchain initialized successfully');
+    
+    // 🎯 CENTRALIZED CREDENTIAL RETRIEVAL
+    console.log('🔐 Retrieving Bwaezi chain credentials...');
+    currentCredentials = await blockchainInstance.getRealCredentials();
+    
+    if (currentCredentials && currentCredentials.BWAEZI_CHAIN_ID) {
+      console.log('✅ Bwaezi credentials retrieved successfully');
+      console.log(`🔗 Chain ID: ${currentCredentials.BWAEZI_CHAIN_ID}`);
+      console.log(`📝 Contract: ${currentCredentials.BWAEZI_CONTRACT_ADDRESS}`);
+      console.log(`🌐 RPC URL: ${currentCredentials.BWAEZI_RPC_URL}`);
+    } else {
+      throw new Error('Failed to retrieve valid Bwaezi credentials');
+    }
+    
     return true;
   } catch (error) {
     console.error('❌ Blockchain initialization failed:', error);
@@ -244,41 +266,29 @@ async function initializeBlockchainSystem() {
   }
 }
 
+// --- Get current credentials for other modules ---
+export function getCurrentCredentials() {
+  return currentCredentials;
+}
+
 // --- Lean Bwaezi Config Loader using BrianNwaezikeChain ---
 async function loadBwaeziMainnetEssentials() {
   const logger = getGlobalLogger();
-  logger.warn('*** PRODUCTION MAINNET: EXTRACTING REAL BWAEZI CHAIN CREDENTIALS ***');
+  logger.warn('*** PRODUCTION MAINNET: USING CENTRALIZED BWAEZI CHAIN CREDENTIALS ***');
 
   try {
-    if (blockchainInstance) {
-      logger.info('🔍 Extracting credentials from running BrianNwaezikeChain instance...');
-      const credentials = await blockchainInstance.getRealCredentials();
-      
-      if (credentials && credentials.BWAEZI_RPC_URL) {
-        logger.info('✅ SUCCESS: Real credentials extracted from live blockchain instance');
-        return credentials;
-      }
+    if (currentCredentials) {
+      logger.info('✅ Using centralized Bwaezi credentials');
+      logger.info(`🔗 ACTUAL RPC URL: ${currentCredentials.BWAEZI_RPC_URL}`);
+      logger.info(`🆔 ACTUAL CHAIN ID: ${currentCredentials.BWAEZI_CHAIN_ID}`);
+      logger.info(`📝 CONTRACT: ${currentCredentials.BWAEZI_CONTRACT_ADDRESS}`);
+      return currentCredentials;
     }
 
-    logger.info('🚀 Initializing new BrianNwaezikeChain instance for credential extraction...');
-    const blockchainConfig = {
-      network: 'mainnet',
-      rpcUrl: VALIDATED_ENDPOINTS.FALLBACK_RPC_URLS[1],
-      solanaRpcUrl: VALIDATED_ENDPOINTS.SOLANA_RPC_URL
-    };
-    const chainInstance = await createBrianNwaezikeChain(blockchainConfig);
-    
-    const credentials = await chainInstance.getRealCredentials(); 
-    
-    if (credentials && credentials.BWAEZI_CHAIN_ID) {
-      logger.info('✅ SUCCESS: New blockchain instance initialized and real credentials extracted');
-      return credentials;
-    } else {
-      throw new Error('Failed to extract valid real credentials from new chain instance');
-    }
+    throw new Error('No credentials available - blockchain not initialized');
 
   } catch (extractionError) {
-    logger.error(`❌ Failed to extract credentials from blockchain instance: ${extractionError.message}`);
+    logger.error(`❌ Failed to get credentials: ${extractionError.message}`);
     return {
       BWAEZI_RPC_URL: VALIDATED_ENDPOINTS.FALLBACK_RPC_URLS[1],
       BWAEZI_CHAIN_ID: 777777,
@@ -407,7 +417,8 @@ function createExpressApplication() {
       services: {
         blockchain: !!blockchainInstance && blockchainInstance.isConnected,
         analytics: enterpriseDataAnalytics.initialized,
-        server: true
+        server: true,
+        credentials: !!currentCredentials
       },
       port: process.env.PORT || 3000,
       host: '0.0.0.0'
@@ -425,137 +436,6 @@ function createExpressApplication() {
 
     res.json(health);
   });
-  
-  // 🌐 Public RPC Broadcast Endpoint
-  app.get('/bwaezi-rpc', async (req, res) => {
-    try {
-      if (!blockchainInstance) {
-        return res.status(503).json({
-          status: 'ERROR',
-          message: 'Blockchain service initializing',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      const credentials = await blockchainInstance.getRealCredentials();
-      const status = await blockchainInstance.getStatus();
-      
-      res.json({
-        status: 'LIVE',
-        rpcUrl: 'https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc',
-        chainId: credentials.BWAEZI_CHAIN_ID,
-        chainName: 'Bwaezi Mainnet',
-        blockNumber: status.lastBlockNumber,
-        gasPrice: status.gasPrice,
-        health: status.connected ? 'HEALTHY' : 'UNHEALTHY',
-        peerCount: status.metrics?.peerCount || 0,
-        timestamp: new Date().toISOString(),
-        version: 'ArielSQL Ultimate Suite v4.3',
-        networkId: 777777,
-        nativeCurrency: {
-          name: 'Bwaezi',
-          symbol: 'BWAEZI',
-          decimals: 18
-        }
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'ERROR',
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  });
-
-  // 🔍 Blockchain Status Endpoint
-  app.get('/blockchain-status', async (req, res) => {
-    try {
-      if (!blockchainInstance) {
-        return res.status(503).json({
-          status: 'INITIALIZING',
-          message: 'Blockchain service starting up',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      const status = await blockchainInstance.getStatus();
-      res.json({
-        status: 'SUCCESS',
-        data: status,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'ERROR',
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  });
-
-  // 📊 Data Agent Status Endpoint
-  app.get('/data-agent-status', async (req, res) => {
-    try {
-      const { getStatus } = await import('../backend/agents/dataAgent.js');
-      const status = getStatus();
-      
-      res.json({
-        status: 'SUCCESS',
-        data: status,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(503).json({
-        status: 'ERROR',
-        message: 'Data Agent service not available: ' + error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  });
-
-  // 💰 Revenue Analytics Endpoint
-  app.get('/revenue-analytics', async (req, res) => {
-    try {
-      const DataAgent = await import('../backend/agents/dataAgent.js');
-      
-      const logger = {
-        info: (...args) => console.log('📊 [DataAgent]', ...args),
-        error: (...args) => console.error('❌ [DataAgent]', ...args),
-        success: (...args) => console.log('✅ [DataAgent]', ...args),
-        warn: (...args) => console.warn('⚠️ [DataAgent]', ...args)
-      };
-      
-      const dataAgent = new DataAgent.default({
-        ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
-        COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
-        COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY
-      }, logger);
-      
-      await dataAgent.initialize();
-      
-      const timeframe = req.query.timeframe || '7 days';
-      const stats = await dataAgent.getDataCollectionStats(timeframe);
-      const revenue = await dataAgent.getRevenueAnalytics(timeframe);
-      
-      res.json({
-        status: 'SUCCESS',
-        data: {
-          timeframe,
-          collectionStats: stats,
-          revenueAnalytics: revenue,
-          timestamp: new Date().toISOString()
-        }
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'ERROR',
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  });
-  
-  // === ARIELSQL ENTERPRISE ANALYTICS ENDPOINTS ===
   
   // Enhanced analytics endpoint
   app.post('/api/analytics', async (req, res) => {
@@ -608,7 +488,12 @@ function createExpressApplication() {
           uptime: process.uptime(),
           memory: process.memoryUsage(),
           timestamp: Date.now(),
-          port: process.env.PORT || 10000
+          port: process.env.PORT || 3000
+        },
+        credentials: {
+          hasCredentials: !!currentCredentials,
+          chainId: currentCredentials?.BWAEZI_CHAIN_ID,
+          rpcUrl: currentCredentials?.BWAEZI_RPC_URL ? '***' : 'Not available'
         }
       };
       
@@ -658,7 +543,7 @@ function createServer(app) {
   const logger = getGlobalLogger();
   
   // CRITICAL FIX: Proper port binding for Render/container deployment
-  const PORT = process.env.PORT || 10000;
+  const PORT = process.env.PORT || 3000;
   const HOST = '0.0.0.0'; // Essential for container binding
   
   const server = http.createServer(app);
@@ -693,7 +578,7 @@ async function initializeArielSQLSuite() {
   
   // Log critical deployment information
   console.log(`🌐 Deployment Environment: ${process.env.NODE_ENV || 'production'}`);
-  console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '10000 (default)'}`);
+  console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '3000 (default)'}`);
   console.log(`🏠 Binding Host: 0.0.0.0 (container-compatible)`);
   
   // Initialize core systems first
@@ -719,24 +604,40 @@ async function initializeArielSQLSuite() {
     logger.info('🔗 STEP 2: Loading Bwaezi mainnet essentials...');
     const bwaeziCredentials = await loadBwaeziMainnetEssentials();
     
-    // Step 4: Initialize application database
-    logger.info('🗄️ STEP 3: Initializing application database...');
+    // Step 4: Initialize backend systems with credentials
+    logger.info('🔗 STEP 3: Initializing backend systems with credentials...');
+    setBackendCredentials(bwaeziCredentials);
+    const backendInitialized = await initializeBackendSystems();
+    if (!backendInitialized) {
+      logger.warn('⚠️ Backend systems initialization failed, but continuing...');
+    }
+    
+    // Step 5: Initialize application database
+    logger.info('🗄️ STEP 4: Initializing application database...');
     const database = await initializeApplicationDatabase();
     
-    // Step 5: Initialize service manager
-    logger.info('🔧 STEP 4: Initializing service manager...');
+    // Step 6: Initialize service manager
+    logger.info('🔧 STEP 5: Initializing service manager...');
     const services = await initializeServiceManager();
     
-    // Step 6: Initialize enterprise data analytics
-    logger.info('📊 STEP 5: Initializing enterprise data analytics...');
+    // Step 7: Initialize enterprise data analytics
+    logger.info('📊 STEP 6: Initializing enterprise data analytics...');
     await enterpriseDataAnalytics.initialize();
     
-    // Step 7: Create Express application
-    logger.info('🌐 STEP 6: Creating Express application...');
+    // Step 8: Create Express application
+    logger.info('🌐 STEP 7: Creating Express application...');
     const app = createExpressApplication();
     
-    // Step 8: Create HTTP server with proper binding
-    logger.info('🔌 STEP 7: Creating HTTP server with proper port binding...');
+    // Step 9: Register backend routes
+    logger.info('🔗 STEP 8: Registering backend routes...');
+    const backendRoutes = getBackendRouteHandlers();
+    Object.entries(backendRoutes).forEach(([path, config]) => {
+      app[config.method.toLowerCase()](path, config.handler);
+      logger.info(`✅ Registered backend route: ${config.method} ${path}`);
+    });
+    
+    // Step 10: Create HTTP server with proper binding
+    logger.info('🔌 STEP 9: Creating HTTP server with proper port binding...');
     const { server, PORT, HOST } = createServer(app);
     
     // Start server with proper error handling
@@ -752,6 +653,7 @@ async function initializeArielSQLSuite() {
       console.log('\n🎉 ArielSQL Ultimate Suite v4.3 - FULLY OPERATIONAL');
       console.log('🚀 PRIMARY PRODUCTION SERVER: READY FOR GLOBAL TRAFFIC');
       console.log('🔗 BLOCKCHAIN: CONNECTED TO BWAEZI MAINNET');
+      console.log('🔐 CREDENTIALS: CENTRALIZED RETRIEVAL ACTIVE');
       console.log('📊 ANALYTICS: ENTERPRISE GRADE ACTIVE');
       console.log('🛡️ SECURITY: ENHANCED ENTERPRISE PROTECTION');
       console.log(`🌐 PORT: ${PORT} (Properly bound for deployment)`);
@@ -766,6 +668,9 @@ async function initializeArielSQLSuite() {
       try {
         // Close analytics
         await enterpriseDataAnalytics.cleanup();
+        
+        // Close backend systems
+        await shutdownBackendSystems();
         
         // Close blockchain connection
         if (blockchainInstance) {
@@ -819,6 +724,7 @@ async function initializeArielSQLSuite() {
     // Emergency cleanup
     try {
       await enterpriseDataAnalytics.cleanup();
+      await shutdownBackendSystems();
       
       if (blockchainInstance) {
         await blockchainInstance.disconnect();
@@ -846,6 +752,7 @@ export {
   loadBwaeziMainnetEssentials,
   createExpressApplication,
   createServer,
+  getCurrentCredentials,
   VALIDATED_ENDPOINTS
 };
 
