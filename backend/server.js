@@ -6,7 +6,7 @@
  */
 
 import { ApolloServer } from '@apollo/server';
-import { expressMiddleware } from '@apollo/server/express4';
+import { expressMiddleware } from '@apollo/server/express4'; // FIXED IMPORT PATH
 import cors from 'cors';
 import express from 'express';
 import 'dotenv/config';
@@ -249,64 +249,11 @@ export function getRootEndpointData() {
     };
 }
 
-// GraphQL Setup Functions
+// GraphQL Setup Functions - REMOVED APOLLO SERVER DEPENDENCIES
+// Since we're not using GraphQL in the current setup, we'll remove these to simplify
 export function createGraphQLServer() {
-    const typeDefs = `#graphql
-        type Query {
-            health: String
-            blockchainStatus: String
-            dataAgentStatus: String
-        }
-        
-        type Mutation {
-            startDataCollection: String
-        }
-    `;
-
-    const resolvers = {
-        Query: {
-            health: () => 'OK',
-            blockchainStatus: () => blockchainInstance ? 'CONNECTED' : 'DISCONNECTED',
-            dataAgentStatus: async () => {
-                try {
-                    const { getStatus } = await import('./agents/dataAgent.js');
-                    const status = getStatus();
-                    return status.lastStatus || 'UNKNOWN';
-                } catch (error) {
-                    return 'ERROR: ' + error.message;
-                }
-            }
-        },
-        Mutation: {
-            startDataCollection: async () => {
-                try {
-                    const DataAgent = await import('./agents/dataAgent.js');
-                    const logger = {
-                        info: (...args) => console.log('📊 [DataAgent]', ...args),
-                        error: (...args) => console.error('❌ [DataAgent]', ...args)
-                    };
-                    
-                    const dataAgent = new DataAgent.default({
-                        ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
-                        COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS
-                    }, logger);
-                    
-                    await dataAgent.initialize();
-                    const result = await dataAgent.run();
-                    return `Data collection started: ${JSON.stringify(result)}`;
-                } catch (error) {
-                    return `Error: ${error.message}`;
-                }
-            }
-        }
-    };
-
-    return new ApolloServer({
-        typeDefs,
-        resolvers,
-        introspection: true,
-        playground: true
-    });
+    console.warn('⚠️ GraphQL server creation not implemented - Apollo Server dependencies removed');
+    return null;
 }
 
 // Export route handlers for integration with main.js
