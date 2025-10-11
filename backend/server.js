@@ -6,13 +6,15 @@
  */
 
 import { ApolloServer } from '@apollo/server';
-import { expressMiddleware } from '@apollo/server/express4'; // FIXED IMPORT PATH
+import { startStandaloneServer } from '@apollo/server/standalone';
+import { typeDefs } from './graphql/schema.js'; // ✅ USE EXISTING SCHEMA
+import { resolvers } from './graphql/resolvers.js'; // ✅ USE EXISTING RESOLVERS
 import cors from 'cors';
 import express from 'express';
 import 'dotenv/config';
 
 // Import blockchain modules
-import { createBrianNwaezikeChain, getInitializedChain, isChainInitialized } from './blockchain/BrianNwaezikeChain.js';
+import { createBrianNwaezikeChain } from './blockchain/BrianNwaezikeChain.js';
 import { createDatabase } from './database/BrianNwaezikeDB.js';
 
 // Global instances
@@ -242,18 +244,29 @@ export function getRootEndpointData() {
             status: '/blockchain-status',
             data: '/data-agent-status',
             health: '/health',
-            revenue: '/revenue-analytics'
+            revenue: '/revenue-analytics',
+            graphql: '/graphql'
         },
         documentation: 'https://github.com/arielmatrix/arielmatrix2.0',
         credentialSource: 'Centralized from main.js'
     };
 }
 
-// GraphQL Setup Functions - REMOVED APOLLO SERVER DEPENDENCIES
-// Since we're not using GraphQL in the current setup, we'll remove these to simplify
-export function createGraphQLServer() {
-    console.warn('⚠️ GraphQL server creation not implemented - Apollo Server dependencies removed');
-    return null;
+// GraphQL Setup Functions - USING EXISTING SCHEMA AND RESOLVERS
+export async function createGraphQLServer() {
+    try {
+        const server = new ApolloServer({
+            typeDefs,
+            resolvers,
+            introspection: true
+        });
+
+        console.log('✅ GraphQL server created successfully using existing schema and resolvers');
+        return server;
+    } catch (error) {
+        console.error('❌ GraphQL server creation failed:', error);
+        return null;
+    }
 }
 
 // Export route handlers for integration with main.js
