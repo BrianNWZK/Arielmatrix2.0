@@ -1,4 +1,4 @@
-// backend/agents/socialAgent.js - PRODUCTION READY v4.3 - FIXED & ENHANCED
+// backend/agents/socialAgent.js - PRODUCTION READY v4.3 - FIXED EXPORTS
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
 import { Mutex } from 'async-mutex';
@@ -920,7 +920,7 @@ async function workerThreadFunction() {
   }
 }
 
-// 🏆 CRITICAL FIX: Main thread orchestration - MOVE EXPORTS BEFORE MAIN LOGIC
+// 🏆 CRITICAL FIX: Main thread orchestration
 if (isMainThread) {
   const numThreads = process.env.SOCIAL_AGENT_THREADS || 3;
   const config = {
@@ -1026,5 +1026,8 @@ if (isMainThread) {
   });
 }
 
-// 🏆 CRITICAL FIX: Export the SocialAgent class and status - FIXED SYNTAX
+// 🏆 CRITICAL FIX: Export the SocialAgent class and status - FIXED FOR DEFAULT EXPORT
 export { SocialAgent as socialAgent, socialAgentStatus };
+
+// 🏆 CRITICAL FIX: Add default export for compatibility with autonomous-ai-engine.js
+export default SocialAgent;
