@@ -106,7 +106,7 @@ class EnterprisePaymentProcessor {
 }
 
 // --- Real-Time Analytics Integration ---
-class SocialAnalytics {
+class socialAnalytics {
   constructor(writeKey) {
     this.writeKey = writeKey;
     this.blockchain = new BrianNwaezikeChain({
@@ -201,14 +201,14 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
 ];
 
 // 🏆 CRITICAL FIX: Enhanced SocialAgent class with proper database initialization
-class SocialAgent {
+class socialAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
     this.db = null; // Will be initialized properly
     this.platformClients = {};
     this.paymentProcessor = new EnterprisePaymentProcessor();
-    this.analytics = new SocialAnalytics(config.ANALYTICS_WRITE_KEY);
+    this.analytics = new socialAnalytics(config.ANALYTICS_WRITE_KEY);
     this.walletInitialized = false;
     this.initialized = false;
     this.initializationPromise = null;
@@ -897,7 +897,7 @@ async function workerThreadFunction() {
     }
 
     // Create social agent instance
-    const socialAgent = new SocialAgent(config, workerLogger);
+    const socialAgent = new socialAgent(config, workerLogger);
     
     // Initialize the agent with proper error handling
     await socialAgent.initialize();
@@ -1026,8 +1026,8 @@ if (isMainThread) {
   });
 }
 
-// 🏆 CRITICAL FIX: Export the SocialAgent class and status - FIXED FOR DEFAULT EXPORT
-export { SocialAgent as socialAgent, socialAgentStatus };
+// 🏆 CRITICAL FIX: Export the socialAgent class and status - FIXED FOR DEFAULT EXPORT
+export { socialAgent, socialAgentStatus };
 
 // 🏆 CRITICAL FIX: Add default export for compatibility with autonomous-ai-engine.js
-export default SocialAgent;
+export default socialAgent;
