@@ -59,7 +59,7 @@ app.get('/bwaezi-rpc', async (req, res) => {
         
         res.json({
             status: 'LIVE',
-            rpcUrl: 'https://arielmatrix2-0-dxbr.onrender.com/bwaezi-rpc',
+            rpcUrl: 'https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc',
             chainId: credentials.BWAEZI_CHAIN_ID,
             chainName: 'Bwaezi Mainnet',
             blockNumber: status.lastBlockNumber,
