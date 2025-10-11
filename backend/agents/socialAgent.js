@@ -1016,17 +1016,16 @@ if (isMainThread) {
   }
 
  
-// Export the main socialAgent class for single-threaded use
-  module.exports = { 
-    socialAgent, 
-    socialAgentStatus 
-  };
-} else {
-  // Worker thread execution
+// Export the main socialAgent class
+export { socialAgent, socialAgentStatus };
+
+// Export default for easier imports
+export default socialAgent;
+
+// Worker thread execution
+if (isWorkerThread) {
   workerThreadFunction().catch(error => {
     console.error('Worker thread fatal error:', error);
     process.exit(1);
   });
 }
-
-export default socialAgent;
