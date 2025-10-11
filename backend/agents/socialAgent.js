@@ -1,4 +1,4 @@
-// backend/agents/socialAgent.js - PRODUCTION READY v4.3 - FIXED EXPORTS
+// backend/agents/socialAgent.js - PRODUCTION READY v4.4 - FIXED DATABASE INITIALIZATION
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
 import { Mutex } from 'async-mutex';
@@ -33,11 +33,92 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Global database instance
+// Global database instance with proper initialization tracking
 let globalDatabaseInstance = null;
+let databaseInitializationPromise = null;
 
 // Check if running in worker thread
 const isWorkerThread = !isMainThread && parentPort;
+
+// Global state for social agent
+const socialAgentStatus = {
+  lastStatus: 'idle',
+  lastExecutionTime: 'Never',
+  totalSuccessfulPosts: 0,
+  totalFailedPosts: 0,
+  activeWorkers: 0,
+  workerStatuses: {},
+  totalRevenueGenerated: 0,
+  blockchainTransactions: 0
+};
+
+const mutex = new Mutex();
+const quantumDelay = (ms) => new Promise(resolve => {
+  const jitter = Math.floor(Math.random() * 3000) + 1000;
+  setTimeout(resolve, ms + jitter);
+});
+
+const PROFITABILITY_MATRIX = [
+  { country: 'United States', score: 100, currency: 'USD' },
+  { country: 'Singapore', score: 98, currency: 'SGD' },
+  { country: 'Switzerland', score: 95, currency: 'CHF' },
+  { country: 'United Arab Emirates', score: 92, currency: 'AED' },
+  { country: 'United Kingdom', score: 90, currency: 'GBP' },
+  { country: 'Hong Kong', score: 88, currency: 'HKD' },
+  { country: 'Germany', score: 82, currency: 'EUR' },
+  { country: 'Japan', score: 80, currency: 'JPY' },
+  { country: 'Canada', score: 78, currency: 'CAD' },
+  { country: 'Australia', score: 75, currency: 'AUD' },
+  { country: 'India', score: 70, currency: 'INR' },
+  { country: 'Nigeria', score: 68, currency: 'NGN' },
+  { country: 'Vietnam', score: 65, currency: 'VND' },
+  { country: 'Philippines', score: 62, currency: 'PHP' },
+  { country: 'Brazil', score: 60, currency: 'BRL' }
+];
+
+const WOMEN_TOP_SPENDING_CATEGORIES = [
+  'Luxury Goods', 'High-End Fashion', 'Beauty & Skincare', 'Health & Wellness',
+  'Travel & Experiences', 'Fine Jewelry', 'Exclusive Events', 'Smart Home Tech',
+  'Designer Pets & Accessories', 'Cryptocurrency Investments', 'NFT Collections',
+  'Sustainable Luxury', 'Digital Art', 'Virtual Real Estate'
+];
+
+// Database initialization utility with proper error handling
+async function initializeGlobalDatabase() {
+  if (globalDatabaseInstance) {
+    return globalDatabaseInstance;
+  }
+
+  if (databaseInitializationPromise) {
+    return databaseInitializationPromise;
+  }
+
+  databaseInitializationPromise = (async () => {
+    try {
+      console.log('🗄️ Initializing global database instance...');
+      const db = await initializeDatabase('./data/social_agent.db');
+      
+      // Verify database has required methods
+      if (!db || typeof db.run !== 'function') {
+        throw new Error('Database instance missing required methods');
+      }
+
+      // Test database connection with simple query
+      await db.run('CREATE TABLE IF NOT EXISTS database_health_check (id INTEGER PRIMARY KEY, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)');
+      await db.run('INSERT INTO database_health_check (id) VALUES (1)');
+      
+      globalDatabaseInstance = db;
+      console.log('✅ Global database instance initialized and verified');
+      return db;
+    } catch (error) {
+      console.error('❌ Global database initialization failed:', error);
+      databaseInitializationPromise = null;
+      throw error;
+    }
+  })();
+
+  return databaseInitializationPromise;
+}
 
 // --- Real Enterprise Payment Processor ---
 class EnterprisePaymentProcessor {
@@ -157,66 +238,24 @@ class socialAnalytics {
   }
 }
 
-// Global state for social agent
-const socialAgentStatus = {
-  lastStatus: 'idle',
-  lastExecutionTime: 'Never',
-  totalSuccessfulPosts: 0,
-  totalFailedPosts: 0,
-  activeWorkers: 0,
-  workerStatuses: {},
-  totalRevenueGenerated: 0,
-  blockchainTransactions: 0
-};
-
-const mutex = new Mutex();
-const quantumDelay = (ms) => new Promise(resolve => {
-  const jitter = Math.floor(Math.random() * 3000) + 1000;
-  setTimeout(resolve, ms + jitter);
-});
-
-const PROFITABILITY_MATRIX = [
-  { country: 'United States', score: 100, currency: 'USD' },
-  { country: 'Singapore', score: 98, currency: 'SGD' },
-  { country: 'Switzerland', score: 95, currency: 'CHF' },
-  { country: 'United Arab Emirates', score: 92, currency: 'AED' },
-  { country: 'United Kingdom', score: 90, currency: 'GBP' },
-  { country: 'Hong Kong', score: 88, currency: 'HKD' },
-  { country: 'Germany', score: 82, currency: 'EUR' },
-  { country: 'Japan', score: 80, currency: 'JPY' },
-  { country: 'Canada', score: 78, currency: 'CAD' },
-  { country: 'Australia', score: 75, currency: 'AUD' },
-  { country: 'India', score: 70, currency: 'INR' },
-  { country: 'Nigeria', score: 68, currency: 'NGN' },
-  { country: 'Vietnam', score: 65, currency: 'VND' },
-  { country: 'Philippines', score: 62, currency: 'PHP' },
-  { country: 'Brazil', score: 60, currency: 'BRL' }
-];
-
-const WOMEN_TOP_SPENDING_CATEGORIES = [
-  'Luxury Goods', 'High-End Fashion', 'Beauty & Skincare', 'Health & Wellness',
-  'Travel & Experiences', 'Fine Jewelry', 'Exclusive Events', 'Smart Home Tech',
-  'Designer Pets & Accessories', 'Cryptocurrency Investments', 'NFT Collections',
-  'Sustainable Luxury', 'Digital Art', 'Virtual Real Estate'
-];
-
-// 🏆 CRITICAL FIX: Enhanced SocialAgent class with proper database initialization
+// 🏆 CRITICAL FIX: Enhanced socialAgent class with guaranteed database initialization
 class socialAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
-    this.db = null; // Will be initialized properly
+    this.db = null;
     this.platformClients = {};
     this.paymentProcessor = new EnterprisePaymentProcessor();
     this.analytics = new socialAnalytics(config.ANALYTICS_WRITE_KEY);
     this.walletInitialized = false;
     this.initialized = false;
     this.initializationPromise = null;
+    this.databaseInitialized = false;
   }
 
   async _initializeComponents() {
     try {
-      // 🏆 CRITICAL FIX: Initialize database first using global instance
+      // 🏆 CRITICAL FIX: Initialize database first with proper error handling
       await this._initializeDatabase();
       await this._initializePlatformClients();
       await this.paymentProcessor.initialize();
@@ -257,65 +296,82 @@ class socialAgent {
 
   async _initializeDatabase() {
     try {
-      // 🏆 CRITICAL FIX: Use global database instance or create new one
-      if (!globalDatabaseInstance) {
-        globalDatabaseInstance = await initializeDatabase('./data/social_agent.db');
-      }
-      this.db = globalDatabaseInstance;
-      
-      if (!this.db) {
-        throw new Error('Database initialization failed - null database instance');
-      }
+      // 🏆 CRITICAL FIX: Use global database initialization with verification
+      if (!this.databaseInitialized) {
+        this.db = await initializeGlobalDatabase();
+        
+        if (!this.db || typeof this.db.run !== 'function') {
+          throw new Error('Database instance is invalid or missing run method');
+        }
 
-      // Create social agent specific tables
-      const tables = [
-        `CREATE TABLE IF NOT EXISTS social_posts (
-          id TEXT PRIMARY KEY,
-          platform TEXT NOT NULL,
-          post_id TEXT,
-          content_title TEXT NOT NULL,
-          country TEXT NOT NULL,
-          currency TEXT NOT NULL,
-          interest_category TEXT NOT NULL,
-          success BOOLEAN NOT NULL,
-          revenue_generated REAL DEFAULT 0,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`,
-        `CREATE TABLE IF NOT EXISTS social_revenue (
-          id TEXT PRIMARY KEY,
-          amount REAL NOT NULL,
-          currency TEXT NOT NULL,
-          country TEXT NOT NULL,
-          transaction_hash TEXT,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`,
-        `CREATE TABLE IF NOT EXISTS platform_performance (
-          id TEXT PRIMARY KEY,
-          platform TEXT NOT NULL,
-          successful_posts INTEGER DEFAULT 0,
-          failed_posts INTEGER DEFAULT 0,
-          total_revenue REAL DEFAULT 0,
-          last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`,
-        `CREATE TABLE IF NOT EXISTS country_performance (
-          id TEXT PRIMARY KEY,
-          country TEXT NOT NULL,
-          total_revenue REAL DEFAULT 0,
-          posts_count INTEGER DEFAULT 0,
-          success_rate REAL DEFAULT 0,
-          last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`,
-        "CREATE INDEX IF NOT EXISTS idx_social_platform ON social_posts(platform)",
-        "CREATE INDEX IF NOT EXISTS idx_social_country ON social_posts(country)",
-        "CREATE INDEX IF NOT EXISTS idx_social_timestamp ON social_posts(timestamp)",
-        "CREATE INDEX IF NOT EXISTS idx_revenue_currency ON social_revenue(currency)"
-      ];
+        // Create social agent specific tables with error handling
+        const tables = [
+          `CREATE TABLE IF NOT EXISTS social_posts (
+            id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            post_id TEXT,
+            content_title TEXT NOT NULL,
+            country TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            interest_category TEXT NOT NULL,
+            success BOOLEAN NOT NULL,
+            revenue_generated REAL DEFAULT 0,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS social_revenue (
+            id TEXT PRIMARY KEY,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            country TEXT NOT NULL,
+            transaction_hash TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS platform_performance (
+            id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            successful_posts INTEGER DEFAULT 0,
+            failed_posts INTEGER DEFAULT 0,
+            total_revenue REAL DEFAULT 0,
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS country_performance (
+            id TEXT PRIMARY KEY,
+            country TEXT NOT NULL,
+            total_revenue REAL DEFAULT 0,
+            posts_count INTEGER DEFAULT 0,
+            success_rate REAL DEFAULT 0,
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`
+        ];
 
-      for (const tableSql of tables) {
-        await this.db.run(tableSql);
+        for (const tableSql of tables) {
+          try {
+            await this.db.run(tableSql);
+          } catch (tableError) {
+            this.logger.error(`Failed to create table: ${tableError.message}`);
+            // Continue with other tables even if one fails
+          }
+        }
+
+        // Create indexes
+        const indexes = [
+          "CREATE INDEX IF NOT EXISTS idx_social_platform ON social_posts(platform)",
+          "CREATE INDEX IF NOT EXISTS idx_social_country ON social_posts(country)",
+          "CREATE INDEX IF NOT EXISTS idx_social_timestamp ON social_posts(timestamp)",
+          "CREATE INDEX IF NOT EXISTS idx_revenue_currency ON social_revenue(currency)"
+        ];
+
+        for (const indexSql of indexes) {
+          try {
+            await this.db.run(indexSql);
+          } catch (indexError) {
+            this.logger.warn(`Failed to create index: ${indexError.message}`);
+          }
+        }
+
+        this.databaseInitialized = true;
+        this.logger.success('✅ Social Agent database initialized successfully');
       }
-      
-      this.logger.success('✅ Social Agent database initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize database:', error);
       throw error;
@@ -479,22 +535,33 @@ Send ${content.currency} to: ${paymentAddress}
   }
 
   async _recordPostToDatabase(platform, content, result, revenue = 0) {
-    const postId = `post_${crypto.randomBytes(8).toString('hex')}`;
-    
-    await this.db.run(
-      `INSERT INTO social_posts (id, platform, post_id, content_title, country, currency, interest_category, success, revenue_generated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [postId, platform, result.postId, content.title, content.country, content.currency, content.interest, result.success, revenue]
-    );
+    if (!this.db || typeof this.db.run !== 'function') {
+      this.logger.error('Database not available for recording post');
+      return;
+    }
 
-    // Update platform performance
-    await this._updatePlatformPerformance(platform, result.success, revenue);
+    try {
+      const postId = `post_${crypto.randomBytes(8).toString('hex')}`;
+      
+      await this.db.run(
+        `INSERT INTO social_posts (id, platform, post_id, content_title, country, currency, interest_category, success, revenue_generated)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [postId, platform, result.postId, content.title, content.country, content.currency, content.interest, result.success, revenue]
+      );
 
-    // Update country performance
-    await this._updateCountryPerformance(content.country, result.success, revenue);
+      // Update platform performance
+      await this._updatePlatformPerformance(platform, result.success, revenue);
+
+      // Update country performance
+      await this._updateCountryPerformance(content.country, result.success, revenue);
+    } catch (error) {
+      this.logger.error('Failed to record post to database:', error);
+    }
   }
 
   async _updatePlatformPerformance(platform, success, revenue) {
+    if (!this.db || typeof this.db.run !== 'function') return;
+
     try {
       const existing = await this.db.get(
         'SELECT * FROM platform_performance WHERE platform = ?',
@@ -524,6 +591,8 @@ Send ${content.currency} to: ${paymentAddress}
   }
 
   async _updateCountryPerformance(country, success, revenue) {
+    if (!this.db || typeof this.db.run !== 'function') return;
+
     try {
       const existing = await this.db.get(
         'SELECT * FROM country_performance WHERE country = ?',
@@ -588,11 +657,13 @@ Send ${content.currency} to: ${paymentAddress}
           
           // Record revenue in database
           const revenueId = `rev_${crypto.randomBytes(8).toString('hex')}`;
-          await this.db.run(
-            `INSERT INTO social_revenue (id, amount, currency, country, transaction_hash)
-             VALUES (?, ?, ?, ?, ?)`,
-            [revenueId, revenueAmount, content.currency, content.country, settlementResult.hash || settlementResult.signature]
-          );
+          if (this.db && typeof this.db.run === 'function') {
+            await this.db.run(
+              `INSERT INTO social_revenue (id, amount, currency, country, transaction_hash)
+               VALUES (?, ?, ?, ?, ?)`,
+              [revenueId, revenueAmount, content.currency, content.country, settlementResult.hash || settlementResult.signature]
+            );
+          }
 
           await this.analytics.track({
             event: 'social_revenue_generated',
@@ -651,6 +722,11 @@ Send ${content.currency} to: ${paymentAddress}
         // Ensure agent is initialized
         if (!this.initialized) {
           await this.initialize();
+        }
+
+        // Verify database is available
+        if (!this.db || typeof this.db.run !== 'function') {
+          throw new Error('Database not available for social agent operations');
         }
 
         // Initialize wallet connections if not already done
@@ -802,6 +878,10 @@ Send ${content.currency} to: ${paymentAddress}
 
   async getPerformanceStats(timeframe = '7 days') {
     try {
+      if (!this.db || typeof this.db.run !== 'function') {
+        throw new Error('Database not available for performance stats');
+      }
+
       const timeFilter = timeframe === '24 hours' ? 
         "timestamp > datetime('now', '-1 day')" :
         "timestamp > datetime('now', '-7 days')";
@@ -863,6 +943,7 @@ Send ${content.currency} to: ${paymentAddress}
     }
     this.initialized = false;
     this.initializationPromise = null;
+    this.databaseInitialized = false;
   }
 
   getStatus() {
@@ -870,14 +951,15 @@ Send ${content.currency} to: ${paymentAddress}
       ...socialAgentStatus,
       initialized: this.initialized,
       walletInitialized: this.walletInitialized,
-      databaseConnected: !!this.db,
+      databaseConnected: !!this.db && typeof this.db.run === 'function',
+      databaseInitialized: this.databaseInitialized,
       activePlatforms: Object.keys(this.platformClients).filter(p => this.platformClients[p].client).length,
       timestamp: new Date().toISOString()
     };
   }
 }
 
-// 🏆 CRITICAL FIX: Enhanced worker thread function with proper initialization
+// 🏆 CRITICAL FIX: Enhanced worker thread function with guaranteed database initialization
 async function workerThreadFunction() {
   const { config, workerId } = workerData;
   const workerLogger = {
@@ -890,24 +972,22 @@ async function workerThreadFunction() {
   try {
     workerLogger.info('🚀 Starting social agent worker thread...');
     
-    // 🏆 CRITICAL FIX: Initialize database first before creating SocialAgent
-    if (!globalDatabaseInstance) {
-      workerLogger.info('🗄️ Initializing database for worker thread...');
-      globalDatabaseInstance = await initializeDatabase('./data/social_agent.db');
-    }
+    // 🏆 CRITICAL FIX: Initialize database first with proper error handling
+    workerLogger.info('🗄️ Initializing database for worker thread...');
+    await initializeGlobalDatabase();
 
     // Create social agent instance
-    const socialAgent = new socialAgent(config, workerLogger);
+    const agent = new socialAgent(config, workerLogger);
     
     // Initialize the agent with proper error handling
-    await socialAgent.initialize();
+    await agent.initialize();
 
     workerLogger.success('✅ Social agent worker thread initialized successfully');
 
     // Main worker loop
     while (true) {
       try {
-        await socialAgent.run();
+        await agent.run();
         await quantumDelay(30000); // Run every 30 seconds
       } catch (error) {
         workerLogger.error('Worker execution error:', error);
@@ -920,7 +1000,7 @@ async function workerThreadFunction() {
   }
 }
 
-// 🏆 CRITICAL FIX: Main thread orchestration
+// 🏆 CRITICAL FIX: Main thread orchestration with proper error handling
 if (isMainThread) {
   const numThreads = process.env.SOCIAL_AGENT_THREADS || 3;
   const config = {
@@ -986,7 +1066,7 @@ if (isMainThread) {
           workerData: { workerId: i + 1, config }
         });
         setupWorkerEvents(newWorker, i + 1);
-      }, 10000); // Increased delay to 10 seconds
+      }, 10000);
     });
 
     function setupWorkerEvents(worker, workerId) {
@@ -1026,8 +1106,8 @@ if (isMainThread) {
   });
 }
 
-// 🏆 CRITICAL FIX: Export the socialAgent class and status - FIXED FOR DEFAULT EXPORT
+// 🏆 CRITICAL FIX: Export the socialAgent class and status - MAINTAINING EXACT STRUCTURE
 export { socialAgent, socialAgentStatus };
 
-// 🏆 CRITICAL FIX: Add default export for compatibility with autonomous-ai-engine.js
+// 🏆 CRITICAL FIX: Default export for compatibility with autonomous-ai-engine.js
 export default socialAgent;
