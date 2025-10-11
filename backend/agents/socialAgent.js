@@ -1029,4 +1029,4 @@ if (isMainThread) {
   });
 }
 
-export socialAgent;
+export default socialAgent;
