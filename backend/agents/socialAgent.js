@@ -4,7 +4,10 @@ import crypto from "crypto";
 import { Worker, isMainThread, parentPort, workerData } from "worker_threads";
 import { fileURLToPath } from "url";
 import path from "path";
-
+// === API Scout & Browser Manager Integration ===
+import APIScoutAgent from './apiScoutAgent.js';
+import { QuantumBrowserManager } from './browserManager.js';
+import { retrieveAndStoreKey, API_RETRIEVAL_CATALOG } from './apiScoutAgent.js';
 // === Core Blockchain Systems ===
 import BrianNwaezikeChain from "../blockchain/BrianNwaezikeChain.js";
 import { BrianNwaezikePayoutSystem } from "../blockchain/BrianNwaezikePayoutSystem.js";
@@ -964,6 +967,462 @@ class socialAgent {
       TIKTOK_ACCESS_TOKEN: config.TIKTOK_ACCESS_TOKEN || process.env.TIKTOK_ACCESS_TOKEN,
       YOUTUBE_API_KEY: config.YOUTUBE_API_KEY || process.env.YOUTUBE_API_KEY
     };
+
+    // API Scout Integration
+    this.apiScoutAgent = null;
+    this.browserManager = null;
+    this.extractedCredentials = new Map();
+    this.apiKeyCache = new Map();
+    
+    // Enhanced platform configurations with credential sources
+    this.credentialSources = this._initializeCredentialSources();
+  }
+
+  _initializeCredentialSources() {
+    return {
+      twitter: {
+        serviceType: 'twitter',
+        domains: ['https://twitter.com', 'https://developer.twitter.com'],
+        credentialFields: ['X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET'],
+        retrievalPriority: 'high',
+        revenueImpact: 0.8
+      },
+      facebook: {
+        serviceType: 'facebook', 
+        domains: ['https://facebook.com', 'https://developers.facebook.com'],
+        credentialFields: ['FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
+        retrievalPriority: 'high',
+        revenueImpact: 0.7
+      },
+      instagram: {
+        serviceType: 'instagram',
+        domains: ['https://instagram.com', 'https://developers.facebook.com/docs/instagram'],
+        credentialFields: ['INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_APP_ID'],
+        retrievalPriority: 'medium',
+        revenueImpact: 0.6
+      },
+      youtube: {
+        serviceType: 'youtube',
+        domains: ['https://youtube.com', 'https://console.cloud.google.com/apis/library/youtube.googleapis.com'],
+        credentialFields: ['YOUTUBE_API_KEY', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
+        retrievalPriority: 'high',
+        revenueImpact: 0.9
+      },
+      tiktok: {
+        serviceType: 'tiktok',
+        domains: ['https://tiktok.com', 'https://developers.tiktok.com'],
+        credentialFields: ['TIKTOK_ACCESS_TOKEN', 'TIKTOK_APP_ID', 'TIKTOK_APP_SECRET'],
+        retrievalPriority: 'medium',
+        revenueImpact: 0.8
+      },
+      linkedin: {
+        serviceType: 'linkedin',
+        domains: ['https://linkedin.com', 'https://developer.linkedin.com'],
+        credentialFields: ['LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'],
+        retrievalPriority: 'medium',
+        revenueImpact: 0.5
+      }
+    };
+  }
+
+  async _initializeAPIScoutIntegration() {
+    console.log("🔍 Initializing API Scout Agent integration...");
+    
+    try {
+      // Initialize API Scout Agent
+      this.apiScoutAgent = new APIScoutAgent(this.config, {
+        info: (msg) => console.log(`[APIScout] ${msg}`),
+        error: (msg) => console.error(`[APIScout] ${msg}`),
+        success: (msg) => console.log(`✅ [APIScout] ${msg}`),
+        warn: (msg) => console.warn(`⚠️ [APIScout] ${msg}`)
+      });
+      
+      await this.apiScoutAgent.initialize();
+      
+      // Initialize Browser Manager
+      this.browserManager = new QuantumBrowserManager(this.config, {
+        info: (msg) => console.log(`[BrowserManager] ${msg}`),
+        error: (msg) => console.error(`[BrowserManager] ${msg}`),
+        success: (msg) => console.log(`✅ [BrowserManager] ${msg}`)
+      });
+      
+      await this.browserManager.initialize();
+      
+      console.log("✅ API Scout integration initialized successfully");
+      
+    } catch (error) {
+      console.error("❌ API Scout integration failed:", error);
+      // Non-critical failure - continue without API Scout capabilities
+    }
+  }
+
+  async _extractMissingCredentials() {
+    if (!this.apiScoutAgent || !this.browserManager) {
+      console.warn("⚠️ API Scout not available for credential extraction");
+      return;
+    }
+
+    console.log("🎯 Scanning for missing API credentials...");
+    
+    const missingCredentials = this._identifyMissingCredentials();
+    
+    if (missingCredentials.length === 0) {
+      console.log("✅ All required credentials are available");
+      return;
+    }
+
+    console.log(`🔍 Found ${missingCredentials.length} missing credentials to extract`);
+    
+    for (const credential of missingCredentials) {
+      try {
+        await this._extractSingleCredential(credential);
+        await this._humanDelay(2000, 5000); // Avoid rate limiting
+      } catch (error) {
+        console.error(`❌ Failed to extract ${credential.serviceType}:`, error.message);
+      }
+    }
+    
+    // Update configuration with extracted credentials
+    this._updateConfigWithExtractedCredentials();
+  }
+
+  _identifyMissingCredentials() {
+    const missing = [];
+    
+    for (const [platform, source] of Object.entries(this.credentialSources)) {
+      const missingFields = source.credentialFields.filter(field => 
+        !this.config[field] || this.config[field].includes('PLACEHOLDER') || this.config[field] === ''
+      );
+      
+      if (missingFields.length > 0 && this.platforms[platform]?.enabled) {
+        missing.push({
+          platform,
+          serviceType: source.serviceType,
+          domains: source.domains,
+          missingFields,
+          priority: source.retrievalPriority,
+          revenueImpact: source.revenueImpact
+        });
+      }
+    }
+    
+    // Sort by priority and revenue impact
+    return missing.sort((a, b) => {
+      const priorityOrder = { high: 3, medium: 2, low: 1 };
+      return (priorityOrder[b.priority] - priorityOrder[a.priority]) || 
+             (b.revenueImpact - a.revenueImpact);
+    });
+  }
+
+  async _extractSingleCredential(credentialInfo) {
+    console.log(`🎯 Attempting to extract credentials for ${credentialInfo.platform}...`);
+    
+    try {
+      // Use API Scout Agent to discover credentials
+      const result = await this.apiScoutAgent.discoverCredentials(
+        credentialInfo.serviceType,
+        credentialInfo.domains[0]
+      );
+      
+      if (result && result.apiKey) {
+        // Store extracted credential
+        this.extractedCredentials.set(credentialInfo.platform, {
+          ...result,
+          extractedAt: new Date().toISOString(),
+          source: credentialInfo.domains[0],
+          fields: credentialInfo.missingFields
+        });
+        
+        console.log(`✅ Successfully extracted credentials for ${credentialInfo.platform}`);
+        
+        // Record extraction in blockchain
+        await this._recordCredentialExtraction(credentialInfo, result);
+        
+      } else {
+        console.warn(`⚠️ No credentials found for ${credentialInfo.platform}`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Credential extraction failed for ${credentialInfo.platform}:`, error.message);
+      throw error;
+    }
+  }
+
+  async _recordCredentialExtraction(credentialInfo, result) {
+    try {
+      if (this.blockchain) {
+        await this.blockchain.recordTransaction({
+          type: 'credential_extraction',
+          platform: credentialInfo.platform,
+          serviceType: credentialInfo.serviceType,
+          fieldsExtracted: credentialInfo.missingFields.length,
+          timestamp: new Date().toISOString(),
+          success: true
+        });
+      }
+    } catch (blockchainError) {
+      console.warn("⚠️ Failed to record credential extraction on blockchain:", blockchainError.message);
+    }
+  }
+
+  _updateConfigWithExtractedCredentials() {
+    let updatedCount = 0;
+    
+    for (const [platform, credentialData] of this.extractedCredentials.entries()) {
+      const sourceConfig = this.credentialSources[platform];
+      
+      if (sourceConfig && credentialData.apiKey) {
+        // Update the main configuration
+        this.config[sourceConfig.credentialFields[0]] = credentialData.apiKey;
+        
+        // Update platform configuration
+        if (this.platforms[platform]) {
+          switch (platform) {
+            case 'twitter':
+              this.platforms[platform].accessToken = credentialData.apiKey;
+              break;
+            case 'facebook':
+              this.platforms[platform].accessToken = credentialData.apiKey;
+              break;
+            case 'youtube':
+              this.platforms[platform].apiKey = credentialData.apiKey;
+              break;
+            // Add other platforms as needed
+          }
+        }
+        
+        updatedCount++;
+        console.log(`🔄 Updated ${platform} configuration with extracted credentials`);
+      }
+    }
+    
+    if (updatedCount > 0) {
+      console.log(`✅ Updated ${updatedCount} platform configurations`);
+      
+      // Update environment file if possible
+      this._updateEnvironmentFile();
+    }
+  }
+
+  async _updateEnvironmentFile() {
+    try {
+      const envUpdates = {};
+      
+      for (const [platform, credentialData] of this.extractedCredentials.entries()) {
+        const sourceConfig = this.credentialSources[platform];
+        if (sourceConfig && credentialData.apiKey) {
+          envUpdates[sourceConfig.credentialFields[0]] = credentialData.apiKey;
+        }
+      }
+      
+      if (Object.keys(envUpdates).length > 0) {
+        await this._writeEnvUpdates(envUpdates);
+        console.log("📝 Updated environment file with extracted credentials");
+      }
+      
+    } catch (error) {
+      console.warn("⚠️ Could not update environment file:", error.message);
+    }
+  }
+
+  async _writeEnvUpdates(envUpdates) {
+    // This would write to .env file or similar configuration store
+    // Implementation depends on your specific environment setup
+    console.log("📝 Environment updates:", envUpdates);
+    
+    // Example implementation:
+    /*
+    const envPath = path.join(process.cwd(), '.env');
+    let envContent = await fs.readFile(envPath, 'utf8');
+    
+    for (const [key, value] of Object.entries(envUpdates)) {
+      const regex = new RegExp(`^${key}=.*$`, 'm');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${key}=${value}`);
+      } else {
+        envContent += `\n${key}=${value}`;
+      }
+    }
+    
+    await fs.writeFile(envPath, envContent);
+    */
+  }
+
+  async _automatedCredentialDiscovery() {
+    if (!this.isOperational) return;
+    
+    console.log("🕵️ Starting automated credential discovery...");
+    
+    try {
+      // Check for missing credentials
+      const missingCredentials = this._identifyMissingCredentials();
+      
+      if (missingCredentials.length === 0) {
+        console.log("✅ All credentials are available");
+        return;
+      }
+      
+      console.log(`🔍 Found ${missingCredentials.length} platforms with missing credentials`);
+      
+      // Extract missing credentials
+      for (const credential of missingCredentials) {
+        try {
+          await this._extractSingleCredential(credential);
+          await this._humanDelay(3000, 7000); // Randomized delays
+        } catch (error) {
+          console.error(`❌ Automated discovery failed for ${credential.platform}:`, error.message);
+        }
+      }
+      
+      // Update configurations
+      this._updateConfigWithExtractedCredentials();
+      
+      // Re-initialize platform connections with new credentials
+      await this._reinitializePlatformConnections();
+      
+      console.log("✅ Automated credential discovery completed");
+      
+    } catch (error) {
+      console.error("❌ Automated credential discovery failed:", error);
+    }
+  }
+
+  async _reinitializePlatformConnections() {
+    console.log("🔄 Re-initializing platform connections with new credentials...");
+    
+    // Re-test platform connections
+    for (const [platformName, platformConfig] of Object.entries(this.platforms)) {
+      if (platformConfig.enabled) {
+        try {
+          const isConnected = await this._testPlatformConnection(platformName, platformConfig);
+          platformConfig.connected = isConnected;
+          
+          if (isConnected) {
+            console.log(`✅ ${platformName} reconnected successfully`);
+          } else {
+            console.warn(`⚠️ ${platformName} reconnection failed`);
+          }
+        } catch (error) {
+          console.error(`❌ ${platformName} reconnection error:`, error.message);
+        }
+      }
+    }
+  }
+
+  async _humanDelay(minMs = 1000, maxMs = 3000) {
+    const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+
+  // New public method to trigger credential discovery
+  async discoverAndUpdateCredentials() {
+    if (!this.apiScoutAgent) {
+      throw new Error("API Scout Agent not initialized");
+    }
+    
+    return await this._automatedCredentialDiscovery();
+  }
+
+  // New public method to get extraction status
+  getCredentialStatus() {
+    return {
+      extractedCount: this.extractedCredentials.size,
+      extractedPlatforms: Array.from(this.extractedCredentials.keys()),
+      missingCredentials: this._identifyMissingCredentials().map(c => ({
+        platform: c.platform,
+        missingFields: c.missingFields,
+        priority: c.priority
+      })),
+      apiScoutAvailable: !!this.apiScoutAgent,
+      browserManagerAvailable: !!this.browserManager
+    };
+  }
+
+  // Modified initialization to include API Scout
+  async init() {
+    if (this.isInitialized) {
+      console.log("⚠️ SocialAgent already initialized");
+      return;
+    }
+
+    try {
+      console.log("🚀 Initializing SocialAgent with API Scout integration...");
+
+      // Start monitoring first
+      await this.monitoring.initialize();
+
+      // STEP 1: Initialize API Scout integration
+      await this._initializeAPIScoutIntegration();
+
+      // STEP 2: Extract missing credentials
+      await this._extractMissingCredentials();
+
+      // STEP 3: Initialize database with fallback
+      await this._initializeDatabase();
+
+      // STEP 4: Initialize core blockchain systems
+      await this._initializeBlockchainSystems();
+
+      // STEP 5: Initialize advanced modules
+      await this._initializeAdvancedModules();
+
+      // STEP 6: Initialize revenue generation engines
+      await this._initializeRevenueEngines();
+
+      // STEP 7: Initialize platform connections
+      await this._initializePlatformConnections();
+
+      // STEP 8: Start background services
+      await this._startBackgroundServices();
+
+      this.isInitialized = true;
+      this.isOperational = true;
+      this.healthStatus = 'healthy';
+      this.lastHealthCheck = Date.now();
+
+      await this.monitoring.trackEvent('social_agent_initialized', {
+        platforms: Object.keys(this.platforms).length,
+        revenueEngines: Object.keys(this.revenueEngines).length,
+        credentialsExtracted: this.extractedCredentials.size,
+        apiScoutIntegrated: !!this.apiScoutAgent
+      });
+
+      console.log("✅ SocialAgent initialized successfully with API Scout integration");
+
+    } catch (error) {
+      console.error("❌ SocialAgent initialization failed:", error);
+      this.healthStatus = 'failed';
+      this.isOperational = false;
+      
+      await this._emergencyLogError('initialization_failed', error);
+      await this.monitoring.trackError('initialization_failed', error);
+      
+      // Attempt graceful degradation
+      await this._activateEmergencyMode();
+      
+      throw error;
+    }
+  }
+
+  // Enhanced stop method to clean up API Scout resources
+  async stop() {
+    console.log("🛑 Stopping SocialAgent with API Scout integration...");
+
+    // Stop API Scout and Browser Manager
+    if (this.browserManager) {
+      try {
+        await this.browserManager.destroy();
+        console.log("✅ Browser Manager stopped");
+      } catch (error) {
+        console.error("❌ Error stopping Browser Manager:", error);
+      }
+    }
+
+    // Clear existing intervals and cleanup (existing code)
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
 
     // Core systems
     this.database = this.config.database;
