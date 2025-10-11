@@ -13,8 +13,9 @@
     "averageGasUsed": 0
   },
   "scripts": {
-    "start": "node arielsql_suite/main.js",
-    "dev": "nodemon backend/server.js",
+    "start": "dotenv -e .env -- node arielsql_suite/main.js",
+    "dev": "nodemon arielsql_suite/main.js",
+    "backend": "node backend/server.js",
     "precommit": "node scripts/precommit.js",
     "test": "jest",
     "refresh-lock": "rm -f package-lock.json && npm install",
@@ -23,9 +24,7 @@
     "monitor": "node scripts/system-monitor.js",
     "payout-agent": "node backend/agents/payoutAgent.js",
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
-    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
-    "start": "dotenv -e .env -- node arielsql_suite/main.js"
-
+    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -69,10 +68,10 @@
     "pqc-dilithium": "file:./modules/pqc-dilithium",
     "@huggingface/inference": "^2.6.0",
     "ccxt": "^4.1.89",
-     "tesseract.js": "^4.1.1",
+    "tesseract.js": "^4.1.1",
     "sharp": "^0.32.0",
     "are-we-there-yet": "^3.0.0",
-     "rimraf": "^5.0.5",
+    "rimraf": "^5.0.5",
     "gauge": "^4.0.4",
     "@npmcli/fs": "^3.1.0",
     "@npmcli/move-file": "^3.0.0",
