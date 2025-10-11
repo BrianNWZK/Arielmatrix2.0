@@ -85,7 +85,7 @@ class EnterpriseDataAnalytics {
         profitabilityScore,
         metadata: options,
         blockchainVerified: true,
-        analysisId: `analysis_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+        analysisId: `analysis_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`
       };
 
       this.metrics.analyticsGenerated++;
@@ -113,7 +113,7 @@ class EnterpriseDataAnalytics {
     }
 
     try {
-      const eventId = `evt_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+      const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
       const eventData = {
         eventId,
         trackedAt: new Date().toISOString(),
@@ -153,11 +153,18 @@ class EnterpriseDataAnalytics {
   }
 
   _hashData(data) {
-    return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
+    // Simple hash implementation without crypto dependency
+    let hash = 0;
+    for (let i = 0; i < data.length; i++) {
+      const char = data.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(16).substring(0, 16);
   }
 
   _generateSessionId() {
-    return `sess_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
   }
 
   _isSignificantEvent(eventName) {
@@ -267,7 +274,7 @@ async function initializeBlockchainSystem() {
 }
 
 // --- Get current credentials for other modules ---
-export function getCurrentCredentials() {
+function getCurrentCredentials() {
   return currentCredentials;
 }
 
@@ -420,7 +427,7 @@ function createExpressApplication() {
         server: true,
         credentials: !!currentCredentials
       },
-      port: process.env.PORT || 3000,
+      port: process.env.PORT || 10000,
       host: '0.0.0.0'
     };
 
@@ -449,7 +456,7 @@ function createExpressApplication() {
       const analysis = await enterpriseDataAnalytics.analyze(data, options);
       res.json(analysis);
     } catch (error) {
-      logger.error('Analytics endpoint error:', error);
+      getGlobalLogger().error('Analytics endpoint error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -466,7 +473,7 @@ function createExpressApplication() {
       const event = await enterpriseDataAnalytics.trackEvent(eventName, properties);
       res.json(event);
     } catch (error) {
-      logger.error('Events endpoint error:', error);
+      getGlobalLogger().error('Events endpoint error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -488,7 +495,7 @@ function createExpressApplication() {
           uptime: process.uptime(),
           memory: process.memoryUsage(),
           timestamp: Date.now(),
-          port: process.env.PORT || 3000
+          port: process.env.PORT || 10000
         },
         credentials: {
           hasCredentials: !!currentCredentials,
@@ -499,7 +506,7 @@ function createExpressApplication() {
       
       res.json(metrics);
     } catch (error) {
-      logger.error('Metrics endpoint error:', error);
+      getGlobalLogger().error('Metrics endpoint error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -526,7 +533,7 @@ function createExpressApplication() {
   
   // Enhanced error handler
   app.use((error, req, res, next) => {
-    logger.error('Unhandled application error:', error);
+    getGlobalLogger().error('Unhandled application error:', error);
     res.status(500).json({
       error: 'Internal server error',
       message: error.message,
@@ -534,7 +541,7 @@ function createExpressApplication() {
     });
   });
   
-  logger.info('✅ Express application configured successfully');
+  getGlobalLogger().info('✅ Express application configured successfully');
   return app;
 }
 
@@ -543,7 +550,7 @@ function createServer(app) {
   const logger = getGlobalLogger();
   
   // CRITICAL FIX: Proper port binding for Render/container deployment
-  const PORT = process.env.PORT || 3000;
+  const PORT = process.env.PORT || 10000;
   const HOST = '0.0.0.0'; // Essential for container binding
   
   const server = http.createServer(app);
@@ -578,7 +585,7 @@ async function initializeArielSQLSuite() {
   
   // Log critical deployment information
   console.log(`🌐 Deployment Environment: ${process.env.NODE_ENV || 'production'}`);
-  console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '3000 (default)'}`);
+  console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '10000 (default)'}`);
   console.log(`🏠 Binding Host: 0.0.0.0 (container-compatible)`);
   
   // Initialize core systems first
@@ -745,14 +752,13 @@ if (import.meta.url === `file://${process.argv[1]}` || process.env.NODE_ENV === 
   });
 }
 
-// Export everything for module usage
+// Export everything for module usage - REMOVED DUPLICATE EXPORTS
 export {
   initializeArielSQLSuite,
   enterpriseDataAnalytics,
   loadBwaeziMainnetEssentials,
   createExpressApplication,
   createServer,
-  getCurrentCredentials,
   VALIDATED_ENDPOINTS
 };
 
