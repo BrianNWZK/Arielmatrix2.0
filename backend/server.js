@@ -6,9 +6,7 @@
  */
 
 import { ApolloServer } from '@apollo/server';
-import { startStandaloneServer } from '@apollo/server/standalone';
-import { typeDefs } from './graphql/schema.js'; // ✅ USE EXISTING SCHEMA
-import { resolvers } from './graphql/resolvers.js'; // ✅ USE EXISTING RESOLVERS
+import { startStandaloneServer } from '@apollo/server/standalone'; // ✅ CORRECT IMPORT
 import cors from 'cors';
 import express from 'express';
 import 'dotenv/config';
@@ -252,16 +250,66 @@ export function getRootEndpointData() {
     };
 }
 
-// GraphQL Setup Functions - USING EXISTING SCHEMA AND RESOLVERS
+// GraphQL Setup Functions - USING CORRECT STANDALONE PATTERN
 export async function createGraphQLServer() {
     try {
+        const typeDefs = `#graphql
+            type Query {
+                health: String
+                blockchainStatus: String
+                dataAgentStatus: String
+            }
+            
+            type Mutation {
+                startDataCollection: String
+            }
+        `;
+
+        const resolvers = {
+            Query: {
+                health: () => 'OK',
+                blockchainStatus: () => blockchainInstance ? 'CONNECTED' : 'DISCONNECTED',
+                dataAgentStatus: async () => {
+                    try {
+                        const { getStatus } = await import('./agents/dataAgent.js');
+                        const status = getStatus();
+                        return status.lastStatus || 'UNKNOWN';
+                    } catch (error) {
+                        return 'ERROR: ' + error.message;
+                    }
+                }
+            },
+            Mutation: {
+                startDataCollection: async () => {
+                    try {
+                        const DataAgent = await import('./agents/dataAgent.js');
+                        const logger = {
+                            info: (...args) => console.log('📊 [DataAgent]', ...args),
+                            error: (...args) => console.error('❌ [DataAgent]', ...args)
+                        };
+                        
+                        const dataAgent = new DataAgent.default({
+                            ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
+                            COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS
+                        }, logger);
+                        
+                        await dataAgent.initialize();
+                        const result = await dataAgent.run();
+                        return `Data collection started: ${JSON.stringify(result)}`;
+                    } catch (error) {
+                        return `Error: ${error.message}`;
+                    }
+                }
+            }
+        };
+
         const server = new ApolloServer({
             typeDefs,
             resolvers,
             introspection: true
         });
 
-        console.log('✅ GraphQL server created successfully using existing schema and resolvers');
+        console.log('✅ GraphQL server created successfully (standalone mode)');
         return server;
     } catch (error) {
         console.error('❌ GraphQL server creation failed:', error);
