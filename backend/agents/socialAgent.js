@@ -1015,8 +1015,8 @@ if (isMainThread) {
     }
   }
 
- // Export the main SocialAgent class for single-threaded use
-// Export the main SocialAgent class for single-threaded use
+ 
+// Export the main socialAgent class for single-threaded use
   module.exports = { 
     socialAgent, 
     socialAgentStatus 
@@ -1028,3 +1028,5 @@ if (isMainThread) {
     process.exit(1);
   });
 }
+
+export socialAgent;
