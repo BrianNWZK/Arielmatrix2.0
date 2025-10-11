@@ -1,4 +1,4 @@
-// backend/agents/socialAgent.js - PRODUCTION READY v4.3 - FIXED
+// backend/agents/socialAgent.js - PRODUCTION READY v4.3 - FIXED & ENHANCED
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
 import { Mutex } from 'async-mutex';
@@ -35,6 +35,9 @@ const __dirname = path.dirname(__filename);
 
 // Global database instance
 let globalDatabaseInstance = null;
+
+// Check if running in worker thread
+const isWorkerThread = !isMainThread && parentPort;
 
 // --- Real Enterprise Payment Processor ---
 class EnterprisePaymentProcessor {
@@ -103,7 +106,7 @@ class EnterprisePaymentProcessor {
 }
 
 // --- Real-Time Analytics Integration ---
-class socialAnalytics {
+class SocialAnalytics {
   constructor(writeKey) {
     this.writeKey = writeKey;
     this.blockchain = new BrianNwaezikeChain({
@@ -198,7 +201,7 @@ const WOMEN_TOP_SPENDING_CATEGORIES = [
 ];
 
 // 🏆 CRITICAL FIX: Enhanced SocialAgent class with proper database initialization
-class socialAgent {
+class SocialAgent {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
@@ -894,7 +897,7 @@ async function workerThreadFunction() {
     }
 
     // Create social agent instance
-    const socialAgent = new socialAgent(config, workerLogger);
+    const socialAgent = new SocialAgent(config, workerLogger);
     
     // Initialize the agent with proper error handling
     await socialAgent.initialize();
@@ -917,7 +920,7 @@ async function workerThreadFunction() {
   }
 }
 
-// Main thread orchestration
+// 🏆 CRITICAL FIX: Main thread orchestration - MOVE EXPORTS BEFORE MAIN LOGIC
 if (isMainThread) {
   const numThreads = process.env.SOCIAL_AGENT_THREADS || 3;
   const config = {
@@ -1003,29 +1006,25 @@ if (isMainThread) {
         socialAgentStatus.workerStatuses[`worker-${workerId}`] = `exited: ${code}`;
         console.log(`Worker ${workerId} exited with code ${code}`);
         
-        // Auto-restart worker with delay
+        // Auto-restart with exponential backoff
+        const restartDelay = Math.min(60000, 10000 * Math.pow(2, 3)); // Max 1 minute
         setTimeout(() => {
-          console.log(`🔄 Restarting Worker ${workerId}`);
+          console.log(`🔄 Restarting Worker ${workerId} after delay`);
           const newWorker = new Worker(__filename, {
             workerData: { workerId, config }
           });
           setupWorkerEvents(newWorker, workerId);
-        }, 10000);
+        }, restartDelay);
       });
     }
   }
-
- 
-// Export the main socialAgent class
-export { socialAgent, socialAgentStatus };
-
-// Export default for easier imports
-export default socialAgent;
-
-// Worker thread execution
-if (isWorkerThread) {
+} else {
+  // 🏆 CRITICAL FIX: Worker thread execution
   workerThreadFunction().catch(error => {
-    console.error('Worker thread fatal error:', error);
+    console.error('💀 Worker thread fatal error:', error);
     process.exit(1);
   });
 }
+
+// 🏆 CRITICAL FIX: Export the SocialAgent class and status - FIXED SYNTAX
+export { SocialAgent as socialAgent, socialAgentStatus };
