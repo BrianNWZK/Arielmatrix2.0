@@ -186,14 +186,14 @@ class EnterpriseDataAnalytics {
 const enterpriseDataAnalytics = new EnterpriseDataAnalytics();
 
 // --- Global configuration with validated endpoints ---
+// 🔴 CREDENTIALS FIX: Remove hardcoded placeholder constants from VALIDATED_ENDPOINTS.
+// Keep only the RPC URLs for the Chain class to manage.
 const VALIDATED_ENDPOINTS = {
-  BWAEZI_RPC_URL: process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc",
-  BWAEZI_CHAIN_ID: 777777,
-  BWAEZI_CONTRACT_ADDRESS: "0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1",
+  // BWAEZI_RPC_URL, BWAEZI_CHAIN_ID, BWAEZI_CONTRACT_ADDRESS removed
   SOLANA_RPC_URL: "https://api.mainnet-beta.solana.com",
   FALLBACK_RPC_URLS: [
     process.env.BWAEZI_RPC_URL || "https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc",
-    "https://rpc.winr.games"
+    "https://rpc.winr.games" // 🟢 Working RPC is a critical part of the fallback list
   ]
 };
 
@@ -231,7 +231,6 @@ function initializeWorkerSafeModules() {
 // --- Lean Bwaezi Config Loader using BrianNwaezikeChain ---
 async function loadBwaeziMainnetEssentials() {
   const logger = getGlobalLogger();
-  
   logger.warn('*** PRODUCTION MAINNET: EXTRACTING REAL BWAEZI CHAIN CREDENTIALS ***');
 
   try {
@@ -247,47 +246,46 @@ async function loadBwaeziMainnetEssentials() {
         logger.info(`📊 LATEST BLOCK: ${credentials.blockNumber}`);
         logger.info(`📝 CONTRACT: ${credentials.BWAEZI_CONTRACT_ADDRESS}`);
         logger.info(`❤️ HEALTH: ${credentials.healthStatus}`);
-        
         return credentials;
       }
     }
 
-    // Initialize new blockchain instance using BrianNwaezikeChain
+    // 🚀 ENHANCEMENT: Initializing new blockchain instance for credential extraction, 
+    // letting the chain object handle dynamic retrieval internally.
     logger.info('🚀 Initializing new BrianNwaezikeChain instance for credential extraction...');
-    
     const blockchainConfig = {
       network: 'mainnet',
-      rpcUrl: VALIDATED_ENDPOINTS.BWAEZI_RPC_URL,
-      chainId: VALIDATED_ENDPOINTS.BWAEZI_CHAIN_ID,
-      contractAddress: VALIDATED_ENDPOINTS.BWAEZI_CONTRACT_ADDRESS,
+      // Pass the known working RPC as a starting point
+      rpcUrl: VALIDATED_ENDPOINTS.FALLBACK_RPC_URLS[1], // Use the working RPC directly
       solanaRpcUrl: VALIDATED_ENDPOINTS.SOLANA_RPC_URL
+      // Chain ID and Contract Address are omitted—they will be fetched internally by .init()
     };
-
     const chainInstance = await createBrianNwaezikeChain(blockchainConfig);
-    const credentials = await chainInstance.getRealCredentials();
     
-    if (credentials && credentials.BWAEZI_RPC_URL) {
-      logger.info('✅ SUCCESS: New blockchain instance initialized and credentials extracted');
+    // The credentials are now extracted *after* the chain successfully fetches them and initializes
+    const credentials = await chainInstance.getRealCredentials(); 
+    
+    if (credentials && credentials.BWAEZI_CHAIN_ID) {
+      logger.info('✅ SUCCESS: New blockchain instance initialized and real credentials extracted');
       return credentials;
     } else {
-      throw new Error('Failed to extract valid credentials from new chain instance');
+      throw new Error('Failed to extract valid real credentials from new chain instance');
     }
 
   } catch (extractionError) {
     logger.error(`❌ Failed to extract credentials from blockchain instance: ${extractionError.message}`);
-    
-    // Fallback to validated endpoints
+    // Fallback to minimal static placeholder values if RPC fetch fails
     return {
-      BWAEZI_RPC_URL: VALIDATED_ENDPOINTS.BWAEZI_RPC_URL,
-      BWAEZI_CHAIN_ID: VALIDATED_ENDPOINTS.BWAEZI_CHAIN_ID,
-      BWAEZI_CONTRACT_ADDRESS: VALIDATED_ENDPOINTS.BWAEZI_CONTRACT_ADDRESS,
+      BWAEZI_RPC_URL: VALIDATED_ENDPOINTS.FALLBACK_RPC_URLS[1], // Fallback to known working RPC
+      BWAEZI_CHAIN_ID: 777777, // Emergency Placeholder ID
+      BWAEZI_CONTRACT_ADDRESS: '0x0000000000000000000000000000000000000000', // Emergency Placeholder Contract
       BWAEZI_ABI: [],
-      BWAEZI_SECRET_REF: 'VALIDATED_PRODUCTION_ENDPOINT',
-      verificationStatus: 'SUCCESS - Production Validated Configuration',
-      rpcSource: 'PRODUCTION_VALIDATED',
+      BWAEZI_SECRET_REF: 'EMERGENCY_STATIC_FALLBACK',
+      verificationStatus: 'FAILURE - Emergency Static Configuration',
+      rpcSource: 'EMERGENCY_VALIDATED',
       timestamp: Date.now(),
-      blockNumber: 65743313,
-      healthStatus: 'HEALTHY'
+      blockNumber: 0,
+      healthStatus: 'UNHEALTHY'
     };
   }
 }
