@@ -27,12 +27,13 @@ async function initializeCoreSystems() {
     try {
         // Initialize blockchain only
         console.log('🔗 Initializing Bwaezi Blockchain...');
+        // 🔴 CREDENTIALS FIX: Remove hardcoded placeholder chainId and contractAddress.
+        // The BrianNwaezikeChain class now dynamically loads these from the working RPC.
         blockchainInstance = await createBrianNwaezikeChain({
-            rpcUrl: process.env.BWAEZI_RPC_URL || 'https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc',
-            chainId: 777777,
-            contractAddress: '0x4B6E1F4249C03C2E28822A9F52d9C8d5B7E580A1',
+            rpcUrl: 'https://rpc.winr.games', // Use working RPC directly for initialization
             network: 'mainnet'
         });
+        
         console.log('✅ Blockchain initialized successfully');
 
         return true;
