@@ -625,7 +625,7 @@ class EnterpriseMonitoring {
 // SERVICE MANAGER CLASS (UPDATED WITH INTEGRATED MONITORING)
 // ====================================================================
 
-class serviceManager {
+class ServiceManager {
   constructor(config = {}) {
     this.config = {
       port: config.port || process.env.PORT || 10000,
@@ -671,7 +671,7 @@ class serviceManager {
 
     // Enterprise monitoring - NOW FULLY INTEGRATED
     this.monitoring = new EnterpriseMonitoring({
-      serviceName: 'serviceManager',
+      serviceName: 'ServiceManager',
       mainnet: this.config.mainnet,
       logLevel: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
       ...this.config.monitoringConfig
@@ -685,12 +685,12 @@ class serviceManager {
 
   async initialize() {
     if (this.isInitialized) {
-      console.log("⚠️ serviceManager already initialized");
+      console.log("⚠️ ServiceManager already initialized");
       return;
     }
 
     try {
-      console.log("🚀 Initializing serviceManager with Enterprise Fault Tolerance...");
+      console.log("🚀 Initializing ServiceManager with Enterprise Fault Tolerance...");
 
       // Start monitoring first - track initialization start
       await this.monitoring.initialize();
@@ -735,10 +735,10 @@ class serviceManager {
         operational: true
       });
 
-      console.log("✅ serviceManager initialized successfully with " + this.operationalAgents.size + " operational agents");
+      console.log("✅ ServiceManager initialized successfully with " + this.operationalAgents.size + " operational agents");
 
     } catch (error) {
-      console.error("❌ serviceManager initialization failed:", error);
+      console.error("❌ ServiceManager initialization failed:", error);
       
       // Ensure we can still log errors even if initialization fails
       await this._emergencyLogError('initialization_failed', error);
@@ -748,269 +748,960 @@ class serviceManager {
     }
   }
 
-  // ... [REST OF THE serviceManager METHODS REMAIN THE SAME AS BEFORE]
-  // All the existing serviceManager methods (_initializeAllDatabases, _initializeCoreSystems, etc.)
-  // remain unchanged from the previous implementation
-
-  async _registerHealthChecks() {
-    // Register system health check
-    this.monitoring.registerHealthCheck('system', async () => {
-      return {
-        healthy: this.isInitialized,
-        operationalAgents: this.operationalAgents.size,
-        totalAgents: Object.keys(this.agents).length,
-        modules: Object.keys(this.modules).length,
-        uptime: process.uptime(),
-        timestamp: Date.now()
-      };
-    });
-
-    // Register database health check
-    this.monitoring.registerHealthCheck('database', async () => {
-      try {
-        const status = this.databaseInitializer.getStatus();
-        return {
-          healthy: status.initialized,
-          mainDb: !!status.mainDb,
-          arielEngine: !!status.arielEngine,
-          serviceDatabases: status.serviceDatabases,
-          timestamp: Date.now()
-        };
-      } catch (error) {
-        return {
-          healthy: false,
-          error: error.message,
-          timestamp: Date.now()
-        };
-      }
-    });
-
-    // Register blockchain health check
-    this.monitoring.registerHealthCheck('blockchain', async () => {
-      try {
-        if (this.blockchain && this.blockchain.getStatus) {
-          const status = await this.blockchain.getStatus();
-          return {
-            healthy: status.initialized,
-            chainId: status.chainId,
-            blockHeight: status.blockHeight,
-            timestamp: Date.now()
-          };
+  async _initializeAllDatabases() {
+    console.log("🗄️ Initializing all databases...");
+    
+    try {
+      const initResult = await this.databaseInitializer.initializeAllDatabases();
+      
+      if (initResult && initResult.success) {
+        console.log("✅ All databases initialized successfully");
+        
+        // Store unified database interfaces
+        this.unifiedDatabaseInterfaces.set('main', this.databaseInitializer.getMainDatabase());
+        this.unifiedDatabaseInterfaces.set('arielEngine', this.databaseInitializer.getArielEngine());
+        
+        // Store service-specific databases
+        const serviceDbs = this.databaseInitializer.getServiceDatabases();
+        for (const [serviceName, db] of Object.entries(serviceDbs)) {
+          this.unifiedDatabaseInterfaces.set(serviceName, db);
         }
-        return {
-          healthy: false,
-          error: 'Blockchain not available',
-          timestamp: Date.now()
-        };
-      } catch (error) {
-        return {
-          healthy: false,
-          error: error.message,
-          timestamp: Date.now()
-        };
+        
+        await this.monitoring.trackEvent('databases_initialized', {
+          totalDatabases: this.unifiedDatabaseInterfaces.size,
+          services: Array.from(this.unifiedDatabaseInterfaces.keys())
+        });
+      } else {
+        throw new Error('Database initialization returned invalid result');
       }
-    });
-
-    console.log('✅ Health checks registered with Enterprise Monitoring');
+    } catch (error) {
+      console.error("❌ Database initialization failed:", error);
+      await this.monitoring.trackError('database_initialization_failed', error);
+      throw error;
+    }
   }
 
-  // Enhanced health monitoring with metrics tracking
-  async _performHealthChecks() {
-    const startTime = Date.now();
+  async _initializeCoreSystems() {
+    console.log("🔗 Initializing core blockchain systems...");
     
-    const healthChecks = Array.from(this.operationalAgents).map(async (agentName) => {
-      try {
-        const agent = this.agents[agentName];
-        if (agent && agent.getStatus) {
-          const status = await agent.getStatus();
-          const isHealthy = this._evaluateAgentHealth(status, agentName);
-          
-          this.agentHealth.set(agentName, {
-            status: isHealthy ? 'healthy' : 'degraded',
-            lastCheck: Date.now(),
-            details: status
-          });
+    try {
+      // Initialize blockchain with production credentials
+      this.blockchain = await this._initializeBlockchain();
+      
+      // Initialize payout system
+      this.payoutSystem = new BrianNwaezikePayoutSystem({
+        blockchain: this.blockchain,
+        database: this.unifiedDatabaseInterfaces.get('main')
+      });
+      await this.payoutSystem.initialize();
+      
+      await this.monitoring.trackEvent('core_systems_initialized', {
+        blockchain: !!this.blockchain,
+        payoutSystem: !!this.payoutSystem
+      });
+      
+      console.log("✅ Core systems initialized successfully");
+    } catch (error) {
+      console.error("❌ Core systems initialization failed:", error);
+      await this.monitoring.trackError('core_systems_initialization_failed', error);
+      throw error;
+    }
+  }
 
-          // Track agent health metric
-          await this.monitoring.trackMetric('agent_health', isHealthy ? 1 : 0, {
-            agentName,
-            ...status
-          });
+  async _initializeBlockchain() {
+    console.log("⛓️ Initializing blockchain with production credentials...");
+    
+    try {
+      const blockchain = await import('../backend/blockchain/BrianNwaezikeChain.js');
+      const chainInstance = await blockchain.createBrianNwaezikeChain({
+        rpcUrl: "https://rpc.winr.games",
+        network: 'mainnet',
+        chainId: 777777,
+        contractAddress: "0x00000000000000000000000000000000000a4b05"
+      });
+      
+      await chainInstance.init();
+      console.log("✅ Blockchain initialized with production credentials");
+      return chainInstance;
+    } catch (error) {
+      console.error("❌ Blockchain initialization failed:", error);
+      throw error;
+    }
+  }
 
-          if (!isHealthy) {
-            console.warn(`⚠️ Agent health degraded: ${agentName}`);
-            await this.monitoring.trackEvent('agent_health_degraded', { 
-              agentName, 
-              status,
-              responseTime: Date.now() - startTime
-            });
-          }
+  async _initializeGovernance() {
+    console.log("🏛️ Initializing governance system...");
+    
+    try {
+      this.governance = new SovereignGovernance({
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      });
+      
+      await this.governance.initialize();
+      await this.monitoring.trackEvent('governance_initialized', {
+        module: 'SovereignGovernance'
+      });
+      
+      console.log("✅ Governance system initialized successfully");
+    } catch (error) {
+      console.error("❌ Governance initialization failed:", error);
+      await this.monitoring.trackError('governance_initialization_failed', error);
+      // Don't throw error - governance is not critical for basic operation
+    }
+  }
 
-          return { agentName, healthy: isHealthy, responseTime: Date.now() - startTime };
-        }
-      } catch (error) {
-        console.error(`❌ Health check failed for ${agentName}:`, error);
-        this.agentHealth.set(agentName, {
-          status: 'failed',
-          lastCheck: Date.now(),
-          error: error.message
-        });
-        await this.monitoring.trackError(`health_check_failed_${agentName}`, error, {
-          responseTime: Date.now() - startTime
-        });
-        return { agentName, healthy: false, responseTime: Date.now() - startTime };
+  async _initializeModules() {
+    console.log("🔧 Initializing advanced modules...");
+    
+    const moduleConfigs = {
+      QuantumResistantCrypto: { database: this.unifiedDatabaseInterfaces.get('main') },
+      QuantumShield: { database: this.unifiedDatabaseInterfaces.get('main') },
+      AIThreatDetector: { database: this.unifiedDatabaseInterfaces.get('main') },
+      AISecurityModule: { database: this.unifiedDatabaseInterfaces.get('main') },
+      CrossChainBridge: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      OmnichainInteroperabilityEngine: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      ShardingManager: { database: this.unifiedDatabaseInterfaces.get('main') },
+      InfiniteScalabilityEngine: { database: this.unifiedDatabaseInterfaces.get('main') },
+      EnergyEfficientConsensus: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      CarbonNegativeConsensus: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
       }
+    };
+
+    for (const [moduleName, ModuleClass] of Object.entries({
+      QuantumResistantCrypto,
+      QuantumShield,
+      AIThreatDetector,
+      AISecurityModule,
+      CrossChainBridge,
+      OmnichainInteroperabilityEngine,
+      ShardingManager,
+      InfiniteScalabilityEngine,
+      EnergyEfficientConsensus,
+      CarbonNegativeConsensus
+    })) {
+      try {
+        const config = moduleConfigs[moduleName] || {};
+        this.modules[moduleName] = new ModuleClass(config);
+        
+        if (this.modules[moduleName].initialize) {
+          await this.modules[moduleName].initialize();
+        }
+        
+        console.log(`✅ ${moduleName} initialized`);
+      } catch (error) {
+        console.error(`❌ ${moduleName} initialization failed:`, error);
+        await this.monitoring.trackError(`module_initialization_failed_${moduleName}`, error);
+        // Continue with other modules even if one fails
+      }
+    }
+    
+    await this.monitoring.trackEvent('modules_initialized', {
+      totalModules: Object.keys(this.modules).length,
+      moduleNames: Object.keys(this.modules)
+    });
+  }
+
+  async _initializeAgentsConcurrently() {
+    console.log("🤖 Initializing agents concurrently with fault isolation...");
+    
+    const agentConfigs = {
+      AdRevenueAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      AdsenseAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      ApiScoutAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      QuantumBrowserManager: { database: this.unifiedDatabaseInterfaces.get('main') },
+      configAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      ContractDeployAgent: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      EnhancedCryptoAgent: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      DataAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      forexSignalAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      HealthAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      PayoutAgent: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        payoutSystem: this.payoutSystem
+      },
+      shopifyAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      socialAgent: { database: this.unifiedDatabaseInterfaces.get('main') }
+    };
+
+    const agentInitializers = Object.entries({
+      AdRevenueAgent,
+      AdsenseAgent,
+      ApiScoutAgent,
+      QuantumBrowserManager,
+      configAgent,
+      ContractDeployAgent,
+      EnhancedCryptoAgent,
+      DataAgent,
+      forexSignalAgent,
+      HealthAgent,
+      PayoutAgent,
+      shopifyAgent,
+      socialAgent
+    }).map(async ([agentName, AgentClass]) => {
+      return this._initializeAgentWithIsolation(agentName, AgentClass, agentConfigs[agentName] || {});
     });
 
-    const results = await Promise.allSettled(healthChecks);
+    const results = await Promise.allSettled(agentInitializers);
     
-    // Track overall health metrics
-    const healthyAgents = results.filter(r => r.status === 'fulfilled' && r.value.healthy).length;
-    const totalAgents = this.operationalAgents.size;
-    const healthRatio = totalAgents > 0 ? healthyAgents / totalAgents : 1;
-    
-    await this.monitoring.trackMetric('system_health_ratio', healthRatio);
-    await this.monitoring.trackMetric('healthy_agents_count', healthyAgents);
-    await this.monitoring.trackMetric('total_agents_count', totalAgents);
-
-    // Handle failed agents
+    // Process results and track operational agents
     results.forEach((result, index) => {
-      if (result.status === 'fulfilled' && !result.value.healthy) {
-        const agentName = result.value.agentName;
-        this._handleUnhealthyAgent(agentName);
+      const agentName = Object.keys({
+        AdRevenueAgent,
+        AdsenseAgent,
+        ApiScoutAgent,
+        QuantumBrowserManager,
+        configAgent,
+        ContractDeployAgent,
+        EnhancedCryptoAgent,
+        DataAgent,
+        forexSignalAgent,
+        HealthAgent,
+        PayoutAgent,
+        shopifyAgent,
+        socialAgent
+      })[index];
+      
+      if (result.status === 'fulfilled' && result.value) {
+        this.operationalAgents.add(agentName);
+        this.agentHealth.set(agentName, { status: 'healthy', lastCheck: Date.now() });
+      } else {
+        console.error(`❌ Agent ${agentName} failed to initialize`);
+        this.agentHealth.set(agentName, { 
+          status: 'failed', 
+          lastCheck: Date.now(),
+          error: result.reason?.message || 'Unknown error'
+        });
       }
     });
 
-    // Track total health check duration
-    const totalDuration = Date.now() - startTime;
-    await this.monitoring.trackMetric('health_check_duration', totalDuration);
-    await this.monitoring.trackRequest(true, totalDuration, {
-      type: 'health_check',
-      agentsChecked: results.length
+    await this.monitoring.trackEvent('agents_initialization_completed', {
+      totalAgents: Object.keys(agentConfigs).length,
+      operationalAgents: this.operationalAgents.size,
+      failedAgents: Object.keys(agentConfigs).length - this.operationalAgents.size
+    });
+
+    console.log(`✅ ${this.operationalAgents.size}/${Object.keys(agentConfigs).length} agents initialized successfully`);
+  }
+
+  async _initializeAgentWithIsolation(agentName, AgentClass, config) {
+    if (!this.config.enableIsolation) {
+      // Direct initialization without isolation
+      const agent = new AgentClass(config);
+      if (agent.initialize) {
+        await agent.initialize();
+      }
+      this.agents[agentName] = agent;
+      return agent;
+    }
+
+    // Initialize with fault isolation
+    try {
+      const agent = new AgentClass(config);
+      
+      if (agent.initialize) {
+        await agent.initialize();
+      }
+      
+      this.agents[agentName] = agent;
+      this.agentRestartCounts.set(agentName, 0);
+      
+      await this.monitoring.trackEvent('agent_initialized', {
+        agentName,
+        hasInitialize: !!agent.initialize,
+        isolated: true
+      });
+      
+      return agent;
+    } catch (error) {
+      console.error(`❌ Agent ${agentName} initialization failed:`, error);
+      await this.monitoring.trackError(`agent_initialization_failed_${agentName}`, error);
+      
+      // Create a stub agent that can be restarted later
+      this.agents[agentName] = this._createStubAgent(agentName, error);
+      throw error;
+    }
+  }
+
+  _createStubAgent(agentName, error) {
+    return {
+      name: agentName,
+      status: 'failed',
+      error: error,
+      initialize: async () => { throw error; },
+      process: async () => ({ error: `Agent ${agentName} is in failed state` }),
+      healthCheck: async () => ({ healthy: false, error: error.message })
+    };
+  }
+
+  _setupBasicRoutes() {
+    // Basic health check that works even before full initialization
+    this.app.get("/health", async (req, res) => {
+      const health = await this.monitoring.getHealth();
+      res.json(health);
+    });
+
+    // Basic info endpoint
+    this.app.get("/", (req, res) => {
+      res.json({
+        service: "ServiceManager",
+        version: "4.5.0",
+        mainnet: this.config.mainnet,
+        initialized: this.isInitialized,
+        timestamp: Date.now()
+      });
     });
   }
 
-  // Enhanced API routes with monitoring
   _setupApiRoutes() {
-    // Existing API routes plus monitoring endpoints...
+    if (!this.isInitialized) {
+      console.warn("⚠️ Cannot setup API routes - ServiceManager not initialized");
+      return;
+    }
 
-    // Monitoring endpoints
-    this.app.get("/api/monitoring/metrics", async (req, res) => {
+    // Agent status endpoint
+    this.app.get("/agents/status", (req, res) => {
+      const status = {};
+      for (const [agentName, agent] of Object.entries(this.agents)) {
+        const health = this.agentHealth.get(agentName) || { status: 'unknown' };
+        status[agentName] = {
+          status: health.status,
+          operational: this.operationalAgents.has(agentName),
+          lastCheck: health.lastCheck || null
+        };
+      }
+      res.json(status);
+    });
+
+    // Module status endpoint
+    this.app.get("/modules/status", (req, res) => {
+      const status = {};
+      for (const [moduleName, module] of Object.entries(this.modules)) {
+        status[moduleName] = {
+          initialized: !!module,
+          hasHealthCheck: typeof module.healthCheck === 'function'
+        };
+      }
+      res.json(status);
+    });
+
+    // Blockchain status endpoint
+    this.app.get("/blockchain/status", async (req, res) => {
+      try {
+        const status = await this.blockchain.getStatus();
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Monitoring metrics endpoint
+    this.app.get("/monitoring/metrics", async (req, res) => {
       try {
         const metrics = await this.monitoring.getMetrics();
         res.json(metrics);
       } catch (error) {
-        await this.monitoring.trackError('metrics_endpoint_error', error);
         res.status(500).json({ error: error.message });
       }
     });
 
-    this.app.get("/api/monitoring/health", async (req, res) => {
+    // Performance report endpoint
+    this.app.get("/monitoring/performance", async (req, res) => {
       try {
-        const health = await this.monitoring.getHealth();
-        res.json(health);
-      } catch (error) {
-        await this.monitoring.trackError('health_endpoint_error', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    this.app.get("/api/monitoring/performance", async (req, res) => {
-      try {
-        const report = await this.monitoring.getPerformanceReport(req.query.timeframe);
+        const timeframe = req.query.timeframe || '1h';
+        const report = await this.monitoring.getPerformanceReport(timeframe);
         res.json(report);
       } catch (error) {
-        await this.monitoring.trackError('performance_endpoint_error', error);
         res.status(500).json({ error: error.message });
       }
     });
 
-    this.app.get("/api/monitoring/healthchecks", async (req, res) => {
+    // Agent restart endpoint
+    this.app.post("/agents/:agentName/restart", async (req, res) => {
+      const agentName = req.params.agentName;
       try {
-        const results = await this.monitoring.executeHealthChecks();
-        res.json(results);
+        await this.restartAgent(agentName);
+        res.json({ success: true, message: `Agent ${agentName} restart initiated` });
       } catch (error) {
-        await this.monitoring.trackError('healthchecks_endpoint_error', error);
         res.status(500).json({ error: error.message });
       }
     });
-
-    // ... rest of existing API routes
   }
 
-  // Enhanced error handling with monitoring
-  async _emergencyLogError(context, error) {
-    // Emergency logging when systems are unstable
+  _setupWebSocket() {
+    this.wss.on("connection", (ws, req) => {
+      const clientId = crypto.randomBytes(8).toString("hex");
+      this.connectedClients.add(ws);
+
+      console.log(`🔗 WebSocket client connected: ${clientId}`);
+      this.monitoring.trackEvent('websocket_client_connected', { clientId });
+
+      ws.on("message", async (data) => {
+        try {
+          const message = JSON.parse(data);
+          await this._handleWebSocketMessage(ws, message);
+        } catch (error) {
+          console.error("❌ WebSocket message handling error:", error);
+          this.monitoring.trackError('websocket_message_handling', error);
+        }
+      });
+
+      ws.on("close", () => {
+        this.connectedClients.delete(ws);
+        console.log(`🔌 WebSocket client disconnected: ${clientId}`);
+        this.monitoring.trackEvent('websocket_client_disconnected', { clientId });
+      });
+
+      ws.on("error", (error) => {
+        console.error(`❌ WebSocket error for client ${clientId}:`, error);
+        this.monitoring.trackError('websocket_error', error, { clientId });
+      });
+
+      // Send welcome message
+      ws.send(JSON.stringify({
+        type: "welcome",
+        clientId,
+        timestamp: Date.now(),
+        service: "ServiceManager"
+      }));
+    });
+  }
+
+  async _handleWebSocketMessage(ws, message) {
+    const { type, data, requestId } = message;
+
     try {
-      console.error(`🚨 EMERGENCY LOG [${context}]:`, error);
+      let response;
+
+      switch (type) {
+        case "agent_status":
+          response = await this._getAgentStatus(data);
+          break;
+        case "blockchain_status":
+          response = await this.blockchain.getStatus();
+          break;
+        case "system_metrics":
+          response = await this.monitoring.getMetrics();
+          break;
+        case "health_check":
+          response = await this.monitoring.getHealth();
+          break;
+        default:
+          response = { error: `Unknown message type: ${type}` };
+      }
+
+      ws.send(JSON.stringify({
+        type: "response",
+        requestId,
+        data: response,
+        timestamp: Date.now()
+      }));
+
+      await this.monitoring.trackRequest(true, 0, { 
+        websocketMessageType: type,
+        clientId: "unknown" // Would need to track client IDs
+      });
+
+    } catch (error) {
+      console.error(`❌ WebSocket message processing error:`, error);
       
-      // Use monitoring if available
+      ws.send(JSON.stringify({
+        type: "error",
+        requestId,
+        error: error.message,
+        timestamp: Date.now()
+      }));
+
+      await this.monitoring.trackError('websocket_message_processing', error, {
+        messageType: type,
+        requestId
+      });
+    }
+  }
+
+  async _getAgentStatus(agentNames) {
+    const status = {};
+    const names = Array.isArray(agentNames) ? agentNames : Object.keys(this.agents);
+
+    for (const agentName of names) {
+      const agent = this.agents[agentName];
+      const health = this.agentHealth.get(agentName) || { status: 'unknown' };
+      
+      status[agentName] = {
+        exists: !!agent,
+        status: health.status,
+        operational: this.operationalAgents.has(agentName),
+        restartCount: this.agentRestartCounts.get(agentName) || 0,
+        lastCheck: health.lastCheck || null
+      };
+    }
+
+    return status;
+  }
+
+  _setupErrorHandling() {
+    this.app.use((error, req, res, next) => {
+      console.error("❌ Unhandled error:", error);
+      
+      this.monitoring.trackError('unhandled_http_error', error, {
+        path: req.path,
+        method: req.method
+      });
+
+      res.status(500).json({
+        error: "Internal server error",
+        timestamp: Date.now()
+      });
+    });
+
+    process.on("unhandledRejection", (reason, promise) => {
+      console.error("❌ Unhandled promise rejection:", reason);
+      this.monitoring.trackError('unhandled_promise_rejection', new Error(reason));
+    });
+
+    process.on("uncaughtException", (error) => {
+      console.error("❌ Uncaught exception:", error);
+      this.monitoring.trackError('uncaught_exception', error);
+      
+      // In production, we might want to exit here
+      if (this.config.mainnet) {
+        console.error("🛑 Critical error in mainnet - exiting process");
+        process.exit(1);
+      }
+    });
+  }
+
+  _startHealthMonitoring() {
+    this.healthCheckInterval = setInterval(async () => {
+      await this._performHealthChecks();
+    }, this.config.healthCheckInterval);
+
+    console.log("❤️ Health monitoring started");
+  }
+
+  async _performHealthChecks() {
+    const checkStart = Date.now();
+    
+    try {
+      // Check agent health
+      for (const [agentName, agent] of Object.entries(this.agents)) {
+        try {
+          let healthy = false;
+          
+          if (agent.healthCheck && typeof agent.healthCheck === 'function') {
+            const healthResult = await agent.healthCheck();
+            healthy = healthResult.healthy !== false;
+          } else {
+            // Basic health check - agent exists and is not a stub
+            healthy = agent.status !== 'failed' && !agent.error;
+          }
+          
+          this.agentHealth.set(agentName, {
+            status: healthy ? 'healthy' : 'unhealthy',
+            lastCheck: Date.now()
+          });
+          
+          if (!healthy && this.operationalAgents.has(agentName)) {
+            console.warn(`⚠️ Agent ${agentName} is unhealthy`);
+            await this.monitoring.trackEvent('agent_unhealthy', { agentName });
+          }
+          
+        } catch (error) {
+          console.error(`❌ Health check failed for agent ${agentName}:`, error);
+          this.agentHealth.set(agentName, {
+            status: 'error',
+            lastCheck: Date.now(),
+            error: error.message
+          });
+          
+          await this.monitoring.trackError(`agent_health_check_failed_${agentName}`, error);
+        }
+      }
+
+      // Check module health
+      for (const [moduleName, module] of Object.entries(this.modules)) {
+        if (module.healthCheck && typeof module.healthCheck === 'function') {
+          try {
+            await module.healthCheck();
+          } catch (error) {
+            console.error(`❌ Health check failed for module ${moduleName}:`, error);
+            await this.monitoring.trackError(`module_health_check_failed_${moduleName}`, error);
+          }
+        }
+      }
+
+      // Track health check completion
+      await this.monitoring.trackMetric('health_check_duration', Date.now() - checkStart);
+      await this.monitoring.trackEvent('health_check_completed', {
+        agentsChecked: Object.keys(this.agents).length,
+        modulesChecked: Object.keys(this.modules).length,
+        duration: Date.now() - checkStart
+      });
+
+    } catch (error) {
+      console.error("❌ Overall health check failed:", error);
+      await this.monitoring.trackError('overall_health_check_failed', error);
+    }
+  }
+
+  _startBackgroundServices() {
+    // Background tasks interval
+    this.backgroundInterval = setInterval(async () => {
+      try {
+        await this._performBackgroundTasks();
+      } catch (error) {
+        console.error("❌ Background tasks error:", error);
+        this.monitoring.trackError('background_tasks_error', error);
+      }
+    }, 60000); // Every minute
+
+    console.log("🔄 Background services started");
+  }
+
+  async _performBackgroundTasks() {
+    const tasks = [];
+
+    // Clean up old monitoring data
+    tasks.push(this._cleanupOldMonitoringData());
+
+    // Check for agent restarts
+    tasks.push(this._checkForAgentRestarts());
+
+    // Perform system maintenance
+    tasks.push(this._performSystemMaintenance());
+
+    await Promise.allSettled(tasks);
+  }
+
+  async _cleanupOldMonitoringData() {
+    const now = Date.now();
+    const oneDayAgo = now - (24 * 60 * 60 * 1000);
+    
+    // Clean old events
+    this.monitoring.events = this.monitoring.events.filter(event => 
+      event.timestamp > oneDayAgo
+    );
+    
+    // Clean old health checks
+    const systemChecks = this.monitoring.healthChecks.get('system') || [];
+    if (systemChecks.length > 0) {
+      this.monitoring.healthChecks.set('system', 
+        systemChecks.filter(check => check.timestamp > oneDayAgo)
+      );
+    }
+  }
+
+  async _checkForAgentRestarts() {
+    for (const [agentName, health] of this.agentHealth) {
+      if (health.status === 'failed' || health.status === 'unhealthy') {
+        const restartCount = this.agentRestartCounts.get(agentName) || 0;
+        
+        if (restartCount < this.config.maxAgentRestarts) {
+          console.log(`🔄 Attempting to restart agent: ${agentName}`);
+          await this.restartAgent(agentName);
+        } else {
+          console.error(`🛑 Agent ${agentName} has exceeded maximum restart attempts`);
+        }
+      }
+    }
+  }
+
+  async _performSystemMaintenance() {
+    // Perform any system-wide maintenance tasks
+    try {
+      // Example: Clean up temporary files, optimize databases, etc.
+      if (this.modules.ArielSQLiteEngine && this.modules.ArielSQLiteEngine.optimize) {
+        await this.modules.ArielSQLiteEngine.optimize();
+      }
+    } catch (error) {
+      console.error("❌ System maintenance error:", error);
+      await this.monitoring.trackError('system_maintenance_error', error);
+    }
+  }
+
+  _registerHealthChecks() {
+    // Register system health checks with monitoring
+    this.monitoring.registerHealthCheck('blockchain', async () => {
+      try {
+        const status = await this.blockchain.getStatus();
+        return {
+          healthy: status.connected === true,
+          details: status,
+          timestamp: Date.now()
+        };
+      } catch (error) {
+        return {
+          healthy: false,
+          error: error.message,
+          timestamp: Date.now()
+        };
+      }
+    });
+
+    this.monitoring.registerHealthCheck('database', async () => {
+      try {
+        const mainDb = this.unifiedDatabaseInterfaces.get('main');
+        if (mainDb && mainDb.healthCheck) {
+          return await mainDb.healthCheck();
+        }
+        return { healthy: true, timestamp: Date.now() };
+      } catch (error) {
+        return {
+          healthy: false,
+          error: error.message,
+          timestamp: Date.now()
+        };
+      }
+    });
+  }
+
+  async restartAgent(agentName) {
+    console.log(`🔄 Restarting agent: ${agentName}`);
+    
+    try {
+      const restartCount = this.agentRestartCounts.get(agentName) || 0;
+      
+      if (restartCount >= this.config.maxAgentRestarts) {
+        throw new Error(`Agent ${agentName} has exceeded maximum restart attempts`);
+      }
+
+      // Remove current agent
+      delete this.agents[agentName];
+      this.operationalAgents.delete(agentName);
+      this.agentHealth.delete(agentName);
+
+      // Reinitialize agent
+      const AgentClass = this._getAgentClassByName(agentName);
+      if (!AgentClass) {
+        throw new Error(`Unknown agent class: ${agentName}`);
+      }
+
+      const config = this._getAgentConfig(agentName);
+      const agent = await this._initializeAgentWithIsolation(agentName, AgentClass, config);
+      
+      this.agentRestartCounts.set(agentName, restartCount + 1);
+      this.operationalAgents.add(agentName);
+
+      await this.monitoring.trackEvent('agent_restarted', {
+        agentName,
+        restartCount: restartCount + 1,
+        success: true
+      });
+
+      console.log(`✅ Agent ${agentName} restarted successfully`);
+      return agent;
+
+    } catch (error) {
+      console.error(`❌ Failed to restart agent ${agentName}:`, error);
+      
+      await this.monitoring.trackError(`agent_restart_failed_${agentName}`, error, {
+        restartCount: this.agentRestartCounts.get(agentName) || 0
+      });
+
+      throw error;
+    }
+  }
+
+  _getAgentClassByName(agentName) {
+    const agentClasses = {
+      AdRevenueAgent,
+      AdsenseAgent,
+      ApiScoutAgent,
+      QuantumBrowserManager,
+      configAgent,
+      ContractDeployAgent,
+      EnhancedCryptoAgent,
+      DataAgent,
+      forexSignalAgent,
+      HealthAgent,
+      PayoutAgent,
+      shopifyAgent,
+      socialAgent
+    };
+
+    return agentClasses[agentName];
+  }
+
+  _getAgentConfig(agentName) {
+    const configs = {
+      AdRevenueAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      AdsenseAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      ApiScoutAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      QuantumBrowserManager: { database: this.unifiedDatabaseInterfaces.get('main') },
+      configAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      ContractDeployAgent: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      EnhancedCryptoAgent: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        blockchain: this.blockchain
+      },
+      DataAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      forexSignalAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      HealthAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      PayoutAgent: { 
+        database: this.unifiedDatabaseInterfaces.get('main'),
+        payoutSystem: this.payoutSystem
+      },
+      shopifyAgent: { database: this.unifiedDatabaseInterfaces.get('main') },
+      socialAgent: { database: this.unifiedDatabaseInterfaces.get('main') }
+    };
+
+    return configs[agentName] || {};
+  }
+
+  async _emergencyLogError(context, error) {
+    // Emergency logging when systems are not fully initialized
+    try {
+      console.error(`🛑 EMERGENCY ERROR [${context}]:`, error);
+      
+      // Try to use monitoring if available
       if (this.monitoring) {
-        await this.monitoring.trackError(context, error, { emergency: true });
+        await this.monitoring.trackError(context, error);
       }
       
-      // Try to use logger DB if available
-      if (this.loggerDB && this.loggerDB.run) {
-        await this.loggerDB.run(
-          "INSERT INTO emergency_logs (context, error_message, stack_trace, timestamp) VALUES (?, ?, ?, ?)",
-          [context, error.message, error.stack, Date.now()]
-        );
-      }
+      // Basic file logging as fallback
+      const fs = await import('fs');
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        context,
+        error: error.message,
+        stack: error.stack
+      };
+      
+      fs.appendFileSync('./emergency_errors.log', JSON.stringify(logEntry) + '\n');
     } catch (logError) {
       // Last resort - console only
-      console.error("💥 FAILED TO LOG ERROR:", logError);
+      console.error('🛑 CRITICAL: Cannot log emergency error:', logError);
     }
   }
 
-  // Enhanced stop method with monitoring
-  async stop() {
-    console.log("🛑 Stopping serviceManager...");
+  async start() {
+    if (!this.isInitialized) {
+      throw new Error("ServiceManager must be initialized before starting");
+    }
 
-    // Track shutdown event
-    await this.monitoring.trackEvent('service_manager_shutdown_initiated', {
-      operationalAgents: this.operationalAgents.size,
-      uptime: Date.now() - this.monitoring.startTime
+    return new Promise((resolve, reject) => {
+      this.server.listen(this.config.port, (err) => {
+        if (err) {
+          console.error("❌ Failed to start server:", err);
+          this.monitoring.trackError('server_start_failed', err);
+          reject(err);
+          return;
+        }
+
+        console.log(`🚀 ServiceManager running on port ${this.config.port}`);
+        console.log(`📊 Enterprise Monitoring: ACTIVE`);
+        console.log(`🌐 Mainnet Mode: ${this.config.mainnet}`);
+        console.log(`🤖 Operational Agents: ${this.operationalAgents.size}`);
+        
+        this.monitoring.trackEvent('server_started', {
+          port: this.config.port,
+          mainnet: this.config.mainnet,
+          operationalAgents: this.operationalAgents.size
+        });
+
+        resolve();
+      });
     });
+  }
 
-    // Stop background services
+  async stop() {
+    console.log("🛑 Stopping ServiceManager...");
+
+    // Stop intervals
     if (this.backgroundInterval) {
       clearInterval(this.backgroundInterval);
-      this.backgroundInterval = null;
     }
-
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
-      this.healthCheckInterval = null;
     }
 
-    // Stop all agents with monitoring
-    const stopPromises = Object.entries(this.agents).map(async ([agentName, agent]) => {
-      const startTime = Date.now();
+    // Close WebSocket connections
+    this.connectedClients.forEach(client => {
       try {
-        if (agent.stop) {
-          await agent.stop();
-          console.log(`✅ Agent stopped: ${agentName}`);
-          await this.monitoring.trackRequest(true, Date.now() - startTime, {
-            type: 'agent_stop',
-            agentName
-          });
-        }
+        client.close();
       } catch (error) {
-        console.error(`❌ Failed to stop agent ${agentName}:`, error);
-        await this.monitoring.trackError(`agent_stop_failed_${agentName}`, error, {
-          duration: Date.now() - startTime
-        });
+        console.error("Error closing WebSocket client:", error);
       }
     });
+    this.connectedClients.clear();
 
-    // ... rest of stop logic
+    // Stop server
+    if (this.server) {
+      this.server.close();
+    }
 
-    // Final monitoring cleanup
-    await this.monitoring.stop();
+    // Stop monitoring
+    if (this.monitoring) {
+      await this.monitoring.stop();
+    }
 
-    console.log("✅ serviceManager stopped successfully");
+    this.isInitialized = false;
+    console.log("✅ ServiceManager stopped successfully");
+  }
+
+  // Public API methods
+  getAgent(agentName) {
+    return this.agents[agentName];
+  }
+
+  getModule(moduleName) {
+    return this.modules[moduleName];
+  }
+
+  getBlockchain() {
+    return this.blockchain;
+  }
+
+  getMonitoring() {
+    return this.monitoring;
+  }
+
+  async getSystemStatus() {
+    const health = await this.monitoring.getHealth();
+    const metrics = await this.monitoring.getMetrics();
+    
+    return {
+      initialized: this.isInitialized,
+      mainnet: this.config.mainnet,
+      health,
+      metrics,
+      agents: {
+        total: Object.keys(this.agents).length,
+        operational: this.operationalAgents.size,
+        status: Object.fromEntries(this.agentHealth)
+      },
+      modules: {
+        total: Object.keys(this.modules).length,
+        names: Object.keys(this.modules)
+      },
+      timestamp: Date.now()
+    };
   }
 }
 
+// Export the ServiceManager class
+export { ServiceManager, EnterpriseMonitoring };
+
+// Create and export default instance
+const serviceManager = new ServiceManager();
 export default serviceManager;
-export { EnterpriseMonitoring };
