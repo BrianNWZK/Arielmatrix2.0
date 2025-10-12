@@ -10,7 +10,7 @@
 import http from "http";
 import express from "express";
 import cors from "cors";
-import { serviceManager } from "./serviceManager.js";
+import serviceManager from "./serviceManager.js";
 import { createBrianNwaezikeChain, getInitializedChain, getRealBwaeziCredentials, isChainInitialized } from '../backend/blockchain/BrianNwaezikeChain.js';
 import { initializeDatabase } from '../backend/database/BrianNwaezikeDB.js';
 import { configAgent } from '../backend/agents/configAgent.js';
