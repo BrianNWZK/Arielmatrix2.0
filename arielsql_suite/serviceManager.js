@@ -45,7 +45,7 @@ import forexSignalAgent from "../backend/agents/forexSignalAgent.js";
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
 import shopifyAgent from "../backend/agents/shopifyAgent.js";
-import SocialAgent from "../backend/agents/socialAgent.js";
+import socialAgent from "../backend/agents/socialAgent.js";
 
 // ====================================================================
 // ENTERPRISE MONITORING MODULE - INTEGRATED DIRECTLY
