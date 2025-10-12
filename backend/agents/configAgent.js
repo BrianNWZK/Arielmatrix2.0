@@ -7,7 +7,7 @@ import DataAgent from './dataAgent.js';
 import { AdsenseAgent } from './adsenseAgent.js';
 import { AdRevenueAgent } from './adRevenueAgent.js';
 import { AutonomousAIEngine } from './autonomous-ai-engine.js';
-import { serviceManager } from '../../arielsql_suite/serviceManager.js';
+import serviceManager from '../../arielsql_suite/serviceManager.js';
 
 /**
  * @class configAgent
