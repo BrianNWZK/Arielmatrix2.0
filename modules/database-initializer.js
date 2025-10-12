@@ -1069,6 +1069,213 @@ class DatabaseInitializer {
         ];
         return serviceConfigs.find(config => config.name === serviceName);
     }
+
+    // NEW FUNCTIONALITY: Enhanced service management methods
+    async registerService(serviceName, serviceConfig) {
+        if (this.serviceDatabases.has(serviceName)) {
+            throw new Error(`Service ${serviceName} already exists`);
+        }
+
+        try {
+            const serviceDb = await this._createServiceDatabase(serviceName, serviceConfig);
+            this.serviceDatabases.set(serviceName, serviceDb);
+            
+            // Update unified interfaces
+            const unifiedInterface = this.createUnifiedInterface({
+                name: serviceName,
+                type: serviceConfig.type,
+                methods: ['run', 'get', 'all', 'health', 'backup', 'close', 'getConfig']
+            });
+            this.unifiedInterfaces.set(serviceName, unifiedInterface);
+            
+            this.logger.info(`✅ New service registered: ${serviceName}`);
+            return serviceDb;
+        } catch (error) {
+            this.logger.error(`❌ Failed to register service ${serviceName}:`, error);
+            throw error;
+        }
+    }
+
+    async unregisterService(serviceName) {
+        if (!this.serviceDatabases.has(serviceName)) {
+            throw new Error(`Service ${serviceName} not found`);
+        }
+
+        try {
+            const serviceDb = this.serviceDatabases.get(serviceName);
+            if (serviceDb.close) {
+                await serviceDb.close();
+            }
+            
+            this.serviceDatabases.delete(serviceName);
+            this.unifiedInterfaces.delete(serviceName);
+            
+            this.logger.info(`✅ Service unregistered: ${serviceName}`);
+        } catch (error) {
+            this.logger.error(`❌ Failed to unregister service ${serviceName}:`, error);
+            throw error;
+        }
+    }
+
+    // NEW FUNCTIONALITY: Performance monitoring
+    async getPerformanceMetrics() {
+        const metrics = {
+            timestamp: Date.now(),
+            services: {},
+            system: {
+                uptime: process.uptime(),
+                memory: process.memoryUsage(),
+                timestamp: Date.now()
+            }
+        };
+
+        for (const [serviceName, dbInterface] of this.unifiedInterfaces) {
+            try {
+                const startTime = process.hrtime();
+                const health = await dbInterface.healthCheck();
+                const diff = process.hrtime(startTime);
+                const latency = (diff[0] * 1e9 + diff[1]) / 1e6;
+
+                metrics.services[serviceName] = {
+                    ...health,
+                    responseTime: latency,
+                    timestamp: Date.now()
+                };
+            } catch (error) {
+                metrics.services[serviceName] = {
+                    healthy: false,
+                    error: error.message,
+                    responseTime: null,
+                    timestamp: Date.now()
+                };
+            }
+        }
+
+        return metrics;
+    }
+
+    // NEW FUNCTIONALITY: Batch operations
+    async executeBatchOperations(operations) {
+        const results = [];
+        
+        for (const operation of operations) {
+            try {
+                const { service, method, params } = operation;
+                const dbInterface = this.unifiedInterfaces.get(service);
+                
+                if (!dbInterface || typeof dbInterface[method] !== 'function') {
+                    throw new Error(`Invalid operation: ${service}.${method}`);
+                }
+                
+                const result = await dbInterface[method](...params);
+                results.push({
+                    service,
+                    method,
+                    success: true,
+                    result
+                });
+            } catch (error) {
+                results.push({
+                    service: operation.service,
+                    method: operation.method,
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+        
+        return results;
+    }
+
+    // NEW FUNCTIONALITY: Service health dashboard
+    async getHealthDashboard() {
+        const dashboard = {
+            overall: 'healthy',
+            services: {},
+            timestamp: Date.now(),
+            summary: {
+                total: 0,
+                healthy: 0,
+                degraded: 0,
+                unhealthy: 0
+            }
+        };
+
+        for (const [serviceName, dbInterface] of this.unifiedInterfaces) {
+            try {
+                const health = await dbInterface.healthCheck();
+                dashboard.services[serviceName] = health;
+                
+                dashboard.summary.total++;
+                if (health.healthy) {
+                    dashboard.summary.healthy++;
+                } else if (health.status === 'degraded') {
+                    dashboard.summary.degraded++;
+                } else {
+                    dashboard.summary.unhealthy++;
+                }
+            } catch (error) {
+                dashboard.services[serviceName] = {
+                    healthy: false,
+                    error: error.message,
+                    status: 'unhealthy'
+                };
+                dashboard.summary.total++;
+                dashboard.summary.unhealthy++;
+            }
+        }
+
+        // Calculate overall status
+        if (dashboard.summary.unhealthy > 0) {
+            dashboard.overall = 'unhealthy';
+        } else if (dashboard.summary.degraded > 0) {
+            dashboard.overall = 'degraded';
+        } else {
+            dashboard.overall = 'healthy';
+        }
+
+        return dashboard;
+    }
+
+    // NEW FUNCTIONALITY: Configuration management
+    updateConfig(newConfig) {
+        this.config = { ...this.config, ...newConfig };
+        this.logger.info('Configuration updated', { newConfig });
+        
+        // Restart background services if interval changed
+        if (newConfig.backupInterval && this.backupInterval) {
+            clearInterval(this.backupInterval);
+            this.backupInterval = setInterval(async () => {
+                try {
+                    await this._performBackup();
+                } catch (error) {
+                    this.logger.error('❌ Background backup failed:', error);
+                }
+            }, this.config.backupInterval);
+        }
+    }
+
+    // NEW FUNCTIONALITY: Service discovery
+    discoverServices() {
+        const discovered = [];
+        
+        // Check for existing service databases
+        for (const [serviceName] of this.serviceDatabases) {
+            discovered.push({
+                name: serviceName,
+                type: 'database',
+                status: 'registered'
+            });
+        }
+        
+        // Add core systems
+        if (this.mainDb) discovered.push({ name: 'main', type: 'core', status: 'active' });
+        if (this.arielEngine) discovered.push({ name: 'ariel', type: 'core', status: 'active' });
+        if (this.governance) discovered.push({ name: 'governance', type: 'core', status: 'active' });
+        if (this.brianChain) discovered.push({ name: 'brian-chain', type: 'core', status: 'active' });
+        
+        return discovered;
+    }
 }
 
 // Export singleton instance
