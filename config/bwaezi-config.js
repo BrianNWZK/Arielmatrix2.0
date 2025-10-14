@@ -7,10 +7,10 @@ import { EventEmitter } from 'events';
 // =========================================================================
 export const BWAEZI_CHAIN = {
     NAME: 'BWAEZI Sovereign Chain',
-    NATIVE_TOKEN: '$bwzC',
+    NATIVE_TOKEN: 'BWAEZI',
     SYMBOL: 'bwzC',
     DECIMALS: 18,
-    CHAIN_ID: 17771,
+    CHAIN_ID: 77777,
     VERSION: '2.0.0-SOVEREIGN',
     FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS || "0x742C2F0B6Ee409E8C0e34F5d6aD0A8f2936e57A4",
     BLOCK_TIME: 2,
