@@ -2,7 +2,7 @@
 import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
 import ArielSQLiteEngine from './ariel-sqlite-engine/index.js';
-import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
+import SovereignRevenueEngine from './sovereign-revenue-engine.js';
 import { BWAEZI_CHAIN } from '../config/bwaezi-config.js';
 
 export class RegulatoryComplianceEngine {
