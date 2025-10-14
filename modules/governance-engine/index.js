@@ -41,3 +41,5 @@ class SovereignGovernance {
         }
     }
 }
+
+    export { SovereignGovernance };
