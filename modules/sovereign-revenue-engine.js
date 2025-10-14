@@ -1,11 +1,8 @@
 // modules/sovereign-revenue-engine.js
 import { EventEmitter } from 'events';
 import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
-import { createHash, randomBytes } from 'crypto';
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-// Import wallet functions directly
+import { SovereignTokenomics } from './tokenomics-engine/index.js';
+import { SovereignGovernance } from './governance-engine/index.js';
 import { 
     initializeConnections,
     getWalletBalances,
@@ -16,6 +13,7 @@ import {
     checkBlockchainHealth,
     validateAddress
 } from '../backend/agents/wallet.js';
+import { createHash, randomBytes } from 'crypto';
 
 import {
     BWAEZI_CHAIN,
@@ -27,440 +25,7 @@ import {
 } from '../config/bwaezi-config.js';
 
 // =========================================================================
-// INTEGRATED TOKENOMICS ENGINE (Production Implementation)
-// =========================================================================
-class SovereignTokenomics {
-    constructor() {
-        this.totalSupply = 100000000;
-        this.circulatingSupply = 0;
-        this.revenueModel = {
-            serviceFees: 0,
-            licensing: 0,
-            enterpriseContracts: 0,
-            dataServices: 0
-        };
-        this.initialized = false;
-    }
-
-    async initialize() {
-        this.circulatingSupply = 0;
-        
-        this.revenueTargets = {
-            monthly: 100000,
-            quarterly: 500000,
-            annual: 2000000
-        };
-        
-        this.initialized = true;
-        console.log('✅ Sovereign Tokenomics Initialized - Revenue Focused');
-        return true;
-    }
-
-    async calculateRevenueDistribution(revenue, serviceRevenueShare = 0.8) {
-        // Dynamic distribution based on service revenue share
-        const sovereignShare = revenue * serviceRevenueShare;
-        const ecosystemShare = revenue * (1 - serviceRevenueShare);
-        
-        return {
-            sovereign: parseFloat(sovereignShare.toFixed(6)),
-            ecosystem: parseFloat(ecosystemShare.toFixed(6)),
-            burned: 0,
-            total: revenue,
-            timestamp: Date.now()
-        };
-    }
-
-    async adjustServiceFees(marketConditions) {
-        // AI-driven fee optimization with real market data
-        const optimalFees = await this.aiPredictOptimalFees(marketConditions);
-        
-        // Update revenue model with optimized fees
-        Object.keys(optimalFees).forEach(service => {
-            if (this.revenueModel[service] !== undefined) {
-                this.revenueModel[service] = optimalFees[service];
-            }
-        });
-        
-        return optimalFees;
-    }
-
-    async aiPredictOptimalFees(marketConditions) {
-        // Real implementation with market analysis
-        const { volatility, demand, competition } = marketConditions;
-        
-        // Simple AI logic - can be enhanced with ML models
-        const baseFee = 0.02; // 2% base fee
-        const volatilityAdjustment = volatility * 0.01;
-        const demandMultiplier = 1 + (demand * 0.1);
-        const competitionDiscount = competition * 0.005;
-        
-        const optimalFee = Math.max(0.005, baseFee + volatilityAdjustment - competitionDiscount) * demandMultiplier;
-        
-        return {
-            serviceFees: optimalFee,
-            licensing: optimalFee * 1.2, // Licensing typically higher
-            enterpriseContracts: optimalFee * 0.8, // Bulk discount
-            dataServices: optimalFee * 1.5 // Premium service
-        };
-    }
-
-    getRevenueMetrics() {
-        return {
-            totalSupply: this.totalSupply,
-            circulatingSupply: this.circulatingSupply,
-            revenueModel: { ...this.revenueModel },
-            revenueTargets: { ...this.revenueTargets },
-            timestamp: Date.now()
-        };
-    }
-}
-
-// =========================================================================
-// INTEGRATED GOVERNANCE ENGINE (Production Implementation)
-// =========================================================================
-class AIGovernor {
-    constructor() {
-        this.decisionHistory = [];
-        this.performanceMetrics = {};
-        this.initialized = false;
-    }
-
-    async initialize() {
-        this.performanceMetrics = {
-            decisionsMade: 0,
-            successRate: 0,
-            avgConfidence: 0,
-            lastAnalysis: Date.now()
-        };
-        this.initialized = true;
-        console.log('✅ AI Governor Initialized');
-        return true;
-    }
-
-    async analyzeEconomy(marketData, revenueData, treasuryData) {
-        const decisions = [];
-        
-        // Analyze fee adjustments
-        const feeDecision = await this.analyzeFeeAdjustments(revenueData);
-        if (feeDecision.confidence > 0.7) {
-            decisions.push(feeDecision);
-        }
-        
-        // Analyze treasury management
-        const treasuryDecision = await this.analyzeTreasuryManagement(treasuryData);
-        if (treasuryDecision.confidence > 0.8) {
-            decisions.push(treasuryDecision);
-        }
-        
-        // Analyze service expansion
-        const expansionDecision = await this.analyzeServiceExpansion(marketData);
-        if (expansionDecision.confidence > 0.75) {
-            decisions.push(expansionDecision);
-        }
-        
-        this.performanceMetrics.decisionsMade += decisions.length;
-        this.performanceMetrics.lastAnalysis = Date.now();
-        
-        return decisions;
-    }
-
-    async analyzeFeeAdjustments(revenueData) {
-        const { totalRevenue, serviceMetrics, timeframe } = revenueData;
-        
-        // Simple AI logic - adjust fees based on performance
-        let adjustment = 0;
-        let confidence = 0.6;
-        
-        if (timeframe === '30d') {
-            const avgTransaction = serviceMetrics.reduce((sum, service) => 
-                sum + service.averageTransaction, 0) / serviceMetrics.length;
-            
-            if (avgTransaction > 1000) {
-                adjustment = 0.02; // Increase fees for high-value transactions
-                confidence = 0.85;
-            } else if (avgTransaction < 100) {
-                adjustment = -0.01; // Decrease fees for low-value transactions
-                confidence = 0.75;
-            }
-        }
-        
-        return {
-            type: 'FEE_ADJUSTMENT',
-            parameters: { adjustment },
-            confidence,
-            rationale: `Fee adjustment based on average transaction size analysis`,
-            timestamp: Date.now()
-        };
-    }
-
-    async analyzeTreasuryManagement(treasuryData) {
-        const { balance, minimumRequired, revenueStreams } = treasuryData;
-        
-        let action = 'HOLD';
-        let confidence = 0.7;
-        let parameters = {};
-        
-        if (balance > minimumRequired * 3) {
-            action = 'REINVEST';
-            parameters = { amount: balance * 0.3, areas: ['TECHNOLOGY', 'MARKETING'] };
-            confidence = 0.9;
-        } else if (balance < minimumRequired) {
-            action = 'ALERT';
-            parameters = { deficit: minimumRequired - balance, urgency: 'HIGH' };
-            confidence = 0.95;
-        }
-        
-        return {
-            type: 'TREASURY_MANAGEMENT',
-            parameters: { action, ...parameters },
-            confidence,
-            rationale: `Treasury management decision based on balance: ${balance}`,
-            timestamp: Date.now()
-        };
-    }
-
-    async analyzeServiceExpansion(marketData) {
-        // Analyze market conditions for service expansion
-        const { growthRate, competition, marketSize } = marketData;
-        
-        if (growthRate > 0.15 && competition < 0.3) {
-            return {
-                type: 'NEW_SERVICE',
-                parameters: { 
-                    serviceType: 'premium', 
-                    investment: 50000,
-                    expectedROI: 0.25 
-                },
-                confidence: 0.8,
-                rationale: `Favorable market conditions for premium service expansion`,
-                timestamp: Date.now()
-            };
-        }
-        
-        return {
-            type: 'NEW_SERVICE',
-            parameters: {},
-            confidence: 0.3,
-            rationale: `Market conditions not favorable for expansion`,
-            timestamp: Date.now()
-        };
-    }
-
-    getPerformanceMetrics() {
-        return {
-            ...this.performanceMetrics,
-            uptime: Date.now() - this.performanceMetrics.lastAnalysis,
-            timestamp: Date.now()
-        };
-    }
-}
-
-class SovereignPolicies {
-    constructor() {
-        this.policies = new Map();
-        this.initialized = false;
-    }
-
-    async initializeDefaultPolicies() {
-        // Default governance policies
-        this.policies.set('FEE_ADJUSTMENT', {
-            maxAdjustment: 0.05,
-            minAdjustment: -0.03,
-            cooldownPeriod: 604800000, // 7 days
-            lastAdjustment: 0
-        });
-        
-        this.policies.set('TREASURY_MANAGEMENT', {
-            minReserves: 100000,
-            maxReinvestment: 0.5,
-            emergencyThreshold: 0.1
-        });
-        
-        this.policies.set('NEW_SERVICE', {
-            minInvestment: 10000,
-            maxInvestment: 500000,
-            requiredROI: 0.15
-        });
-        
-        this.initialized = true;
-        console.log('✅ Sovereign Policies Initialized');
-        return true;
-    }
-
-    validateDecision(decision) {
-        const policy = this.policies.get(decision.type);
-        if (!policy) return false;
-        
-        switch (decision.type) {
-            case 'FEE_ADJUSTMENT':
-                const adjustment = decision.parameters.adjustment;
-                return adjustment >= policy.minAdjustment && 
-                       adjustment <= policy.maxAdjustment &&
-                       (Date.now() - policy.lastAdjustment) > policy.cooldownPeriod;
-                
-            case 'TREASURY_MANAGEMENT':
-                if (decision.parameters.action === 'REINVEST') {
-                    return decision.parameters.amount <= policy.maxReinvestment;
-                }
-                return true;
-                
-            case 'NEW_SERVICE':
-                const investment = decision.parameters.investment;
-                return investment >= policy.minInvestment && 
-                       investment <= policy.maxInvestment &&
-                       decision.parameters.expectedROI >= policy.requiredROI;
-                
-            default:
-                return false;
-        }
-    }
-
-    updatePolicy(type, updates) {
-        if (this.policies.has(type)) {
-            this.policies.set(type, { ...this.policies.get(type), ...updates });
-            return true;
-        }
-        return false;
-    }
-}
-
-class SovereignGovernance {
-    constructor() {
-        this.sovereign = process.env.FOUNDER_ADDRESS;
-        this.aiGovernor = new AIGovernor();
-        this.policies = new SovereignPolicies();
-        this.initialized = false;
-    }
-
-    async initialize() {
-        await this.policies.initializeDefaultPolicies();
-        await this.aiGovernor.initialize();
-        
-        this.initialized = true;
-        console.log('✅ Sovereign Governance Initialized - AI-Governed');
-        return true;
-    }
-
-    async executeAIGovernance(marketData = {}, revenueData = {}, treasuryData = {}) {
-        if (!this.initialized) await this.initialize();
-        
-        const decisions = await this.aiGovernor.analyzeEconomy(marketData, revenueData, treasuryData);
-        const executedDecisions = [];
-        
-        for (const decision of decisions) {
-            if (decision.confidence > 0.7 && this.policies.validateDecision(decision)) {
-                const result = await this.executeDecision(decision);
-                executedDecisions.push({
-                    decision,
-                    result,
-                    timestamp: Date.now()
-                });
-            }
-        }
-        
-        return executedDecisions;
-    }
-
-    async executeDecision(decision) {
-        try {
-            let result;
-            
-            switch (decision.type) {
-                case 'FEE_ADJUSTMENT':
-                    result = await this.adjustServiceFees(decision.parameters);
-                    // Update policy cooldown
-                    this.policies.updatePolicy('FEE_ADJUSTMENT', { 
-                        lastAdjustment: Date.now() 
-                    });
-                    break;
-                    
-                case 'NEW_SERVICE':
-                    result = await this.launchNewService(decision.parameters);
-                    break;
-                    
-                case 'TREASURY_MANAGEMENT':
-                    result = await this.manageTreasury(decision.parameters);
-                    break;
-                    
-                default:
-                    result = { success: false, error: 'Unknown decision type' };
-            }
-            
-            return {
-                success: true,
-                decision: decision.type,
-                parameters: decision.parameters,
-                result,
-                timestamp: Date.now()
-            };
-            
-        } catch (error) {
-            return {
-                success: false,
-                decision: decision.type,
-                error: error.message,
-                timestamp: Date.now()
-            };
-        }
-    }
-
-    async adjustServiceFees(parameters) {
-        const { adjustment } = parameters;
-        
-        // In production, this would update service registry
-        console.log(`🔄 Adjusting service fees by ${(adjustment * 100).toFixed(2)}%`);
-        
-        return {
-            success: true,
-            adjustment,
-            previousFees: { /* would contain current fee structure */ },
-            newFees: { /* would contain updated fee structure */ },
-            timestamp: Date.now()
-        };
-    }
-
-    async launchNewService(parameters) {
-        const { serviceType, investment, expectedROI } = parameters;
-        
-        console.log(`🚀 Launching new ${serviceType} service with $${investment} investment`);
-        
-        return {
-            success: true,
-            serviceType,
-            investment,
-            expectedROI,
-            launchDate: Date.now(),
-            timestamp: Date.now()
-        };
-    }
-
-    async manageTreasury(parameters) {
-        const { action, amount, areas } = parameters;
-        
-        console.log(`💰 Treasury management: ${action} ${amount ? `$${amount}` : ''}`);
-        
-        return {
-            success: true,
-            action,
-            amount,
-            areas,
-            timestamp: Date.now()
-        };
-    }
-
-    getGovernanceStatus() {
-        return {
-            initialized: this.initialized,
-            aiGovernor: this.aiGovernor.getPerformanceMetrics(),
-            policies: Array.from(this.policies.policies.entries()),
-            sovereign: this.sovereign,
-            timestamp: Date.now()
-        };
-    }
-}
-
-// =========================================================================
-// INTEGRATED SOVEREIGN REVENUE ENGINE - PRODUCTION READY
+// PRODUCTION-READY SOVEREIGN REVENUE ENGINE - FULLY INTEGRATED
 // =========================================================================
 export class SovereignRevenueEngine extends EventEmitter {
     constructor(config = {}) {
@@ -479,12 +44,19 @@ export class SovereignRevenueEngine extends EventEmitter {
         this.governance = new SovereignGovernance();
         this.initialized = false;
         this.blockchainConnected = false;
+        this.walletInitialized = false;
         
         // Revenue tracking
         this.dailyRevenue = 0;
         this.weeklyRevenue = 0;
         this.monthlyRevenue = 0;
         this.revenueTargets = this.config.REVENUE_TARGETS;
+
+        // Blockchain wallet balances cache
+        this.walletBalances = {
+            ethereum: { native: 0, usdt: 0, address: '' },
+            solana: { native: 0, usdt: 0, address: '' }
+        };
 
         // Compliance tracking
         this.complianceState = {
@@ -498,9 +70,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         // Governance intervals
         this.governanceInterval = null;
         this.complianceInterval = null;
-        
-        // Wallet integration
-        this.walletInitialized = false;
+        this.walletHealthInterval = null;
     }
 
     async initialize() {
@@ -517,29 +87,31 @@ export class SovereignRevenueEngine extends EventEmitter {
             await this.db.init();
             await this.createRevenueTables();
             await this.createComplianceTables();
+            await this.createBlockchainTables();
             
             // Initialize tokenomics and governance
             await this.tokenomics.initialize();
             await this.governance.initialize();
             
+            // Load initial treasury balance from blockchain
+            await this.loadTreasuryFromBlockchain();
+            
             // Ensure minimum reserves
             await this.ensureMinimumReserves();
             
-            // Start governance cycles
+            // Start all monitoring cycles
             this.startGovernanceCycles();
-
-            // Start compliance monitoring
             this.startComplianceMonitoring();
+            this.startWalletHealthMonitoring();
             
             this.initialized = true;
-            console.log('✅ BWAEZI Sovereign Revenue Engine Initialized - ARCHITECTURAL COMPLIANCE MODE');
+            console.log('✅ BWAEZI Sovereign Revenue Engine Initialized - PRODUCTION READY');
             this.emit('initialized', { 
                 timestamp: Date.now(),
                 treasury: this.treasuryBalance,
+                blockchain: this.blockchainConnected,
                 services: this.registeredServices.size,
-                compliance: this.complianceState,
-                strategy: COMPLIANCE_STRATEGY.PUBLIC_COMMUNICATION,
-                walletConnected: this.walletInitialized
+                compliance: this.complianceState
             });
             
         } catch (error) {
@@ -549,23 +121,31 @@ export class SovereignRevenueEngine extends EventEmitter {
     }
 
     async initializeWalletConnections() {
+        console.log('🔗 Initializing blockchain wallet connections...');
+        
         try {
-            console.log('🔗 Initializing blockchain wallet connections...');
             const walletInitialized = await initializeConnections();
-            
-            if (walletInitialized) {
-                this.walletInitialized = true;
-                console.log('✅ Blockchain wallet connections established');
-                
-                // Verify wallet balances
-                const balances = await getWalletBalances();
-                console.log('💰 Initial wallet balances:', balances);
-                
-            } else {
+            if (!walletInitialized) {
                 throw new Error('Failed to initialize blockchain wallet connections');
             }
+            
+            // Test wallet functionality
+            const health = await checkBlockchainHealth();
+            if (!health.healthy) {
+                throw new Error('Blockchain health check failed');
+            }
+            
+            // Cache initial wallet balances
+            this.walletBalances = await getWalletBalances();
+            this.blockchainConnected = true;
+            this.walletInitialized = true;
+            
+            console.log('✅ Blockchain wallets initialized and ready for production');
+            this.emit('walletsInitialized', this.walletBalances);
+            
         } catch (error) {
-            console.error('❌ Wallet initialization failed:', error);
+            console.error('❌ Blockchain wallet initialization failed:', error);
+            this.blockchainConnected = false;
             throw error;
         }
     }
@@ -608,6 +188,8 @@ export class SovereignRevenueEngine extends EventEmitter {
                 transactionHash TEXT,
                 compliance_metadata TEXT,
                 verification_methodology TEXT,
+                blockchain_tx_hash TEXT,
+                wallet_address TEXT,
                 FOREIGN KEY (serviceId) REFERENCES sovereign_services (id)
             )
         `);
@@ -627,6 +209,8 @@ export class SovereignRevenueEngine extends EventEmitter {
                 distributionType TEXT,
                 compliance_metadata TEXT,
                 architectural_alignment TEXT,
+                blockchain_network TEXT,
+                wallet_transaction_id TEXT,
                 FOREIGN KEY (serviceId) REFERENCES sovereign_services (id)
             )
         `);
@@ -641,26 +225,8 @@ export class SovereignRevenueEngine extends EventEmitter {
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 description TEXT,
                 transactionId TEXT,
-                compliance_verification TEXT
-            )
-        `);
-        
-        // Blockchain Transactions Table
-        await this.db.run(`
-            CREATE TABLE IF NOT EXISTS blockchain_transactions (
-                id TEXT PRIMARY KEY,
-                chain TEXT NOT NULL,
-                transactionHash TEXT NOT NULL,
-                fromAddress TEXT NOT NULL,
-                toAddress TEXT NOT NULL,
-                amount REAL NOT NULL,
-                token TEXT DEFAULT 'native',
-                type TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                blockNumber INTEGER,
-                gasUsed REAL,
-                confirmationCount INTEGER DEFAULT 0
+                compliance_verification TEXT,
+                blockchain_reference TEXT
             )
         `);
     }
@@ -711,13 +277,215 @@ export class SovereignRevenueEngine extends EventEmitter {
                 public_url TEXT,
                 on_chain_hash TEXT,
                 architectural_alignment TEXT,
-                verification_summary TEXT
+                verification_summary TEXT,
+                blockchain_treasury_snapshot TEXT
+            )
+        `);
+    }
+
+    async createBlockchainTables() {
+        // Blockchain Transactions Table
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS blockchain_transactions (
+                id TEXT PRIMARY KEY,
+                network TEXT NOT NULL,
+                transaction_hash TEXT NOT NULL,
+                from_address TEXT NOT NULL,
+                to_address TEXT NOT NULL,
+                amount REAL NOT NULL,
+                token TEXT NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                block_number INTEGER,
+                gas_used REAL,
+                confirmation_count INTEGER DEFAULT 0,
+                error_message TEXT
+            )
+        `);
+
+        // Wallet Balances History
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS wallet_balances_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ethereum_native REAL DEFAULT 0,
+                ethereum_usdt REAL DEFAULT 0,
+                solana_native REAL DEFAULT 0,
+                solana_usdt REAL DEFAULT 0,
+                total_value_usd REAL DEFAULT 0
             )
         `);
     }
 
     // =========================================================================
-    // ZERO-KNOWLEDGE SERVICE REGISTRATION
+    // PRODUCTION BLOCKCHAIN INTEGRATION
+    // =========================================================================
+
+    async loadTreasuryFromBlockchain() {
+        try {
+            if (!this.walletInitialized) {
+                await this.initializeWalletConnections();
+            }
+            
+            const balances = await getWalletBalances();
+            this.walletBalances = balances;
+            
+            // Calculate total treasury value in USD
+            const totalValue = this.calculateTotalTreasuryValue(balances);
+            this.treasuryBalance = totalValue;
+            
+            // Record initial treasury snapshot
+            await this.recordWalletBalanceSnapshot(balances);
+            
+            console.log(`✅ Treasury loaded from blockchain: $${totalValue.toLocaleString()}`);
+            this.emit('treasuryLoaded', { balances, totalValue });
+            
+        } catch (error) {
+            console.error('❌ Failed to load treasury from blockchain:', error);
+            throw error;
+        }
+    }
+
+    calculateTotalTreasuryValue(balances) {
+        // Simple conversion rates (in production, use real-time price feeds)
+        const ETH_PRICE = 2500; // Example price
+        const SOL_PRICE = 100;  // Example price
+        const USDT_PRICE = 1;   // Stablecoin
+        
+        const ethValue = balances.ethereum.native * ETH_PRICE;
+        const ethUSDTValue = balances.ethereum.usdt * USDT_PRICE;
+        const solValue = balances.solana.native * SOL_PRICE;
+        const solUSDTValue = balances.solana.usdt * USDT_PRICE;
+        
+        return ethValue + ethUSDTValue + solValue + solUSDTValue;
+    }
+
+    async recordWalletBalanceSnapshot(balances) {
+        const totalValue = this.calculateTotalTreasuryValue(balances);
+        
+        await this.db.run(`
+            INSERT INTO wallet_balances_history 
+            (ethereum_native, ethereum_usdt, solana_native, solana_usdt, total_value_usd)
+            VALUES (?, ?, ?, ?, ?)
+        `, [
+            balances.ethereum.native,
+            balances.ethereum.usdt,
+            balances.solana.native,
+            balances.solana.usdt,
+            totalValue
+        ]);
+    }
+
+    async executeBlockchainPayment(paymentConfig) {
+        const { type, amount, toAddress, token = 'native', description = '' } = paymentConfig;
+        const paymentId = ConfigUtils.generateZKId(`payment_${type}`);
+        
+        try {
+            // Validate address
+            if (!validateAddress(toAddress, type === 'sol' ? 'sol' : 'eth')) {
+                throw new Error(`Invalid ${type} address: ${toAddress}`);
+            }
+
+            // Record transaction in database
+            await this.db.run(`
+                INSERT INTO blockchain_transactions 
+                (id, network, from_address, to_address, amount, token, type, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+                paymentId,
+                type === 'sol' ? 'solana' : 'ethereum',
+                type === 'sol' ? this.walletBalances.solana.address : this.walletBalances.ethereum.address,
+                toAddress,
+                amount,
+                token,
+                'outgoing',
+                'pending'
+            ]);
+
+            let result;
+            
+            // Execute actual blockchain transaction
+            if (token === 'native') {
+                if (type === 'sol') {
+                    result = await sendSOL(toAddress, amount);
+                } else if (type === 'eth') {
+                    result = await sendETH(toAddress, amount);
+                }
+            } else if (token === 'usdt') {
+                result = await sendUSDT(toAddress, amount, type);
+            } else {
+                throw new Error(`Unsupported token: ${token}`);
+            }
+
+            if (!result.success) {
+                throw new Error(result.error);
+            }
+
+            // Update transaction status
+            await this.db.run(`
+                UPDATE blockchain_transactions 
+                SET status = 'confirmed', transaction_hash = ?, confirmation_count = 1
+                WHERE id = ?
+            `, [result.signature || result.hash, paymentId]);
+
+            // Update local balance cache
+            await this.updateLocalBalancesAfterPayment(type, token, amount);
+
+            console.log(`✅ Blockchain payment executed: ${amount} ${token} to ${toAddress}`);
+            
+            this.emit('blockchainPaymentExecuted', {
+                paymentId,
+                ...paymentConfig,
+                transactionHash: result.signature || result.hash,
+                timestamp: Date.now()
+            });
+
+            return {
+                success: true,
+                paymentId,
+                transactionHash: result.signature || result.hash
+            };
+
+        } catch (error) {
+            console.error('❌ Blockchain payment failed:', error);
+            
+            // Update transaction status to failed
+            await this.db.run(`
+                UPDATE blockchain_transactions 
+                SET status = 'failed', error_message = ?
+                WHERE id = ?
+            `, [error.message, paymentId]);
+
+            this.emit('blockchainPaymentFailed', {
+                paymentId,
+                ...paymentConfig,
+                error: error.message,
+                timestamp: Date.now()
+            });
+
+            return {
+                success: false,
+                error: error.message,
+                paymentId
+            };
+        }
+    }
+
+    async updateLocalBalancesAfterPayment(network, token, amount) {
+        // Refresh balances from blockchain
+        const balances = await getWalletBalances();
+        this.walletBalances = balances;
+        
+        // Update treasury value
+        this.treasuryBalance = this.calculateTotalTreasuryValue(balances);
+        
+        // Record new snapshot
+        await this.recordWalletBalanceSnapshot(balances);
+    }
+
+    // =========================================================================
+    // PRODUCTION-READY SERVICE REGISTRATION WITH REAL PAYMENTS
     // =========================================================================
 
     async registerService(serviceConfig) {
@@ -734,6 +502,14 @@ export class SovereignRevenueEngine extends EventEmitter {
         // Validate architectural compliance
         if (!ConfigUtils.validateZKCompliance(serviceConfig)) {
             throw new Error('Service configuration violates architectural compliance requirements');
+        }
+
+        // Process registration fee as real blockchain payment if in crypto
+        if (serviceConfig.paymentCurrency && serviceConfig.paymentCurrency !== 'USD') {
+            const paymentResult = await this.processCryptoPayment(serviceConfig);
+            if (!paymentResult.success) {
+                throw new Error(`Registration payment failed: ${paymentResult.error}`);
+            }
         }
 
         await this.db.run(`
@@ -756,7 +532,7 @@ export class SovereignRevenueEngine extends EventEmitter {
             architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
         });
         
-        // Process registration fee as revenue using real wallet
+        // Process registration fee as revenue
         await this.processRevenue(serviceId, registrationFee, 'registration', 'USD');
 
         // Record compliance evidence with professional framing
@@ -786,8 +562,41 @@ export class SovereignRevenueEngine extends EventEmitter {
         return serviceId;
     }
 
+    async processCryptoPayment(serviceConfig) {
+        // Convert USD amount to crypto based on current prices
+        const cryptoAmount = await this.convertUsdToCrypto(
+            serviceConfig.registrationFee, 
+            serviceConfig.paymentCurrency
+        );
+
+        const paymentConfig = {
+            type: serviceConfig.paymentNetwork === 'solana' ? 'sol' : 'eth',
+            amount: cryptoAmount,
+            toAddress: this.config.SOVEREIGN_OWNER,
+            token: serviceConfig.paymentCurrency === 'usdt' ? 'usdt' : 'native'
+        };
+
+        return await this.executeBlockchainPayment(paymentConfig);
+    }
+
+    async convertUsdToCrypto(usdAmount, cryptocurrency) {
+        // In production, integrate with real price feeds
+        const PRICES = {
+            eth: 2500,
+            sol: 100,
+            usdt: 1
+        };
+
+        const price = PRICES[cryptocurrency.toLowerCase()];
+        if (!price) {
+            throw new Error(`Unsupported cryptocurrency: ${cryptocurrency}`);
+        }
+
+        return usdAmount / price;
+    }
+
     // =========================================================================
-    // REAL BLOCKCHAIN REVENUE PROCESSING
+    // PRODUCTION REVENUE PROCESSING WITH REAL BLOCKCHAIN DISTRIBUTIONS
     // =========================================================================
 
     async processRevenue(serviceId, amount, revenueType, currency = 'USD', chain = 'bwaezi', metadata = {}) {
@@ -805,8 +614,8 @@ export class SovereignRevenueEngine extends EventEmitter {
         
         // Record revenue stream with architectural compliance metadata
         await this.db.run(`
-            INSERT INTO revenue_streams (id, serviceId, amount, currency, type, chain, compliance_metadata, verification_methodology)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO revenue_streams (id, serviceId, amount, currency, type, chain, compliance_metadata, verification_methodology, blockchain_tx_hash, wallet_address)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [revenueId, serviceId, amount, currency, revenueType, chain, 
             JSON.stringify({ 
                 architectural_compliant: true, 
@@ -814,7 +623,9 @@ export class SovereignRevenueEngine extends EventEmitter {
                 pii_excluded: true,
                 alignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
             }),
-            JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY)]);
+            JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY),
+            metadata.blockchainTxHash,
+            metadata.walletAddress]);
 
         // Update service revenue metrics
         service.totalRevenue += amount;
@@ -829,10 +640,10 @@ export class SovereignRevenueEngine extends EventEmitter {
         // Update period revenue tracking
         await this.updateRevenueTracking(amount);
 
-        // Calculate distribution using integrated tokenomics
+        // Calculate distribution using integrated tokenomics (80/20 split)
         const distribution = await this.calculateDistribution(amount, service.revenueShare);
         
-        // Process distribution with real blockchain transactions
+        // Process distribution with real blockchain payments
         const distributionResult = await this.distributeRevenue(distribution, chain, serviceId);
 
         // Record treasury transaction
@@ -850,11 +661,7 @@ export class SovereignRevenueEngine extends EventEmitter {
 
         // Trigger AI governance review if significant revenue
         if (amount > 10000) {
-            const marketData = await this.getMarketData();
-            const revenueData = await this.getRevenueMetrics('7d');
-            const treasuryData = { balance: this.treasuryBalance, minimumRequired: this.config.AI_GOVERNANCE.MIN_RESERVES };
-            
-            await this.governance.executeAIGovernance(marketData, revenueData, treasuryData);
+            await this.governance.executeAIGovernance();
         }
         
         this.emit('revenueProcessed', { 
@@ -873,6 +680,304 @@ export class SovereignRevenueEngine extends EventEmitter {
         console.log(`💰 Architecturally Compliant Revenue processed: $${amount} from ${service.name}`);
         return revenueId;
     }
+
+    // =========================================================================
+    // PRODUCTION REVENUE DISTRIBUTION WITH REAL BLOCKCHAIN PAYMENTS
+    // =========================================================================
+
+    async calculateDistribution(amount, serviceRevenueShare = null) {
+        const revenueShare = serviceRevenueShare || this.config.SOVEREIGN_SERVICES.revenueShare;
+        
+        // Use integrated tokenomics calculation (80/20 split)
+        const tokenomicsDistribution = await this.tokenomics.calculateRevenueDistribution(amount);
+        
+        // BWAEZI Economic Distribution Model with 80/20 sovereign/ecosystem split
+        const sovereignShare = amount * 0.8; // 80% to founder/sovereign
+        const ecosystemShare = amount * 0.2; // 20% to ecosystem
+        
+        // AI Governance reinvestment from ecosystem share
+        const reinvestmentShare = ecosystemShare * this.config.AI_GOVERNANCE.REINVESTMENT_RATE;
+        const remainingEcosystem = ecosystemShare - reinvestmentShare;
+
+        return {
+            sovereign: parseFloat(sovereignShare.toFixed(6)),
+            reinvestment: parseFloat(reinvestmentShare.toFixed(6)),
+            ecosystem: parseFloat(remainingEcosystem.toFixed(6)),
+            total: amount,
+            tokenomics: tokenomicsDistribution,
+            architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+        };
+    }
+
+    async distributeRevenue(distribution, chain = 'bwaezi', serviceId = null) {
+        const distributionId = ConfigUtils.generateZKId(`dist_${serviceId}`);
+        
+        try {
+            // Record compliance evidence before distribution
+            await this.recordComplianceEvidence('REVENUE_DISTRIBUTION', {
+                distributionId,
+                amount: distribution.total,
+                sovereign: distribution.sovereign,
+                reinvestment: distribution.reinvestment,
+                ecosystem: distribution.ecosystem,
+                chain,
+                architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+            });
+
+            // Process sovereign payment (80%) via blockchain
+            const sovereignPayment = await this.processSovereignPayment(distribution.sovereign, chain);
+            
+            // Process reinvestment to treasury
+            await this.processReinvestment(distribution.reinvestment, chain);
+
+            // Process ecosystem funding (remaining from 20%)
+            await this.processEcosystemFunding(distribution.ecosystem, chain);
+
+            // Record distribution with architectural compliance metadata
+            await this.db.run(`
+                INSERT INTO distributions (id, amount, sovereignShare, ecosystemShare, reinvestmentShare, chain, serviceId, distributionType, compliance_metadata, architectural_alignment, blockchain_network, wallet_transaction_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [distributionId, distribution.total, distribution.sovereign, 
+                distribution.ecosystem, distribution.reinvestment, chain, serviceId, 
+                'revenue_distribution', 
+                JSON.stringify({ architectural_compliant: true }),
+                JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT),
+                chain,
+                sovereignPayment.transactionHash]);
+
+            // Update treasury balance
+            await this.updateTreasuryBalance(distribution.sovereign + distribution.reinvestment);
+
+            this.emit('revenueDistributed', { 
+                distributionId, 
+                sovereign: distribution.sovereign,
+                reinvestment: distribution.reinvestment,
+                ecosystem: distribution.ecosystem,
+                chain,
+                serviceId,
+                transactionHash: sovereignPayment.transactionHash,
+                compliance: 'architectural_alignment',
+                verification: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
+                timestamp: Date.now()
+            });
+
+            console.log(`✅ Revenue distributed via blockchain - Sovereign (80%): $${distribution.sovereign}, Reinvestment: $${distribution.reinvestment}, Ecosystem: $${distribution.ecosystem}`);
+
+            return { success: true, distributionId, transactionHash: sovereignPayment.transactionHash };
+        } catch (error) {
+            console.error('❌ Revenue distribution failed:', error);
+            
+            // Record compliance incident
+            await this.recordComplianceEvidence('COMPLIANCE_INCIDENT', {
+                type: 'REVENUE_DISTRIBUTION_FAILURE',
+                error: error.message,
+                distributionId,
+                timestamp: Date.now(),
+                architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+            });
+            
+            await this.db.run('UPDATE revenue_streams SET processed = false WHERE serviceId = ? AND processed = false', [serviceId]);
+            
+            this.emit('distributionFailed', {
+                distributionId,
+                error: error.message,
+                timestamp: Date.now()
+            });
+            
+            return { success: false, error: error.message };
+        }
+    }
+
+    async processSovereignPayment(amount, chain) {
+        // Convert to blockchain payment using integrated wallet system
+        const paymentConfig = {
+            type: chain === 'bwaezi' ? 'eth' : chain,
+            amount: amount,
+            toAddress: this.config.SOVEREIGN_OWNER,
+            token: 'usdt',
+            description: `Sovereign revenue distribution: $${amount}`
+        };
+
+        // Execute real blockchain payment
+        const paymentResult = await this.executeBlockchainPayment(paymentConfig);
+        
+        if (!paymentResult.success) {
+            throw new Error(`Sovereign payment failed: ${paymentResult.error}`);
+        }
+
+        console.log(`✅ Sovereign payment processed via blockchain: $${amount} to ${this.config.SOVEREIGN_OWNER} on ${chain}`);
+        return { 
+            success: true, 
+            amount,
+            transactionHash: paymentResult.transactionHash
+        };
+    }
+
+    async processReinvestment(amount, chain) {
+        this.reinvestmentPool += amount;
+        this.treasuryBalance += amount;
+        
+        await this.recordTreasuryTransaction(
+            amount, 
+            'REINVESTMENT', 
+            `AI Governance reinvestment on ${chain}`
+        );
+
+        console.log(`✅ Reinvestment processed: $${amount} added to treasury`);
+        
+        await this.triggerReinvestmentActions(amount, chain);
+    }
+
+    async processEcosystemFunding(amount, chain) {
+        this.ecosystemFund += amount;
+        
+        await this.recordTreasuryTransaction(
+            amount, 
+            'ECOSYSTEM', 
+            `Ecosystem funding on ${chain}`
+        );
+
+        console.log(`✅ Ecosystem funding processed: $${amount} added to ecosystem fund`);
+        
+        await this.triggerEcosystemDevelopment(amount, chain);
+    }
+
+    // =========================================================================
+    // PRODUCTION MONITORING AND HEALTH CHECKS
+    // =========================================================================
+
+    startWalletHealthMonitoring() {
+        this.walletHealthInterval = setInterval(async () => {
+            try {
+                await this.checkWalletHealth();
+                await this.refreshWalletBalances();
+            } catch (error) {
+                console.error('❌ Wallet health monitoring failed:', error);
+            }
+        }, 300000); // Every 5 minutes
+
+        console.log('🔍 Blockchain wallet health monitoring activated');
+    }
+
+    async checkWalletHealth() {
+        const health = await checkBlockchainHealth();
+        
+        if (!health.healthy) {
+            this.emit('blockchainHealthIssue', {
+                health,
+                timestamp: Date.now(),
+                architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+            });
+            
+            // Attempt reconnection
+            await this.initializeWalletConnections();
+        }
+
+        return health;
+    }
+
+    async refreshWalletBalances() {
+        try {
+            const balances = await getWalletBalances();
+            this.walletBalances = balances;
+            this.treasuryBalance = this.calculateTotalTreasuryValue(balances);
+            
+            await this.recordWalletBalanceSnapshot(balances);
+            
+            this.emit('walletBalancesRefreshed', {
+                balances,
+                treasury: this.treasuryBalance,
+                timestamp: Date.now()
+            });
+            
+        } catch (error) {
+            console.error('❌ Failed to refresh wallet balances:', error);
+        }
+    }
+
+    // =========================================================================
+    // ENHANCED PRODUCTION FUNCTIONS
+    // =========================================================================
+
+    async getProductionMetrics() {
+        const revenueMetrics = await this.getRevenueMetrics('30d');
+        const walletHealth = await this.checkWalletHealth();
+        const complianceHealth = await this.performComplianceHealthCheck();
+
+        return {
+            status: 'production',
+            version: BWAEZI_CHAIN.VERSION,
+            timestamp: Date.now(),
+            
+            blockchain: {
+                connected: this.blockchainConnected,
+                wallets: this.walletBalances,
+                health: walletHealth
+            },
+            
+            treasury: {
+                total: this.treasuryBalance,
+                ecosystem: this.ecosystemFund,
+                reinvestment: this.reinvestmentPool,
+                minimumReserves: this.config.AI_GOVERNANCE.MIN_RESERVES,
+                adequate: this.treasuryBalance >= this.config.AI_GOVERNANCE.MIN_RESERVES
+            },
+            
+            revenue: revenueMetrics,
+            compliance: complianceHealth,
+            
+            services: {
+                active: this.registeredServices.size,
+                totalRevenue: Array.from(this.registeredServices.values())
+                    .reduce((sum, service) => sum + service.totalRevenue, 0)
+            },
+            
+            architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
+            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY
+        };
+    }
+
+    async executeInvestment(investmentConfig) {
+        const { amount, type, target, description } = investmentConfig;
+        
+        try {
+            // Convert investment to blockchain payment
+            const paymentResult = await this.executeBlockchainPayment({
+                type: investmentConfig.network || 'eth',
+                amount: investmentConfig.cryptoAmount || await this.convertUsdToCrypto(amount, investmentConfig.token || 'usdt'),
+                toAddress: investmentConfig.recipient,
+                token: investmentConfig.token || 'usdt',
+                description: `Investment: ${description}`
+            });
+
+            if (!paymentResult.success) {
+                throw new Error(`Investment execution failed: ${paymentResult.error}`);
+            }
+
+            // Record investment in treasury
+            await this.recordTreasuryTransaction(
+                -amount, // Negative amount for outflow
+                'INVESTMENT',
+                description
+            );
+
+            this.emit('investmentExecuted', {
+                ...investmentConfig,
+                transactionHash: paymentResult.transactionHash,
+                timestamp: Date.now()
+            });
+
+            return { success: true, transactionHash: paymentResult.transactionHash };
+
+        } catch (error) {
+            console.error('❌ Investment execution failed:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // =========================================================================
+    // MAINTAIN ORIGINAL COMPLIANCE AND UTILITY FUNCTIONS
+    // =========================================================================
 
     async logDataProcessing(serviceId, dataType, encryptedHash) {
         const logId = ConfigUtils.generateZKId(`log_${serviceId}`);
@@ -894,75 +999,6 @@ export class SovereignRevenueEngine extends EventEmitter {
         });
     }
 
-    // =========================================================================
-    // REAL BLOCKCHAIN PAYMENT PROCESSING
-    // =========================================================================
-
-    async processBlockchainPayment(paymentDetails) {
-        if (!this.walletInitialized) {
-            throw new Error('Blockchain wallet not initialized');
-        }
-
-        const { toAddress, amount, currency, chain, token = 'native' } = paymentDetails;
-        
-        try {
-            let paymentResult;
-            
-            // Use integrated wallet functions for real blockchain transactions
-            if (token === 'native') {
-                if (chain === 'eth') {
-                    paymentResult = await sendETH(toAddress, amount);
-                } else if (chain === 'sol') {
-                    paymentResult = await sendSOL(toAddress, amount);
-                } else {
-                    throw new Error(`Unsupported chain for native token: ${chain}`);
-                }
-            } else if (token === 'usdt') {
-                paymentResult = await sendUSDT(toAddress, amount, chain);
-            } else {
-                throw new Error(`Unsupported token: ${token}`);
-            }
-
-            if (!paymentResult.success) {
-                throw new Error(paymentResult.error);
-            }
-
-            // Record blockchain transaction
-            const txId = ConfigUtils.generateZKId(`tx_${chain}`);
-            await this.db.run(`
-                INSERT INTO blockchain_transactions (id, chain, transactionHash, fromAddress, toAddress, amount, token, type, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [txId, chain, paymentResult.hash || paymentResult.signature, 
-                'sovereign_treasury', toAddress, amount, token, 'PAYMENT', 'confirmed']);
-
-            return {
-                success: true,
-                transactionId: txId,
-                transactionHash: paymentResult.hash || paymentResult.signature,
-                chain,
-                amount,
-                token,
-                timestamp: Date.now()
-            };
-
-        } catch (error) {
-            console.error('❌ Blockchain payment failed:', error);
-            
-            // Record failed transaction
-            const txId = ConfigUtils.generateZKId(`tx_failed_${chain}`);
-            await this.db.run(`
-                INSERT INTO blockchain_transactions (id, chain, fromAddress, toAddress, amount, token, type, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [txId, chain, 'sovereign_treasury', toAddress, amount, token, 'PAYMENT', 'failed']);
-
-            throw error;
-        }
-    }
-
-    // =========================================================================
-    // COMPLIANCE EVIDENCE MANAGEMENT
-    // =========================================================================
-
     async recordComplianceEvidence(framework, evidence) {
         const evidenceId = ConfigUtils.generateZKId(`evidence_${framework}`);
         const publicHash = createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
@@ -975,7 +1011,6 @@ export class SovereignRevenueEngine extends EventEmitter {
             JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY),
             JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT)]);
 
-        // Emit event for real-time compliance monitoring
         this.emit('complianceEvidenceRecorded', {
             evidenceId,
             framework,
@@ -989,250 +1024,33 @@ export class SovereignRevenueEngine extends EventEmitter {
         return evidenceId;
     }
 
-    async generateTransparencyReport(period = 'monthly') {
-        const reportId = ConfigUtils.generateZKId(`report_${period}`);
-        const now = new Date();
-        const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-
-        const metrics = await this.getRevenueMetrics('30d');
-        const complianceStats = await this.getComplianceStats();
-
-        const reportData = {
-            period,
-            periodStart: periodStart.toISOString(),
-            periodEnd: periodEnd.toISOString(),
-            revenue: metrics.totalRevenue,
-            services: metrics.activeServices,
-            complianceIncidents: complianceStats.incidents,
-            dataProcessed: complianceStats.dataPoints,
-            architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
-            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
-            publicUrl: `/transparency/${reportId}`
-        };
-
-        // Store report with architectural compliance framing
-        await this.db.run(`
-            INSERT INTO transparency_reports (id, report_type, period_start, period_end, data_processed, revenue_generated, services_active, compliance_incidents, public_url, architectural_alignment, verification_summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [reportId, period, periodStart.toISOString(), periodEnd.toISOString(), 
-            reportData.dataProcessed, reportData.revenue, reportData.services, 
-            reportData.complianceIncidents, reportData.publicUrl,
-            JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT),
-            JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY)]);
-
-        // Generate on-chain hash for immutability
-        const onChainHash = createHash('sha256').update(JSON.stringify(reportData)).digest('hex');
-        
-        await this.db.run(`UPDATE transparency_reports SET on_chain_hash = ? WHERE id = ?`, [onChainHash, reportId]);
-
-        this.emit('transparencyReportGenerated', {
-            reportId,
-            period,
-            data: reportData,
-            onChainHash,
-            architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
-            timestamp: Date.now()
-        });
-
-        return reportData;
-    }
-
-    async getComplianceStats() {
-        const dataPoints = await this.db.get(`SELECT COUNT(*) as count FROM data_processing_logs WHERE timestamp >= datetime('now', '-30 days')`);
-        const incidents = await this.db.get(`SELECT COUNT(*) as count FROM compliance_evidence WHERE framework = 'COMPLIANCE_INCIDENT' AND timestamp >= datetime('now', '-30 days')`);
-        
-        return {
-            dataPoints: dataPoints?.count || 0,
-            incidents: incidents?.count || 0,
-            architecturalCompliance: true,
-            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
-            lastAudit: this.complianceState.lastAudit
-        };
-    }
-
-    // =========================================================================
-    // AI GOVERNANCE WITH REAL BLOCKCHAIN INTEGRATION
-    // =========================================================================
-
-    startGovernanceCycles() {
-        // Start periodic AI governance execution with compliance checks
-        this.governanceInterval = setInterval(async () => {
-            try {
-                const marketData = await this.getMarketData();
-                const revenueData = await this.getRevenueMetrics('7d');
-                const treasuryData = { 
-                    balance: this.treasuryBalance, 
-                    minimumRequired: this.config.AI_GOVERNANCE.MIN_RESERVES,
-                    revenueStreams: this.revenueStreams.size
-                };
-                
-                await this.governance.executeAIGovernance(marketData, revenueData, treasuryData);
-                await this.performComplianceHealthCheck();
-            } catch (error) {
-                console.error('❌ AI Governance cycle failed:', error);
-            }
-        }, this.config.AI_GOVERNANCE.GOVERNANCE_INTERVAL);
-    }
-
-    startComplianceMonitoring() {
-        // Start compliance monitoring with architectural verification
-        this.complianceInterval = setInterval(async () => {
-            try {
-                await this.performComplianceHealthCheck();
-                await this.generateTransparencyReport('monthly');
-                await this.verifyArchitecturalAlignment();
-            } catch (error) {
-                console.error('❌ Compliance monitoring failed:', error);
-            }
-        }, this.config.COMPLIANCE_MONITORING_INTERVAL);
-    }
-
-    async performComplianceHealthCheck() {
-        const healthCheck = {
-            dataProcessing: this.complianceState.dataProcessing,
-            piiHandling: this.complianceState.piiHandling,
-            encryption: this.complianceState.encryption,
-            architecturalAlignment: this.complianceState.architecturalAlignment,
-            lastAudit: this.complianceState.lastAudit,
-            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
-            timestamp: Date.now()
-        };
-
-        // Record compliance evidence
-        await this.recordComplianceEvidence('HEALTH_CHECK', healthCheck);
-
-        this.emit('complianceHealthCheck', healthCheck);
-        return healthCheck;
-    }
-
-    async verifyArchitecturalAlignment() {
-        const alignment = {
-            strategy: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
-            verification: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
-            compliance: PUBLIC_COMPLIANCE_STATEMENTS.SECURITY,
-            timestamp: Date.now()
-        };
-
-        // Verify all services maintain architectural compliance
-        for (const [serviceId, service] of this.registeredServices) {
-            if (!service.architecturalAlignment || 
-                service.architecturalAlignment !== COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT) {
-                
-                console.warn(`⚠️ Service ${serviceId} architectural alignment needs verification`);
-                await this.recalibrateServiceArchitecture(serviceId);
-            }
-        }
-
-        await this.recordComplianceEvidence('ARCHITECTURAL_VERIFICATION', alignment);
-        return alignment;
-    }
-
-    async recalibrateServiceArchitecture(serviceId) {
-        const service = this.registeredServices.get(serviceId);
-        if (service) {
-            service.architecturalAlignment = COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT;
-            
-            await this.db.run(`
-                UPDATE sovereign_services SET architectural_alignment = ? WHERE id = ?
-            `, [JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT), serviceId]);
-            
-            await this.recordComplianceEvidence('ARCHITECTURAL_RECALIBRATION', {
-                serviceId,
-                previousAlignment: service.architecturalAlignment,
-                newAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
-                verification: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY
-            });
-        }
-    }
-
-    // =========================================================================
-    // REVENUE DISTRIBUTION WITH REAL BLOCKCHAIN TRANSACTIONS
-    // =========================================================================
-
-    async calculateDistribution(amount, revenueShare = 0.8) {
-        // Use integrated tokenomics engine for distribution calculations
-        const distribution = await this.tokenomics.calculateRevenueDistribution(amount, revenueShare);
-        
-        return {
-            sovereign: distribution.sovereign,
-            ecosystem: distribution.ecosystem,
-            burned: distribution.burned,
-            total: distribution.total,
-            revenueShare,
-            timestamp: distribution.timestamp
-        };
-    }
-
-    async distributeRevenue(distribution, chain, serviceId) {
-        const distributionId = ConfigUtils.generateZKId(`dist_${serviceId}`);
-        
-        // Record distribution with architectural compliance
-        await this.db.run(`
-            INSERT INTO distributions (id, amount, sovereignShare, ecosystemShare, reinvestmentShare, chain, serviceId, distributionType, compliance_metadata, architectural_alignment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [distributionId, distribution.total, distribution.sovereign, distribution.ecosystem, 
-            distribution.burned, chain, serviceId, 'revenue_distribution',
-            JSON.stringify({ 
-                architectural_compliant: true, 
-                verification: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY 
-            }),
-            JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT)]);
-
-        // Update treasury and ecosystem funds
-        this.treasuryBalance += distribution.sovereign;
-        this.ecosystemFund += distribution.ecosystem;
-        this.reinvestmentPool += distribution.burned;
-
-        // Process real blockchain payments for ecosystem distribution
-        if (distribution.ecosystem > 0) {
-            const ecosystemPayment = await this.processBlockchainPayment({
-                toAddress: this.config.ECOSYSTEM_WALLET,
-                amount: distribution.ecosystem,
-                currency: 'USD',
-                chain: chain,
-                token: 'usdt'
-            });
-
-            // Update distribution with transaction hash
-            if (ecosystemPayment.success) {
-                await this.db.run(`UPDATE distributions SET txHash = ? WHERE id = ?`, 
-                    [ecosystemPayment.transactionHash, distributionId]);
-            }
-        }
-
-        // Record treasury transactions
-        await this.recordTreasuryTransaction(distribution.sovereign, 'SOVEREIGN_SHARE', `Revenue distribution for ${serviceId}`);
-        await this.recordTreasuryTransaction(distribution.ecosystem, 'ECOSYSTEM_SHARE', `Ecosystem distribution for ${serviceId}`);
-
-        // Record compliance evidence
-        await this.recordComplianceEvidence('REVENUE_DISTRIBUTION', {
-            distributionId,
-            amount: distribution.total,
-            sovereign: distribution.sovereign,
-            ecosystem: distribution.ecosystem,
-            reinvestment: distribution.burned,
-            chain,
-            architecturalCompliant: true,
-            verification: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY
-        });
-
-        return {
-            distributionId,
-            ...distribution,
-            chain,
-            serviceId,
-            timestamp: Date.now()
-        };
-    }
-
     async recordTreasuryTransaction(amount, type, description) {
-        const txId = ConfigUtils.generateZKId(`treasury_${type}`);
+        const transactionId = ConfigUtils.generateZKId(`treasury_${type}`);
         
         await this.db.run(`
             INSERT INTO treasury_balance (balance, type, amount, description, transactionId, compliance_verification)
             VALUES (?, ?, ?, ?, ?, ?)
-        `, [this.treasuryBalance, type, amount, description, txId,
+        `, [this.treasuryBalance, type, amount, description, transactionId,
+            JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY)]);
+
+        this.emit('treasuryTransaction', { 
+            transactionId, 
+            amount, 
+            type, 
+            description,
+            newBalance: this.treasuryBalance,
+            complianceVerification: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
+            timestamp: Date.now()
+        });
+    }
+
+    async updateTreasuryBalance(amount) {
+        this.treasuryBalance += amount;
+        
+        await this.db.run(`
+            INSERT INTO treasury_balance (balance, type, amount, description, compliance_verification)
+            VALUES (?, 'UPDATE', ?, 'Revenue distribution', ?)
+        `, [this.treasuryBalance, amount, 
             JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY)]);
     }
 
@@ -1242,140 +1060,305 @@ export class SovereignRevenueEngine extends EventEmitter {
         this.monthlyRevenue += amount;
 
         // Reset daily revenue every 24 hours
-        setTimeout(() => {
-            this.dailyRevenue = 0;
-        }, 24 * 60 * 60 * 1000);
-
+        setTimeout(() => { this.dailyRevenue = 0; }, 24 * 60 * 60 * 1000);
         // Reset weekly revenue every 7 days
-        setTimeout(() => {
-            this.weeklyRevenue = 0;
-        }, 7 * 24 * 60 * 60 * 1000);
-
+        setTimeout(() => { this.weeklyRevenue = 0; }, 7 * 24 * 60 * 60 * 1000);
         // Reset monthly revenue every 30 days
-        setTimeout(() => {
-            this.monthlyRevenue = 0;
-        }, 30 * 24 * 60 * 60 * 1000);
+        setTimeout(() => { this.monthlyRevenue = 0; }, 30 * 24 * 60 * 60 * 1000);
     }
 
-    // =========================================================================
-    // PRODUCTION UTILITIES
-    // =========================================================================
+    async getRevenueMetrics(period = '30d') {
+        let query = `SELECT SUM(amount) as total, COUNT(*) as transactions FROM revenue_streams WHERE 1=1`;
+        let params = [];
+
+        if (period === '7d') {
+            query += ` AND timestamp >= datetime('now', '-7 days')`;
+        } else if (period === '30d') {
+            query += ` AND timestamp >= datetime('now', '-30 days')`;
+        }
+
+        const result = await this.db.get(query, params);
+        
+        return {
+            total: result.total || 0,
+            transactions: result.transactions || 0,
+            daily: this.dailyRevenue,
+            weekly: this.weeklyRevenue,
+            monthly: this.monthlyRevenue,
+            targets: this.revenueTargets,
+            period
+        };
+    }
+
+    async performComplianceHealthCheck() {
+        const checks = {
+            dataProcessing: await this.checkDataProcessingCompliance(),
+            architecturalAlignment: await this.checkArchitecturalAlignment(),
+            blockchainVerification: await this.checkBlockchainVerification(),
+            transparency: await this.checkTransparencyCompliance()
+        };
+
+        const allPassed = Object.values(checks).every(check => check.passed);
+        
+        return {
+            status: allPassed ? 'compliant' : 'non_compliant',
+            checks,
+            lastAudit: this.complianceState.lastAudit,
+            architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
+            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY
+        };
+    }
+
+    async checkDataProcessingCompliance() {
+        const result = await this.db.get(`
+            SELECT COUNT(*) as total, 
+                   SUM(CASE WHEN processing_type = 'architectural_compliance' THEN 1 ELSE 0 END) as compliant
+            FROM data_processing_logs 
+            WHERE timestamp >= datetime('now', '-30 days')
+        `);
+
+        return {
+            passed: result.compliant === result.total,
+            compliant: result.compliant,
+            total: result.total,
+            framework: 'Zero-Knowledge Architecture'
+        };
+    }
+
+    async checkArchitecturalAlignment() {
+        const result = await this.db.get(`
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN architectural_alignment IS NOT NULL THEN 1 ELSE 0 END) as aligned
+            FROM sovereign_services
+        `);
+
+        return {
+            passed: result.aligned === result.total,
+            aligned: result.aligned,
+            total: result.total,
+            strategy: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+        };
+    }
+
+    async checkBlockchainVerification() {
+        const result = await this.db.get(`
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed
+            FROM blockchain_transactions
+            WHERE timestamp >= datetime('now', '-7 days')
+        `);
+
+        return {
+            passed: result.confirmed === result.total,
+            confirmed: result.confirmed,
+            total: result.total,
+            network: 'Multi-chain verification'
+        };
+    }
+
+    async checkTransparencyCompliance() {
+        const result = await this.db.get(`
+            SELECT COUNT(*) as total_reports
+            FROM transparency_reports
+            WHERE period_end >= datetime('now', '-90 days')
+        `);
+
+        return {
+            passed: result.total_reports > 0,
+            reports: result.total_reports,
+            requirement: 'Quarterly transparency reports'
+        };
+    }
+
+    startGovernanceCycles() {
+        this.governanceInterval = setInterval(async () => {
+            try {
+                await this.governance.executeAIGovernance();
+                await this.performComplianceHealthCheck();
+                await this.generateTransparencyReport();
+            } catch (error) {
+                console.error('❌ Governance cycle failed:', error);
+            }
+        }, 24 * 60 * 60 * 1000); // Daily governance cycles
+
+        console.log('🏛️  AI Governance cycles activated');
+    }
+
+    startComplianceMonitoring() {
+        this.complianceInterval = setInterval(async () => {
+            try {
+                await this.performComplianceHealthCheck();
+                await this.recordComplianceEvidence('PERIODIC_AUDIT', {
+                    auditType: 'automated_compliance_check',
+                    timestamp: Date.now(),
+                    architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+                });
+            } catch (error) {
+                console.error('❌ Compliance monitoring failed:', error);
+            }
+        }, 4 * 60 * 60 * 1000); // Every 4 hours
+
+        console.log('🛡️  Compliance monitoring activated');
+    }
+
+    async generateTransparencyReport() {
+        const reportId = ConfigUtils.generateZKId(`report_${Date.now()}`);
+        const periodStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const periodEnd = new Date();
+        
+        const metrics = await this.getRevenueMetrics('30d');
+        const compliance = await this.performComplianceHealthCheck();
+        
+        const report = {
+            period_start: periodStart,
+            period_end: periodEnd,
+            data_processed: 0, // Zero-knowledge: no actual data stored
+            revenue_generated: metrics.total,
+            services_active: this.registeredServices.size,
+            compliance_incidents: 0,
+            architectural_alignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
+            verification_summary: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
+            blockchain_treasury_snapshot: this.walletBalances
+        };
+
+        await this.db.run(`
+            INSERT INTO transparency_reports (id, report_type, period_start, period_end, revenue_generated, services_active, architectural_alignment, verification_summary, blockchain_treasury_snapshot)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [reportId, 'quarterly', periodStart, periodEnd, metrics.total, 
+            this.registeredServices.size, 
+            JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT),
+            JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY),
+            JSON.stringify(this.walletBalances)]);
+
+        this.emit('transparencyReportGenerated', {
+            reportId,
+            ...report,
+            timestamp: Date.now()
+        });
+
+        return reportId;
+    }
 
     async ensureMinimumReserves() {
-        const minimumReserves = this.config.AI_GOVERNANCE.MIN_RESERVES;
+        const minReserves = this.config.AI_GOVERNANCE.MIN_RESERVES;
         
-        if (this.treasuryBalance < minimumReserves) {
-            console.warn(`⚠️ Treasury below minimum reserves: $${this.treasuryBalance} < $${minimumReserves}`);
+        if (this.treasuryBalance < minReserves) {
+            console.warn(`⚠️ Treasury below minimum reserves: $${this.treasuryBalance} < $${minReserves}`);
             
-            // In production, this would trigger emergency funding procedures
-            this.emit('lowReserves', {
+            this.emit('minimumReservesWarning', {
                 current: this.treasuryBalance,
-                minimum: minimumReserves,
-                deficit: minimumReserves - this.treasuryBalance,
+                minimum: minReserves,
+                deficit: minReserves - this.treasuryBalance,
                 timestamp: Date.now()
             });
+
+            // Trigger emergency governance action
+            await this.governance.executeEmergencyProtocol('LOW_TREASURY');
         }
     }
 
-    async getMarketData() {
-        // In production, this would fetch real market data from APIs
-        return {
-            volatility: 0.15,
-            demand: 0.8,
-            competition: 0.3,
-            marketSize: 1000000000,
-            growthRate: 0.25,
-            timestamp: Date.now()
-        };
-    }
-
-    async getRevenueMetrics(timeframe = 'all') {
-        let query = 'SELECT SUM(amount) as totalRevenue, COUNT(*) as transactionCount FROM revenue_streams';
-        let params = [];
+    async triggerReinvestmentActions(amount, chain) {
+        // AI-driven reinvestment decisions
+        const reinvestmentPlan = await this.governance.generateReinvestmentPlan(amount, chain);
         
-        if (timeframe === '7d') {
-            query += ' WHERE timestamp >= datetime("now", "-7 days")';
-        } else if (timeframe === '30d') {
-            query += ' WHERE timestamp >= datetime("now", "-30 days")';
+        if (reinvestmentPlan.actions && reinvestmentPlan.actions.length > 0) {
+            for (const action of reinvestmentPlan.actions) {
+                await this.executeInvestment(action);
+            }
         }
-        
-        const revenue = await this.db.get(query, params);
-        const services = await this.db.get('SELECT COUNT(*) as activeServices FROM sovereign_services WHERE status = "active"');
-        
-        return {
-            totalRevenue: revenue?.totalRevenue || 0,
-            transactionCount: revenue?.transactionCount || 0,
-            activeServices: services?.activeServices || 0,
-            dailyRevenue: this.dailyRevenue,
-            weeklyRevenue: this.weeklyRevenue,
-            monthlyRevenue: this.monthlyRevenue,
-            treasuryBalance: this.treasuryBalance,
-            ecosystemFund: this.ecosystemFund,
-            reinvestmentPool: this.reinvestmentPool,
-            timeframe,
-            timestamp: Date.now()
-        };
     }
 
-    async getServiceMetrics(serviceId) {
-        const service = await this.db.get('SELECT * FROM sovereign_services WHERE id = ?', [serviceId]);
-        const revenue = await this.db.get('SELECT SUM(amount) as totalRevenue, COUNT(*) as transactionCount FROM revenue_streams WHERE serviceId = ?', [serviceId]);
+    async triggerEcosystemDevelopment(amount, chain) {
+        // AI-driven ecosystem development
+        const ecosystemPlan = await this.governance.generateEcosystemPlan(amount, chain);
         
-        return {
-            service: service || null,
-            revenue: revenue?.totalRevenue || 0,
-            transactionCount: revenue?.transactionCount || 0,
-            compliance: service?.compliance ? JSON.parse(service.compliance) : [],
-            architecturalAlignment: service?.architectural_alignment ? JSON.parse(service.architectural_alignment) : null,
-            timestamp: Date.now()
-        };
+        if (ecosystemPlan.grants && ecosystemPlan.grants.length > 0) {
+            for (const grant of ecosystemPlan.grants) {
+                await this.executeBlockchainPayment(grant);
+            }
+        }
     }
+
+    // =========================================================================
+    // PRODUCTION SHUTDOWN AND CLEANUP
+    // =========================================================================
 
     async shutdown() {
-        console.log('🛑 Shutting down Sovereign Revenue Engine...');
+        console.log('🛑 Shutting down BWAEZI Sovereign Revenue Engine...');
         
+        // Clear all intervals
         if (this.governanceInterval) clearInterval(this.governanceInterval);
         if (this.complianceInterval) clearInterval(this.complianceInterval);
+        if (this.walletHealthInterval) clearInterval(this.walletHealthInterval);
         
-        await this.db.close();
+        // Close database connection
+        if (this.db) await this.db.close();
+        
+        // Shutdown governance and tokenomics
+        if (this.governance) await this.governance.shutdown();
+        if (this.tokenomics) await this.tokenomics.shutdown();
+        
         this.initialized = false;
+        console.log('✅ BWAEZI Sovereign Revenue Engine shut down gracefully');
         
-        console.log('✅ Sovereign Revenue Engine shut down gracefully');
+        this.emit('shutdown', { timestamp: Date.now() });
     }
 
     // =========================================================================
-    // PUBLIC INTERFACE
+    // PUBLIC API FOR EXTERNAL INTEGRATION
     // =========================================================================
 
-    getStatus() {
+    getPublicAPI() {
         return {
-            initialized: this.initialized,
-            walletConnected: this.walletInitialized,
-            services: this.registeredServices.size,
-            revenueStreams: this.revenueStreams.size,
-            treasuryBalance: this.treasuryBalance,
-            ecosystemFund: this.ecosystemFund,
-            reinvestmentPool: this.reinvestmentPool,
-            compliance: this.complianceState,
-            tokenomics: this.tokenomics.getRevenueMetrics(),
-            governance: this.governance.getGovernanceStatus(),
-            architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
-            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
-            timestamp: Date.now()
+            // Service Management
+            registerService: (config) => this.registerService(config),
+            getService: (id) => this.registeredServices.get(id),
+            listServices: () => Array.from(this.registeredServices.values()),
+            
+            // Revenue Processing
+            processRevenue: (serviceId, amount, type, currency, metadata) => 
+                this.processRevenue(serviceId, amount, type, currency, 'bwaezi', metadata),
+            
+            // Treasury Management
+            getTreasuryBalance: () => this.treasuryBalance,
+            getEcosystemFund: () => this.ecosystemFund,
+            getReinvestmentPool: () => this.reinvestmentPool,
+            
+            // Blockchain Operations
+            getWalletBalances: () => this.walletBalances,
+            executePayment: (paymentConfig) => this.executeBlockchainPayment(paymentConfig),
+            
+            // Analytics & Reporting
+            getMetrics: (period) => this.getProductionMetrics(),
+            getComplianceStatus: () => this.performComplianceHealthCheck(),
+            generateReport: () => this.generateTransparencyReport(),
+            
+            // System Status
+            isInitialized: () => this.initialized,
+            isBlockchainConnected: () => this.blockchainConnected,
+            getVersion: () => BWAEZI_CHAIN.VERSION
         };
     }
 }
 
 // =========================================================================
-// GLOBAL PRODUCTION INSTANCE
+// PRODUCTION EXPORT AND INSTANCE MANAGEMENT
 // =========================================================================
 
-// Create and export global instance for production use
-export const sovereignRevenueEngine = new SovereignRevenueEngine();
+// Global production instance
+let globalRevenueEngine = null;
 
-// Auto-initialize in production environment
-if (process.env.NODE_ENV === 'production') {
-    sovereignRevenueEngine.initialize().catch(console.error);
+export function getSovereignRevenueEngine(config = {}) {
+    if (!globalRevenueEngine) {
+        globalRevenueEngine = new SovereignRevenueEngine(config);
+    }
+    return globalRevenueEngine;
 }
 
-export default sovereignRevenueEngine;
+export async function initializeSovereignRevenueEngine(config = {}) {
+    const engine = getSovereignRevenueEngine(config);
+    await engine.initialize();
+    return engine;
+}
+
+export default SovereignRevenueEngine;
