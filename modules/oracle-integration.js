@@ -1,8 +1,8 @@
 // modules/oracle-integration.js
 import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
-import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
+import SovereignRevenueEngine from './sovereign-revenue-engine.js';
 import { BWAEZI_CHAIN } from '../config/bwaezi-config.js';
 
 export class OracleIntegration {
@@ -11,7 +11,7 @@ export class OracleIntegration {
       dataSources: ['coingecko', 'chainlink', 'band'],
       updateInterval: 30000,
       fallbackEnabled: true,
-      priceFeeds: ['BTC/USD', 'ETH/USD', 'BWZ/USD'],
+      priceFeeds: ['BTC/USD', 'ETH/USD', 'bwzC/USD'],
       ...config
     };
     this.priceFeeds = new Map();
@@ -97,7 +97,7 @@ export class OracleIntegration {
     const basePrices = {
       'BTC/USD': 45000 + (Math.random() * 1000),
       'ETH/USD': 3000 + (Math.random() * 100),
-      'BWZ/USD': 1.50 + (Math.random() * 0.1)
+      'bwzC/USD': 1.50 + (Math.random() * 0.1)
     };
     return basePrices[pair] || 1.0;
   }
