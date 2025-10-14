@@ -1,6 +1,6 @@
 // modules/sovereign-revenue-engine.js
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
+import ArielSQLiteEngine from '../ariel-sqlite-engine/index.js';
 import { SovereignTokenomics } from './tokenomics-engine/index.js';
 import { SovereignGovernance } from './governance-engine/index.js';
 import { 
