@@ -8,7 +8,7 @@ import { EventEmitter } from 'events';
 export const BWAEZI_CHAIN = {
     NAME: 'BWAEZI Sovereign Chain',
     NATIVE_TOKEN: 'BWAEZI',
-    SYMBOL: 'bwz',
+    SYMBOL: 'bwzC',
     DECIMALS: 18,
     CHAIN_ID: 77777,
     VERSION: '2.0.0-SOVEREIGN',
