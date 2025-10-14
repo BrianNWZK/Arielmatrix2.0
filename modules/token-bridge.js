@@ -8,7 +8,7 @@ import { BWAEZI_CHAIN } from '../config/bwaezi-config.js';
 export class TokenBridge {
   constructor(config = {}) {
     this.config = {
-      bridgeableTokens: ['BWZ', 'USDT', 'USDC', 'WBTC'],
+      bridgeableTokens: ['bwzC', 'USDT', 'USDC', 'WBTC'],
       bridgeFeePercentage: 0.1,
       minimumBridgeAmount: 0.001,
       maximumBridgeAmount: 1000000,
@@ -108,7 +108,7 @@ export class TokenBridge {
   }
 
   calculateBridgeFee(token, amount) {
-    const tokenFees = { 'BWZ': 0.08, 'USDT': 0.15, 'USDC': 0.15, 'WBTC': 0.2 };
+    const tokenFees = { 'bwzC': 0.08, 'USDT': 0.15, 'USDC': 0.15, 'WBTC': 0.2 };
     const feePercentage = tokenFees[token] || this.config.bridgeFeePercentage;
     const percentageFee = amount * (feePercentage / 100);
     return Math.max(percentageFee, this.config.minimumBridgeAmount);
