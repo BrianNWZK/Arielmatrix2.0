@@ -1,11 +1,10 @@
 // modules/zero-cost-dpos.js
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { 
     BWAEZI_CHAIN,
     BWAEZI_SOVEREIGN_CONFIG,
-    SOVEREIGN_SERVICES,
     COMPLIANCE_STRATEGY,
     PUBLIC_COMPLIANCE_STATEMENTS,
     ConfigUtils
@@ -1249,11 +1248,11 @@ export class ZeroCostDPoS extends EventEmitter {
     }
 
     // =========================================================================
-    // DEEPSEEK NOVEL INNOVATIVE INTELLIGENCE EXTENSIONS
+    // NOVEL INNOVATIVE INTELLIGENCE EXTENSIONS
     // =========================================================================
 
     /**
-     * DeepSeek AI Innovation: Adaptive Economic Model
+     * Innovation: Adaptive Economic Model
      * Dynamically adjusts economic parameters based on network conditions
      */
     async adaptiveEconomicModel() {
@@ -1274,7 +1273,7 @@ export class ZeroCostDPoS extends EventEmitter {
     }
 
     /**
-     * DeepSeek AI Innovation: Predictive Performance Scoring
+     * Innovation: Predictive Performance Scoring
      * Uses historical data to predict validator performance
      */
     async predictivePerformanceScoring(validatorAddress) {
@@ -1307,7 +1306,7 @@ export class ZeroCostDPoS extends EventEmitter {
     }
 
     /**
-     * DeepSeek AI Innovation: Intelligent Stake Distribution
+     * Innovation: Intelligent Stake Distribution
      * Suggests optimal stake distribution for delegators
      */
     async intelligentStakeDistribution(delegatorAddress, totalAmount) {
@@ -1344,7 +1343,7 @@ export class ZeroCostDPoS extends EventEmitter {
     }
 
     /**
-     * DeepSeek AI Innovation: Network Security Analysis
+     * Innovation: Network Security Analysis
      * Advanced security threat detection and prevention
      */
     async networkSecurityAnalysis() {
