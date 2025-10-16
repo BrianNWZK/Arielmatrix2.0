@@ -8,7 +8,6 @@ import {
     ConfigUtils 
 } from '../config/bwaezi-config.js';
 import { createHash, randomBytes, createHmac } from 'crypto';
-import { WebSocket } from 'ws';
 
 export class AIOracleEngine {
     constructor(config = {}) {
@@ -341,7 +340,10 @@ export class AIOracleEngine {
         return {
             price: parseFloat(data.data.amount),
             volume: 0,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            source: 'coinbase',
+            symbol,
+            currency
         };
     }
 
@@ -351,61 +353,90 @@ export class AIOracleEngine {
         if (!response.ok) throw new Error(`Binance API error: ${response.status}`);
         
         const data = await response.json();
+        
+        const statsResponse = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${tradingPair}`);
+        let volume = 0;
+        if (statsResponse.ok) {
+            const statsData = await statsResponse.json();
+            volume = parseFloat(statsData.volume) || 0;
+        }
+        
         return {
             price: parseFloat(data.price),
-            volume: 0,
-            timestamp: new Date().toISOString()
+            volume: volume,
+            timestamp: new Date().toISOString(),
+            source: 'binance',
+            symbol,
+            currency
         };
     }
 
     async fetchKrakenPrice(symbol, currency) {
-        const pair = `${symbol}${currency}`;
+        const pair = `${symbol}${currency}`.toUpperCase();
         const response = await fetch(`https://api.kraken.com/0/public/Ticker?pair=${pair}`);
         if (!response.ok) throw new Error(`Kraken API error: ${response.status}`);
         
         const data = await response.json();
+        
+        if (data.error && data.error.length > 0) {
+            throw new Error(`Kraken API error: ${data.error.join(', ')}`);
+        }
+        
         const resultKey = Object.keys(data.result)[0];
+        const ticker = data.result[resultKey];
+        
         return {
-            price: parseFloat(data.result[resultKey].c[0]),
-            volume: parseFloat(data.result[resultKey].v[1]),
-            timestamp: new Date().toISOString()
+            price: parseFloat(ticker.c[0]),
+            volume: parseFloat(ticker.v[1]),
+            timestamp: new Date().toISOString(),
+            source: 'kraken',
+            symbol,
+            currency
         };
     }
 
     async fetchUniswapPrice(symbol, currency) {
-        // Uniswap V3 subgraph query for price data
-        const query = `
-            {
-                token(id: "${symbol.toLowerCase()}") {
-                    derivedETH
-                }
-                bundle(id: "1") {
-                    ethPriceUSD
-                }
-            }
-        `;
-
-        const response = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query })
-        });
-
-        if (!response.ok) throw new Error(`Uniswap API error: ${response.status}`);
+        const coingeckoId = this.getCoinGeckoId(symbol);
+        if (!coingeckoId) {
+            throw new Error(`Unsupported symbol for Uniswap price: ${symbol}`);
+        }
+        
+        const response = await fetch(
+            `https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=${currency.toLowerCase()}`
+        );
+        
+        if (!response.ok) throw new Error(`CoinGecko API error: ${response.status}`);
         
         const data = await response.json();
-        const ethPrice = parseFloat(data.data.bundle.ethPriceUSD);
-        const tokenEthPrice = parseFloat(data.data.token.derivedETH);
+        const priceData = data[coingeckoId];
+        
+        if (!priceData || !priceData[currency.toLowerCase()]) {
+            throw new Error(`Price data not available for ${symbol}`);
+        }
         
         return {
-            price: tokenEthPrice * ethPrice,
+            price: priceData[currency.toLowerCase()],
             volume: 0,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            source: 'coingecko',
+            symbol,
+            currency
         };
     }
 
+    getCoinGeckoId(symbol) {
+        const mapping = {
+            'BWZ': 'bwaezi',
+            'ETH': 'ethereum',
+            'BTC': 'bitcoin',
+            'USDT': 'tether',
+            'USDC': 'usd-coin',
+            'DAI': 'dai'
+        };
+        return mapping[symbol.toUpperCase()];
+    }
+
     async fetchWeatherData(source, feedId) {
-        // Implementation for weather data fetching
         const location = feedId.replace('weather_', '');
         
         switch (source) {
@@ -425,10 +456,13 @@ export class AIOracleEngine {
         if (!apiKey) throw new Error('OpenWeather API key not configured');
 
         const response = await fetch(
-            `https://api.openweathermap.org/data/2.5/weather?q=${location}&appid=${apiKey}&units=metric`
+            `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(location)}&appid=${apiKey}&units=metric`
         );
         
-        if (!response.ok) throw new Error(`OpenWeather API error: ${response.status}`);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`OpenWeather API error: ${response.status} - ${errorData.message || 'Unknown error'}`);
+        }
         
         const data = await response.json();
         return {
@@ -436,12 +470,80 @@ export class AIOracleEngine {
             humidity: data.main.humidity,
             pressure: data.main.pressure,
             description: data.weather[0].description,
-            timestamp: new Date().toISOString()
+            windSpeed: data.wind.speed,
+            visibility: data.visibility,
+            timestamp: new Date(data.dt * 1000).toISOString(),
+            location: data.name,
+            country: data.sys.country
+        };
+    }
+
+    async fetchAccuWeatherData(location) {
+        const apiKey = process.env.ACCUWEATHER_API_KEY;
+        if (!apiKey) throw new Error('AccuWeather API key not configured');
+
+        const locationResponse = await fetch(
+            `https://dataservice.accuweather.com/locations/v1/cities/search?q=${encodeURIComponent(location)}&apikey=${apiKey}`
+        );
+        
+        if (!locationResponse.ok) throw new Error(`AccuWeather location API error: ${locationResponse.status}`);
+        
+        const locationData = await locationResponse.json();
+        if (!locationData || locationData.length === 0) {
+            throw new Error(`Location not found: ${location}`);
+        }
+        
+        const locationKey = locationData[0].Key;
+        
+        const weatherResponse = await fetch(
+            `https://dataservice.accuweather.com/currentconditions/v1/${locationKey}?apikey=${apiKey}&details=true`
+        );
+        
+        if (!weatherResponse.ok) throw new Error(`AccuWeather conditions API error: ${weatherResponse.status}`);
+        
+        const weatherData = await weatherResponse.json();
+        const current = weatherData[0];
+        
+        return {
+            temperature: current.Temperature.Metric.Value,
+            humidity: current.RelativeHumidity,
+            pressure: current.Pressure.Metric.Value,
+            description: current.WeatherText,
+            windSpeed: current.Wind.Speed.Metric.Value,
+            visibility: current.Visibility.Metric.Value,
+            timestamp: new Date(current.EpochTime * 1000).toISOString(),
+            location: locationData[0].LocalizedName,
+            country: locationData[0].Country.LocalizedName
+        };
+    }
+
+    async fetchWeatherBitData(location) {
+        const apiKey = process.env.WEATHERBIT_API_KEY;
+        if (!apiKey) throw new Error('WeatherBit API key not configured');
+
+        const response = await fetch(
+            `https://api.weatherbit.io/v2.0/current?city=${encodeURIComponent(location)}&key=${apiKey}`
+        );
+        
+        if (!response.ok) throw new Error(`WeatherBit API error: ${response.status}`);
+        
+        const data = await response.json();
+        const current = data.data[0];
+        
+        return {
+            temperature: current.temp,
+            humidity: current.rh,
+            pressure: current.pres,
+            description: current.weather.description,
+            windSpeed: current.wind_spd,
+            visibility: current.vis,
+            timestamp: new Date(current.ts * 1000).toISOString(),
+            location: current.city_name,
+            country: current.country_code
         };
     }
 
     async fetchSportsData(source, feedId) {
-        // Implementation for sports data fetching
         const [sport, league] = feedId.split('_').slice(1);
         
         switch (source) {
@@ -456,8 +558,61 @@ export class AIOracleEngine {
         }
     }
 
+    async fetchSportsDBData(sport, league) {
+        const apiKey = process.env.THESPORTSDB_API_KEY;
+        
+        let endpoint;
+        if (sport === 'football' && league === 'nfl') {
+            endpoint = 'https://www.thesportsdb.com/api/v1/json/2/search_all_teams.php?l=NFL';
+        } else if (sport === 'basketball' && league === 'nba') {
+            endpoint = 'https://www.thesportsdb.com/api/v1/json/2/search_all_teams.php?l=NBA';
+        } else {
+            throw new Error(`Unsupported sport/league combination: ${sport}/${league}`);
+        }
+        
+        if (apiKey) {
+            endpoint += `&apiKey=${apiKey}`;
+        }
+        
+        const response = await fetch(endpoint);
+        if (!response.ok) throw new Error(`TheSportsDB API error: ${response.status}`);
+        
+        const data = await response.json();
+        
+        return {
+            sport,
+            league,
+            teams: data.teams ? data.teams.length : 0,
+            lastUpdated: new Date().toISOString(),
+            data: data.teams ? data.teams.slice(0, 10) : []
+        };
+    }
+
+    async fetchSportRadarData(sport, league) {
+        const apiKey = process.env.SPORTRADAR_API_KEY;
+        if (!apiKey) throw new Error('SportRadar API key not configured');
+
+        let endpoint;
+        if (sport === 'basketball' && league === 'nba') {
+            endpoint = `https://api.sportradar.us/nba/trial/v8/en/league/standings.json?api_key=${apiKey}`;
+        } else {
+            throw new Error(`Unsupported sport/league combination: ${sport}/${league}`);
+        }
+        
+        const response = await fetch(endpoint);
+        if (!response.ok) throw new Error(`SportRadar API error: ${response.status}`);
+        
+        const data = await response.json();
+        
+        return {
+            sport,
+            league,
+            standings: data.standings || [],
+            lastUpdated: new Date().toISOString()
+        };
+    }
+
     async fetchFinancialData(source, feedId) {
-        // Implementation for financial data fetching
         const symbol = feedId.replace('financial_', '');
         
         switch (source) {
@@ -472,6 +627,66 @@ export class AIOracleEngine {
         }
     }
 
+    async fetchAlphaVantageData(symbol) {
+        const apiKey = process.env.ALPHAVANTAGE_API_KEY;
+        if (!apiKey) throw new Error('AlphaVantage API key not configured');
+
+        const response = await fetch(
+            `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`
+        );
+        
+        if (!response.ok) throw new Error(`AlphaVantage API error: ${response.status}`);
+        
+        const data = await response.json();
+        
+        if (data['Error Message']) {
+            throw new Error(`AlphaVantage error: ${data['Error Message']}`);
+        }
+        
+        if (data['Note']) {
+            throw new Error(`AlphaVantage rate limit: ${data['Note']}`);
+        }
+        
+        const quote = data['Global Quote'];
+        if (!quote) {
+            throw new Error('No quote data available');
+        }
+        
+        return {
+            symbol: quote['01. symbol'],
+            price: parseFloat(quote['05. price']),
+            change: parseFloat(quote['09. change']),
+            changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
+            volume: parseInt(quote['06. volume']),
+            latestTradingDay: quote['07. latest trading day'],
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    async fetchIEXCloudData(symbol) {
+        const apiKey = process.env.IEXCLOUD_API_KEY;
+        if (!apiKey) throw new Error('IEX Cloud API key not configured');
+
+        const response = await fetch(
+            `https://cloud.iexapis.com/stable/stock/${symbol}/quote?token=${apiKey}`
+        );
+        
+        if (!response.ok) throw new Error(`IEX Cloud API error: ${response.status}`);
+        
+        const data = await response.json();
+        
+        return {
+            symbol: data.symbol,
+            price: data.latestPrice,
+            change: data.change,
+            changePercent: data.changePercent * 100,
+            volume: data.volume,
+            marketCap: data.marketCap,
+            latestTradingDay: data.latestTime,
+            timestamp: new Date().toISOString()
+        };
+    }
+
     async calculateConsensus(feedId, dataPoints) {
         const feed = this.oracleFeeds.get(feedId);
         if (!feed) throw new Error(`Feed not found: ${feedId}`);
@@ -480,7 +695,6 @@ export class AIOracleEngine {
             throw new Error('No data points for consensus calculation');
         }
 
-        // Group data by value (with tolerance for numeric values)
         const valueGroups = new Map();
         
         for (const point of dataPoints) {
@@ -491,7 +705,6 @@ export class AIOracleEngine {
             valueGroups.get(key).push(point);
         }
 
-        // Find the group with highest total confidence and sufficient participation
         let bestGroup = null;
         let maxConfidence = 0;
 
@@ -715,7 +928,6 @@ export class AIOracleEngine {
     }
 
     getSourceConfig(source, feedType) {
-        // Implement source-specific configuration
         return {
             timeout: 10000,
             retries: 3,
@@ -789,11 +1001,11 @@ export class AIOracleEngine {
     async startConsensusEngine() {
         setInterval(async () => {
             await this.cleanupOldData();
-        }, 3600000); // Cleanup every hour
+        }, 3600000);
     }
 
     async cleanupOldData() {
-        const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours ago
+        const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000);
         
         await this.db.run(`
             DELETE FROM oracle_data_points WHERE timestamp < ?
