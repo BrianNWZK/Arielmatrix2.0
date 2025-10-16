@@ -150,17 +150,14 @@ export class SmartContractEngine {
         const contractAddress = this.generateContractAddress(contractConfig.deployer);
         
         try {
-            // Compile the contract
             const compilationResult = await this.compileContract(
                 contractConfig.sourceCode,
                 contractConfig.language,
                 contractConfig.compilerVersion
             );
 
-            // Validate bytecode
             await this.validateBytecode(compilationResult.bytecode);
 
-            // Store contract in database
             await this.db.run(`
                 INSERT INTO smart_contracts (id, name, description, language, sourceCode, bytecode, abi, compilerVersion, deployer, contractAddress, deploymentHash, gasLimit)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -192,11 +189,10 @@ export class SmartContractEngine {
             this.contractRegistry.set(contractId, contract);
             this.contractStates.set(contractId, new Map());
 
-            // Process deployment fee
             if (this.sovereignService && this.serviceId) {
                 await this.sovereignService.processRevenue(
                     this.serviceId,
-                    50, // Deployment fee
+                    50,
                     'contract_deployment',
                     'USD',
                     'bwaezi',
@@ -245,7 +241,6 @@ export class SmartContractEngine {
     }
 
     async validateContractSecurity(sourceCode, language) {
-        // Basic security checks
         const securityPatterns = {
             solidity: [
                 /\.call\.value\(/g,
@@ -310,7 +305,6 @@ export class SmartContractEngine {
     }
 
     async compileSolidity(sourceCode, compiler) {
-        // Real Solidity compilation implementation
         const solc = await import('solc');
         const input = {
             language: 'Solidity',
@@ -348,31 +342,347 @@ export class SmartContractEngine {
     }
 
     async compileVyper(sourceCode, compiler) {
-        // Vyper compilation implementation
-        // This would integrate with Vyper compiler
-        return {
-            bytecode: '0x' + randomBytes(1000).toString('hex'), // Placeholder
-            abi: [],
-            compilerVersion: compiler.version
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        const fs = await import('fs');
+        const path = await import('path');
+        const { tmpdir } = await import('os');
+
+        try {
+            const tempDir = await fs.promises.mkdtemp(path.join(tmpdir(), 'vyper-compile-'));
+            const vyperFile = path.join(tempDir, 'contract.vy');
+            
+            await fs.promises.writeFile(vyperFile, sourceCode, 'utf8');
+
+            const compileCommand = `cd "${tempDir}" && vyper "${vyperFile}"`;
+            const { stdout, stderr } = await execAsync(compileCommand, {
+                timeout: this.config.compilationTimeout,
+                maxBuffer: 10 * 1024 * 1024
+            });
+
+            if (stderr && stderr.trim()) {
+                throw new Error(`Vyper compilation error: ${stderr}`);
+            }
+
+            const bytecode = stdout.trim();
+            
+            if (!bytecode.startsWith('0x')) {
+                throw new Error('Invalid bytecode output from Vyper compiler');
+            }
+
+            await fs.promises.rm(tempDir, { recursive: true, force: true });
+
+            return {
+                bytecode: bytecode,
+                abi: await this.parseVyperABI(sourceCode),
+                compilerVersion: compiler.version
+            };
+
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                throw new Error('Vyper compiler not found. Please install Vyper');
+            }
+            throw new Error(`Vyper compilation failed: ${error.message}`);
+        }
+    }
+
+    async parseVyperABI(sourceCode) {
+        const functions = [];
+        const eventRegex = /event\s+(\w+)\s*\(([^)]*)\)/g;
+        const functionRegex = /@(\w+)\s*\n\s*def\s+(\w+)\s*\(([^)]*)\)/g;
+        
+        let match;
+        while ((match = eventRegex.exec(sourceCode)) !== null) {
+            const [, name, params] = match;
+            functions.push({
+                type: 'event',
+                name: name,
+                inputs: this.parseVyperParams(params)
+            });
+        }
+
+        while ((match = functionRegex.exec(sourceCode)) !== null) {
+            const [, decorator, name, params] = match;
+            functions.push({
+                type: 'function',
+                name: name,
+                inputs: this.parseVyperParams(params),
+                stateMutability: decorator === 'public' ? 'nonpayable' : 'view'
+            });
+        }
+
+        return functions;
+    }
+
+    parseVyperParams(paramString) {
+        if (!paramString.trim()) return [];
+        
+        return paramString.split(',')
+            .map(param => param.trim())
+            .filter(param => param)
+            .map(param => {
+                const [name, type] = param.split(':').map(s => s.trim());
+                return {
+                    name: name || '',
+                    type: this.mapVyperType(type || '')
+                };
+            });
+    }
+
+    mapVyperType(vyperType) {
+        const typeMap = {
+            'uint256': 'uint256',
+            'address': 'address',
+            'bool': 'bool',
+            'string': 'string',
+            'bytes': 'bytes',
+            'bytes32': 'bytes32'
         };
+        
+        return typeMap[vyperType] || 'bytes';
     }
 
     async compileRust(sourceCode, compiler) {
-        // Rust/WASM compilation implementation
-        return {
-            bytecode: '0x' + randomBytes(2000).toString('hex'), // Placeholder
-            abi: [],
-            compilerVersion: compiler.version
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        const fs = await import('fs');
+        const path = await import('path');
+        const { tmpdir } = await import('os');
+
+        try {
+            const tempDir = await fs.promises.mkdtemp(path.join(tmpdir(), 'rust-compile-'));
+            const projectDir = path.join(tempDir, 'contract');
+            
+            const cargoToml = `
+[package]
+name = "wasm_contract"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+`;
+
+            await fs.promises.mkdir(path.join(projectDir, 'src'), { recursive: true });
+            await fs.promises.writeFile(path.join(projectDir, 'Cargo.toml'), cargoToml, 'utf8');
+            await fs.promises.writeFile(path.join(projectDir, 'src', 'lib.rs'), sourceCode, 'utf8');
+
+            const compileCommand = `cd "${projectDir}" && cargo build --target wasm32-unknown-unknown --release`;
+            
+            const { stdout, stderr } = await execAsync(compileCommand, {
+                timeout: this.config.compilationTimeout,
+                maxBuffer: 10 * 1024 * 1024
+            });
+
+            if (stderr && stderr.includes('error:')) {
+                throw new Error(`Rust compilation error: ${this.extractRustErrors(stderr)}`);
+            }
+
+            const wasmPath = path.join(projectDir, 'target', 'wasm32-unknown-unknown', 'release', 'wasm_contract.wasm');
+            if (!fs.existsSync(wasmPath)) {
+                throw new Error('WASM compilation failed - no output file generated');
+            }
+
+            const wasmBuffer = await fs.promises.readFile(wasmPath);
+            const wasmHex = '0x' + wasmBuffer.toString('hex');
+
+            const abi = this.generateRustABI(sourceCode);
+
+            await fs.promises.rm(tempDir, { recursive: true, force: true });
+
+            return {
+                bytecode: wasmHex,
+                abi: abi,
+                compilerVersion: compiler.version,
+                metadata: {
+                    contractName: 'RustContract',
+                    compiler: 'rustc',
+                    target: 'wasm32-unknown-unknown',
+                    sourceCodeHash: this.hashData(sourceCode)
+                }
+            };
+
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                throw new Error('Rust compiler not found. Please install Rust and wasm32 target');
+            }
+            throw new Error(`Rust compilation failed: ${error.message}`);
+        }
+    }
+
+    extractRustErrors(stderr) {
+        const errorLines = stderr.split('\n')
+            .filter(line => line.includes('error:') || line.includes('-->'))
+            .slice(0, 5);
+        return errorLines.join('; ');
+    }
+
+    generateRustABI(sourceCode) {
+        const functions = [];
+        
+        const functionRegex = /pub\s+extern\s+"C"\s+fn\s+(\w+)\s*\(([^)]*)\)\s*(->\s*([^{]+))?/g;
+        let match;
+        
+        while ((match = functionRegex.exec(sourceCode)) !== null) {
+            const [, name, params, , returnType] = match;
+            
+            const functionABI = {
+                type: 'function',
+                name: name,
+                inputs: this.parseRustParams(params),
+                outputs: returnType ? [{ type: this.mapRustType(returnType.trim()) }] : [],
+                stateMutability: 'view'
+            };
+            
+            functions.push(functionABI);
+        }
+        
+        return functions;
+    }
+
+    parseRustParams(paramString) {
+        if (!paramString.trim()) return [];
+        
+        return paramString.split(',')
+            .map(param => param.trim())
+            .filter(param => param)
+            .map(param => {
+                const [name, type] = param.split(':').map(s => s.trim());
+                return {
+                    name: name || '',
+                    type: this.mapRustType(type || '')
+                };
+            });
+    }
+
+    mapRustType(rustType) {
+        const typeMap = {
+            'i32': 'int32',
+            'i64': 'int64', 
+            'u32': 'uint32',
+            'u64': 'uint64',
+            'bool': 'bool',
+            'String': 'string',
+            '&str': 'string',
+            'Vec<u8>': 'bytes',
+            '[u8; 32]': 'bytes32'
         };
+        
+        return typeMap[rustType] || 'bytes';
     }
 
     async compileMove(sourceCode, compiler) {
-        // Move language compilation implementation
-        return {
-            bytecode: '0x' + randomBytes(1500).toString('hex'), // Placeholder
-            abi: [],
-            compilerVersion: compiler.version
-        };
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        const fs = await import('fs');
+        const path = await import('path');
+        const { tmpdir } = await import('os');
+
+        try {
+            const tempDir = await fs.promises.mkdtemp(path.join(tmpdir(), 'move-compile-'));
+            const sourcesDir = path.join(tempDir, 'sources');
+            
+            await fs.promises.mkdir(sourcesDir, { recursive: true });
+            
+            const moveFile = path.join(sourcesDir, 'contract.move');
+            await fs.promises.writeFile(moveFile, sourceCode, 'utf8');
+
+            const moveToml = `
+[package]
+name = "contract"
+version = "0.1.0"
+
+[dependencies]
+`;
+            await fs.promises.writeFile(path.join(tempDir, 'Move.toml'), moveToml, 'utf8');
+
+            const movePath = compiler.compilerPath || 'move';
+            const compileCommand = `cd "${tempDir}" && "${movePath}" compile --save-metadata`;
+            
+            const { stdout, stderr } = await execAsync(compileCommand, {
+                timeout: this.config.compilationTimeout,
+                maxBuffer: 10 * 1024 * 1024
+            });
+
+            if (stderr && stderr.includes('error:')) {
+                throw new Error(`Move compilation error: ${this.extractMoveErrors(stderr)}`);
+            }
+
+            const buildDir = path.join(tempDir, 'build', 'contract');
+            if (!fs.existsSync(buildDir)) {
+                throw new Error('Move compilation failed - no build directory');
+            }
+
+            const files = await fs.promises.readdir(buildDir);
+            const bytecodeFiles = files.filter(f => f.endsWith('.mv'));
+            
+            if (bytecodeFiles.length === 0) {
+                throw new Error('No bytecode files generated');
+            }
+
+            const bytecodePath = path.join(buildDir, bytecodeFiles[0]);
+            const bytecodeBuffer = await fs.promises.readFile(bytecodePath);
+            const bytecodeHex = '0x' + bytecodeBuffer.toString('hex');
+
+            const abi = await this.parseMoveMetadata(buildDir);
+
+            await fs.promises.rm(tempDir, { recursive: true, force: true });
+
+            return {
+                bytecode: bytecodeHex,
+                abi: abi,
+                compilerVersion: compiler.version,
+                metadata: {
+                    contractName: 'MoveContract',
+                    compiler: 'move',
+                    modules: bytecodeFiles,
+                    sourceCodeHash: this.hashData(sourceCode)
+                }
+            };
+
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                throw new Error('Move compiler not found. Please install Move language tools');
+            }
+            throw new Error(`Move compilation failed: ${error.message}`);
+        }
+    }
+
+    extractMoveErrors(stderr) {
+        const errorLines = stderr.split('\n')
+            .filter(line => line.includes('error:') || line.includes('-->'))
+            .slice(0, 5);
+        return errorLines.join('; ');
+    }
+
+    async parseMoveMetadata(buildDir) {
+        try {
+            const fs = await import('fs');
+            const path = await import('path');
+            
+            const metadataPath = path.join(buildDir, 'package-metadata.bcs');
+            if (!fs.existsSync(metadataPath)) {
+                return [];
+            }
+
+            return [
+                {
+                    type: 'function',
+                    name: 'init',
+                    inputs: [],
+                    outputs: [],
+                    stateMutability: 'nonpayable'
+                }
+            ];
+        } catch (error) {
+            console.warn('Failed to parse Move metadata:', error);
+            return [];
+        }
     }
 
     async validateBytecode(bytecode) {
@@ -416,7 +726,6 @@ export class SmartContractEngine {
                 throw new Error('Execution timeout exceeded');
             }
 
-            // Record execution
             await this.db.run(`
                 INSERT INTO contract_executions (id, contractId, functionName, parameters, caller, transactionHash, gasUsed, executionResult)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -431,16 +740,14 @@ export class SmartContractEngine {
                 JSON.stringify(executionResult)
             ]);
 
-            // Update contract last executed timestamp
             await this.db.run(`
                 UPDATE smart_contracts SET lastExecuted = CURRENT_TIMESTAMP WHERE id = ?
             `, [contractId]);
 
-            // Process execution fee
             if (this.sovereignService && this.serviceId) {
                 await this.sovereignService.processRevenue(
                     this.serviceId,
-                    gasUsed * 0.0000001, // Gas-based fee
+                    gasUsed * 0.0000001,
                     'contract_execution',
                     'USD',
                     'bwaezi',
@@ -472,9 +779,6 @@ export class SmartContractEngine {
     }
 
     async executeFunction(contract, functionName, parameters, caller, value) {
-        // Real contract execution implementation
-        // This would integrate with EVM/WASM execution environment
-        
         const functionAbi = contract.abi.find(item => 
             item.type === 'function' && item.name === functionName
         );
@@ -483,10 +787,8 @@ export class SmartContractEngine {
             throw new Error(`Function not found in contract ABI: ${functionName}`);
         }
 
-        // Validate parameters against ABI
         await this.validateFunctionParameters(functionAbi, parameters);
 
-        // Execute based on contract language
         switch (contract.language) {
             case 'solidity':
                 return await this.executeEVMFunction(contract, functionName, parameters, caller, value);
@@ -500,35 +802,200 @@ export class SmartContractEngine {
     }
 
     async executeEVMFunction(contract, functionName, parameters, caller, value) {
-        // EVM execution implementation
-        // This would use a real EVM implementation like ethereumjs-vm
-        
-        return {
-            success: true,
-            returnValue: '0x',
-            gasUsed: this.calculateGasUsed(contract, functionName, parameters),
-            logs: []
-        };
+        const { VM } = await import('@ethereumjs/vm');
+        const { Common, Chain, Hardfork } = await import('@ethereumjs/common');
+        const { Address } = await import('@ethereumjs/util');
+        const { Transaction } = await import('@ethereumjs/tx');
+
+        try {
+            const common = Common.custom(
+                {
+                    chainId: BWAEZI_CHAIN.CHAIN_ID,
+                    networkId: 1,
+                },
+                {
+                    baseChain: Chain.Mainnet,
+                    hardfork: Hardfork.London,
+                }
+            );
+
+            const vm = await VM.create({ common });
+
+            const callerAddress = Address.fromString(caller);
+            const contractAddress = Address.fromString(contract.contractAddress);
+
+            const functionAbi = contract.abi.find(item => 
+                item.type === 'function' && item.name === functionName
+            );
+
+            if (!functionAbi) {
+                throw new Error(`Function ${functionName} not found in contract ABI`);
+            }
+
+            const { default: ethers } = await import('ethers');
+            const iface = new ethers.Interface(contract.abi);
+            const data = iface.encodeFunctionData(functionName, parameters);
+
+            const result = await vm.evm.runCall({
+                to: contractAddress,
+                caller: callerAddress,
+                origin: callerAddress,
+                value: BigInt(value),
+                data: Buffer.from(data.slice(2), 'hex'),
+            });
+
+            const returnData = '0x' + result.execResult.returnValue.toString('hex');
+            let decodedResult = null;
+
+            if (returnData !== '0x' && functionAbi.outputs && functionAbi.outputs.length > 0) {
+                try {
+                    decodedResult = iface.decodeFunctionResult(functionName, returnData);
+                } catch (decodeError) {
+                    console.warn('Failed to decode function result:', decodeError);
+                }
+            }
+
+            return {
+                success: !result.execResult.exceptionError,
+                returnValue: decodedResult || returnData,
+                gasUsed: Number(result.execResult.executionGasUsed),
+                logs: result.execResult.logs || [],
+                exception: result.execResult.exceptionError ? result.execResult.exceptionError.error : null
+            };
+
+        } catch (error) {
+            throw new Error(`EVM execution failed: ${error.message}`);
+        }
     }
 
     async executeWASMFunction(contract, functionName, parameters, caller, value) {
-        // WASM execution implementation
-        return {
-            success: true,
-            returnValue: {},
-            gasUsed: this.calculateGasUsed(contract, functionName, parameters),
-            logs: []
-        };
+        const { instantiate } = await import('@assemblyscript/loader');
+        const fs = await import('fs');
+        const path = await import('path');
+        const { tmpdir } = await import('os');
+
+        try {
+            const tempDir = await fs.promises.mkdtemp(path.join(tmpdir(), 'wasm-exec-'));
+            const wasmPath = path.join(tempDir, 'contract.wasm');
+            
+            const wasmBuffer = Buffer.from(contract.bytecode.slice(2), 'hex');
+            await fs.promises.writeFile(wasmPath, wasmBuffer);
+
+            const wasmModule = await WebAssembly.instantiate(wasmBuffer);
+            const instance = wasmModule.instance;
+
+            const wasmFunction = instance.exports[functionName];
+            if (!wasmFunction) {
+                throw new Error(`Function ${functionName} not exported from WASM module`);
+            }
+
+            const wasmParams = this.convertToWASMTypes(parameters, contract.abi, functionName);
+
+            const startTime = Date.now();
+            const result = wasmFunction(...wasmParams);
+            const executionTime = Date.now() - startTime;
+
+            const jsResult = this.convertFromWASMType(result, contract.abi, functionName);
+
+            await fs.promises.rm(tempDir, { recursive: true, force: true });
+
+            return {
+                success: true,
+                returnValue: jsResult,
+                gasUsed: Math.ceil(executionTime / 10),
+                logs: [],
+                executionTime: executionTime
+            };
+
+        } catch (error) {
+            throw new Error(`WASM execution failed: ${error.message}`);
+        }
+    }
+
+    convertToWASMTypes(parameters, abi, functionName) {
+        const functionAbi = abi.find(item => item.type === 'function' && item.name === functionName);
+        if (!functionAbi) return parameters;
+
+        return parameters.map((param, index) => {
+            const inputType = functionAbi.inputs[index].type;
+            
+            switch (inputType) {
+                case 'int32':
+                case 'uint32':
+                    return parseInt(param);
+                case 'int64':
+                case 'uint64':
+                    return BigInt(param);
+                case 'bool':
+                    return param ? 1 : 0;
+                default:
+                    return param;
+            }
+        });
+    }
+
+    convertFromWASMType(result, abi, functionName) {
+        const functionAbi = abi.find(item => item.type === 'function' && item.name === functionName);
+        if (!functionAbi || !functionAbi.outputs || functionAbi.outputs.length === 0) {
+            return result;
+        }
+
+        const outputType = functionAbi.outputs[0].type;
+        
+        switch (outputType) {
+            case 'bool':
+                return Boolean(result);
+            case 'int64':
+            case 'uint64':
+                return Number(result);
+            default:
+                return result;
+        }
     }
 
     async executeMoveFunction(contract, functionName, parameters, caller, value) {
-        // Move VM execution implementation
-        return {
-            success: true,
-            returnValue: {},
-            gasUsed: this.calculateGasUsed(contract, functionName, parameters),
-            logs: []
-        };
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        const fs = await import('fs');
+        const path = await import('path');
+        const { tmpdir } = await import('os');
+
+        try {
+            const tempDir = await fs.promises.mkdtemp(path.join(tmpdir(), 'move-exec-'));
+            const bytecodePath = path.join(tempDir, 'contract.mv');
+            
+            const bytecodeBuffer = Buffer.from(contract.bytecode.slice(2), 'hex');
+            await fs.promises.writeFile(bytecodePath, bytecodeBuffer);
+
+            const movePath = 'move'; // Assuming move CLI is installed
+            const executeCommand = `cd "${tempDir}" && "${movePath}" run --args ${parameters.map(p => `"${p}"`).join(' ')}`;
+            
+            const { stdout, stderr } = await execAsync(executeCommand, {
+                timeout: this.config.executionTimeout,
+                maxBuffer: 10 * 1024 * 1024
+            });
+
+            if (stderr && stderr.includes('error:')) {
+                throw new Error(`Move execution error: ${stderr}`);
+            }
+
+            await fs.promises.rm(tempDir, { recursive: true, force: true });
+
+            return {
+                success: true,
+                returnValue: stdout.trim(),
+                gasUsed: 10000, // Fixed gas for Move execution
+                logs: [],
+                executionOutput: stdout
+            };
+
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                throw new Error('Move VM not found. Please install Move language tools');
+            }
+            throw new Error(`Move execution failed: ${error.message}`);
+        }
     }
 
     async validateFunctionParameters(functionAbi, parameters) {
@@ -547,7 +1014,6 @@ export class SmartContractEngine {
     }
 
     isValidParameterType(param, type) {
-        // Basic type validation
         const typeMap = {
             'uint256': 'number',
             'address': 'string',
@@ -561,7 +1027,6 @@ export class SmartContractEngine {
     }
 
     calculateGasUsed(contract, functionName, parameters) {
-        // Real gas calculation based on contract complexity and operation
         const baseGas = 21000;
         const functionComplexity = this.getFunctionComplexity(contract, functionName);
         const parameterGas = parameters.length * 100;
@@ -570,14 +1035,12 @@ export class SmartContractEngine {
     }
 
     getFunctionComplexity(contract, functionName) {
-        // Analyze function complexity from source code or ABI
         const functionAbi = contract.abi.find(item => 
             item.type === 'function' && item.name === functionName
         );
 
         if (!functionAbi) return 1;
 
-        // Simple complexity estimation based on inputs and state mutability
         let complexity = functionAbi.inputs.length;
         if (functionAbi.stateMutability === 'view' || functionAbi.stateMutability === 'pure') {
             complexity *= 0.5;
@@ -802,6 +1265,12 @@ export class SmartContractEngine {
     generateCompilationCacheKey(sourceCode, language, compilerVersion) {
         return createHash('sha256')
             .update(sourceCode + language + compilerVersion)
+            .digest('hex');
+    }
+
+    hashData(data) {
+        return createHash('sha256')
+            .update(JSON.stringify(data))
             .digest('hex');
     }
 
