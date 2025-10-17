@@ -1,4 +1,4 @@
-// bwaezi-reality-engine.js
+// modules/bwaezi-reality-engine.js
 import { ethers } from 'ethers';
 import { createHash, randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
