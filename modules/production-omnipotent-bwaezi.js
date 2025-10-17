@@ -1,4 +1,4 @@
-// modules/production-bwaezi-ecosystem.js
+//modules/production-omnipotent-bwaezi.js
 
 // SECURE FOUNDATIONAL IMPORTS
 import { EventEmitter } from 'events';
