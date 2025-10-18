@@ -536,4 +536,11 @@ export class ProductionValidator {
     }
 }
 
+export default {
+    HyperDimensionalQuantumEvolution,
+    TemporalQuantumField,
+    HolographicGeneticStorage, 
+    ProductionValidator,
+    SovereignModules
+};
 console.log(`SOVEREIGN MODULE STATUS: ${ProductionValidator.validateModuleIntegrity()}`);
