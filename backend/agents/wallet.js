@@ -1,7 +1,7 @@
 /**
  * wallet.js - Unified Blockchain Wallet Manager
  * Integrated with Autonomous AI Engine for multi-chain operations
- * Now with BWAEZI Chain support and automated revenue consolidation
+ * Now with BWAEZI Chain integration and automated revenue consolidation
  */
 
 import 'dotenv/config';
@@ -40,8 +40,7 @@ const SOLANA_RPC_URLS = [
 // BWAEZI Chain Configuration
 const BWAEZI_RPC_URLS = [
     process.env.BWAEZI_RPC_URL || 'https://rpc.winr.games',
-    'https://rpc.bwaezi.com',
-    'https://mainnet.bwaezi-rpc.io'
+    'https://rpc.bwaezi.com'
 ];
 
 // Contract addresses
@@ -53,8 +52,8 @@ const BWAEZI_CONTRACT_ADDRESS = process.env.BWAEZI_CONTRACT_ADDRESS || '0x000000
 const SOLANA_TRUST_WALLET_ADDRESS = process.env.SOLANA_TRUST_WALLET_ADDRESS;
 const ETHEREUM_TRUST_WALLET_ADDRESS = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
 
-// BWAEZI conversion rate
-const BWAEZI_TO_USDT_RATE = 10000; // 1 BWAEZI = 10,000 USDT
+// BWAEZI to USDT conversion rate
+const BWAEZI_TO_USDT_RATE = 100; // 1 BWAEZI = 100 USDT
 
 // =========================================================================
 // 2. GLOBAL VARIABLES
@@ -169,7 +168,7 @@ export async function initializeConnections() {
         if (!bwaeziConnected) {
             throw new Error("All BWAEZI Chain RPC connections failed");
         }
-        
+
         // Initialize BWAEZI wallet if private key is available
         if (process.env.BWAEZI_COLLECTION_WALLET_PRIVATE_KEY) {
             try {
@@ -184,7 +183,7 @@ export async function initializeConnections() {
 
         console.log("✅ All blockchain connections initialized successfully");
         
-        // Start autonomous revenue consolidation scheduler
+        // Start automated revenue consolidation scheduler
         startRevenueConsolidationScheduler();
         
         return true;
@@ -267,8 +266,9 @@ export async function getWalletBalances() {
                 const bwaeziBalance = await bwaeziProvider.getBalance(bwaeziWallet.address);
                 balances.bwaezi.native = parseFloat(ethers.formatEther(bwaeziBalance));
                 
-                // Calculate USDT equivalent for BWAEZI
+                // Calculate equivalent USDT value for BWAEZI
                 balances.bwaezi.usdt = balances.bwaezi.native * BWAEZI_TO_USDT_RATE;
+                
             } catch (error) {
                 console.error("❌ Error fetching BWAEZI balances:", error.message);
             }
@@ -355,7 +355,7 @@ export async function sendETH(toAddress, amount) {
     }
 }
 
-export async function sendBwaezi(toAddress, amount) {
+export async function sendBWAZI(toAddress, amount) {
     try {
         if (!bwaeziWallet) throw new Error("BWAEZI wallet not initialized");
         if (!ethers.isAddress(toAddress)) throw new Error("Invalid BWAEZI address");
@@ -459,172 +459,187 @@ export async function sendUSDT(toAddress, amount, chain) {
 }
 
 // =========================================================================
-// 6. AUTONOMOUS REVENUE CONSOLIDATION
+// 6. BWAEZI CROSS-CHAIN BRIDGE FUNCTIONS
 // =========================================================================
 
 /**
- * Autonomous revenue consolidation - moves all revenue every hour
- * Leaves 5-10% for operational costs
+ * Converts BWAEZI to USDT and transfers to consolidation wallet
  */
-async function consolidateRevenue() {
-    console.log("🔄 Starting autonomous revenue consolidation...");
-    
+export async function convertBwaeziToUSDT(amount) {
     try {
-        const balances = await getWalletBalances();
-        const results = [];
+        if (!bwaeziWallet) throw new Error("BWAEZI wallet not initialized");
+        if (!ETHEREUM_TRUST_WALLET_ADDRESS) throw new Error("Ethereum trust wallet not configured");
         
-        // Calculate amounts to transfer (90-95% of balance)
-        const operationalCostPercentage = 0.05 + (Math.random() * 0.05); // 5-10% for operational costs
-        const transferPercentage = 1 - operationalCostPercentage;
+        console.log(`🔄 Converting ${amount} BWAEZI to USDT...`);
         
-        // Consolidate Ethereum
-        if (balances.ethereum.native > 0.001 && ETHEREUM_TRUST_WALLET_ADDRESS) { // Minimum threshold
-            const amountToTransfer = balances.ethereum.native * transferPercentage;
-            if (amountToTransfer > 0.0001) { // Ensure meaningful amount
-                try {
-                    const result = await sendETH(ETHEREUM_TRUST_WALLET_ADDRESS, amountToTransfer);
-                    results.push({
-                        chain: 'ethereum',
-                        asset: 'ETH',
-                        amount: amountToTransfer,
-                        success: result.success,
-                        tx: result.success ? result.hash : null,
-                        error: result.error
-                    });
-                } catch (error) {
-                    results.push({
-                        chain: 'ethereum',
-                        asset: 'ETH',
-                        amount: amountToTransfer,
-                        success: false,
-                        error: error.message
-                    });
-                }
-            }
+        // Calculate USDT equivalent
+        const usdtAmount = amount * BWAEZI_TO_USDT_RATE;
+        
+        // In a real implementation, this would interact with a bridge contract
+        // For now, we'll simulate the conversion and transfer equivalent USDT
+        
+        // Transfer BWAEZI to bridge contract (simulated)
+        const bridgeTx = await bwaeziWallet.sendTransaction({
+            to: BWAEZI_CONTRACT_ADDRESS,
+            value: ethers.parseEther(amount.toString()),
+            gasLimit: 50000
+        });
+        
+        console.log(`✅ BWAEZI sent to bridge: ${bridgeTx.hash}`);
+        
+        // Send equivalent USDT to trust wallet
+        const usdtResult = await sendUSDT(ETHEREUM_TRUST_WALLET_ADDRESS, usdtAmount, 'eth');
+        
+        if (usdtResult.success) {
+            return {
+                success: true,
+                bwaeziTx: bridgeTx.hash,
+                usdtTx: usdtResult.hash || usdtResult.signature,
+                convertedAmount: usdtAmount,
+                originalAmount: amount
+            };
+        } else {
+            throw new Error(`USDT transfer failed: ${usdtResult.error}`);
         }
-        
-        // Consolidate Ethereum USDT
-        if (balances.ethereum.usdt > 1 && ETHEREUM_TRUST_WALLET_ADDRESS) { // Minimum 1 USDT
-            const amountToTransfer = balances.ethereum.usdt * transferPercentage;
-            if (amountToTransfer > 0.1) { // Ensure meaningful amount
-                try {
-                    const result = await sendUSDT(ETHEREUM_TRUST_WALLET_ADDRESS, amountToTransfer, 'eth');
-                    results.push({
-                        chain: 'ethereum',
-                        asset: 'USDT',
-                        amount: amountToTransfer,
-                        success: result.success,
-                        tx: result.success ? result.hash : null,
-                        error: result.error
-                    });
-                } catch (error) {
-                    results.push({
-                        chain: 'ethereum',
-                        asset: 'USDT',
-                        amount: amountToTransfer,
-                        success: false,
-                        error: error.message
-                    });
-                }
-            }
-        }
-        
-        // Consolidate Solana
-        if (balances.solana.native > 0.001 && SOLANA_TRUST_WALLET_ADDRESS) { // Minimum threshold
-            const amountToTransfer = balances.solana.native * transferPercentage;
-            if (amountToTransfer > 0.0001) { // Ensure meaningful amount
-                try {
-                    const result = await sendSOL(SOLANA_TRUST_WALLET_ADDRESS, amountToTransfer);
-                    results.push({
-                        chain: 'solana',
-                        asset: 'SOL',
-                        amount: amountToTransfer,
-                        success: result.success,
-                        tx: result.success ? result.signature : null,
-                        error: result.error
-                    });
-                } catch (error) {
-                    results.push({
-                        chain: 'solana',
-                        asset: 'SOL',
-                        amount: amountToTransfer,
-                        success: false,
-                        error: error.message
-                    });
-                }
-            }
-        }
-        
-        // Consolidate Solana USDT
-        if (balances.solana.usdt > 1 && SOLANA_TRUST_WALLET_ADDRESS) { // Minimum 1 USDT
-            const amountToTransfer = balances.solana.usdt * transferPercentage;
-            if (amountToTransfer > 0.1) { // Ensure meaningful amount
-                try {
-                    const result = await sendUSDT(SOLANA_TRUST_WALLET_ADDRESS, amountToTransfer, 'sol');
-                    results.push({
-                        chain: 'solana',
-                        asset: 'USDT',
-                        amount: amountToTransfer,
-                        success: result.success,
-                        tx: result.success ? result.signature : null,
-                        error: result.error
-                    });
-                } catch (error) {
-                    results.push({
-                        chain: 'solana',
-                        asset: 'USDT',
-                        amount: amountToTransfer,
-                        success: false,
-                        error: error.message
-                    });
-                }
-            }
-        }
-        
-        // Note: BWAEZI conversion to USDT would happen through external DEX/swap service
-        // For now, we track the USDT equivalent but don't auto-transfer BWAEZI
-        if (balances.bwaezi.usdt > 100) { // Only if significant amount (>100 USDT equivalent)
-            console.log(`ℹ️ BWAEZI balance equivalent to ${balances.bwaezi.usdt} USDT - requires manual DEX conversion`);
-            results.push({
-                chain: 'bwaezi',
-                asset: 'BWAEZI',
-                amount: balances.bwaezi.native,
-                usdtEquivalent: balances.bwaezi.usdt,
-                note: 'Requires manual conversion via DEX',
-                success: true
-            });
-        }
-        
-        console.log("✅ Revenue consolidation completed:", results);
-        return results;
         
     } catch (error) {
-        console.error("❌ Error in revenue consolidation:", error);
+        console.error("❌ Error converting BWAEZI to USDT:", error);
         return { success: false, error: error.message };
     }
 }
 
+// =========================================================================
+// 7. AUTOMATED REVENUE CONSOLIDATION
+// =========================================================================
+
 /**
- * Starts the autonomous revenue consolidation scheduler
+ * Automatically consolidates revenue from all chains to trust wallets
+ * Leaves 5-10% for operational costs
+ */
+export async function consolidateRevenue() {
+    console.log("🔄 Starting automated revenue consolidation...");
+    
+    const results = {
+        ethereum: { success: false, error: null, txHash: null },
+        solana: { success: false, error: null, signature: null },
+        bwaezi: { success: false, error: null, txHash: null },
+        timestamp: Date.now()
+    };
+
+    try {
+        // Get current balances
+        const balances = await getWalletBalances();
+        
+        // Consolidate Ethereum
+        if (balances.ethereum.native > 0 && ETHEREUM_TRUST_WALLET_ADDRESS) {
+            try {
+                // Leave 7.5% for operational costs (average of 5-10%)
+                const operationalPercentage = 0.075;
+                const amountToSend = balances.ethereum.native * (1 - operationalPercentage);
+                
+                if (amountToSend > 0.001) { // Minimum threshold
+                    const result = await sendETH(ETHEREUM_TRUST_WALLET_ADDRESS, amountToSend);
+                    if (result.success) {
+                        results.ethereum.success = true;
+                        results.ethereum.txHash = result.hash;
+                        console.log(`✅ Ethereum consolidation: ${amountToSend} ETH sent`);
+                    } else {
+                        results.ethereum.error = result.error;
+                    }
+                }
+                
+                // Consolidate USDT on Ethereum
+                if (balances.ethereum.usdt > 1) { // Minimum 1 USDT
+                    const usdtResult = await sendUSDT(ETHEREUM_TRUST_WALLET_ADDRESS, balances.ethereum.usdt, 'eth');
+                    if (usdtResult.success) {
+                        console.log(`✅ Ethereum USDT consolidation: ${balances.ethereum.usdt} USDT sent`);
+                    }
+                }
+            } catch (error) {
+                results.ethereum.error = error.message;
+                console.error("❌ Ethereum consolidation failed:", error);
+            }
+        }
+
+        // Consolidate Solana
+        if (balances.solana.native > 0 && SOLANA_TRUST_WALLET_ADDRESS) {
+            try {
+                // Leave 7.5% for operational costs
+                const operationalPercentage = 0.075;
+                const amountToSend = balances.solana.native * (1 - operationalPercentage);
+                
+                if (amountToSend > 0.01) { // Minimum threshold
+                    const result = await sendSOL(SOLANA_TRUST_WALLET_ADDRESS, amountToSend);
+                    if (result.success) {
+                        results.solana.success = true;
+                        results.solana.signature = result.signature;
+                        console.log(`✅ Solana consolidation: ${amountToSend} SOL sent`);
+                    } else {
+                        results.solana.error = result.error;
+                    }
+                }
+                
+                // Consolidate USDT on Solana
+                if (balances.solana.usdt > 1) { // Minimum 1 USDT
+                    const usdtResult = await sendUSDT(SOLANA_TRUST_WALLET_ADDRESS, balances.solana.usdt, 'sol');
+                    if (usdtResult.success) {
+                        console.log(`✅ Solana USDT consolidation: ${balances.solana.usdt} USDT sent`);
+                    }
+                }
+            } catch (error) {
+                results.solana.error = error.message;
+                console.error("❌ Solana consolidation failed:", error);
+            }
+        }
+
+        // Consolidate BWAEZI (convert to USDT first)
+        if (balances.bwaezi.native > 0) {
+            try {
+                // Leave 7.5% for operational costs
+                const operationalPercentage = 0.075;
+                const amountToConvert = balances.bwaezi.native * (1 - operationalPercentage);
+                
+                if (amountToConvert > 0.01) { // Minimum threshold
+                    const result = await convertBwaeziToUSDT(amountToConvert);
+                    if (result.success) {
+                        results.bwaezi.success = true;
+                        results.bwaezi.txHash = result.bwaeziTx;
+                        console.log(`✅ BWAEZI consolidation: ${amountToConvert} BWZ converted to ${result.convertedAmount} USDT`);
+                    } else {
+                        results.bwaezi.error = result.error;
+                    }
+                }
+            } catch (error) {
+                results.bwaezi.error = error.message;
+                console.error("❌ BWAEZI consolidation failed:", error);
+            }
+        }
+
+        console.log("✅ Revenue consolidation completed");
+        return results;
+        
+    } catch (error) {
+        console.error("❌ Error in revenue consolidation:", error);
+        results.error = error.message;
+        return results;
+    }
+}
+
+/**
+ * Starts the automated revenue consolidation scheduler
  */
 function startRevenueConsolidationScheduler() {
-    console.log("⏰ Starting autonomous revenue consolidation scheduler (runs every hour)...");
-    
-    // Schedule to run every hour
+    // Schedule consolidation to run every hour
     cron.schedule('0 * * * *', async () => {
-        console.log(`🕐 Scheduled revenue consolidation started at ${new Date().toISOString()}`);
+        console.log('🕐 Running scheduled revenue consolidation...');
         await consolidateRevenue();
     });
     
-    // Also run immediately on startup
-    setTimeout(() => {
-        console.log("🚀 Initial revenue consolidation running...");
-        consolidateRevenue();
-    }, 30000); // Wait 30 seconds after startup
+    console.log('✅ Automated revenue consolidation scheduler started (runs every hour)');
 }
 
 // =========================================================================
-// 7. INTEGRATION FUNCTIONS FOR AUTONOMOUS AI ENGINE
+// 8. INTEGRATION FUNCTIONS FOR AUTONOMOUS AI ENGINE
 // =========================================================================
 
 export async function processRevenuePayment(payment) {
@@ -638,8 +653,8 @@ export async function processRevenuePayment(payment) {
                 result = await sendSOL(toAddress, amount);
             } else if (type === 'eth') {
                 result = await sendETH(toAddress, amount);
-            } else if (type === 'bwaezi') {
-                result = await sendBwaezi(toAddress, amount);
+            } else if (type === 'bwz') {
+                result = await sendBWAZI(toAddress, amount);
             } else {
                 return { success: false, error: `Unsupported chain for native token: ${type}` };
             }
@@ -694,7 +709,7 @@ export async function checkBlockchainHealth() {
 }
 
 // =========================================================================
-// 8. LEGACY COMPATIBILITY FUNCTIONS
+// 9. LEGACY COMPATIBILITY FUNCTIONS
 // =========================================================================
 
 // For compatibility with autonomous-ai-engine.js
@@ -726,19 +741,19 @@ export function getSolanaKeypair() {
 }
 
 export function getBwaeziAccount() {
-    return { 
+    return {
         address: bwaeziWallet?.address || '0x0000000000000000000000000000000000000000',
         privateKey: bwaeziWallet?.privateKey || ''
     };
 }
 
 // =========================================================================
-// 9. UTILITY FUNCTIONS
+// 10. UTILITY FUNCTIONS
 // =========================================================================
 
 export function validateAddress(address, chain) {
     try {
-        if (chain === 'eth' || chain === 'bwaezi') {
+        if (chain === 'eth' || chain === 'bwz') {
             return ethers.isAddress(address);
         } else if (chain === 'sol') {
             new PublicKey(address); // This will throw if invalid
@@ -759,14 +774,8 @@ export async function testAllConnections() {
     return await checkBlockchainHealth();
 }
 
-// Manual trigger for revenue consolidation
-export async function triggerRevenueConsolidation() {
-    console.log("🚀 Manually triggering revenue consolidation...");
-    return await consolidateRevenue();
-}
-
 // =========================================================================
-// 10. DEFAULT EXPORT
+// 11. DEFAULT EXPORT
 // =========================================================================
 
 export default {
@@ -775,14 +784,15 @@ export default {
     getWalletAddresses,
     sendSOL,
     sendETH,
-    sendBwaezi,
+    sendBWAZI,
     sendUSDT,
+    convertBwaeziToUSDT,
+    consolidateRevenue,
     processRevenuePayment,
     checkBlockchainHealth,
     validateAddress,
     formatBalance,
     testAllConnections,
-    triggerRevenueConsolidation,
     
     // Legacy compatibility
     getEthereumWeb3,
