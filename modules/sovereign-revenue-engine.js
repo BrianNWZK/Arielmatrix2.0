@@ -19,7 +19,7 @@ import { createHash, randomBytes } from 'crypto';
 
 import {
     BWAEZI_CHAIN,
-    TOKEN_ECONOMICS,
+    TOKEN_CONVERSION_RATES,
     BWAEZI_SOVEREIGN_CONFIG,
     SOVEREIGN_SERVICES,
     COMPLIANCE_STRATEGY,
@@ -366,8 +366,8 @@ export class SovereignRevenueEngine extends EventEmitter {
         const solValue = balances.solana.native * SOL_PRICE;
         const solUSDTValue = balances.solana.usdt * USDT_PRICE;
         
-        // Convert BWAEZI to USD using TOKEN_ECONOMICS rate
-        const bwaeziValue = balances.bwaezi.native * TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
+        // Convert BWAEZI to USD using TOKEN_CONVERSION_RATES rate
+        const bwaeziValue = balances.bwaezi.native * TOKEN_CONVERSION_RATES.BWAEZI_TO_USDT;
         const bwaeziUSDTValue = balances.bwaezi.usdt * USDT_PRICE;
         
         return ethValue + ethUSDTValue + solValue + solUSDTValue + bwaeziValue + bwaeziUSDTValue;
@@ -598,11 +598,11 @@ export class SovereignRevenueEngine extends EventEmitter {
     }
 
     async convertUsdToCrypto(usdAmount, cryptocurrency) {
-        // Use real conversion rates from TOKEN_ECONOMICS
+        // Use real conversion rates from TOKEN_CONVERSION_RATES
         const PRICES = {
             eth: 2500, // Integrate with real price feed
             sol: 100,  // Integrate with real price feed
-            bwaezi: 0.0001, // 1 BWAEZI = 10,000 USDT, so 1 USDT = 0.0001 BWAEZI
+            bwaezi: 0.01, // 1 BWAEZI = 100 USDT, so 1 USDT = 0.01 BWAEZI
             usdt: 1
         };
 
