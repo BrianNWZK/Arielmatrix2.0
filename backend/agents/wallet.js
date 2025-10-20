@@ -1,6 +1,7 @@
 /**
  * wallet.js - Unified Blockchain Wallet Manager
  * Integrated with Autonomous AI Engine for multi-chain operations
+ * Now with BWAEZI Chain support and automated revenue consolidation
  */
 
 import 'dotenv/config';
@@ -11,8 +12,7 @@ import Web3 from 'web3';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
-
+import cron from 'node-cron';
 
 // Get current directory path for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -37,15 +37,30 @@ const SOLANA_RPC_URLS = [
     'https://solana-mainnet.rpc.extrnode.com'
 ];
 
-// Public addresses for stablecoins
+// BWAEZI Chain Configuration
+const BWAEZI_RPC_URLS = [
+    process.env.BWAEZI_RPC_URL || 'https://rpc.winr.games',
+    'https://rpc.bwaezi.com',
+    'https://mainnet.bwaezi-rpc.io'
+];
+
+// Contract addresses
 const USDT_CONTRACT_ADDRESS_ETH = process.env.USDT_CONTRACT_ADDRESS_ETH || '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 const USDT_MINT_ADDRESS_SOL = process.env.USDT_MINT_ADDRESS_SOL || 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const BWAEZI_CONTRACT_ADDRESS = process.env.BWAEZI_CONTRACT_ADDRESS || '0x00000000000000000000000000000000000a4b05';
+
+// Trust wallet addresses for consolidation
+const SOLANA_TRUST_WALLET_ADDRESS = process.env.SOLANA_TRUST_WALLET_ADDRESS;
+const ETHEREUM_TRUST_WALLET_ADDRESS = process.env.ETHEREUM_TRUST_WALLET_ADDRESS;
+
+// BWAEZI conversion rate
+const BWAEZI_TO_USDT_RATE = 10000; // 1 BWAEZI = 10,000 USDT
 
 // =========================================================================
 // 2. GLOBAL VARIABLES
 // =========================================================================
-let ethProvider, solConnection;
-let ethWallet, solWallet;
+let ethProvider, solConnection, bwaeziProvider;
+let ethWallet, solWallet, bwaeziWallet;
 let ethWeb3; // For legacy Web3 compatibility
 
 // =========================================================================
@@ -53,7 +68,7 @@ let ethWeb3; // For legacy Web3 compatibility
 // =========================================================================
 
 /**
- * Initializes all blockchain connections
+ * Initializes all blockchain connections including BWAEZI Chain
  */
 export async function initializeConnections() {
     console.log("🔄 Initializing blockchain connections...");
@@ -136,7 +151,42 @@ export async function initializeConnections() {
             console.warn("⚠️ Solana private key not set");
         }
 
-        console.log("✅ Blockchain connections initialized successfully");
+        // Initialize BWAEZI Chain connection
+        let bwaeziConnected = false;
+        for (const url of BWAEZI_RPC_URLS) {
+            try {
+                bwaeziProvider = new ethers.JsonRpcProvider(url);
+                await bwaeziProvider.getBlockNumber(); // Test connection
+                console.log(`✅ BWAEZI Chain connected to: ${url}`);
+                bwaeziConnected = true;
+                break;
+            } catch (error) {
+                console.warn(`❌ Failed to connect to BWAEZI RPC: ${url}`, error.message);
+                continue;
+            }
+        }
+        
+        if (!bwaeziConnected) {
+            throw new Error("All BWAEZI Chain RPC connections failed");
+        }
+        
+        // Initialize BWAEZI wallet if private key is available
+        if (process.env.BWAEZI_COLLECTION_WALLET_PRIVATE_KEY) {
+            try {
+                bwaeziWallet = new ethers.Wallet(process.env.BWAEZI_COLLECTION_WALLET_PRIVATE_KEY, bwaeziProvider);
+                console.log(`✅ BWAEZI wallet connected: ${bwaeziWallet.address}`);
+            } catch (error) {
+                console.error("❌ Failed to initialize BWAEZI wallet:", error.message);
+            }
+        } else {
+            console.warn("⚠️ BWAEZI private key not set");
+        }
+
+        console.log("✅ All blockchain connections initialized successfully");
+        
+        // Start autonomous revenue consolidation scheduler
+        startRevenueConsolidationScheduler();
+        
         return true;
     } catch (error) {
         console.error("❌ Failed to initialize connections:", error.message);
@@ -153,6 +203,7 @@ export async function getWalletBalances() {
         const balances = {
             ethereum: { native: 0, usdt: 0, address: ethWallet?.address || '' },
             solana: { native: 0, usdt: 0, address: solWallet?.publicKey?.toString() || '' },
+            bwaezi: { native: 0, usdt: 0, address: bwaeziWallet?.address || '' },
             timestamp: Date.now()
         };
 
@@ -210,12 +261,26 @@ export async function getWalletBalances() {
             }
         }
 
+        // BWAEZI Chain balances
+        if (bwaeziWallet) {
+            try {
+                const bwaeziBalance = await bwaeziProvider.getBalance(bwaeziWallet.address);
+                balances.bwaezi.native = parseFloat(ethers.formatEther(bwaeziBalance));
+                
+                // Calculate USDT equivalent for BWAEZI
+                balances.bwaezi.usdt = balances.bwaezi.native * BWAEZI_TO_USDT_RATE;
+            } catch (error) {
+                console.error("❌ Error fetching BWAEZI balances:", error.message);
+            }
+        }
+
         return balances;
     } catch (error) {
         console.error("❌ Error in getWalletBalances:", error.message);
         return {
             ethereum: { native: 0, usdt: 0, address: '' },
             solana: { native: 0, usdt: 0, address: '' },
+            bwaezi: { native: 0, usdt: 0, address: '' },
             error: error.message,
             timestamp: Date.now()
         };
@@ -226,6 +291,7 @@ export function getWalletAddresses() {
     return {
         ethereum: ethWallet?.address || '',
         solana: solWallet?.publicKey?.toString() || '',
+        bwaezi: bwaeziWallet?.address || '',
         timestamp: Date.now()
     };
 }
@@ -285,6 +351,24 @@ export async function sendETH(toAddress, amount) {
         return { success: true, hash: tx.hash };
     } catch (error) {
         console.error("❌ Error sending ETH:", error);
+        return { success: false, error: error.message };
+    }
+}
+
+export async function sendBwaezi(toAddress, amount) {
+    try {
+        if (!bwaeziWallet) throw new Error("BWAEZI wallet not initialized");
+        if (!ethers.isAddress(toAddress)) throw new Error("Invalid BWAEZI address");
+        
+        const tx = await bwaeziWallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amount.toString()),
+            gasLimit: 21000
+        });
+        
+        return { success: true, hash: tx.hash };
+    } catch (error) {
+        console.error("❌ Error sending BWAEZI:", error);
         return { success: false, error: error.message };
     }
 }
@@ -375,7 +459,172 @@ export async function sendUSDT(toAddress, amount, chain) {
 }
 
 // =========================================================================
-// 6. INTEGRATION FUNCTIONS FOR AUTONOMOUS AI ENGINE
+// 6. AUTONOMOUS REVENUE CONSOLIDATION
+// =========================================================================
+
+/**
+ * Autonomous revenue consolidation - moves all revenue every hour
+ * Leaves 5-10% for operational costs
+ */
+async function consolidateRevenue() {
+    console.log("🔄 Starting autonomous revenue consolidation...");
+    
+    try {
+        const balances = await getWalletBalances();
+        const results = [];
+        
+        // Calculate amounts to transfer (90-95% of balance)
+        const operationalCostPercentage = 0.05 + (Math.random() * 0.05); // 5-10% for operational costs
+        const transferPercentage = 1 - operationalCostPercentage;
+        
+        // Consolidate Ethereum
+        if (balances.ethereum.native > 0.001 && ETHEREUM_TRUST_WALLET_ADDRESS) { // Minimum threshold
+            const amountToTransfer = balances.ethereum.native * transferPercentage;
+            if (amountToTransfer > 0.0001) { // Ensure meaningful amount
+                try {
+                    const result = await sendETH(ETHEREUM_TRUST_WALLET_ADDRESS, amountToTransfer);
+                    results.push({
+                        chain: 'ethereum',
+                        asset: 'ETH',
+                        amount: amountToTransfer,
+                        success: result.success,
+                        tx: result.success ? result.hash : null,
+                        error: result.error
+                    });
+                } catch (error) {
+                    results.push({
+                        chain: 'ethereum',
+                        asset: 'ETH',
+                        amount: amountToTransfer,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+        }
+        
+        // Consolidate Ethereum USDT
+        if (balances.ethereum.usdt > 1 && ETHEREUM_TRUST_WALLET_ADDRESS) { // Minimum 1 USDT
+            const amountToTransfer = balances.ethereum.usdt * transferPercentage;
+            if (amountToTransfer > 0.1) { // Ensure meaningful amount
+                try {
+                    const result = await sendUSDT(ETHEREUM_TRUST_WALLET_ADDRESS, amountToTransfer, 'eth');
+                    results.push({
+                        chain: 'ethereum',
+                        asset: 'USDT',
+                        amount: amountToTransfer,
+                        success: result.success,
+                        tx: result.success ? result.hash : null,
+                        error: result.error
+                    });
+                } catch (error) {
+                    results.push({
+                        chain: 'ethereum',
+                        asset: 'USDT',
+                        amount: amountToTransfer,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+        }
+        
+        // Consolidate Solana
+        if (balances.solana.native > 0.001 && SOLANA_TRUST_WALLET_ADDRESS) { // Minimum threshold
+            const amountToTransfer = balances.solana.native * transferPercentage;
+            if (amountToTransfer > 0.0001) { // Ensure meaningful amount
+                try {
+                    const result = await sendSOL(SOLANA_TRUST_WALLET_ADDRESS, amountToTransfer);
+                    results.push({
+                        chain: 'solana',
+                        asset: 'SOL',
+                        amount: amountToTransfer,
+                        success: result.success,
+                        tx: result.success ? result.signature : null,
+                        error: result.error
+                    });
+                } catch (error) {
+                    results.push({
+                        chain: 'solana',
+                        asset: 'SOL',
+                        amount: amountToTransfer,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+        }
+        
+        // Consolidate Solana USDT
+        if (balances.solana.usdt > 1 && SOLANA_TRUST_WALLET_ADDRESS) { // Minimum 1 USDT
+            const amountToTransfer = balances.solana.usdt * transferPercentage;
+            if (amountToTransfer > 0.1) { // Ensure meaningful amount
+                try {
+                    const result = await sendUSDT(SOLANA_TRUST_WALLET_ADDRESS, amountToTransfer, 'sol');
+                    results.push({
+                        chain: 'solana',
+                        asset: 'USDT',
+                        amount: amountToTransfer,
+                        success: result.success,
+                        tx: result.success ? result.signature : null,
+                        error: result.error
+                    });
+                } catch (error) {
+                    results.push({
+                        chain: 'solana',
+                        asset: 'USDT',
+                        amount: amountToTransfer,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+        }
+        
+        // Note: BWAEZI conversion to USDT would happen through external DEX/swap service
+        // For now, we track the USDT equivalent but don't auto-transfer BWAEZI
+        if (balances.bwaezi.usdt > 100) { // Only if significant amount (>100 USDT equivalent)
+            console.log(`ℹ️ BWAEZI balance equivalent to ${balances.bwaezi.usdt} USDT - requires manual DEX conversion`);
+            results.push({
+                chain: 'bwaezi',
+                asset: 'BWAEZI',
+                amount: balances.bwaezi.native,
+                usdtEquivalent: balances.bwaezi.usdt,
+                note: 'Requires manual conversion via DEX',
+                success: true
+            });
+        }
+        
+        console.log("✅ Revenue consolidation completed:", results);
+        return results;
+        
+    } catch (error) {
+        console.error("❌ Error in revenue consolidation:", error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Starts the autonomous revenue consolidation scheduler
+ */
+function startRevenueConsolidationScheduler() {
+    console.log("⏰ Starting autonomous revenue consolidation scheduler (runs every hour)...");
+    
+    // Schedule to run every hour
+    cron.schedule('0 * * * *', async () => {
+        console.log(`🕐 Scheduled revenue consolidation started at ${new Date().toISOString()}`);
+        await consolidateRevenue();
+    });
+    
+    // Also run immediately on startup
+    setTimeout(() => {
+        console.log("🚀 Initial revenue consolidation running...");
+        consolidateRevenue();
+    }, 30000); // Wait 30 seconds after startup
+}
+
+// =========================================================================
+// 7. INTEGRATION FUNCTIONS FOR AUTONOMOUS AI ENGINE
 // =========================================================================
 
 export async function processRevenuePayment(payment) {
@@ -389,6 +638,8 @@ export async function processRevenuePayment(payment) {
                 result = await sendSOL(toAddress, amount);
             } else if (type === 'eth') {
                 result = await sendETH(toAddress, amount);
+            } else if (type === 'bwaezi') {
+                result = await sendBwaezi(toAddress, amount);
             } else {
                 return { success: false, error: `Unsupported chain for native token: ${type}` };
             }
@@ -418,16 +669,18 @@ export async function processRevenuePayment(payment) {
 
 export async function checkBlockchainHealth() {
     try {
-        const [ethHealth, solHealth, walletBalances] = await Promise.allSettled([
+        const [ethHealth, solHealth, bwaeziHealth, walletBalances] = await Promise.allSettled([
             ethProvider?.getBlockNumber() || Promise.resolve(false),
             solConnection?.getLatestBlockhash() || Promise.resolve(false),
+            bwaeziProvider?.getBlockNumber() || Promise.resolve(false),
             getWalletBalances()
         ]);
         
         return {
-            healthy: ethHealth.status === 'fulfilled' && solHealth.status === 'fulfilled',
+            healthy: ethHealth.status === 'fulfilled' && solHealth.status === 'fulfilled' && bwaeziHealth.status === 'fulfilled',
             ethereum: ethHealth.status === 'fulfilled' ? { connected: true, block: ethHealth.value } : { connected: false },
             solana: solHealth.status === 'fulfilled' ? { connected: true, blockhash: solHealth.value } : { connected: false },
+            bwaezi: bwaeziHealth.status === 'fulfilled' ? { connected: true, block: bwaeziHealth.value } : { connected: false },
             wallets: walletBalances.status === 'fulfilled' ? walletBalances.value : null,
             timestamp: Date.now()
         };
@@ -441,7 +694,7 @@ export async function checkBlockchainHealth() {
 }
 
 // =========================================================================
-// 7. LEGACY COMPATIBILITY FUNCTIONS
+// 8. LEGACY COMPATIBILITY FUNCTIONS
 // =========================================================================
 
 // For compatibility with autonomous-ai-engine.js
@@ -451,6 +704,10 @@ export function getEthereumWeb3() {
 
 export function getSolanaConnection() {
     return solConnection;
+}
+
+export function getBwaeziProvider() {
+    return bwaeziProvider;
 }
 
 export function getEthereumAccount() {
@@ -468,13 +725,20 @@ export function getSolanaKeypair() {
     };
 }
 
+export function getBwaeziAccount() {
+    return { 
+        address: bwaeziWallet?.address || '0x0000000000000000000000000000000000000000',
+        privateKey: bwaeziWallet?.privateKey || ''
+    };
+}
+
 // =========================================================================
-// 8. UTILITY FUNCTIONS
+// 9. UTILITY FUNCTIONS
 // =========================================================================
 
 export function validateAddress(address, chain) {
     try {
-        if (chain === 'eth') {
+        if (chain === 'eth' || chain === 'bwaezi') {
             return ethers.isAddress(address);
         } else if (chain === 'sol') {
             new PublicKey(address); // This will throw if invalid
@@ -495,8 +759,14 @@ export async function testAllConnections() {
     return await checkBlockchainHealth();
 }
 
+// Manual trigger for revenue consolidation
+export async function triggerRevenueConsolidation() {
+    console.log("🚀 Manually triggering revenue consolidation...");
+    return await consolidateRevenue();
+}
+
 // =========================================================================
-// 9. DEFAULT EXPORT
+// 10. DEFAULT EXPORT
 // =========================================================================
 
 export default {
@@ -505,16 +775,20 @@ export default {
     getWalletAddresses,
     sendSOL,
     sendETH,
+    sendBwaezi,
     sendUSDT,
     processRevenuePayment,
     checkBlockchainHealth,
     validateAddress,
     formatBalance,
     testAllConnections,
+    triggerRevenueConsolidation,
     
     // Legacy compatibility
     getEthereumWeb3,
     getSolanaConnection,
+    getBwaeziProvider,
     getEthereumAccount,
-    getSolanaKeypair
+    getSolanaKeypair,
+    getBwaeziAccount
 };
