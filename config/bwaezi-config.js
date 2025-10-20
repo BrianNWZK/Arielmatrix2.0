@@ -1,4 +1,3 @@
-```javascript
 // config/bwaezi-config.js
 import { randomBytes, createHash } from 'crypto';
 import { EventEmitter } from 'events';
@@ -20,13 +19,21 @@ export const BWAEZI_CHAIN = {
 };
 
 // =========================================================================
-// BWAEZI TOKEN ECONOMICS - CONVERSION RATES
+// TOKEN ECONOMICS & CONVERSION RATES
 // =========================================================================
-export const BWAEZI_TOKEN_ECONOMICS = {
+export const TOKEN_ECONOMICS = {
+    // BWAEZI conversion rates
     BWAEZI_TO_USDT_RATE: 10000, // 1 BWAEZI = 10,000 USDT
-    STABLE_TOKEN_PAIR: 'BWAEZI/USDT',
-    PRICE_ORACLE: 'BWAEZI_Sovereign_Oracle_V1',
-    LIQUIDITY_POOL: 'BWAEZI_USDT_LP_V1'
+    BWAEZI_TO_USDC_RATE: 10000, // 1 BWAEZI = 10,000 USDC
+    BWAEZI_TO_DAI_RATE: 10000, // 1 BWAEZI = 10,000 DAI
+    STABLE_TOKEN_RATE: 10000, // Same rate for all stable tokens
+    
+    // Trading pairs
+    SUPPORTED_STABLECOINS: ['USDT', 'USDC', 'DAI', 'BUSD', 'TUSD'],
+    
+    // Price oracle configuration
+    ORACLE_UPDATE_INTERVAL: 30000, // 30 seconds
+    PRICE_VOLATILITY_THRESHOLD: 0.05 // 5% volatility threshold
 };
 
 // =========================================================================
@@ -267,18 +274,18 @@ export const ConfigUtils = {
             .update(JSON.stringify(data) + randomBytes(16).toString('hex'))
             .digest('hex');
     },
-
-    // BWAEZI token utility functions
-    convertBWAEZItoUSDT: (bwaeziAmount) => {
-        return bwaeziAmount * BWAEZI_TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
+    
+    // Token conversion utilities
+    convertBWAEZIToStable: (bwaeziAmount, stablecoin = 'USDT') => {
+        return bwaeziAmount * TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
     },
-
-    convertUSDTtoBWAEZI: (usdtAmount) => {
-        return usdtAmount / BWAEZI_TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
+    
+    convertStableToBWAEZI: (stableAmount, stablecoin = 'USDT') => {
+        return stableAmount / TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
     },
-
-    calculateServiceFeeInBWAEZI: (usdtAmount) => {
-        return usdtAmount / BWAEZI_TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
+    
+    validateStablecoin: (stablecoin) => {
+        return TOKEN_ECONOMICS.SUPPORTED_STABLECOINS.includes(stablecoin.toUpperCase());
     }
 };
 
@@ -287,7 +294,7 @@ export const ConfigUtils = {
 // =========================================================================
 export default {
     BWAEZI_CHAIN,
-    BWAEZI_TOKEN_ECONOMICS,
+    TOKEN_ECONOMICS,
     SOVEREIGN_LEGAL_STRUCTURE,
     ZERO_KNOWLEDGE_COMPLIANCE,
     BWAEZI_SOVEREIGN_CONFIG,
@@ -297,4 +304,3 @@ export default {
     PUBLIC_COMPLIANCE_STATEMENTS,
     ConfigUtils
 };
-```
