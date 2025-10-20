@@ -8,15 +8,18 @@ import {
     getWalletBalances,
     sendETH,
     sendSOL,
+    sendBwaezi,
     sendUSDT,
     processRevenuePayment,
     checkBlockchainHealth,
-    validateAddress
+    validateAddress,
+    triggerRevenueConsolidation
 } from '../backend/agents/wallet.js';
 import { createHash, randomBytes } from 'crypto';
 
 import {
     BWAEZI_CHAIN,
+    BWAEZI_TOKEN_ECONOMICS,
     BWAEZI_SOVEREIGN_CONFIG,
     SOVEREIGN_SERVICES,
     COMPLIANCE_STRATEGY,
@@ -55,7 +58,8 @@ export class SovereignRevenueEngine extends EventEmitter {
         // Blockchain wallet balances cache
         this.walletBalances = {
             ethereum: { native: 0, usdt: 0, address: '' },
-            solana: { native: 0, usdt: 0, address: '' }
+            solana: { native: 0, usdt: 0, address: '' },
+            bwaezi: { native: 0, usdt: 0, address: '' }
         };
 
         // Compliance tracking
@@ -71,6 +75,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         this.governanceInterval = null;
         this.complianceInterval = null;
         this.walletHealthInterval = null;
+        this.revenueConsolidationInterval = null;
     }
 
     async initialize() {
@@ -103,6 +108,7 @@ export class SovereignRevenueEngine extends EventEmitter {
             this.startGovernanceCycles();
             this.startComplianceMonitoring();
             this.startWalletHealthMonitoring();
+            this.startRevenueConsolidationMonitoring();
             
             this.initialized = true;
             console.log('✅ BWAEZI Sovereign Revenue Engine Initialized - PRODUCTION READY');
@@ -313,6 +319,8 @@ export class SovereignRevenueEngine extends EventEmitter {
                 ethereum_usdt REAL DEFAULT 0,
                 solana_native REAL DEFAULT 0,
                 solana_usdt REAL DEFAULT 0,
+                bwaezi_native REAL DEFAULT 0,
+                bwaezi_usdt REAL DEFAULT 0,
                 total_value_usd REAL DEFAULT 0
             )
         `);
@@ -357,8 +365,9 @@ export class SovereignRevenueEngine extends EventEmitter {
         const ethUSDTValue = balances.ethereum.usdt * USDT_PRICE;
         const solValue = balances.solana.native * SOL_PRICE;
         const solUSDTValue = balances.solana.usdt * USDT_PRICE;
+        const bwaeziValue = balances.bwaezi.usdt; // Already in USDT equivalent
         
-        return ethValue + ethUSDTValue + solValue + solUSDTValue;
+        return ethValue + ethUSDTValue + solValue + solUSDTValue + bwaeziValue;
     }
 
     async recordWalletBalanceSnapshot(balances) {
@@ -366,13 +375,15 @@ export class SovereignRevenueEngine extends EventEmitter {
         
         await this.db.run(`
             INSERT INTO wallet_balances_history 
-            (ethereum_native, ethereum_usdt, solana_native, solana_usdt, total_value_usd)
-            VALUES (?, ?, ?, ?, ?)
+            (ethereum_native, ethereum_usdt, solana_native, solana_usdt, bwaezi_native, bwaezi_usdt, total_value_usd)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
             balances.ethereum.native,
             balances.ethereum.usdt,
             balances.solana.native,
             balances.solana.usdt,
+            balances.bwaezi.native,
+            balances.bwaezi.usdt,
             totalValue
         ]);
     }
@@ -383,7 +394,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         
         try {
             // Validate address
-            if (!validateAddress(toAddress, type === 'sol' ? 'sol' : 'eth')) {
+            if (!validateAddress(toAddress, type === 'sol' ? 'sol' : (type === 'bwaezi' ? 'bwaezi' : 'eth'))) {
                 throw new Error(`Invalid ${type} address: ${toAddress}`);
             }
 
@@ -394,8 +405,9 @@ export class SovereignRevenueEngine extends EventEmitter {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `, [
                 paymentId,
-                type === 'sol' ? 'solana' : 'ethereum',
-                type === 'sol' ? this.walletBalances.solana.address : this.walletBalances.ethereum.address,
+                type === 'sol' ? 'solana' : (type === 'bwaezi' ? 'bwaezi' : 'ethereum'),
+                type === 'sol' ? this.walletBalances.solana.address : 
+                 (type === 'bwaezi' ? this.walletBalances.bwaezi.address : this.walletBalances.ethereum.address),
                 toAddress,
                 amount,
                 token,
@@ -411,6 +423,8 @@ export class SovereignRevenueEngine extends EventEmitter {
                     result = await sendSOL(toAddress, amount);
                 } else if (type === 'eth') {
                     result = await sendETH(toAddress, amount);
+                } else if (type === 'bwaezi') {
+                    result = await sendBwaezi(toAddress, amount);
                 }
             } else if (token === 'usdt') {
                 result = await sendUSDT(toAddress, amount, type);
@@ -570,7 +584,8 @@ export class SovereignRevenueEngine extends EventEmitter {
         );
 
         const paymentConfig = {
-            type: serviceConfig.paymentNetwork === 'solana' ? 'sol' : 'eth',
+            type: serviceConfig.paymentNetwork === 'solana' ? 'sol' : 
+                  (serviceConfig.paymentNetwork === 'bwaezi' ? 'bwaezi' : 'eth'),
             amount: cryptoAmount,
             toAddress: this.config.SOVEREIGN_OWNER,
             token: serviceConfig.paymentCurrency === 'usdt' ? 'usdt' : 'native'
@@ -584,6 +599,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         const PRICES = {
             eth: 2500,
             sol: 100,
+            bwaezi: 0.0001, // 1 BWAEZI = 10,000 USDT, so 1 USDT = 0.0001 BWAEZI
             usdt: 1
         };
 
@@ -791,7 +807,7 @@ export class SovereignRevenueEngine extends EventEmitter {
     async processSovereignPayment(amount, chain) {
         // Convert to blockchain payment using integrated wallet system
         const paymentConfig = {
-            type: chain === 'bwaezi' ? 'eth' : chain,
+            type: chain === 'bwaezi' ? 'bwaezi' : (chain === 'solana' ? 'sol' : 'eth'),
             amount: amount,
             toAddress: this.config.SOVEREIGN_OWNER,
             token: 'usdt',
@@ -859,6 +875,18 @@ export class SovereignRevenueEngine extends EventEmitter {
         console.log('🔍 Blockchain wallet health monitoring activated');
     }
 
+    startRevenueConsolidationMonitoring() {
+        this.revenueConsolidationInterval = setInterval(async () => {
+            try {
+                await this.triggerRevenueConsolidation();
+            } catch (error) {
+                console.error('❌ Revenue consolidation monitoring failed:', error);
+            }
+        }, 3600000); // Every hour
+
+        console.log('💰 Autonomous revenue consolidation monitoring activated');
+    }
+
     async checkWalletHealth() {
         const health = await checkBlockchainHealth();
         
@@ -892,6 +920,28 @@ export class SovereignRevenueEngine extends EventEmitter {
             
         } catch (error) {
             console.error('❌ Failed to refresh wallet balances:', error);
+        }
+    }
+
+    async triggerRevenueConsolidation() {
+        try {
+            console.log('🔄 Triggering autonomous revenue consolidation...');
+            const results = await triggerRevenueConsolidation();
+            
+            this.emit('revenueConsolidationExecuted', {
+                results,
+                timestamp: Date.now(),
+                architecturalAlignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT
+            });
+            
+            return results;
+        } catch (error) {
+            console.error('❌ Revenue consolidation failed:', error);
+            this.emit('revenueConsolidationFailed', {
+                error: error.message,
+                timestamp: Date.now()
+            });
+            return { success: false, error: error.message };
         }
     }
 
@@ -1290,6 +1340,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         if (this.governanceInterval) clearInterval(this.governanceInterval);
         if (this.complianceInterval) clearInterval(this.complianceInterval);
         if (this.walletHealthInterval) clearInterval(this.walletHealthInterval);
+        if (this.revenueConsolidationInterval) clearInterval(this.revenueConsolidationInterval);
         
         // Close database connection
         if (this.db) await this.db.close();
@@ -1327,6 +1378,7 @@ export class SovereignRevenueEngine extends EventEmitter {
             // Blockchain Operations
             getWalletBalances: () => this.walletBalances,
             executePayment: (paymentConfig) => this.executeBlockchainPayment(paymentConfig),
+            triggerConsolidation: () => this.triggerRevenueConsolidation(),
             
             // Analytics & Reporting
             getMetrics: (period) => this.getProductionMetrics(),
