@@ -1,3 +1,4 @@
+```javascript
 // config/bwaezi-config.js
 import { randomBytes, createHash } from 'crypto';
 import { EventEmitter } from 'events';
@@ -16,6 +17,16 @@ export const BWAEZI_CHAIN = {
     BLOCK_TIME: 2,
     GAS_LIMIT: 30000000,
     GAS_PRICE: '1000000000'
+};
+
+// =========================================================================
+// BWAEZI TOKEN ECONOMICS - CONVERSION RATES
+// =========================================================================
+export const BWAEZI_TOKEN_ECONOMICS = {
+    BWAEZI_TO_USDT_RATE: 10000, // 1 BWAEZI = 10,000 USDT
+    STABLE_TOKEN_PAIR: 'BWAEZI/USDT',
+    PRICE_ORACLE: 'BWAEZI_Sovereign_Oracle_V1',
+    LIQUIDITY_POOL: 'BWAEZI_USDT_LP_V1'
 };
 
 // =========================================================================
@@ -255,6 +266,19 @@ export const ConfigUtils = {
         return createHash('sha256')
             .update(JSON.stringify(data) + randomBytes(16).toString('hex'))
             .digest('hex');
+    },
+
+    // BWAEZI token utility functions
+    convertBWAEZItoUSDT: (bwaeziAmount) => {
+        return bwaeziAmount * BWAEZI_TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
+    },
+
+    convertUSDTtoBWAEZI: (usdtAmount) => {
+        return usdtAmount / BWAEZI_TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
+    },
+
+    calculateServiceFeeInBWAEZI: (usdtAmount) => {
+        return usdtAmount / BWAEZI_TOKEN_ECONOMICS.BWAEZI_TO_USDT_RATE;
     }
 };
 
@@ -263,6 +287,7 @@ export const ConfigUtils = {
 // =========================================================================
 export default {
     BWAEZI_CHAIN,
+    BWAEZI_TOKEN_ECONOMICS,
     SOVEREIGN_LEGAL_STRUCTURE,
     ZERO_KNOWLEDGE_COMPLIANCE,
     BWAEZI_SOVEREIGN_CONFIG,
@@ -272,3 +297,4 @@ export default {
     PUBLIC_COMPLIANCE_STATEMENTS,
     ConfigUtils
 };
+```
