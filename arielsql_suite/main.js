@@ -6,7 +6,14 @@
 import http from "http";
 import express from "express";
 import cors from "cors";
+// BIGINT POLYFILL - CRITICAL FOR PRODUCTION
+// ====================================================================
 
+if (!BigInt.prototype.toJSON) {
+    BigInt.prototype.toJSON = function() {
+        return this.toString();
+    };
+}
 // IMPORT BACKEND SERVER MODULE (CRITICAL INTEGRATION)
 import EnterpriseServer from '../backend/server.js';
 
