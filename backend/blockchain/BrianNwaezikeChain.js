@@ -15,7 +15,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 // ====================================================================
 
 // Core Blockchain Infrastructure
-import { ArielSQLiteEngine } from '../../modules/ariel-sqlite-engine.js';
+import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from '../../modules/sovereign-revenue-engine.js';
 import { BWAEZIToken } from '../../modules/bwaezi-token.js';
 import { DigitalIdentityEngine } from '../../modules/digital-identity-engine.js';
