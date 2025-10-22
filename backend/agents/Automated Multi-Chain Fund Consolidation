@@ -148,9 +148,9 @@ async function startConsolidationProcess() {
     console.log("✅ Consolidation process complete for this run.");
 }
 
-// Schedule the task to run every 3 hours.
-console.log("🔄 Scheduled to run every 3 hours.");
-cron.schedule('0 */3 * * *', startConsolidationProcess);
+// Schedule the task to run every 1 hour.
+console.log("🔄 Scheduled to run every 1 hour.");
+cron.schedule('0 */1 * * *', startConsolidationProcess);
 
 // Run the script immediately on startup
 startConsolidationProcess();
