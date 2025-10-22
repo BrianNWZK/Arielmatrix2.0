@@ -1,8 +1,8 @@
 // arielsql_suite/god-mode-launcher.js
 // PRODUCTION READY - MAINNET LAUNCHER
 
-import { GOD_MODE_ACTIVATOR } from '../core/sovereign-god-mode-activator.js';
-import { GOD_MODE_WALLET } from '../backend/agents/god-mode-wallet.js';
+import GOD_MODE_ACTIVATOR from '../core/sovereign-god-mode-activator.js';
+import GOD_MODE_WALLET from '../backend/agents/god-mode-wallet.js';
 
 class GodModeProductionLauncher {
     constructor() {
