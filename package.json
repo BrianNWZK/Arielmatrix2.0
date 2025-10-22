@@ -24,6 +24,9 @@
     "monitor": "node scripts/system-monitor.js",
     "payout-agent": "node backend/agents/payoutAgent.js",
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
+    "god-mode": "node core/sovereign-god-mode-activator.js",
+    "launch-mainnet": "node arielsql_suite/god-mode-launcher.js",
+    "build-god-mode": "./build_and_deploy-god-mode.sh",
     "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js"
   },
   "dependencies": {
