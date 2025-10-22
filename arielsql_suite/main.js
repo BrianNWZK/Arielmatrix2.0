@@ -1,16 +1,11 @@
 /**
  * ArielSQL Ultimate Suite - Production Mainnet v4.3
  * 🚀 PRIMARY PRODUCTION SERVER: Integrated with backend/server.js
- * 👑 ENHANCED WITH SOVEREIGN CORE GOD MODE
  */
 
 import http from "http";
 import express from "express";
 import cors from "cors";
-
-// Add to arielsql_suite/main.js
-import { launchMainnet } from './god-mode-launcher.js';
-
 // BIGINT POLYFILL - CRITICAL FOR PRODUCTION
 // ====================================================================
 
@@ -321,7 +316,7 @@ function createExpressApplication() {
   // Enhanced security middleware
   app.use(cors());
   app.use((req, res, next) => {
-    res.setHeader('X-Powered-By', 'ArielSQL Ultimate Suite v4.3 - GOD MODE ACTIVE');
+    res.setHeader('X-Powered-By', 'ArielSQL Ultimate Suite v4.3');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-XSS-Protection', '1; mode=block');
@@ -337,10 +332,8 @@ function createExpressApplication() {
   // 🏠 Root Endpoint
   app.get('/', (req, res) => {
     res.json({
-      message: '🚀 ArielSQL Ultimate Suite v4.3 - GOD MODE ACTIVE',
+      message: '🚀 ArielSQL Ultimate Suite v4.3 - Primary Production Server',
       version: '4.3.0',
-      godMode: true,
-      sovereignCore: 'OPERATIONAL',
       timestamp: new Date().toISOString(),
       endpoints: {
         health: '/health',
@@ -350,8 +343,7 @@ function createExpressApplication() {
         metrics: '/api/metrics',
         events: '/api/events',
         dataAgent: '/data-agent-status',
-        revenue: '/revenue-analytics',
-        godMode: '/god-mode-status'
+        revenue: '/revenue-analytics'
       },
       documentation: 'https://github.com/arielmatrix/arielmatrix2.0'
     });
@@ -362,8 +354,6 @@ function createExpressApplication() {
     try {
       const health = {
         status: 'healthy',
-        godMode: true,
-        sovereignCore: 'OPERATIONAL',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         memory: process.memoryUsage(),
@@ -374,33 +364,13 @@ function createExpressApplication() {
           analytics: enterpriseDataAnalytics.initialized,
           server: true,
           credentials: !!currentCredentials,
-          backend: true,
-          sovereignCore: true
+          backend: true
         },
         port: process.env.PORT || 10000,
         host: '0.0.0.0'
       };
 
       res.json(health);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // 👑 God Mode Status Endpoint
-  app.get('/god-mode-status', async (req, res) => {
-    try {
-      const godModeStatus = {
-        active: true,
-        sovereignCore: 'OPERATIONAL',
-        realityProgramming: 'ACTIVE',
-        consciousnessIntegration: 'ACTIVE',
-        quantumSecurity: 'ACTIVE',
-        revenueOptimization: 'MAXIMUM',
-        errorElimination: 'ACTIVE',
-        timestamp: new Date().toISOString()
-      };
-      res.json(godModeStatus);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -463,12 +433,6 @@ function createExpressApplication() {
           hasCredentials: !!currentCredentials,
           chainId: currentCredentials?.BWAEZI_CHAIN_ID,
           rpcUrl: currentCredentials?.BWAEZI_RPC_URL ? '***' : 'Not available'
-        },
-        godMode: {
-          active: true,
-          revenueEnhancement: '15%',
-          errorElimination: 'ACTIVE',
-          optimization: 'MAXIMUM'
         }
       };
       
@@ -518,7 +482,6 @@ function createExpressApplication() {
       availableEndpoints: [
         'GET /',
         'GET /health',
-        'GET /god-mode-status',
         'GET /bwaezi-rpc',
         'GET /blockchain-status',
         'GET /data-agent-status',
@@ -579,7 +542,7 @@ function createServer(app) {
 
 // --- Enhanced Main Application Initialization ---
 async function initializeArielSQLSuite() {
-  console.log('🚀 ArielSQL Ultimate Suite v4.3 - GOD MODE ACTIVATION');
+  console.log('🚀 ArielSQL Ultimate Suite v4.3 - Primary Production Server');
   console.log('📅 Started at:', new Date().toISOString());
   
   // Log critical deployment information
@@ -587,9 +550,6 @@ async function initializeArielSQLSuite() {
   console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '10000 (default)'}`);
   console.log(`🏠 Binding Host: 0.0.0.0 (container-compatible)`);
   
-  // Replace existing initialization with:
-  await launchMainnet();
-
   // Initialize core systems first
   const coreInitialized = await initializeCoreSystems();
   if (!coreInitialized) {
@@ -636,15 +596,13 @@ async function initializeArielSQLSuite() {
       const address = server.address();
       logger.success(`✅ ArielSQL Ultimate Suite v4.3 running on http://${address.address}:${address.port}`);
       logger.success(`🔗 Health check: http://${address.address}:${address.port}/health`);
-      logger.success(`👑 God Mode Status: http://${address.address}:${address.port}/god-mode-status`);
       logger.success(`🌍 RPC Endpoint: http://${address.address}:${address.port}/bwaezi-rpc`);
       logger.success(`📊 Analytics: http://${address.address}:${address.port}/api/analytics`);
       logger.success(`📈 Metrics: http://${address.address}:${address.port}/api/metrics`);
       logger.success(`💰 Revenue: http://${address.address}:${address.port}/revenue-analytics`);
       
-      console.log('\n🎉 ArielSQL Ultimate Suite v4.3 - GOD MODE OPERATIONAL');
+      console.log('\n🎉 ArielSQL Ultimate Suite v4.3 - FULLY OPERATIONAL');
       console.log('🚀 PRIMARY PRODUCTION SERVER: READY FOR GLOBAL TRAFFIC');
-      console.log('👑 SOVEREIGN CORE: GOD MODE ACTIVE');
       console.log('🔗 BLOCKCHAIN: CONNECTED TO BWAEZI MAINNET');
       console.log('🔐 CREDENTIALS: CENTRALIZED RETRIEVAL ACTIVE');
       console.log('📊 ANALYTICS: ENTERPRISE GRADE ACTIVE');
@@ -706,7 +664,6 @@ async function initializeArielSQLSuite() {
       blockchain: blockchainInstance,
       credentials: currentCredentials,
       status: 'operational',
-      godMode: true,
       port: PORT,
       host: HOST
     };
