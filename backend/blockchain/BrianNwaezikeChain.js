@@ -24,7 +24,7 @@ import { SmartContractEngine } from '../../modules/smart-contract-engine.js';
 // Advanced Blockchain Capabilities
 import { AIOracleEngine } from '../../modules/ai-oracle-engine.js';
 import { DecentralizedStorage } from '../../modules/decentralized-storage.js';
-import  GovernanceSystem from '../../modules/governance-engine.js';
+import { GovernanceSystem } from '../../modules/governance-system.js';
 import { MultiChainManager } from '../../modules/multi-chain-manager.js';
 
 // Enterprise & Institutional Modules
