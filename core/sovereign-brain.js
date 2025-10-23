@@ -14,7 +14,7 @@ import {
 } from 'crypto';
 
 // Core Infrastructure
-import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
+import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 
 // Production Modules
