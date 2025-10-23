@@ -82,7 +82,7 @@ import { QuantumTransactionProcessor } from '../../modules/quantum-transaction-p
 import { ZeroCostDPoS } from '../../modules/zero-cost-dpos.js';
 
 // NEW PRODUCTION MODULES
-import { BrianNwaezikePayoutSystem } from "./BrianNwaezikePayoutSystem.js";
+import { BrianNwaezikePayoutSystem } from "./blockchain/BrianNwaezikePayoutSystem.js";
 import { getDatabaseInitializer } from "../modules/database-initializer.js";
 import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
 import { QuantumShield } from "../modules/quantum-shield/index.js";
