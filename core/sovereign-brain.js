@@ -18,9 +18,9 @@ import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from "../modules/sovereign-revenue-engine.js";
 
 // Production Modules
-import ProductionOmnipotentBWAEZI from './modules/production-omnipotent-bwaezi.js';
-import ProductionEvolvingBWAEZI from './modules/production-evolving-bwaezi.js';
-import ProductionOmnipresentBWAEZI from './modules/production-omnipresent-bwaezi.js';
+import ProductionOmnipotentBWAEZI from "../modules/production-omnipotent-bwaezi.js";
+import ProductionEvolvingBWAEZI from "../modules/production-evolving-bwaezi.js";
+import ProductionOmnipresentBWAEZI from "../modules/production-omnipresent-bwaezi.js";
 
 // Quantum Core Modules
 import {
