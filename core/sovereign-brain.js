@@ -29,7 +29,7 @@ import {
     HolographicGeneticStorage,
     ProductionValidator,
     SovereignModules
-} from './core/hyper-dimensional-sovereign-modules.js';
+} from './hyper-dimensional-sovereign-modules.js';
 
 // Quantum Hardware Layer
 import {
@@ -40,7 +40,7 @@ import {
     QuantumNeuralNetwork,
     QuantumMonteCarlo,
     QuantumChemistrySolver
-} from './core/quantumhardware-layer.js';
+} from './quantumhardware-layer.js';
 
 // Quantum Hardware Core
 import {
@@ -51,7 +51,7 @@ import {
     SurfaceCodeHardware,
     QuantumNetworkNode,
     QuantumHardwareMonitor
-} from './core/quantum-hardware-core.js';
+} from './quantum-hardware-core.js';
 
 // Quantum Elemental Hardware Integration
 import {
@@ -61,7 +61,7 @@ import {
     HardwareInterface,
     ProductionElementalCore,
     PRODUCTION_ELEMENTAL_ENGINE
-} from './core/quantum-elemental-hardware.js';
+} from './quantum-elemental-hardware.js';
 
 // Advanced Consciousness Reality Integration
 import {
@@ -71,7 +71,7 @@ import {
     RealityProgrammingEngine,
     AdvancedConsciousnessCore,
     ADVANCED_CONSCIOUSNESS_ENGINE
-} from './core/consciousness-reality-advanced.js';
+} from './consciousness-reality-advanced.js';
 
 // Consciousness Reality Engine Integration
 import {
@@ -80,7 +80,7 @@ import {
     TemporalResonanceEngine,
     ConsciousnessRealityCore,
     CONSCIOUSNESS_ENGINE
-} from './core/consciousness-reality-engine.js';
+} from './consciousness-reality-engine.js';
 
 // Enhanced Consciousness Reality B-Mode Integration
 import {
@@ -89,7 +89,7 @@ import {
     TemporalArchitectureEngine,
     ExistenceMatrixEngine,
     b_MODE_ENGINE
-} from './core/consciousness-reality-bmode.js';
+} from './consciousness-reality-bmode.js';
 
 // Quantum Elemental Matrix Integration
 import {
@@ -97,7 +97,7 @@ import {
     QuantumElementalMatrix,
     MultidimensionalFieldGenerator,
     ELEMENTAL_REALITY_ENGINE
-} from './core/elemental-matrix-complete.js';
+} from './elemental-matrix-complete.js';
 
 // =========================================================================
 // QUANTUM-RESISTANT CRYPTOGRAPHIC ENGINE - PRODUCTION READY
