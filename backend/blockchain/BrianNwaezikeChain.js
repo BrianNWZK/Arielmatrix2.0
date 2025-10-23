@@ -82,17 +82,17 @@ import { ZeroCostDPoS } from '../../modules/zero-cost-dpos.js';
 
 // NEW PRODUCTION MODULES
 import { BrianNwaezikePayoutSystem } from "./BrianNwaezikePayoutSystem.js";
-import { getDatabaseInitializer } from "../modules/database-initializer.js";
-import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
-import { QuantumShield } from "../modules/quantum-shield/index.js";
-import { AIThreatDetector } from "../modules/ai-threat-detector/index.js";
-import { AISecurityModule } from "../modules/ai-security-module/index.js";
-import { CrossChainBridge } from "../modules/cross-chain-bridge/index.js";
-import { OmnichainInteroperabilityEngine } from "../modules/omnichain-interoperability/index.js";
-import { ShardingManager } from "../modules/sharding-manager/index.js";
-import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js";
-import { EnergyEfficientConsensus } from "../modules/energy-efficient-consensus/index.js";
-import { CarbonNegativeConsensus } from "../modules/carbon-negative-consensus/index.js";
+import { getDatabaseInitializer } from "../../modules/database-initializer.js";
+import { QuantumResistantCrypto } from "../../modules/quantum-resistant-crypto/index.js";
+import { QuantumShield } from "../../modules/quantum-shield/index.js";
+import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js";
+import { AISecurityModule } from "../../modules/ai-security-module/index.js";
+import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js";
+import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js";
+import { ShardingManager } from "../../modules/sharding-manager/index.js";
+import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js";
+import { EnergyEfficientConsensus } from "../../modules/energy-efficient-consensus/index.js";
+import { CarbonNegativeConsensus } from "../../modules/carbon-negative-consensus/index.js";
 
 // ENTERPRISE EVOLUTION AND NETWORK MODULES
 import { ProductionEvolvingBWAEZI } from "../../modules/production-evolving-bwaezi.js";
