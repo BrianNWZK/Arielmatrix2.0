@@ -41,6 +41,7 @@ import { StakingRewardsEngine } from '../../modules/staking-rewards-engine.js';
 import { YieldFarming } from '../../modules/yield-farming.js';
 import { FlashLoanSystem } from '../../modules/flash-loan-system.js';
 import { LiquidityProvider } from '../../modules/liquidity-provider.js';
+import { StakingSystem } from '../../modules/staking-system.js';
 
 // AI & Advanced Technology Modules
 import { AdaptiveAI } from '../../modules/adaptive-ai-engine.js';
@@ -50,7 +51,7 @@ import { ZeroKnowledgeProofEngine } from '../../modules/zero-knowledge-proof-eng
 import { AdvancedZKP } from '../../modules/advanced-zkp.js';
 
 // Tokenomics & Economic Modules
-import { SovereignTokenomics } from '../../modules/tokenomics-engine.js';
+import { SovereignTokenomics } from '../../modules/tokenomics-engine/index.js';
 import { MicrotransactionEngine } from '../../modules/microtransaction-engine.js';
 import { HighFrequencySettlement } from '../../modules/high-frequency-settlement.js';
 import { RealWorldAssetTokenization } from '../../modules/real-world-asset-tokenization.js';
@@ -723,7 +724,6 @@ class BrianNwaezikeChain extends EventEmitter {
         this.analyticsDashboard = new AnalyticsDashboard();
         this.userAuthentication = new UserAuthentication();
         this.notificationEngine = new NotificationEngine();
-        this.systemIntegrationHub = new SystemIntegrationHub();
 
         // DeFi & Financial Infrastructure
         this.defiLiquidityEngine = new DeFiLiquidityEngine();
@@ -731,6 +731,7 @@ class BrianNwaezikeChain extends EventEmitter {
         this.yieldFarming = new YieldFarming();
         this.flashLoanSystem = new FlashLoanSystem();
         this.liquidityProvider = new LiquidityProvider();
+        this.StakingSystem = new StakingSystem();
 
         // AI & Advanced Technology Modules
         this.adaptiveAI = new AdaptiveAI();
@@ -807,7 +808,7 @@ class BrianNwaezikeChain extends EventEmitter {
             analyticsDashboard: this.analyticsDashboard,
             userAuthentication: this.userAuthentication,
             notificationEngine: this.notificationEngine,
-            systemIntegrationHub: this.systemIntegrationHub,
+            StakingSystem: this.StakingSystem,
             defiLiquidityEngine: this.defiLiquidityEngine,
             stakingRewardsEngine: this.stakingRewardsEngine,
             yieldFarming: this.yieldFarming,
