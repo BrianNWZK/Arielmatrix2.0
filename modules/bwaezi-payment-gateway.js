@@ -1,6 +1,6 @@
 // modules/bwaezi-payment-gateway.js
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { 
     BWAEZI_CHAIN, 
