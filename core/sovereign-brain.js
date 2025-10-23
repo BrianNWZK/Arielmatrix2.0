@@ -15,7 +15,7 @@ import {
 
 // Core Infrastructure
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
-import { SovereignRevenueEngine } from "../modules/sovereign-revenue-engine.js';
+import { SovereignRevenueEngine } from "../modules/sovereign-revenue-engine.js";
 
 // Production Modules
 import ProductionOmnipotentBWAEZI from './modules/production-omnipotent-bwaezi.js';
