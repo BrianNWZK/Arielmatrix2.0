@@ -2,11 +2,15 @@ services:
   - type: web
     name: arielsql-suite
     env: node
-    buildCommand: ./build_and_deploy.sh
+    plan: free
+    buildCommand: npm install && npm run build  # or your actual build commands
     startCommand: node arielsql_suite/main.js
     healthCheckPath: /health
+    port: 10000
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: ETH_MAINNET_RPC
-        value: your_rpc_url
-      - key: AI_THREAT_API_KEY
-        value: your_api_key
+        fromSecret: ETH_MAINNET_RPC  # Set this in Render dashboard
+      - key: AI_THREAT_API_KEY  
+        fromSecret: AI_THREAT_API_KEY  # Set this in Render dashboard
