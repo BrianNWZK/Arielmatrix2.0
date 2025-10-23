@@ -34,7 +34,6 @@ import { APIGateway } from '../../modules/api-gateway.js';
 import { AnalyticsDashboard } from '../../modules/analytics-dashboard.js';
 import { UserAuthentication } from '../../modules/user-authentication.js';
 import { NotificationEngine } from '../../modules/notification-engine.js';
-import { SystemIntegrationHub } from '../../modules/system-integration-hub.js';
 
 // DeFi & Financial Infrastructure
 import { DeFiLiquidityEngine } from '../../modules/defi-liquidity-engine.js';
