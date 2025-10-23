@@ -77,7 +77,6 @@ import { RegulatoryComplianceEngine } from '../../modules/regulatory-compliance-
 
 // Payment & Settlement
 import { BwaeziPaymentGateway } from '../../modules/bwaezi-payment-gateway.js';
-import { AutomatedPayoutSystem } from '../../modules/automated-payout-system.js';
 import { QuantumTransactionProcessor } from '../../modules/quantum-transaction-processor.js';
 import { ZeroCostDPoS } from '../../modules/zero-cost-dpos.js';
 
@@ -767,7 +766,6 @@ class BrianNwaezikeChain extends EventEmitter {
 
         // Payment & Settlement
         this.bwaeziPaymentGateway = new BwaeziPaymentGateway();
-        this.automatedPayoutSystem = new AutomatedPayoutSystem();
         this.quantumTransactionProcessor = new QuantumTransactionProcessor();
         this.zeroCostDPoS = new ZeroCostDPoS();
 
@@ -835,7 +833,6 @@ class BrianNwaezikeChain extends EventEmitter {
             autonomousGovernance: this.autonomousGovernance,
             regulatoryComplianceEngine: this.regulatoryComplianceEngine,
             bwaeziPaymentGateway: this.bwaeziPaymentGateway,
-            automatedPayoutSystem: this.automatedPayoutSystem,
             quantumTransactionProcessor: this.quantumTransactionProcessor,
             zeroCostDPoS: this.zeroCostDPoS,
             // NEW PRODUCTION MODULES
