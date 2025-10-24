@@ -83,6 +83,9 @@
     "bignumber.js": "^9.0.2",
     "serialport": "^12.0.0",
     "onoff": "^6.0.3",
+    "web3.storage": "^4.4.0",
+    "nft.storage": "^7.1.1", 
+    "arweave": "^1.15.7",
     "websocket": "^1.0.34"
     
     
