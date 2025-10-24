@@ -2,7 +2,7 @@
 
 // SECURE FOUNDATIONAL IMPORTS
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 
 // PRODUCTION CRYPTOGRAPHY - AUDITED ONLY
