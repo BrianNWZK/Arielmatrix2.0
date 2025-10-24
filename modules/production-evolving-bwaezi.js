@@ -18,10 +18,31 @@ import { Worker, isMainThread, parentPort } from 'worker_threads';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
+
+// IMPORT YOUR EXISTING PQC MODULES
+import { 
+    dilithiumKeyPair, 
+    dilithiumSign, 
+    dilithiumVerify, 
+    PQCDilithiumProvider,
+    PQCDilithiumError,
+    SecurityError as DilithiumSecurityError,
+    ConfigurationError as DilithiumConfigurationError
+} from './pqc-dilithium/index.js';
+
+import {
+    kyberKeyPair,
+    kyberEncapsulate,
+    kyberDecapsulate,
+    PQCKyberProvider,
+    PQCKyberError,
+    KyberSecurityError,
+    KyberConfigurationError
+} from './pqc-kyber/index.js';
+
+// IMPORT REMAINING DEPENDENCIES
 import { groth16 } from 'snarkjs';
 import { poseidon } from 'circomlibjs';
-import oqs from 'oqs';
-import { kyber, dilithium, falcon } from 'pqcrypto-js';
 
 const execAsync = promisify(exec);
 
@@ -59,6 +80,10 @@ export class ProductionEvolvingBWAEZI {
         this.evolutionHistory = new EnterpriseSecureMap(500);
         this.entropyPool = new EnterpriseSecureMap(100);
         this.deployedSystems = new EnterpriseSecureMap(50);
+        
+        // ENTERPRISE PQC PROVIDERS
+        this.dilithiumProvider = new PQCDilithiumProvider(3); // Level 3 for enterprise security
+        this.kyberProvider = new PQCKyberProvider(768); // Kyber-768 for enterprise
         
         // ENTERPRISE DATABASE WITH ENCRYPTION
         this.db = new ArielSQLiteEngine({ 
@@ -101,6 +126,10 @@ export class ProductionEvolvingBWAEZI {
             await this.quantumOptimizer.initialize();
             await this.neuralAdapter.initialize();
             await this.quantumEntangler.initialize();
+            
+            // INITIALIZE PQC PROVIDERS
+            await this.dilithiumProvider.initialize();
+            await this.kyberProvider.initialize();
             
             await this.db.init();
             await this.createEnterpriseEvolutionTables();
@@ -166,6 +195,133 @@ export class ProductionEvolvingBWAEZI {
             'info',
             'Enterprise evolution system integrated with Omnipotent and Omnipresent systems'
         );
+    }
+
+    // ENHANCED ENTERPRISE CRYPTOGRAPHY WITH YOUR PQC MODULES
+    async generateEnterpriseQuantumKeyPair() {
+        try {
+            // GENERATE DILITHIUM KEY PAIR FOR SIGNATURES
+            const dilithiumKeys = await dilithiumKeyPair({ level: 3 });
+            
+            // GENERATE KYBER KEY PAIR FOR ENCRYPTION
+            const kyberKeys = await kyberKeyPair({ level: 768 });
+            
+            const keyId = this.generateEnterpriseId('quantum_key');
+            
+            const quantumKeyPair = {
+                id: keyId,
+                dilithium: dilithiumKeys,
+                kyber: kyberKeys,
+                generatedAt: new Date(),
+                securityLevel: 'quantum_enterprise',
+                algorithm: 'Dilithium3-Kyber768'
+            };
+            
+            await this.securityMonitor.logEvent(
+                'enterprise_quantum_key_generated',
+                'info',
+                `Enterprise quantum key pair generated successfully`,
+                { keyId, algorithms: ['Dilithium3', 'Kyber768'] }
+            );
+            
+            return quantumKeyPair;
+            
+        } catch (error) {
+            await this.securityMonitor.logEvent(
+                'enterprise_quantum_key_generation_failed',
+                'error',
+                `Quantum key generation failed: ${error.message}`
+            );
+            throw new EnterpriseCryptoError(`Quantum key generation failed: ${error.message}`);
+        }
+    }
+
+    async performEnterpriseQuantumSignature(data, quantumKeyPair) {
+        try {
+            const signature = await dilithiumSign(
+                quantumKeyPair.dilithium.privateKey,
+                data,
+                { level: 3 }
+            );
+            
+            const verification = await dilithiumVerify(
+                quantumKeyPair.dilithium.publicKey,
+                data,
+                signature,
+                { level: 3 }
+            );
+            
+            if (!verification) {
+                throw new EnterpriseCryptoError('Quantum signature verification failed');
+            }
+            
+            return {
+                signature: signature.toString('base64'),
+                algorithm: 'Dilithium3',
+                keyId: quantumKeyPair.id,
+                verified: true,
+                timestamp: new Date()
+            };
+            
+        } catch (error) {
+            await this.securityMonitor.logEvent(
+                'enterprise_quantum_signature_failed',
+                'error',
+                `Quantum signature failed: ${error.message}`
+            );
+            throw new EnterpriseCryptoError(`Quantum signature failed: ${error.message}`);
+        }
+    }
+
+    async performEnterpriseQuantumEncapsulation(quantumKeyPair) {
+        try {
+            const encapsulation = await kyberEncapsulate(
+                quantumKeyPair.kyber.publicKey,
+                { level: 768 }
+            );
+            
+            return {
+                ciphertext: encapsulation.ciphertext.toString('base64'),
+                sharedSecret: encapsulation.sharedSecret.toString('base64'),
+                algorithm: 'Kyber768',
+                keyId: quantumKeyPair.id,
+                sessionExpiry: encapsulation.sessionExpiry,
+                timestamp: new Date()
+            };
+            
+        } catch (error) {
+            await this.securityMonitor.logEvent(
+                'enterprise_quantum_encapsulation_failed',
+                'error',
+                `Quantum encapsulation failed: ${error.message}`
+            );
+            throw new EnterpriseCryptoError(`Quantum encapsulation failed: ${error.message}`);
+        }
+    }
+
+    async performEnterpriseQuantumDecapsulation(quantumKeyPair, ciphertext) {
+        try {
+            const sharedSecret = await kyberDecapsulate(
+                quantumKeyPair.kyber.privateKey,
+                Buffer.from(ciphertext, 'base64'),
+                { level: 768 }
+            );
+            
+            return {
+                sharedSecret: sharedSecret.toString('base64'),
+                algorithm: 'Kyber768',
+                keyId: quantumKeyPair.id,
+                timestamp: new Date()
+            };
+            
+        } catch (error) {
+            await this.securityMonitor.logEvent(
+                'enterprise_quantum_decapsulation_failed',
+                'error',
+                `Quantum decapsulation failed: ${error.message}`
+            );
+            throw new EnterpriseCryptoError(`Quantum decapsulation failed: ${error.message}`);
+        }
     }
 
     async runEnterpriseEvolutionGeneration() {
@@ -925,24 +1081,321 @@ class EnterpriseOmnipresentIntegration {
     }
 }
 
+// ENTERPRISE SECURE DATA STRUCTURES
+class EnterpriseSecureMap {
+    constructor(maxSize = 10000) {
+        this.data = new Map();
+        this.maxSize = maxSize;
+        this.securityKey = randomBytes(32);
+    }
+
+    set(key, value) {
+        if (this.data.size >= this.maxSize) {
+            this.evictEnterpriseLeastUsed();
+        }
+        
+        const encryptedValue = this.encryptEnterpriseValue(value);
+        this.data.set(key, encryptedValue);
+    }
+
+    get(key) {
+        const encryptedValue = this.data.get(key);
+        return encryptedValue ? this.decryptEnterpriseValue(encryptedValue) : undefined;
+    }
+
+    encryptEnterpriseValue(value) {
+        const cipher = createCipheriv('aes-256-gcm', this.securityKey, randomBytes(16));
+        let encrypted = cipher.update(JSON.stringify(value), 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return {
+            encrypted,
+            authTag: cipher.getAuthTag().toString('hex'),
+            iv: cipher.getIV().toString('hex')
+        };
+    }
+
+    decryptEnterpriseValue(encryptedValue) {
+        const decipher = createDecipheriv('aes-256-gcm', this.securityKey, Buffer.from(encryptedValue.iv, 'hex'));
+        decipher.setAuthTag(Buffer.from(encryptedValue.authTag, 'hex'));
+        let decrypted = decipher.update(encryptedValue.encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return JSON.parse(decrypted);
+    }
+
+    evictEnterpriseLeastUsed() {
+        // EVICTION LOGIC FOR ENTERPRISE SECURITY
+        const keys = Array.from(this.data.keys());
+        if (keys.length > 0) {
+            this.data.delete(keys[0]);
+        }
+    }
+
+    get size() {
+        return this.data.size;
+    }
+}
+
 // ENTERPRISE ERROR CLASSES
 class EnterpriseEvolutionError extends Error {
-    constructor(message, context = {}) {
+    constructor(message) {
         super(message);
         this.name = 'EnterpriseEvolutionError';
-        this.code = 'ENTERPRISE_EVOLUTION_ERROR';
-        this.context = context;
-        this.timestamp = Date.now();
-        this.isEnterprise = true;
+        this.timestamp = new Date();
+        this.severity = 'high';
     }
 }
 
-class EnterpriseDeploymentError extends EnterpriseEvolutionError {
-    constructor(message, context = {}) {
-        super(message, context);
+class EnterpriseCryptoError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'EnterpriseCryptoError';
+        this.timestamp = new Date();
+        this.severity = 'critical';
+    }
+}
+
+class EnterpriseDeploymentError extends Error {
+    constructor(message) {
+        super(message);
         this.name = 'EnterpriseDeploymentError';
-        this.code = 'ENTERPRISE_DEPLOYMENT_ERROR';
+        this.timestamp = new Date();
+        this.severity = 'high';
     }
 }
 
+class EnterpriseRateLimitError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'EnterpriseRateLimitError';
+        this.timestamp = new Date();
+        this.severity = 'medium';
+    }
+}
+
+// ENTERPRISE SECURITY MONITOR
+class EnterpriseSecurityMonitor {
+    constructor() {
+        this.events = new EnterpriseSecureMap(10000);
+        this.alerts = new EnterpriseSecureMap(1000);
+        this.securityLevel = 'maximum';
+    }
+
+    async start() {
+        this.initialized = true;
+    }
+
+    async logEvent(type, severity, message, metadata = {}) {
+        const event = {
+            id: this.generateEnterpriseEventId(),
+            type,
+            severity,
+            message,
+            metadata,
+            timestamp: new Date(),
+            securityLevel: this.securityLevel
+        };
+
+        this.events.set(event.id, event);
+
+        if (severity === 'critical' || severity === 'error') {
+            await this.triggerEnterpriseSecurityAlert(event);
+        }
+
+        return event;
+    }
+
+    generateEnterpriseEventId() {
+        return `ent_evt_${Date.now().toString(36)}_${randomBytes(16).toString('hex')}`;
+    }
+
+    async triggerEnterpriseSecurityAlert(event) {
+        this.alerts.set(event.id, {
+            ...event,
+            alertLevel: 'enterprise',
+            notified: false,
+            escalation: 'security_team'
+        });
+
+        // ENTERPRISE ALERT ESCALATION LOGIC
+        await this.escalateEnterpriseSecurityAlert(event);
+    }
+
+    async escalateEnterpriseSecurityAlert(event) {
+        // IMPLEMENT ENTERPRISE SECURITY ALERT ESCALATION
+        console.error(`🚨 ENTERPRISE SECURITY ALERT: ${event.message}`, event);
+    }
+}
+
+// ENTERPRISE RATE LIMITER
+class EnterpriseRateLimiter {
+    constructor() {
+        this.limits = new EnterpriseSecureMap(1000);
+        this.securityLevel = 'enterprise';
+    }
+
+    async checkEnterpriseLimit(operation, context) {
+        const key = `${operation}_${context}`;
+        const now = Date.now();
+        const windowStart = now - 60000; // 1 minute window
+
+        const operationCount = await this.getEnterpriseOperationCount(key, windowStart);
+        const limit = this.getEnterpriseLimit(operation, context);
+
+        if (operationCount >= limit) {
+            return {
+                allowed: false,
+                limit,
+                current: operationCount,
+                retryAfter: this.calculateEnterpriseRetryAfter(windowStart)
+            };
+        }
+
+        await this.incrementEnterpriseOperationCount(key, now);
+        return { allowed: true, limit, current: operationCount + 1 };
+    }
+
+    getEnterpriseLimit(operation, context) {
+        const limits = {
+            evolution_generation: 10, // 10 generations per minute
+            quantum_operation: 100, // 100 quantum operations per minute
+            deployment: 5, // 5 deployments per minute
+            security_scan: 50 // 50 security scans per minute
+        };
+
+        return limits[operation] || 100; // Default limit
+    }
+
+    async getEnterpriseOperationCount(key, since) {
+        // IMPLEMENT ENTERPRISE OPERATION COUNTING
+        return 0;
+    }
+
+    async incrementEnterpriseOperationCount(key, timestamp) {
+        // IMPLEMENT ENTERPRISE OPERATION COUNTING
+    }
+
+    calculateEnterpriseRetryAfter(windowStart) {
+        return Math.max(0, 60000 - (Date.now() - windowStart));
+    }
+}
+
+// ENTERPRISE CIRCUIT BREAKER
+class EnterpriseCircuitBreaker {
+    constructor() {
+        this.states = new EnterpriseSecureMap(100);
+        this.failureThreshold = 5;
+        this.resetTimeout = 60000; // 1 minute
+    }
+
+    async executeEnterprise(operation, action, options = {}) {
+        const state = this.getEnterpriseCircuitState(operation);
+
+        if (state === 'OPEN') {
+            if (Date.now() - state.lastFailure > this.resetTimeout) {
+                this.setEnterpriseCircuitState(operation, 'HALF_OPEN');
+            } else {
+                throw new EnterpriseCircuitBreakerError(`Circuit breaker open for ${operation}`);
+            }
+        }
+
+        try {
+            const result = await Promise.race([
+                action(),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(`Operation ${operation} timeout`)), options.timeout || 30000)
+                )
+            ]);
+
+            if (state === 'HALF_OPEN') {
+                this.setEnterpriseCircuitState(operation, 'CLOSED');
+            }
+
+            return result;
+
+        } catch (error) {
+            this.recordEnterpriseFailure(operation);
+            throw error;
+        }
+    }
+
+    getEnterpriseCircuitState(operation) {
+        return this.states.get(operation) || { state: 'CLOSED', failures: 0, lastFailure: 0 };
+    }
+
+    setEnterpriseCircuitState(operation, state) {
+        this.states.set(operation, {
+            state,
+            failures: state === 'CLOSED' ? 0 : this.getEnterpriseCircuitState(operation).failures,
+            lastFailure: this.getEnterpriseCircuitState(operation).lastFailure
+        });
+    }
+
+    recordEnterpriseFailure(operation) {
+        const state = this.getEnterpriseCircuitState(operation);
+        state.failures++;
+        state.lastFailure = Date.now();
+
+        if (state.failures >= this.failureThreshold) {
+            state.state = 'OPEN';
+        }
+
+        this.states.set(operation, state);
+    }
+}
+
+class EnterpriseCircuitBreakerError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'EnterpriseCircuitBreakerError';
+    }
+}
+
+// ENTERPRISE NEURAL EVOLUTION ADAPTER
+class EnterpriseNeuralEvolutionAdapter {
+    constructor() {
+        this.models = new EnterpriseSecureMap(50);
+        this.adaptationRules = new EnterpriseSecureMap(100);
+        this.learningRates = new EnterpriseSecureMap(20);
+    }
+
+    async initialize() {
+        await this.loadEnterpriseNeuralModels();
+        await this.initializeEnterpriseAdaptationRules();
+        this.initialized = true;
+    }
+
+    async applyEnterpriseNeuralAdaptation(individual) {
+        const neuralModel = await this.selectEnterpriseNeuralModel(individual);
+        const adaptation = await this.generateEnterpriseNeuralAdaptation(individual, neuralModel);
+        
+        return {
+            ...individual,
+            neuralAdaptation: adaptation,
+            adaptationScore: await this.evaluateEnterpriseAdaptation(adaptation)
+        };
+    }
+
+    async selectEnterpriseNeuralModel(individual) {
+        // ENTERPRISE NEURAL MODEL SELECTION LOGIC
+        return this.models.get('default');
+    }
+
+    async generateEnterpriseNeuralAdaptation(individual, model) {
+        // ENTERPRISE NEURAL ADAPTATION GENERATION
+        return {
+            modelId: model.id,
+            adaptations: [],
+            confidence: 0.85,
+            timestamp: new Date()
+        };
+    }
+
+    async evaluateEnterpriseAdaptation(adaptation) {
+        // ENTERPRISE ADAPTATION EVALUATION
+        return adaptation.confidence;
+    }
+}
+
+// EXPORT ENTERPRISE EVOLUTION SYSTEM
+export { ProductionEvolvingBWAEZI, EnterpriseEvolutionError, EnterpriseCryptoError, EnterpriseDeploymentError };
 export default ProductionEvolvingBWAEZI;
