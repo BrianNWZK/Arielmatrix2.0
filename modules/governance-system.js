@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
 import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import SovereignRevenueEngine from './sovereign-revenue-engine.js';
-import { SovereignGovernance } from '../governance-engine/index.js';
+import { SovereignGovernance } from './governance-engine/index.js';
 import { 
     BWAEZI_CHAIN,
     TOKEN_CONVERSION_RATES,
