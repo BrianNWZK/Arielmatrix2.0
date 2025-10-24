@@ -1660,7 +1660,6 @@ class EnterpriseCircuitBreakerError extends EnterpriseError {
 // =============================================================================
 
 export {
-  ProductionOmnipotentBWAEZI,
   EnterpriseCryptoEngine,
   EnterpriseZKEngine,
   EnterpriseSecurityMonitor,
