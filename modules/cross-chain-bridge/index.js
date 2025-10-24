@@ -12,7 +12,7 @@ import {
     COMPLIANCE_STRATEGY,
     PUBLIC_COMPLIANCE_STATEMENTS,
     ConfigUtils 
-} from '../config/bwaezi-config.js';
+} from '../../config/bwaezi-config.js';
 import axios from 'axios';
 import { createHash, randomBytes } from 'crypto';
 
