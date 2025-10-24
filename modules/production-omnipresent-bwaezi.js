@@ -18,7 +18,6 @@ import dns from 'dns/promises';
 import { groth16 } from 'snarkjs';
 import oqs from 'oqs';
 import { kyber, dilithium, falcon } from 'pqcrypto-js';
-import { liboqs } from 'liboqs-node';
 
 export class ProductionOmnipresentBWAEZI {
     constructor(config = {}) {
