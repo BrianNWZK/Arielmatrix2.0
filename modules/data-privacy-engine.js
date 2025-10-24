@@ -1,7 +1,7 @@
 // modules/data-privacy-engine.js
 import { randomBytes, createHash } from 'crypto';
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 import { getSovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { 
     BWAEZI_CHAIN,
