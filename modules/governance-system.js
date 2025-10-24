@@ -1,7 +1,7 @@
 // modules/governance-system.js
 import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import SovereignRevenueEngine from './sovereign-revenue-engine.js';
 import { SovereignGovernance } from '../governance-engine/index.js';
 import { 
