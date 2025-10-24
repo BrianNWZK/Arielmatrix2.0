@@ -355,7 +355,7 @@ export async function sendETH(toAddress, amount) {
     }
 }
 
-export async function sendBWAZI(toAddress, amount) {
+export async function sendBwaezi(toAddress, amount) {
     try {
         if (!bwaeziWallet) throw new Error("BWAEZI wallet not initialized");
         if (!ethers.isAddress(toAddress)) throw new Error("Invalid BWAEZI address");
@@ -457,7 +457,6 @@ export async function sendUSDT(toAddress, amount, chain) {
     }
     return { success: false, error: "Invalid chain specified" };
 }
-
 // =========================================================================
 // 6. BWAEZI CROSS-CHAIN BRIDGE FUNCTIONS
 // =========================================================================
@@ -604,7 +603,7 @@ export async function consolidateRevenue() {
                     if (result.success) {
                         results.bwaezi.success = true;
                         results.bwaezi.txHash = result.bwaeziTx;
-                        console.log(`✅ BWAEZI consolidation: ${amountToConvert} BWZ converted to ${result.convertedAmount} USDT`);
+                        console.log(`✅ BWAEZI consolidation: ${amountToConvert} BWAEZI converted to ${result.convertedAmount} USDT`);
                     } else {
                         results.bwaezi.error = result.error;
                     }
@@ -653,8 +652,8 @@ export async function processRevenuePayment(payment) {
                 result = await sendSOL(toAddress, amount);
             } else if (type === 'eth') {
                 result = await sendETH(toAddress, amount);
-            } else if (type === 'bwz') {
-                result = await sendBWAZI(toAddress, amount);
+            } else if (type === 'bwaezi') {
+                result = await sendBwaezi(toAddress, amount);
             } else {
                 return { success: false, error: `Unsupported chain for native token: ${type}` };
             }
@@ -753,7 +752,7 @@ export function getBwaeziAccount() {
 
 export function validateAddress(address, chain) {
     try {
-        if (chain === 'eth' || chain === 'bwz') {
+        if (chain === 'eth' || chain === 'bwaezi') {
             return ethers.isAddress(address);
         } else if (chain === 'sol') {
             new PublicKey(address); // This will throw if invalid
@@ -784,15 +783,14 @@ export default {
     getWalletAddresses,
     sendSOL,
     sendETH,
-    sendBWAZI,
+    sendBwaezi,
     sendUSDT,
-    convertBwaeziToUSDT,
-    consolidateRevenue,
     processRevenuePayment,
     checkBlockchainHealth,
     validateAddress,
     formatBalance,
     testAllConnections,
+    triggerRevenueConsolidation,
     
     // Legacy compatibility
     getEthereumWeb3,
