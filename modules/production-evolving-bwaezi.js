@@ -20,11 +20,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { groth16 } from 'snarkjs';
 import { poseidon } from 'circomlibjs';
-import { 
-    kyber1024, 
-    dilithium5, 
-    falcon1024 
-} from '@openquantumsafe/openssl';
+import { kyber } from 'kyber';
+import { dilithium } from 'pqcrypto';
+import { liboqs } from 'liboqs-node';
 
 const execAsync = promisify(exec);
 
