@@ -1397,5 +1397,5 @@ class EnterpriseNeuralEvolutionAdapter {
 }
 
 // EXPORT ENTERPRISE EVOLUTION SYSTEM
-export { ProductionEvolvingBWAEZI, EnterpriseEvolutionError, EnterpriseCryptoError, EnterpriseDeploymentError };
+export { EnterpriseEvolutionError, EnterpriseCryptoError, EnterpriseDeploymentError };
 export default ProductionEvolvingBWAEZI;
