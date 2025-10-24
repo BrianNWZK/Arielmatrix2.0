@@ -81,10 +81,8 @@
     "@npmcli/fs": "^3.1.0",
     "@npmcli/move-file": "^3.0.0",
     "bignumber.js": "^9.0.2",
-    "websocket": "^1.0.34",
-    "oqs": "^0.5.0",
-    "pqcrypto-js": "^1.0.2",
-    "liboqs-js": "^0.5.0"
+    "websocket": "^1.0.34"
+    
     
   },
   "devDependencies": {
