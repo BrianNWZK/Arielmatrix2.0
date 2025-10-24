@@ -42,7 +42,6 @@ import {
 
 // ZK IMPORTS
 import { groth16 } from 'snarkjs';
-import { poseidon } from 'circomlibjs';
 
 // SECURE INFRASTRUCTURE
 import { Worker } from 'worker_threads';
