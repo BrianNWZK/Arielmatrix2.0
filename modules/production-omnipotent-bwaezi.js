@@ -20,8 +20,8 @@ import {
 } from 'crypto';
 import { groth16 } from 'snarkjs';
 import { poseidon } from 'circomlibjs';
-import { kyber } from 'kyber';
-import { dilithium } from 'pqcrypto';
+import oqs from 'oqs';
+import { kyber, dilithium, falcon } from 'pqcrypto-js';
 import { liboqs } from 'liboqs-node';
 
 // SECURE INFRASTRUCTURE
