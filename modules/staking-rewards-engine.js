@@ -1,7 +1,7 @@
 // modules/staking-rewards-engine.js
 import { randomBytes, createHash } from 'crypto';
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { SovereignRevenueEngine, getSovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { 
     BWAEZI_CHAIN, 
