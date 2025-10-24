@@ -1,7 +1,7 @@
 // modules/production-omnipresent-bwaezi.js - COMPLETE ENTERPRISE VERSION
 
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { 
     createHash, randomBytes, createHmac, createCipheriv, createDecipheriv,
