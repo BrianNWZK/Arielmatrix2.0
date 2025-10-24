@@ -82,6 +82,7 @@
     "@npmcli/move-file": "^3.0.0",
     "bignumber.js": "^9.0.2",
     "serialport": "^12.0.0",
+    "onoff": "^6.0.3",
     "websocket": "^1.0.34"
     
     
