@@ -1,4 +1,4 @@
-class SovereignTokenomics {
+export class SovereignTokenomics {
     constructor() {
         this.totalSupply = 100000000;
         this.circulatingSupply = 0; // All tokens held by sovereign initially
