@@ -22,7 +22,6 @@ import { groth16 } from 'snarkjs';
 import { poseidon } from 'circomlibjs';
 import oqs from 'oqs';
 import { kyber, dilithium, falcon } from 'pqcrypto-js';
-import { liboqs } from 'liboqs-node';
 
 // SECURE INFRASTRUCTURE
 import { Worker } from 'worker_threads';
