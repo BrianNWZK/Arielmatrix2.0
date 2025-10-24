@@ -1,7 +1,7 @@
 // modules/production-evolving-bwaezi.js - COMPLETE ENTERPRISE EVOLUTION SYSTEM
 
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
+import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { 
     generateKeyPair, 
