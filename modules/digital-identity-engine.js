@@ -1,6 +1,6 @@
 // modules/digital-identity-engine.js
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from "./modules/ariel-sqlite-engine/index.js";
+import { ArielSQLiteEngine } from "./ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
 import { ZeroKnowledgeProofEngine } from './zero-knowledge-proof-engine.js';
 import { 
