@@ -42,7 +42,6 @@ import {
 
 // IMPORT REMAINING DEPENDENCIES
 import { groth16 } from 'snarkjs';
-import { poseidon } from 'circomlibjs';
 
 const execAsync = promisify(exec);
 
