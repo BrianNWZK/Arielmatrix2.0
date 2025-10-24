@@ -16,8 +16,8 @@ import dns from 'dns/promises';
 
 // ENTERPRISE NETWORK IMPORTS
 import { groth16 } from 'snarkjs';
-import { kyber } from 'kyber';
-import { dilithium } from 'pqcrypto';
+import oqs from 'oqs';
+import { kyber, dilithium, falcon } from 'pqcrypto-js';
 import { liboqs } from 'liboqs-node';
 
 export class ProductionOmnipresentBWAEZI {
