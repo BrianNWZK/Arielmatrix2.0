@@ -82,9 +82,9 @@
     "@npmcli/move-file": "^3.0.0",
     "bignumber.js": "^9.0.2",
     "websocket": "^1.0.34",
-     "kyber": "^1.0.0",
-    "pqcrypto": "^1.0.0", 
-    "liboqs-node": "^0.5.0"
+    "oqs": "^0.5.0",
+    "pqcrypto-js": "^1.0.2",
+    "liboqs-js": "^0.5.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
