@@ -74,6 +74,10 @@
     "sharp": "^0.32.0",
     "are-we-there-yet": "^3.0.0",
     "rimraf": "^5.0.5",
+    "snarkjs": "^0.7.0",
+    "circomlibjs": "^0.1.7",
+    "@openquantumsafe/openssl": "^1.2.0",
+    "validator": "^13.11.0",
     "gauge": "^4.0.4",
     "@npmcli/fs": "^3.1.0",
     "@npmcli/move-file": "^3.0.0",
@@ -93,6 +97,7 @@
     "vite": "^5.0.0",
     "webpack": "^5.88.0",
     "webpack-cli": "^5.1.4",
+    "@types/validator": "^13.11.0",
     "ts-node": "^10.9.2"
   },
   "optionalDependencies": {
