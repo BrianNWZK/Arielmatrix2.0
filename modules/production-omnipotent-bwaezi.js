@@ -2013,7 +2013,6 @@ class EnterpriseCircuitError extends EnterpriseError {
 // =============================================================================
 
 export {
-  ProductionOmnipotentBWAEZI,
   EnterpriseError,
   EnterpriseSecurityError,
   EnterpriseInitializationError,
