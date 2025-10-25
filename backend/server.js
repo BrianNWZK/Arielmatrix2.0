@@ -12,7 +12,7 @@ import express from 'express';
 import 'dotenv/config';
 
 // Import blockchain modules
-import { createBrianNwaezikeChain } from './blockchain/BrianNwaezikeChain.js';
+import { BrianNwaezikeChain } from './blockchain/BrianNwaezikeChain.js';
 import { createDatabase } from './database/BrianNwaezikeDB.js';
 
 // Global instances
