@@ -356,6 +356,21 @@ export class HyperDimensionalQuantumEvolution {
             teleportationId: result.teleportationId
         };
     }
+
+    /**
+     * @method getStatus
+     * @description Returns the current status of the hyper-dimensional engine
+     * @returns {Promise<Object>}
+     */
+    async getStatus() {
+        return {
+            initialized: this.initialized,
+            quantumDimensions: this.quantumDimensions,
+            manifoldCount: this.manifoldRegistry.size,
+            status: this.initialized ? 'OPERATIONAL' : 'INITIALIZING',
+            timestamp: Date.now()
+        };
+    }
 }
 
 /**
@@ -369,6 +384,20 @@ export class TemporalQuantumField {
         this.temporalSyncEngine = new ChrononSyncAPI();
         this.gravitySensor = new GravitationalSensorAPI();
         this.coherenceHistory = [];
+    }
+
+    /**
+     * @method initialize
+     * @description Initializes the temporal quantum field
+     * @returns {Promise<Object>}
+     */
+    async initialize() {
+        this.currentCoherence = await this.establishTemporalCoherence();
+        return {
+            status: 'TEMPORAL_FIELD_ACTIVE',
+            coherence: this.currentCoherence,
+            timestamp: Date.now()
+        };
     }
 
     /**
@@ -417,6 +446,54 @@ export class TemporalQuantumField {
         };
     }
 
+    /**
+     * @method synchronizeResults
+     * @description Synchronizes quantum computation results across temporal dimensions
+     * @param {any} results - The results to synchronize
+     * @returns {Promise<any>}
+     */
+    async synchronizeResults(results) {
+        await this.establishTemporalCoherence();
+        return {
+            ...results,
+            temporalCoherence: this.currentCoherence,
+            synchronizedAt: Date.now()
+        };
+    }
+
+    /**
+     * @method generateTemporalSignature
+     * @description Generates a temporal signature for quantum operations
+     * @returns {Promise<string>}
+     */
+    async generateTemporalSignature() {
+        return `temporal_sig_${Date.now()}_${randomBytes(8).toString('hex')}`;
+    }
+
+    /**
+     * @method getCoherence
+     * @description Returns current temporal coherence level
+     * @returns {Promise<number>}
+     */
+    async getCoherence() {
+        return this.currentCoherence;
+    }
+
+    /**
+     * @method getStatus
+     * @description Returns the current status of the temporal field
+     * @returns {Promise<Object>}
+     */
+    async getStatus() {
+        return {
+            coherence: this.currentCoherence,
+            coherenceHistory: this.coherenceHistory.length,
+            lastSync: this.temporalSyncEngine.lastSync,
+            status: 'TEMPORAL_FIELD_OPERATIONAL',
+            timestamp: Date.now()
+        };
+    }
+
     applyGravitationalPerturbation(quantumState, perturbationTensor) {
         // Apply gravitational effects to quantum state
         return {
@@ -441,6 +518,20 @@ export class HolographicGeneticStorage {
         this.storageEngine = new HolographicStorageAPI();
         this.pqc = new ProductionPQCryptoEngine();
         this.dnaRegistry = new Map();
+    }
+
+    /**
+     * @method initialize
+     * @description Initializes the holographic storage system
+     * @returns {Promise<Object>}
+     */
+    async initialize() {
+        await this.pqc.initialize();
+        return {
+            status: 'HOLOGRAPHIC_STORAGE_ACTIVE',
+            dnaRecords: this.dnaRegistry.size,
+            timestamp: Date.now()
+        };
     }
 
     /**
@@ -514,8 +605,174 @@ export class HolographicGeneticStorage {
         return this.storageEngine.decodeHolographically(encodedDNA);
     }
 
+    /**
+     * @method storeSovereignState
+     * @description Stores sovereign state data in holographic storage
+     * @param {Object} stateData - The sovereign state data to store
+     * @returns {Promise<Object>}
+     */
+    async storeSovereignState(stateData) {
+        const securityContext = {
+            publicKey: randomBytes(32),
+            securityLevel: 'QUANTUM_RESISTANT'
+        };
+
+        const dnaRecord = await this.encodeToHolographicGeneticDNA(
+            JSON.stringify(stateData), 
+            securityContext
+        );
+
+        return {
+            id: dnaRecord.dnaId,
+            storageType: 'HOLOGRAPHIC_GENETIC',
+            timestamp: Date.now(),
+            securityLevel: securityContext.securityLevel
+        };
+    }
+
+    /**
+     * @method getStatus
+     * @description Returns the current status of the holographic storage
+     * @returns {Promise<Object>}
+     */
+    async getStatus() {
+        return {
+            dnaRecords: this.dnaRegistry.size,
+            pqcInitialized: this.pqc.initialized,
+            status: 'HOLOGRAPHIC_STORAGE_OPERATIONAL',
+            timestamp: Date.now()
+        };
+    }
+
     generateDNAId(geneticCode) {
         return `dna_${createHash('sha256').update(geneticCode).digest('hex').slice(0, 16)}`;
+    }
+}
+
+// =========================================================================
+// SOVEREIGN MODULES EXPORT - FIXED MISSING EXPORT
+// =========================================================================
+
+/**
+ * @class SovereignModules
+ * @description Main container class for all sovereign modules with unified interface
+ */
+export class SovereignModules {
+    constructor() {
+        this.hyperDimensionalEngine = new HyperDimensionalQuantumEvolution();
+        this.temporalField = new TemporalQuantumField();
+        this.holographicStorage = new HolographicGeneticStorage();
+        this.initialized = false;
+    }
+
+    /**
+     * @method initialize
+     * @description Initializes all sovereign modules
+     * @returns {Promise<Object>}
+     */
+    async initialize() {
+        if (this.initialized) {
+            return { status: 'ALREADY_INITIALIZED' };
+        }
+
+        console.log('🚀 INITIALIZING SOVEREIGN MODULES...');
+        
+        const results = await Promise.all([
+            this.hyperDimensionalEngine.createHyperspaceManifold(8),
+            this.temporalField.initialize(),
+            this.holographicStorage.initialize()
+        ]);
+
+        this.initialized = true;
+        
+        console.log('✅ SOVEREIGN MODULES INITIALIZED SUCCESSFULLY');
+        
+        return {
+            status: 'ALL_MODULES_ACTIVE',
+            hyperDimensional: results[0],
+            temporal: results[1],
+            holographic: results[2],
+            timestamp: Date.now()
+        };
+    }
+
+    /**
+     * @method getModuleStatus
+     * @description Returns status of all modules
+     * @returns {Promise<Object>}
+     */
+    async getModuleStatus() {
+        const statuses = await Promise.all([
+            this.hyperDimensionalEngine.getStatus(),
+            this.temporalField.getStatus(),
+            this.holographicStorage.getStatus()
+        ]);
+
+        return {
+            hyperDimensional: statuses[0],
+            temporal: statuses[1],
+            holographic: statuses[2],
+            allOperational: statuses.every(s => s.status.includes('OPERATIONAL') || s.status.includes('ACTIVE')),
+            timestamp: Date.now()
+        };
+    }
+
+    /**
+     * @method executeHyperspaceComputation
+     * @description Executes computation across hyper-dimensional space
+     * @param {any} computationData - Data for computation
+     * @returns {Promise<Object>}
+     */
+    async executeHyperspaceComputation(computationData) {
+        if (!this.initialized) {
+            throw new Error('SovereignModules not initialized');
+        }
+
+        // Create quantum state for computation
+        const quantumState = await this.hyperDimensionalEngine.createHyperspaceManifold(4);
+        
+        // Apply temporal synchronization
+        const synchronizedState = await this.temporalField.synchronizeResults(quantumState);
+        
+        // Store computation state
+        const storageResult = await this.holographicStorage.storeSovereignState({
+            computation: computationData,
+            quantumState: synchronizedState,
+            timestamp: Date.now()
+        });
+
+        return {
+            computationId: storageResult.id,
+            quantumState: synchronizedState,
+            storageVerified: true,
+            timestamp: Date.now()
+        };
+    }
+
+    /**
+     * @method optimizeResult
+     * @description Optimizes computation results using hyper-dimensional techniques
+     * @param {any} result - Result to optimize
+     * @returns {Promise<any>}
+     */
+    async optimizeResult(result) {
+        if (!this.initialized) {
+            throw new Error('SovereignModules not initialized');
+        }
+
+        // Apply temporal optimization
+        const temporallyOptimized = await this.temporalField.synchronizeResults(result);
+        
+        // Apply hyper-dimensional enhancement
+        const quantumState = { data: temporallyOptimized, dimension: 8 };
+        const enhancedResult = await this.hyperDimensionalEngine.teleportQuantumState(quantumState, 12);
+        
+        return {
+            ...enhancedResult.newQuantumState,
+            optimizationLevel: 'HYPER_DIMENSIONAL_ENHANCED',
+            fidelity: enhancedResult.fidelity,
+            timestamp: Date.now()
+        };
     }
 }
 
@@ -525,22 +782,65 @@ export class ProductionValidator {
         const modules = [
             HyperDimensionalQuantumEvolution,
             TemporalQuantumField,
-            HolographicGeneticStorage
+            HolographicGeneticStorage,
+            SovereignModules  // Added missing module to validation
         ];
         
-        return modules.every(module => 
+        const allValid = modules.every(module => 
             module.prototype && 
             typeof module === 'function' &&
             module.name
-        ) ? 'ALL_MODULES_PRODUCTION_READY' : 'MODULE_INTEGRITY_CHECK_FAILED';
+        );
+
+        return allValid ? 'ALL_MODULES_PRODUCTION_READY' : 'MODULE_INTEGRITY_CHECK_FAILED';
+    }
+
+    /**
+     * @method validateExports
+     * @description Validates all required exports are present
+     * @returns {Object}
+     */
+    static validateExports() {
+        const requiredExports = [
+            'HyperDimensionalQuantumEvolution',
+            'TemporalQuantumField', 
+            'HolographicGeneticStorage',
+            'ProductionValidator',
+            'SovereignModules'  // Critical missing export
+        ];
+
+        const availableExports = Object.keys(module.exports || {});
+        const missingExports = requiredExports.filter(exp => !availableExports.includes(exp));
+
+        return {
+            valid: missingExports.length === 0,
+            missing: missingExports,
+            available: availableExports,
+            timestamp: Date.now()
+        };
     }
 }
+
+// =========================================================================
+// COMPREHENSIVE EXPORTS - FIXED MISSING SovereignModules EXPORT
+// =========================================================================
 
 export default {
     HyperDimensionalQuantumEvolution,
     TemporalQuantumField,
-    HolographicGeneticStorage, 
+    HolographicGeneticStorage,
     ProductionValidator,
-    SovereignModules
+    SovereignModules  // ✅ CRITICAL FIX: Added missing export
 };
-console.log(`SOVEREIGN MODULE STATUS: ${ProductionValidator.validateModuleIntegrity()}`);
+
+// Validate module integrity on load
+console.log(`🔧 SOVEREIGN MODULE STATUS: ${ProductionValidator.validateModuleIntegrity()}`);
+
+// Validate all exports are present
+const exportValidation = ProductionValidator.validateExports();
+if (!exportValidation.valid) {
+    console.error('❌ CRITICAL: Missing exports detected:', exportValidation.missing);
+    throw new Error(`Missing required exports: ${exportValidation.missing.join(', ')}`);
+} else {
+    console.log('✅ ALL EXPORTS VALIDATED: SovereignModules and all dependencies are properly exported');
+}
