@@ -105,7 +105,7 @@ import {
     getWalletBalances,
     sendETH,
     sendSOL,
-    sendBWAZI as sendBwaezi,
+    sendBwaezi,
     sendUSDT,
     processRevenuePayment,
     checkBlockchainHealth,
@@ -124,16 +124,6 @@ import {
     getSovereignRevenueEngine,
     initializeSovereignRevenueEngine 
 } from '../../modules/sovereign-revenue-engine.js';
-
-import { 
-    BWAEZI_SOVEREIGN_CONFIG,
-    BWAEZI_CHAIN,
-    TOKEN_CONVERSION_RATES,
-    SOVEREIGN_SERVICES,
-    COMPLIANCE_STRATEGY,
-    PUBLIC_COMPLIANCE_STATEMENTS,
-    ConfigUtils 
-} from '../../config/bwaezi-config.js';
 
 // ====================================================================
 // LAYER 1 & LAYER 2 BLOCKCHAIN CONFIGURATION - PRODUCTION READY
@@ -656,7 +646,7 @@ class AIServiceGenerator {
 // BWAEZI CHAIN - PRODUCTION READY MAINNET IMPLEMENTATION
 // ====================================================================
 
-class BrianNwaezikeChain extends EventEmitter {
+export class BrianNwaezikeChain extends EventEmitter {
     constructor(config = {}) {
         super();
         
@@ -712,7 +702,7 @@ class BrianNwaezikeChain extends EventEmitter {
         this.crossChainBridge = new CrossChainBridge();
         this.aiOracle = new AIOracleEngine();
         this.decentralizedStorage = new DecentralizedStorage();
-        this.governanceEngine = new GovernanceEngine();
+        this.governanceEngine = new GovernanceSystem();
         this.quantumShield = new QuantumShield();
         this.multiChainManager = new MultiChainManager();
 
@@ -730,7 +720,6 @@ class BrianNwaezikeChain extends EventEmitter {
         this.yieldFarming = new YieldFarming();
         this.flashLoanSystem = new FlashLoanSystem();
         this.liquidityProvider = new LiquidityProvider();
-        this.StakingSystem = new StakingSystem();
 
         // AI & Advanced Technology Modules
         this.adaptiveAI = new AdaptiveAI();
@@ -773,8 +762,10 @@ class BrianNwaezikeChain extends EventEmitter {
         this.brianNwaezikePayoutSystem = new BrianNwaezikePayoutSystem();
         this.databaseInitializer = getDatabaseInitializer();
         this.quantumResistantCrypto = new QuantumResistantCrypto();
+        this.quantumShield = new QuantumShield();
         this.aiThreatDetector = new AIThreatDetector();
         this.aiSecurityModule = new AISecurityModule();
+        this.crossChainBridge = new CrossChainBridge();
         this.omnichainInteroperabilityEngine = new OmnichainInteroperabilityEngine();
         this.shardingManager = new ShardingManager();
         this.infiniteScalabilityEngine = new InfiniteScalabilityEngine();
@@ -806,7 +797,6 @@ class BrianNwaezikeChain extends EventEmitter {
             analyticsDashboard: this.analyticsDashboard,
             userAuthentication: this.userAuthentication,
             notificationEngine: this.notificationEngine,
-            StakingSystem: this.StakingSystem,
             defiLiquidityEngine: this.defiLiquidityEngine,
             stakingRewardsEngine: this.stakingRewardsEngine,
             yieldFarming: this.yieldFarming,
@@ -839,8 +829,10 @@ class BrianNwaezikeChain extends EventEmitter {
             brianNwaezikePayoutSystem: this.brianNwaezikePayoutSystem,
             databaseInitializer: this.databaseInitializer,
             quantumResistantCrypto: this.quantumResistantCrypto,
+            quantumShield: this.quantumShield,
             aiThreatDetector: this.aiThreatDetector,
             aiSecurityModule: this.aiSecurityModule,
+            crossChainBridge: this.crossChainBridge,
             omnichainInteroperabilityEngine: this.omnichainInteroperabilityEngine,
             shardingManager: this.shardingManager,
             infiniteScalabilityEngine: this.infiniteScalabilityEngine,
@@ -1251,134 +1243,6 @@ class BrianNwaezikeChain extends EventEmitter {
     // ENTERPRISE EVOLUTION METHODS
     // ====================================================================
 
-    async executeEnterpriseEvolutionCycle() {
-        if (!this.evolutionEngine) {
-            throw new Error('Enterprise Evolution Engine not initialized');
-        }
-
-        try {
-            const evolutionStart = Date.now();
-            
-            // Execute comprehensive evolution cycle
-            const evolutionResult = await this.evolutionEngine.runEnterpriseEvolutionGeneration();
-            
-            // Update enterprise systems with evolved components
-            await this.updateEnterpriseSystems(evolutionResult);
-            
-            // Deploy evolved systems if applicable
-            if (evolutionResult.shouldDeploy && evolutionResult.bestIndividual) {
-                await this.deployEvolvedEnterpriseSystem(evolutionResult.bestIndividual);
-            }
-
-            const evolutionTime = Date.now() - evolutionStart;
-            
-            this.emit('enterpriseEvolutionCycle', {
-                timestamp: new Date(),
-                duration: evolutionTime,
-                generation: evolutionResult.generationNumber,
-                bestFitness: evolutionResult.bestFitness,
-                deployed: evolutionResult.shouldDeploy,
-                quantumAdvantage: evolutionResult.quantumAdvantage
-            });
-
-            return evolutionResult;
-
-        } catch (error) {
-            console.error('❌ Enterprise Evolution Cycle Failed:', error);
-            throw error;
-        }
-    }
-
-    async updateEnterpriseSystems(evolutionResult) {
-        // Update Omnipotent System with evolved intelligence
-        if (this.omnipotentSystem && evolutionResult.bestIndividual) {
-            await this.omnipotentSystem.updateWithEvolvedIndividual(evolutionResult.bestIndividual);
-        }
-
-        // Update Omnipresent Network with evolved routing
-        if (this.omnipresentNetwork && evolutionResult.networkOptimizations) {
-            await this.omnipresentNetwork.optimizeWithEvolution(evolutionResult.networkOptimizations);
-        }
-
-        // Update core modules with evolved capabilities
-        await this.updateCoreModulesWithEvolution(evolutionResult.moduleEnhancements);
-    }
-
-    async deployEvolvedEnterpriseSystem(individual) {
-        const deploymentId = crypto.randomBytes(16).toString('hex');
-        
-        try {
-            console.log(`🚀 Deploying Evolved Enterprise System: ${individual.id}`);
-            
-            // Verify deployment safety
-            const safetyCheck = await this.verifyEvolutionDeploymentSafety(individual);
-            if (!safetyCheck.approved) {
-                throw new Error(`Deployment safety check failed: ${safetyCheck.reasons.join(', ')}`);
-            }
-
-            // Execute phased deployment
-            const deploymentResult = await this.executePhasedEvolutionDeployment(individual);
-            
-            // Update system metrics
-            await this.updateSystemMetricsAfterDeployment(individual, deploymentResult);
-
-            this.emit('evolvedSystemDeployed', {
-                deploymentId,
-                individualId: individual.id,
-                fitness: individual.fitnessScores.overall,
-                quantumAdvantage: individual.fitnessScores.quantumAdvantage,
-                timestamp: new Date(),
-                deploymentResult
-            });
-
-            console.log(`✅ Evolved Enterprise System Deployed Successfully: ${individual.id}`);
-            return deploymentResult;
-
-        } catch (error) {
-            console.error(`❌ Evolved System Deployment Failed: ${error.message}`);
-            throw error;
-        }
-    }
-
-    async updateCoreModulesWithEvolution(moduleEnhancements) {
-        if (!moduleEnhancements) return;
-
-        const modules = this.getCoreModulesMap();
-        for (const [moduleName, enhancement] of Object.entries(moduleEnhancements)) {
-            const module = modules[moduleName];
-            if (module && typeof module.applyEvolutionEnhancement === 'function') {
-                try {
-                    await module.applyEvolutionEnhancement(enhancement);
-                } catch (error) {
-                    console.warn(`⚠️ Failed to apply evolution enhancement to ${moduleName}:`, error.message);
-                }
-            }
-        }
-    }
-
-    async verifyEvolutionDeploymentSafety(individual) {
-        return {
-            approved: true,
-            reasons: ['Safety check passed'],
-            riskLevel: 'low',
-            compatibility: 0.95
-        };
-    }
-
-    async executePhasedEvolutionDeployment(individual) {
-        return {
-            success: true,
-            phases: ['validation', 'deployment', 'verification'],
-            duration: 15000,
-            componentsDeployed: Object.keys(individual.components || {}).length
-        };
-    }
-
-    async updateSystemMetricsAfterDeployment(individual, deploymentResult) {
-        // Update system metrics after successful deployment
-        console.log(`📊 Updated metrics for evolved system: ${individual.id}`);
-    }
-
     async evolveEnterprise() {
         if (!this.evolutionEngine) {
             throw new Error('Enterprise Evolution Engine not initialized');
@@ -1423,188 +1287,6 @@ class BrianNwaezikeChain extends EventEmitter {
         });
 
         return deploymentResult;
-    }
-
-    // ====================================================================
-    // OMNIPOTENT SYSTEM ENHANCEMENTS
-    // ====================================================================
-
-    async executeOmnipotentComputation(jobType, code, inputData, options = {}) {
-        if (!this.omnipotentSystem) {
-            throw new Error('Omnipotent System not initialized');
-        }
-
-        try {
-            const computationResult = await this.omnipotentSystem.executeEnterpriseComputation(
-                jobType,
-                code,
-                inputData,
-                options.environment || 'auto',
-                options
-            );
-
-            this.emit('omnipotentComputation', {
-                jobType,
-                result: computationResult,
-                timestamp: new Date()
-            });
-
-            return computationResult;
-
-        } catch (error) {
-            console.error('❌ Omnipotent Computation Failed:', error);
-            throw error;
-        }
-    }
-
-    async makeEnterpriseDecision(decisionType, inputData, options = {}) {
-        if (!this.omnipotentSystem) {
-            throw new Error('Omnipotent System not initialized');
-        }
-
-        try {
-            const decisionResult = await this.omnipotentSystem.makeEnterpriseDecision(
-                decisionType,
-                inputData,
-                options
-            );
-
-            this.emit('enterpriseDecision', {
-                decisionType,
-                result: decisionResult,
-                timestamp: new Date()
-            });
-
-            return decisionResult;
-
-        } catch (error) {
-            console.error('❌ Enterprise Decision Failed:', error);
-            throw error;
-        }
-    }
-
-    async activateQuantumOmnipotentMode() {
-        if (!this.omnipotentSystem) {
-            throw new Error('Omnipotent System not initialized');
-        }
-
-        try {
-            const activationResult = await this.omnipotentSystem.activateQuantumMode();
-            
-            this.emit('quantumOmnipotentActivated', {
-                timestamp: new Date(),
-                result: activationResult
-            });
-
-            return activationResult;
-
-        } catch (error) {
-            console.error('❌ Quantum Omnipotent Activation Failed:', error);
-            throw error;
-        }
-    }
-
-    // ====================================================================
-    // OMNIPRESENT NETWORK ENHANCEMENTS
-    // ====================================================================
-
-    async connectToOmnipresentNetwork(nodeConfig = {}) {
-        if (!this.omnipresentNetwork) {
-            throw new Error('Omnipresent Network not initialized');
-        }
-
-        try {
-            const connectionResult = await this.omnipresentNetwork.connectEnterpriseNode(nodeConfig);
-            
-            this.emit('omnipresentConnected', {
-                timestamp: new Date(),
-                result: connectionResult
-            });
-
-            return connectionResult;
-
-        } catch (error) {
-            console.error('❌ Omnipresent Network Connection Failed:', error);
-            throw error;
-        }
-    }
-
-    async broadcastToOmnipresentNetwork(messageType, data, options = {}) {
-        if (!this.omnipresentNetwork) {
-            throw new Error('Omnipresent Network not initialized');
-        }
-
-        try {
-            const broadcastResult = await this.omnipresentNetwork.broadcastEnterpriseMessage(
-                messageType,
-                data,
-                options
-            );
-
-            this.emit('omnipresentBroadcast', {
-                messageType,
-                nodesReached: broadcastResult.nodesReached,
-                timestamp: new Date()
-            });
-
-            return broadcastResult;
-
-        } catch (error) {
-            console.error('❌ Omnipresent Broadcast Failed:', error);
-            throw error;
-        }
-    }
-
-    async storeDataOmnipresent(data, encryptionKey, replication = 7) {
-        if (!this.omnipresentNetwork) {
-            throw new Error('Omnipresent Network not initialized');
-        }
-
-        try {
-            const storageResult = await this.omnipresentNetwork.storeEnterpriseData(
-                data,
-                encryptionKey,
-                replication
-            );
-
-            this.emit('omnipresentDataStored', {
-                shardId: storageResult.shardId,
-                dataHash: storageResult.dataHash,
-                replication: storageResult.replicationNodes.length,
-                timestamp: new Date()
-            });
-
-            return storageResult;
-
-        } catch (error) {
-            console.error('❌ Omnipresent Data Storage Failed:', error);
-            throw error;
-        }
-    }
-
-    async retrieveDataOmnipresent(shardId, decryptionKey) {
-        if (!this.omnipresentNetwork) {
-            throw new Error('Omnipresent Network not initialized');
-        }
-
-        try {
-            const retrievalResult = await this.omnipresentNetwork.retrieveEnterpriseData(
-                shardId,
-                decryptionKey
-            );
-
-            this.emit('omnipresentDataRetrieved', {
-                shardId,
-                success: retrievalResult.success,
-                timestamp: new Date()
-            });
-
-            return retrievalResult;
-
-        } catch (error) {
-            console.error('❌ Omnipresent Data Retrieval Failed:', error);
-            throw error;
-        }
     }
 
     // ====================================================================
@@ -1653,42 +1335,6 @@ class BrianNwaezikeChain extends EventEmitter {
         }
     }
 
-    async getBlockNumber() {
-        try {
-            return await this.provider.getBlockNumber();
-        } catch (error) {
-            console.error('❌ Failed to get block number:', error);
-            return 0;
-        }
-    }
-
-    async getPeerCount() {
-        try {
-            return await this.provider.send('net_peerCount', []);
-        } catch (error) {
-            console.error('❌ Failed to get peer count:', error);
-            return 0;
-        }
-    }
-
-    async getSyncStatus() {
-        try {
-            return await this.provider.send('eth_syncing', []);
-        } catch (error) {
-            console.error('❌ Failed to get sync status:', error);
-            return false;
-        }
-    }
-
-    async getTransactionThroughput() {
-        // This would be calculated based on actual transaction monitoring
-        return {
-            tps: 1500,
-            pending: 0,
-            confirmed: 1000000
-        };
-    }
-
     async shutdown() {
         console.log('🛑 Shutting down BWAEZI Chain...');
         
@@ -1727,382 +1373,67 @@ class BrianNwaezikeChain extends EventEmitter {
         await instance.initialize();
         return instance;
     }
+}
 
-    // ====================================================================
-    // ENTERPRISE SECURITY & COMPLIANCE
-    // ====================================================================
+// ====================================================================
+// ENTERPRISE CHAIN STATE MANAGEMENT
+// ====================================================================
 
-    async performEnterpriseSecurityAudit() {
-        const auditResults = {
-            timestamp: new Date(),
-            securityLevel: 'enterprise',
-            checks: {},
-            overallScore: 0,
-            recommendations: []
-        };
-
-        try {
-            // Audit Evolution Engine Security
-            if (this.evolutionEngine) {
-                auditResults.checks.evolution = await this.evolutionEngine.performSecurityAudit();
-            }
-
-            // Audit Omnipotent System Security
-            if (this.omnipotentSystem) {
-                auditResults.checks.omnipotent = await this.omnipotentSystem.performSecurityAudit();
-            }
-
-            // Audit Omnipresent Network Security
-            if (this.omnipresentNetwork) {
-                auditResults.checks.omnipresent = await this.omnipresentNetwork.performSecurityAudit();
-            }
-
-            // Audit Core Modules Security
-            auditResults.checks.coreModules = await this.auditCoreModulesSecurity();
-
-            // Calculate Overall Security Score
-            auditResults.overallScore = this.calculateSecurityScore(auditResults.checks);
-            auditResults.recommendations = this.generateSecurityRecommendations(auditResults.checks);
-
-            this.emit('enterpriseSecurityAudit', auditResults);
-
-            return auditResults;
-
-        } catch (error) {
-            console.error('❌ Enterprise Security Audit Failed:', error);
-            throw error;
-        }
-    }
-
-    async auditCoreModulesSecurity() {
-        const moduleAudits = {};
-        const modules = this.getCoreModulesMap();
-
-        for (const [name, module] of Object.entries(modules)) {
-            try {
-                if (module && typeof module.securityCheck === 'function') {
-                    moduleAudits[name] = await module.securityCheck();
-                } else {
-                    moduleAudits[name] = { status: 'unknown', score: 0.5 };
-                }
-            } catch (error) {
-                moduleAudits[name] = { status: 'error', error: error.message, score: 0 };
-            }
-        }
-
-        return moduleAudits;
-    }
-
-    calculateSecurityScore(auditChecks) {
-        let totalScore = 0;
-        let checkCount = 0;
-
-        for (const [system, check] of Object.entries(auditChecks)) {
-            if (check.score !== undefined) {
-                totalScore += check.score;
-                checkCount++;
-            }
-        }
-
-        return checkCount > 0 ? totalScore / checkCount : 0;
-    }
-
-    generateSecurityRecommendations(auditChecks) {
-        const recommendations = [];
-        
-        for (const [system, check] of Object.entries(auditChecks)) {
-            if (check.score !== undefined && check.score < 0.8) {
-                recommendations.push(`Improve security for ${system}: current score ${check.score}`);
-            }
-        }
-        
-        return recommendations;
-    }
-
-    // ====================================================================
-    // ENTERPRISE PERFORMANCE OPTIMIZATION
-    // ====================================================================
-
-    async optimizeEnterprisePerformance() {
-        const optimizationResults = {
-            timestamp: new Date(),
-            optimizations: [],
-            performanceGains: {},
-            resourceUsage: {}
-        };
-
-        try {
-            // Optimize Evolution Engine Performance
-            if (this.evolutionEngine) {
-                const evolutionOptimization = await this.evolutionEngine.optimizePerformance();
-                optimizationResults.optimizations.push('evolution_engine');
-                optimizationResults.performanceGains.evolution = evolutionOptimization.performanceGain;
-            }
-
-            // Optimize Omnipotent System Performance
-            if (this.omnipotentSystem) {
-                const omnipotentOptimization = await this.omnipotentSystem.optimizePerformance();
-                optimizationResults.optimizations.push('omnipotent_system');
-                optimizationResults.performanceGains.omnipotent = omnipotentOptimization.performanceGain;
-            }
-
-            // Optimize Omnipresent Network Performance
-            if (this.omnipresentNetwork) {
-                const omnipresentOptimization = await this.omnipresentNetwork.optimizePerformance();
-                optimizationResults.optimizations.push('omnipresent_network');
-                optimizationResults.performanceGains.omnipresent = omnipresentOptimization.performanceGain;
-            }
-
-            // Optimize Core Modules Performance
-            const coreOptimizations = await this.optimizeCoreModulesPerformance();
-            optimizationResults.optimizations.push(...coreOptimizations.optimizedModules);
-            optimizationResults.performanceGains.core = coreOptimizations.overallGain;
-
-            // Monitor Resource Usage
-            optimizationResults.resourceUsage = await this.monitorResourceUsage();
-
-            this.emit('enterprisePerformanceOptimized', optimizationResults);
-
-            return optimizationResults;
-
-        } catch (error) {
-            console.error('❌ Enterprise Performance Optimization Failed:', error);
-            throw error;
-        }
-    }
-
-    async optimizeCoreModulesPerformance() {
-        const optimizationResults = {
-            optimizedModules: [],
-            overallGain: 0
-        };
-
-        const modules = this.getCoreModulesMap();
-        let totalGain = 0;
-        let optimizedCount = 0;
-
-        for (const [name, module] of Object.entries(modules)) {
-            try {
-                if (module && typeof module.optimize === 'function') {
-                    const optimization = await module.optimize();
-                    if (optimization.optimized && optimization.performanceGain > 0) {
-                        optimizationResults.optimizedModules.push(name);
-                        totalGain += optimization.performanceGain;
-                        optimizedCount++;
-                    }
-                }
-            } catch (error) {
-                console.warn(`⚠️ Optimization failed for module ${name}:`, error.message);
-            }
-        }
-
-        optimizationResults.overallGain = optimizedCount > 0 ? totalGain / optimizedCount : 0;
-        return optimizationResults;
-    }
-
-    async monitorResourceUsage() {
-        const resourceUsage = {
-            timestamp: Date.now(),
-            memory: process.memoryUsage(),
-            cpu: process.cpuUsage(),
-            uptime: process.uptime(),
-            activeConnections: 0,
-            networkThroughput: 0
-        };
-
-        // Monitor Omnipresent Network Resources
-        if (this.omnipresentNetwork) {
-            const networkMetrics = await this.omnipresentNetwork.getNetworkMetrics();
-            resourceUsage.activeConnections = networkMetrics.connectedNodes || 0;
-            resourceUsage.networkThroughput = networkMetrics.throughput || 0;
-        }
-
-        return resourceUsage;
-    }
-
-    // ====================================================================
-    // ENTERPRISE CHAIN STATE MANAGEMENT
-    // ====================================================================
-
-    async getEnterpriseChainState() {
-        return {
-            chain: await this.getChainInfo(),
-            enterprise: {
-                evolution: this.evolutionEngine ? await this.evolutionEngine.getState() : null,
-                omnipotent: this.omnipotentSystem ? await this.omnipotentSystem.getState() : null,
-                omnipresent: this.omnipresentNetwork ? await this.omnipresentNetwork.getState() : null
-            },
-            modules: await this.getModuleStates(),
-            services: await this.getServiceStates(),
-            security: await this.getSecurityState(),
-            performance: await this.getPerformanceState(),
-            timestamp: new Date()
-        };
-    }
-
-    async getModuleStates() {
-        const states = {};
-        const modules = this.getCoreModulesMap();
-
-        for (const [name, module] of Object.entries(modules)) {
-            try {
-                if (module && typeof module.getState === 'function') {
-                    states[name] = await module.getState();
-                } else {
-                    states[name] = { status: 'active', initialized: true };
-                }
-            } catch (error) {
-                states[name] = { status: 'error', error: error.message };
-            }
-        }
-
-        return states;
-    }
-
-    async getServiceStates() {
-        const states = {};
-        
-        for (const [serviceName] of Object.entries(this.aiServices)) {
-            states[serviceName] = {
-                active: true,
-                executions: 0, // Would track actual metrics
-                lastExecution: null
-            };
-        }
-
-        return states;
-    }
-
-    async getSecurityState() {
-        return {
-            level: 'enterprise',
-            lastAudit: new Date(),
-            threats: 0,
-            compliance: ['GDPR', 'SOC2', 'ISO27001']
-        };
-    }
-
-    async getPerformanceState() {
-        return {
-            tps: await this.getTransactionThroughput(),
-            uptime: process.uptime(),
-            health: await this.healthCheck()
-        };
-    }
-
-    async getChainState() {
-        return {
-            blockNumber: await this.getBlockNumber(),
-            peerCount: await this.getPeerCount(),
-            syncStatus: await this.getSyncStatus(),
-            chainId: this.config.CHAIN_ID
-        };
-    }
-
-    async getEnterpriseState() {
-        return {
+async getEnterpriseChainState() {
+    return {
+        chain: await this.getChainInfo(),
+        enterprise: {
             evolution: this.evolutionEngine ? await this.evolutionEngine.getState() : null,
             omnipotent: this.omnipotentSystem ? await this.omnipotentSystem.getState() : null,
             omnipresent: this.omnipresentNetwork ? await this.omnipresentNetwork.getState() : null
-        };
-    }
+        },
+        modules: await this.getModuleStates(),
+        services: await this.getServiceStates(),
+        security: await this.getSecurityState(),
+        performance: await this.getPerformanceState(),
+        timestamp: new Date()
+    };
 }
 
-// ====================================================================
-// ENTERPRISE PRODUCTION ORCHESTRATOR
-// ====================================================================
+async getModuleStates() {
+    const states = {};
+    const modules = this.getCoreModulesMap();
 
-class EnterpriseProductionOrchestrator {
-    constructor() {
-        this.chain = null;
-        this.initialized = false;
-    }
-
-    async initializeProductionEnvironment(config = {}) {
-        if (this.initialized) {
-            console.log('⚠️ Production environment already initialized');
-            return;
-        }
-
+    for (const [name, module] of Object.entries(modules)) {
         try {
-            console.log('🏭 Initializing Enterprise Production Environment...');
-
-            // Initialize the main chain instance
-            this.chain = await BrianNwaezikeChain.createMainnetInstance(config);
-            
-            this.initialized = true;
-            
-            console.log('✅ Enterprise Production Environment Initialized');
-            
-            // Emit initialization complete event
-            this.chain.emit('productionEnvironmentReady', {
-                timestamp: new Date(),
-                components: ['main_chain', 'enterprise_systems'],
-                status: 'operational'
-            });
-
+            if (module && typeof module.getState === 'function') {
+                states[name] = await module.getState();
+            } else {
+                states[name] = { status: 'active', initialized: true };
+            }
         } catch (error) {
-            console.error('❌ Production Environment Initialization Failed:', error);
-            throw error;
+            states[name] = { status: 'error', error: error.message };
         }
     }
 
-    async getProductionStatus() {
-        if (!this.chain) {
-            throw new Error('Production environment not initialized');
-        }
+    return states;
+}
 
-        return {
-            environment: {
-                initialized: this.initialized,
-                timestamp: new Date()
-            },
-            chain: await this.chain.getChainInfo(),
-            health: await this.chain.healthCheck(),
-            enterprise: await this.chain.getEnterpriseSystemMetrics()
+async getServiceStates() {
+    const states = {};
+    
+    for (const [serviceName] of Object.entries(this.aiServices)) {
+        states[serviceName] = {
+            active: true,
+            executions: 0, // Would track actual metrics
+            lastExecution: null
         };
     }
 
-    async executeProductionOperation(operation, parameters) {
-        if (!this.initialized || !this.chain) {
-            throw new Error('Production environment not initialized');
-        }
-
-        switch (operation) {
-            case 'health_check':
-                return await this.chain.healthCheck();
-            case 'evolution_cycle':
-                return await this.chain.executeEnterpriseEvolutionCycle();
-            case 'security_audit':
-                return await this.chain.performEnterpriseSecurityAudit();
-            case 'performance_optimization':
-                return await this.chain.optimizeEnterprisePerformance();
-            default:
-                throw new Error(`Unknown production operation: ${operation}`);
-        }
-    }
-
-    async shutdownProductionEnvironment() {
-        console.log('🛑 Shutting down Production Environment...');
-        
-        if (this.chain) {
-            await this.chain.shutdown();
-        }
-
-        this.initialized = false;
-        console.log('✅ Production Environment Shutdown Complete');
-    }
+    return states;
 }
 
 // ====================================================================
-// PRODUCTION READY EXPORTS & GLOBAL INSTANCES
+// PRODUCTION READY EXPORTS
 // ====================================================================
 
-// Create global production orchestrator instance
-const globalProductionOrchestrator = new EnterpriseProductionOrchestrator();
-
-// Global mainnet instance
-let globalBrianNwaezikeChain = null;
+// Global mainnet instance with auto-initialization
+const globalBrianNwaezikeChain = new BrianNwaezikeChain();
 
 // Export factory functions for different environments
 export const createProductionInstance = async (config = {}) => {
@@ -2127,152 +1458,28 @@ export const createStagingInstance = async (config = {}) => {
     return await BrianNwaezikeChain.createMainnetInstance(stagingConfig);
 };
 
-// Production configuration templates
-export const ProductionConfigTemplates = {
-    DEVELOPMENT: {
-        name: 'development',
-        features: {
-            evolution: true,
-            omnipotent: true,
-            omnipresent: true
-        },
-        monitoring: {
-            health_checks: true,
-            performance: true,
-            security: true
-        },
-        backup: {
-            enabled: true,
-            frequency: 'daily',
-            retention: 7
-        }
-    },
-
-    STAGING: {
-        name: 'staging',
-        features: {
-            evolution: true,
-            omnipotent: true,
-            omnipresent: true
-        },
-        monitoring: {
-            health_checks: true,
-            performance: true,
-            security: true
-        },
-        backup: {
-            enabled: true,
-            frequency: 'hourly',
-            retention: 30
-        }
-    },
-
-    PRODUCTION: {
-        name: 'production',
-        features: {
-            evolution: true,
-            omnipotent: true,
-            omnipresent: true
-        },
-        monitoring: {
-            health_checks: true,
-            performance: true,
-            security: true
-        },
-        backup: {
-            enabled: true,
-            frequency: 'continuous',
-            retention: 90
-        },
-        security: {
-            enterprise_grade: true,
-            compliance: ['SOC2', 'ISO27001', 'GDPR'],
-            encryption: 'quantum_resistant'
-        }
-    }
-};
-
-// Production utility functions
-export const ProductionUtils = {
-    createProductionConfig: (environment, customConfig = {}) => ({
-        ...ProductionConfigTemplates[environment],
-        ...customConfig,
-        deploymentId: `deploy_${Date.now()}`,
-        timestamp: new Date()
-    }),
-
-    validateProductionReadiness: async (chainInstance) => {
-        const checks = {
-            chain: await chainInstance.healthCheck(),
-            enterprise: await chainInstance.getEnterpriseSystemMetrics(),
-            performance: await chainInstance.getPerformanceMetrics()
-        };
-
-        const ready = Object.values(checks).every(check => 
-            check.status === 'healthy' || check.healthScore > 0.8
-        );
-
-        return { ready, checks };
-    },
-
-    generateProductionReport: async (chainInstance, timeframe = '24h') => {
-        return {
-            timestamp: new Date(),
-            timeframe,
-            chain: await chainInstance.getChainInfo(),
-            enterprise: await chainInstance.getEnterpriseMetrics(),
-            performance: await chainInstance.getPerformanceMetrics(),
-            security: await chainInstance.getSecurityMetrics()
-        };
-    }
-};
-
-// Auto-initialize production environment in production mode
-if (process.env.NODE_ENV === 'production' && process.env.AUTO_PRODUCTION_INIT === 'true') {
-    const productionConfig = ProductionUtils.createProductionConfig('PRODUCTION');
-    
-    globalProductionOrchestrator.initializeProductionEnvironment(productionConfig)
-        .then(() => {
-            console.log('🎉 Enterprise Production Environment Auto-Initialized Successfully');
-            globalBrianNwaezikeChain = globalProductionOrchestrator.chain;
-        })
-        .catch(error => {
-            console.error('❌ Production Environment Auto-Initialization Failed:', error);
-            
-            // In production, we might want to exit on initialization failure
-            if (process.env.EXIT_ON_PRODUCTION_FAILURE === 'true') {
-                process.exit(1);
-            }
-        });
-}
-
-// Auto-initialize main chain in production environment
+// Auto-initialize in production environment
 if (process.env.NODE_ENV === 'production' && process.env.AUTO_INIT !== 'false') {
-    createProductionInstance()
-        .then(instance => {
-            globalBrianNwaezikeChain = instance;
-            console.log('✅ Global BWAEZI Chain Auto-Initialized Successfully');
-        })
-        .catch(error => {
-            console.error('❌ Auto-initialization failed:', error);
-            if (process.env.EXIT_ON_INIT_FAILURE === 'true') {
-                process.exit(1);
-            }
-        });
+    globalBrianNwaezikeChain.initialize().catch(error => {
+        console.error('❌ Auto-initialization failed:', error);
+        // In production, we might want to exit or use fallback
+        if (process.env.EXIT_ON_INIT_FAILURE === 'true') {
+            process.exit(1);
+        }
+    });
 }
 
 // ====================================================================
-// PRODUCTION READY EXPORTS
+// GLOBAL MAINNET EXPORT - PRODUCTION READY
 // ====================================================================
 
 // Final comprehensive export
 export default {
     BrianNwaezikeChain,
-    EnterpriseProductionOrchestrator,
-    ProductionConfigTemplates,
-    ProductionUtils,
     globalBrianNwaezikeChain,
-    globalProductionOrchestrator
+    AutonomousMultichainManager,
+    EnterpriseSecureMap,
+    AIServiceGenerator
 };
 
 // Final export with all enterprise capabilities
