@@ -447,4 +447,20 @@ export function isBackendInitialized() {
     return !!blockchainInstance && !!currentCredentials;
 }
 
-// Note: Server startup code has been removed - this is now a pure module
+// ✅ ADD DEFAULT EXPORT FOR MAIN.JS COMPATIBILITY
+export default {
+    setBackendCredentials,
+    initializeBackendSystems,
+    getBwaeziRPCData,
+    getBlockchainStatus,
+    getDataAgentStatus,
+    startDataCollection,
+    getRevenueAnalytics,
+    getBackendHealth,
+    getRootEndpointData,
+    createGraphQLServer,
+    getBackendRouteHandlers,
+    getBlockchainInstance,
+    shutdownBackendSystems,
+    isBackendInitialized
+};
