@@ -44,7 +44,7 @@ import { LiquidityProvider } from '../../modules/liquidity-provider.js';
 import { StakingSystem } from '../../modules/staking-system.js';
 
 // AI & Advanced Technology Modules
-import { AdaptiveAI } from '../../modules/adaptive-ai-engine.js';
+import  AdaptiveAI from '../../modules/adaptive-ai-engine.js';
 import { PredictiveScaling } from '../../modules/predictive-scaling.js';
 import { SelfHealingNetwork } from '../../modules/self-healing-network.js';
 import { ZeroKnowledgeProofEngine } from '../../modules/zero-knowledge-proof-engine.js';
