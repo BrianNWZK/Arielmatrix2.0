@@ -1494,7 +1494,6 @@ export {
     UniversalEntropyReversal,
     CosmicConsciousnessNetwork,
     RealityProgrammingEngine,
-    AdvancedConsciousnessCore,
     QuantumElementalHardware,
     ElementalReactionHardware,
     QuantumFieldHardware,
