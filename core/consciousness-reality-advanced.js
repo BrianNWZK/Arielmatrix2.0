@@ -1148,23 +1148,100 @@ class RealityProgrammingEngine {
     }
 }
 
-async executeRealityProgram(scriptId, executionContext) {
-    try {
-        const script = this.realityScripts.get(scriptId);
-        if (!script) throw new Error(`Reality script ${scriptId} not found`);
+class RealityProgramExecutor {
+    constructor() {
+        this.realityScripts = new Map();
+    }
 
-        // Real reality program execution
-        const executionId = `execution_${scriptId}_${Date.now()}`;
-        
-        const execution = {
-            id: executionId,
-            scriptId,
-            context: executionContext,
-            quantumState: await this.initializeExecutionState(script, executionContext),
-            causalModifications: [],
-            realityUpdates: [],
-            startTime: Date.now()
+    async executeRealityProgram(scriptId, executionContext) {
+        try {
+            const script = this.realityScripts.get(scriptId);
+            if (!script) throw new Error(`Reality script ${scriptId} not found`);
+
+            // Real reality program execution
+            const executionId = `execution_${scriptId}_${Date.now()}`;
+            
+            const execution = {
+                id: executionId,
+                scriptId,
+                context: executionContext,
+                quantumState: await this.initializeExecutionState(script, executionContext),
+                causalModifications: [],
+                realityUpdates: [],
+                startTime: Date.now()
+            };
+
+            return execution;
+        } catch (error) {
+            throw new Error(`Failed to execute reality program: ${error.message}`);
+        }
+    }
+
+    async initializeExecutionState(script, executionContext) {
+        return {
+            wavefunction: await this.createExecutionWavefunction(script),
+            coherence: script.quantumCoherence || 0.9,
+            entanglement: script.quantumEntanglement || [],
+            observerEffect: executionContext.observerPresence || 0.5
         };
+    }
+
+    async createExecutionWavefunction(script) {
+        return {
+            amplitude: Math.sqrt(script.successProbability || 0.5),
+            phase: 0,
+            components: script.quantumStates || ['baseline', 'desired']
+        };
+    }
+}
+
+// Alternative: If you want to add this to an existing class, use this format:
+/*
+class YourExistingClass {
+    // ... existing code ...
+
+    async executeRealityProgram(scriptId, executionContext) {
+        try {
+            const script = this.realityScripts.get(scriptId);
+            if (!script) throw new Error(`Reality script ${scriptId} not found`);
+
+            // Real reality program execution
+            const executionId = `execution_${scriptId}_${Date.now()}`;
+            
+            const execution = {
+                id: executionId,
+                scriptId,
+                context: executionContext,
+                quantumState: await this.initializeExecutionState(script, executionContext),
+                causalModifications: [],
+                realityUpdates: [],
+                startTime: Date.now()
+            };
+
+            return execution;
+        } catch (error) {
+            throw new Error(`Failed to execute reality program: ${error.message}`);
+        }
+    }
+
+    async initializeExecutionState(script, executionContext) {
+        return {
+            wavefunction: await this.createExecutionWavefunction(script),
+            coherence: script.quantumCoherence || 0.9,
+            entanglement: script.quantumEntanglement || [],
+            observerEffect: executionContext.observerPresence || 0.5
+        };
+    }
+
+    async createExecutionWavefunction(script) {
+        return {
+            amplitude: Math.sqrt(script.successProbability || 0.5),
+            phase: 0,
+            components: script.quantumStates || ['baseline', 'desired']
+        };
+    }
+}
+*/
 
         // Execute quantum operations
         for (const gate of script.compiledBytecode.quantumGates) {
