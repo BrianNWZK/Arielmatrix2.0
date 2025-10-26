@@ -70,7 +70,7 @@ import {
     CosmicConsciousnessNetwork,
     RealityProgrammingEngine,
     AdvancedConsciousnessCore,
-    ADVANCED_CONSCIOUSNESS_ENGINE
+    AdvancedConsciousnessRealityEngine
 } from './consciousness-reality-advanced.js';
 
 // Consciousness Reality Engine Integration
@@ -403,7 +403,7 @@ class SovereignIntegrationEngine {
         
         // Enhanced Consciousness Systems
         this.consciousnessEngine = CONSCIOUSNESS_ENGINE;
-        this.advancedConsciousness = ADVANCED_CONSCIOUSNESS_ENGINE;
+        this.advancedConsciousness = AdvancedConsciousnessRealityEngine;
         this.elementalEngine = PRODUCTION_ELEMENTAL_ENGINE;
         this.bModeEngine = b_MODE_ENGINE;
         this.elementalRealityEngine = ELEMENTAL_REALITY_ENGINE;
