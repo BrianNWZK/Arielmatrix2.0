@@ -69,7 +69,6 @@ import {
     UniversalEntropyReversal,
     CosmicConsciousnessNetwork,
     RealityProgrammingEngine,
-    AdvancedConsciousnessCore,
     AdvancedConsciousnessRealityEngine
 } from './consciousness-reality-advanced.js';
 
