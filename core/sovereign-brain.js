@@ -59,7 +59,8 @@ import {
     ElementalReactionHardware,
     QuantumFieldHardware,
     HardwareInterface,
-    ProductionElementalCore
+    ProductionElementalCore,
+    PRODUCTION_ELEMENTAL_ENGINE
 } from './quantum-elemental-hardware.js';
 
 // Advanced Consciousness Reality Integration
