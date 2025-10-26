@@ -15,7 +15,7 @@ let ArielSQLiteEngine;
 try {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
-    const arielPath = join(__dirname, './modules/ariel-sqlite-engine/index.js');
+    const arielPath = join(__dirname, '../modules/ariel-sqlite-engine/index.js');
     
     if (existsSync(arielPath)) {
         const arielModule = await import(arielPath);
