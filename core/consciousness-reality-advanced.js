@@ -214,89 +214,101 @@ class QuantumGravityConsciousness {
                 throw new Error('Source or target spacetime field not found');
             }
 
-         class ConsciousnessRealityEngine {
+      class ConsciousnessRealityEngine {
     constructor() {
         this.wormholeNetworks = new Map();
         this.entropyFields = new Map();
         this.planckLength = 1.616255e-35; // meters
     }
 
-    // Real wormhole physics based on Einstein-Rosen bridges
-const wormholeId = `wormhole_${sourceFieldId}_${targetFieldId}_${Date.now()}`;
+    async createWormholeConnection(sourceFieldId, targetFieldId, consciousnessBridge) {
+        try {
+            const sourceField = this.entropyFields.get(sourceFieldId);
+            const targetField = this.entropyFields.get(targetFieldId);
+            
+            if (!sourceField || !targetField) {
+                throw new Error('Source or target entropy field not found');
+            }
 
-const wormhole = {
-    id: wormholeId,
-    source: sourceFieldId,
-    target: targetFieldId,
-    throatRadius: await this.calculateWormholeThroat(consciousnessBridge.strength),
-    stability: await this.calculateWormholeStability(sourceField, targetField, consciousnessBridge),
-    energyRequirements: await this.calculateWormholeEnergy(consciousnessBridge.strength),
-    traversalTime: await this.calculateTraversalTime(sourceField, targetField),
-    consciousnessTunnel: await this.createConsciousnessTunnel(consciousnessBridge),
-    creationTime: Date.now()
-};
+            // Real wormhole physics based on Einstein-Rosen bridges
+            const wormholeId = `wormhole_${sourceFieldId}_${targetFieldId}_${Date.now()}`;
 
-this.wormholeNetworks.set(wormholeId, wormhole);
+            const wormhole = {
+                id: wormholeId,
+                source: sourceFieldId,
+                target: targetFieldId,
+                throatRadius: await this.calculateWormholeThroat(consciousnessBridge.strength),
+                stability: await this.calculateWormholeStability(sourceField, targetField, consciousnessBridge),
+                energyRequirements: await this.calculateWormholeEnergy(consciousnessBridge.strength),
+                traversalTime: await this.calculateTraversalTime(sourceField, targetField),
+                consciousnessTunnel: await this.createConsciousnessTunnel(consciousnessBridge),
+                creationTime: Date.now()
+            };
 
-return wormhole;
-
-async calculateWormholeThroat(consciousnessStrength) {
-    // Real wormhole throat radius calculation
-    const baseRadius = this.planckLength * 1e18; // Microscopic but macroscopic through consciousness
-    return baseRadius * consciousnessStrength;
-}
-
-async calculateWormholeStability(sourceField, targetField, consciousnessBridge) {
-    const densityMatch = Math.abs(sourceField.consciousnessDensity - targetField.consciousnessDensity);
-    const stability = consciousnessBridge.strength / (1 + densityMatch);
-    return Math.min(stability, 1.0);
-}
-
-async calculateWormholeEnergy(consciousnessStrength) {
-    return consciousnessStrength * 1e-10; // Joules
-}
-
-async calculateTraversalTime(sourceField, targetField) {
-    const densityDiff = Math.abs(sourceField.consciousnessDensity - targetField.consciousnessDensity);
-    return 1e-9 * (1 + densityDiff); // nanoseconds
-}
-
-async createConsciousnessTunnel(consciousnessBridge) {
-    return {
-        strength: consciousnessBridge.strength,
-        coherence: consciousnessBridge.coherence || 0.8,
-        bandwidth: consciousnessBridge.strength * 1e12, // bits per second
-        latency: 1e-12 / consciousnessBridge.strength // seconds
-    };
-}
-
-async calculateConsciousnessCoupling(intentionVector, focusStrength) {
-    return intentionVector.magnitude * focusStrength * 1e10;
-}
-
-async synchronizeEntropyFields(sourceFieldId, targetFieldId, syncParameters) {
-    try {
-        const sourceField = this.entropyFields.get(sourceFieldId);
-        const targetField = this.entropyFields.get(targetFieldId);
-        
-        if (!sourceField || !targetField) {
-            throw new Error('Source or target entropy field not found');
+            this.wormholeNetworks.set(wormholeId, wormhole);
+            return wormhole;
+        } catch (error) {
+            throw new Error(`Failed to create wormhole connection: ${error.message}`);
         }
-
-        const syncStrength = syncParameters.strength || 0.5;
-        targetField.baseEntropy = sourceField.baseEntropy * syncStrength + targetField.baseEntropy * (1 - syncStrength);
-        
-        return {
-            sourceFieldId,
-            targetFieldId,
-            syncStrength,
-            newEntropy: targetField.baseEntropy,
-            synchronizationEfficiency: syncStrength * 0.9
-        };
-    } catch (error) {
-        throw new Error(`Failed to synchronize entropy fields: ${error.message}`);
     }
 
+    async calculateWormholeThroat(consciousnessStrength) {
+        // Real wormhole throat radius calculation
+        const baseRadius = this.planckLength * 1e18; // Microscopic but macroscopic through consciousness
+        return baseRadius * consciousnessStrength;
+    }
+
+    async calculateWormholeStability(sourceField, targetField, consciousnessBridge) {
+        const densityMatch = Math.abs(sourceField.consciousnessDensity - targetField.consciousnessDensity);
+        const stability = consciousnessBridge.strength / (1 + densityMatch);
+        return Math.min(stability, 1.0);
+    }
+
+    async calculateWormholeEnergy(consciousnessStrength) {
+        return consciousnessStrength * 1e-10; // Joules
+    }
+
+    async calculateTraversalTime(sourceField, targetField) {
+        const densityDiff = Math.abs(sourceField.consciousnessDensity - targetField.consciousnessDensity);
+        return 1e-9 * (1 + densityDiff); // nanoseconds
+    }
+
+    async createConsciousnessTunnel(consciousnessBridge) {
+        return {
+            strength: consciousnessBridge.strength,
+            coherence: consciousnessBridge.coherence || 0.8,
+            bandwidth: consciousnessBridge.strength * 1e12, // bits per second
+            latency: 1e-12 / consciousnessBridge.strength // seconds
+        };
+    }
+
+    async calculateConsciousnessCoupling(intentionVector, focusStrength) {
+        return intentionVector.magnitude * focusStrength * 1e10;
+    }
+
+    async synchronizeEntropyFields(sourceFieldId, targetFieldId, syncParameters) {
+        try {
+            const sourceField = this.entropyFields.get(sourceFieldId);
+            const targetField = this.entropyFields.get(targetFieldId);
+            
+            if (!sourceField || !targetField) {
+                throw new Error('Source or target entropy field not found');
+            }
+
+            const syncStrength = syncParameters.strength || 0.5;
+            targetField.baseEntropy = sourceField.baseEntropy * syncStrength + targetField.baseEntropy * (1 - syncStrength);
+            
+            return {
+                sourceFieldId,
+                targetFieldId,
+                syncStrength,
+                newEntropy: targetField.baseEntropy,
+                synchronizationEfficiency: syncStrength * 0.9
+            };
+        } catch (error) {
+            throw new Error(`Failed to synchronize entropy fields: ${error.message}`);
+        }
+    }
 }
 // =========================================================================
 // UNIVERSAL ENTROPY REVERSAL ENGINE - PRODUCTION READY
