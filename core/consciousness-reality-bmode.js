@@ -608,170 +608,501 @@ class UniversalEntropyReversal {
         this.reversalNodes = new Map();
         this.timeReversalMechanisms = new Map();
         this.cosmicConstants = new Map();
+        this.quantumStates = new Map();
+        this.initialized = false;
     }
 
-    async initializeCosmicConstants() {
+    initializeCosmicConstants() {
         this.cosmicConstants.set('ENTROPY_REVERSAL_THRESHOLD', 0.8);
         this.cosmicConstants.set('TIME_REVERSAL_ENERGY', 1e50);
         this.cosmicConstants.set('QUANTUM_COHERENCE_LIMIT', 0.99);
         this.cosmicConstants.set('CAUSALITY_PRESERVATION_FACTOR', 0.95);
+        this.cosmicConstants.set('PLANCK_ENTROPY', 1.416808e32);
+        this.cosmicConstants.set('BOLTZMANN_CONSTANT', 1.380649e-23);
+        this.cosmicConstants.set('HAWKING_ENTROPY_FACTOR', 1.0);
         
+        this.initialized = true;
         return this.cosmicConstants;
     }
 
-    async createEntropyField(region, initialEntropy = 0.5) {
+    createEntropyField(region, initialEntropy = 0.5) {
+        if (!this.initialized) {
+            this.initializeCosmicConstants();
+        }
+
         const fieldId = `entropy_field_${Date.now()}_${randomBytes(8).toString('hex')}`;
         
+        const entropyGradient = this.calculateEntropyGradient(initialEntropy);
+        const quantumStates = this.generateEntropyQuantumStates(initialEntropy);
+        const temporalEvolution = this.calculateTemporalEntropyEvolution(initialEntropy);
+
         const entropyField = {
             id: fieldId,
             region,
             currentEntropy: initialEntropy,
-            targetEntropy: initialEntropy * 0.5, // Aim for lower entropy
-            entropyGradient: await this.calculateEntropyGradient(initialEntropy),
-            quantumStates: await this.generateEntropyQuantumStates(initialEntropy),
+            targetEntropy: initialEntropy * 0.5,
+            entropyGradient,
+            quantumStates,
             reversalMechanisms: new Set(),
-            temporalEvolution: await this.calculateTemporalEntropyEvolution(initialEntropy)
+            temporalEvolution,
+            creationTime: Date.now(),
+            stabilityMetrics: this.calculateStabilityMetrics(initialEntropy, quantumStates)
         };
 
         this.entropyFields.set(fieldId, entropyField);
         return fieldId;
     }
 
-    async calculateEntropyGradient(entropy) {
+    calculateEntropyGradient(entropy) {
+        const convergence = this.checkEntropyConvergence(entropy);
         return {
             magnitude: entropy,
-            direction: 'DECREASING', // Towards lower entropy
-            stability: 1 - entropy, // Higher entropy = less stable
-            convergence: await this.checkEntropyConvergence(entropy)
+            direction: entropy > 0.5 ? 'DECREASING' : 'STABLE',
+            stability: 1 - entropy,
+            convergence,
+            gradientForce: entropy * 0.1,
+            equilibriumPoint: 0.3
         };
     }
 
-    async checkEntropyConvergence(entropy) {
-        return entropy < 0.3; // Converges when entropy is low
+    checkEntropyConvergence(entropy) {
+        return entropy < 0.3;
     }
 
-    async generateEntropyQuantumStates(entropy) {
+    generateEntropyQuantumStates(entropy) {
         const stateCount = Math.max(3, Math.floor(10 * (1 - entropy)));
         const states = [];
         
         for (let i = 0; i < stateCount; i++) {
-            states.push({
-                amplitude: (1 - entropy) * ((randomBytes(8).readDoubleBE(0) % 2) - 1),
-                phase: Math.random() * 2 * Math.PI,
+            const amplitudeReal = (randomBytes(8).readDoubleBE(0) % 2) - 1;
+            const amplitudeImag = (randomBytes(8).readDoubleBE(0) % 2) - 1;
+            const magnitude = Math.sqrt(amplitudeReal * amplitudeReal + amplitudeImag * amplitudeImag);
+            
+            const state = {
+                id: `quantum_state_${i}_${Date.now()}`,
+                amplitude: { 
+                    real: amplitudeReal / magnitude, 
+                    imaginary: amplitudeImag / magnitude 
+                },
+                phase: Math.atan2(amplitudeImag, amplitudeReal),
                 coherence: 1 - entropy,
-                entanglement: i > 0 ? states[i - 1] : null,
-                entropyContribution: entropy / stateCount
-            });
+                probability: Math.pow(amplitudeReal / magnitude, 2) + Math.pow(amplitudeImag / magnitude, 2),
+                entanglement: i > 0 ? states[i - 1].id : null,
+                entropyContribution: entropy / stateCount,
+                decoherenceRate: entropy * 0.01
+            };
+            
+            states.push(state);
+            this.quantumStates.set(state.id, state);
         }
         
         return states;
     }
 
-    async calculateTemporalEntropyEvolution(initialEntropy) {
-        const timeSteps = [0, 1000, 10000, 100000]; // ms
-        const entropyPredictions = timeSteps.map(t => ({
-            time: t,
-            entropy: initialEntropy * Math.exp(-0.0001 * t), // Exponential decay
-            stability: 1 - (initialEntropy * Math.exp(-0.0001 * t)),
-            reversalProbability: await this.calculateReversalProbability(initialEntropy, t)
-        }));
+    calculateTemporalEntropyEvolution(initialEntropy) {
+        const timeSteps = [0, 1000, 10000, 100000];
+        const entropyPredictions = timeSteps.map(t => {
+            const entropy = initialEntropy * Math.exp(-0.0001 * t);
+            const stability = 1 - entropy;
+            const reversalProbability = this.calculateReversalProbability(initialEntropy, t);
+            
+            return {
+                time: t,
+                entropy,
+                stability,
+                reversalProbability,
+                coherence: 1 - entropy,
+                quantumFluctuations: entropy * 0.1
+            };
+        });
         
         return entropyPredictions;
     }
 
-    async calculateReversalProbability(entropy, time) {
+    calculateReversalProbability(entropy, time) {
         const baseProbability = (1 - entropy) * 0.8;
         const timeFactor = Math.exp(-time / 10000);
-        return baseProbability * timeFactor;
+        const quantumFactor = 1 - entropy;
+        return Math.min(1.0, baseProbability * timeFactor * quantumFactor);
     }
 
-    async initiateEntropyReversal(fieldId, reversalStrength = 0.8) {
-        const field = this.entropyFields.get(fieldId);
-        if (!field) throw new Error(`Entropy field not found: ${fieldId}`);
+    calculateStabilityMetrics(entropy, quantumStates) {
+        const averageCoherence = quantumStates.reduce((sum, state) => sum + state.coherence, 0) / quantumStates.length;
+        const coherenceVariance = quantumStates.reduce((sum, state) => sum + Math.pow(state.coherence - averageCoherence, 2), 0) / quantumStates.length;
+        
+        return {
+            averageCoherence,
+            coherenceVariance,
+            stabilityScore: averageCoherence * (1 - entropy),
+            resilience: (1 - entropy) * averageCoherence,
+            fluctuationTolerance: 1 - coherenceVariance
+        };
+    }
 
-        if (reversalStrength > this.cosmicConstants.get('ENTROPY_REVERSAL_THRESHOLD')) {
-            const reversalId = `reversal_${fieldId}_${Date.now()}`;
-            
-            const reversal = {
-                id: reversalId,
-                field: fieldId,
-                strength: reversalStrength,
-                previousEntropy: field.currentEntropy,
-                newEntropy: field.currentEntropy * (1 - reversalStrength),
-                energyRequired: await this.calculateReversalEnergy(field.currentEntropy, reversalStrength),
-                quantumEffects: await this.calculateQuantumReversalEffects(field, reversalStrength),
-                temporalConsequences: await this.assessTemporalConsequences(field, reversalStrength),
-                causalityPreservation: await this.verifyCausalityPreservation(field, reversalStrength)
-            };
-
-            // Apply the reversal
-            field.currentEntropy = reversal.newEntropy;
-            field.reversalMechanisms.add(reversalId);
-            this.reversalNodes.set(reversalId, reversal);
-
-            return reversal;
+    initiateEntropyReversal(fieldId, reversalStrength = 0.8) {
+        if (!this.initialized) {
+            this.initializeCosmicConstants();
         }
 
-        throw new Error('Reversal strength below threshold');
+        const field = this.entropyFields.get(fieldId);
+        if (!field) {
+            throw new Error(`Entropy field not found: ${fieldId}`);
+        }
+
+        const threshold = this.cosmicConstants.get('ENTROPY_REVERSAL_THRESHOLD');
+        if (reversalStrength <= threshold) {
+            throw new Error(`Reversal strength ${reversalStrength} below threshold ${threshold}`);
+        }
+
+        const reversalId = `reversal_${fieldId}_${Date.now()}`;
+        const previousEntropy = field.currentEntropy;
+        const newEntropy = field.currentEntropy * (1 - reversalStrength);
+        
+        const reversal = {
+            id: reversalId,
+            field: fieldId,
+            strength: reversalStrength,
+            previousEntropy,
+            newEntropy,
+            energyRequired: this.calculateReversalEnergy(previousEntropy, reversalStrength),
+            quantumEffects: this.calculateQuantumReversalEffects(field, reversalStrength),
+            temporalConsequences: this.assessTemporalConsequences(field, reversalStrength),
+            causalityPreservation: this.verifyCausalityPreservation(field, reversalStrength),
+            entropyReduction: previousEntropy - newEntropy,
+            efficiency: reversalStrength * (1 - previousEntropy),
+            timestamp: Date.now()
+        };
+
+        // Apply the reversal
+        field.currentEntropy = newEntropy;
+        field.reversalMechanisms.add(reversalId);
+        field.entropyGradient = this.calculateEntropyGradient(newEntropy);
+        field.temporalEvolution = this.calculateTemporalEntropyEvolution(newEntropy);
+        
+        this.reversalNodes.set(reversalId, reversal);
+
+        return reversal;
     }
 
-    async calculateReversalEnergy(entropy, strength) {
+    calculateReversalEnergy(entropy, strength) {
         const baseEnergy = this.cosmicConstants.get('TIME_REVERSAL_ENERGY');
-        return baseEnergy * entropy * strength;
+        const entropyFactor = Math.log(1 / (entropy + 1e-10));
+        const strengthFactor = Math.pow(strength, 2);
+        return baseEnergy * entropyFactor * strengthFactor * 1e-40;
     }
 
-    async calculateQuantumReversalEffects(field, strength) {
-        return {
-            coherenceEnhancement: field.quantumStates.map(state => ({
+    calculateQuantumReversalEffects(field, strength) {
+        const enhancedStates = field.quantumStates.map(state => {
+            const newCoherence = Math.min(
+                this.cosmicConstants.get('QUANTUM_COHERENCE_LIMIT'),
+                state.coherence + (strength * 0.2)
+            );
+            
+            return {
                 ...state,
-                coherence: Math.min(this.cosmicConstants.get('QUANTUM_COHERENCE_LIMIT'), 
-                                  state.coherence + (strength * 0.2))
-            })),
+                coherence: newCoherence,
+                probability: state.probability * (1 + strength * 0.1),
+                decoherenceRate: state.decoherenceRate * (1 - strength * 0.15)
+            };
+        });
+
+        return {
+            coherenceEnhancement: enhancedStates,
             entanglementStrengthening: strength * 0.3,
-            superpositionExpansion: await this.calculateSuperpositionExpansion(field, strength)
+            superpositionExpansion: this.calculateSuperpositionExpansion(field, strength),
+            quantumFluctuationReduction: strength * 0.25,
+            stateCoherenceImprovement: strength * 0.4
         };
     }
 
-    async calculateSuperpositionExpansion(field, strength) {
+    calculateSuperpositionExpansion(field, strength) {
         const baseStates = field.quantumStates.length;
-        return Math.floor(baseStates * (1 + strength));
-    }
-
-    async assessTemporalConsequences(field, strength) {
-        const causalityFactor = this.cosmicConstants.get('CAUSALITY_PRESERVATION_FACTOR');
+        const expansionFactor = 1 + strength;
+        const newStateCount = Math.floor(baseStates * expansionFactor);
         
         return {
-            timeReversal: strength > 0.9,
-            causalLoops: strength > 0.95,
-            temporalStability: causalityFactor * (1 - strength * 0.1),
-            realityAnchors: await this.verifyRealityAnchors(field, strength)
+            baseStates,
+            newStateCount,
+            expansionFactor,
+            superpositionDepth: strength * 2,
+            quantumComplexity: baseStates * expansionFactor
         };
     }
 
-    async verifyRealityAnchors(field, strength) {
-        const anchorStrength = field.quantumStates.reduce((acc, state) => acc + state.coherence, 0) / field.quantumStates.length;
-        return anchorStrength > (1 - strength) * 0.5;
+    assessTemporalConsequences(field, strength) {
+        const causalityFactor = this.cosmicConstants.get('CAUSALITY_PRESERVATION_FACTOR');
+        const timeReversal = strength > 0.9;
+        const causalLoops = strength > 0.95;
+        
+        return {
+            timeReversal,
+            causalLoops,
+            temporalStability: causalityFactor * (1 - strength * 0.1),
+            realityAnchors: this.verifyRealityAnchors(field, strength),
+            timelineIntegrity: this.assessTimelineIntegrity(field, strength),
+            paradoxRisk: causalLoops ? 0.3 : 0.1,
+            temporalCoherence: 1 - (strength * 0.05)
+        };
     }
 
-    async verifyCausalityPreservation(field, strength) {
+    verifyRealityAnchors(field, strength) {
+        const anchorStrength = field.quantumStates.reduce((acc, state) => acc + state.coherence, 0) / field.quantumStates.length;
+        const stabilityThreshold = (1 - strength) * 0.5;
+        const anchorsHolding = anchorStrength > stabilityThreshold;
+        
+        return {
+            anchorsHolding,
+            anchorStrength,
+            stabilityThreshold,
+            quantumStability: anchorStrength * 0.9,
+            realityCoherence: anchorsHolding ? 0.95 : 0.7
+        };
+    }
+
+    assessTimelineIntegrity(field, strength) {
+        const entropyTrend = this.checkEntropyTrend(field);
+        const quantumConsistency = this.checkQuantumConsistency(field);
+        const temporalAlignment = 1 - (strength * 0.1);
+        
+        return {
+            intact: entropyTrend && quantumConsistency,
+            entropyTrend,
+            quantumConsistency,
+            temporalAlignment,
+            overallIntegrity: (entropyTrend + quantumConsistency + temporalAlignment) / 3
+        };
+    }
+
+    checkEntropyTrend(field) {
+        if (field.temporalEvolution.length < 2) return true;
+        
+        const firstEntropy = field.temporalEvolution[0].entropy;
+        const lastEntropy = field.temporalEvolution[field.temporalEvolution.length - 1].entropy;
+        return lastEntropy <= firstEntropy;
+    }
+
+    checkQuantumConsistency(field) {
+        const coherences = field.quantumStates.map(state => state.coherence);
+        const averageCoherence = coherences.reduce((sum, coh) => sum + coh, 0) / coherences.length;
+        const variance = coherences.reduce((sum, coh) => sum + Math.pow(coh - averageCoherence, 2), 0) / coherences.length;
+        
+        return variance < 0.1 && averageCoherence > 0.5;
+    }
+
+    verifyCausalityPreservation(field, strength) {
         const preservationStrength = this.cosmicConstants.get('CAUSALITY_PRESERVATION_FACTOR');
         const quantumStability = field.quantumStates.every(state => state.coherence > 0.5);
+        const temporalConsistency = this.checkTemporalConsistency(field);
+        const entropyConsistency = this.checkEntropyConsistency(field);
         
+        const preserved = preservationStrength > (1 - strength) && 
+                         quantumStability && 
+                         temporalConsistency && 
+                         entropyConsistency;
+
         return {
-            preserved: preservationStrength > (1 - strength),
+            preserved,
             quantumStability,
-            temporalConsistency: await this.checkTemporalConsistency(field),
-            confidence: preservationStrength * (quantumStability ? 1 : 0.5)
+            temporalConsistency,
+            entropyConsistency,
+            preservationStrength,
+            confidence: (quantumStability + temporalConsistency + entropyConsistency) / 3 * preservationStrength
         };
     }
 
-    async checkTemporalConsistency(field) {
-        // Check that entropy evolution follows expected patterns
-        const currentTrend = field.temporalEvolution[0].entropy > field.temporalEvolution[1].entropy;
-        return currentTrend; // Should be decreasing
+    checkTemporalConsistency(field) {
+        if (field.temporalEvolution.length < 2) return true;
+        
+        const trends = [];
+        for (let i = 1; i < field.temporalEvolution.length; i++) {
+            const current = field.temporalEvolution[i];
+            const previous = field.temporalEvolution[i - 1];
+            trends.push(current.entropy <= previous.entropy);
+        }
+        
+        return trends.every(trend => trend);
+    }
+
+    checkEntropyConsistency(field) {
+        const currentEntropy = field.currentEntropy;
+        const predictedEntropy = field.temporalEvolution[0].entropy;
+        const deviation = Math.abs(currentEntropy - predictedEntropy);
+        return deviation < 0.1;
+    }
+
+    // Additional utility methods
+    getEntropyField(fieldId) {
+        return this.entropyFields.get(fieldId);
+    }
+
+    getAllEntropyFields() {
+        return Array.from(this.entropyFields.values());
+    }
+
+    getReversalNode(reversalId) {
+        return this.reversalNodes.get(reversalId);
+    }
+
+    calculateFieldStatistics() {
+        const fields = Array.from(this.entropyFields.values());
+        if (fields.length === 0) return null;
+
+        const totalEntropy = fields.reduce((sum, field) => sum + field.currentEntropy, 0);
+        const averageEntropy = totalEntropy / fields.length;
+        const activeReversals = Array.from(this.reversalNodes.values()).filter(rev => 
+            Date.now() - rev.timestamp < 60000
+        ).length;
+
+        return {
+            totalFields: fields.length,
+            averageEntropy,
+            totalEntropy,
+            activeReversals,
+            reversalSuccessRate: this.calculateReversalSuccessRate(),
+            systemStability: this.calculateSystemStability(fields),
+            quantumCoherence: this.calculateAverageQuantumCoherence(fields)
+        };
+    }
+
+    calculateReversalSuccessRate() {
+        const reversals = Array.from(this.reversalNodes.values());
+        if (reversals.length === 0) return 1.0;
+
+        const successfulReversals = reversals.filter(rev => 
+            rev.newEntropy < rev.previousEntropy && rev.causalityPreservation.preserved
+        ).length;
+
+        return successfulReversals / reversals.length;
+    }
+
+    calculateSystemStability(fields) {
+        if (fields.length === 0) return 1.0;
+
+        const stabilityScores = fields.map(field => 
+            field.stabilityMetrics.stabilityScore
+        );
+        return stabilityScores.reduce((sum, score) => sum + score, 0) / stabilityScores.length;
+    }
+
+    calculateAverageQuantumCoherence(fields) {
+        if (fields.length === 0) return 1.0;
+
+        const coherenceScores = fields.map(field => 
+            field.stabilityMetrics.averageCoherence
+        );
+        return coherenceScores.reduce((sum, coh) => sum + coh, 0) / coherenceScores.length;
+    }
+
+    // Monitoring and maintenance
+    performSystemDiagnostics() {
+        const statistics = this.calculateFieldStatistics();
+        const diagnostics = {
+            timestamp: Date.now(),
+            statistics,
+            health: this.assessSystemHealth(statistics),
+            recommendations: this.generateMaintenanceRecommendations(statistics),
+            alerts: this.checkForAlerts(statistics)
+        };
+
+        return diagnostics;
+    }
+
+    assessSystemHealth(statistics) {
+        if (!statistics) return 'UNKNOWN';
+
+        const { averageEntropy, reversalSuccessRate, systemStability, quantumCoherence } = statistics;
+        
+        if (averageEntropy < 0.3 && reversalSuccessRate > 0.8 && systemStability > 0.8 && quantumCoherence > 0.8) {
+            return 'OPTIMAL';
+        } else if (averageEntropy < 0.5 && reversalSuccessRate > 0.6 && systemStability > 0.6 && quantumCoherence > 0.6) {
+            return 'HEALTHY';
+        } else if (averageEntropy < 0.7 && reversalSuccessRate > 0.4 && systemStability > 0.4 && quantumCoherence > 0.4) {
+            return 'DEGRADED';
+        } else {
+            return 'CRITICAL';
+        }
+    }
+
+    generateMaintenanceRecommendations(statistics) {
+        const recommendations = [];
+        
+        if (!statistics) return recommendations;
+
+        if (statistics.averageEntropy > 0.6) {
+            recommendations.push('INITIATE_ENTROPY_REDUCTION_CYCLE');
+        }
+        
+        if (statistics.reversalSuccessRate < 0.7) {
+            recommendations.push('OPTIMIZE_REVERSAL_ALGORITHMS');
+        }
+        
+        if (statistics.systemStability < 0.7) {
+            recommendations.push('REINFORCE_QUANTUM_STABILIZATION');
+        }
+        
+        if (statistics.quantumCoherence < 0.7) {
+            recommendations.push('ENHANCE_COHERENCE_MAINTENANCE');
+        }
+
+        return recommendations;
+    }
+
+    checkForAlerts(statistics) {
+        const alerts = [];
+        
+        if (!statistics) {
+            alerts.push('SYSTEM_STATISTICS_UNAVAILABLE');
+            return alerts;
+        }
+
+        if (statistics.averageEntropy > 0.8) {
+            alerts.push('HIGH_SYSTEM_ENTROPY');
+        }
+        
+        if (statistics.reversalSuccessRate < 0.5) {
+            alerts.push('LOW_REVERSAL_SUCCESS_RATE');
+        }
+        
+        if (statistics.systemStability < 0.5) {
+            alerts.push('SYSTEM_STABILITY_COMPROMISED');
+        }
+        
+        if (statistics.quantumCoherence < 0.5) {
+            alerts.push('QUANTUM_COHERENCE_DEGRADED');
+        }
+
+        return alerts;
+    }
+
+    // Cleanup and resource management
+    cleanupOldData(maxAgeMs = 24 * 60 * 60 * 1000) { // 24 hours default
+        const now = Date.now();
+        let cleanedCount = 0;
+
+        // Clean old reversal nodes
+        for (const [reversalId, reversal] of this.reversalNodes.entries()) {
+            if (now - reversal.timestamp > maxAgeMs) {
+                this.reversalNodes.delete(reversalId);
+                cleanedCount++;
+            }
+        }
+
+        // Clean old quantum states
+        for (const [stateId, state] of this.quantumStates.entries()) {
+            if (now - parseInt(state.id.split('_').pop()) > maxAgeMs) {
+                this.quantumStates.delete(stateId);
+                cleanedCount++;
+            }
+        }
+
+        return {
+            cleanedCount,
+            remainingReversals: this.reversalNodes.size,
+            remainingQuantumStates: this.quantumStates.size,
+            timestamp: now
+        };
     }
 }
-
 // =========================================================================
 // COSMIC CONSCIOUSNESS NETWORK - PRODUCTION READY
 // =========================================================================
