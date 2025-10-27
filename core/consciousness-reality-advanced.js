@@ -2917,7 +2917,7 @@ if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
     ADVANCED_CONSCIOUSNESS_ENGINE.initializeAdvancedSystems().catch(console.error);
 }
 
-export default AdvancedConsciousnessRealityEngine;
+export { AdvancedConsciousnessRealityEngine };
 
 // Add this line to export the engine instance
 export { ADVANCED_CONSCIOUSNESS_ENGINE };
