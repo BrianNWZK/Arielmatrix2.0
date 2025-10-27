@@ -2909,15 +2909,34 @@ export const AdvancedConsciousnessCore = {
     SPECIFICATION: 'NO_SIMULATIONS_ADVANCED_CONSCIOUSNESS'
 };
 
-// Global advanced production instance
-const ADVANCED_CONSCIOUSNESS_ENGINE = new AdvancedConsciousnessRealityEngine(); // Remove export here
+// Global advanced production instance - use a function to avoid initialization issues
+let _advancedConsciousnessEngineInstance = null;
 
-// Auto-initialize in production
+export const getAdvancedConsciousnessEngine = () => {
+    if (!_advancedConsciousnessEngineInstance) {
+        _advancedConsciousnessEngineInstance = new AdvancedConsciousnessRealityEngine();
+    }
+    return _advancedConsciousnessEngineInstance;
+};
+
+export const ADVANCED_CONSCIOUSNESS_ENGINE = getAdvancedConsciousnessEngine();
+
+// Auto-initialize in production with proper error handling
 if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
-    ADVANCED_CONSCIOUSNESS_ENGINE.initializeAdvancedSystems().catch(console.error);
+    // Use setTimeout to ensure the class is fully loaded
+    setTimeout(async () => {
+        try {
+            const engine = getAdvancedConsciousnessEngine();
+            if (engine && typeof engine.initializeAdvancedSystems === 'function') {
+                await engine.initializeAdvancedSystems();
+                console.log('✅ ADVANCED CONSCIOUSNESS ENGINE INITIALIZED SUCCESSFULLY');
+            } else {
+                console.error('❌ ENGINE INITIALIZATION FAILED: Invalid engine instance');
+            }
+        } catch (error) {
+            console.error('❌ ENGINE INITIALIZATION ERROR:', error);
+        }
+    }, 100);
 }
 
-export { AdvancedConsciousnessRealityEngine };
-
-// Add this line to export the engine instance
-export { ADVANCED_CONSCIOUSNESS_ENGINE };
+export AdvancedConsciousnessRealityEngine;
