@@ -868,11 +868,11 @@ getActiveKeyCount() {
 }
       
       // SECURE SERVICE REGISTRATION WITH COMPLIANCE
-     // Create and initialize the service
-this.sovereignService = new SovereignRevenueEngine();
-await this.sovereignService.initialize();
+   // Create class instance and initialize service registration
+const sovereignService = new SovereignRevenueEngine();
+await sovereignService.initialize();
 
-this.serviceId = await this.sovereignService.registerService({
+const serviceId = await sovereignService.registerService({
   name: 'EnterpriseOmnipotentBWAEZI',
   description: 'Military-grade computation and governance infrastructure with PQC',
   compliance: ['SOC2', 'ISO27001', 'NIST', 'GDPR', 'HIPAA'],
@@ -887,6 +887,10 @@ this.serviceId = await this.sovereignService.registerService({
   revenueShare: 0.15, // 15% revenue share for enterprise
   minDeposit: 25000 // Minimum deposit for enterprise service
 });
+
+// Export or use the serviceId as needed
+console.log(`✅ Enterprise service registered with ID: ${serviceId}`);
+export { sovereignService, serviceId };
 
       // PARALLEL INITIALIZATION FOR PERFORMANCE
       await Promise.all([
