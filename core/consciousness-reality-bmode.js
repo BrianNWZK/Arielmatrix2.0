@@ -1589,6 +1589,7 @@ export {
     BModeConsciousnessEngine,
     OmnipotentRealityControl,
     TemporalArchitectureEngine,
-    ExistenceMatrixEngine,
-    b_MODE_ENGINE
+    ExistenceMatrixEngine
 };
+
+ export default b_MODE_ENGINE;
