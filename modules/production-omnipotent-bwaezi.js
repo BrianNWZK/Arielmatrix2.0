@@ -867,30 +867,37 @@ getActiveKeyCount() {
   return count;
 }
       
-      // SECURE SERVICE REGISTRATION WITH COMPLIANCE
-   // Create class instance and initialize service registration
-const sovereignService = new SovereignRevenueEngine();
-await sovereignService.initialize();
+     class ProductOmnipotentBWAEZI {
+  constructor() {
+    this.sovereignService = null;
+    this.serviceId = null;
+  }
 
-const serviceId = await sovereignService.registerService({
-  name: 'EnterpriseOmnipotentBWAEZI',
-  description: 'Military-grade computation and governance infrastructure with PQC',
-  compliance: ['SOC2', 'ISO27001', 'NIST', 'GDPR', 'HIPAA'],
-  serviceType: 'enterprise',
-  securityLevel: 'maximum',
-  auditRequirements: 'comprehensive',
-  pqcEnabled: true,
-  algorithms: ['Dilithium3', 'Kyber768'],
-  dataPolicy: 'Zero-Knowledge Military Grade',
-  registrationFee: 10000, // Enterprise registration fee
-  annualLicenseFee: 5000,
-  revenueShare: 0.15, // 15% revenue share for enterprise
-  minDeposit: 25000 // Minimum deposit for enterprise service
-});
+  async initializeSovereignService() {
+    // Create and initialize the service
+    this.sovereignService = new SovereignRevenueEngine();
+    await this.sovereignService.initialize();
 
-// Export or use the serviceId as needed
-console.log(`✅ Enterprise service registered with ID: ${serviceId}`);
-export { sovereignService, serviceId };
+    this.serviceId = await this.sovereignService.registerService({
+      name: 'EnterpriseOmnipotentBWAEZI',
+      description: 'Military-grade computation and governance infrastructure with PQC',
+      compliance: ['SOC2', 'ISO27001', 'NIST', 'GDPR', 'HIPAA'],
+      serviceType: 'enterprise',
+      securityLevel: 'maximum',
+      auditRequirements: 'comprehensive',
+      pqcEnabled: true,
+      algorithms: ['Dilithium3', 'Kyber768'],
+      dataPolicy: 'Zero-Knowledge Military Grade',
+      registrationFee: 10000, // Enterprise registration fee
+      annualLicenseFee: 5000,
+      revenueShare: 0.15, // 15% revenue share for enterprise
+      minDeposit: 25000 // Minimum deposit for enterprise service
+    });
+
+    console.log(`✅ Enterprise service registered with ID: ${this.serviceId}`);
+    return this.serviceId;
+  }
+}
 
       // PARALLEL INITIALIZATION FOR PERFORMANCE
       await Promise.all([
