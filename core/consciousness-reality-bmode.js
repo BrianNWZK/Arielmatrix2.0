@@ -1584,7 +1584,6 @@ export const b_MODE_ENGINE = {
     }
 };
 
-export default b_MODE_ENGINE;
 // Export all engines with proper ES Module syntax
 export {
     BModeConsciousnessEngine,
