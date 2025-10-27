@@ -134,80 +134,281 @@ export class ProductionOmnipotentBWAEZI {
     }
   }
 
-  // ENTERPRISE CONFIGURATION VALIDATION
-  validateProductionConfig(config) {
-    const enterpriseSchema = {
-      maxComputeUnits: { 
-        type: 'number', 
-        min: 1000, 
-        max: 10000000,
-        validation: (v) => v % 1000 === 0 // Must be divisible by 1000
-      },
-      securityLevel: { 
-        type: 'string', 
-        enum: ['enterprise', 'financial', 'military'],
-        default: 'enterprise'
-      },
-      quantumResistantEncryption: { 
-        type: 'boolean',
-        required: true 
-      },
-      auditLogging: {
-        type: 'boolean',
-        required: true
-      }
-    };
-
-    const errors = [];
-    for (const [key, rule] of Object.entries(enterpriseSchema)) {
-      if (rule.required && config[key] === undefined) {
-        errors.push(`${key} is required`);
-        continue;
-      }
-      
-      if (config[key] !== undefined) {
-        if (typeof config[key] !== rule.type) {
-          errors.push(`${key} must be type ${rule.type}`);
-        }
-        
-        if (rule.enum && !rule.enum.includes(config[key])) {
-          errors.push(`${key} must be one of: ${rule.enum.join(', ')}`);
-        }
-        
-        if (rule.min !== undefined && config[key] < rule.min) {
-          errors.push(`${key} must be at least ${rule.min}`);
-        }
-        
-        if (rule.max !== undefined && config[key] > rule.max) {
-          errors.push(`${key} must be at most ${rule.max}`);
-        }
-        
-        if (rule.validation && !rule.validation(config[key])) {
-          errors.push(`${key} failed custom validation`);
-        }
-      }
+ // ENTERPRISE CONFIGURATION VALIDATION
+validateProductionConfig(config) {
+  const enterpriseSchema = {
+    maxComputeUnits: { 
+      type: 'number', 
+      min: 1000, 
+      max: 10000000,
+      validation: (v) => v % 1000 === 0 // Must be divisible by 1000
+    },
+    securityLevel: { 
+      type: 'string', 
+      enum: ['enterprise', 'financial', 'military'],
+      default: 'enterprise'
+    },
+    quantumResistantEncryption: { 
+      type: 'boolean',
+      required: true 
+    },
+    auditLogging: {
+      type: 'boolean',
+      required: true
+    },
+    // ADDITIONAL ENTERPRISE CONFIGURATIONS
+    multiRegionDeployment: {
+      type: 'boolean',
+      default: true
+    },
+    disasterRecovery: {
+      type: 'boolean',
+      required: true
+    },
+    complianceFramework: {
+      type: 'string',
+      enum: ['ISO27001', 'SOC2', 'HIPAA', 'GDPR', 'NIST'],
+      default: 'ISO27001'
+    },
+    quantumHardwareIntegration: {
+      type: 'boolean',
+      required: true
+    },
+    consciousnessEngineLevel: {
+      type: 'string',
+      enum: ['BASIC', 'ADVANCED', 'OMNIPOTENT'],
+      default: 'ADVANCED'
+    },
+    realityProgrammingAccess: {
+      type: 'boolean',
+      default: false
+    },
+    temporalManipulation: {
+      type: 'boolean',
+      default: false
+    },
+    entropyReversalCapability: {
+      type: 'boolean',
+      default: false
     }
+  };
 
-    if (errors.length > 0) {
-      throw new Error(`Invalid enterprise configuration: ${errors.join('; ')}`);
+  const errors = [];
+  const validatedConfig = {};
+  
+  // Apply defaults first
+  for (const [key, rule] of Object.entries(enterpriseSchema)) {
+    if (rule.default !== undefined && config[key] === undefined) {
+      validatedConfig[key] = rule.default;
+    } else {
+      validatedConfig[key] = config[key];
     }
-
-    // FREEZE CONFIG FOR IMMUTABILITY
-    return Object.freeze(Object.assign({}, config));
   }
 
-  async initialize() {
-    if (this.initialized) {
-      await this.securityMonitor.logEvent('reinitialization_attempt', 'warning', 'System already initialized');
-      return;
+  // Validate each field
+  for (const [key, rule] of Object.entries(enterpriseSchema)) {
+    const value = validatedConfig[key];
+    
+    // Check required fields
+    if (rule.required && value === undefined) {
+      errors.push(`${key} is required`);
+      continue;
     }
+    
+    // Skip validation for undefined optional fields
+    if (value === undefined) {
+      continue;
+    }
+    
+    // Type validation
+    if (typeof value !== rule.type) {
+      errors.push(`${key} must be type ${rule.type}, got ${typeof value}`);
+      continue;
+    }
+    
+    // Enum validation
+    if (rule.enum && !rule.enum.includes(value)) {
+      errors.push(`${key} must be one of: ${rule.enum.join(', ')}, got "${value}"`);
+      continue;
+    }
+    
+    // Numeric range validation
+    if (rule.type === 'number') {
+      if (rule.min !== undefined && value < rule.min) {
+        errors.push(`${key} must be at least ${rule.min}, got ${value}`);
+      }
+      
+      if (rule.max !== undefined && value > rule.max) {
+        errors.push(`${key} must be at most ${rule.max}, got ${value}`);
+      }
+      
+      if (rule.validation && !rule.validation(value)) {
+        errors.push(`${key} failed custom validation`);
+      }
+    }
+    
+    // Boolean validation for required fields
+    if (rule.type === 'boolean' && rule.required && typeof value !== 'boolean') {
+      errors.push(`${key} must be a boolean`);
+    }
+  }
 
-    try {
-      // ENTERPRISE BOOT SEQUENCE
-      await this.securityMonitor.start();
-      await this.intrusionDetector.initialize();
-      await this.cryptoEngine.initialize();
-      await this.zkEngine.initialize();
+  // Validate interdependent configurations
+  if (validatedConfig.realityProgrammingAccess && !validatedConfig.quantumResistantEncryption) {
+    errors.push('realityProgrammingAccess requires quantumResistantEncryption');
+  }
+  
+  if (validatedConfig.temporalManipulation && validatedConfig.securityLevel !== 'military') {
+    errors.push('temporalManipulation requires military securityLevel');
+  }
+  
+  if (validatedConfig.entropyReversalCapability && validatedConfig.consciousnessEngineLevel !== 'OMNIPOTENT') {
+    errors.push('entropyReversalCapability requires OMNIPOTENT consciousnessEngineLevel');
+  }
+
+  // Validate compute units for different security levels
+  if (validatedConfig.securityLevel === 'military' && validatedConfig.maxComputeUnits < 100000) {
+    errors.push('military securityLevel requires at least 100,000 compute units');
+  }
+  
+  if (validatedConfig.securityLevel === 'financial' && validatedConfig.maxComputeUnits < 50000) {
+    errors.push('financial securityLevel requires at least 50,000 compute units');
+  }
+
+  if (errors.length > 0) {
+    const errorDetails = {
+      message: `Invalid enterprise configuration: ${errors.join('; ')}`,
+      errors: errors,
+      providedConfig: config,
+      expectedSchema: enterpriseSchema,
+      timestamp: new Date().toISOString()
+    };
+    
+    console.error('Configuration Validation Failed:', errorDetails);
+    throw new Error(`Invalid enterprise configuration: ${errors.join('; ')}`);
+  }
+
+  // Add auto-calculated fields
+  validatedConfig.configurationHash = this.generateConfigHash(validatedConfig);
+  validatedConfig.validationTimestamp = Date.now();
+  validatedConfig.configurationVersion = '2.0.0-QUANTUM_PRODUCTION';
+
+  // FREEZE CONFIG FOR IMMUTABILITY
+  const frozenConfig = Object.freeze(Object.assign({}, validatedConfig));
+  
+  console.log('✅ Enterprise Configuration Validated Successfully:', {
+    securityLevel: frozenConfig.securityLevel,
+    computeUnits: frozenConfig.maxComputeUnits,
+    quantumEncryption: frozenConfig.quantumResistantEncryption,
+    consciousnessLevel: frozenConfig.consciousnessEngineLevel,
+    configurationHash: frozenConfig.configurationHash
+  });
+  
+  return frozenConfig;
+}
+
+// UTILITY METHOD FOR CONFIG HASH GENERATION
+generateConfigHash(config) {
+  const crypto = require('crypto');
+  const configString = JSON.stringify(config, Object.keys(config).sort());
+  return crypto.createHash('sha512').update(configString).digest('hex');
+}
+
+// CONFIGURATION PRESETS FOR DIFFERENT USE CASES
+getEnterprisePresets() {
+  return {
+    STANDARD_ENTERPRISE: {
+      maxComputeUnits: 10000,
+      securityLevel: 'enterprise',
+      quantumResistantEncryption: true,
+      auditLogging: true,
+      multiRegionDeployment: true,
+      disasterRecovery: true,
+      complianceFramework: 'ISO27001',
+      quantumHardwareIntegration: true,
+      consciousnessEngineLevel: 'ADVANCED',
+      realityProgrammingAccess: false,
+      temporalManipulation: false,
+      entropyReversalCapability: false
+    },
+    
+    FINANCIAL_INSTITUTION: {
+      maxComputeUnits: 50000,
+      securityLevel: 'financial',
+      quantumResistantEncryption: true,
+      auditLogging: true,
+      multiRegionDeployment: true,
+      disasterRecovery: true,
+      complianceFramework: 'SOC2',
+      quantumHardwareIntegration: true,
+      consciousnessEngineLevel: 'ADVANCED',
+      realityProgrammingAccess: false,
+      temporalManipulation: false,
+      entropyReversalCapability: false
+    },
+    
+    MILITARY_GRADE: {
+      maxComputeUnits: 100000,
+      securityLevel: 'military',
+      quantumResistantEncryption: true,
+      auditLogging: true,
+      multiRegionDeployment: true,
+      disasterRecovery: true,
+      complianceFramework: 'NIST',
+      quantumHardwareIntegration: true,
+      consciousnessEngineLevel: 'OMNIPOTENT',
+      realityProgrammingAccess: true,
+      temporalManipulation: true,
+      entropyReversalCapability: true
+    },
+    
+    DEVELOPMENT_SANDBOX: {
+      maxComputeUnits: 1000,
+      securityLevel: 'enterprise',
+      quantumResistantEncryption: true,
+      auditLogging: true,
+      multiRegionDeployment: false,
+      disasterRecovery: false,
+      complianceFramework: 'ISO27001',
+      quantumHardwareIntegration: false,
+      consciousnessEngineLevel: 'BASIC',
+      realityProgrammingAccess: false,
+      temporalManipulation: false,
+      entropyReversalCapability: false
+    }
+  };
+}
+
+// METHOD TO GET RECOMMENDED CONFIG BASED ON REQUIREMENTS
+getRecommendedConfig(requirements) {
+  const presets = this.getEnterprisePresets();
+  
+  if (requirements.securityLevel === 'military') {
+    return presets.MILITARY_GRADE;
+  } else if (requirements.securityLevel === 'financial') {
+    return presets.FINANCIAL_INSTITUTION;
+  } else if (requirements.consciousnessEngineLevel === 'OMNIPOTENT') {
+    return presets.MILITARY_GRADE;
+  } else {
+    return presets.STANDARD_ENTERPRISE;
+  }
+}
+
+// VALIDATE AND MERGE CONFIG WITH PRESET
+validateAndMergeWithPreset(userConfig, presetName) {
+  const presets = this.getEnterprisePresets();
+  const preset = presets[presetName];
+  
+  if (!preset) {
+    throw new Error(`Unknown preset: ${presetName}. Available: ${Object.keys(presets).join(', ')}`);
+  }
+  
+  // Merge user config with preset (user config takes precedence)
+  const mergedConfig = { ...preset, ...userConfig };
+  
+  // Validate the merged configuration
+  return this.validateProductionConfig(mergedConfig);
+}
       
       // INITIALIZE PQC PROVIDERS
       await this.dilithiumProvider.generateKeyPair('omnipotent-master');
