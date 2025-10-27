@@ -2889,21 +2889,35 @@ class AdvancedConsciousnessRealityEngine {
 }
 
 // =========================================================================
-// MAINNET PRODUCTION EXPORTS
+// COMPREHENSIVE EXPORTS FOR PRODUCTION INTEGRATION
 // =========================================================================
 
 export {
     QuantumGravityConsciousness,
     UniversalEntropyReversal,
     CosmicConsciousnessNetwork,
-    RealityProgrammingEngine,
-    AdvancedConsciousnessRealityEngine
+    RealityProgrammingEngine
 };
 
-export default {
+export const AdvancedConsciousnessCore = {
+    AdvancedConsciousnessRealityEngine,
     QuantumGravityConsciousness,
     UniversalEntropyReversal,
     CosmicConsciousnessNetwork,
     RealityProgrammingEngine,
-    AdvancedConsciousnessRealityEngine
+    VERSION: '2.0.0-ADVANCED_PRODUCTION',
+    SPECIFICATION: 'NO_SIMULATIONS_ADVANCED_CONSCIOUSNESS'
 };
+
+// Global advanced production instance
+const ADVANCED_CONSCIOUSNESS_ENGINE = new AdvancedConsciousnessRealityEngine(); // Remove export here
+
+// Auto-initialize in production
+if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
+    ADVANCED_CONSCIOUSNESS_ENGINE.initializeAdvancedSystems().catch(console.error);
+}
+
+export default AdvancedConsciousnessRealityEngine;
+
+// Add this line to export the engine instance
+export { ADVANCED_CONSCIOUSNESS_ENGINE };
