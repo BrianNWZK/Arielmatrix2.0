@@ -1431,6 +1431,6 @@ console.log('🚀 BWAEZI Zero-Cost DPoS Engine - PRODUCTION READY');
 console.log('🔗 Integrated with Sovereign Revenue Engine');
 console.log('🛡️  Compliant with Architectural Standards');
 console.log('💰 Real Economic Model with Staking Rewards');
-console.log('⚡ DeepSeek AI Innovations Enabled');
+console.log('⚡ BWAEZI AI Innovations Enabled');
 
 export default zeroCostDPoS;
