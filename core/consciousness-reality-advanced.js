@@ -2939,4 +2939,4 @@ if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
     }, 100);
 }
 
-export default AdvancedConsciousnessRealityEngine;
+export { AdvancedConsciousnessRealityEngine };
