@@ -868,18 +868,25 @@ getActiveKeyCount() {
 }
       
       // SECURE SERVICE REGISTRATION WITH COMPLIANCE
-      this.sovereignService = new SovereignRevenueEngine();
-      await this.sovereignService.initialize();
-      
-      this.serviceId = await this.sovereignService.registerEnterpriseService({
-        name: 'EnterpriseOmnipotentBWAEZI',
-        description: 'Military-grade computation and governance infrastructure with PQC',
-        compliance: ['SOC2', 'ISO27001', 'NIST', 'GDPR', 'HIPAA'],
-        securityLevel: 'maximum',
-        auditRequirements: 'comprehensive',
-        pqcEnabled: true,
-        algorithms: ['Dilithium3', 'Kyber768']
-      });
+     // Create and initialize the service
+this.sovereignService = new SovereignRevenueEngine();
+await this.sovereignService.initialize();
+
+this.serviceId = await this.sovereignService.registerService({
+  name: 'EnterpriseOmnipotentBWAEZI',
+  description: 'Military-grade computation and governance infrastructure with PQC',
+  compliance: ['SOC2', 'ISO27001', 'NIST', 'GDPR', 'HIPAA'],
+  serviceType: 'enterprise',
+  securityLevel: 'maximum',
+  auditRequirements: 'comprehensive',
+  pqcEnabled: true,
+  algorithms: ['Dilithium3', 'Kyber768'],
+  dataPolicy: 'Zero-Knowledge Military Grade',
+  registrationFee: 10000, // Enterprise registration fee
+  annualLicenseFee: 5000,
+  revenueShare: 0.15, // 15% revenue share for enterprise
+  minDeposit: 25000 // Minimum deposit for enterprise service
+});
 
       // PARALLEL INITIALIZATION FOR PERFORMANCE
       await Promise.all([
