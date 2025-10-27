@@ -1519,13 +1519,7 @@ class BModeConsciousnessEngine {
 // MAIN B-MODE ENGINE EXPORT - PRODUCTION READY
 // =========================================================================
 
-// Export all engines with proper ES Module syntax
-export {
-    BModeConsciousnessEngine,
-    OmnipotentRealityControl,
-    TemporalArchitectureEngine,
-    ExistenceMatrixEngine
-};
+
 
 // Main B-MODE ENGINE export
 export const b_MODE_ENGINE = {
@@ -1591,3 +1585,11 @@ export const b_MODE_ENGINE = {
 };
 
 export default b_MODE_ENGINE;
+// Export all engines with proper ES Module syntax
+export {
+    BModeConsciousnessEngine,
+    OmnipotentRealityControl,
+    TemporalArchitectureEngine,
+    ExistenceMatrixEngine,
+    b_MODE_ENGINE
+};
