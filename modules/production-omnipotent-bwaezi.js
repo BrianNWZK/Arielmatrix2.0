@@ -410,12 +410,462 @@ validateAndMergeWithPreset(userConfig, presetName) {
   return this.validateProductionConfig(mergedConfig);
 }
       
-      // INITIALIZE PQC PROVIDERS
-      await this.dilithiumProvider.generateKeyPair('omnipotent-master');
-      await this.kyberProvider.generateKeyPair('omnipotent-kyber-master');
+     // PQC PROVIDERS INITIALIZATION - ES MODULE COMPATIBLE
+initializePQCProviders() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      console.log('🔐 INITIALIZING QUANTUM-RESISTANT CRYPTOGRAPHY...');
       
-      await this.db.init();
-      await this.createEnterpriseTables();
+      // Initialize Dilithium provider synchronously first
+      if (!this.dilithiumProvider) {
+        this.dilithiumProvider = new DilithiumProvider();
+      }
+      
+      // Initialize Kyber provider synchronously first
+      if (!this.kyberProvider) {
+        this.kyberProvider = new KyberProvider();
+      }
+      
+      // Generate key pairs with proper async handling
+      const dilithiumPromise = this.dilithiumProvider.generateKeyPair('omnipotent-master');
+      const kyberPromise = this.kyberProvider.generateKeyPair('omnipotent-kyber-master');
+      
+      // Wait for both key generation operations
+      const [dilithiumResult, kyberResult] = await Promise.all([
+        dilithiumPromise,
+        kyberPromise
+      ]);
+      
+      console.log('✅ PQC KEY PAIRS GENERATED:', {
+        dilithium: dilithiumResult.keyId,
+        kyber: kyberResult.keyId,
+        timestamp: new Date().toISOString()
+      });
+      
+      resolve({
+        dilithium: dilithiumResult,
+        kyber: kyberResult,
+        status: 'PQC_PROVIDERS_INITIALIZED'
+      });
+      
+    } catch (error) {
+      console.error('❌ PQC PROVIDERS INITIALIZATION FAILED:', error);
+      reject(new Error(`PQC initialization failed: ${error.message}`));
+    }
+  });
+}
+
+// DATABASE INITIALIZATION - ES MODULE COMPATIBLE
+initializeDatabase() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      console.log('🗄️ INITIALIZING ENTERPRISE DATABASE...');
+      
+      if (!this.db) {
+        this.db = new EnterpriseDatabase();
+      }
+      
+      // Initialize database
+      const dbResult = await this.db.init();
+      console.log('✅ DATABASE INITIALIZED:', dbResult);
+      
+      // Create enterprise tables
+      const tablesResult = await this.createEnterpriseTables();
+      console.log('✅ ENTERPRISE TABLES CREATED:', tablesResult);
+      
+      resolve({
+        database: dbResult,
+        tables: tablesResult,
+        status: 'DATABASE_INITIALIZED'
+      });
+      
+    } catch (error) {
+      console.error('❌ DATABASE INITIALIZATION FAILED:', error);
+      reject(new Error(`Database initialization failed: ${error.message}`));
+    }
+  });
+}
+
+// ENTERPRISE TABLE CREATION
+createEnterpriseTables() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const tables = [
+        {
+          name: 'quantum_entropy_fields',
+          schema: `
+            id TEXT PRIMARY KEY,
+            region TEXT NOT NULL,
+            current_entropy REAL NOT NULL,
+            target_entropy REAL NOT NULL,
+            quantum_states JSON NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          `,
+          indexes: ['region', 'current_entropy']
+        },
+        {
+          name: 'reality_constructs',
+          schema: `
+            id TEXT PRIMARY KEY,
+            blueprint JSON NOT NULL,
+            energy_level REAL NOT NULL,
+            consciousness_coupling REAL NOT NULL,
+            quantum_state JSON NOT NULL,
+            stability_metrics JSON NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          `,
+          indexes: ['energy_level', 'consciousness_coupling']
+        },
+        {
+          name: 'temporal_nodes',
+          schema: `
+            id TEXT PRIMARY KEY,
+            timestamp INTEGER NOT NULL,
+            quantum_state JSON NOT NULL,
+            causal_links JSON NOT NULL,
+            resonance REAL NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          `,
+          indexes: ['timestamp', 'resonance']
+        },
+        {
+          name: 'consciousness_network',
+          schema: `
+            id TEXT PRIMARY KEY,
+            position JSON NOT NULL,
+            intensity REAL NOT NULL,
+            coherence REAL NOT NULL,
+            quantum_state JSON NOT NULL,
+            connections JSON NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          `,
+          indexes: ['intensity', 'coherence']
+        },
+        {
+          name: 'enterprise_audit_log',
+          schema: `
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            security_level TEXT NOT NULL,
+            user_id TEXT,
+            details JSON NOT NULL,
+            ip_address TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+          `,
+          indexes: ['event_type', 'security_level', 'timestamp']
+        }
+      ];
+      
+      const creationResults = [];
+      
+      for (const table of tables) {
+        const result = await this.db.createTable(table.name, table.schema, table.indexes);
+        creationResults.push({
+          table: table.name,
+          status: result ? 'CREATED' : 'EXISTS',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      resolve({
+        tables: creationResults,
+        totalTables: tables.length,
+        status: 'ENTERPRISE_TABLES_CREATED'
+      });
+      
+    } catch (error) {
+      reject(new Error(`Table creation failed: ${error.message}`));
+    }
+  });
+}
+
+// COMPLETE ENTERPRISE INITIALIZATION - ES MODULE COMPATIBLE
+async initialize() {
+  if (this.initialized) {
+    await this.securityMonitor.logEvent('reinitialization_attempt', 'warning', 'System already initialized');
+    return {
+      status: 'ALREADY_INITIALIZED',
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  try {
+    console.log('🚀 INITIALIZING ENTERPRISE OMNIPOTENT SYSTEM...');
+    
+    // ENTERPRISE CONFIGURATION VALIDATION
+    const enterpriseConfig = this.validateProductionConfig({
+      maxComputeUnits: 100000,
+      securityLevel: 'military',
+      quantumResistantEncryption: true,
+      auditLogging: true,
+      multiRegionDeployment: true,
+      disasterRecovery: true,
+      complianceFramework: 'NIST',
+      quantumHardwareIntegration: true,
+      consciousnessEngineLevel: 'OMNIPOTENT',
+      realityProgrammingAccess: true,
+      temporalManipulation: true,
+      entropyReversalCapability: true
+    });
+    
+    console.log('✅ ENTERPRISE CONFIG VALIDATED:', {
+      securityLevel: enterpriseConfig.securityLevel,
+      computeUnits: enterpriseConfig.maxComputeUnits
+    });
+
+    // PARALLEL INITIALIZATION OF CORE SYSTEMS
+    const initializationPromises = [
+      this.initializePQCProviders(),
+      this.initializeDatabase(),
+      this.securityMonitor.start(),
+      this.intrusionDetector.initialize(),
+      this.cryptoEngine.initialize(),
+      this.zkEngine.initialize()
+    ];
+
+    // Wait for all initializations to complete
+    const results = await Promise.allSettled(initializationPromises);
+    
+    // Check for any failures
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length > 0) {
+      const errorMessages = failures.map(f => f.reason.message).join('; ');
+      throw new Error(`Initialization failures: ${errorMessages}`);
+    }
+
+    // Extract successful results
+    const successfulResults = results.map(result => result.value);
+    
+    console.log('✅ ALL ENTERPRISE SYSTEMS INITIALIZED:', {
+      pqcProviders: successfulResults[0]?.status,
+      database: successfulResults[1]?.status,
+      securityMonitor: 'ACTIVE',
+      intrusionDetector: 'ACTIVE',
+      cryptoEngine: 'ACTIVE',
+      zkEngine: 'ACTIVE'
+    });
+
+    this.initialized = true;
+    this.enterpriseConfig = enterpriseConfig;
+
+    // LOG SUCCESSFUL INITIALIZATION
+    await this.securityMonitor.logEvent(
+      'system_initialized', 
+      'info', 
+      'Enterprise omnipotent system initialized successfully'
+    );
+
+    return {
+      status: 'INITIALIZED',
+      timestamp: new Date().toISOString(),
+      enterpriseConfig: {
+        securityLevel: enterpriseConfig.securityLevel,
+        consciousnessEngineLevel: enterpriseConfig.consciousnessEngineLevel,
+        configurationHash: enterpriseConfig.configurationHash
+      },
+      subsystems: {
+        pqc: successfulResults[0],
+        database: successfulResults[1],
+        security: 'ACTIVE',
+        cryptography: 'ACTIVE',
+        zeroKnowledge: 'ACTIVE'
+      }
+    };
+    
+  } catch (error) {
+    console.error('❌ ENTERPRISE INITIALIZATION FAILED:', error);
+    
+    // ATTEMPT GRACEFUL RECOVERY
+    try {
+      await this.securityMonitor.logEvent(
+        'initialization_failed', 
+        'error', 
+        `Enterprise initialization failed: ${error.message}`
+      );
+    } catch (logError) {
+      console.error('❌ FAILED TO LOG INITIALIZATION ERROR:', logError);
+    }
+
+    // PROVIDE RECOVERY SUGGESTIONS
+    const recoveryConfig = this.getRecommendedConfig({
+      securityLevel: 'enterprise',
+      consciousnessEngineLevel: 'ADVANCED'
+    });
+    
+    console.log('💡 RECOVERY SUGGESTION: Try with reduced configuration:', recoveryConfig);
+    
+    throw new Error(`Enterprise initialization failed: ${error.message}`);
+  }
+}
+
+// INDIVIDUAL SUBSYSTEM INITIALIZATION METHODS
+initializeSecurityMonitor() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!this.securityMonitor) {
+        this.securityMonitor = new EnterpriseSecurityMonitor();
+      }
+      
+      const result = await this.securityMonitor.start();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+initializeIntrusionDetector() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!this.intrusionDetector) {
+        this.intrusionDetector = new QuantumIntrusionDetector();
+      }
+      
+      const result = await this.intrusionDetector.initialize();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+initializeCryptoEngine() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!this.cryptoEngine) {
+        this.cryptoEngine = new QuantumCryptoEngine();
+      }
+      
+      const result = await this.cryptoEngine.initialize();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+initializeZKEngine() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!this.zkEngine) {
+        this.zkEngine = new ZeroKnowledgeEngine();
+      }
+      
+      const result = await this.zkEngine.initialize();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+// HEALTH CHECK METHOD
+async healthCheck() {
+  if (!this.initialized) {
+    return {
+      status: 'NOT_INITIALIZED',
+      timestamp: new Date().toISOString(),
+      message: 'System not initialized'
+    };
+  }
+
+  try {
+    const checks = [
+      this.checkPQCHealth(),
+      this.checkDatabaseHealth(),
+      this.checkSecurityHealth(),
+      this.checkCryptoHealth()
+    ];
+
+    const results = await Promise.allSettled(checks);
+    
+    const healthStatus = {
+      status: 'HEALTHY',
+      timestamp: new Date().toISOString(),
+      subsystems: {}
+    };
+
+    results.forEach((result, index) => {
+      const subsystem = ['pqc', 'database', 'security', 'crypto'][index];
+      if (result.status === 'fulfilled') {
+        healthStatus.subsystems[subsystem] = {
+          status: 'HEALTHY',
+          details: result.value
+        };
+      } else {
+        healthStatus.subsystems[subsystem] = {
+          status: 'UNHEALTHY',
+          error: result.reason.message
+        };
+        healthStatus.status = 'DEGRADED';
+      }
+    });
+
+    return healthStatus;
+    
+  } catch (error) {
+    return {
+      status: 'UNHEALTHY',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    };
+  }
+}
+
+// INDIVIDUAL HEALTH CHECK METHODS
+checkPQCHealth() {
+  return new Promise((resolve) => {
+    const health = {
+      dilithium: this.dilithiumProvider ? 'ACTIVE' : 'INACTIVE',
+      kyber: this.kyberProvider ? 'ACTIVE' : 'INACTIVE',
+      keyCount: this.getActiveKeyCount(),
+      timestamp: new Date().toISOString()
+    };
+    resolve(health);
+  });
+}
+
+checkDatabaseHealth() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const health = await this.db.healthCheck();
+      resolve(health);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+checkSecurityHealth() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const health = await this.securityMonitor.healthCheck();
+      resolve(health);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+checkCryptoHealth() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const health = await this.cryptoEngine.healthCheck();
+      resolve(health);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+// UTILITY METHOD
+getActiveKeyCount() {
+  let count = 0;
+  if (this.dilithiumProvider) count++;
+  if (this.kyberProvider) count++;
+  return count;
+}
       
       // SECURE SERVICE REGISTRATION WITH COMPLIANCE
       this.sovereignService = new SovereignRevenueEngine();
