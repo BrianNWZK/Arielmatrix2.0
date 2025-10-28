@@ -1,4 +1,4 @@
-// arielsql_suite/main.js - GOD MODE INTEGRATED v4.4 - PRODUCTION FIXED
+// arielsql_suite/main.js - GOD MODE INTEGRATED v4.4 - PRODUCTION PORT BINDING FIXED
 import http from "http";
 import express from "express";
 import cors from "cors";
@@ -714,8 +714,6 @@ function createExpressApplication() {
     }
   });
   
-  // ... [REST OF ORIGINAL ENDPOINTS WITH GOD MODE ENHANCEMENTS] ...
-
   // Enhanced 404 handler
   app.use('*', (req, res) => {
     res.status(404).json({
@@ -770,17 +768,17 @@ function createExpressApplication() {
   return app;
 }
 
-// --- Enhanced Server Creation with GOD MODE Protection ---
+// --- Enhanced Server Creation with PORT BINDING FIX ---
 function createServer(app) {
   const logger = getGlobalLogger();
   
-  // CRITICAL FIX: Proper port binding for Render/container deployment
+  // CRITICAL FIX: Dynamic port binding for container deployment
   const PORT = process.env.PORT || 10000;
-  const HOST = '0.0.0.0';
+  const HOST = '0.0.0.0'; // Critical for container binding
   
   const server = http.createServer(app);
   
-  // Enhanced error handling for server with GOD MODE
+  // Enhanced error handling for server with PORT BINDING FIX
   server.on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
       logger.error(`❌ Port ${PORT} is already in use`);
@@ -789,8 +787,11 @@ function createServer(app) {
       if (godModeActive) {
         logger.warn('👑 Attempting GOD MODE port recovery...');
         try {
-          // In a real implementation, this would attempt to find an alternative port
-          logger.warn('🔧 GOD MODE would attempt alternative port binding');
+          // Attempt to use alternative port
+          const altPort = parseInt(PORT) + 1;
+          logger.warn(`🔧 GOD MODE attempting alternative port: ${altPort}`);
+          server.listen(altPort, HOST);
+          return;
         } catch (recoveryError) {
           logger.error('❌ GOD MODE port recovery failed:', recoveryError);
         }
@@ -806,6 +807,7 @@ function createServer(app) {
   server.on('listening', () => {
     const address = server.address();
     logger.success(`✅ Server successfully bound to ${address.address}:${address.port}${godModeActive ? ' - GOD MODE PROTECTED' : ''}`);
+    logger.success(`🌐 Server accessible at: http://${HOST}:${address.port}`);
   });
   
   return {
@@ -815,9 +817,9 @@ function createServer(app) {
   };
 }
 
-// --- Enhanced Main Application Initialization with GOD MODE ---
+// --- Enhanced Main Application Initialization with PORT BINDING FIX ---
 async function initializeArielSQLSuite() {
-  console.log('🚀 ArielSQL Ultimate Suite v4.4 - GOD MODE INTEGRATION');
+  console.log('🚀 ArielSQL Ultimate Suite v4.4 - PORT BINDING FIXED');
   console.log('📅 Started at:', new Date().toISOString());
   
   // Log critical deployment information
@@ -868,44 +870,69 @@ async function initializeArielSQLSuite() {
     logger.info('🌐 STEP 5: Creating Express application...');
     const app = createExpressApplication();
     
-    // Step 7: Create HTTP server with proper binding
-    logger.info('🔌 STEP 6: Creating HTTP server with GOD MODE protection...');
+    // Step 7: Create HTTP server with PROPER PORT BINDING
+    logger.info('🔌 STEP 6: Creating HTTP server with PORT BINDING FIX...');
     const { server, PORT, HOST } = createServer(app);
     
-    // Start server with proper error handling
-    server.listen(PORT, HOST, () => {
-      const address = server.address();
-      logger.success(`✅ ArielSQL Ultimate Suite v4.4 running on http://${address.address}:${address.port}`);
-      logger.success(`🔗 Health check: http://${address.address}:${address.port}/health`);
-      logger.success(`👑 God Mode: http://${address.address}:${address.port}/god-mode-status`);
-      logger.success(`🔐 Quantum Crypto: http://${address.address}:${address.port}/quantum-crypto-status`);
-      logger.success(`🌍 RPC Endpoint: http://${address.address}:${address.port}/bwaezi-rpc`);
-      logger.success(`📊 Analytics: http://${address.address}:${address.port}/api/analytics`);
-      logger.success(`📈 Metrics: http://${address.address}:${address.port}/api/metrics`);
-      logger.success(`💰 Revenue: http://${address.address}:${address.port}/revenue-analytics`);
-      
-      console.log('\n🎉 ArielSQL Ultimate Suite v4.4 - FULLY OPERATIONAL');
-      console.log('🚀 PRIMARY PRODUCTION SERVER: READY FOR GLOBAL TRAFFIC');
-      console.log('👑 GOD MODE: ' + (godModeActive ? 'FULLY ACTIVATED' : 'INACTIVE'));
-      console.log('🔐 QUANTUM CRYPTO: PRODUCTION READY & ACTIVE');
-      console.log('🔗 BLOCKCHAIN: CONNECTED TO BWAEZI MAINNET');
-      console.log('🔐 CREDENTIALS: CENTRALIZED RETRIEVAL ACTIVE');
-      console.log('📊 ANALYTICS: ENTERPRISE GRADE ACTIVE');
-      console.log('🛡️ SECURITY: GOD MODE ENHANCED PROTECTION');
-      console.log(`🌐 PORT: ${PORT} (Properly bound for deployment)`);
-      console.log(`🏠 HOST: ${HOST} (Container compatible)`);
-      console.log(`⏰ Uptime: ${process.uptime().toFixed(2)}s`);
-      
-      if (godModeActive) {
-        console.log('\n💎 SOVEREIGN CORE SYSTEMS:');
-        console.log('   🌌 Quantum Security: ACTIVE');
-        console.log('   🧠 Consciousness Integration: OPERATIONAL');
-        console.log('   🔮 Reality Programming: ENABLED');
-        console.log('   ⚡ Hyper-Dimensional Ops: READY');
-        console.log('   🕰️ Temporal Synchronization: ACTIVE');
-        console.log('   🔐 Quantum Crypto: PRODUCTION READY');
-      }
-    });
+    // CRITICAL FIX: Start server with proper error handling and port binding
+    let serverStarted = false;
+    
+    const startServer = (port, host) => {
+      server.listen(port, host, (err) => {
+        if (err) {
+          if (err.code === 'EADDRINUSE') {
+            logger.error(`❌ Port ${port} is already in use, trying alternative...`);
+            
+            // Try alternative port
+            if (!serverStarted && port === parseInt(PORT)) {
+              const altPort = parseInt(port) + 1;
+              logger.warn(`🔄 Attempting alternative port: ${altPort}`);
+              startServer(altPort, host);
+              return;
+            }
+          }
+          
+          logger.error('❌ Server failed to start:', err);
+          process.exit(1);
+        }
+        
+        serverStarted = true;
+        const address = server.address();
+        logger.success(`✅ ArielSQL Ultimate Suite v4.4 running on http://${address.address}:${address.port}`);
+        logger.success(`🔗 Health check: http://${address.address}:${address.port}/health`);
+        logger.success(`👑 God Mode: http://${address.address}:${address.port}/god-mode-status`);
+        logger.success(`🔐 Quantum Crypto: http://${address.address}:${address.port}/quantum-crypto-status`);
+        logger.success(`🌍 RPC Endpoint: http://${address.address}:${address.port}/bwaezi-rpc`);
+        logger.success(`📊 Analytics: http://${address.address}:${address.port}/api/analytics`);
+        logger.success(`📈 Metrics: http://${address.address}:${address.port}/api/metrics`);
+        logger.success(`💰 Revenue: http://${address.address}:${address.port}/revenue-analytics`);
+        
+        console.log('\n🎉 ArielSQL Ultimate Suite v4.4 - FULLY OPERATIONAL');
+        console.log('🚀 PRIMARY PRODUCTION SERVER: READY FOR GLOBAL TRAFFIC');
+        console.log('👑 GOD MODE: ' + (godModeActive ? 'FULLY ACTIVATED' : 'INACTIVE'));
+        console.log('🔐 QUANTUM CRYPTO: PRODUCTION READY & ACTIVE');
+        console.log('🔗 BLOCKCHAIN: CONNECTED TO BWAEZI MAINNET');
+        console.log('🔐 CREDENTIALS: CENTRALIZED RETRIEVAL ACTIVE');
+        console.log('📊 ANALYTICS: ENTERPRISE GRADE ACTIVE');
+        console.log('🛡️ SECURITY: GOD MODE ENHANCED PROTECTION');
+        console.log(`🌐 PORT: ${address.port} (Successfully bound)`);
+        console.log(`🏠 HOST: ${address.address} (Container compatible)`);
+        console.log(`⏰ Uptime: ${process.uptime().toFixed(2)}s`);
+        
+        if (godModeActive) {
+          console.log('\n💎 SOVEREIGN CORE SYSTEMS:');
+          console.log('   🌌 Quantum Security: ACTIVE');
+          console.log('   🧠 Consciousness Integration: OPERATIONAL');
+          console.log('   🔮 Reality Programming: ENABLED');
+          console.log('   ⚡ Hyper-Dimensional Ops: READY');
+          console.log('   🕰️ Temporal Synchronization: ACTIVE');
+          console.log('   🔐 Quantum Crypto: PRODUCTION READY');
+        }
+      });
+    };
+    
+    // Start the server with initial port
+    startServer(PORT, HOST);
     
     // Enhanced graceful shutdown with GOD MODE
     const gracefulShutdown = async (signal) => {
@@ -1012,18 +1039,5 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes
     process.exit(1);
   });
 }
-// --- DEBUG SERVER STARTUP ---
-console.log('🔍 DEBUG: Checking if we should start server...');
-console.log('🔍 import.meta.url:', import.meta.url);
-console.log('🔍 process.argv[1]:', process.argv[1]);
-console.log('🔍 Starting server now...');
-
-// Force server start
-initializeArielSQLSuite().then(() => {
-  console.log('✅ SERVER STARTUP INITIATED SUCCESSFULLY');
-}).catch(error => {
-  console.error('❌ SERVER STARTUP FAILED:', error);
-  process.exit(1);
-});
 
 export default initializeArielSQLSuite;
