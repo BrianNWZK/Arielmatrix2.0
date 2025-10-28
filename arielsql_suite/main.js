@@ -901,39 +901,42 @@ function createServer(app) {
   
   const server = http.createServer(app);
   
-  // SIMPLIFIED error handling - no complex recursion
-  server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
-      logger.error(`❌ Port ${PORT} is already in use`);
-      logger.warn(`🔄 Trying alternative port ${PORT + 1}...`);
-      
-      // Create new server instance on alternative port
-      const altServer = http.createServer(app);
-      altServer.listen(PORT + 1, HOST, () => {
-        const address = altServer.address();
-        logger.success(`✅ Server successfully bound to ALTERNATIVE PORT ${address.port}`);
-        logger.success(`🌐 Server accessible at: http://${HOST}:${address.port}`);
-      });
-      
-      altServer.on('error', (altError) => {
-        logger.error(`❌ Alternative port ${PORT + 1} also failed:`, altError);
-        process.exit(1);
-      });
-      
-      return altServer;
-    } else {
-      logger.error('❌ Server error:', error);
-      process.exit(1);
-    }
+  return new Promise((resolve, reject) => {
+    // Try to start server on primary port
+    server.listen(PORT, HOST, () => {
+      const address = server.address();
+      logger.success(`✅ SERVER SUCCESSFULLY BOUND TO PORT ${address.port}`);
+      logger.success(`🌐 Primary URL: http://${HOST}:${address.port}`);
+      resolve({ server, PORT: address.port, HOST });
+    });
+    
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        logger.error(`❌ Port ${PORT} is already in use`);
+        logger.warn(`🔄 Trying alternative port ${PORT + 1}...`);
+        
+        // Close the current server and try alternative port
+        server.close();
+        
+        const altServer = http.createServer(app);
+        altServer.listen(PORT + 1, HOST, () => {
+          const address = altServer.address();
+          logger.success(`✅ Server successfully bound to ALTERNATIVE PORT ${address.port}`);
+          logger.success(`🌐 Server accessible at: http://${HOST}:${address.port}`);
+          resolve({ server: altServer, PORT: address.port, HOST });
+        });
+        
+        altServer.on('error', (altError) => {
+          logger.error(`❌ Alternative port ${PORT + 1} also failed:`, altError);
+          reject(altError);
+        });
+      } else {
+        logger.error('❌ Server error:', error);
+        reject(error);
+      }
+    });
   });
-  
-  return {
-    server,
-    PORT,
-    HOST
-  };
 }
-
 // 🔥 CRITICAL FIX: STREAMLINED INITIALIZATION WITH PORT BINDING FIRST
 async function initializeArielSQLSuite() {
   console.log('🚀 ArielSQL Ultimate Suite v4.4 - CRITICAL FIXES APPLIED');
@@ -960,22 +963,18 @@ async function initializeArielSQLSuite() {
     logger.info('🌐 STEP 1: Creating Express application...');
     const app = createExpressApplication();
     
-    // 🔥 CRITICAL FIX: START SERVER IMMEDIATELY - DON'T WAIT FOR OTHER SYSTEMS
-    logger.info('🔌 STEP 2: Starting HTTP server with PORT BINDING...');
-    const { server, PORT, HOST } = createServer(app);
-    
-    // Start server immediately
-    server.listen(PORT, HOST, () => {
-      const address = server.address();
-      logger.success(`✅ SERVER SUCCESSFULLY BOUND TO PORT ${address.port}`);
-      logger.success(`🌐 Primary URL: http://${HOST}:${address.port}`);
-      logger.success(`💰 Revenue Status: http://${HOST}:${address.port}/revenue-status`);
-      logger.success(`🔧 Health Check: http://${HOST}:${address.port}/health`);
-      
-      console.log('\n🎉 CRITICAL FIX: PORT BINDING SUCCESSFUL!');
-      console.log('🚀 REVENUE GENERATION NOW POSSIBLE');
-      console.log(`📡 Port ${address.port} is OPEN and ACCEPTING REQUESTS`);
-    });
+   // 🔥 CRITICAL FIX: START SERVER IMMEDIATELY - DON'T WAIT FOR OTHER SYSTEMS
+logger.info('🔌 STEP 2: Starting HTTP server with PORT BINDING...');
+const { server, PORT, HOST } = await createServer(app);
+
+logger.success(`✅ SERVER SUCCESSFULLY BOUND TO PORT ${PORT}`);
+logger.success(`🌐 Primary URL: http://${HOST}:${PORT}`);
+logger.success(`💰 Revenue Status: http://${HOST}:${PORT}/revenue-status`);
+logger.success(`🔧 Health Check: http://${HOST}:${PORT}/health`);
+
+console.log('\n🎉 CRITICAL FIX: PORT BINDING SUCCESSFUL!');
+console.log('🚀 REVENUE GENERATION NOW POSSIBLE');
+console.log(`📡 Port ${PORT} is OPEN and ACCEPTING REQUESTS`);
 
     // 🔥 INITIALIZE OTHER SYSTEMS ASYNCHRONOUSLY (NON-BLOCKING)
     logger.info('🔧 STEP 3: Initializing other systems asynchronously...');
