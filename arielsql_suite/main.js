@@ -1012,10 +1012,17 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes
     process.exit(1);
   });
 }
-// --- IMMEDIATE SERVER STARTUP (ADD THIS) ---
-console.log('🎯 FORCING SERVER STARTUP...');
-initializeArielSQLSuite().catch(error => {
-  console.error('💀 Fatal error during startup:', error);
+// --- DEBUG SERVER STARTUP ---
+console.log('🔍 DEBUG: Checking if we should start server...');
+console.log('🔍 import.meta.url:', import.meta.url);
+console.log('🔍 process.argv[1]:', process.argv[1]);
+console.log('🔍 Starting server now...');
+
+// Force server start
+initializeArielSQLSuite().then(() => {
+  console.log('✅ SERVER STARTUP INITIATED SUCCESSFULLY');
+}).catch(error => {
+  console.error('❌ SERVER STARTUP FAILED:', error);
   process.exit(1);
 });
 
