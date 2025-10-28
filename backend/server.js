@@ -6,7 +6,7 @@
  */
 
 import { ApolloServer } from '@apollo/server';
-import { startStandaloneServer } from '@apollo/server/standalone'; // ✅ CORRECT IMPORT
+import { startStandaloneServer } from '@apollo/server/standalone';
 import cors from 'cors';
 import express from 'express';
 import 'dotenv/config';
@@ -18,449 +18,115 @@ import { createDatabase } from './database/BrianNwaezikeDB.js';
 // Global instances
 let blockchainInstance = null;
 let currentCredentials = null;
+let backendInitialized = false;
 
-// 🎯 SET CREDENTIALS FROM MAIN.JS
-export function setBackendCredentials(credentials) {
-    currentCredentials = credentials;
-    console.log('✅ Backend credentials set from main.js');
-    if (credentials && credentials.BWAEZI_CHAIN_ID) {
-        console.log(`🔗 Chain ID: ${credentials.BWAEZI_CHAIN_ID}`);
-        console.log(`📝 Contract: ${credentials.BWAEZI_CONTRACT_ADDRESS}`);
+// 🎯 CREATE BLOCKCHAIN INSTANCE FUNCTION (MISSING IN ORIGINAL)
+async function createBrianNwaezikeChain(config = {}) {
+    try {
+        console.log('🔗 Creating BrianNwaezikeChain instance...');
+        const chain = new BrianNwaezikeChain({
+            rpcUrl: config.rpcUrl || 'https://rpc.winr.games',
+            network: config.network || 'mainnet',
+            chainId: config.chainId || 777777,
+            contractAddress: config.contractAddress || '0x00000000000000000000000000000000000a4b05',
+            ...config
+        });
+        return chain;
+    } catch (error) {
+        console.error('❌ Failed to create BrianNwaezikeChain:', error);
+        throw error;
     }
 }
 
-// Initialize core systems
-export async function initializeBackendSystems() {
-    console.log('🚀 Initializing Backend Systems Module...');
-    
+// 🎯 SET CREDENTIALS FROM MAIN.JS
+export function setBackendCredentials(credentials) {
     try {
-        // Initialize blockchain only if not already initialized by main.js
-        if (!blockchainInstance) {
-            console.log('🔗 Initializing Bwaezi Blockchain in backend module...');
-            blockchainInstance = await createBrianNwaezikeChain({
-                rpcUrl: 'https://rpc.winr.games',
-                network: 'mainnet'
-            });
-            await blockchainInstance.init();
+        currentCredentials = credentials;
+        console.log('✅ Backend credentials set from main.js');
+        
+        if (credentials) {
+            console.log(`🔗 Chain ID: ${credentials.BWAEZI_CHAIN_ID || 'Not set'}`);
+            console.log(`📝 Contract: ${credentials.BWAEZI_CONTRACT_ADDRESS || 'Not set'}`);
+            console.log(`👑 God Mode: ${credentials.GOD_MODE_ACTIVE ? 'ACTIVE' : 'INACTIVE'}`);
         }
         
-        console.log('✅ Backend systems initialized successfully');
         return true;
     } catch (error) {
-        console.error('❌ Backend system initialization failed:', error);
+        console.error('❌ Failed to set backend credentials:', error);
         return false;
     }
 }
 
-// 🌐 Public RPC Broadcast Function - Uses centralized credentials
-export async function getBwaeziRPCData() {
+// Initialize core systems with enhanced error handling
+export async function initializeBackendSystems() {
+    console.log('🚀 Initializing Backend Systems Module...');
+    
     try {
+        // Validate credentials first
         if (!currentCredentials) {
-            throw new Error('Credentials not set - call setBackendCredentials() first');
+            console.warn('⚠️ No credentials set, using defaults');
+            currentCredentials = {
+                BWAEZI_RPC_URL: 'https://rpc.winr.games',
+                BWAEZI_CHAIN_ID: 777777,
+                BWAEZI_CONTRACT_ADDRESS: '0x00000000000000000000000000000000000a4b05',
+                GOD_MODE_ACTIVE: false
+            };
         }
 
-        let status = {};
-        if (blockchainInstance) {
-            status = await blockchainInstance.getStatus();
-        }
-        
-        return {
-            status: 'LIVE',
-            rpcUrl: 'https://arielmatrix2-0-t2hc.onrender.com/bwaezi-rpc',
-            chainId: currentCredentials.BWAEZI_CHAIN_ID,
-            chainName: 'Bwaezi Mainnet',
-            blockNumber: status.lastBlockNumber || currentCredentials.blockNumber || 0,
-            gasPrice: status.gasPrice || '0',
-            health: status.connected ? 'HEALTHY' : 'UNHEALTHY',
-            peerCount: status.metrics?.peerCount || 0,
-            timestamp: new Date().toISOString(),
-            version: 'ArielSQL Ultimate Suite v4.3',
-            networkId: 777777,
-            nativeCurrency: {
-                name: 'Bwaezi',
-                symbol: 'BWAEZI',
-                decimals: 18
-            },
-            credentialSource: 'Centralized from main.js'
-        };
-    } catch (error) {
-        throw new Error(`RPC data error: ${error.message}`);
-    }
-}
-
-// 🔍 Blockchain Status Function
-export async function getBlockchainStatus() {
-    try {
+        // Initialize blockchain only if not already initialized
         if (!blockchainInstance) {
-            throw new Error('Blockchain service starting up');
-        }
-
-        const status = await blockchainInstance.getStatus();
-        return {
-            status: 'SUCCESS',
-            data: status,
-            timestamp: new Date().toISOString(),
-            credentialSource: 'Centralized from main.js'
-        };
-    } catch (error) {
-        throw new Error(`Blockchain status error: ${error.message}`);
-    }
-}
-
-// 📊 Data Agent Status Function
-export async function getDataAgentStatus() {
-    try {
-        // Dynamic import to avoid circular dependencies
-        const { getStatus } = await import('./agents/dataAgent.js');
-        const status = getStatus();
-        
-        return {
-            status: 'SUCCESS',
-            data: status,
-            timestamp: new Date().toISOString()
-        };
-    } catch (error) {
-        throw new Error(`Data Agent status error: ${error.message}`);
-    }
-}
-
-// 🎯 Start Data Collection Function
-export async function startDataCollection() {
-    try {
-        // Dynamic import to avoid circular dependencies
-        const DataAgent = await import('./agents/dataAgent.js');
-        
-        const logger = {
-            info: (...args) => console.log('📊 [DataAgent]', ...args),
-            error: (...args) => console.error('❌ [DataAgent]', ...args),
-            success: (...args) => console.log('✅ [DataAgent]', ...args),
-            warn: (...args) => console.warn('⚠️ [DataAgent]', ...args)
-        };
-        
-        const dataAgent = new DataAgent.default({
-            ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
-            COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
-            COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY
-        }, logger);
-        
-        await dataAgent.initialize();
-        const result = await dataAgent.run();
-        
-        return {
-            status: 'SUCCESS',
-            data: result,
-            timestamp: new Date().toISOString()
-        };
-    } catch (error) {
-        throw new Error(`Data collection error: ${error.message}`);
-    }
-}
-
-// 💰 Revenue Analytics Function
-export async function getRevenueAnalytics(timeframe = '7 days') {
-    try {
-        // Dynamic import to avoid circular dependencies
-        const DataAgent = await import('./agents/dataAgent.js');
-        
-        const logger = {
-            info: (...args) => console.log('📊 [DataAgent]', ...args),
-            error: (...args) => console.error('❌ [DataAgent]', ...args),
-            success: (...args) => console.log('✅ [DataAgent]', ...args),
-            warn: (...args) => console.warn('⚠️ [DataAgent]', ...args)
-        };
-        
-        const dataAgent = new DataAgent.default({
-            ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
-            COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS,
-            COMPANY_WALLET_PRIVATE_KEY: process.env.COMPANY_WALLET_PRIVATE_KEY
-        }, logger);
-        
-        await dataAgent.initialize();
-        
-        const stats = await dataAgent.getDataCollectionStats(timeframe);
-        const revenue = await dataAgent.getRevenueAnalytics(timeframe);
-        
-        return {
-            status: 'SUCCESS',
-            data: {
-                timeframe,
-                collectionStats: stats,
-                revenueAnalytics: revenue,
-                timestamp: new Date().toISOString()
-            }
-        };
-    } catch (error) {
-        throw new Error(`Revenue analytics error: ${error.message}`);
-    }
-}
-
-// 🔧 Health Check Function
-export async function getBackendHealth() {
-    const health = {
-        status: 'OK',
-        timestamp: new Date().toISOString(),
-        version: 'ArielMatrix 2.0',
-        services: {
-            blockchain: !!blockchainInstance && blockchainInstance.isConnected,
-            credentials: !!currentCredentials,
-            server: true
-        },
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        environment: process.env.NODE_ENV || 'development',
-        credentialInfo: currentCredentials ? {
-            hasCredentials: true,
-            chainId: currentCredentials.BWAEZI_CHAIN_ID,
-            source: 'Centralized from main.js'
-        } : {
-            hasCredentials: false,
-            source: 'Not set'
-        }
-    };
-
-    // Check Data Agent status separately without blocking
-    try {
-        const { getStatus } = await import('./agents/dataAgent.js');
-        const dataAgentStatus = getStatus();
-        health.services.dataAgent = dataAgentStatus.lastStatus !== 'error';
-    } catch (error) {
-        health.services.dataAgent = false;
-        health.dataAgentError = error.message;
-    }
-
-    return health;
-}
-
-// 🏠 Root Endpoint Data Function
-export function getRootEndpointData() {
-    return {
-        message: '🚀 ArielMatrix 2.0 - Global Enterprise Blockchain Gateway',
-        version: '2.0.0',
-        timestamp: new Date().toISOString(),
-        endpoints: {
-            rpc: '/bwaezi-rpc',
-            status: '/blockchain-status',
-            data: '/data-agent-status',
-            health: '/health',
-            revenue: '/revenue-analytics',
-            graphql: '/graphql'
-        },
-        documentation: 'https://github.com/arielmatrix/arielmatrix2.0',
-        credentialSource: 'Centralized from main.js'
-    };
-}
-
-// GraphQL Setup Functions - USING CORRECT STANDALONE PATTERN
-export async function createGraphQLServer() {
-    try {
-        const typeDefs = `#graphql
-            type Query {
-                health: String
-                blockchainStatus: String
-                dataAgentStatus: String
-            }
+            console.log('🔗 Initializing Bwaezi Blockchain in backend module...');
             
-            type Mutation {
-                startDataCollection: String
+            blockchainInstance = await createBrianNwaezikeChain({
+                rpcUrl: currentCredentials.BWAEZI_RPC_URL,
+                network: 'mainnet',
+                chainId: currentCredentials.BWAEZI_CHAIN_ID,
+                contractAddress: currentCredentials.BWAEZI_CONTRACT_ADDRESS
+            });
+            
+            if (blockchainInstance && typeof blockchainInstance.init === 'function') {
+                await blockchainInstance.init();
+                console.log('✅ Blockchain instance initialized successfully');
+            } else {
+                console.error('❌ Blockchain instance invalid or missing init method');
+                blockchainInstance = null;
             }
-        `;
-
-        const resolvers = {
-            Query: {
-                health: () => 'OK',
-                blockchainStatus: () => blockchainInstance ? 'CONNECTED' : 'DISCONNECTED',
-                dataAgentStatus: async () => {
-                    try {
-                        const { getStatus } = await import('./agents/dataAgent.js');
-                        const status = getStatus();
-                        return status.lastStatus || 'UNKNOWN';
-                    } catch (error) {
-                        return 'ERROR: ' + error.message;
-                    }
-                }
-            },
-            Mutation: {
-                startDataCollection: async () => {
-                    try {
-                        const DataAgent = await import('./agents/dataAgent.js');
-                        const logger = {
-                            info: (...args) => console.log('📊 [DataAgent]', ...args),
-                            error: (...args) => console.error('❌ [DataAgent]', ...args)
-                        };
-                        
-                        const dataAgent = new DataAgent.default({
-                            ANALYTICS_WRITE_KEY: process.env.ANALYTICS_WRITE_KEY,
-                            COMPANY_WALLET_ADDRESS: process.env.COMPANY_WALLET_ADDRESS
-                        }, logger);
-                        
-                        await dataAgent.initialize();
-                        const result = await dataAgent.run();
-                        return `Data collection started: ${JSON.stringify(result)}`;
-                    } catch (error) {
-                        return `Error: ${error.message}`;
-                    }
-                }
-            }
-        };
-
-        const server = new ApolloServer({
-            typeDefs,
-            resolvers,
-            introspection: true
-        });
-
-        console.log('✅ GraphQL server created successfully (standalone mode)');
-        return server;
+        }
+        
+        backendInitialized = true;
+        console.log('✅ Backend systems initialized successfully');
+        return true;
     } catch (error) {
-        console.error('❌ GraphQL server creation failed:', error);
-        return null;
+        console.error('❌ Backend system initialization failed:', error);
+        backendInitialized = false;
+        
+        // Create fallback blockchain instance
+        blockchainInstance = createFallbackBlockchainInstance();
+        return false; // Don't throw, allow server to start without blockchain
     }
 }
 
-// Export route handlers for integration with main.js
-export function getBackendRouteHandlers() {
+// Fallback blockchain instance when main initialization fails
+function createFallbackBlockchainInstance() {
+    console.log('🔄 Creating fallback blockchain instance...');
+    
     return {
-        // RPC endpoint handler
-        '/bwaezi-rpc': {
-            method: 'GET',
-            handler: async (req, res) => {
-                try {
-                    const rpcData = await getBwaeziRPCData();
-                    res.json(rpcData);
-                } catch (error) {
-                    res.status(500).json({
-                        status: 'ERROR',
-                        message: error.message,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
+        isConnected: false,
+        isFallback: true,
+        getStatus: async () => ({
+            connected: false,
+            isFallback: true,
+            lastBlockNumber: 0,
+            gasPrice: '0',
+            metrics: { peerCount: 0 },
+            error: 'Using fallback instance - blockchain not available'
+        }),
+        disconnect: async () => {
+            console.log('🔻 Fallback blockchain instance disconnected');
         },
-        
-        // Blockchain status handler
-        '/blockchain-status': {
-            method: 'GET',
-            handler: async (req, res) => {
-                try {
-                    const status = await getBlockchainStatus();
-                    res.json(status);
-                } catch (error) {
-                    res.status(500).json({
-                        status: 'ERROR',
-                        message: error.message,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
-        },
-        
-        // Data Agent status handler
-        '/data-agent-status': {
-            method: 'GET',
-            handler: async (req, res) => {
-                try {
-                    const status = await getDataAgentStatus();
-                    res.json(status);
-                } catch (error) {
-                    res.status(503).json({
-                        status: 'ERROR',
-                        message: error.message,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
-        },
-        
-        // Revenue analytics handler
-        '/revenue-analytics': {
-            method: 'GET',
-            handler: async (req, res) => {
-                try {
-                    const timeframe = req.query.timeframe || '7 days';
-                    const analytics = await getRevenueAnalytics(timeframe);
-                    res.json(analytics);
-                } catch (error) {
-                    res.status(500).json({
-                        status: 'ERROR',
-                        message: error.message,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
-        },
-        
-        // Health check handler
-        '/health': {
-            method: 'GET',
-            handler: async (req, res) => {
-                try {
-                    const health = await getBackendHealth();
-                    res.json(health);
-                } catch (error) {
-                    res.status(500).json({
-                        status: 'ERROR',
-                        message: error.message,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
-        },
-        
-        // Root endpoint handler
-        '/': {
-            method: 'GET',
-            handler: (req, res) => {
-                const rootData = getRootEndpointData();
-                res.json(rootData);
-            }
+        init: async () => {
+            console.log('✅ Fallback blockchain instance initialized');
+            return true;
         }
     };
 }
-
-// Export the blockchain instance for direct access
-export function getBlockchainInstance() {
-    return blockchainInstance;
-}
-
-// Graceful shutdown for backend systems
-export async function shutdownBackendSystems() {
-    console.log('\n🔻 Shutting down backend systems...');
-    if (blockchainInstance) {
-        await blockchainInstance.disconnect();
-    }
-    console.log('✅ Backend systems shutdown completed');
-}
-
-// Register shutdown handlers for module cleanup
-process.on('SIGINT', async () => {
-    await shutdownBackendSystems();
-    process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-    await shutdownBackendSystems();
-    process.exit(0);
-});
-
-// Export initialization status
-export function isBackendInitialized() {
-    return !!blockchainInstance && !!currentCredentials;
-}
-
-// ✅ ADD DEFAULT EXPORT FOR MAIN.JS COMPATIBILITY
-export default {
-    setBackendCredentials,
-    initializeBackendSystems,
-    getBwaeziRPCData,
-    getBlockchainStatus,
-    getDataAgentStatus,
-    startDataCollection,
-    getRevenueAnalytics,
-    getBackendHealth,
-    getRootEndpointData,
-    createGraphQLServer,
-    getBackendRouteHandlers,
-    getBlockchainInstance,
-    shutdownBackendSystems,
-    isBackendInitialized
-};
