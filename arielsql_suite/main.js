@@ -14,7 +14,21 @@ if (!BigInt.prototype.toJSON) {
 }
 
 // IMPORT BACKEND SERVER MODULE (CRITICAL INTEGRATION)
-import EnterpriseServer from '../backend/server.js';
+import { setBackendCredentials,
+    initializeBackendSystems,
+    getBwaeziRPCData,
+    getBlockchainStatus,
+    getDataAgentStatus,
+    startDataCollection,
+    getRevenueAnalytics,
+    getBackendHealth,
+    getRootEndpointData,
+    createGraphQLServer,
+    getBackendRouteHandlers,
+    getBlockchainInstance,
+    shutdownBackendSystems,
+    isBackendInitialized,
+    getCurrentCredentials } from '../backend/server.js';
 
 // Import other core modules
 import { ServiceManager } from './serviceManager.js';
