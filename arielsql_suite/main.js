@@ -27,8 +27,7 @@ import { setBackendCredentials,
     getBackendRouteHandlers,
     getBlockchainInstance,
     shutdownBackendSystems,
-    isBackendInitialized,
-    getCurrentCredentials } from '../backend/server.js';
+    isBackendInitialized } from '../backend/server.js';
 
 // Import other core modules
 import { ServiceManager } from './serviceManager.js';
