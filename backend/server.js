@@ -316,7 +316,7 @@ export class EnterpriseServer {
                 chainId: 777777,
                 chainName: 'BWAEZI Sovereign Chain',
                 blockNumber: 65880300,
-                gasPrice: ''0.01 Gwei',
+                gasPrice: '0.01 Gwei',
                 health: 'DEGRADED',
                 peerCount: 0,
                 timestamp: new Date().toISOString(),
