@@ -1012,5 +1012,11 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes
     process.exit(1);
   });
 }
+// --- IMMEDIATE SERVER STARTUP (ADD THIS) ---
+console.log('🎯 FORCING SERVER STARTUP...');
+initializeArielSQLSuite().catch(error => {
+  console.error('💀 Fatal error during startup:', error);
+  process.exit(1);
+});
 
 export default initializeArielSQLSuite;
