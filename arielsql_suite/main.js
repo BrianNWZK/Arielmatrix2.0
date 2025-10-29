@@ -669,7 +669,7 @@ async function initializeFullSystem() {
     console.log('🔗 STEP 2: Initializing blockchain system...');
     const blockchainInstance = await createBrianNwaezikeChain({
       rpcUrl: 'https://rpc.winr.games',
-      network: 'mainnet',
+      network: 'BWAEZI Sovereign Chain',
       chainId: 777777,
       contractAddress: '0x00000000000000000000000000000000000a4b05'
     });
