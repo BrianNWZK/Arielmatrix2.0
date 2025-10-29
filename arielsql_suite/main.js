@@ -1,4 +1,4 @@
-// arielsql_suite/main.js - PRODUCTION READY WITH REAL IMPLEMENTATIONS
+// arielsql_suite/main.js - PRODUCTION READY WITH SINGLE SERVER APPROACH
 import http from "http";
 import express from "express";
 import cors from "cors";
@@ -11,20 +11,32 @@ import fs from 'fs/promises';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// 🔥 PHASE 1: IMMEDIATE PORT BINDING - CRITICAL FOR RENDER DEPLOYMENT
+// 🔥 SINGLE SERVER APPROACH: Create app and server once
 const app = express();
 const PORT = process.env.PORT || 10000;
 const HOST = '0.0.0.0';
 
-app.use(express.json());
+// Global instances
+let blockchainInstance = null;
+let currentCredentials = null;
+let sovereignCore = null;
+let godModeActive = false;
+let quantumCrypto = null;
+let enterpriseDataAnalytics = null;
+let server = null;
 
-// CRITICAL: Instant health endpoint for deployment verification
+// Basic middleware for immediate binding
+app.use(express.json());
+app.use(cors());
+
+// 🚨 CRITICAL: IMMEDIATE PORT BINDING - MINIMAL APP FIRST
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ready', 
     timestamp: new Date().toISOString(),
     phase: 'port-binding',
-    port: PORT
+    port: PORT,
+    message: 'Server bound successfully - Full system initializing'
   });
 });
 
@@ -36,21 +48,6 @@ app.get('/', (req, res) => {
     nextPhase: 'system-initialization'
   });
 });
-
-// 🚨 PHASE 1: START SERVER IMMEDIATELY - NO ASYNC, NO PROMISES
-console.log('🚀 PHASE 1: Starting immediate port binding...');
-console.log(`🌐 Target: ${HOST}:${PORT}`);
-console.log(`📅 Started at: ${new Date().toISOString()}`);
-
-const server = http.createServer(app);
-
-// Global instances
-let blockchainInstance = null;
-let currentCredentials = null;
-let sovereignCore = null;
-let godModeActive = false;
-let quantumCrypto = null;
-let enterpriseDataAnalytics = null;
 
 // Function to check if port is available
 function checkPort(port) {
@@ -77,42 +74,38 @@ async function findAvailablePort(startPort, maxAttempts = 10) {
   throw new Error(`No available ports found between ${startPort} and ${startPort + maxAttempts - 1}`);
 }
 
-// Start server with port fallback
-async function startServer() {
+// 🔥 SINGLE SERVER CREATION AND BINDING
+async function bindServer() {
+  console.log('🚀 PHASE 1: Starting immediate port binding...');
+  console.log(`🌐 Target: ${HOST}:${PORT}`);
+  console.log(`📅 Started at: ${new Date().toISOString()}`);
+
   try {
     const availablePort = await findAvailablePort(PORT);
     
-    server.listen(availablePort, HOST, () => {
-      console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${availablePort}`);
-      console.log(`🌐 Primary URL: http://${HOST}:${availablePort}`);
-      console.log(`🔧 Health: http://${HOST}:${availablePort}/health`);
-      console.log(`💰 Revenue Status: http://${HOST}:${availablePort}/revenue-status`);
+    return new Promise((resolve, reject) => {
+      server = http.createServer(app);
       
-      // Update process environment with actual port
-      process.env.ACTUAL_PORT = availablePort.toString();
+      server.listen(availablePort, HOST, () => {
+        console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${availablePort}`);
+        console.log(`🌐 Primary URL: http://${HOST}:${availablePort}`);
+        console.log(`🔧 Health: http://${HOST}:${availablePort}/health`);
+        
+        // Update process environment with actual port
+        process.env.ACTUAL_PORT = availablePort.toString();
+        resolve(availablePort);
+      });
       
-      // 🚀 PHASE 2: NOW INITIALIZE FULL SYSTEM ASYNCHRONOUSLY
-      setTimeout(() => initializeFullSystem(availablePort), 100);
+      server.on('error', (error) => {
+        console.error(`❌ Server binding error: ${error.message}`);
+        reject(error);
+      });
     });
   } catch (error) {
     console.error('❌ Failed to bind to any port:', error);
     process.exit(1);
   }
 }
-
-// Handle port binding errors
-server.on('error', (error) => {
-  if (error.code === 'EADDRINUSE') {
-    console.log(`🔄 Port ${PORT} busy, starting port discovery...`);
-    startServer();
-  } else {
-    console.error('❌ Server error:', error);
-    process.exit(1);
-  }
-});
-
-// Start initial server attempt
-startServer();
 
 // 🔥 GOD MODE CORE INTEGRATION
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
@@ -606,10 +599,11 @@ async function initializeApplicationDatabase() {
   }
 }
 
-// --- Enhanced Express Application Setup with GOD MODE ---
-function createExpressApplication() {
-  const app = express();
+// --- Add Full Routes to Existing App ---
+function addFullRoutesToApp() {
   const logger = getGlobalLogger();
+  
+  console.log('🌐 Adding full routes to existing app...');
   
   // Enhanced security middleware
   app.use(cors());
@@ -630,7 +624,7 @@ function createExpressApplication() {
   // === PRIMARY SERVER ENDPOINTS ===
   
   // 🏠 Root Endpoint with GOD MODE status
-  app.get('/', (req, res) => {
+  app.get('/full', (req, res) => {
     res.json({
       message: `🚀 ArielSQL Ultimate Suite v4.4 - ${godModeActive ? 'GOD MODE ACTIVE' : 'Production Server'}`,
       version: '4.4.0',
@@ -661,7 +655,7 @@ function createExpressApplication() {
     });
   });
   
-  // 🔧 Health Check Endpoint with GOD MODE enhancements
+  // 🔧 Enhanced Health Check Endpoint with GOD MODE enhancements
   app.get('/health', async (req, res) => {
     try {
       const health = {
@@ -939,103 +933,7 @@ function createExpressApplication() {
     }
   });
 
-  // Enhanced 404 handler
-  app.use('*', (req, res) => {
-    res.status(404).json({
-      error: 'Endpoint not found',
-      path: req.originalUrl,
-      timestamp: new Date().toISOString(),
-      godMode: {
-        active: godModeActive,
-        suggestion: godModeActive ? 'Quantum search activated' : 'Standard routing'
-      },
-      quantumCrypto: {
-        active: true,
-        available: true
-      },
-      availableEndpoints: [
-        'GET /',
-        'GET /health',
-        'GET /god-mode-status',
-        'GET /quantum-crypto-status',
-        'GET /bwaezi-rpc',
-        'GET /blockchain-status',
-        'GET /data-agent-status',
-        'GET /revenue-analytics',
-        'POST /api/analytics',
-        'POST /api/crypto/encrypt',
-        'POST /api/crypto/decrypt',
-        'POST /api/events',
-        'GET /api/metrics'
-      ]
-    });
-  });
-  
-  // Enhanced error handler with GOD MODE recovery
-  app.use((error, req, res, next) => {
-    getGlobalLogger().error('Unhandled application error:', error);
-    
-    // 🔥 GOD MODE ERROR RECOVERY ATTEMPT
-    if (godModeActive) {
-      getGlobalLogger().warn('🔄 GOD MODE error recovery activated...');
-    }
-    
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message,
-      timestamp: new Date().toISOString(),
-      godModeRecovery: godModeActive ? 'activated' : 'unavailable',
-      quantumCrypto: 'active'
-    });
-  });
-  
-  getGlobalLogger().info(`✅ Express application configured successfully${godModeActive ? ' - GOD MODE INTEGRATED' : ''}`);
-  return app;
-}
-
-// --- Enhanced Server Creation with GOD MODE Protection ---
-function createServer(app, port) {
-  const logger = getGlobalLogger();
-  
-  // Use the actual port that was successfully bound
-  const actualPort = port || process.env.ACTUAL_PORT || process.env.PORT || 10000;
-  const HOST = '0.0.0.0';
-  
-  const server = http.createServer(app);
-  
-  // Enhanced error handling for server with GOD MODE
-  server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
-      logger.error(`❌ Port ${actualPort} is already in use`);
-      
-      // 🔥 GOD MODE PORT RECOVERY
-      if (godModeActive) {
-        logger.warn('👑 Attempting GOD MODE port recovery...');
-        try {
-          // In a real implementation, this would attempt to find an alternative port
-          logger.warn('🔧 GOD MODE would attempt alternative port binding');
-        } catch (recoveryError) {
-          logger.error('❌ GOD MODE port recovery failed:', recoveryError);
-        }
-      }
-      
-      process.exit(1);
-    } else {
-      logger.error('❌ Server error:', error);
-      process.exit(1);
-    }
-  });
-  
-  server.on('listening', () => {
-    const address = server.address();
-    logger.success(`✅ Server successfully bound to ${address.address}:${address.port}${godModeActive ? ' - GOD MODE PROTECTED' : ''}`);
-  });
-  
-  return {
-    server,
-    PORT: actualPort,
-    HOST
-  };
+  console.log('✅ Full routes added successfully');
 }
 
 // --- PHASE 2: Full System Initialization ---
@@ -1043,7 +941,7 @@ async function initializeFullSystem(actualPort) {
   console.log('🚀 PHASE 2: Initializing full ArielSQL system...');
   console.log(`📅 System initialization started: ${new Date().toISOString()}`);
   console.log(`🌐 Deployment Environment: ${process.env.NODE_ENV || 'production'}`);
-  console.log(`🔌 PORT Environment Variable: ${process.env.PORT}`);
+  console.log(`🔌 ACTUAL PORT: ${actualPort}`);
   console.log(`🏠 Binding Host: 0.0.0.0`);
   console.log(`🔐 QUANTUM CRYPTO: PRODUCTION READY`);
   
@@ -1056,7 +954,7 @@ async function initializeFullSystem(actualPort) {
     }
     console.log('✅ Core systems initialized successfully');
     
-    // STEP 2: Initialize GOD MODE
+    // STEP 2: Initialize Worker Modules
     console.log('🔧 Initializing worker-safe modules...');
     initializeWorkerSafeModules();
     console.log('✅ Worker-safe modules initialized');
@@ -1091,22 +989,16 @@ async function initializeFullSystem(actualPort) {
     quantumCrypto = new ProductionQuantumCrypto();
     console.log('🔐 Quantum Crypto: ACTIVE');
     
-    // STEP 8: Create Express Application
-    console.log('🌐 STEP 4: Creating Express application...');
-    const expressApp = createExpressApplication();
-    console.log('✅ Express application configured successfully');
+    // STEP 8: Add Full Routes to Existing App
+    console.log('🌐 STEP 5: Adding full routes to existing app...');
+    addFullRoutesToApp();
     
-    // STEP 9: Create HTTP Server
-    console.log('🔌 STEP 5: Creating HTTP server...');
-    const { server, PORT, HOST } = createServer(expressApp, actualPort);
-    
-    // Start the server
-    server.listen(PORT, HOST, () => {
-      console.log(`🌐 Server running on: http://${HOST}:${PORT}`);
-      console.log(`🔐 Quantum Crypto: ACTIVE`);
-      console.log(`👑 God Mode: ${godModeActive ? 'ACTIVE' : 'INACTIVE'}`);
-      console.log('🎉 FULL SYSTEM INITIALIZATION COMPLETE');
-    });
+    console.log('🎉 FULL SYSTEM INITIALIZATION COMPLETE');
+    console.log(`🌐 Server running on: http://${HOST}:${actualPort}`);
+    console.log(`🔐 Quantum Crypto: ACTIVE`);
+    console.log(`👑 God Mode: ${godModeActive ? 'ACTIVE' : 'INACTIVE'}`);
+    console.log(`🔗 Blockchain: ${blockchainInstance && blockchainInstance.isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
+    console.log(`📊 Analytics: ${enterpriseDataAnalytics.initialized ? 'ACTIVE' : 'INACTIVE'}`);
     
   } catch (error) {
     console.error('❌ Full system initialization failed:', error);
@@ -1125,6 +1017,22 @@ async function initializeFullSystem(actualPort) {
       }
     }
     
+    // Don't exit process - server is still running with basic routes
+    console.log('⚠️  Server remains running with basic routes despite initialization errors');
+  }
+}
+
+// 🔥 MAIN STARTUP FUNCTION
+async function startApplication() {
+  try {
+    // PHASE 1: Bind server immediately
+    const actualPort = await bindServer();
+    
+    // PHASE 2: Initialize full system asynchronously
+    setTimeout(() => initializeFullSystem(actualPort), 100);
+    
+  } catch (error) {
+    console.error('💀 Fatal error during startup:', error);
     process.exit(1);
   }
 }
@@ -1141,7 +1049,7 @@ export {
   quantumCrypto,
   sovereignCore,
   godModeActive,
-  initializeFullSystem
+  startApplication
 };
 
 // Export the main application
@@ -1159,5 +1067,13 @@ export default {
   crypto: quantumCrypto,
   sovereignCore,
   godModeActive,
-  initializeFullSystem
+  startApplication
 };
+
+// 🔥 AUTO-START IF MAIN MODULE
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes('main.js')) {
+  startApplication().catch(error => {
+    console.error('💀 Fatal error during startup:', error);
+    process.exit(1);
+  });
+}
