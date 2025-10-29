@@ -268,7 +268,7 @@ import EnterpriseServer from '../backend/server.js';
 
 // Import other core modules
 import { ServiceManager } from './serviceManager.js';
-import { createBrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
+import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
 import { initializeGlobalLogger, getGlobalLogger } from '../modules/enterprise-logger/index.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
 
