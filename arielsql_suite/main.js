@@ -2,11 +2,10 @@
 import http from "http";
 import express from "express";
 import cors from "cors";
-import { createHash, randomBytes, scryptSync, createCipheriv, createDecipheriv, generateKeyPairSync, createSign, createVerify } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs/promises';
-import { Web3 } from 'web3';
 
 // 🔥 CRITICAL: Define __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -45,35 +44,45 @@ console.log(`📅 Started at: ${new Date().toISOString()}`);
 
 const server = http.createServer(app);
 
-server.listen(PORT, HOST, () => {
-  console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${PORT}`);
-  console.log(`🌐 Primary URL: http://${HOST}:${PORT}`);
-  console.log(`🔧 Health: http://${HOST}:${PORT}/health`);
-  console.log(`💰 Revenue Status: http://${HOST}:${PORT}/revenue-status`);
-  
-  // 🚀 PHASE 2: NOW INITIALIZE FULL SYSTEM ASYNCHRONOUSLY
-  setTimeout(() => initializeFullSystem(), 100);
-});
+// Global instances
+let blockchainInstance = null;
+let currentCredentials = null;
+let sovereignCore = null;
+let godModeActive = false;
+let enterpriseDataAnalytics = null;
+let quantumCrypto = null;
 
-// Handle port binding errors
-server.on('error', (error) => {
-  if (error.code === 'EADDRINUSE') {
-    console.log(`🔄 Port ${PORT} busy, trying ${parseInt(PORT) + 1}...`);
-    const altServer = http.createServer(app);
-    const altPort = parseInt(PORT) + 1;
-    altServer.listen(altPort, HOST, () => {
-      console.log(`✅ Bound to alternative port ${altPort}`);
-      console.log(`🌐 Alternative URL: http://${HOST}:${altPort}`);
-      setTimeout(() => initializeFullSystem(), 100);
+// Initialize port binding first
+function initializePortBinding() {
+  return new Promise((resolve, reject) => {
+    server.listen(PORT, HOST, () => {
+      console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${PORT}`);
+      console.log(`🌐 Primary URL: http://${HOST}:${PORT}`);
+      console.log(`🔧 Health: http://${HOST}:${PORT}/health`);
+      resolve({ port: PORT, host: HOST });
     });
-  }
-});
 
-// BIGINT POLYFILL - CRITICAL FOR PRODUCTION
-if (!BigInt.prototype.toJSON) {
-    BigInt.prototype.toJSON = function() {
-        return this.toString();
-    };
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        console.log(`🔄 Port ${PORT} busy, trying ${parseInt(PORT) + 1}...`);
+        const altPort = parseInt(PORT) + 1;
+        const altServer = http.createServer(app);
+        
+        altServer.listen(altPort, HOST, () => {
+          console.log(`✅ Bound to alternative port ${altPort}`);
+          console.log(`🌐 Alternative URL: http://${HOST}:${altPort}`);
+          server.close(); // Close original server
+          resolve({ port: altPort, host: HOST });
+        });
+
+        altServer.on('error', (altError) => {
+          reject(altError);
+        });
+      } else {
+        reject(error);
+      }
+    });
+  });
 }
 
 // PRODUCTION-READY QUANTUM-RESISTANT CRYPTO IMPLEMENTATION
@@ -85,7 +94,8 @@ class ProductionQuantumCrypto {
         this.godModeEnhanced = true;
     }
 
-    generateKeyPair() {
+    async generateKeyPair() {
+        const { generateKeyPairSync } = await import('crypto');
         return generateKeyPairSync('rsa', {
             modulusLength: 4096,
             publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -93,8 +103,9 @@ class ProductionQuantumCrypto {
         });
     }
 
-    async encrypt(data, keyId = 'default') {
-        const key = scryptSync(process.env.CRYPTO_MASTER_KEY || 'default-prod-key-32bytes-long-secure!', 'salt', 32);
+    async encrypt(data, publicKey) {
+        const { randomBytes, createCipheriv, scryptSync } = await import('crypto');
+        const key = scryptSync(process.env.CRYPTO_MASTER_KEY || 'default-prod-key', 'salt', 32);
         const iv = randomBytes(16);
         const cipher = createCipheriv('aes-256-gcm', key, iv);
         const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
@@ -102,168 +113,37 @@ class ProductionQuantumCrypto {
         return {
             encrypted: Buffer.concat([iv, authTag, encrypted]).toString('base64'),
             algorithm: this.algorithm,
-            timestamp: Date.now(),
-            keyId: keyId
+            timestamp: Date.now()
         };
     }
 
-    async decrypt(encryptedData, keyId = 'default') {
+    async decrypt(encryptedData, privateKey) {
+        const { createDecipheriv, scryptSync } = await import('crypto');
         const buffer = Buffer.from(encryptedData, 'base64');
         const iv = buffer.slice(0, 16);
         const authTag = buffer.slice(16, 32);
         const encrypted = buffer.slice(32);
-        const key = scryptSync(process.env.CRYPTO_MASTER_KEY || 'default-prod-key-32bytes-long-secure!', 'salt', 32);
+        const key = scryptSync(process.env.CRYPTO_MASTER_KEY || 'default-prod-key', 'salt', 32);
         const decipher = createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(authTag);
         return decipher.update(encrypted, null, 'utf8') + decipher.final('utf8');
     }
 
-    sign(data, privateKey) {
+    async sign(data, privateKey) {
+        const { createSign } = await import('crypto');
         const signer = createSign('sha256');
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, 'base64');
     }
 
-    verify(data, signature, publicKey) {
+    async verify(data, signature, publicKey) {
+        const { createVerify } = await import('crypto');
         const verifier = createVerify('sha256');
         verifier.update(data);
         verifier.end();
         return verifier.verify(publicKey, signature, 'base64');
     }
-}
-
-// REAL BLOCKCHAIN IMPLEMENTATION - FIXED EXPORT ISSUE
-class BrianNwaezikeChain {
-    constructor(config = {}) {
-        this.config = {
-            rpcUrl: config.rpcUrl || 'https://rpc.winr.games',
-            network: config.network || 'mainnet',
-            chainId: config.chainId || 777777,
-            contractAddress: config.contractAddress || '0x00000000000000000000000000000000000a4b05',
-            ...config
-        };
-        this.web3 = new Web3(this.config.rpcUrl);
-        this.isConnected = false;
-        this.initialized = false;
-    }
-
-    async init() {
-        try {
-            // Test connection
-            const blockNumber = await this.web3.eth.getBlockNumber();
-            this.isConnected = true;
-            this.initialized = true;
-            console.log(`✅ Blockchain connected - Latest block: ${blockNumber}`);
-            return this;
-        } catch (error) {
-            console.error('❌ Blockchain connection failed:', error);
-            this.isConnected = false;
-            throw error;
-        }
-    }
-
-    async rpcCall(method, params = []) {
-        try {
-            return await this.web3.currentProvider.send(method, params);
-        } catch (error) {
-            console.error('RPC call failed:', error);
-            throw error;
-        }
-    }
-
-    async getStatus() {
-        try {
-            const blockNumber = await this.web3.eth.getBlockNumber();
-            const gasPrice = await this.web3.eth.getGasPrice();
-            const accounts = await this.web3.eth.getAccounts();
-            
-            return {
-                connected: this.isConnected,
-                blockNumber: blockNumber,
-                gasPrice: gasPrice,
-                accounts: accounts.length,
-                chainId: this.config.chainId,
-                network: this.config.network,
-                contractAddress: this.config.contractAddress
-            };
-        } catch (error) {
-            return {
-                connected: false,
-                error: error.message
-            };
-        }
-    }
-
-    async calculateRiskAssessment(data) {
-        // Real risk calculation based on blockchain data
-        const riskFactors = {
-            volatility: Math.random() * 0.5 + 0.1,
-            liquidity: Math.random() * 0.8 + 0.2,
-            marketCap: Math.random() * 0.9 + 0.1
-        };
-        
-        const overallRisk = (
-            riskFactors.volatility * 0.4 +
-            (1 - riskFactors.liquidity) * 0.4 +
-            (1 - riskFactors.marketCap) * 0.2
-        );
-        
-        return {
-            score: Math.min(1, Math.max(0, overallRisk)),
-            factors: riskFactors,
-            level: overallRisk > 0.7 ? 'HIGH' : overallRisk > 0.4 ? 'MEDIUM' : 'LOW',
-            timestamp: Date.now()
-        };
-    }
-
-    async calculateProfitabilityScore(data) {
-        // Real profitability calculation
-        const profitabilityFactors = {
-            historicalReturns: Math.random() * 0.6 + 0.4,
-            marketTrend: Math.random() * 0.8 + 0.2,
-            volumeMomentum: Math.random() * 0.7 + 0.3
-        };
-        
-        const overallProfitability = (
-            profitabilityFactors.historicalReturns * 0.5 +
-            profitabilityFactors.marketTrend * 0.3 +
-            profitabilityFactors.volumeMomentum * 0.2
-        );
-        
-        return {
-            score: Math.min(1, Math.max(0, overallProfitability)),
-            factors: profitabilityFactors,
-            rating: overallProfitability > 0.8 ? 'EXCELLENT' : 
-                   overallProfitability > 0.6 ? 'GOOD' : 
-                   overallProfitability > 0.4 ? 'FAIR' : 'POOR',
-            timestamp: Date.now()
-        };
-    }
-
-    async recordAnalysisOnChain(analysis) {
-        // Simulate on-chain recording
-        const txHash = '0x' + randomBytes(32).toString('hex');
-        console.log(`📝 Analysis recorded on chain: ${txHash}`);
-        
-        return {
-            transactionHash: txHash,
-            status: 'success',
-            timestamp: Date.now(),
-            analysisId: analysis.analysisId
-        };
-    }
-
-    async disconnect() {
-        this.isConnected = false;
-        this.initialized = false;
-        console.log('🔗 Blockchain connection closed');
-    }
-}
-
-// Factory function for blockchain instance
-function createBrianNwaezikeChain(config = {}) {
-    return new BrianNwaezikeChain(config);
 }
 
 // Real Enterprise Data Analytics
@@ -279,7 +159,7 @@ class EnterpriseDataAnalytics {
       startupTime: Date.now()
     };
     this.blockchain = null;
-
+    
     // PRODUCTION CRYPTO INTEGRATION
     this.crypto = new ProductionQuantumCrypto();
   }
@@ -289,7 +169,7 @@ class EnterpriseDataAnalytics {
     
     try {
       // Initialize blockchain connection
-      this.blockchain = createBrianNwaezikeChain({
+      this.blockchain = await createBrianNwaezikeChain({
         network: 'mainnet',
         nodeId: 'enterprise_analytics',
         systemAccount: process.env.COMPANY_WALLET_ADDRESS
@@ -334,7 +214,7 @@ class EnterpriseDataAnalytics {
 
       this.metrics.analyticsGenerated++;
       
-      // Record analysis on blockchain
+      // Record analysis on blockchain using BrianNwaezikeChain
       await this.blockchain.recordAnalysisOnChain(analysis);
       
       return analysis;
@@ -347,7 +227,8 @@ class EnterpriseDataAnalytics {
   // CRYPTO-ENHANCED METHODS
   async encryptAnalytics(data, keyId = 'analytics') {
     try {
-      const encrypted = await this.crypto.encrypt(JSON.stringify(data), keyId);
+      const keyPair = await this.crypto.generateKeyPair();
+      const encrypted = await this.crypto.encrypt(JSON.stringify(data), keyPair.publicKey);
       return {
         ...encrypted,
         keyId
@@ -360,7 +241,8 @@ class EnterpriseDataAnalytics {
 
   async decryptAnalytics(encryptedData, keyId = 'analytics') {
     try {
-      const decrypted = await this.crypto.decrypt(encryptedData.encrypted, keyId);
+      const keyPair = await this.crypto.generateKeyPair();
+      const decrypted = await this.crypto.decrypt(encryptedData.encrypted, keyPair.privateKey);
       return JSON.parse(decrypted);
     } catch (error) {
       console.error('Analytics decryption failed:', error);
@@ -370,30 +252,35 @@ class EnterpriseDataAnalytics {
 
   async cleanup() {
     this.initialized = false;
-    if (this.blockchain) {
-      await this.blockchain.disconnect();
-    }
     console.log('🧹 Analytics cleanup completed');
   }
 }
 
-// Create global instance
-const enterpriseDataAnalytics = new EnterpriseDataAnalytics();
+// BIGINT POLYFILL - CRITICAL FOR PRODUCTION
+if (!BigInt.prototype.toJSON) {
+    BigInt.prototype.toJSON = function() {
+        return this.toString();
+    };
+}
 
-// Global blockchain instance for the server
-let blockchainInstance = null;
-let currentCredentials = null;
+// Import backend server module
+import EnterpriseServer from '../backend/server.js';
 
-// GLOBAL QUANTUM-RESISTANT CRYPTO
-let quantumCrypto = new ProductionQuantumCrypto();
+// Import other core modules
+import { ServiceManager } from './serviceManager.js';
+import { createBrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
+import { initializeGlobalLogger, getGlobalLogger } from '../modules/enterprise-logger/index.js';
+import { getDatabaseInitializer } from '../modules/database-initializer.js';
 
 // --- Initialize Global Logger First ---
 async function initializeCoreSystems() {
   console.log('🔧 Initializing core systems...');
   
   try {
-    // Initialize basic logging
-    console.log('✅ Core systems initialized successfully');
+    console.log('📝 STEP 0: Initializing global logger...');
+    await initializeGlobalLogger();
+    console.log('✅ Global logger initialized successfully');
+    
     return true;
   } catch (error) {
     console.error('❌ Core system initialization failed:', error);
@@ -412,10 +299,11 @@ function initializeWorkerSafeModules() {
 
 // --- Initialize Blockchain System ---
 async function initializeBlockchainSystem() {
+  const logger = getGlobalLogger();
   console.log('🔗 Initializing Bwaezi Blockchain...');
   
   try {
-    blockchainInstance = createBrianNwaezikeChain({
+    blockchainInstance = await createBrianNwaezikeChain({
       rpcUrl: 'https://rpc.winr.games',
       network: 'mainnet',
       chainId: 777777,
@@ -452,60 +340,41 @@ function getCurrentCredentials() {
   };
 }
 
-// --- Get BrianNwaezikeChain credentials ---
 function getBrianNwaezikeChainCredentials() {
-  return {
-    rpcUrl: 'https://rpc.winr.games',
-    chainId: 777777,
-    contractAddress: '0x00000000000000000000000000000000000a4b05',
-    network: 'mainnet',
-    quantumCryptoActive: true,
-    timestamp: new Date().toISOString()
-  };
+  return getCurrentCredentials();
 }
 
 // --- Enhanced Database Initialization ---
 async function initializeApplicationDatabase() {
-  console.log('🗄️ Starting application database initialization...');
+  const logger = getGlobalLogger();
+  
+  logger.info('🗄️ Starting enhanced application database initialization...');
   
   try {
-    // Simulate database initialization
-    const database = {
-      run: (sql, params) => {
-        console.log(`[DATABASE] Executing: ${sql}`, params || '');
-        return Promise.resolve({ lastID: 1, changes: 1 });
-      },
-      get: (sql, params) => {
-        console.log(`[DATABASE] Querying: ${sql}`, params || '');
-        return Promise.resolve(null);
-      },
-      all: (sql, params) => {
-        console.log(`[DATABASE] Fetching all: ${sql}`, params || '');
-        return Promise.resolve([]);
-      },
-      close: () => {
-        console.log('🗄️ Database connection closed');
-        return Promise.resolve();
-      },
-      isEmergency: false
-    };
+    const initializer = getDatabaseInitializer();
+    const initResult = await initializer.initializeAllDatabases();
     
-    console.log('✅ Main application database initialized');
-    return database;
+    if (!initResult || !initResult.success) {
+      throw new Error('Database initialization returned invalid database object');
+    }
+    
+    logger.info('✅ Main application database initialized');
+    
+    return initializer;
   } catch (error) {
-    console.error('❌ Database initialization failed:', error);
+    logger.error('❌ Database initialization failed:', error);
 
     const emergencyDb = {
       run: (sql, params) => {
-        console.warn(`[EMERGENCY DB] ${sql}`, params || '');
+        logger.warn(`[EMERGENCY DB] ${sql}`, params || '');
         return Promise.resolve({ lastID: 1, changes: 1 });
       },
       get: (sql, params) => {
-        console.warn(`[EMERGENCY DB GET] ${sql}`, params || '');
+        logger.warn(`[EMERGENCY DB GET] ${sql}`, params || '');
         return Promise.resolve(null);
       },
       all: (sql, params) => {
-        console.warn(`[EMERGENCY DB ALL] ${sql}`, params || '');
+        logger.warn(`[EMERGENCY DB ALL] ${sql}`, params || '');
         return Promise.resolve([]);
       },
       close: () => Promise.resolve(),
@@ -519,6 +388,7 @@ async function initializeApplicationDatabase() {
 // --- Enhanced Express Application Setup ---
 function createExpressApplication() {
   const app = express();
+  const logger = getGlobalLogger();
   
   // Enhanced security middleware
   app.use(cors());
@@ -583,6 +453,7 @@ function createExpressApplication() {
           analytics: enterpriseDataAnalytics.initialized,
           server: true,
           credentials: !!currentCredentials,
+          backend: true,
           quantumCrypto: true
         },
         port: process.env.PORT || 10000,
@@ -594,7 +465,7 @@ function createExpressApplication() {
       res.status(500).json({ error: error.message });
     }
   });
-
+  
   // 🔐 QUANTUM CRYPTO Status Endpoint
   app.get('/quantum-crypto-status', async (req, res) => {
     try {
@@ -630,7 +501,7 @@ function createExpressApplication() {
         keyId: keyId || 'default'
       });
     } catch (error) {
-      console.error('Crypto encryption error:', error);
+      getGlobalLogger().error('Crypto encryption error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -650,7 +521,7 @@ function createExpressApplication() {
         timestamp: Date.now()
       });
     } catch (error) {
-      console.error('Crypto decryption error:', error);
+      getGlobalLogger().error('Crypto decryption error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -667,134 +538,69 @@ function createExpressApplication() {
       const analysis = await enterpriseDataAnalytics.analyze(data, options);
       res.json(analysis);
     } catch (error) {
-      console.error('Analytics endpoint error:', error);
+      getGlobalLogger().error('Analytics endpoint error:', error);
       res.status(500).json({ error: error.message });
     }
   });
-  
+
   // Blockchain RPC endpoint
   app.post('/bwaezi-rpc', async (req, res) => {
     try {
       const { method, params } = req.body;
       
-      if (!method) {
-        return res.status(400).json({ error: 'Missing method parameter' });
+      if (!blockchainInstance) {
+        return res.status(503).json({ error: 'Blockchain not initialized' });
       }
       
-      if (blockchainInstance && blockchainInstance.isConnected) {
-        const result = await blockchainInstance.rpcCall(method, params || []);
-        res.json({
-          jsonrpc: '2.0',
-          result: result,
-          id: 1
-        });
-      } else {
-        res.status(503).json({ error: 'Blockchain service unavailable' });
-      }
+      const result = await blockchainInstance.rpcCall(method, params);
+      res.json(result);
     } catch (error) {
-      console.error('RPC endpoint error:', error);
+      getGlobalLogger().error('RPC endpoint error:', error);
       res.status(500).json({ error: error.message });
     }
   });
-  
+
   // Blockchain status endpoint
   app.get('/blockchain-status', async (req, res) => {
     try {
-      if (blockchainInstance) {
-        const status = await blockchainInstance.getStatus();
-        res.json({
-          ...status,
-          quantumCryptoActive: true
-        });
-      } else {
-        res.status(503).json({ 
-          error: 'Blockchain not initialized'
-        });
+      if (!blockchainInstance) {
+        return res.status(503).json({ error: 'Blockchain not initialized' });
       }
+      
+      const status = await blockchainInstance.getStatus();
+      res.json(status);
     } catch (error) {
-      console.error('Blockchain status error:', error);
+      getGlobalLogger().error('Blockchain status error:', error);
       res.status(500).json({ error: error.message });
     }
   });
-  
+
   // Revenue analytics endpoint
   app.get('/revenue-analytics', async (req, res) => {
     try {
       const analytics = await enterpriseDataAnalytics.analyze({
-        type: 'revenue_analysis',
-        timestamp: Date.now(),
-        metrics: ['total_revenue', 'active_users', 'transaction_volume']
+        type: 'revenue',
+        period: 'daily',
+        timestamp: Date.now()
       });
-      
-      res.json({
-        revenue: analytics,
-        timestamp: new Date().toISOString()
-      });
+      res.json(analytics);
     } catch (error) {
-      console.error('Revenue analytics error:', error);
+      getGlobalLogger().error('Revenue analytics error:', error);
       res.status(500).json({ error: error.message });
     }
   });
-  
+
   // Data agent status endpoint
   app.get('/data-agent-status', async (req, res) => {
     try {
       res.json({
         status: 'active',
-        agentId: 'ariel_matrix_agent_v4',
-        version: '4.4.0',
-        capabilities: ['data_analysis', 'blockchain_integration', 'quantum_crypto'],
-        quantumCryptoActive: true,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        metrics: enterpriseDataAnalytics.metrics,
+        quantumCrypto: 'active'
       });
     } catch (error) {
-      console.error('Data agent status error:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-  
-  // Metrics endpoint
-  app.get('/api/metrics', async (req, res) => {
-    try {
-      const metrics = {
-        ...enterpriseDataAnalytics.metrics,
-        blockchainConnected: !!blockchainInstance && blockchainInstance.isConnected,
-        quantumCryptoActive: true,
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        timestamp: new Date().toISOString()
-      };
-      
-      res.json(metrics);
-    } catch (error) {
-      console.error('Metrics endpoint error:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-  
-  // Events endpoint
-  app.post('/api/events', async (req, res) => {
-    try {
-      const { event, data } = req.body;
-      
-      if (!event) {
-        return res.status(400).json({ error: 'Missing event parameter' });
-      }
-      
-      enterpriseDataAnalytics.events.set(event, {
-        data,
-        timestamp: Date.now()
-      });
-      
-      enterpriseDataAnalytics.metrics.eventsTracked++;
-      
-      res.json({
-        status: 'recorded',
-        event: event,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Events endpoint error:', error);
+      getGlobalLogger().error('Data agent status error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -828,7 +634,7 @@ function createExpressApplication() {
   
   // Enhanced error handler
   app.use((error, req, res, next) => {
-    console.error('Unhandled application error:', error);
+    getGlobalLogger().error('Unhandled application error:', error);
     
     res.status(500).json({
       error: 'Internal server error',
@@ -838,150 +644,72 @@ function createExpressApplication() {
     });
   });
   
-  console.log('✅ Express application configured successfully');
+  getGlobalLogger().info('✅ Express application configured successfully');
   return app;
 }
 
-// --- Enhanced Server Creation ---
-function createServer(app) {
-  // CRITICAL FIX: Proper port binding for Render/container deployment
-  const PORT = process.env.PORT || 10000;
-  const HOST = '0.0.0.0';
-  
-  const server = http.createServer(app);
-  
-  // Enhanced error handling for server
-  server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
-      console.error(`❌ Port ${PORT} is already in use`);
-      process.exit(1);
-    } else {
-      console.error('❌ Server error:', error);
-      process.exit(1);
-    }
-  });
-  
-  server.on('listening', () => {
-    const address = server.address();
-    console.log(`✅ Server successfully bound to ${address.address}:${address.port}`);
-  });
-  
-  return {
-    server,
-    PORT,
-    HOST
-  };
-}
-
 // --- Enhanced Main Application Initialization ---
-async function initializeArielSQLSuite() {
-  console.log('🚀 ArielSQL Ultimate Suite v4.4 - PRODUCTION READY');
-  console.log('📅 Started at:', new Date().toISOString());
+async function initializeFullSystem() {
+  console.log('🚀 PHASE 2: Initializing full ArielSQL system...');
+  console.log('📅 System initialization started:', new Date().toISOString());
   
   // Log critical deployment information
   console.log(`🌐 Deployment Environment: ${process.env.NODE_ENV || 'production'}`);
   console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '10000 (default)'}`);
-  console.log(`🏠 Binding Host: 0.0.0.0`);
+  console.log(`🏠 Binding Host: 0.0.0.0 (container-compatible)`);
   console.log(`🔐 QUANTUM CRYPTO: PRODUCTION READY`);
   
-  // Initialize core systems first
-  const coreInitialized = await initializeCoreSystems();
-  if (!coreInitialized) {
-    throw new Error('Core system initialization failed - cannot proceed');
-  }
-  
   try {
+    // Initialize core systems first
+    const coreInitialized = await initializeCoreSystems();
+    if (!coreInitialized) {
+      throw new Error('Core system initialization failed - cannot proceed');
+    }
+    
+    const logger = getGlobalLogger();
+    
     // Step 1: Initialize worker-safe modules
     initializeWorkerSafeModules();
     
-    // Step 2: Initialize blockchain system
-    console.log('🔗 STEP 1: Initializing blockchain system...');
+    // Step 2: Initialize quantum crypto
+    quantumCrypto = new ProductionQuantumCrypto();
+    console.log('🔐 Quantum Crypto: ACTIVE');
+    
+    // Step 3: Initialize blockchain system
+    logger.info('🔗 STEP 1: Initializing blockchain system...');
     const blockchainInitialized = await initializeBlockchainSystem();
     if (!blockchainInitialized) {
-      console.warn('⚠️ Blockchain initialization failed - some features may be unavailable');
+      throw new Error('Blockchain initialization failed');
     }
     
-    // Step 3: Initialize application database
-    console.log('🗄️ STEP 2: Initializing application database...');
+    // Step 4: Initialize application database
+    logger.info('🗄️ STEP 2: Initializing application database...');
     const database = await initializeApplicationDatabase();
     
-    // Step 4: Initialize enterprise data analytics
-    console.log('📊 STEP 3: Initializing enterprise data analytics...');
+    // Step 5: Initialize backend systems with credentials
+    logger.info('🔗 STEP 3: Initializing backend systems...');
+    const backendServer = new EnterpriseServer();
+    await backendServer.initialize();
+    console.log('✅ Backend systems initialized');
+    
+    // Step 6: Initialize enterprise data analytics
+    logger.info('📊 STEP 4: Initializing enterprise data analytics...');
+    enterpriseDataAnalytics = new EnterpriseDataAnalytics();
     await enterpriseDataAnalytics.initialize();
     
-    // Step 5: Create Express application
-    console.log('🌐 STEP 4: Creating Express application...');
-    const app = createExpressApplication();
+    // Step 7: Create Express application
+    logger.info('🌐 STEP 5: Creating Express application...');
+    const expressApp = createExpressApplication();
     
-    // Step 6: Create HTTP server with proper binding
-    console.log('🔌 STEP 5: Creating HTTP server...');
-    const { server, PORT, HOST } = createServer(app);
+    // Update the server with the fully configured Express app
+    server.removeAllListeners('request');
+    server.on('request', expressApp);
     
-    // Start server with proper error handling
-    server.listen(PORT, HOST, () => {
-      const address = server.address();
-      console.log(`\n🎉 SUCCESS: ArielSQL Ultimate Suite v4.4 is RUNNING!`);
-      console.log(`🌐 Primary URL: http://${HOST}:${PORT}`);
-      console.log(`🔧 Health Check: http://${HOST}:${PORT}/health`);
-      console.log(`🔐 Quantum Crypto: http://${HOST}:${PORT}/quantum-crypto-status`);
-      console.log(`🌍 RPC Endpoint: http://${HOST}:${PORT}/bwaezi-rpc`);
-      console.log(`📊 Analytics: http://${HOST}:${PORT}/api/analytics`);
-      console.log(`📈 Metrics: http://${HOST}:${PORT}/api/metrics`);
-      console.log(`💰 Revenue: http://${HOST}:${PORT}/revenue-analytics`);
-      
-      console.log('\n🎉 ArielSQL Ultimate Suite v4.4 - FULLY OPERATIONAL');
-      console.log('🚀 PRIMARY PRODUCTION SERVER: READY FOR GLOBAL TRAFFIC');
-      console.log('🔐 QUANTUM CRYPTO: PRODUCTION READY & ACTIVE');
-      console.log('🔗 BLOCKCHAIN: CONNECTED TO BWAEZI MAINNET');
-      console.log('🔐 CREDENTIALS: CENTRALIZED RETRIEVAL ACTIVE');
-      console.log('📊 ANALYTICS: ENTERPRISE GRADE ACTIVE');
-      console.log(`🌐 PORT: ${PORT} (Properly bound for deployment)`);
-      console.log(`🏠 HOST: ${HOST} (Container compatible)`);
-      console.log(`⏰ Uptime: ${process.uptime().toFixed(2)}s`);
-    });
-    
-    // Graceful shutdown
-    const gracefulShutdown = async (signal) => {
-      console.log(`🛑 Received ${signal}, initiating graceful shutdown...`);
-      
-      try {
-        // Close analytics
-        await enterpriseDataAnalytics.cleanup();
-        
-        // Close blockchain connection
-        if (blockchainInstance) {
-          await blockchainInstance.disconnect();
-        }
-        
-        // Close database
-        if (database && typeof database.close === 'function' && !database.isEmergency) {
-          await database.close();
-        }
-        
-        // Close server
-        server.close(() => {
-          console.log('✅ Graceful shutdown completed');
-          process.exit(0);
-        });
-        
-        // Force close after 10 seconds
-        setTimeout(() => {
-          console.log('💀 Forcing shutdown after timeout');
-          process.exit(1);
-        }, 10000);
-        
-      } catch (error) {
-        console.error('❌ Error during graceful shutdown:', error);
-        process.exit(1);
-      }
-    };
-    
-    // Register shutdown handlers
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    console.log('🎉 FULL SYSTEM INITIALIZATION COMPLETE');
+    console.log(`🌐 Server running on: http://${HOST}:${PORT}`);
     
     return {
-      app,
+      app: expressApp,
       server,
       database,
       analytics: enterpriseDataAnalytics,
@@ -994,11 +722,13 @@ async function initializeArielSQLSuite() {
     };
     
   } catch (error) {
-    console.error('💀 ArielSQL Suite initialization failed:', error);
+    console.error('💀 Full system initialization failed:', error);
     
     // Emergency cleanup
     try {
-      await enterpriseDataAnalytics.cleanup();
+      if (enterpriseDataAnalytics) {
+        await enterpriseDataAnalytics.cleanup();
+      }
       
       if (blockchainInstance) {
         await blockchainInstance.disconnect();
@@ -1011,57 +741,34 @@ async function initializeArielSQLSuite() {
   }
 }
 
-// 🔥 PHASE 2: Initialize Full System (Called after port binding)
-async function initializeFullSystem() {
-  console.log('\n🚀 PHASE 2: Initializing full ArielSQL system...');
-  console.log(`📅 System initialization started: ${new Date().toISOString()}`);
-  
-  try {
-    const initializedSystem = await initializeArielSQLSuite();
-    console.log('🎉 FULL SYSTEM INITIALIZATION COMPLETE');
-    console.log(`🌐 Server running on: http://0.0.0.0:${initializedSystem.port}`);
-    console.log(`🔐 Quantum Crypto: ACTIVE`);
-    
-    return initializedSystem;
-  } catch (error) {
-    console.error('❌ Full system initialization failed:', error);
-    throw error;
-  }
-}
-
-// Export all modules for external use
+// --- Export for ES Module Usage ---
 export {
   initializeFullSystem,
   getCurrentCredentials,
   getBrianNwaezikeChainCredentials,
   enterpriseDataAnalytics,
-  quantumCrypto,
-  blockchainInstance,
-  createBrianNwaezikeChain,
-  BrianNwaezikeChain,
   ProductionQuantumCrypto,
-  EnterpriseDataAnalytics
+  EnterpriseDataAnalytics,
+  app
 };
 
-// Export the main application for testing and external use
-export const APP = {
-  initialize: initializeFullSystem,
-  getCredentials: getCurrentCredentials,
-  getBlockchainCredentials: getBrianNwaezikeChainCredentials,
-  analytics: enterpriseDataAnalytics,
-  crypto: quantumCrypto,
-  blockchain: blockchainInstance,
-  createBlockchain: createBrianNwaezikeChain,
-  version: '4.4.0',
-  production: true,
-  quantumResistant: true
-};
+// Export the app for external use
+export { app as APP };
 
-// Export for CommonJS compatibility if needed
-export default APP;
-
-// Auto-initialize if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
+// --- Auto-start if this is the main module ---
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes('main.js')) {
   console.log('🚀 Starting ArielSQL Ultimate Suite v4.4 as main module...');
-  // Server is already bound in Phase 1, Phase 2 will initialize the full system
+  
+  initializePortBinding()
+    .then(({ port, host }) => {
+      console.log(`✅ Port binding successful: ${host}:${port}`);
+      // Start full system initialization after successful port binding
+      setTimeout(() => initializeFullSystem(), 100);
+    })
+    .catch(error => {
+      console.error('❌ Port binding failed:', error);
+      process.exit(1);
+    });
 }
+
+export default initializeFullSystem;
