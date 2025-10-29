@@ -82,108 +82,8 @@ async function bindServer() {
 }
 
 // 🔥 PRODUCTION MODULE IMPORTS
-// 🔥 FIXED MODULE LOADING - PRODUCTION READY
 async function loadProductionModules() {
-  console.log('📦 Loading production modules with error handling...');
-  
-  try {
-    // SIMPLIFIED MODULE LOADING - Only load what actually exists
-    const modules = {};
-    
-    // Try to load modules with fallbacks
-    try {
-      // Use absolute paths or module names
-      const { ProductionSovereignCore } = await import('./core/sovereign-brain.js');
-      modules.ProductionSovereignCore = ProductionSovereignCore;
-      console.log('✅ Sovereign Core loaded');
-    } catch (error) {
-      console.log('⚠️ Sovereign Core not available, using fallback');
-      modules.ProductionSovereignCore = class FallbackCore {
-        async initialize() { 
-          console.log('🔄 Fallback Core initialized');
-          return this;
-        }
-      };
-    }
-
-    try {
-      const { default: EnterpriseServer } = await import('./server.js');
-      modules.EnterpriseServer = EnterpriseServer;
-      console.log('✅ Enterprise Server loaded');
-    } catch (error) {
-      console.log('⚠️ Enterprise Server not available');
-      modules.EnterpriseServer = null;
-    }
-
-    // Essential modules with guaranteed fallbacks
-    modules.ServiceManager = class ServiceManager {
-      constructor() { this.services = new Map(); }
-      async start() { console.log('🔄 Fallback Service Manager started'); }
-    };
-
-    modules.BrianNwaezikeChain = class FallbackBlockchain {
-      constructor(config) { this.config = config; this.isConnected = false; }
-      async init() { 
-        this.isConnected = true;
-        console.log('🔄 Fallback Blockchain initialized');
-      }
-      async rpcCall(method, params) {
-        return { method, params, fallback: true };
-      }
-      async getStatus() {
-        return { connected: true, fallback: true, chainId: 777777 };
-      }
-    };
-
-    modules.initializeGlobalLogger = () => {
-      console.log('📝 Logger initialized (fallback)');
-      global.logger = console;
-    };
-
-    modules.getGlobalLogger = () => global.logger || console;
-
-    modules.getDatabaseInitializer = () => ({
-      initializeAllDatabases: async () => {
-        console.log('🗄️ Fallback database initialized');
-        return { success: true, fallback: true };
-      }
-    });
-
-    console.log('✅ All production modules loaded (with fallbacks)');
-    return modules;
-    
-  } catch (error) {
-    console.error('❌ Critical module loading failed:', error);
-    
-    // Emergency fallback - return minimal working modules
-    return createEmergencyModules();
-  }
-}
-
-function createEmergencyModules() {
-  console.log('🚨 Loading emergency fallback modules');
-  
-  return {
-    ProductionSovereignCore: class EmergencyCore {
-      async initialize() { 
-        console.log('🆘 Emergency Core initialized');
-        return this;
-      }
-    },
-    EnterpriseServer: null,
-    ServiceManager: class { async start() {} },
-    BrianNwaezikeChain: class {
-      async init() { this.isConnected = false; }
-      async rpcCall() { return { emergency: true }; }
-      async getStatus() { return { emergency: true }; }
-    },
-    initializeGlobalLogger: () => { global.logger = console; },
-    getGlobalLogger: () => console,
-    getDatabaseInitializer: () => ({
-      initializeAllDatabases: async () => ({ success: true, emergency: true })
-    })
-  };
-}
+  console.log('📦 Loading production modules...');
   
   try {
     // Dynamic imports for better performance
@@ -734,62 +634,46 @@ function addFullRoutesToApp(sovereignCore, blockchainInstance, analytics, quantu
 }
 
 // 🔥 MAIN INITIALIZATION FUNCTION
-// 🔥 UPDATED: Initialize with error handling
 async function initializeFullSystemAfterBinding(actualPort) {
   console.log('\n🚀 PHASE 2: Initializing full ArielSQL system...');
+  console.log(`📅 System initialization started: ${new Date().toISOString()}`);
+  console.log(`🔌 CONFIRMED PORT: ${actualPort}`);
+  console.log(`🏠 Binding Host: ${HOST}`);
   
   try {
-    // Load production modules WITH ERROR HANDLING
+    // Load production modules
     const modules = await loadProductionModules();
     
     // Initialize core systems
     await initializeCoreSystems();
     
-    // Initialize God Mode (with fallback)
-    let sovereignCore = null;
-    try {
-      sovereignCore = await initializeGodMode(modules.ProductionSovereignCore);
-    } catch (error) {
-      console.log('⚠️ God Mode initialization skipped:', error.message);
-    }
+    // Initialize God Mode
+    const sovereignCore = await initializeGodMode(modules.ProductionSovereignCore);
     
-    // Initialize blockchain (with fallback)
-    let blockchainInstance = null;
-    let credentials = null;
-    try {
-      const blockchainResult = await initializeBlockchainSystem(modules.BrianNwaezikeChain);
-      blockchainInstance = blockchainResult.blockchainInstance;
-      credentials = blockchainResult.credentials;
-    } catch (error) {
-      console.log('⚠️ Blockchain initialization skipped:', error.message);
-    }
+    // Initialize blockchain
+    const { blockchainInstance, credentials } = await initializeBlockchainSystem(modules.BrianNwaezikeChain);
+    
+    // Initialize database
+    const database = await initializeApplicationDatabase(modules.getDatabaseInitializer);
     
     // Initialize quantum crypto
     const quantumCrypto = new ProductionQuantumCrypto();
     
     // Initialize analytics
-    const analytics = new EnterpriseDataAnalytics();
+    const analytics = new EnterpriseDataAnalytics({
+      blockchain: blockchainInstance,
+      database: database,
+      godMode: !!sovereignCore,
+      quantumCrypto: true
+    });
+    
     await analytics.initialize(sovereignCore, blockchainInstance);
     
     // Add full routes to app
     addFullRoutesToApp(sovereignCore, blockchainInstance, analytics, quantumCrypto);
     
-    // MARK SYSTEM AS INITIALIZED - CRITICAL!
+    // Mark system as initialized
     isSystemInitialized = true;
-    
-    console.log('\n🎉 FULL SYSTEM INITIALIZATION COMPLETE');
-    console.log(`✅ System Initialized: ${isSystemInitialized}`);
-    console.log(`🌐 Ready at: https://arielmatrix2-0-twwc.onrender.com`);
-    
-  } catch (error) {
-    console.error('❌ Full system initialization failed:', error);
-    initializationError = error;
-    
-    // CRITICAL: Still mark as initialized for basic functionality
-    isSystemInitialized = true;
-    console.log('⚠️ System running with limited functionality');
-  }
-}
     
     console.log('\n🎉 FULL SYSTEM INITIALIZATION COMPLETE');
     console.log(`🌐 Server running on: http://${HOST}:${actualPort}`);
