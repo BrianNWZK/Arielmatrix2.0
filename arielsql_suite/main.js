@@ -1,43 +1,39 @@
-// arielsql_suite/main.js - CRITICAL PORT BINDING FIX v4.4
+// arielsql_suite/main.js - CRITICAL PORT BINDING FIRST v4.5
 import http from "http";
 import express from "express";
 import cors from "cors";
 
-// 🔥 IMMEDIATE PORT BINDING - CRITICAL FIX
+// 🚨 CRITICAL: PORT BINDING FIRST - IMMEDIATE SERVER START
 const app = express();
 const PORT = process.env.PORT || 10000;
 const HOST = '0.0.0.0';
 
 app.use(express.json());
 
-// CRITICAL: Instant health endpoint for port scanning
+// INSTANT HEALTH ENDPOINT - CRITICAL FOR DEPLOYMENT
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ready', 
     timestamp: new Date().toISOString(),
-    server: 'ArielSQL Ultimate Suite',
-    port: PORT,
-    binding: 'active'
+    server: 'ArielSQL - Bootstrapping Full System'
   });
 });
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'ArielSQL Server - PORT ACTIVE', 
+    message: '🚀 ArielSQL Ultimate Suite - Full System Loading', 
     port: PORT,
-    status: 'initializing_full_system',
-    version: '4.4.0'
+    status: 'booting'
   });
 });
 
 // 🚨 START SERVER IMMEDIATELY - NO ASYNC BLOCKING
 const server = http.createServer(app);
-
 server.listen(PORT, HOST, () => {
-  console.log(`🎉 SERVER SUCCESSFULLY BOUND TO PORT ${PORT}`);
-  console.log(`🌐 Primary URL: http://${HOST}:${PORT}`);
+  console.log(`🎉 CRITICAL: SERVER BOUND TO PORT ${PORT}`);
+  console.log(`🌐 http://${HOST}:${PORT}`);
   console.log(`🔧 Health: http://${HOST}:${PORT}/health`);
-  console.log('🚀 PORT BINDING COMPLETE - NOW INITIALIZING FULL SYSTEM...');
+  console.log('💰 Revenue Status: PORT ACTIVE - ACCEPTING REQUESTS');
 });
 
 // Handle port binding errors
@@ -46,17 +42,12 @@ server.on('error', (error) => {
     console.log(`🔄 Port ${PORT} busy, trying ${parseInt(PORT) + 1}...`);
     const altServer = http.createServer(app);
     altServer.listen(parseInt(PORT) + 1, HOST, () => {
-      console.log(`✅ Server successfully bound to ALTERNATIVE PORT ${parseInt(PORT) + 1}`);
-      console.log(`🌐 Server accessible at: http://${HOST}:${parseInt(PORT) + 1}`);
+      console.log(`✅ Bound to alternative port ${parseInt(PORT) + 1}`);
     });
   }
 });
 
-// =========================================================================
-// NOW IMPORT AND INITIALIZE ALL MODULES ASYNCHRONOUSLY AFTER PORT BINDING
-// =========================================================================
-
-// 🔥 GOD MODE CORE INTEGRATION
+// 🔥 GOD MODE CORE INTEGRATION - LOADED AFTER PORT BINDING
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 
 // BIGINT POLYFILL - CRITICAL FOR PRODUCTION
@@ -603,91 +594,15 @@ async function initializeApplicationDatabase() {
   }
 }
 
-// =========================================================================
-// ASYNCHRONOUS SYSTEM INITIALIZATION - RUNS AFTER PORT BINDING
-// =========================================================================
-
-async function initializeFullSystem() {
-  console.log('🚀 ArielSQL Ultimate Suite v4.4 - FULL SYSTEM INITIALIZATION');
-  console.log('📅 Started at:', new Date().toISOString());
-  
-  // Log critical deployment information
-  console.log(`🌐 Deployment Environment: ${process.env.NODE_ENV || 'production'}`);
-  console.log(`🔌 PORT Environment Variable: ${process.env.PORT || '10000 (default)'}`);
-  console.log(`🏠 Binding Host: 0.0.0.0 (container-compatible)`);
-  console.log(`👑 GOD MODE: INITIALIZING...`);
-  console.log(`🔐 QUANTUM CRYPTO: PRODUCTION READY`);
-  console.log(`💰 REVENUE SYSTEMS: ACTIVATING...`);
-  
-  try {
-    // Initialize core systems first
-    const coreInitialized = await initializeCoreSystems();
-    if (!coreInitialized) {
-      console.error('❌ Core system initialization failed - continuing with limited functionality');
-    }
-    
-    const logger = getGlobalLogger();
-    
-    // 🔥 INITIALIZE ALL SYSTEMS ASYNCHRONOUSLY
-    const initializeAsyncSystems = async () => {
-      try {
-        console.log('🔧 STEP 1: Initializing GOD MODE systems...');
-        await initializeGodMode();
-        
-        console.log('🔗 STEP 2: Initializing blockchain system...');
-        await initializeBlockchainSystem();
-        
-        console.log('🏢 STEP 3: Initializing backend systems...');
-        const backendServer = new EnterpriseServer();
-        await backendServer.initialize();
-        
-        console.log('🗄️ STEP 4: Initializing database...');
-        await initializeApplicationDatabase();
-        
-        console.log('📊 STEP 5: Initializing analytics...');
-        await enterpriseDataAnalytics.initialize();
-        
-        // 🔥 ENHANCE EXPRESS APP WITH FULL FUNCTIONALITY
-        enhanceExpressApp(app);
-        
-        logger.success('✅ All systems initialized successfully');
-        
-        // Log revenue readiness
-        console.log('\n💰 REVENUE SYSTEMS STATUS:');
-        console.log(`   📊 Analytics: ${enterpriseDataAnalytics.initialized ? 'READY' : 'NOT READY'}`);
-        console.log(`   🔗 Blockchain: ${blockchainInstance ? 'READY' : 'NOT READY'}`);
-        console.log(`   👑 God Mode: ${godModeActive ? 'ACTIVE' : 'INACTIVE'}`);
-        console.log(`   🌐 Server Port: ${PORT} - ACCEPTING REQUESTS`);
-        console.log(`   💸 Revenue Generation: ${(enterpriseDataAnalytics.initialized && blockchainInstance) ? 'OPERATIONAL' : 'SETUP REQUIRED'}`);
-        
-      } catch (asyncError) {
-        console.error('Async system initialization failed:', asyncError);
-        // Don't crash the server - these systems can be initialized later
-      }
-    };
-
-    // Start async initialization
-    initializeAsyncSystems();
-
-  } catch (error) {
-    console.error('💀 Full system initialization failed:', error);
-    // Server continues running even if initialization fails
-  }
-}
-
-// =========================================================================
-// ENHANCE EXPRESS APP WITH FULL FUNCTIONALITY AFTER INITIALIZATION
-// =========================================================================
-
-function enhanceExpressApp(app) {
+// --- Enhanced Express Application Setup with GOD MODE ---
+function createFullExpressApplication() {
+  const fullApp = express();
   const logger = getGlobalLogger();
   
-  console.log('🎯 Enhancing Express app with full functionality...');
-  
   // Enhanced security middleware
-  app.use(cors());
-  app.use((req, res, next) => {
-    res.setHeader('X-Powered-By', `ArielSQL Ultimate Suite v4.4${godModeActive ? ' - GOD MODE ACTIVE' : ''}`);
+  fullApp.use(cors());
+  fullApp.use((req, res, next) => {
+    res.setHeader('X-Powered-By', `ArielSQL Ultimate Suite v4.5${godModeActive ? ' - GOD MODE ACTIVE' : ''}`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-XSS-Protection', '1; mode=block');
@@ -697,16 +612,16 @@ function enhanceExpressApp(app) {
   });
   
   // Enhanced body parsing
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  fullApp.use(express.json({ limit: '50mb' }));
+  fullApp.use(express.urlencoded({ extended: true, limit: '50mb' }));
   
   // === PRIMARY SERVER ENDPOINTS ===
   
-  // 🏠 Enhanced Root Endpoint with GOD MODE status
-  app.get('/full-status', (req, res) => {
+  // 🏠 Root Endpoint with GOD MODE status
+  fullApp.get('/', (req, res) => {
     res.json({
-      message: `🚀 ArielSQL Ultimate Suite v4.4 - ${godModeActive ? 'GOD MODE ACTIVE' : 'Production Server'}`,
-      version: '4.4.0',
+      message: `🚀 ArielSQL Ultimate Suite v4.5 - ${godModeActive ? 'GOD MODE ACTIVE' : 'Production Server'}`,
+      version: '4.5.0',
       timestamp: new Date().toISOString(),
       godMode: {
         active: godModeActive,
@@ -717,12 +632,6 @@ function enhanceExpressApp(app) {
         active: true,
         algorithm: quantumCrypto.algorithm,
         quantumResistant: true
-      },
-      systems: {
-        blockchain: !!blockchainInstance,
-        analytics: enterpriseDataAnalytics.initialized,
-        database: true,
-        backend: true
       },
       endpoints: {
         health: '/health',
@@ -735,15 +644,70 @@ function enhanceExpressApp(app) {
         revenue: '/revenue-analytics',
         revenueStatus: '/revenue-status',
         godMode: '/god-mode-status',
-        crypto: '/quantum-crypto-status',
-        fullStatus: '/full-status'
+        crypto: '/quantum-crypto-status'
       },
       documentation: 'https://github.com/arielmatrix/arielmatrix2.0'
     });
   });
   
+  // 🔧 Health Check Endpoint with GOD MODE enhancements
+  fullApp.get('/health', async (req, res) => {
+    try {
+      const health = {
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        version: '4.5.0',
+        environment: process.env.NODE_ENV || 'production',
+        godMode: {
+          active: godModeActive,
+          sovereignCore: !!sovereignCore,
+          quantumSystems: godModeActive ? 'operational' : 'inactive'
+        },
+        quantumCrypto: {
+          active: true,
+          initialized: quantumCrypto.initialized,
+          quantumResistant: quantumCrypto.quantumResistant
+        },
+        services: {
+          blockchain: !!blockchainInstance && blockchainInstance.isConnected,
+          analytics: enterpriseDataAnalytics.initialized,
+          server: true,
+          credentials: !!currentCredentials,
+          backend: true,
+          sovereignCore: !!sovereignCore,
+          quantumCrypto: true
+        },
+        port: process.env.PORT || 10000,
+        host: '0.0.0.0'
+      };
+
+      // 🔥 GOD MODE HEALTH ENHANCEMENT
+      if (godModeActive) {
+        try {
+          const healthEnhancement = await sovereignCore.executeQuantumComputation(
+            'health_enhancement',
+            { health },
+            { consciousnessEnhanced: true }
+          );
+          
+          if (healthEnhancement.enhancedHealth) {
+            Object.assign(health, healthEnhancement.enhancedHealth);
+          }
+        } catch (enhancementError) {
+          // Silently fail - don't break health endpoint
+        }
+      }
+
+      res.json(health);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // 🔥 NEW REVENUE STATUS ENDPOINT - CRITICAL FOR REVENUE GENERATION
-  app.get('/revenue-status', async (req, res) => {
+  fullApp.get('/revenue-status', async (req, res) => {
     try {
       const revenueStatus = {
         timestamp: new Date().toISOString(),
@@ -782,7 +746,7 @@ function enhanceExpressApp(app) {
   });
 
   // 🔥 NEW REVENUE TRANSACTION ENDPOINT
-  app.post('/api/revenue/transaction', async (req, res) => {
+  fullApp.post('/api/revenue/transaction', async (req, res) => {
     try {
       const { amount, currency = 'BWAEZI', description } = req.body;
       
@@ -810,7 +774,7 @@ function enhanceExpressApp(app) {
   });
   
   // 👑 GOD MODE Status Endpoint
-  app.get('/god-mode-status', async (req, res) => {
+  fullApp.get('/god-mode-status', async (req, res) => {
     try {
       let godModeStatus = {
         active: godModeActive,
@@ -836,7 +800,7 @@ function enhanceExpressApp(app) {
   });
 
   // 🔐 QUANTUM CRYPTO Status Endpoint
-  app.get('/quantum-crypto-status', async (req, res) => {
+  fullApp.get('/quantum-crypto-status', async (req, res) => {
     try {
       const cryptoStatus = {
         active: true,
@@ -855,7 +819,7 @@ function enhanceExpressApp(app) {
   });
 
   // 🔐 QUANTUM CRYPTO Operations Endpoint
-  app.post('/api/crypto/encrypt', async (req, res) => {
+  fullApp.post('/api/crypto/encrypt', async (req, res) => {
     try {
       const { data, keyId } = req.body;
       
@@ -877,7 +841,7 @@ function enhanceExpressApp(app) {
     }
   });
 
-  app.post('/api/crypto/decrypt', async (req, res) => {
+  fullApp.post('/api/crypto/decrypt', async (req, res) => {
     try {
       const { encrypted, keyId } = req.body;
       
@@ -899,7 +863,7 @@ function enhanceExpressApp(app) {
   });
   
   // Enhanced analytics endpoint with GOD MODE
-  app.post('/api/analytics', async (req, res) => {
+  fullApp.post('/api/analytics', async (req, res) => {
     try {
       const { data, options } = req.body;
       
@@ -916,7 +880,7 @@ function enhanceExpressApp(app) {
   });
   
   // Enhanced 404 handler
-  app.use('*', (req, res) => {
+  fullApp.use('*', (req, res) => {
     res.status(404).json({
       error: 'Endpoint not found',
       path: req.originalUrl,
@@ -932,7 +896,6 @@ function enhanceExpressApp(app) {
       availableEndpoints: [
         'GET /',
         'GET /health',
-        'GET /full-status',
         'GET /revenue-status',
         'GET /god-mode-status',
         'GET /quantum-crypto-status',
@@ -951,7 +914,7 @@ function enhanceExpressApp(app) {
   });
   
   // Enhanced error handler with GOD MODE recovery
-  app.use((error, req, res, next) => {
+  fullApp.use((error, req, res, next) => {
     getGlobalLogger().error('Unhandled application error:', error);
     
     // 🔥 GOD MODE ERROR RECOVERY ATTEMPT
@@ -968,23 +931,68 @@ function enhanceExpressApp(app) {
     });
   });
   
-  getGlobalLogger().info(`✅ Express application enhanced successfully${godModeActive ? ' - GOD MODE INTEGRATED' : ''}`);
+  getGlobalLogger().info(`✅ Full Express application configured successfully${godModeActive ? ' - GOD MODE INTEGRATED' : ''}`);
+  return fullApp;
 }
 
-// =========================================================================
-// START FULL SYSTEM INITIALIZATION AFTER PORT BINDING
-// =========================================================================
+// 🔥 CRITICAL: ASYNCHRONOUS SYSTEM INITIALIZATION - NON-BLOCKING
+async function initializeFullSystemAsync() {
+  console.log('\n🚀 STARTING FULL SYSTEM INITIALIZATION ASYNCHRONOUSLY...');
+  
+  try {
+    // Initialize core systems
+    const coreInitialized = await initializeCoreSystems();
+    if (!coreInitialized) {
+      console.warn('⚠️ Core system initialization failed - continuing with limited functionality');
+    }
 
-// Start full system initialization after a brief delay to ensure port binding is complete
+    // Initialize GOD MODE
+    await initializeGodMode();
+    
+    // Initialize blockchain system
+    await initializeBlockchainSystem();
+    
+    // Initialize backend systems
+    const backendServer = new EnterpriseServer();
+    await backendServer.initialize();
+    
+    // Initialize database
+    await initializeApplicationDatabase();
+    
+    // Initialize analytics
+    await enterpriseDataAnalytics.initialize();
+    
+    console.log('\n✅ ALL SYSTEMS INITIALIZED SUCCESSFULLY');
+    console.log('💰 REVENUE SYSTEMS STATUS:');
+    console.log(`   📊 Analytics: ${enterpriseDataAnalytics.initialized ? 'READY' : 'NOT READY'}`);
+    console.log(`   🔗 Blockchain: ${blockchainInstance ? 'READY' : 'NOT READY'}`);
+    console.log(`   👑 God Mode: ${godModeActive ? 'ACTIVE' : 'INACTIVE'}`);
+    console.log(`   🌐 Server Port: ${PORT} - ACCEPTING REQUESTS`);
+    console.log(`   💸 Revenue Generation: ${(enterpriseDataAnalytics.initialized && blockchainInstance) ? 'OPERATIONAL' : 'SETUP REQUIRED'}`);
+    
+    // 🔥 SWITCH TO FULL EXPRESS APP AFTER INITIALIZATION
+    const fullApp = createFullExpressApplication();
+    server.removeAllListeners('request');
+    server.on('request', fullApp);
+    
+    console.log('🎯 FULL SYSTEM NOW ACTIVE WITH ALL ENDPOINTS');
+    
+  } catch (error) {
+    console.error('❌ Full system initialization error:', error);
+    // Server continues running with basic functionality
+  }
+}
+
+// 🚀 START ASYNC INITIALIZATION AFTER PORT BINDING
 setTimeout(() => {
-  initializeFullSystem().catch(error => {
-    console.error('Full system initialization error:', error);
+  initializeFullSystemAsync().catch(error => {
+    console.error('Async initialization failed:', error);
   });
 }, 1000);
 
 // Enhanced graceful shutdown
 const gracefulShutdown = async (signal) => {
-  console.log(`🛑 Received ${signal}, initiating graceful shutdown...`);
+  console.log(`\n🛑 Received ${signal}, initiating graceful shutdown...`);
   
   try {
     // Close analytics
@@ -1023,36 +1031,40 @@ const gracefulShutdown = async (signal) => {
 // Register shutdown handlers
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // For nodemon
 
-// =========================================================================
-// EXPORT ALL MODULES - MAINTAINING ALL ORIGINAL FUNCTIONALITY
-// =========================================================================
-
+// Export everything for module usage
 export {
-  app,
-  server,
-  enterpriseDataAnalytics,
   blockchainInstance,
+  currentCredentials,
+  getCurrentCredentials,
   sovereignCore,
   godModeActive,
   quantumCrypto,
-  getCurrentCredentials,
+  enterpriseDataAnalytics,
+  EnterpriseServer,
   ProductionQuantumCrypto,
-  EnterpriseDataAnalytics,
-  ProductionSovereignCore
+  ProductionSovereignCore,
+  ServiceManager,
+  BrianNwaezikeChain,
+  initializeGlobalLogger,
+  getGlobalLogger,
+  getDatabaseInitializer
 };
 
 export default {
-  app,
-  server,
-  enterpriseDataAnalytics,
   blockchainInstance,
+  currentCredentials,
+  getCurrentCredentials,
   sovereignCore,
   godModeActive,
   quantumCrypto,
-  getCurrentCredentials,
+  enterpriseDataAnalytics,
+  EnterpriseServer,
   ProductionQuantumCrypto,
-  EnterpriseDataAnalytics,
-  ProductionSovereignCore
+  ProductionSovereignCore,
+  ServiceManager,
+  BrianNwaezikeChain,
+  initializeGlobalLogger,
+  getGlobalLogger,
+  getDatabaseInitializer
 };
