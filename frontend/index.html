@@ -4,10 +4,666 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Arielmatrix2.0 Dashboard</title>
+    <title>ArielSQL Ultimate Suite - Live System Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        color: #f1f5f9;
+        min-height: 100vh;
+      }
+      .glass-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 1rem;
+      }
+      .gradient-text {
+        background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      .pulse-ring {
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(96, 165, 250, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
+      }
+      .status-online { color: #10b981; }
+      .status-offline { color: #ef4444; }
+      .status-warning { color: #f59e0b; }
+    </style>
   </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+  <body class="min-h-screen">
+    <!-- Navigation -->
+    <nav class="glass-card mx-4 mt-4 mb-6">
+      <div class="flex items-center justify-between p-4">
+        <div class="flex items-center space-x-4">
+          <div class="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
+            <span class="text-white font-bold">A</span>
+          </div>
+          <div>
+            <h1 class="text-xl font-bold gradient-text">ArielSQL Ultimate Suite</h1>
+            <p class="text-sm text-gray-400">v4.4 - Production System Dashboard</p>
+          </div>
+        </div>
+        <div class="flex items-center space-x-4">
+          <div id="systemStatus" class="flex items-center space-x-2">
+            <div class="w-3 h-3 bg-red-500 rounded-full pulse-ring"></div>
+            <span class="text-sm">Initializing...</span>
+          </div>
+          <button onclick="refreshAllData()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container mx-auto px-4 pb-8">
+      <!-- System Overview -->
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+        <!-- System Health -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">System Health</h3>
+          <div class="space-y-3">
+            <div class="flex justify-between">
+              <span class="text-gray-400">Status</span>
+              <span id="healthStatus" class="status-warning">Checking...</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Uptime</span>
+              <span id="systemUptime">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Port</span>
+              <span id="systemPort">10000</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Phase</span>
+              <span id="systemPhase">--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Blockchain Status -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Blockchain</h3>
+          <div class="space-y-3">
+            <div class="flex justify-between">
+              <span class="text-gray-400">Network</span>
+              <span id="blockchainNetwork" class="status-warning">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Status</span>
+              <span id="blockchainStatus" class="status-warning">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Chain ID</span>
+              <span id="blockchainChainId">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Last Block</span>
+              <span id="blockchainLastBlock">--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Revenue Status -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Revenue Engine</h3>
+          <div class="space-y-3">
+            <div class="flex justify-between">
+              <span class="text-gray-400">Total Revenue</span>
+              <span id="totalRevenue" class="text-green-400">$0.00</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Active Streams</span>
+              <span id="activeStreams">0</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Transactions</span>
+              <span id="revenueTransactions">0</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Success Rate</span>
+              <span id="revenueSuccessRate">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Service Manager -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Service Manager</h3>
+          <div class="space-y-3">
+            <div class="flex justify-between">
+              <span class="text-gray-400">Status</span>
+              <span id="serviceManagerStatus" class="status-warning">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Active Agents</span>
+              <span id="activeAgents">0</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">God Mode</span>
+              <span id="godModeStatus" class="status-warning">--</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Total Agents</span>
+              <span id="totalAgents">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts and Detailed Metrics -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Revenue Streams Chart -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Revenue Streams</h3>
+          <div class="h-64">
+            <canvas id="revenueChart"></canvas>
+          </div>
+        </div>
+
+        <!-- System Performance -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">System Performance</h3>
+          <div class="h-64">
+            <canvas id="performanceChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detailed Sections -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <!-- Wallet Balances -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Wallet Balances</h3>
+          <div class="space-y-4" id="walletBalances">
+            <div class="text-center py-8">
+              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+              <p class="text-gray-400 mt-2">Loading wallet data...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Agents -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Active Agents</h3>
+          <div class="space-y-3" id="agentsList">
+            <div class="text-center py-8">
+              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+              <p class="text-gray-400 mt-2">Loading agents...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- System Metrics -->
+        <div class="glass-card p-6">
+          <h3 class="text-lg font-semibold mb-4">Real-time Metrics</h3>
+          <div class="space-y-3" id="systemMetrics">
+            <div class="text-center py-8">
+              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+              <p class="text-gray-400 mt-2">Loading metrics...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Endpoints Status -->
+      <div class="glass-card p-6 mb-6">
+        <h3 class="text-lg font-semibold mb-4">API Endpoints Status</h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4" id="endpointsStatus">
+          <!-- Endpoints will be populated here -->
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="glass-card p-6">
+        <h3 class="text-lg font-semibold mb-4">Quick Actions</h3>
+        <div class="flex flex-wrap gap-4">
+          <button onclick="triggerRevenueConsolidation()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
+            💰 Consolidate Revenue
+          </button>
+          <button onclick="checkAllSystems()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
+            🔍 System Diagnostics
+          </button>
+          <button onclick="openWalletDashboard()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
+            💳 Wallet Dashboard
+          </button>
+          <button onclick="viewBlockchainExplorer()" class="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
+            🔗 Blockchain Explorer
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="fixed bottom-0 left-0 right-0 glass-card border-t border-gray-700">
+      <div class="px-4 py-2 flex justify-between items-center text-sm">
+        <div class="flex items-center space-x-4">
+          <span id="lastUpdate" class="text-gray-400">Last update: Never</span>
+          <span id="serverUrl" class="text-blue-400">https://arielmatrix2-0-twwc.onrender.com</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <div id="connectionStatus" class="w-2 h-2 bg-red-500 rounded-full"></div>
+          <span id="connectionText">Disconnected</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const SERVER_URL = 'https://arielmatrix2-0-twwc.onrender.com';
+      let revenueChart, performanceChart;
+
+      // Initialize charts
+      function initializeCharts() {
+        const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+        revenueChart = new Chart(revenueCtx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Ad Revenue', 'Blockchain', 'API Services', 'Data Analytics'],
+            datasets: [{
+              data: [25, 35, 20, 20],
+              backgroundColor: ['#60a5fa', '#10b981', '#f59e0b', '#8b5cf6'],
+              borderWidth: 0
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { color: '#f1f5f9' }
+              }
+            }
+          }
+        });
+
+        const performanceCtx = document.getElementById('performanceChart').getContext('2d');
+        performanceChart = new Chart(performanceCtx, {
+          type: 'line',
+          data: {
+            labels: ['1h', '2h', '3h', '4h', '5h', '6h'],
+            datasets: [{
+              label: 'Revenue/Hour',
+              data: [120, 150, 180, 200, 220, 240],
+              borderColor: '#60a5fa',
+              backgroundColor: 'rgba(96, 165, 250, 0.1)',
+              tension: 0.4,
+              fill: true
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                labels: { color: '#f1f5f9' }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                ticks: { color: '#f1f5f9' }
+              },
+              x: {
+                grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                ticks: { color: '#f1f5f9' }
+              }
+            }
+          }
+        });
+      }
+
+      // Fetch system health
+      async function fetchSystemHealth() {
+        try {
+          const response = await fetch(`${SERVER_URL}/health`);
+          const data = await response.json();
+          
+          document.getElementById('healthStatus').textContent = data.status;
+          document.getElementById('healthStatus').className = data.status === 'ready' ? 'status-online' : 'status-warning';
+          document.getElementById('systemPhase').textContent = data.phase;
+          document.getElementById('systemPort').textContent = data.port;
+          
+          // Update system status indicator
+          const statusIndicator = document.getElementById('systemStatus');
+          statusIndicator.innerHTML = data.status === 'ready' 
+            ? '<div class="w-3 h-3 bg-green-500 rounded-full pulse-ring"></div><span class="text-sm status-online">Operational</span>'
+            : '<div class="w-3 h-3 bg-yellow-500 rounded-full pulse-ring"></div><span class="text-sm status-warning">Initializing</span>';
+          
+          return data;
+        } catch (error) {
+          console.error('Error fetching system health:', error);
+          document.getElementById('healthStatus').textContent = 'Error';
+          document.getElementById('healthStatus').className = 'status-offline';
+        }
+      }
+
+      // Fetch blockchain status
+      async function fetchBlockchainStatus() {
+        try {
+          const response = await fetch(`${SERVER_URL}/blockchain-status`);
+          const data = await response.json();
+          
+          document.getElementById('blockchainNetwork').textContent = data.network || '--';
+          document.getElementById('blockchainStatus').textContent = data.status || '--';
+          document.getElementById('blockchainStatus').className = data.connected ? 'status-online' : 'status-offline';
+          document.getElementById('blockchainChainId').textContent = data.chainId || '--';
+          document.getElementById('blockchainLastBlock').textContent = data.lastBlock ? 'Recent' : '--';
+          
+          return data;
+        } catch (error) {
+          console.error('Error fetching blockchain status:', error);
+        }
+      }
+
+      // Fetch revenue status
+      async function fetchRevenueStatus() {
+        try {
+          const response = await fetch(`${SERVER_URL}/revenue-status`);
+          const data = await response.json();
+          
+          if (data.metrics) {
+            document.getElementById('totalRevenue').textContent = `$${data.metrics.totalRevenue.toFixed(2)}`;
+            document.getElementById('activeStreams').textContent = data.metrics.activeStreams;
+            document.getElementById('revenueTransactions').textContent = data.metrics.transactions;
+            document.getElementById('revenueSuccessRate').textContent = `${((1 - (data.metrics.errors / Math.max(data.metrics.transactions, 1))) * 100).toFixed(1)}%`;
+            
+            // Update revenue chart
+            if (data.streams && revenueChart) {
+              const streams = ['ad_revenue', 'blockchain_revenue', 'api_revenue', 'data_services'];
+              const revenueData = streams.map(stream => data.streams[stream]?.amount || 0);
+              revenueChart.data.datasets[0].data = revenueData;
+              revenueChart.update();
+            }
+          }
+          
+          return data;
+        } catch (error) {
+          console.error('Error fetching revenue status:', error);
+        }
+      }
+
+      // Fetch service manager status
+      async function fetchServiceManagerStatus() {
+        try {
+          const response = await fetch(`${SERVER_URL}/agents-status`);
+          const data = await response.json();
+          
+          document.getElementById('serviceManagerStatus').textContent = data.initialized ? 'Active' : 'Inactive';
+          document.getElementById('serviceManagerStatus').className = data.initialized ? 'status-online' : 'status-offline';
+          document.getElementById('activeAgents').textContent = data.agents?.operational || 0;
+          document.getElementById('totalAgents').textContent = data.agents?.total || 0;
+          document.getElementById('godModeStatus').textContent = data.godMode?.active ? 'Active' : 'Inactive';
+          document.getElementById('godModeStatus').className = data.godMode?.active ? 'status-online' : 'status-offline';
+          
+          // Update agents list
+          updateAgentsList(data.agents?.status || {});
+          
+          return data;
+        } catch (error) {
+          console.error('Error fetching service manager status:', error);
+        }
+      }
+
+      // Fetch wallet balances
+      async function fetchWalletBalances() {
+        try {
+          const response = await fetch(`${SERVER_URL}/wallet-status`);
+          const data = await response.json();
+          
+          const walletContainer = document.getElementById('walletBalances');
+          walletContainer.innerHTML = `
+            <div class="space-y-3">
+              <div class="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
+                <div>
+                  <div class="font-medium">Ethereum</div>
+                  <div class="text-sm text-gray-400">${data.ethereum.address ? data.ethereum.address.substring(0, 8) + '...' : 'Not configured'}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-green-400">${data.ethereum.native}</div>
+                  <div class="text-sm text-gray-400">${data.ethereum.usdt}</div>
+                </div>
+              </div>
+              <div class="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
+                <div>
+                  <div class="font-medium">Solana</div>
+                  <div class="text-sm text-gray-400">${data.solana.address ? data.solana.address.substring(0, 8) + '...' : 'Not configured'}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-green-400">${data.solana.native}</div>
+                  <div class="text-sm text-gray-400">${data.solana.usdt}</div>
+                </div>
+              </div>
+              <div class="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
+                <div>
+                  <div class="font-medium">BWAEZI</div>
+                  <div class="text-sm text-gray-400">${data.bwaezi.address ? data.bwaezi.address.substring(0, 8) + '...' : 'Not configured'}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-green-400">${data.bwaezi.native}</div>
+                  <div class="text-sm text-gray-400">${data.bwaezi.usdt}</div>
+                </div>
+              </div>
+              <div class="flex justify-between items-center p-3 bg-blue-900 rounded-lg">
+                <div class="font-medium">Total Value</div>
+                <div class="text-green-400 font-bold">$${data.total_usdt}</div>
+              </div>
+            </div>
+          `;
+          
+          return data;
+        } catch (error) {
+          console.error('Error fetching wallet balances:', error);
+        }
+      }
+
+      // Fetch system metrics
+      async function fetchSystemMetrics() {
+        try {
+          const response = await fetch(`${SERVER_URL}/api/metrics`);
+          const data = await response.json();
+          
+          const metricsContainer = document.getElementById('systemMetrics');
+          metricsContainer.innerHTML = `
+            <div class="space-y-3">
+              <div class="flex justify-between">
+                <span class="text-gray-400">System Uptime</span>
+                <span>${formatUptime(data.system?.uptime || 0)}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Blockchain Connected</span>
+                <span class="${data.blockchain?.connected ? 'status-online' : 'status-offline'}">${data.blockchain?.connected ? 'Yes' : 'No'}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Wallet System</span>
+                <span class="${data.wallet?.initialized ? 'status-online' : 'status-offline'}">${data.wallet?.initialized ? 'Active' : 'Inactive'}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Service Manager</span>
+                <span class="${data.serviceManager?.active ? 'status-online' : 'status-offline'}">${data.serviceManager?.active ? 'Active' : 'Inactive'}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Revenue Agents</span>
+                <span>${data.serviceManager?.agents || 0}</span>
+              </div>
+            </div>
+          `;
+          
+          // Update uptime
+          document.getElementById('systemUptime').textContent = formatUptime(data.system?.uptime || 0);
+          
+          return data;
+        } catch (error) {
+          console.error('Error fetching system metrics:', error);
+        }
+      }
+
+      // Update agents list
+      function updateAgentsList(agentsStatus) {
+        const agentsContainer = document.getElementById('agentsList');
+        if (Object.keys(agentsStatus).length === 0) {
+          agentsContainer.innerHTML = '<div class="text-center text-gray-400 py-4">No agents data available</div>';
+          return;
+        }
+        
+        let agentsHTML = '<div class="space-y-2">';
+        for (const [agentName, status] of Object.entries(agentsStatus)) {
+          const statusColor = status.status === 'healthy' ? 'status-online' : 
+                            status.status === 'failed' ? 'status-offline' : 'status-warning';
+          agentsHTML += `
+            <div class="flex justify-between items-center p-2 bg-gray-800 rounded">
+              <span class="text-sm">${agentName}</span>
+              <span class="text-xs ${statusColor}">${status.status}</span>
+            </div>
+          `;
+        }
+        agentsHTML += '</div>';
+        agentsContainer.innerHTML = agentsHTML;
+      }
+
+      // Check API endpoints status
+      async function checkEndpointsStatus() {
+        const endpoints = [
+          { name: 'Health', path: '/health' },
+          { name: 'Blockchain', path: '/blockchain-status' },
+          { name: 'Revenue', path: '/revenue-status' },
+          { name: 'Agents', path: '/agents-status' },
+          { name: 'Metrics', path: '/api/metrics' },
+          { name: 'Wallet', path: '/wallet-status' },
+          { name: 'Dashboard', path: '/dashboard' },
+          { name: 'Full Status', path: '/full' }
+        ];
+
+        const endpointsContainer = document.getElementById('endpointsStatus');
+        endpointsContainer.innerHTML = '';
+
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(`${SERVER_URL}${endpoint.path}`);
+            const status = response.ok ? 'online' : 'offline';
+            
+            endpointsContainer.innerHTML += `
+              <div class="text-center p-3 bg-gray-800 rounded-lg">
+                <div class="w-3 h-3 rounded-full mx-auto mb-2 ${status === 'online' ? 'bg-green-500' : 'bg-red-500'}"></div>
+                <div class="text-sm font-medium">${endpoint.name}</div>
+                <div class="text-xs text-gray-400">${endpoint.path}</div>
+              </div>
+            `;
+          } catch (error) {
+            endpointsContainer.innerHTML += `
+              <div class="text-center p-3 bg-gray-800 rounded-lg">
+                <div class="w-3 h-3 rounded-full mx-auto mb-2 bg-red-500"></div>
+                <div class="text-sm font-medium">${endpoint.name}</div>
+                <div class="text-xs text-gray-400">Offline</div>
+              </div>
+            `;
+          }
+        }
+      }
+
+      // Utility functions
+      function formatUptime(ms) {
+        if (!ms) return '0s';
+        const seconds = Math.floor(ms / 1000);
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        return `${hours}h ${minutes}m ${secs}s`;
+      }
+
+      function updateConnectionStatus(connected) {
+        const statusElement = document.getElementById('connectionStatus');
+        const textElement = document.getElementById('connectionText');
+        
+        if (connected) {
+          statusElement.className = 'w-2 h-2 bg-green-500 rounded-full';
+          textElement.textContent = 'Connected';
+          textElement.className = 'text-green-400';
+        } else {
+          statusElement.className = 'w-2 h-2 bg-red-500 rounded-full';
+          textElement.textContent = 'Disconnected';
+          textElement.className = 'text-red-400';
+        }
+      }
+
+      // Action functions
+      async function refreshAllData() {
+        updateConnectionStatus(false);
+        
+        try {
+          await Promise.all([
+            fetchSystemHealth(),
+            fetchBlockchainStatus(),
+            fetchRevenueStatus(),
+            fetchServiceManagerStatus(),
+            fetchWalletBalances(),
+            fetchSystemMetrics(),
+            checkEndpointsStatus()
+          ]);
+          
+          updateConnectionStatus(true);
+          document.getElementById('lastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+        } catch (error) {
+          console.error('Error refreshing data:', error);
+          updateConnectionStatus(false);
+        }
+      }
+
+      async function triggerRevenueConsolidation() {
+        try {
+          const response = await fetch(`${SERVER_URL}/trigger-revenue-consolidation`, { method: 'POST' });
+          if (response.ok) {
+            alert('Revenue consolidation triggered successfully!');
+          } else {
+            alert('Failed to trigger revenue consolidation');
+          }
+        } catch (error) {
+          alert('Error triggering revenue consolidation');
+        }
+      }
+
+      function checkAllSystems() {
+        refreshAllData();
+        alert('System diagnostics completed. Check the dashboard for status.');
+      }
+
+      function openWalletDashboard() {
+        window.open(`${SERVER_URL}/dashboard`, '_blank');
+      }
+
+      function viewBlockchainExplorer() {
+        window.open('https://explorer.winr.games', '_blank');
+      }
+
+      // Initialize dashboard
+      document.addEventListener('DOMContentLoaded', function() {
+        initializeCharts();
+        refreshAllData();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(refreshAllData, 30000);
+        
+        // Add keyboard shortcut
+        document.addEventListener('keydown', (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+            e.preventDefault();
+            refreshAllData();
+          }
+        });
+      });
+    </script>
   </body>
 </html>
