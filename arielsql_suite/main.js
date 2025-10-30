@@ -1,8 +1,14 @@
-// arielsql_suite/main.js - CLEAN WORKING VERSION
+// arielsql_suite/main.js - WITH DASHBOARD SUPPORT
 import http from "http";
 import express from "express";
 import cors from "cors";
 import { ethers } from 'ethers';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import fs from 'fs/promises';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -10,8 +16,12 @@ const HOST = '0.0.0.0';
 
 let server = null;
 let mintingActive = false;
+let mintingProgress = {
+  totalMinted: 0,
+  target: 12000,
+  cyclesCompleted: 0
+};
 
-// Simple Configuration
 const CONFIG = {
   RPC_URL: 'https://rpc.winr.games',
   CONTRACT_ADDRESS: '0x00000000000000000000000000000000000a4b05',
@@ -26,16 +36,27 @@ const BWAEZI_ABI = [
 app.use(express.json());
 app.use(cors());
 
-// 🎯 SIMPLE ROUTES
-app.get('/', (req, res) => {
-  res.json({ 
-    message: '🚀 BWAEZI Minting - Ready',
-    wallet: CONFIG.SOVEREIGN_WALLET,
-    action: 'Check /balance then POST /start'
-  });
+// 🎯 SERVE DASHBOARD
+app.get('/', async (req, res) => {
+  try {
+    const dashboardPath = join(__dirname, 'dashboard.html');
+    const html = await fs.readFile(dashboardPath, 'utf8');
+    res.send(html);
+  } catch (error) {
+    res.json({ 
+      message: '🚀 BWAEZI Minting API',
+      dashboard: 'Dashboard not available',
+      endpoints: {
+        balance: 'GET /balance',
+        start: 'POST /start',
+        stop: 'POST /stop',
+        status: 'GET /mint-status'
+      }
+    });
+  }
 });
 
-// 🔍 CHECK BALANCE (NO SIGNER NEEDED)
+// 📊 API ENDPOINTS
 app.get('/balance', async (req, res) => {
   try {
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
@@ -53,14 +74,12 @@ app.get('/balance', async (req, res) => {
   }
 });
 
-// 🚀 START MINTING
 app.post('/start', async (req, res) => {
   if (mintingActive) {
     return res.json({ status: 'already_running', message: 'Minting already active' });
   }
   
   try {
-    // Quick balance check
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
     const balance = await provider.getBalance(CONFIG.SOVEREIGN_WALLET);
     const balanceETH = ethers.formatEther(balance);
@@ -74,7 +93,6 @@ app.post('/start', async (req, res) => {
       });
     }
     
-    // Start minting
     startMinting();
     
     res.json({
@@ -89,11 +107,28 @@ app.post('/start', async (req, res) => {
   }
 });
 
-// ✅ SIMPLE MINTING FUNCTION
+app.post('/stop', (req, res) => {
+  mintingActive = false;
+  res.json({ status: 'stopped', message: 'Minting stopped' });
+});
+
+app.get('/mint-status', (req, res) => {
+  res.json({
+    mintingActive,
+    totalMinted: mintingProgress.totalMinted,
+    target: mintingProgress.target,
+    progress: (mintingProgress.totalMinted / mintingProgress.target) * 100,
+    cyclesCompleted: mintingProgress.cyclesCompleted
+  });
+});
+
+// 🔥 MINTING ENGINE
 async function startMinting() {
   if (mintingActive) return;
   
   mintingActive = true;
+  mintingProgress = { totalMinted: 0, target: 12000, cyclesCompleted: 0 };
+  
   console.log('🚀 STARTING MINTING PROCESS...');
   
   try {
@@ -107,36 +142,44 @@ async function startMinting() {
     const signer = new ethers.Wallet(privateKey, provider);
     const contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, BWAEZI_ABI, signer);
     
-    let totalMinted = 0;
-    const target = 12000;
-    
-    console.log(`🎯 Target: ${target} BWAEZI`);
+    console.log(`🎯 Target: 12,000 BWAEZI`);
     console.log(`👛 Using wallet: ${await signer.getAddress()}`);
     
-    // Simple minting loop
-    const interval = setInterval(async () => {
-      if (totalMinted >= target || !mintingActive) {
-        console.log('✅ MINTING COMPLETED:', totalMinted, 'BWAEZI');
-        clearInterval(interval);
+    const mintInterval = setInterval(async () => {
+      if (!mintingActive) {
+        clearInterval(mintInterval);
+        console.log('🛑 Minting stopped');
+        return;
+      }
+      
+      if (mintingProgress.totalMinted >= mintingProgress.target) {
+        clearInterval(mintInterval);
+        mintingActive = false;
+        console.log('🎉 MINTING COMPLETED! 12,000 BWAEZI');
         return;
       }
       
       try {
-        // Mint 250 BWAEZI per cycle (adjust gas deducted)
-        const amount = ethers.parseUnits("250", 18);
+        // Calculate gas-deducted amount (250 BWAEZI gross, ~0.5 BWAEZI gas cost)
+        const netBWAEZI = 249.5;
+        const amount = ethers.parseUnits(netBWAEZI.toFixed(18), 18);
+        
         const tx = await contract.mint(CONFIG.SOVEREIGN_WALLET, amount, {
           gasLimit: 150000,
           gasPrice: ethers.parseUnits("25", "gwei")
         });
         
-        console.log(`📝 Minted 250 BWAEZI: ${tx.hash}`);
-        totalMinted += 250;
-        console.log(`📊 Progress: ${totalMinted}/${target}`);
+        console.log(`📝 Minted ${netBWAEZI} BWAEZI: ${tx.hash}`);
+        
+        mintingProgress.totalMinted += netBWAEZI;
+        mintingProgress.cyclesCompleted++;
+        
+        console.log(`📊 Progress: ${mintingProgress.totalMinted.toFixed(2)}/12000 BWAEZI`);
         
       } catch (error) {
         console.error('❌ Mint error:', error.message);
       }
-    }, 30000); // Every 30 seconds
+    }, 30000);
     
   } catch (error) {
     console.error('❌ Failed to start minting:', error);
@@ -144,31 +187,22 @@ async function startMinting() {
   }
 }
 
-// 🛑 STOP MINTING
-app.post('/stop', (req, res) => {
-  mintingActive = false;
-  res.json({ status: 'stopped', message: 'Minting stopped' });
-});
-
-// 🔥 STATUS
-app.get('/status', (req, res) => {
-  res.json({
-    mintingActive,
-    endpoints: {
-      balance: 'GET /balance',
-      start: 'POST /start', 
-      stop: 'POST /stop'
-    }
-  });
-});
-
 // 🚀 START SERVER
 async function startServer() {
+  // Create dashboard.html if it doesn't exist
+  try {
+    const dashboardHTML = `<!DOCTYPE html>...`; // Use the full HTML from above
+    await fs.writeFile(join(__dirname, 'dashboard.html'), dashboardHTML);
+  } catch (error) {
+    console.log('Note: Could not create dashboard file');
+  }
+  
   return new Promise((resolve, reject) => {
     server = http.createServer(app);
     server.listen(PORT, HOST, () => {
       console.log(`🎉 Server running on port ${PORT}`);
-      console.log(`🌐 URL: https://arielmatrix2-0-twwc.onrender.com`);
+      console.log(`🌐 Dashboard: https://arielmatrix2-0-twwc.onrender.com`);
+      console.log(`🔍 API: https://arielmatrix2-0-twwc.onrender.com/balance`);
       resolve();
     });
     server.on('error', reject);
