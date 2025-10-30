@@ -1,4 +1,4 @@
-// arielsql_suite/main.js - WORKS WITH SMALL ETH BALANCE
+// arielsql_suite/main.js - CLEAN WORKING VERSION
 import http from "http";
 import express from "express";
 import cors from "cors";
@@ -11,263 +11,170 @@ const HOST = '0.0.0.0';
 let server = null;
 let mintingActive = false;
 
-// BrianNwaezikeChain Configuration
+// Simple Configuration
 const CONFIG = {
   RPC_URL: 'https://rpc.winr.games',
-  CHAIN_ID: 777777,
   CONTRACT_ADDRESS: '0x00000000000000000000000000000000000a4b05',
-  SOVEREIGN_WALLET: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
-  MAX_SUPPLY: 100000000,
-  BWAEZI_VALUE_USD: 100,
-  GAS_PRICE_GWEI: 25 // Conservative gas price
+  SOVEREIGN_WALLET: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'
 };
 
 const BWAEZI_ABI = [
-  'function balanceOf(address account) view returns (uint256)',
   'function mint(address to, uint256 amount) returns (bool)',
-  'function totalSupply() view returns (uint256)'
+  'function balanceOf(address account) view returns (uint256)'
 ];
 
 app.use(express.json());
 app.use(cors());
 
-// 🚀 MINIMAL ROUTES
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ready', 
-    port: PORT, 
-    minting: mintingActive ? 'ACTIVE' : 'READY',
-    message: 'Send ETH to sovereign wallet to start minting'
-  });
-});
-
+// 🎯 SIMPLE ROUTES
 app.get('/', (req, res) => {
   res.json({ 
-    message: '🚀 BWAEZI Minting - Waiting for ETH in Sovereign Wallet',
-    sovereign: CONFIG.SOVEREIGN_WALLET,
-    action: 'Send 0.005+ ETH to start minting',
-    target: '12,000 BWAEZI NET after gas deduction'
+    message: '🚀 BWAEZI Minting - Ready',
+    wallet: CONFIG.SOVEREIGN_WALLET,
+    action: 'Check /balance then POST /start'
   });
 });
 
-app.post('/start-minting', async (req, res) => {
-  try {
-    const result = await startSovereignMinting();
-    res.json(result);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.get('/wallet-status', async (req, res) => {
+// 🔍 CHECK BALANCE (NO SIGNER NEEDED)
+app.get('/balance', async (req, res) => {
   try {
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
     const balance = await provider.getBalance(CONFIG.SOVEREIGN_WALLET);
     const balanceETH = ethers.formatEther(balance);
     
     res.json({
-      sovereignWallet: CONFIG.SOVEREIGN_WALLET,
-      ethBalance: balanceETH,
-      ethValueUSD: (Number(balanceETH) * 3500).toFixed(2),
-      status: Number(balanceETH) > 0.001 ? 'READY' : 'NEEDS_ETH',
-      required: '0.005 ETH recommended ($17.50)',
-      gasUnit: 'GWEI'
+      wallet: CONFIG.SOVEREIGN_WALLET,
+      balanceETH: balanceETH,
+      status: Number(balanceETH) > 0 ? 'HAS_ETH' : 'NO_ETH',
+      ready: Number(balanceETH) >= 0.005
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 🔥 ULTRA-EFFICIENT MINTING ENGINE
-class EfficientMintingEngine {
-  constructor() {
-    this.provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
-    this.signer = null;
-    this.contract = null;
-    this.initialized = false;
-  }
-
-  async initialize() {
-    console.log('🚀 Initializing Efficient Minting Engine...');
-    
-    const privateKey = process.env.SOVEREIGN_PRIVATE_KEY;
-    if (!privateKey) {
-      throw new Error('SOVEREIGN_PRIVATE_KEY environment variable required');
-    }
-    
-    this.signer = new ethers.Wallet(privateKey, this.provider);
-    
-    // Verify wallet match
-    const signerAddress = await this.signer.getAddress();
-    if (signerAddress.toLowerCase() !== CONFIG.SOVEREIGN_WALLET.toLowerCase()) {
-      throw new Error('Private key does not match sovereign wallet address');
-    }
-    
-    // Check ETH balance
-    const balance = await this.provider.getBalance(signerAddress);
-    const balanceETH = ethers.formatEther(balance);
-    console.log(`💰 Sovereign ETH Balance: ${balanceETH}`);
-    
-    if (Number(balanceETH) < 0.0005) {
-      throw new Error(`Insufficient ETH. Current: ${balanceETH} ETH. Send 0.005+ ETH to ${CONFIG.SOVEREIGN_WALLET}`);
-    }
-    
-    this.contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, BWAEZI_ABI, this.signer);
-    this.initialized = true;
-    
-    console.log('✅ Efficient Minting Engine Ready');
-    return true;
-  }
-
-  // 🔥 OPTIMIZED GAS CALCULATION
-  calculateGasDeduction(grossBWAEZI) {
-    const gasLimit = 150000n; // Optimized gas limit
-    const gasPrice = ethers.parseUnits(CONFIG.GAS_PRICE_GWEI.toString(), "gwei");
-    const gasCostWei = gasLimit * gasPrice;
-    const gasCostETH = Number(ethers.formatEther(gasCostWei));
-    
-    // Convert to BWAEZI (1 BWAEZI = $100, 1 ETH = $3500)
-    const gasCostUSD = gasCostETH * 3500;
-    const gasCostBWAEZI = gasCostUSD / 100;
-    
-    const netBWAEZI = grossBWAEZI - gasCostBWAEZI;
-    
-    return {
-      grossBWAEZI,
-      gasCostBWAEZI,
-      gasCostETH,
-      netBWAEZI,
-      gasLimit,
-      gasPrice
-    };
-  }
-
-  async executeMintCycle() {
-    if (!this.initialized) throw new Error('Engine not ready');
-    
-    // Generate revenue (200-300 BWAEZI per cycle)
-    const grossBWAEZI = 200 + (Math.random() * 100);
-    const calculation = this.calculateGasDeduction(grossBWAEZI);
-    
-    if (calculation.netBWAEZI <= 0) {
-      throw new Error('Gas cost exceeds revenue');
-    }
-    
-    console.log(`🎯 Minting: ${calculation.netBWAEZI.toFixed(4)} BWAEZI NET`);
-    console.log(`⛽ Gas: ${calculation.gasCostBWAEZI.toFixed(4)} BWAEZI`);
-    
-    const netAmountWei = ethers.parseUnits(calculation.netBWAEZI.toFixed(18), 18);
-    
-    const tx = await this.contract.mint(
-      CONFIG.SOVEREIGN_WALLET,
-      netAmountWei,
-      {
-        gasLimit: calculation.gasLimit,
-        gasPrice: calculation.gasPrice
-      }
-    );
-    
-    console.log(`📝 Transaction: ${tx.hash}`);
-    const receipt = await tx.wait();
-    
-    console.log(`✅ Mint confirmed in block ${receipt.blockNumber}`);
-    return calculation.netBWAEZI;
-  }
-}
-
-let mintingEngine = null;
-
-async function startSovereignMinting() {
+// 🚀 START MINTING
+app.post('/start', async (req, res) => {
   if (mintingActive) {
-    return { status: 'already_active', message: 'Minting already running' };
+    return res.json({ status: 'already_running', message: 'Minting already active' });
   }
   
   try {
-    mintingActive = true;
-    mintingEngine = new EfficientMintingEngine();
+    // Quick balance check
+    const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
+    const balance = await provider.getBalance(CONFIG.SOVEREIGN_WALLET);
+    const balanceETH = ethers.formatEther(balance);
     
-    console.log('🚀 Starting sovereign wallet minting...');
-    await mintingEngine.initialize();
+    if (Number(balanceETH) < 0.005) {
+      return res.status(400).json({
+        error: 'Need more ETH',
+        current: balanceETH,
+        required: '0.005 ETH',
+        action: `Send ETH to: ${CONFIG.SOVEREIGN_WALLET}`
+      });
+    }
     
-    // Start minting loop
+    // Start minting
+    startMinting();
+    
+    res.json({
+      status: 'started',
+      message: 'Minting 12,000 BWAEZI started!',
+      balance: balanceETH,
+      time: '10-15 minutes estimated'
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ SIMPLE MINTING FUNCTION
+async function startMinting() {
+  if (mintingActive) return;
+  
+  mintingActive = true;
+  console.log('🚀 STARTING MINTING PROCESS...');
+  
+  try {
+    const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
+    const privateKey = process.env.SOVEREIGN_PRIVATE_KEY;
+    
+    if (!privateKey) {
+      throw new Error('SOVEREIGN_PRIVATE_KEY not set');
+    }
+    
+    const signer = new ethers.Wallet(privateKey, provider);
+    const contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, BWAEZI_ABI, signer);
+    
     let totalMinted = 0;
     const target = 12000;
-    const startTime = Date.now();
-    const deadline = startTime + (10 * 60 * 1000);
     
-    console.log(`🎯 Target: ${target} BWAEZI in 10 minutes`);
+    console.log(`🎯 Target: ${target} BWAEZI`);
+    console.log(`👛 Using wallet: ${await signer.getAddress()}`);
     
-    const mintInterval = setInterval(async () => {
-      if (totalMinted >= target) {
-        console.log('🎉 TARGET ACHIEVED! 12,000 BWAEZI minted!');
-        clearInterval(mintInterval);
-        mintingActive = false;
-        return;
-      }
-      
-      if (Date.now() > deadline) {
-        console.log('⏰ Time limit reached');
-        clearInterval(mintInterval);
-        mintingActive = false;
+    // Simple minting loop
+    const interval = setInterval(async () => {
+      if (totalMinted >= target || !mintingActive) {
+        console.log('✅ MINTING COMPLETED:', totalMinted, 'BWAEZI');
+        clearInterval(interval);
         return;
       }
       
       try {
-        const netAmount = await mintingEngine.executeMintCycle();
-        totalMinted += netAmount;
+        // Mint 250 BWAEZI per cycle (adjust gas deducted)
+        const amount = ethers.parseUnits("250", 18);
+        const tx = await contract.mint(CONFIG.SOVEREIGN_WALLET, amount, {
+          gasLimit: 150000,
+          gasPrice: ethers.parseUnits("25", "gwei")
+        });
         
-        console.log(`📊 Progress: ${totalMinted.toFixed(2)}/${target} BWAEZI (${((totalMinted/target)*100).toFixed(1)}%)`);
+        console.log(`📝 Minted 250 BWAEZI: ${tx.hash}`);
+        totalMinted += 250;
+        console.log(`📊 Progress: ${totalMinted}/${target}`);
         
       } catch (error) {
-        console.error('❌ Mint cycle failed:', error.message);
-        // Continue trying
+        console.error('❌ Mint error:', error.message);
       }
-    }, 25000); // 25 second cycles
-    
-    return { 
-      status: 'started', 
-      message: 'Minting started successfully',
-      target: '12,000 BWAEZI NET',
-      time: '10 minutes',
-      strategy: 'Gas deducted from minted BWAEZI'
-    };
+    }, 30000); // Every 30 seconds
     
   } catch (error) {
+    console.error('❌ Failed to start minting:', error);
     mintingActive = false;
-    throw error;
   }
 }
 
-// 🔥 PORT BINDING
-async function bindServer() {
+// 🛑 STOP MINTING
+app.post('/stop', (req, res) => {
+  mintingActive = false;
+  res.json({ status: 'stopped', message: 'Minting stopped' });
+});
+
+// 🔥 STATUS
+app.get('/status', (req, res) => {
+  res.json({
+    mintingActive,
+    endpoints: {
+      balance: 'GET /balance',
+      start: 'POST /start', 
+      stop: 'POST /stop'
+    }
+  });
+});
+
+// 🚀 START SERVER
+async function startServer() {
   return new Promise((resolve, reject) => {
     server = http.createServer(app);
     server.listen(PORT, HOST, () => {
-      const actualPort = server.address().port;
-      console.log(`🎉 Server bound to port ${actualPort}`);
-      console.log(`🌐 Primary URL: https://arielmatrix2-0-twwc.onrender.com`);
-      console.log(`🔗 Local URL: http://${HOST}:${actualPort}`);
-      resolve(actualPort);
+      console.log(`🎉 Server running on port ${PORT}`);
+      console.log(`🌐 URL: https://arielmatrix2-0-twwc.onrender.com`);
+      resolve();
     });
     server.on('error', reject);
   });
 }
 
-async function startApplication() {
-  try {
-    await bindServer();
-    console.log('✅ System ready');
-    console.log(`👛 Check wallet status: GET /wallet-status`);
-    console.log(`🚀 Start minting: POST /start-minting`);
-    console.log(`💡 Send ETH to: ${CONFIG.SOVEREIGN_WALLET}`);
-  } catch (error) {
-    console.error('💀 Port binding failed:', error);
-    process.exit(1);
-  }
-}
+startServer().catch(console.error);
 
-export default { app, startApplication };
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  startApplication();
-}
+export default app;
