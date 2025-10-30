@@ -486,7 +486,7 @@ class ServiceManager {
     try {
       const blockchain = new BrianNwaezikeChain({
         rpcUrl: this.config.blockchainConfig.rpcUrl || 'https://rpc.winr.games',
-        network: this.config.blockchainConfig.network || 'mainnet',
+        network: this.config.blockchainConfig.network || 'Bwaezi Sovereign Chain',
         chainId: this.config.blockchainConfig.chainId || 777777,
         contractAddress: this.config.blockchainConfig.contractAddress || '0x00000000000000000000000000000000000a4b05'
       });
