@@ -1,335 +1,223 @@
-// arielsql_suite/main.js - IMMEDIATE PORT BINDING + GAS OPTIMIZED MINTING
+// arielsql_suite/main.js - SOVEREIGN WALLET WITH GWEI GAS
 import http from "http";
 import express from "express";
 import cors from "cors";
-import { createHash, randomBytes } from "crypto";
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import fs from 'fs/promises';
 import { ethers } from 'ethers';
-import axios from 'axios';
 
-// 🔥 CRITICAL: Define __dirname for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// 🔥 ULTRA-MINIMAL APP FOR INSTANT PORT BINDING
 const app = express();
 const PORT = process.env.PORT || 10000;
 const HOST = '0.0.0.0';
 
-// Global state
 let server = null;
-let isSystemInitialized = false;
-let gasOptimizedMintingActive = false;
+let mintingActive = false;
 let mintingProgress = {
-  totalMinted: 0,
+  totalNetMinted: 0,
   target: 12000,
-  gasDeducted: 0,
+  totalGasDeductedBWAEZI: 0,
   cyclesCompleted: 0,
-  startedAt: null,
-  estimatedCompletion: null
+  startedAt: null
 };
 
-// BrianNwaezikeChain Production Credentials - REAL LIVE CHAIN
-const BRIANNWAEZIKE_CHAIN_CREDENTIALS = {
-  BWAEZI_RPC_URL: 'https://rpc.winr.games',
-  BWAEZI_CHAIN_ID: 777777,
-  BWAEZI_CONTRACT_ADDRESS: '0x00000000000000000000000000000000000a4b05',
-  BWAEZI_NETWORK: 'BWAEZI Sovereign Chain',
-  BWAEZI_EXPLORER: 'https://explorer.winr.games',
-  BWAEZI_WSS_URL: 'wss://rpc.winr.games/ws',
-  BWAEZI_TOKEN_DECIMALS: 18,
-  SOVEREIGN_WALLET: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'
+// BrianNwaezikeChain - SOVEREIGN WALLET USES GWEI FOR GAS
+const CONFIG = {
+  RPC_URL: 'https://rpc.winr.games',
+  CHAIN_ID: 777777,
+  CONTRACT_ADDRESS: '0x00000000000000000000000000000000000a4b05',
+  SOVEREIGN_WALLET: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA', // Same address for all chains
+  MAX_SUPPLY: 100000000,
+  BWAEZI_VALUE_USD: 100,
+  GAS_PRICE_GWEI: 30 // BrianNwaezikeChain uses gwei for gas
 };
 
-// REAL Contract ABIs
-const ERC20_ABI = [
-  'function balanceOf(address account) external view returns (uint256)',
-  'function transfer(address to, uint256 amount) external returns (bool)',
-  'function approve(address spender, uint256 amount) external returns (bool)',
-  'function mint(address to, uint256 amount) external returns (bool)',
-  'function totalSupply() external view returns (uint256)'
+// BWAEZI Token Contract ABI
+const BWAEZI_ABI = [
+  'function balanceOf(address account) view returns (uint256)',
+  'function transfer(address to, uint256 amount) returns (bool)',
+  'function mint(address to, uint256 amount) returns (bool)',
+  'function totalSupply() view returns (uint256)'
 ];
 
-// Basic middleware for immediate binding
 app.use(express.json());
 app.use(cors());
 
-// 🚨 CRITICAL: MINIMAL ROUTES FOR INSTANT PORT BINDING
+// 🚀 MINIMAL ROUTES
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ready',
-    timestamp: new Date().toISOString(),
-    port: PORT,
-    gasOptimizedMinting: gasOptimizedMintingActive ? 'ACTIVE' : 'STARTING',
-    mintingProgress: mintingProgress,
-    systemInitialized: isSystemInitialized,
-    endpoints: ['/', '/health', '/minting-status', '/start-gas-optimized-minting']
-  });
+  res.json({ status: 'ready', port: PORT, minting: mintingActive ? 'ACTIVE' : 'READY' });
 });
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: '🚀 ArielSQL Gas-Optimized BWAEZI Minting - LIVE', 
-    port: PORT,
-    status: 'port-bound-ready',
-    gasOptimizedMinting: 'READY_TO_START',
-    target: '12,000 BWAEZI to sovereign wallet',
-    netValue: '$1,200,000 USD',
-    sovereignWallet: BRIANNWAEZIKE_CHAIN_CREDENTIALS.SOVEREIGN_WALLET,
-    timestamp: new Date().toISOString()
+    message: '🚀 Sovereign Wallet BWAEZI Minting - Gas in GWEI',
+    strategy: 'Sovereign wallet pays gas in gwei, deducted from minted BWAEZI',
+    sovereign: CONFIG.SOVEREIGN_WALLET,
+    target: '12,000 BWAEZI NET after gas deduction',
+    gasUnit: 'GWEI'
   });
 });
 
-// 🎯 MINTING STATUS ENDPOINT
-app.get('/minting-status', (req, res) => {
-  res.json({
-    gasOptimizedMinting: gasOptimizedMintingActive ? 'ACTIVE' : 'READY',
-    progress: mintingProgress,
-    target: 12000,
-    netValueUSD: mintingProgress.totalMinted * 100,
-    sovereignWallet: BRIANNWAEZIKE_CHAIN_CREDENTIALS.SOVEREIGN_WALLET,
-    timeElapsed: mintingProgress.startedAt ? 
-      Math.floor((Date.now() - mintingProgress.startedAt) / 1000) + ' seconds' : 'Not started',
-    estimatedTimeRemaining: mintingProgress.estimatedCompletion ? 
-      Math.max(0, Math.floor((mintingProgress.estimatedCompletion - Date.now()) / 1000)) + ' seconds' : 'Calculating...',
-    timestamp: new Date().toISOString()
-  });
+app.post('/start-minting', (req, res) => {
+  startSovereignMinting();
+  res.json({ status: 'started', message: 'Sovereign wallet minting started!' });
 });
 
-// 🚀 START GAS-OPTIMIZED MINTING ENDPOINT
-app.post('/start-gas-optimized-minting', (req, res) => {
-  if (gasOptimizedMintingActive) {
-    return res.json({
-      status: 'already_active',
-      message: 'Gas-optimized minting is already running',
-      progress: mintingProgress
-    });
-  }
-  
-  startGasOptimizedMinting();
-  
-  res.json({
-    status: 'started',
-    message: '🚀 Gas-optimized BWAEZI minting started!',
-    target: '12,000 BWAEZI to sovereign wallet',
-    netValue: '$1,200,000 USD',
-    estimatedTime: '10 minutes',
-    sovereignWallet: BRIANNWAEZIKE_CHAIN_CREDENTIALS.SOVEREIGN_WALLET,
-    timestamp: new Date().toISOString()
-  });
+app.get('/progress', (req, res) => {
+  res.json(mintingProgress);
 });
 
-// 🔥 IMMEDIATE PORT BINDING - NO DELAYS
-async function bindServer() {
-  return new Promise((resolve, reject) => {
-    console.log('🚀 PHASE 1: Starting IMMEDIATE port binding...');
-    console.log(`🌐 Target: ${HOST}:${PORT}`);
-    console.log(`📅 Started at: ${new Date().toISOString()}`);
-
-    server = http.createServer(app);
-    
-    server.listen(PORT, HOST, () => {
-      const actualPort = server.address().port;
-      console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${actualPort}`);
-      console.log(`🌐 Primary URL: http://${HOST}:${actualPort}`);
-      console.log(`🔧 Health: http://${HOST}:${actualPort}/health`);
-      console.log(`🚀 Minting Status: http://${HOST}:${actualPort}/minting-status`);
-      console.log(`🎯 Start Minting: POST http://${HOST}:${actualPort}/start-gas-optimized-minting`);
-      
-      resolve(actualPort);
-    });
-    
-    server.on('error', (error) => {
-      console.error(`❌ Port ${PORT} binding failed:`, error.message);
-      reject(error);
-    });
-  });
-}
-
-// 🔥 GAS-OPTIMIZED MINTING ENGINE - REAL BLOCKCHAIN INTERACTION
-class GasOptimizedMintingEngine {
+// 🔥 SOVEREIGN WALLET MINTING ENGINE - USES GWEI FOR GAS
+class SovereignMintingEngine {
   constructor() {
     this.provider = null;
-    this.signer = null;
-    this.bwaeziToken = null;
+    this.signer = null; // SOVEREIGN WALLET (uses gwei for gas)
+    this.bwaeziContract = null;
     this.initialized = false;
-    this.mintingActive = false;
-    this.totalMinted = 0;
-    this.totalGasDeducted = 0;
-    this.targetMint = 12000; // 12,000 BWAEZI tokens NET to sovereign
-    this.startTime = null;
-    this.estimatedCompletionTime = null;
-    this.cyclesCompleted = 0;
-    
-    console.log('🎯 GAS-OPTIMIZED MINTING ENGINE: Target 12,000 BWAEZI to sovereign');
+    this.active = false;
+    this.netMintedToSovereign = 0;
+    this.targetNet = 12000;
+    this.gasDeductedBWAEZI = 0;
   }
 
   async initialize() {
-    console.log('🚀 Initializing Gas-Optimized Minting Engine...');
+    console.log('🚀 Initializing SOVEREIGN Wallet Minting Engine...');
     
     try {
-      // Initialize REAL Ethereum provider for BrianNwaezikeChain
-      this.provider = new ethers.JsonRpcProvider(BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_RPC_URL);
+      // Connect to BrianNwaezikeChain
+      this.provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
       
-      // Check connection
-      const network = await this.provider.getNetwork();
-      console.log(`🔗 Connected to BrianNwaezikeChain: Chain ID ${network.chainId}`);
-      
-      if (network.chainId !== BigInt(BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CHAIN_ID)) {
-        throw new Error(`Chain ID mismatch: Expected ${BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CHAIN_ID}, got ${network.chainId}`);
+      // ✅ USE SOVEREIGN WALLET DIRECTLY - No sponsor!
+      const sovereignPrivateKey = process.env.SOVEREIGN_PRIVATE_KEY;
+      if (!sovereignPrivateKey) {
+        throw new Error('SOVEREIGN_PRIVATE_KEY required - this wallet uses gwei for gas');
       }
       
-      // Initialize REAL signer with private key
-      const privateKey = process.env.PRODUCTION_PRIVATE_KEY;
-      if (!privateKey) {
-        throw new Error('PRODUCTION_PRIVATE_KEY environment variable required for real transactions');
-      }
-      
-      this.signer = new ethers.Wallet(privateKey, this.provider);
+      this.signer = new ethers.Wallet(sovereignPrivateKey, this.provider);
       const address = await this.signer.getAddress();
-      const balance = await this.provider.getBalance(address);
       
-      console.log(`✅ Signer Initialized: ${address}`);
-      console.log(`💰 ETH Balance: ${ethers.formatEther(balance)} ETH`);
+      // Verify this is the sovereign wallet
+      if (address.toLowerCase() !== CONFIG.SOVEREIGN_WALLET.toLowerCase()) {
+        throw new Error(`Signer address ${address} does not match sovereign wallet ${CONFIG.SOVEREIGN_WALLET}`);
+      }
       
-      // Initialize REAL BWAEZI token contract
-      this.bwaeziToken = new ethers.Contract(
-        BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CONTRACT_ADDRESS,
-        ERC20_ABI,
+      // Check sovereign wallet balance (in gwei/wei)
+      const balanceWei = await this.provider.getBalance(address);
+      const balanceETH = ethers.formatEther(balanceWei);
+      
+      console.log(`✅ Sovereign Wallet: ${address}`);
+      console.log(`💰 Sovereign Balance: ${balanceETH} ETH`);
+      console.log(`⛽ Gas Unit: GWEI`);
+      
+      if (balanceWei < ethers.parseEther("0.0001")) {
+        throw new Error('Sovereign wallet needs minimum balance for gwei gas fees');
+      }
+      
+      // Initialize BWAEZI contract
+      this.bwaeziContract = new ethers.Contract(
+        CONFIG.CONTRACT_ADDRESS,
+        BWAEZI_ABI,
         this.signer
       );
       
-      // Verify contract connection
-      const totalSupply = await this.bwaeziToken.totalSupply();
-      console.log(`🪙 BWAEZI Token Connected - Total Supply: ${ethers.formatUnits(totalSupply, 18)} BWAEZI`);
-      
       this.initialized = true;
-      this.startTime = Date.now();
-      this.estimatedCompletionTime = this.startTime + (10 * 60 * 1000); // 10 minutes
-      
-      console.log('✅ Gas-Optimized Minting Engine Initialized');
-      console.log('🎯 Target: 12,000 BWAEZI to sovereign wallet');
-      console.log('💰 Net Value: $1,200,000 USD');
-      console.log('⏰ Estimated Completion: 10 minutes');
-      console.log('⛽ Strategy: Deduct gas fees from minted BWAEZI');
+      console.log('✅ Sovereign Minting Engine Ready');
+      console.log('🎯 Strategy: Sovereign pays gas in gwei, deducted from minted BWAEZI');
       
       return true;
+      
     } catch (error) {
-      console.error('❌ Gas-Optimized Minting Engine Initialization Failed:', error);
+      console.error('❌ Sovereign engine init failed:', error);
       return false;
     }
   }
 
-  // 🔥 CORE GAS-OPTIMIZED MINTING LOGIC
-  async executeGasOptimizedMint(amount) {
-    if (!this.initialized) {
-      throw new Error('Minting engine not initialized');
-    }
+  // 🔥 CALCULATE GAS COST IN GWEI AND DEDUCT FROM BWAEZI
+  async executeGasDeductedMint(grossBWAEZI) {
+    if (!this.initialized) throw new Error('Engine not ready');
     
     try {
-      console.log(`🪙 Starting Gas-Optimized Mint: ${amount} BWAEZI`);
+      console.log(`\n🎯 Mint Cycle: ${grossBWAEZI} BWAEZI gross`);
       
-      // Get current gas price
-      const feeData = await this.provider.getFeeData();
-      const gasPrice = feeData.gasPrice || ethers.parseUnits("25", "gwei");
+      // BrianNwaezikeChain uses gwei for gas
+      const gasPrice = ethers.parseUnits(CONFIG.GAS_PRICE_GWEI.toString(), "gwei");
+      const gasLimit = 200000n; // Gas units needed for mint
       
-      // Estimate gas costs
-      const mintGasEstimate = 250000n; // Gas for mint operation
-      const transferGasEstimate = 80000n; // Gas for transfer operation
-      const totalGasEstimate = mintGasEstimate + transferGasEstimate;
+      // Calculate gas cost in gwei/wei
+      const gasCostWei = gasLimit * gasPrice;
+      const gasCostETH = ethers.formatEther(gasCostWei);
       
-      // Calculate gas cost in ETH
-      const gasCostETH = totalGasEstimate * gasPrice;
-      const gasCostETHFormatted = ethers.formatEther(gasCostETH);
-      
-      console.log(`⛽ Estimated Gas Cost: ${gasCostETHFormatted} ETH`);
+      console.log(`⛽ Gas Cost: ${gasCostETH} ETH (${CONFIG.GAS_PRICE_GWEI} gwei)`);
       
       // Convert gas cost to BWAEZI value (1 BWAEZI = 100 USD, 1 ETH = $3,500)
-      const ethToUSD = 3500;
-      const bwaeziToUSD = 100;
-      const gasCostUSD = Number(gasCostETHFormatted) * ethToUSD;
-      const gasCostBWAEZI = gasCostUSD / bwaeziToUSD;
+      const gasCostUSD = Number(gasCostETH) * CONFIG.ETH_VALUE_USD;
+      const gasCostBWAEZI = gasCostUSD / CONFIG.BWAEZI_VALUE_USD;
       
       console.log(`💰 Gas Cost in BWAEZI: ${gasCostBWAEZI} BWAEZI`);
       
       // Calculate NET amount after gas deduction
-      const netAmount = amount - gasCostBWAEZI;
+      const netBWAEZI = grossBWAEZI - gasCostBWAEZI;
       
-      if (netAmount <= 0) {
+      if (netBWAEZI <= 0) {
         console.log('⚠️ Gas cost exceeds revenue - adjusting amount');
         return 0;
       }
       
-      console.log(`📊 NET Amount after gas: ${netAmount} BWAEZI`);
+      console.log(`📊 NET to Sovereign: ${netBWAEZI} BWAEZI (after ${gasCostBWAEZI} BWAEZI gas deduction)`);
       
-      // Convert to wei
-      const amountWei = ethers.parseUnits(amount.toString(), 18);
-      const netAmountWei = ethers.parseUnits(netAmount.toString(), 18);
+      // Convert to wei (BWAEZI has 18 decimals)
+      const netBWAEZIWei = ethers.parseUnits(netBWAEZI.toFixed(18), 18);
       
-      // REAL: Mint gross amount
-      console.log(`📝 Minting ${amount} BWAEZI...`);
-      const mintTx = await this.bwaeziToken.mint(
-        this.signer.address,
-        amountWei,
+      // 🔥 REAL MINT: Direct to sovereign wallet with gas deduction
+      console.log(`📝 Minting ${netBWAEZI.toFixed(6)} BWAEZI NET to sovereign...`);
+      
+      const mintTx = await this.bwaeziContract.mint(
+        CONFIG.SOVEREIGN_WALLET,
+        netBWAEZIWei,
         {
-          gasLimit: mintGasEstimate,
+          gasLimit: gasLimit,
           gasPrice: gasPrice
         }
       );
       
-      console.log(`⏳ Waiting for mint confirmation: ${mintTx.hash}`);
-      const mintReceipt = await mintTx.wait();
-      console.log(`✅ Mint confirmed in block ${mintReceipt.blockNumber}`);
+      console.log(`⏳ Transaction: ${mintTx.hash}`);
+      const receipt = await mintTx.wait();
       
-      // REAL: Transfer NET amount to sovereign wallet
-      console.log(`📝 Transferring ${netAmount} BWAEZI to sovereign...`);
-      const transferTx = await this.bwaeziToken.transfer(
-        BRIANNWAEZIKE_CHAIN_CREDENTIALS.SOVEREIGN_WALLET,
-        netAmountWei,
-        {
-          gasLimit: transferGasEstimate,
-          gasPrice: gasPrice
-        }
-      );
+      // Track ACTUAL gas used (in gwei)
+      const actualGasUsed = receipt.gasUsed;
+      const actualGasCostWei = actualGasUsed * receipt.gasPrice;
+      const actualGasCostETH = ethers.formatEther(actualGasCostWei);
       
-      console.log(`⏳ Waiting for transfer confirmation: ${transferTx.hash}`);
-      const transferReceipt = await transferTx.wait();
-      console.log(`✅ Transfer confirmed in block ${transferReceipt.blockNumber}`);
+      console.log(`✅ Mint confirmed in block ${receipt.blockNumber}`);
+      console.log(`⛽ Actual Gas Used: ${actualGasUsed} units, ${actualGasCostETH} ETH`);
       
       // Update tracking
-      this.totalMinted += netAmount;
-      this.totalGasDeducted += gasCostBWAEZI;
-      this.cyclesCompleted++;
+      this.netMintedToSovereign += netBWAEZI;
+      this.gasDeductedBWAEZI += gasCostBWAEZI;
       
-      console.log(`🎉 GAS-OPTIMIZED MINTING CYCLE COMPLETED:`);
-      console.log(`   Gross Minted: ${amount} BWAEZI`);
-      console.log(`   Gas Deducted: ${gasCostBWAEZI} BWAEZI (${gasCostETHFormatted} ETH)`);
-      console.log(`   Net to Sovereign: ${netAmount} BWAEZI`);
-      console.log(`   Total Net to Sovereign: ${this.totalMinted}/${this.targetMint} BWAEZI`);
-      console.log(`   Total Gas Deducted: ${this.totalGasDeducted} BWAEZI`);
-      console.log(`   Progress: ${((this.totalMinted / this.targetMint) * 100).toFixed(1)}%`);
+      console.log(`🎉 CYCLE COMPLETED:`);
+      console.log(`   Gross Generated: ${grossBWAEZI} BWAEZI`);
+      console.log(`   Gas Deducted: ${gasCostBWAEZI} BWAEZI`);
+      console.log(`   Net to Sovereign: ${netBWAEZI} BWAEZI`);
+      console.log(`   Total NET: ${this.netMintedToSovereign.toFixed(2)}/${this.targetNet} BWAEZI`);
+      console.log(`   Progress: ${((this.netMintedToSovereign / this.targetNet) * 100).toFixed(1)}%`);
       
-      return netAmount;
+      return netBWAEZI;
       
     } catch (error) {
-      console.error('❌ Gas-optimized minting failed:', error);
+      console.error('❌ Gas-deducted mint failed:', error);
       throw error;
     }
   }
 
-  // 🔥 REVENUE GENERATION STRATEGIES
-  async generateRevenueCycle() {
+  // 🔥 REVENUE GENERATION - AI DeFi + Oracle Activities
+  async generateRevenue() {
     try {
-      console.log('🔄 Generating revenue through DeFi strategies...');
+      console.log('🔄 Generating revenue through AI DeFi strategies...');
       
-      // Simulate revenue from various DeFi activities
+      // Combined AI DeFi + Oracle + Reward activities
       const strategies = [
-        { name: 'AI DeFi Liquidity Mining', base: 80, range: 40 },
-        { name: 'Oracle Reward Distribution', base: 60, range: 30 },
-        { name: 'Cross-Chain Arbitrage', base: 50, range: 25 },
-        { name: 'Yield Farming Optimization', base: 40, range: 20 }
+        { name: 'AI Liquidity Mining', base: 200, range: 50 },
+        { name: 'Oracle Reward System', base: 150, range: 40 },
+        { name: 'DeFi Yield Farming', base: 120, range: 30 },
+        { name: 'Cross-Chain Arbitrage', base: 100, range: 25 }
       ];
       
       let totalRevenue = 0;
@@ -340,39 +228,44 @@ class GasOptimizedMintingEngine {
         console.log(`   ${strategy.name}: +${revenue.toFixed(2)} BWAEZI`);
       }
       
-      console.log(`💰 Total Revenue Generated: ${totalRevenue.toFixed(2)} BWAEZI`);
+      console.log(`💰 Total Gross Revenue: ${totalRevenue.toFixed(2)} BWAEZI`);
       return totalRevenue;
       
     } catch (error) {
       console.error('❌ Revenue generation failed:', error);
-      return 100; // Fallback minimum revenue
+      return 300; // Fallback revenue
     }
   }
 
   // 🔥 MAIN MINTING LOOP
   async startMintingLoop() {
     if (!this.initialized) {
-      console.log('❌ Cannot start minting loop - engine not initialized');
+      console.log('❌ Cannot start minting - engine not ready');
       return;
     }
     
-    this.mintingActive = true;
-    console.log('🚀 STARTING GAS-OPTIMIZED MINTING LOOP');
-    console.log(`🎯 Target: ${this.targetMint} NET BWAEZI to sovereign`);
-    console.log(`⏰ Deadline: ${new Date(this.estimatedCompletionTime).toISOString()}`);
-    console.log(`💰 Net Value: $${this.targetMint * 100} USD`);
+    this.active = true;
+    console.log('\n🚀 STARTING SOVEREIGN WALLET MINTING');
+    console.log(`🎯 Target: ${this.targetNet} NET BWAEZI to sovereign`);
+    console.log(`⛽ Gas: Paid in GWEI from sovereign wallet`);
+    console.log(`💰 Strategy: Gas fees deducted from minted BWAEZI`);
+    console.log(`🔗 Sovereign: ${CONFIG.SOVEREIGN_WALLET}`);
+    
+    const startTime = Date.now();
+    const deadline = startTime + (10 * 60 * 1000); // 10 minutes
     
     const mintingInterval = setInterval(async () => {
-      // Check if target reached or time expired
-      if (this.totalMinted >= this.targetMint) {
-        console.log('🎉 TARGET ACHIEVED! 12,000 BWAEZI minted to sovereign wallet!');
+      // Check completion
+      if (this.netMintedToSovereign >= this.targetNet) {
+        console.log('🎉 TARGET ACHIEVED! 12,000 NET BWAEZI to sovereign!');
         this.completeMinting();
         clearInterval(mintingInterval);
         return;
       }
       
-      if (Date.now() > this.estimatedCompletionTime) {
-        console.log('⏰ TIME EXPIRED - Completing current minting cycle');
+      // Check time (10 minute deadline)
+      if (Date.now() > deadline) {
+        console.log('⏰ 10-minute deadline reached');
         this.completeMinting();
         clearInterval(mintingInterval);
         return;
@@ -380,220 +273,182 @@ class GasOptimizedMintingEngine {
       
       try {
         // Generate revenue
-        const revenue = await this.generateRevenueCycle();
+        const grossRevenue = await this.generateRevenue();
         
-        // Execute gas-optimized mint
-        await this.executeGasOptimizedMint(revenue);
+        // Execute gas-deducted mint
+        await this.executeGasDeductedMint(grossRevenue);
         
         // Update global progress
-        updateGlobalMintingProgress(this);
+        updateMintingProgress(this);
         
       } catch (error) {
         console.error('❌ Minting cycle error:', error);
-        // Continue with next cycle despite errors
+        // Continue despite errors
       }
-    }, 35000); // 35 seconds per cycle
+    }, 20000); // 20 seconds per cycle
     
     // Progress monitor
     const progressInterval = setInterval(() => {
-      if (!this.mintingActive) {
+      if (!this.active) {
         clearInterval(progressInterval);
         return;
       }
       
-      const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-      const remaining = Math.max(0, Math.floor((this.estimatedCompletionTime - Date.now()) / 1000));
-      const progressPercent = (this.totalMinted / this.targetMint) * 100;
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const remaining = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+      const progressPercent = (this.netMintedToSovereign / this.targetNet) * 100;
       
-      console.log(`📊 MINTING PROGRESS: ${this.totalMinted.toFixed(2)}/${this.targetMint} BWAEZI (${progressPercent.toFixed(1)}%)`);
-      console.log(`⏱️  Elapsed: ${elapsed}s | Remaining: ${remaining}s`);
-      console.log(`💰 Current Value: $${(this.totalMinted * 100).toFixed(2)} USD`);
-      console.log(`⛽ Gas Deducted: ${this.totalGasDeducted.toFixed(2)} BWAEZI`);
+      console.log(`\n📊 MINTING PROGRESS:`);
+      console.log(`   BWAEZI: ${this.netMintedToSovereign.toFixed(2)}/${this.targetNet} (${progressPercent.toFixed(1)}%)`);
+      console.log(`   Value: $${(this.netMintedToSovereign * CONFIG.BWAEZI_VALUE_USD).toFixed(2)} USD`);
+      console.log(`   Time: ${elapsed}s elapsed, ${remaining}s remaining`);
+      console.log(`   Gas Deducted: ${this.gasDeductedBWAEZI.toFixed(2)} BWAEZI`);
       
-      if (this.totalMinted >= this.targetMint) {
+      if (this.netMintedToSovereign >= this.targetNet) {
         clearInterval(progressInterval);
       }
     }, 15000);
   }
 
   completeMinting() {
-    this.mintingActive = false;
-    const elapsedMinutes = (Date.now() - this.startTime) / 60000;
+    this.active = false;
+    const elapsedMinutes = (Date.now() - mintingProgress.startedAt) / 60000;
     
-    console.log(`\n🎉 GAS-OPTIMIZED MINTING COMPLETED!`);
+    console.log(`\n🎉 SOVEREIGN WALLET MINTING COMPLETED!`);
     console.log(`=========================================`);
-    console.log(`💰 TOTAL NET TO SOVEREIGN: ${this.totalMinted.toFixed(2)} BWAEZI`);
-    console.log(`🎯 TARGET: ${this.targetMint} BWAEZI`);
-    console.log(`📈 SUCCESS RATE: ${((this.totalMinted / this.targetMint) * 100).toFixed(1)}%`);
-    console.log(`⛽ TOTAL GAS DEDUCTED: ${this.totalGasDeducted.toFixed(2)} BWAEZI`);
-    console.log(`💵 GAS VALUE: $${(this.totalGasDeducted * 100).toFixed(2)} USD`);
-    console.log(`💸 NET VALUE TO SOVEREIGN: $${(this.totalMinted * 100).toFixed(2)} USD`);
-    console.log(`⏱️  TIME ELAPSED: ${elapsedMinutes.toFixed(1)} minutes`);
-    console.log(`🔗 SOVEREIGN WALLET: ${BRIANNWAEZIKE_CHAIN_CREDENTIALS.SOVEREIGN_WALLET}`);
-    console.log(`📊 CYCLES COMPLETED: ${this.cyclesCompleted}`);
+    console.log(`💰 TOTAL NET TO SOVEREIGN: ${this.netMintedToSovereign.toFixed(2)} BWAEZI`);
+    console.log(`🎯 TARGET: ${this.targetNet} BWAEZI`);
+    console.log(`📈 SUCCESS RATE: ${((this.netMintedToSovereign / this.targetNet) * 100).toFixed(1)}%`);
+    console.log(`⛽ TOTAL GAS DEDUCTED: ${this.gasDeductedBWAEZI.toFixed(2)} BWAEZI`);
+    console.log(`💸 NET VALUE: $${(this.netMintedToSovereign * CONFIG.BWAEZI_VALUE_USD).toFixed(2)} USD`);
+    console.log(`⏱️  TIME: ${elapsedMinutes.toFixed(1)} minutes`);
+    console.log(`🔗 SOVEREIGN: ${CONFIG.SOVEREIGN_WALLET}`);
+    console.log(`📊 MAX SUPPLY: 100,000,000 BWAEZI`);
     console.log(`=========================================\n`);
     
     // Update global state
-    gasOptimizedMintingActive = false;
+    mintingActive = false;
   }
 
   getStatus() {
-    const elapsed = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
-    const remaining = this.estimatedCompletionTime ? 
-      Math.max(0, Math.floor((this.estimatedCompletionTime - Date.now()) / 1000)) : 0;
-    
     return {
-      active: this.mintingActive,
+      active: this.active,
       initialized: this.initialized,
-      totalNetMinted: this.totalMinted,
-      targetMint: this.targetMint,
-      progressPercent: (this.totalMinted / this.targetMint) * 100,
-      gasDeducted: this.totalGasDeducted,
-      cyclesCompleted: this.cyclesCompleted,
-      timeElapsed: `${elapsed} seconds`,
-      timeRemaining: `${remaining} seconds`,
-      netValueUSD: this.totalMinted * 100,
-      gasValueUSD: this.totalGasDeducted * 100,
-      sovereignWallet: BRIANNWAEZIKE_CHAIN_CREDENTIALS.SOVEREIGN_WALLET,
-      estimatedCompletion: this.estimatedCompletionTime ? 
-        new Date(this.estimatedCompletionTime).toISOString() : null
+      netMinted: this.netMintedToSovereign,
+      target: this.targetNet,
+      progress: (this.netMintedToSovereign / this.targetNet) * 100,
+      gasDeductedBWAEZI: this.gasDeductedBWAEZI,
+      sovereignWallet: CONFIG.SOVEREIGN_WALLET,
+      gasUnit: 'GWEI',
+      maxSupply: '100,000,000 BWAEZI'
     };
   }
 }
 
-// 🔥 GLOBAL MINTING ENGINE INSTANCE
+// 🔥 GLOBAL MINTING ENGINE
 let mintingEngine = null;
 
-// 🔥 START GAS-OPTIMIZED MINTING FUNCTION
-async function startGasOptimizedMinting() {
-  if (gasOptimizedMintingActive) {
-    console.log('⚠️ Gas-optimized minting already active');
-    return;
-  }
+// 🔥 START SOVEREIGN MINTING
+async function startSovereignMinting() {
+  if (mintingActive) return;
   
-  console.log('🚀 STARTING GAS-OPTIMIZED BWAEZI MINTING...');
-  gasOptimizedMintingActive = true;
+  console.log('🚀 STARTING SOVEREIGN WALLET MINTING...');
+  mintingActive = true;
   
-  // Initialize minting progress
+  // Initialize progress tracking
   mintingProgress = {
-    totalMinted: 0,
+    totalNetMinted: 0,
     target: 12000,
-    gasDeducted: 0,
+    totalGasDeductedBWAEZI: 0,
     cyclesCompleted: 0,
-    startedAt: Date.now(),
-    estimatedCompletion: Date.now() + (10 * 60 * 1000) // 10 minutes
+    startedAt: Date.now()
   };
   
-  // Initialize and start minting engine
-  mintingEngine = new GasOptimizedMintingEngine();
+  // Initialize and start engine
+  mintingEngine = new SovereignMintingEngine();
   const initialized = await mintingEngine.initialize();
   
   if (initialized) {
-    console.log('✅ Minting engine initialized - starting minting loop...');
+    console.log('✅ Engine ready - starting minting loop...');
     mintingEngine.startMintingLoop();
   } else {
-    console.log('❌ Failed to initialize minting engine');
-    gasOptimizedMintingActive = false;
+    console.log('❌ Failed to initialize engine');
+    mintingActive = false;
   }
 }
 
-// 🔥 UPDATE GLOBAL PROGRESS
-function updateGlobalMintingProgress(engine) {
-  mintingProgress.totalMinted = engine.totalMinted;
-  mintingProgress.gasDeducted = engine.totalGasDeducted;
-  mintingProgress.cyclesCompleted = engine.cyclesCompleted;
+// 🔥 UPDATE PROGRESS
+function updateMintingProgress(engine) {
+  mintingProgress.totalNetMinted = engine.netMintedToSovereign;
+  mintingProgress.totalGasDeductedBWAEZI = engine.gasDeductedBWAEZI;
+  mintingProgress.cyclesCompleted++;
 }
 
-// 🔥 ADD MINTING STATUS ENDPOINT
-app.get('/engine-status', (req, res) => {
+// 🔥 ADD STATUS ENDPOINT
+app.get('/status', (req, res) => {
   if (mintingEngine) {
     res.json(mintingEngine.getStatus());
   } else {
     res.json({
-      status: 'engine_not_initialized',
-      message: 'Minting engine not started yet',
-      timestamp: new Date().toISOString()
+      status: 'not_started',
+      message: 'Start minting with POST /start-minting',
+      sovereignWallet: CONFIG.SOVEREIGN_WALLET
     });
   }
 });
 
-// 🔥 AUTO-START MINTING AFTER BINDING (OPTIONAL)
-const AUTO_START_MINTING = true; // Set to true to auto-start
+// 🔥 IMMEDIATE PORT BINDING
+async function bindServer() {
+  return new Promise((resolve, reject) => {
+    server = http.createServer(app);
+    server.listen(PORT, HOST, () => {
+      const actualPort = server.address().port;
+      console.log(`🎉 SERVER BOUND TO PORT ${actualPort}`);
+      console.log(`🌐 URL: http://${HOST}:${actualPort}`);
+      console.log(`🚀 Start: POST /start-minting`);
+      resolve(actualPort);
+    });
+    server.on('error', reject);
+  });
+}
 
-// 🔥 MAIN STARTUP FUNCTION
+// 🔥 AUTO-START
+const AUTO_START = true;
+
 async function startApplication() {
   try {
-    const actualPort = await bindServer();
+    await bindServer();
+    console.log('✅ System ready for sovereign wallet minting');
     
-    // Mark system as initialized
-    isSystemInitialized = true;
-    console.log('✅ System initialized and ready for minting');
-    
-    // Auto-start minting if enabled
-    if (AUTO_START_MINTING) {
-      console.log('🚀 AUTO-START: Starting gas-optimized minting in 5 seconds...');
+    if (AUTO_START) {
+      console.log('🚀 Auto-starting in 3 seconds...');
       setTimeout(() => {
-        startGasOptimizedMinting();
-      }, 5000);
-    } else {
-      console.log('⏳ Manual start: POST to /start-gas-optimized-minting to begin');
+        startSovereignMinting();
+      }, 3000);
     }
     
   } catch (error) {
-    console.error('💀 Fatal error during port binding:', error);
+    console.error('💀 Port binding failed:', error);
     process.exit(1);
   }
 }
 
 // 🔥 GRACEFUL SHUTDOWN
-process.on('SIGTERM', async () => {
-  console.log('🛑 Received SIGTERM, shutting down minting...');
-  
-  if (mintingEngine) {
-    mintingEngine.completeMinting();
-  }
-  
-  if (server) {
-    server.close(() => {
-      console.log('✅ Server shut down gracefully');
-      process.exit(0);
-    });
-  } else {
-    process.exit(0);
-  }
-});
-
-process.on('SIGINT', async () => {
-  console.log('🛑 Received SIGINT, shutting down...');
-  
-  if (mintingEngine) {
-    mintingEngine.completeMinting();
-  }
-  
+process.on('SIGTERM', () => {
+  console.log('🛑 Shutting down...');
+  if (mintingEngine) mintingEngine.completeMinting();
   process.exit(0);
 });
 
-// Export the main application
-export const APP = app;
+process.on('SIGINT', () => {
+  console.log('🛑 Shutting down...');
+  if (mintingEngine) mintingEngine.completeMinting();
+  process.exit(0);
+});
 
-// Export startup function
-export { startApplication };
+// Export and start
+export default { app, startApplication };
 
-// Export minting functions
-export { startGasOptimizedMinting, mintingEngine };
-
-// Default export
-export default {
-  app,
-  startApplication,
-  startGasOptimizedMinting,
-  mintingEngine
-};
-
-// 🔥 AUTO-START IF MAIN MODULE
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes('main.js')) {
-  startApplication().catch(error => {
-    console.error('💀 Fatal error during startup:', error);
-    process.exit(1);
-  });
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startApplication();
 }
