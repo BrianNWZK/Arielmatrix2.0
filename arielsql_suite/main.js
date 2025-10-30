@@ -1,8 +1,7 @@
-// arielsql_suite/main.js - PRODUCTION READY WITH GUARANTEED PORT BINDING
+// arielsql_suite/main.js - PRODUCTION READY WITH WALLET INTEGRATION
 import http from "http";
 import express from "express";
 import cors from "cors";
-import { createHash, randomBytes } from "crypto";
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs/promises';
@@ -21,6 +20,7 @@ let server = null;
 let isSystemInitialized = false;
 let initializationError = null;
 let serviceManager = null;
+let walletInitialized = false;
 
 // BrianNwaezikeChain Production Credentials
 const BRIANNWAEZIKE_CHAIN_CREDENTIALS = {
@@ -33,8 +33,11 @@ const BRIANNWAEZIKE_CHAIN_CREDENTIALS = {
 };
 
 // Basic middleware for immediate binding
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cors());
+
+// 🚨 Serve static files from backend directory
+app.use(express.static(join(__dirname, '../backend')));
 
 // 🚨 CRITICAL: MINIMAL ROUTES FOR PORT BINDING VERIFICATION
 app.get('/health', (req, res) => {
@@ -44,10 +47,12 @@ app.get('/health', (req, res) => {
     port: PORT,
     phase: isSystemInitialized ? 'full-system-ready' : 'port-binding',
     systemInitialized: isSystemInitialized,
+    walletInitialized: walletInitialized,
     initializationError: initializationError?.message || null,
     endpoints: isSystemInitialized ? [
-      '/', '/health', '/blockchain-status', '/bwaezi-rpc',
-      '/api/metrics', '/revenue-status', '/agents-status'
+      '/', '/health', '/dashboard', '/wallet-status', '/wallet-balances',
+      '/blockchain-status', '/bwaezi-rpc', '/revenue-status', 
+      '/agents-status', '/api/metrics'
     ] : ['/', '/health']
   };
   
@@ -56,11 +61,13 @@ app.get('/health', (req, res) => {
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'ArielSQL Ultimate Suite v4.4 - PRODUCTION READY', 
+    message: '🚀 ArielSQL Ultimate Suite v4.4 - PRODUCTION READY', 
     port: PORT,
     status: isSystemInitialized ? 'full-system-active' : 'port-bound-initializing',
     systemInitialized: isSystemInitialized,
+    walletInitialized: walletInitialized,
     timestamp: new Date().toISOString(),
+    dashboard: '/dashboard',
     nextPhase: isSystemInitialized ? 'operational' : 'system-initialization'
   });
 });
@@ -76,13 +83,17 @@ async function bindServer() {
     
     server.listen(PORT, HOST, () => {
       const actualPort = server.address().port;
-      console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${actualPort}`);
-      console.log(`🌐 Primary URL: http://${HOST}:${actualPort}`);
-      console.log(`🔧 Health: http://${HOST}:${actualPort}/health`);
-      console.log(`🏠 Render URL: https://arielmatrix2-0-twwc.onrender.com`);
       
       // 🚨 CRITICAL: Mark port as bound immediately
       isSystemInitialized = true;
+      
+      console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${actualPort}`);
+      console.log(`🌐 Primary URL: http://${HOST}:${actualPort}`);
+      console.log(`🔧 Health: http://${HOST}:${actualPort}/health`);
+      console.log(`📊 Dashboard: http://${HOST}:${actualPort}/dashboard`);
+      console.log(`🏠 Render URL: https://arielmatrix2-0-twwc.onrender.com`);
+      console.log(`✅ PORT BINDING COMPLETE - Render will detect open port`);
+      
       resolve(actualPort);
     });
     
@@ -100,7 +111,7 @@ class ProductionBlockchainSystem {
       rpcUrl: config.rpcUrl || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_RPC_URL,
       chainId: config.chainId || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CHAIN_ID,
       contractAddress: config.contractAddress || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CONTRACT_ADDRESS,
-      network: config.network || 'Bwaezi Sovereign Chain'  // 🆕 Default custom name
+      network: config.network || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_NETWORK
     };
     this.initialized = false;
     this.isConnected = false;
@@ -113,7 +124,7 @@ class ProductionBlockchainSystem {
     console.log('🔗 Initializing Production Blockchain System...');
     
     try {
-      // Real blockchain connection
+      // Real blockchain connection test
       const response = await fetch(this.config.rpcUrl, {
         method: 'POST',
         headers: {
@@ -132,12 +143,13 @@ class ProductionBlockchainSystem {
         this.isConnected = true;
         this.chainStatus = 'connected';
         this.lastBlock = Date.now();
-        this.gasPrice = '30000000000';
+        this.gasPrice = '30000000000'; // 30 gwei
         this.initialized = true;
         
         console.log('✅ Production Blockchain System initialized');
         console.log(`🔗 Connected to: ${this.config.rpcUrl}`);
         console.log(`⛓️ Chain ID: ${this.config.chainId}`);
+        console.log(`🏷️ Network: ${this.config.network}`);
         
         return this;
       } else {
@@ -276,38 +288,135 @@ class ProductionRevenueTracker {
   }
 }
 
-// 🔥 INDEPENDENT SERVICE MANAGER INITIALIZATION
-async function initializeServiceManager() {
-  console.log('🤖 Initializing Service Manager for revenue generation...');
+// 🔥 WALLET MANAGEMENT SYSTEM
+async function initializeWalletSystem() {
+  console.log('💰 Initializing wallet system...');
   
   try {
-    // Dynamic import to avoid circular dependencies and ensure port binding happens first
-    const { ServiceManager } = await import('./serviceManager.js');
+    // Dynamic import to avoid blocking port binding
+    const { initializeConnections, getWalletBalances } = await import('../backend/agents/wallet.js');
     
-    const serviceManager = new ServiceManager({
-      port: PORT,
-      blockchainConfig: {
-        rpcUrl: BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_RPC_URL,
-        chainId: BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CHAIN_ID,
-        contractAddress: BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CONTRACT_ADDRESS,
-        network: 'mainnet'
-      },
-      mainnet: true,
-      enableGodMode: true,
-      enableIsolation: true,
-      maxAgentRestarts: 10,
-      healthCheckInterval: 30000
-    });
-
-    await serviceManager.initialize();
-    
-    console.log('✅ Service Manager initialized successfully');
-    return serviceManager;
+    const walletInitialized = await initializeConnections();
+    if (walletInitialized) {
+      console.log('✅ Wallet system initialized successfully');
+      
+      // Test wallet balances
+      try {
+        const balances = await getWalletBalances();
+        console.log('💰 Initial wallet balances:', {
+          ethereum: `${balances.ethereum.native} ETH, ${balances.ethereum.usdt} USDT`,
+          solana: `${balances.solana.native} SOL, ${balances.solana.usdt} USDT`,
+          bwaezi: `${balances.bwaezi.native} BWAEZI, ${balances.bwaezi.usdt} USDT`
+        });
+      } catch (balanceError) {
+        console.warn('⚠️ Could not fetch initial wallet balances:', balanceError.message);
+      }
+      
+      return true;
+    } else {
+      console.warn('⚠️ Wallet system initialization failed - continuing without wallet features');
+      return false;
+    }
   } catch (error) {
-    console.error('❌ Service Manager initialization failed:', error);
-    // Don't throw - continue without service manager
-    return null;
+    console.error('❌ Wallet system initialization failed:', error);
+    return false;
   }
+}
+
+// 🔥 ADD WALLET ENDPOINTS
+function addWalletEndpoints() {
+  console.log('💰 Adding wallet endpoints...');
+  
+  // Dashboard route
+  app.get('/dashboard', (req, res) => {
+    res.sendFile(join(__dirname, '../backend/dashboard.html'));
+  });
+
+  // Wallet status endpoint (detailed)
+  app.get('/wallet-status', async (req, res) => {
+    try {
+      const { getWalletBalances } = await import('../backend/agents/wallet.js');
+      const balances = await getWalletBalances();
+      
+      const walletStatus = {
+        ethereum: {
+          address: balances.ethereum.address || 'Not configured',
+          native: `${balances.ethereum.native?.toFixed(6) || '0.000000'} ETH`,
+          usdt: `${balances.ethereum.usdt?.toFixed(2) || '0.00'} USDT`,
+          status: balances.ethereum.address ? 'connected' : 'not_configured'
+        },
+        solana: {
+          address: balances.solana.address || 'Not configured',
+          native: `${balances.solana.native?.toFixed(6) || '0.000000'} SOL`,
+          usdt: `${balances.solana.usdt?.toFixed(2) || '0.00'} USDT`,
+          status: balances.solana.address ? 'connected' : 'not_configured'
+        },
+        bwaezi: {
+          address: balances.bwaezi.address || 'Not configured',
+          native: `${balances.bwaezi.native?.toFixed(6) || '0.000000'} BWAEZI`,
+          usdt: `${balances.bwaezi.usdt?.toFixed(2) || '0.00'} USDT`,
+          status: balances.bwaezi.address ? 'connected' : 'not_configured'
+        },
+        total_usdt: (balances.ethereum.usdt + balances.solana.usdt + balances.bwaezi.usdt).toFixed(2),
+        timestamp: new Date().toISOString()
+      };
+      
+      res.json(walletStatus);
+    } catch (error) {
+      console.error('❌ Error fetching wallet status:', error);
+      res.status(500).json({ 
+        error: error.message,
+        ethereum: { native: '0.000000 ETH', usdt: '0.00 USDT', status: 'error' },
+        solana: { native: '0.000000 SOL', usdt: '0.00 USDT', status: 'error' },
+        bwaezi: { native: '0.000000 BWAEZI', usdt: '0.00 USDT', status: 'error' },
+        total_usdt: '0.00',
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // Simple wallet balances endpoint (legacy compatibility)
+  app.get('/wallet-balances', async (req, res) => {
+    try {
+      const { getWalletBalances } = await import('../backend/agents/wallet.js');
+      const balances = await getWalletBalances();
+      
+      const formattedResponse = {
+        solana: balances.solana?.native?.toFixed(6) || '0.000000',
+        eth_usdt: balances.ethereum?.usdt?.toFixed(2) || '0.00',
+        sol_usdt: balances.solana?.usdt?.toFixed(2) || '0.00',
+        bwaezi: balances.bwaezi?.native?.toFixed(6) || '0.000000',
+        bwaezi_usdt: balances.bwaezi?.usdt?.toFixed(2) || '0.00',
+        timestamp: new Date().toISOString()
+      };
+      
+      res.json(formattedResponse);
+    } catch (error) {
+      console.error('❌ Error fetching wallet balances:', error);
+      res.status(500).json({ 
+        error: error.message,
+        solana: '0.000000',
+        eth_usdt: '0.00',
+        sol_usdt: '0.00',
+        bwaezi: '0.000000',
+        bwaezi_usdt: '0.00',
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // Wallet addresses endpoint
+  app.get('/wallet-addresses', async (req, res) => {
+    try {
+      const { getWalletAddresses } = await import('../backend/agents/wallet.js');
+      const addresses = await getWalletAddresses();
+      res.json(addresses);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  console.log('✅ Wallet endpoints added successfully');
 }
 
 // 🔥 ADD FULL PRODUCTION ROUTES
@@ -325,10 +434,43 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('X-Blockchain-Status', blockchainActive ? 'CONNECTED' : 'DISCONNECTED');
     res.setHeader('X-Revenue-Tracking', revenueActive ? 'ACTIVE' : 'INACTIVE');
+    res.setHeader('X-Wallet-System', walletInitialized ? 'ACTIVE' : 'INACTIVE');
     next();
   });
 
-  // 🔗 Blockchain RPC Endpoint
+  // Enhanced root endpoint
+  app.get('/full', (req, res) => {
+    res.json({
+      message: '🚀 ArielSQL Ultimate Suite v4.4 - Production Server',
+      version: '4.4.0',
+      timestamp: new Date().toISOString(),
+      status: 'operational',
+      blockchain: {
+        active: blockchainActive,
+        chainId: BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CHAIN_ID,
+        network: BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_NETWORK
+      },
+      revenue: {
+        active: revenueActive,
+        streams: revenueActive ? Array.from(revenueTracker.revenueStreams.keys()) : []
+      },
+      wallet: {
+        active: walletInitialized,
+        dashboard: '/dashboard'
+      },
+      endpoints: {
+        health: '/health',
+        dashboard: '/dashboard',
+        wallet: '/wallet-status',
+        blockchain: '/blockchain-status',
+        revenue: '/revenue-status',
+        agents: '/agents-status',
+        metrics: '/api/metrics'
+      }
+    });
+  });
+
+  // Blockchain RPC Endpoint
   app.post('/bwaezi-rpc', async (req, res) => {
     try {
       const { method, params } = req.body;
@@ -353,7 +495,7 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
     }
   });
 
-  // 🔗 Blockchain Status Endpoint
+  // Blockchain Status Endpoint
   app.get('/blockchain-status', async (req, res) => {
     try {
       if (blockchainInstance) {
@@ -375,7 +517,7 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
     }
   });
 
-  // 💰 Revenue Status Endpoint
+  // Revenue Status Endpoint
   app.get('/revenue-status', async (req, res) => {
     try {
       if (revenueTracker && revenueTracker.initialized) {
@@ -392,7 +534,7 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
     }
   });
 
-  // 🤖 Agents Status Endpoint
+  // Agents Status Endpoint
   app.get('/agents-status', async (req, res) => {
     try {
       if (serviceManager) {
@@ -409,7 +551,7 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
     }
   });
 
-  // 📈 Metrics Endpoint
+  // Metrics Endpoint
   app.get('/api/metrics', async (req, res) => {
     try {
       const metrics = {
@@ -425,6 +567,10 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
           chainStatus: blockchainInstance.chainStatus
         } : null,
         revenue: revenueTracker ? revenueTracker.metrics : null,
+        wallet: {
+          initialized: walletInitialized,
+          dashboard: '/dashboard'
+        },
         serviceManager: serviceManager ? {
           active: true,
           agents: serviceManager.operationalAgents ? serviceManager.operationalAgents.size : 0
@@ -439,6 +585,34 @@ function addFullRoutesToApp(blockchainInstance, revenueTracker) {
   });
 
   console.log('✅ Full production routes added successfully');
+}
+
+// 🔥 INDEPENDENT SERVICE MANAGER INITIALIZATION
+async function initializeServiceManager() {
+  console.log('🤖 Initializing Service Manager for revenue generation...');
+  
+  try {
+    // Dynamic import to avoid circular dependencies
+    const { ServiceManager } = await import('./serviceManager.js');
+    
+    const serviceManager = new ServiceManager({
+      port: PORT,
+      blockchainConfig: BRIANNWAEZIKE_CHAIN_CREDENTIALS,
+      mainnet: true,
+      enableGodMode: true,
+      enableIsolation: true,
+      maxAgentRestarts: 10,
+      healthCheckInterval: 30000
+    });
+
+    await serviceManager.initialize();
+    
+    console.log('✅ Service Manager initialized successfully');
+    return serviceManager;
+  } catch (error) {
+    console.error('❌ Service Manager initialization failed:', error);
+    return null;
+  }
 }
 
 // 🔥 MAIN INITIALIZATION FUNCTION
@@ -457,6 +631,12 @@ async function initializeFullSystemAfterBinding(actualPort) {
     const revenueTracker = new ProductionRevenueTracker();
     await revenueTracker.initialize();
     
+    // Initialize wallet system
+    walletInitialized = await initializeWalletSystem();
+    
+    // Add wallet endpoints
+    addWalletEndpoints();
+    
     // Add full routes to app
     addFullRoutesToApp(blockchainInstance, revenueTracker);
     
@@ -473,18 +653,18 @@ async function initializeFullSystemAfterBinding(actualPort) {
     });
     
     global.startTime = Date.now();
-    
-    console.log('\n🎉 FULL SYSTEM INITIALIZATION COMPLETE');
-    console.log(`🌐 Server running on: http://${HOST}:${actualPort}`);
-    console.log(`🌐 Production URL: https://arielmatrix2-0-twwc.onrender.com`);
-    console.log(`🔗 Blockchain: ${blockchainInstance.isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
-    console.log(`💰 Revenue Tracking: ACTIVE`);
-    
-    // Export global instances
     global.blockchainInstance = blockchainInstance;
     global.revenueTracker = revenueTracker;
     global.serviceManager = serviceManager;
     global.currentCredentials = BRIANNWAEZIKE_CHAIN_CREDENTIALS;
+    
+    console.log('\n🎉 FULL SYSTEM INITIALIZATION COMPLETE');
+    console.log(`🌐 Server running on: http://${HOST}:${actualPort}`);
+    console.log(`📊 Dashboard: http://${HOST}:${actualPort}/dashboard`);
+    console.log(`🌐 Production URL: https://arielmatrix2-0-twwc.onrender.com`);
+    console.log(`🔗 Blockchain: ${blockchainInstance.isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
+    console.log(`💰 Revenue Tracking: ACTIVE`);
+    console.log(`💳 Wallet System: ${walletInitialized ? 'ACTIVE' : 'INACTIVE'}`);
     
   } catch (error) {
     console.error('❌ Full system initialization failed:', error);
@@ -519,7 +699,7 @@ process.on('SIGTERM', async () => {
   console.log('🛑 Received SIGTERM, initiating graceful shutdown...');
   
   if (serviceManager) {
-    await serviceManager.stop();
+    await serviceManager.stop().catch(console.error);
   }
   
   if (server) {
@@ -536,7 +716,7 @@ process.on('SIGINT', async () => {
   console.log('🛑 Received SIGINT, shutting down...');
   
   if (serviceManager) {
-    await serviceManager.stop();
+    await serviceManager.stop().catch(console.error);
   }
   
   process.exit(0);
@@ -564,6 +744,7 @@ export default {
 
 // 🔥 AUTO-START IF MAIN MODULE
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes('main.js')) {
+  console.log('🚀 Starting ArielSQL Server with Wallet Dashboard...');
   startApplication().catch(error => {
     console.error('💀 Fatal error during startup:', error);
     process.exit(1);
