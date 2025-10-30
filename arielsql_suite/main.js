@@ -27,7 +27,7 @@ const BRIANNWAEZIKE_CHAIN_CREDENTIALS = {
   BWAEZI_RPC_URL: 'https://rpc.winr.games',
   BWAEZI_CHAIN_ID: 777777,
   BWAEZI_CONTRACT_ADDRESS: '0x00000000000000000000000000000000000a4b05',
-  BWAEZI_NETWORK: 'mainnet',
+  BWAEZI_NETWORK: 'Bwaezi Sovereign Chain',
   BWAEZI_EXPLORER: 'https://explorer.winr.games',
   BWAEZI_WSS_URL: 'wss://rpc.winr.games/ws'
 };
@@ -100,7 +100,7 @@ class ProductionBlockchainSystem {
       rpcUrl: config.rpcUrl || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_RPC_URL,
       chainId: config.chainId || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CHAIN_ID,
       contractAddress: config.contractAddress || BRIANNWAEZIKE_CHAIN_CREDENTIALS.BWAEZI_CONTRACT_ADDRESS,
-      network: config.network || 'mainnet'
+      network: config.network || 'Bwaezi Sovereign Chain'  // 🆕 Default custom name
     };
     this.initialized = false;
     this.isConnected = false;
