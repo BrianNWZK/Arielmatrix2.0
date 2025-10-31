@@ -14,7 +14,7 @@ import {
 } from '../backend/agents/wallet.js';
 
 // Import Complete Enterprise Systems
-import { ServiceManager } from './arielsql_suite/serviceManager.js';
+import { ServiceManager } from './serviceManager.js';
 import { BrianNwaezikeChain, createProductionInstance } from '../backend/blockchain/BrianNwaezikeChain.js';
 
 // =========================================================================
