@@ -17,14 +17,17 @@ import {
 import { ServiceManager } from './serviceManager.js'; // Same directory as main.js
 import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
 
-// =========================================================================
-// EXPRESS SERVER SETUP FOR RENDER DEPLOYMENT
-// =========================================================================
+import http from "http";
+import cors from "cors";
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const app = express();
 const PORT = process.env.PORT || 10000;
-
-// Middleware
-app.use(express.json());
+const HOST = '0.0.0.0';
 
 // =========================================================================
 // HEALTH CHECK AND STATUS ENDPOINTS
