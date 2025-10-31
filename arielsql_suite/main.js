@@ -16,6 +16,7 @@ import {
 // CORRECTED IMPORT PATHS - Adjust based on your actual file structure
 import { ServiceManager } from './serviceManager.js'; // Same directory as main.js
 import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
+
 // =========================================================================
 // EXPRESS SERVER SETUP FOR RENDER DEPLOYMENT
 // =========================================================================
