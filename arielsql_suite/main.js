@@ -21,7 +21,7 @@ import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js'
 // EXPRESS SERVER SETUP FOR RENDER DEPLOYMENT
 // =========================================================================
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 // Middleware
 app.use(express.json());
