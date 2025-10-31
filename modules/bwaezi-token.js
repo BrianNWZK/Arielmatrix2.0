@@ -190,7 +190,7 @@ export class BWAEZIToken {
             VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
             transactionId,
-            '0x0000000000000000000000000000000000000000', // Mint address
+            '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA', // Mint address
             sovereignAddress,
             totalSupplyWei,
             'mint',
