@@ -448,7 +448,7 @@ async function bindServer() {
       const actualPort = server.address().port;
       console.log(`🎉 CRITICAL SUCCESS: SERVER BOUND TO PORT ${actualPort}`);
       console.log(`🔗 LOCAL: http://${HOST}:${actualPort}`);
-      console.log(`🌐 RENDER: https://arielmatrix2-0-twwc.onrender.com`);
+      console.log(`🌐 RENDER: https://arielmatrix2-0-6xd4.onrender.com`);
       resolve(actualPort);
     });
     
