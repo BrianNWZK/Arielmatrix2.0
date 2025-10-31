@@ -15,7 +15,59 @@ import {
 // CORRECTED IMPORT PATHS - Adjust based on your actual file structure
 import { ServiceManager } from './serviceManager.js'; // Same directory as main.js
 import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
+=========================================================================
+// EXPRESS SERVER SETUP FOR RENDER DEPLOYMENT
+// =========================================================================
+const app = express();
+const PORT = process.env.PORT || 3000;
 
+// Middleware
+app.use(express.json());
+
+// =========================================================================
+// HEALTH CHECK AND STATUS ENDPOINTS
+// =========================================================================
+app.get('/', (req, res) => {
+    res.json({
+        status: 'BWAEZI Enterprise Server Running',
+        timestamp: new Date().toISOString(),
+        endpoints: {
+            health: '/health',
+            status: '/status', 
+            deploy: '/deploy',
+            revenue: '/revenue'
+        }
+    });
+});
+
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        service: 'BWAEZI Enterprise Blockchain',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
+
+app.get('/status', async (req, res) => {
+    try {
+        const balances = await getWalletBalances();
+        res.json({
+            status: 'operational',
+            wallet: {
+                address: getEthereumAccount()?.address || 'not_initialized',
+                balances: balances
+            },
+            ecosystem: 'bwaezi_enterprise',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
+});
 // =========================================================================
 // CONCRETE CONFIGURATION - REAL VALUES ONLY
 // =========================================================================
