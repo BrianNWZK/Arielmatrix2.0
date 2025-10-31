@@ -11,12 +11,11 @@ import {
     processRevenuePayment,
     consolidateRevenue,
     getEthereumAccount
-} from './backend/agents/wallet.js';
+} from '../backend/agents/wallet.js';
 
 // CORRECTED IMPORT PATHS - Adjust based on your actual file structure
 import { ServiceManager } from './serviceManager.js'; // Same directory as main.js
-import { BrianNwaezikeChain, createProductionInstance } from './BrianNwaezikeChain.js'; // Same directory
-
+import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
 // =========================================================================
 // EXPRESS SERVER SETUP FOR RENDER DEPLOYMENT
 // =========================================================================
