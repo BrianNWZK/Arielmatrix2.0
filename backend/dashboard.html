@@ -3,19 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ArielSQL Multi-Chain Wallet Dashboard</title>
+    <title>ArielSQL Sovereign Minting Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: #1a202c;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             min-height: 100vh;
             padding: 1rem;
         }
@@ -25,29 +22,29 @@
             border-radius: 1.5rem;
             box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
             padding: 2.5rem;
-            max-width: 1400px;
+            max-width: 1600px;
             width: 100%;
-            display: flex;
-            flex-direction: column;
-            gap: 2rem;
+            margin: 0 auto;
         }
         .header {
             text-align: center;
             border-bottom: 2px solid #e2e8f0;
             padding-bottom: 1.5rem;
+            margin-bottom: 2rem;
         }
         .title {
-            font-size: 2rem;
+            font-size: 2.25rem;
             font-weight: 700;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            margin-bottom: 0.5rem;
         }
         .subtitle {
             font-size: 1.1rem;
             color: #718096;
-            margin-top: 0.5rem;
+            margin-bottom: 1rem;
         }
         .card {
             background: linear-gradient(135deg, #ffffff 0%, #f7fafc 100%);
@@ -58,9 +55,8 @@
             display: flex;
             flex-direction: column;
             gap: 1rem;
-            align-items: center;
-            justify-content: center;
             transition: all 0.3s ease;
+            height: 100%;
         }
         .card:hover {
             transform: translateY(-2px);
@@ -84,7 +80,14 @@
         .total-card h2, .total-card .balance-info, .total-card .chain-label {
             color: white;
         }
-        .refresh-btn {
+        .sovereign-card {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            color: white;
+        }
+        .sovereign-card h2, .sovereign-card .balance-info, .sovereign-card .chain-label {
+            color: white;
+        }
+        .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
@@ -93,30 +96,114 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 0.5rem;
         }
-        .refresh-btn:hover {
+        .btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .btn-sovereign {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+        }
+        .btn-warning {
+            background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
         }
         .last-updated {
             font-size: 0.875rem;
             color: #718096;
             text-align: center;
+            margin-top: 1rem;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            transition: width 0.3s ease;
+        }
+        .transaction-log {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            background: #f7fafc;
+        }
+        .transaction-item {
+            padding: 0.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.875rem;
+        }
+        .transaction-item:last-child {
+            border-bottom: none;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+        .status-success {
+            background-color: #D1FAE5;
+            color: #065F46;
+        }
+        .status-pending {
+            background-color: #FEF3C7;
+            color: #92400E;
+        }
+        .status-error {
+            background-color: #FEE2E2;
+            color: #991B1B;
+        }
+        .input-field {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+        .input-field:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
     </style>
 </head>
 <body>
 
 <div class="container">
+    <!-- Header -->
     <div class="header">
-        <h1 class="title">🚀 ArielSQL Multi-Chain Wallet Dashboard</h1>
-        <p class="subtitle">Live balances from Ethereum, Solana, and BWAEZI networks</p>
-        <button class="refresh-btn" onclick="fetchBalances()">
-            🔄 Refresh Balances
-        </button>
+        <h1 class="title">🚀 ArielSQL Sovereign Minting Dashboard</h1>
+        <p class="subtitle">Live balances & sovereign authority for BWAEZI token minting</p>
+        <div class="flex gap-4 justify-center">
+            <button class="btn" onclick="fetchBalances()">
+                🔄 Refresh Balances
+            </button>
+            <button class="btn btn-sovereign" onclick="fetchSovereignStatus()">
+                👑 Sovereign Status
+            </button>
+            <button class="btn btn-warning" onclick="mintBwaezi(12000)">
+                🪙 Mint 12,000 BWAEZI
+            </button>
+        </div>
     </div>
 
-    <div id="wallets-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         <!-- Ethereum Card -->
         <div class="card">
             <div class="chain-label">Ethereum Network</div>
@@ -179,22 +266,157 @@
         </div>
     </div>
 
-    <!-- System Status -->
-    <div class="card">
-        <h2 class="text-xl font-bold text-gray-800 text-center">System Status</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-            <div class="text-center">
-                <div class="chain-label">Ethereum</div>
-                <div id="ethStatus" class="balance-info">🔴 Offline</div>
+    <!-- Sovereign Minting Authority Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <!-- Sovereign Status Card -->
+        <div class="card sovereign-card">
+            <div class="chain-label">Sovereign Minting Authority</div>
+            <h2 class="text-xl font-bold">👑 Minting Control</h2>
+            
+            <div class="space-y-3">
+                <div>
+                    <div class="chain-label">Sovereign Wallet</div>
+                    <div id="sovereignAddress" class="balance-info text-sm font-mono truncate">
+                        0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="chain-label">Minting Privileges</div>
+                    <div id="mintingPrivileges" class="balance-info">
+                        <span id="privilegeStatus">Checking...</span>
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="chain-label">Current BWAEZI Balance</div>
+                    <div id="sovereignBwaeziBalance" class="balance-info text-2xl">
+                        0 BWAEZI
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="chain-label">Target Mint</div>
+                    <div class="balance-info">12,000 BWAEZI</div>
+                </div>
             </div>
-            <div class="text-center">
-                <div class="chain-label">Solana</div>
-                <div id="solStatus" class="balance-info">🔴 Offline</div>
+        </div>
+
+        <!-- Gas & Network Status Card -->
+        <div class="card">
+            <div class="chain-label">Gas & Network Status</div>
+            <h2 class="text-xl font-bold text-gray-800">⛽ Gas Calculations</h2>
+            
+            <div class="space-y-3">
+                <div>
+                    <div class="chain-label">Current ETH Balance</div>
+                    <div id="sovereignEthBalance" class="balance-info">
+                        Fetching...
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="chain-label">Estimated Gas Cost</div>
+                    <div id="gasEstimate" class="balance-info">
+                        Calculating...
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="chain-label">Gas Sufficiency</div>
+                    <div id="gasSufficiency" class="balance-info">
+                        <span id="sufficiencyStatus">Checking...</span>
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="chain-label">Network Status</div>
+                    <div id="networkStatus" class="balance-info">
+                        <span id="networkStatusText">Checking...</span>
+                    </div>
+                </div>
             </div>
-            <div class="text-center">
-                <div class="chain-label">BWAEZI</div>
-                <div id="bwaeziStatus" class="balance-info">🔴 Offline</div>
+        </div>
+
+        <!-- Minting Controls Card -->
+        <div class="card">
+            <div class="chain-label">Minting Controls</div>
+            <h2 class="text-xl font-bold text-gray-800">🪙 Mint BWAEZI</h2>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="chain-label">Amount to Mint</label>
+                    <input type="number" id="mintAmount" value="12000" 
+                           class="input-field"
+                           min="1" max="12000" placeholder="Enter amount to mint">
+                </div>
+                
+                <div class="progress-bar">
+                    <div id="mintProgress" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <div class="text-center chain-label" id="progressText">
+                    Ready to mint
+                </div>
+                
+                <button class="btn btn-sovereign" onclick="mintBwaezi()" id="mintButton">
+                    🪙 Mint BWAEZI Tokens
+                </button>
+                
+                <button class="btn btn-warning" onclick="mintBwaezi(12000)" id="mint12000Button">
+                    🚀 Quick Mint 12,000
+                </button>
+                
+                <button class="btn" onclick="checkMintingPrivileges()">
+                    🔍 Verify Privileges
+                </button>
             </div>
+        </div>
+    </div>
+
+    <!-- System Status & Transaction Log -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- System Status -->
+        <div class="card">
+            <h2 class="text-xl font-bold text-gray-800 text-center">System Status</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+                <div class="text-center">
+                    <div class="chain-label">Ethereum</div>
+                    <div id="ethStatus" class="balance-info">🔴 Offline</div>
+                </div>
+                <div class="text-center">
+                    <div class="chain-label">Solana</div>
+                    <div id="solStatus" class="balance-info">🔴 Offline</div>
+                </div>
+                <div class="text-center">
+                    <div class="chain-label">BWAEZI</div>
+                    <div id="bwaeziStatus" class="balance-info">🔴 Offline</div>
+                </div>
+            </div>
+            
+            <div class="mt-4">
+                <div class="chain-label">Sovereign Minting</div>
+                <div id="sovereignStatus" class="balance-info text-center">
+                    <span id="sovereignStatusText">Initializing...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transaction Log -->
+        <div class="card">
+            <h2 class="text-xl font-bold text-gray-800 text-center">Transaction Log</h2>
+            <div class="transaction-log" id="transactionLog">
+                <div class="transaction-item">
+                    <div class="flex justify-between">
+                        <span>System initialized</span>
+                        <span class="status-badge status-success">Ready</span>
+                    </div>
+                    <div class="text-xs text-gray-500">Waiting for transactions...</div>
+                </div>
+            </div>
+            
+            <button class="btn btn-warning mt-3" onclick="clearTransactionLog()">
+                🧹 Clear Log
+            </button>
         </div>
     </div>
 
@@ -212,7 +434,9 @@
 <script>
     const statusMessage = document.getElementById('statusMessage');
     const serverUrl = 'https://arielmatrix2-0-twwc.onrender.com';
+    let transactionCount = 0;
 
+    // Utility Functions
     function showMessage(message, type = 'error') {
         statusMessage.textContent = message;
         statusMessage.classList.remove('hidden', 'bg-red-100', 'bg-yellow-100', 'bg-green-100', 'text-red-700', 'text-yellow-700', 'text-green-700');
@@ -226,11 +450,240 @@
         }
         statusMessage.classList.remove('hidden');
         
-        // Auto-hide success messages after 5 seconds
         if (type === 'success') {
             setTimeout(() => {
                 statusMessage.classList.add('hidden');
             }, 5000);
+        }
+    }
+
+    function addTransactionLog(message, status = 'info', details = '') {
+        transactionCount++;
+        const log = document.getElementById('transactionLog');
+        const statusClass = status === 'success' ? 'status-success' : 
+                           status === 'pending' ? 'status-pending' : 
+                           status === 'error' ? 'status-error' : 'status-success';
+        
+        const statusText = status === 'success' ? 'Success' : 
+                          status === 'pending' ? 'Pending' : 
+                          status === 'error' ? 'Error' : 'Info';
+        
+        const transactionItem = document.createElement('div');
+        transactionItem.className = 'transaction-item';
+        transactionItem.innerHTML = `
+            <div class="flex justify-between">
+                <span>${message}</span>
+                <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
+            <div class="text-xs text-gray-500">${details}</div>
+        `;
+        
+        log.insertBefore(transactionItem, log.firstChild);
+        
+        // Keep only last 10 transactions
+        if (log.children.length > 10) {
+            log.removeChild(log.lastChild);
+        }
+    }
+
+    function clearTransactionLog() {
+        const log = document.getElementById('transactionLog');
+        log.innerHTML = '<div class="transaction-item"><div class="flex justify-between"><span>Log cleared</span><span class="status-badge status-success">Info</span></div><div class="text-xs text-gray-500">Transaction log has been cleared</div></div>';
+        transactionCount = 0;
+    }
+
+    function updateMintProgress(current, target = 12000) {
+        const progress = (current / target) * 100;
+        document.getElementById('mintProgress').style.width = `${Math.min(progress, 100)}%`;
+        document.getElementById('progressText').textContent = 
+            `${current.toLocaleString()} / ${target.toLocaleString()} BWAEZI (${progress.toFixed(1)}%)`;
+    }
+
+    // API Functions
+    async function fetchBalances() {
+        try {
+            showMessage('🔄 Fetching wallet balances...', 'warning');
+            
+            const response = await fetch(`${serverUrl}/real-wallet-status`);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Server responded with an error.');
+            }
+            const data = await response.json();
+
+            // Update Ethereum balances
+            document.getElementById('ethBalance').textContent = data.ethereum.native ? `${parseFloat(data.ethereum.native).toFixed(6)} ETH` : '0.000000 ETH';
+            document.getElementById('ethUsdtBalance').textContent = data.ethereum.usdt ? `${parseFloat(data.ethereum.usdt).toFixed(2)} USDT` : '0.00 USDT';
+
+            // Update Solana balances
+            document.getElementById('solanaBalance').textContent = data.solana.native ? `${parseFloat(data.solana.native).toFixed(6)} SOL` : '0.000000 SOL';
+            document.getElementById('solUsdtBalance').textContent = data.solana.usdt ? `${parseFloat(data.solana.usdt).toFixed(2)} USDT` : '0.00 USDT';
+
+            // Update BWAEZI balances
+            document.getElementById('bwaeziBalance').textContent = data.bwaezi.native ? `${parseFloat(data.bwaezi.native).toLocaleString()} BWAEZI` : '0 BWAEZI';
+            document.getElementById('bwaeziUsdtValue').textContent = data.bwaezi.usdt ? `$${parseFloat(data.bwaezi.usdt).toLocaleString()}` : '$0.00';
+
+            // Update total value
+            document.getElementById('totalUsdtValue').textContent = `$${data.total_usdt ? parseFloat(data.total_usdt).toLocaleString() : '0.00'}`;
+
+            // Update system status
+            updateSystemStatus(data);
+
+            // Update mint progress if we have BWAEZI balance
+            if (data.bwaezi.native) {
+                updateMintProgress(parseFloat(data.bwaezi.native));
+            }
+
+            showMessage('✅ Balances updated successfully!', 'success');
+            addTransactionLog('Wallet balances refreshed', 'success', new Date().toLocaleTimeString());
+
+        } catch (error) {
+            console.error('Error fetching balances:', error);
+            showMessage(`❌ Error: ${error.message}`, 'error');
+            addTransactionLog('Failed to fetch balances', 'error', error.message);
+            
+            // Set offline status
+            document.getElementById('ethStatus').textContent = '🔴 Offline';
+            document.getElementById('solStatus').textContent = '🔴 Offline';
+            document.getElementById('bwaeziStatus').textContent = '🔴 Offline';
+        }
+    }
+
+    async function fetchSovereignStatus() {
+        try {
+            showMessage('👑 Checking sovereign minting status...', 'warning');
+            
+            const response = await fetch(`${serverUrl}/sovereign-status`);
+            if (!response.ok) {
+                throw new Error('Sovereign endpoint not available');
+            }
+            const data = await response.json();
+
+            // Update sovereign status
+            document.getElementById('sovereignBwaeziBalance').textContent = 
+                `${parseFloat(data.currentBalance).toLocaleString()} BWAEZI`;
+            
+            document.getElementById('privilegeStatus').textContent = 
+                data.mintingPrivileges.canMint ? '✅ Can Mint' : '❌ No Privileges';
+            
+            document.getElementById('sovereignEthBalance').textContent = 
+                `${data.confirmedEthBalance} ETH`;
+            
+            document.getElementById('gasEstimate').textContent = 
+                `$${data.gasEstimate.totalGasUSD.toFixed(2)} USD`;
+            
+            document.getElementById('sufficiencyStatus').textContent = 
+                data.gasEstimate.sufficient ? '✅ Sufficient' : '❌ Insufficient';
+            
+            document.getElementById('sufficiencyStatus').className = 
+                data.gasEstimate.sufficient ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+            
+            document.getElementById('networkStatusText').textContent = 
+                data.network === 'Bwaezi Sovereign Chain' ? '🟢 Online' : '🔴 Offline';
+            
+            document.getElementById('sovereignStatusText').textContent = 
+                data.mintingReady ? '🟢 Ready to Mint' : '⚠️ Setup Required';
+
+            // Update mint progress
+            updateMintProgress(parseFloat(data.currentBalance));
+
+            showMessage('✅ Sovereign status updated!', 'success');
+            addTransactionLog('Sovereign status checked', 'success', `Balance: ${data.currentBalance} BWAEZI`);
+
+        } catch (error) {
+            console.error('Error fetching sovereign status:', error);
+            showMessage(`❌ Sovereign status error: ${error.message}`, 'error');
+            addTransactionLog('Failed to check sovereign status', 'error', error.message);
+            
+            document.getElementById('sovereignStatusText').textContent = '🔴 Sovereign System Offline';
+        }
+    }
+
+    async function mintBwaezi(amount = null) {
+        const mintAmount = amount || document.getElementById('mintAmount').value;
+        const mintButton = document.getElementById('mintButton');
+        const mint12000Button = document.getElementById('mint12000Button');
+        
+        if (!mintAmount || mintAmount <= 0) {
+            showMessage('❌ Please enter a valid amount to mint', 'error');
+            return;
+        }
+
+        try {
+            mintButton.disabled = true;
+            mint12000Button.disabled = true;
+            mintButton.innerHTML = '⏳ Minting...';
+            mint12000Button.innerHTML = '⏳ Minting...';
+            
+            showMessage(`🪙 Minting ${mintAmount} BWAEZI tokens...`, 'warning');
+            addTransactionLog(`Initiating mint of ${mintAmount} BWAEZI`, 'pending', 'Waiting for blockchain confirmation...');
+
+            const response = await fetch(`${serverUrl}/mint-bwaezi`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ amount: parseInt(mintAmount) })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showMessage(`✅ Successfully minted ${mintAmount} BWAEZI!`, 'success');
+                addTransactionLog(
+                    `Minted ${mintAmount} BWAEZI`, 
+                    'success', 
+                    `Tx: ${result.transactionHash ? result.transactionHash.substring(0, 16) + '...' : 'Pending'} | Block: ${result.blockNumber || 'Pending'}`
+                );
+                
+                // Update UI
+                document.getElementById('sovereignBwaeziBalance').textContent = 
+                    `${result.newBalance.toLocaleString()} BWAEZI`;
+                
+                updateMintProgress(result.newBalance);
+                
+                // Refresh balances after a short delay
+                setTimeout(() => {
+                    fetchBalances();
+                    fetchSovereignStatus();
+                }, 3000);
+            } else {
+                throw new Error(result.error || 'Minting failed');
+            }
+
+        } catch (error) {
+            console.error('Minting error:', error);
+            showMessage(`❌ Minting failed: ${error.message}`, 'error');
+            addTransactionLog('Minting failed', 'error', error.message);
+        } finally {
+            mintButton.disabled = false;
+            mint12000Button.disabled = false;
+            mintButton.innerHTML = '🪙 Mint BWAEZI Tokens';
+            mint12000Button.innerHTML = '🚀 Quick Mint 12,000';
+        }
+    }
+
+    async function checkMintingPrivileges() {
+        try {
+            showMessage('🔍 Checking minting privileges...', 'warning');
+            
+            const response = await fetch(`${serverUrl}/sovereign-status`);
+            const data = await response.json();
+            
+            const privileges = data.mintingPrivileges;
+            let message = `Can Mint: ${privileges.canMint ? '✅' : '❌'}`;
+            
+            if (privileges.canMint) {
+                showMessage(`✅ Minting privileges confirmed! ${message}`, 'success');
+                addTransactionLog('Minting privileges verified', 'success', message);
+            } else {
+                showMessage(`❌ No minting privileges detected. ${message}`, 'error');
+                addTransactionLog('No minting privileges', 'error', message);
+            }
+            
+        } catch (error) {
+            console.error('Error checking privileges:', error);
+            showMessage(`❌ Failed to check privileges: ${error.message}`, 'error');
         }
     }
 
@@ -255,59 +708,30 @@
         document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
     }
 
-    async function fetchBalances() {
-        try {
-            showMessage('🔄 Fetching wallet balances...', 'warning');
-            
-            const response = await fetch(`${serverUrl}/wallet-status`);
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Server responded with an error.');
-            }
-            const data = await response.json();
+    // Initialize dashboard
+    window.onload = function() {
+        fetchBalances();
+        fetchSovereignStatus();
+        addTransactionLog('Dashboard initialized', 'success', 'Ready for sovereign minting operations');
+        
+        // Auto-refresh every 30 seconds
+        setInterval(fetchBalances, 30000);
+        setInterval(fetchSovereignStatus, 45000);
+    };
 
-            // Update Ethereum balances
-            document.getElementById('ethBalance').textContent = data.ethereum.native || '0.000000 ETH';
-            document.getElementById('ethUsdtBalance').textContent = data.ethereum.usdt || '0.00 USDT';
-
-            // Update Solana balances
-            document.getElementById('solanaBalance').textContent = data.solana.native || '0.000000 SOL';
-            document.getElementById('solUsdtBalance').textContent = data.solana.usdt || '0.00 USDT';
-
-            // Update BWAEZI balances
-            document.getElementById('bwaeziBalance').textContent = data.bwaezi.native || '0.000000 BWAEZI';
-            document.getElementById('bwaeziUsdtValue').textContent = data.bwaezi.usdt || '0.00 USDT';
-
-            // Update total value
-            document.getElementById('totalUsdtValue').textContent = `$${data.total_usdt || '0.00'}`;
-
-            // Update system status
-            updateSystemStatus(data);
-
-            showMessage('✅ Balances updated successfully!', 'success');
-
-        } catch (error) {
-            console.error('Error fetching balances:', error);
-            showMessage(`❌ Error: ${error.message}`, 'error');
-            
-            // Set offline status
-            document.getElementById('ethStatus').textContent = '🔴 Offline';
-            document.getElementById('solStatus').textContent = '🔴 Offline';
-            document.getElementById('bwaeziStatus').textContent = '🔴 Offline';
-        }
-    }
-
-    // Fetch balances every 30 seconds for real-time monitoring
-    setInterval(fetchBalances, 30000);
-
-    // Initial fetch on page load
-    window.onload = fetchBalances;
-
-    // Add keyboard shortcut (Ctrl+R or Cmd+R) to refresh
+    // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
             e.preventDefault();
             fetchBalances();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'm') {
+            e.preventDefault();
+            fetchSovereignStatus();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            mintBwaezi();
         }
     });
 </script>
