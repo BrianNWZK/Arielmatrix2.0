@@ -25,12 +25,12 @@ const CONFIG = {
     TOKEN_SYMBOL: "bwzC", 
     TOTAL_SUPPLY: "100000000",
     CONVERSION_RATE: "100",
-    DEPLOYMENT_GAS_LIMIT: "3000000", // Optimized for kernel
-    NETWORK: process.env.NODE_ENV === 'production' ? 'mainnet' : 'testnet',
-    CHAIN_ID: 777777,
-    RPC_URL: process.env.BWAEZI_RPC_URL || "https://rpc.winr.games",
+    DEPLOYMENT_GAS_LIMIT: "3000000",
+    NETWORK: 'ethereum', // ✅ Changed to ethereum
+    CHAIN_ID: LAYER1_BLOCKCHAINS.ETHEREUM.CHAIN_ID, // ✅ 1
+    RPC_URL: "https://eth.llamarpc.com", // ✅ Real Ethereum RPC
     PORT: process.env.PORT || 10000,
-    PRIVATE_KEY: process.env.PRIVATE_KEY || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    PRIVATE_KEY: process.env.PRIVATE_KEY || "your_actual_private_key_here"
 };
 
 // Global state for deployed contract
