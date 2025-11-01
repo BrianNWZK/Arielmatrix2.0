@@ -26,11 +26,11 @@ const CONFIG = {
     TOTAL_SUPPLY: "100000000",
     CONVERSION_RATE: "100",
     DEPLOYMENT_GAS_LIMIT: "3000000",
-    NETWORK: 'ethereum', // ✅ Changed to ethereum
-    CHAIN_ID: LAYER1_BLOCKCHAINS.ETHEREUM.CHAIN_ID, // ✅ 1
-    RPC_URL: "https://eth.llamarpc.com", // ✅ Real Ethereum RPC
+    NETWORK: 'mainnet',
+    CHAIN_ID: 1, // ✅ ETHEREUM MAINNET
+    RPC_URL: "https://eth.llamarpc.com", // ✅ REAL ETH RPC
     PORT: process.env.PORT || 10000,
-    PRIVATE_KEY: process.env.PRIVATE_KEY || "your_actual_private_key_here"
+    PRIVATE_KEY: process.env.PRIVATE_KEY || "your_actual_private_key"
 };
 
 // Global state for deployed contract
