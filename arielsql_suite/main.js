@@ -11,17 +11,17 @@ import {
     processRevenuePayment,
     consolidateRevenue,
     getEthereumAccount
-} from './backend/agents/wallet.js';
+} from '../backend/agents/wallet.js';
 
 // CORRECTED IMPORT PATHS - Adjust based on your actual file structure
 import { ServiceManager } from './serviceManager.js'; // Same directory as main.js
-import { BrianNwaezikeChain, createProductionInstance } from './BrianNwaezikeChain.js'; // Same directory
+import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
 
 // =========================================================================
 // EXPRESS SERVER SETUP FOR RENDER DEPLOYMENT
 // =========================================================================
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 // Middleware
 app.use(express.json());
@@ -133,7 +133,7 @@ const CONFIG = {
     FOUNDER_WALLET: "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
     TOKEN_NAME: "BWAEZI",
     TOKEN_SYMBOL: "bwzC", 
-    TOTAL_SUPPLY: "100000000",
+    TOTAL_SUPPLY: "100000000",  100M
     CONVERSION_RATE: "100"
 };
 
