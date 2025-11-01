@@ -4,6 +4,8 @@
  * REAL MAINNET DEPLOYMENT READY - NO SIMULATIONS
  */
 
+import { ethers } from 'ethers';
+
 // =========================================================================
 // BWAEZI KERNEL CONTRACT ABI & BYTECODE - PRODUCTION READY
 // =========================================================================
