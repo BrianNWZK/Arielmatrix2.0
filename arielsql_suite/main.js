@@ -109,17 +109,15 @@ async function initializeBlockchain() {
         console.log(` 💰 Balance: ${ethers.formatEther(balance)} ETH`);
         console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasData.gasPrice, 'gwei')} gwei`);
         
-        const minEth = ethers.parseEther("0.006");
+       // NEW LINE (e.g., setting the minimum to 0.005 ETH):
+        const minEth = ethers.parseEther("0.005"); 
+
         if (balance < minEth) {
             throw new Error(`Insufficient ETH. Need ${ethers.formatEther(minEth)} ETH, have ${ethers.formatEther(balance)} ETH`);
         }
-
+        
         return { provider, wallet };
-    } catch (error) {
-        console.error("❌ BLOCKCHAIN INIT FAILED:", error.message);
-        throw error;
     }
-}
 
 // =========================================================================
 // ROBUST KERNEL DEPLOYMENT 
