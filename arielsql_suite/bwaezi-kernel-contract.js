@@ -107,7 +107,7 @@ export const getBWAEZIBytecode = () => {
 };
 
 // =========================================================================
-// BWAEZI KERNEL DEPLOYER CLASS - GAS PROTECTED
+// BWAEZI KERNEL DEPLOYER CLASS - GAS PROTECTED [FIXED BYTECODE HANDLING]
 // =========================================================================
 export class BWAEZIKernelDeployer {
     constructor(wallet, provider, config) {
@@ -154,23 +154,36 @@ export class BWAEZIKernelDeployer {
             console.log(` 💰 Wallet Balance: ${ethers.formatEther(balance)} ETH`);
             console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasPrice.gasPrice, 'gwei')} gwei`);
 
+            // ✅ FIXED: Get bytecode and ensure proper formatting
             const bytecode = getBWAEZIBytecode();
-            if (!bytecode || bytecode.length < 100) {
-                throw new Error("Invalid bytecode detected");
+            
+            // Validate bytecode format
+            if (!bytecode || typeof bytecode !== 'string') {
+                throw new Error("Bytecode is not a string");
             }
+            
+            if (!bytecode.startsWith('0x')) {
+                throw new Error("Bytecode must start with 0x");
+            }
+            
+            if (bytecode.length < 100) {
+                throw new Error(`Invalid bytecode length: ${bytecode.length}`);
+            }
+            
             console.log(` ✅ Bytecode validated: ${bytecode.length} characters`);
 
+            // ✅ FIXED: Create factory with proper bytecode handling
             const factory = new ethers.ContractFactory(BWAEZI_KERNEL_ABI, bytecode, this.wallet);
             console.log(" 🔨 Deploying BWAEZI Kernel...");
             console.log(` 📝 Constructor: founder = ${this.config.SOVEREIGN_WALLET}`);
 
-            // ✅ FIXED: CORRECT CONSTRUCTOR ARGUMENTS - SINGLE PARAMETER
+            // ✅ FIXED: Use deploy with single constructor argument
             const contract = await factory.deploy(
-                this.config.SOVEREIGN_WALLET, // founder address - SINGLE PARAMETER
+                this.config.SOVEREIGN_WALLET, // Single constructor parameter
                 {
-                    gasLimit: 2500000, // Fixed gas limit
-                    gasPrice: gasPrice.gasPrice,
-                    nonce: await this.provider.getTransactionCount(this.wallet.address)
+                    gasLimit: 2500000,
+                    gasPrice: gasPrice.gasPrice
+                    // Remove nonce - let ethers handle it automatically
                 }
             );
 
@@ -201,8 +214,15 @@ export class BWAEZIKernelDeployer {
             };
         } catch (error) {
             console.error("❌ DEPLOYMENT FAILED - GAS SAVED:", error.message);
-            // Provide specific error guidance
-            if (error.message.includes('insufficient funds')) {
+            
+            // Enhanced error diagnostics
+            if (error.message.includes('invalid BytesLike')) {
+                console.error(" 💡 BYTECODE CORRUPTION DETECTED - Checking bytecode format...");
+                const bytecode = getBWAEZIBytecode();
+                console.error(` 💡 Bytecode length: ${bytecode.length}`);
+                console.error(` 💡 Bytecode starts with 0x: ${bytecode.startsWith('0x')}`);
+                console.error(` 💡 First 50 chars: ${bytecode.substring(0, 50)}`);
+            } else if (error.message.includes('insufficient funds')) {
                 console.error(" 💡 Add more ETH to your wallet");
             } else if (error.message.includes('nonce')) {
                 console.error(" 💡 Wait for pending transactions to clear");
@@ -210,9 +230,8 @@ export class BWAEZIKernelDeployer {
                 console.error(" 💡 Constructor arguments mismatch - check ABI");
             } else if (error.message.includes('revert')) {
                 console.error(" 💡 Contract constructor reverted - check parameters");
-            } else if (error.message.includes('BytesLike')) {
-                console.error(" 💡 Bytecode corruption detected - using fixed bytecode handler");
             }
+            
             return { success: false, error: error.message, gasSaved: true };
         }
     }
