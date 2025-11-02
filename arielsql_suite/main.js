@@ -3,7 +3,7 @@
  * PRODUCTION GOD MODE v8.5
  * * ES MODULE: Initializes blockchain, deploys the kernel, and starts 
  * a Render-compatible Express server to bind the required port.
- * * CRITICAL FIX: Explicitly binds Express server to 0.0.0.0 and PORT env.
+ * * CRITICAL FIX: Enhanced private key validation and error handling
  */
 
 import express from 'express';
@@ -14,30 +14,61 @@ import { ethers } from 'ethers';
 import { BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
-// PRODUCTION CONFIGURATION - GAS OPTIMIZED
+// ROBUST ENVIRONMENT VARIABLE VALIDATION
 // =========================================================================
-const CONFIG = {
-    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
-    TOKEN_NAME: "BWAEZI",
-    TOKEN_SYMBOL: "bwzC",
-    TOTAL_SUPPLY: "100000000000000000000000000",
-    DEPLOYMENT_GAS_LIMIT: "2500000",
-    NETWORK: 'mainnet',
-    CHAIN_ID: 1,
-    RPC_URLS: [
-        "https://eth.llamarpc.com",
-        "https://rpc.ankr.com/eth", 
-        "https://cloudflare-eth.com"
-    ],
-    PORT: process.env.PORT || 10000,
-    PRIVATE_KEY: process.env.PRIVATE_KEY
-};
+function validateEnvironment() {
+    console.log("🔧 VALIDATING ENVIRONMENT VARIABLES...");
+    
+    const PRIVATE_KEY = process.env.PRIVATE_KEY;
+    const SOVEREIGN_WALLET = process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA";
+    
+    // CRITICAL: Validate private key exists and is properly formatted
+    if (!PRIVATE_KEY) {
+        throw new Error("❌ PRIVATE_KEY environment variable is REQUIRED and not set");
+    }
+    
+    if (!PRIVATE_KEY.startsWith('0x')) {
+        throw new Error("❌ PRIVATE_KEY must start with '0x'");
+    }
+    
+    if (PRIVATE_KEY.length !== 66) {
+        throw new Error(`❌ PRIVATE_KEY invalid length: ${PRIVATE_KEY.length} characters (expected 66)`);
+    }
+    
+    // Validate private key format (hex characters only)
+    const hexRegex = /^0x[0-9a-fA-F]{64}$/;
+    if (!hexRegex.test(PRIVATE_KEY)) {
+        throw new Error("❌ PRIVATE_KEY contains invalid characters - must be 64 hex characters after 0x");
+    }
+    
+    console.log("✅ ENVIRONMENT VARIABLES VALIDATED");
+    console.log(` • Sovereign: ${SOVEREIGN_WALLET}`);
+    console.log(` • Private Key: ${PRIVATE_KEY.substring(0, 10)}...${PRIVATE_KEY.substring(62)} (validated)`);
+    
+    return {
+        PRIVATE_KEY,
+        SOVEREIGN_WALLET,
+        TOKEN_NAME: "BWAEZI",
+        TOKEN_SYMBOL: "bwzC",
+        TOTAL_SUPPLY: "100000000000000000000000000",
+        DEPLOYMENT_GAS_LIMIT: "2500000",
+        NETWORK: 'mainnet',
+        CHAIN_ID: 1,
+        RPC_URLS: [
+            "https://eth.llamarpc.com",
+            "https://rpc.ankr.com/eth", 
+            "https://cloudflare-eth.com"
+        ],
+        PORT: process.env.PORT || 10000
+    };
+}
 
 // Global state
 let bwaeziKernelAddress = null;
 let kernelContract = null;
 let provider = null;
 let wallet = null;
+let CONFIG = null;
 
 // =========================================================================
 // ROBUST PROVIDER WITH RETRY MECHANISM
@@ -89,20 +120,65 @@ class RobustProvider {
 }
 
 // =========================================================================
+// ENHANCED WALLET INITIALIZATION WITH VALIDATION
+// =========================================================================
+async function initializeWallet(provider, privateKey) {
+    console.log("🔐 INITIALIZING WALLET WITH VALIDATION...");
+    
+    try {
+        // Create wallet instance
+        const wallet = new ethers.Wallet(privateKey, provider);
+        
+        // Test wallet functionality by getting address and balance
+        const address = wallet.address;
+        console.log(` • Wallet Address: ${address}`);
+        
+        // Verify balance can be retrieved (tests wallet functionality)
+        const balance = await provider.getBalance(address);
+        console.log(` • Wallet Balance: ${ethers.formatEther(balance)} ETH`);
+        
+        // Test signing capability (critical for deployments)
+        const testMessage = "BWAEZI Kernel Verification";
+        const signature = await wallet.signMessage(testMessage);
+        
+        if (!signature || signature.length !== 132) {
+            throw new Error("Wallet signing test failed - invalid signature");
+        }
+        
+        console.log("✅ WALLET INITIALIZED AND VALIDATED SUCCESSFULLY");
+        console.log(` • Address: ${address}`);
+        console.log(` • Balance: ${ethers.formatEther(balance)} ETH`);
+        console.log(` • Signing: ✅ Functional`);
+        
+        return wallet;
+    } catch (error) {
+        console.error("❌ WALLET INITIALIZATION FAILED:", error.message);
+        
+        if (error.message.includes('invalid private key')) {
+            throw new Error("INVALID PRIVATE KEY - Check your PRIVATE_KEY environment variable");
+        } else if (error.message.includes('invalid length')) {
+            throw new Error("PRIVATE_KEY length incorrect - must be 64 hex characters after 0x");
+        } else {
+            throw new Error(`Wallet initialization failed: ${error.message}`);
+        }
+    }
+}
+
+// =========================================================================
 // BLOCKCHAIN INITIALIZATION
 // =========================================================================
 async function initializeBlockchain() {
     console.log("🚀 INITIALIZING BLOCKCHAIN (ROBUST MODE)...");
     
     try {
+        // Validate environment first
+        CONFIG = validateEnvironment();
+        
         const providerManager = new RobustProvider(CONFIG.RPC_URLS);
         provider = await providerManager.initializeProvider();
 
-        if (!CONFIG.PRIVATE_KEY) {
-            throw new Error("PRIVATE_KEY environment variable required");
-        }
-        
-        wallet = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
+        // Initialize wallet with enhanced validation
+        wallet = await initializeWallet(provider, CONFIG.PRIVATE_KEY);
 
         // Robust balance check with retry
         let balance;
@@ -129,9 +205,22 @@ async function initializeBlockchain() {
             throw new Error(`Insufficient ETH. Need ${ethers.formatEther(minEth)} ETH, have ${ethers.formatEther(balance)} ETH`);
         }
 
-        return { provider, wallet };
+        return { provider, wallet, config: CONFIG };
     } catch (error) {
         console.error("❌ BLOCKCHAIN INIT FAILED:", error.message);
+        
+        // Provide specific guidance for common issues
+        if (error.message.includes('PRIVATE_KEY')) {
+            console.log("\n💡 SOLUTION: Set PRIVATE_KEY environment variable in Render dashboard");
+            console.log("   Format: PRIVATE_KEY=0xYourActual64CharacterPrivateKey");
+            console.log("   Make sure it starts with '0x' and has 64 hex characters");
+        } else if (error.message.includes('invalid private key')) {
+            console.log("\n💡 SOLUTION: Your PRIVATE_KEY is invalid");
+            console.log("   • Check for typos or missing characters");
+            console.log("   • Ensure it starts with '0x'");
+            console.log("   • Must be exactly 64 hex characters after '0x'");
+        }
+        
         throw error;
     }
 }
@@ -141,6 +230,12 @@ async function initializeBlockchain() {
 // =========================================================================
 async function deployBwaeziKernel() {
     try {
+        console.log("🚀 STARTING BWAEZI KERNEL DEPLOYMENT...");
+        
+        if (!wallet) {
+            throw new Error("Wallet not initialized - cannot deploy");
+        }
+        
         const kernelDeployer = new BWAEZIKernelDeployer(wallet, provider, CONFIG);
         const result = await kernelDeployer.deploy();
         
@@ -169,10 +264,12 @@ function createExpressServer() {
     app.use(cors());
     app.use(express.json());
 
-    // Health check
+    // Health check with enhanced wallet status
     app.get('/health', async (req, res) => {
         try {
             let blockchainStatus = { isConnected: false };
+            let walletStatus = { initialized: false };
+            
             if (provider) {
                 try {
                     const blockNumber = await provider.getBlockNumber();
@@ -188,6 +285,23 @@ function createExpressServer() {
                     };
                 }
             }
+            
+            if (wallet) {
+                try {
+                    const balance = await provider.getBalance(wallet.address);
+                    walletStatus = {
+                        initialized: true,
+                        address: wallet.address,
+                        balance: ethers.formatEther(balance),
+                        hasFunds: parseFloat(ethers.formatEther(balance)) > 0.001
+                    };
+                } catch (error) {
+                    walletStatus = {
+                        initialized: true,
+                        error: error.message
+                    };
+                }
+            }
 
             const tokenStatus = bwaeziKernelAddress ? {
                 address: bwaeziKernelAddress,
@@ -200,6 +314,7 @@ function createExpressServer() {
                 uptime: process.uptime(),
                 port: CONFIG.PORT,
                 blockchain: blockchainStatus,
+                wallet: walletStatus,
                 token: tokenStatus,
                 godMode: true,
                 timestamp: new Date().toISOString()
@@ -213,10 +328,49 @@ function createExpressServer() {
         }
     });
 
+    // Wallet status endpoint for debugging
+    app.get('/wallet-status', async (req, res) => {
+        try {
+            if (!wallet) {
+                return res.status(400).json({ 
+                    error: "Wallet not initialized",
+                    solution: "Check PRIVATE_KEY environment variable" 
+                });
+            }
+            
+            const balance = await provider.getBalance(wallet.address);
+            const network = await provider.getNetwork();
+            
+            res.json({
+                address: wallet.address,
+                balance: ethers.formatEther(balance),
+                balanceWei: balance.toString(),
+                network: network.name,
+                chainId: network.chainId,
+                status: 'connected',
+                hasSufficientFunds: parseFloat(ethers.formatEther(balance)) > 0.006
+            });
+        } catch (error) {
+            res.status(500).json({ 
+                error: error.message,
+                solution: "Check blockchain connection and private key" 
+            });
+        }
+    });
+
     // Deploy endpoint
     app.post('/deploy', async (req, res) => {
         try {
             console.log('🚀 PRODUCTION TOKEN DEPLOYMENT REQUEST RECEIVED');
+            
+            // Verify wallet is ready
+            if (!wallet) {
+                return res.status(400).json({
+                    success: false,
+                    error: "Wallet not initialized - check PRIVATE_KEY environment variable",
+                    solution: "Set PRIVATE_KEY=0xYourPrivateKey in Render environment variables"
+                });
+            }
             
             if (bwaeziKernelAddress) {
                 return res.json({
@@ -241,7 +395,9 @@ function createExpressServer() {
                 res.status(500).json({
                     success: false,
                     error: deploymentResult.error,
-                    gasSaved: true
+                    gasSaved: true,
+                    solution: deploymentResult.error.includes('private key') ? 
+                        "Check PRIVATE_KEY environment variable" : "Check deployment parameters"
                 });
             }
         } catch (error) {
@@ -249,7 +405,8 @@ function createExpressServer() {
             res.status(500).json({
                 success: false,
                 error: error.message,
-                gasSaved: true
+                gasSaved: true,
+                solution: "Verify PRIVATE_KEY and blockchain connection"
             });
         }
     });
@@ -289,27 +446,6 @@ function createExpressServer() {
         }
     });
 
-    // Contract interaction endpoint
-    app.post('/contract/:function', async (req, res) => {
-        try {
-            const { function: funcName } = req.params;
-            const { params = [] } = req.body;
-
-            if (!kernelContract) {
-                return res.status(400).json({ error: 'Contract not deployed' });
-            }
-
-            if (!kernelContract[funcName]) {
-                return res.status(400).json({ error: `Function ${funcName} not found` });
-            }
-
-            const result = await kernelContract[funcName](...params);
-            res.json({ success: true, result: result.toString() });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
     // Root endpoint
     app.get('/', (req, res) => {
         res.json({
@@ -317,9 +453,9 @@ function createExpressServer() {
             status: 'operational',
             endpoints: [
                 'GET  /health - System status',
+                'GET  /wallet-status - Wallet verification',
                 'POST /deploy - Deploy BWAEZI Kernel',
-                'GET  /token - Token information',
-                'POST /contract/:function - Call contract functions'
+                'GET  /token - Token information'
             ],
             network: CONFIG.NETWORK,
             version: 'v8.5',
@@ -337,14 +473,20 @@ async function main() {
     try {
         console.log("🚀 STARTING BWAEZI SOVEREIGN KERNEL - PRODUCTION GOD MODE v8.5");
         console.log(" ⚡ GAS OPTIMIZED - BYTECODE FIXED - RENDER READY");
-        console.log(" 🔧 CONFIGURATION:");
+        
+        // Initialize blockchain connection with enhanced validation
+        const { provider: p, wallet: w, config } = await initializeBlockchain();
+        provider = p;
+        wallet = w;
+        CONFIG = config;
+        
+        console.log("🔧 FINAL CONFIGURATION:");
         console.log(` • Network: ${CONFIG.NETWORK}`);
         console.log(` • Chain ID: ${CONFIG.CHAIN_ID}`);
         console.log(` • Port: ${CONFIG.PORT}`);
         console.log(` • Sovereign: ${CONFIG.SOVEREIGN_WALLET}`);
-
-        // Initialize blockchain connection
-        await initializeBlockchain();
+        console.log(` • Wallet: ${wallet.address}`);
+        console.log(` • Balance: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
 
         // Create and start Express server
         const app = createExpressServer();
@@ -356,6 +498,7 @@ async function main() {
             console.log(` 🌐 Network: http://0.0.0.0:${CONFIG.PORT}`);
             console.log(" 🔥 READY FOR MAINNET DEPLOYMENT!");
             console.log(" 💡 Use POST /deploy to deploy the BWAEZI Kernel contract");
+            console.log(" 💡 Use GET /wallet-status to verify wallet setup");
         });
 
         // Graceful shutdown
@@ -369,7 +512,16 @@ async function main() {
 
     } catch (error) {
         console.error("❌ STARTUP FAILED:", error.message);
-        console.log(" 💡 Check your environment variables and network connection");
+        
+        // Specific error guidance
+        if (error.message.includes('PRIVATE_KEY')) {
+            console.log("\n🎯 IMMEDIATE SOLUTION REQUIRED:");
+            console.log("1. Go to Render Dashboard → Your Service → Environment");
+            console.log("2. Set PRIVATE_KEY=0xYourActualPrivateKey");
+            console.log("3. Ensure it starts with '0x' and has 64 hex characters");
+            console.log("4. Redeploy your service");
+        }
+        
         process.exit(1);
     }
 }
