@@ -1,3 +1,4 @@
+// arielsql_suite/main.js
 /**
  * 🚀 BWAEZI ENTERPRISE KERNEL - MAIN ENTRY POINT
  * PRODUCTION GOD MODE v8.5
@@ -10,11 +11,11 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 
-// Import OPTIMIZED BWAEZI Kernel Contract
+// Import OPTIMIZED BWAEZI Kernel Contract [cite: 343]
 import { BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
-// PRODUCTION CONFIGURATION - GAS OPTIMIZED
+// PRODUCTION CONFIGURATION - GAS OPTIMIZED [cite: 344]
 // =========================================================================
 const CONFIG = {
     SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
@@ -36,14 +37,14 @@ const CONFIG = {
     PRIVATE_KEY: process.env.PRIVATE_KEY
 };
 
-// Global state
+// Global state [cite: 345, 346]
 let bwaeziKernelAddress = null;
 let kernelContract = null;
 let provider = null;
 let wallet = null;
 
 // =========================================================================
-// ROBUST PROVIDER WITH RETRY MECHANISM
+// ROBUST PROVIDER WITH RETRY MECHANISM [cite: 347]
 // =========================================================================
 class RobustProvider {
     constructor(rpcUrls) {
@@ -58,7 +59,7 @@ class RobustProvider {
             const rpcUrl = this.rpcUrls[this.currentIndex];
             console.log(` 🔄 Attempt ${attempt + 1}: ${rpcUrl}`);
             try {
-                // ethers.JsonRpcProvider is used for robustness with network object
+                // ethers.JsonRpcProvider is used for robustness with network object [cite: 350]
                 const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
 
                 // Test connection with timeout
@@ -83,7 +84,7 @@ class RobustProvider {
 }
 
 // =========================================================================
-// BLOCKCHAIN INITIALIZATION
+// BLOCKCHAIN INITIALIZATION [cite: 377]
 // =========================================================================
 async function initializeBlockchain() {
     console.log("🚀 INITIALIZING BLOCKCHAIN (ROBUST MODE)...");
@@ -115,7 +116,7 @@ async function initializeBlockchain() {
         console.log(` 💰 Balance: ${ethers.formatEther(balance)} ETH`);
         console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasData.gasPrice, 'gwei')} gwei`);
 
-        // GAS PROTECTION - Don't deploy if balance too low
+        // GAS PROTECTION - Don't deploy if balance too low [cite: 378]
         const minEth = ethers.parseEther("0.006");
         if (balance < minEth) {
             throw new Error(`Insufficient ETH. Need ${ethers.formatEther(minEth)} ETH, have ${ethers.formatEther(balance)} ETH`);
@@ -129,7 +130,7 @@ async function initializeBlockchain() {
 }
 
 // =========================================================================
-// ROBUST KERNEL DEPLOYMENT
+// ROBUST KERNEL DEPLOYMENT [cite: 381]
 // =========================================================================
 async function deployBwaeziKernel() {
     const kernelDeployer = new BWAEZIKernelDeployer(wallet, provider, CONFIG);
@@ -148,14 +149,14 @@ async function deployBwaeziKernel() {
 }
 
 // =========================================================================
-// EXPRESS SERVER - MAINTAINS ALL ORIGINAL ENDPOINTS
+// EXPRESS SERVER - MAINTAINS ALL ORIGINAL ENDPOINTS [cite: 386]
 // =========================================================================
 function createExpressServer() {
     const app = express();
     app.use(cors());
     app.use(express.json());
 
-    // Health check (original)
+    // Health check (original) [cite: 397]
     app.get('/health', async (req, res) => {
         try {
             const blockchainStatus = provider ? {
@@ -183,7 +184,7 @@ function createExpressServer() {
         }
     });
 
-    // Deploy (original)
+    // Deploy (original) [cite: 401]
     app.post('/deploy', async (req, res) => {
         try {
             console.log('🚀 PRODUCTION TOKEN DEPLOYMENT REQUEST RECEIVED');
@@ -247,7 +248,7 @@ function startWebServer(app) {
 
 
 // =========================================================================
-// MAIN DEPLOYMENT EXECUTION - ROBUST & GAS PROTECTED
+// MAIN DEPLOYMENT EXECUTION - ROBUST & GAS PROTECTED [cite: 418]
 // =========================================================================
 async function executeProductionDeployment() {
     console.log("🚀 STARTING ROBUST DEPLOYMENT");
