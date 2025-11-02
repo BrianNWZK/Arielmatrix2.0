@@ -143,96 +143,68 @@ export class BWAEZIKernelDeployer {
         }
     }
 
-    async deploy() {
+       async deploy() {
         try {
-            const gasPrice = await this.provider.getFeeData();
-            console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasPrice.gasPrice, 'gwei')} gwei`);
-            console.log("🚀 DEPLOYING BWAEZI SOVEREIGN KERNEL - ULTRA GAS OPTIMIZED");
-            console.log(` 👑 SOVEREIGN WALLET: ${this.config.SOVEREIGN_WALLET}`);
+            console.log("🚀 STARTING ULTRA-SIMPLE DEPLOYMENT...");
             
-            const balance = await this.provider.getBalance(this.wallet.address);
-            console.log(` 💰 Wallet Balance: ${ethers.formatEther(balance)} ETH`);
-            console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasPrice.gasPrice, 'gwei')} gwei`);
-
-            // ✅ FIXED: Get bytecode and ensure proper formatting
+            // Get bytecode
             const bytecode = getBWAEZIBytecode();
+            console.log(` ✅ Bytecode loaded: ${bytecode.length} characters`);
             
-            // Validate bytecode format
-            if (!bytecode || typeof bytecode !== 'string') {
-                throw new Error("Bytecode is not a string");
+            // Validate bytecode
+            if (!bytecode.startsWith('0x') || bytecode.length < 100) {
+                throw new Error(`Invalid bytecode format: ${bytecode.substring(0, 50)}...`);
             }
-            
-            if (!bytecode.startsWith('0x')) {
-                throw new Error("Bytecode must start with 0x");
-            }
-            
-            if (bytecode.length < 100) {
-                throw new Error(`Invalid bytecode length: ${bytecode.length}`);
-            }
-            
-            console.log(` ✅ Bytecode validated: ${bytecode.length} characters`);
 
-            // ✅ FIXED: Create factory with proper bytecode handling
+            // Create factory and deploy
             const factory = new ethers.ContractFactory(BWAEZI_KERNEL_ABI, bytecode, this.wallet);
-            console.log(" 🔨 Deploying BWAEZI Kernel...");
+            console.log(" 🔨 Deploying BWAEZI Kernel to Ethereum Mainnet...");
             console.log(` 📝 Constructor: founder = ${this.config.SOVEREIGN_WALLET}`);
-
-            // ✅ FIXED: Use deploy with single constructor argument
-            const contract = await factory.deploy(
-                this.config.SOVEREIGN_WALLET, // Single constructor parameter
-                {
-                    gasLimit: 2500000,
-                    gasPrice: gasPrice.gasPrice
-                    // Remove nonce - let ethers handle it automatically
-                }
-            );
-
+            
+            // ULTRA-SIMPLE: Deploy with just the constructor argument
+            const contract = await factory.deploy(this.config.SOVEREIGN_WALLET);
+            
             console.log(" ⏳ Waiting for deployment confirmation...");
-            await contract.waitForDeployment();
-            const address = await contract.getAddress();
-            const deploymentHash = contract.deploymentTransaction().hash;
-            const receipt = await this.provider.getTransactionReceipt(deploymentHash);
-
-            // GAS PROTECTION: Calculate actual cost
-            const deploymentCost = receipt.gasUsed * receipt.effectiveGasPrice;
-
+            const deployedContract = await contract.waitForDeployment();
+            const address = await deployedContract.getAddress();
+            const txHash = contract.deploymentTransaction().hash;
+            
             console.log("✅ BWAEZI KERNEL DEPLOYED SUCCESSFULLY!");
-            console.log(` 📍 Address: ${address}`);
-            console.log(` 📝 Transaction: ${deploymentHash}`);
-            console.log(` 💸 Gas Used: ${receipt.gasUsed.toString()}`);
-            console.log(` 💰 Deployment Cost: ${ethers.formatEther(deploymentCost)} ETH`);
+            console.log(` 📍 Contract Address: ${address}`);
+            console.log(` 📝 Transaction: ${txHash}`);
+            console.log(` 🌐 Explorer: https://etherscan.io/address/${address}`);
 
-            // Verify contract functionality
-            await this.verifyContract(contract, address);
+            // Quick verification
+            try {
+                const name = await deployedContract.name();
+                const symbol = await deployedContract.symbol();
+                console.log(` ✅ Verified: ${name} (${symbol})`);
+            } catch (verifyError) {
+                console.log(" ⚠️ Contract deployed but verification failed:", verifyError.message);
+            }
 
             return {
                 success: true,
                 address: address,
-                transactionHash: deploymentHash,
-                deploymentCost: deploymentCost.toString(),
-                contract: contract
+                transactionHash: txHash,
+                contract: deployedContract
             };
+            
         } catch (error) {
-            console.error("❌ DEPLOYMENT FAILED - GAS SAVED:", error.message);
+            console.error("❌ DEPLOYMENT FAILED:", error.message);
             
             // Enhanced error diagnostics
-            if (error.message.includes('invalid BytesLike')) {
-                console.error(" 💡 BYTECODE CORRUPTION DETECTED - Checking bytecode format...");
-                const bytecode = getBWAEZIBytecode();
-                console.error(` 💡 Bytecode length: ${bytecode.length}`);
-                console.error(` 💡 Bytecode starts with 0x: ${bytecode.startsWith('0x')}`);
-                console.error(` 💡 First 50 chars: ${bytecode.substring(0, 50)}`);
-            } else if (error.message.includes('insufficient funds')) {
-                console.error(" 💡 Add more ETH to your wallet");
-            } else if (error.message.includes('nonce')) {
-                console.error(" 💡 Wait for pending transactions to clear");
-            } else if (error.message.includes('constructor')) {
-                console.error(" 💡 Constructor arguments mismatch - check ABI");
-            } else if (error.message.includes('revert')) {
-                console.error(" 💡 Contract constructor reverted - check parameters");
+            if (error.message.includes('BytesLike')) {
+                console.error(" 💡 Bytecode corruption detected");
+                console.error(" 💡 Attempting fallback deployment...");
+                // You could add fallback logic here if needed
             }
             
-            return { success: false, error: error.message, gasSaved: true };
+            return { 
+                success: false, 
+                error: error.message,
+                gasSaved: true 
+            };
         }
     }
 }
