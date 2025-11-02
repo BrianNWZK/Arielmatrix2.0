@@ -1,7 +1,6 @@
 /**
- * 🚀 BWAEZI QUANTUM ENTERPRISE LAUNCH - PRODUCTION GOD MODE v8.4
- * MULTIPLE ETHEREUM RPC FALLBACKS - CERTIFICATE ERROR FIXED
- * SINGLE SOVEREIGN WALLET FOR ALL ROLES
+ * 🚀 BWAEZI QUANTUM ENTERPRISE LAUNCH - PRODUCTION GOD MODE v8.5
+ * FIXED CONSTRUCTOR DEPLOYMENT - NO ARGUMENTS
  * REAL LIVE MAINNET DEPLOYMENT READY - GUARANTEED PORT BINDING
  */
 
@@ -14,11 +13,11 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import http from 'http';
 
-// Import BWAEZI Kernel Contract with single sovereign wallet
+// Import FIXED BWAEZI Kernel Contract - NO CONSTRUCTOR ARGUMENTS
 import { BWAEZI_KERNEL_ABI, BWAEZI_KERNEL_BYTECODE, BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
-// PRODUCTION CONFIGURATION - MULTIPLE RPC FALLBACKS
+// PRODUCTION CONFIGURATION - SINGLE SOVEREIGN WALLET
 // =========================================================================
 const CONFIG = {
     // SINGLE SOVEREIGN WALLET FOR ALL ROLES:
@@ -228,16 +227,16 @@ async function initializeBlockchainInfrastructure() {
 }
 
 // =========================================================================
-// BWAEZI KERNEL DEPLOYMENT EXECUTION - SINGLE SOVEREIGN WALLET
+// BWAEZI KERNEL DEPLOYMENT EXECUTION - FIXED CONSTRUCTOR
 // =========================================================================
 async function deployBwaeziKernel() {
-    console.log("🔥 EXECUTING BWAEZI KERNEL DEPLOYMENT - SINGLE SOVEREIGN WALLET");
+    console.log("🔥 EXECUTING BWAEZI KERNEL DEPLOYMENT - FIXED CONSTRUCTOR");
     
     try {
         // Initialize deployer
         kernelDeployer = new BWAEZIKernelDeployer(wallet, provider, CONFIG);
         
-        // Execute deployment
+        // Execute deployment (NO CONSTRUCTOR ARGUMENTS)
         const deploymentResult = await kernelDeployer.deploy();
         
         if (deploymentResult.success) {
@@ -248,7 +247,16 @@ async function deployBwaeziKernel() {
             console.log(`   📍 Contract Address: ${bwaeziKernelAddress}`);
             console.log(`   💸 Deployment Cost: ${ethers.formatEther(deploymentResult.deploymentCost)} ETH`);
             console.log(`   📈 Remaining Balance: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
-            console.log(`   ✅ 100M BWAEZI MINTED TO SOVEREIGN WALLET`);
+            
+            // Transfer tokens to sovereign wallet after deployment
+            console.log("🔄 TRANSFERRING TOKENS TO SOVEREIGN WALLET...");
+            const transferResult = await kernelDeployer.transferToSovereignWallet();
+            
+            if (transferResult.success) {
+                console.log(`   ✅ ${transferResult.amount} BWAEZI TRANSFERRED TO SOVEREIGN WALLET`);
+            } else {
+                console.log(`   ⚠️ Token transfer failed: ${transferResult.error}`);
+            }
             
             return deploymentResult;
         } else {
@@ -276,7 +284,7 @@ function createSovereignServer() {
         res.json({
             status: 'OPERATIONAL',
             service: 'BWAEZI_SOVEREIGN_KERNEL',
-            version: '8.4',
+            version: '8.5',
             network: CONFIG.NETWORK,
             rpc: {
                 active: activeRpcUrl,
@@ -344,15 +352,6 @@ function createSovereignServer() {
         }
     });
     
-    // RPC status endpoint
-    app.get('/rpc/status', (req, res) => {
-        res.json({
-            active_rpc: activeRpcUrl,
-            available_rpcs: CONFIG.RPC_URLS,
-            total_endpoints: CONFIG.RPC_URLS.length
-        });
-    });
-    
     // Deploy kernel endpoint
     app.post('/deploy', async (req, res) => {
         try {
@@ -393,7 +392,7 @@ function createSovereignServer() {
         }
     });
     
-    // Original endpoints maintained for compatibility
+    // Maintain all original endpoints
     app.get('/status', async (req, res) => {
         try {
             let tokenInfo = null;
@@ -440,7 +439,7 @@ function createSovereignServer() {
         }
     });
     
-    // AI Execution endpoint (original functionality)
+    // AI Execution endpoint
     app.post('/ai/execute', async (req, res) => {
         try {
             const { task } = req.body;
@@ -465,7 +464,7 @@ function createSovereignServer() {
         }
     });
     
-    // Revenue monitoring endpoint (original functionality)
+    // Revenue monitoring endpoint
     app.get('/revenue', async (req, res) => {
         try {
             let tokenBalance = "0";
@@ -513,13 +512,13 @@ async function executeProductionDeployment() {
     console.log("   👑 SOVEREIGN WALLET:", CONFIG.SOVEREIGN_WALLET);
     console.log("   🔗 Network: Ethereum Mainnet");
     console.log("   🌐 RPC Fallbacks:", CONFIG.RPC_URLS.length, "endpoints configured");
-    console.log("   🌍 Interoperability: Works across ALL chains with same address");
+    console.log("   📝 Constructor: NO ARGUMENTS REQUIRED");
     
     try {
         // Step 1: Initialize blockchain infrastructure with RPC fallbacks
         await initializeBlockchainInfrastructure();
         
-        // Step 2: Deploy BWAEZI Kernel Contract
+        // Step 2: Deploy BWAEZI Kernel Contract (NO CONSTRUCTOR ARGUMENTS)
         const deploymentResult = await deployBwaeziKernel();
         
         if (!deploymentResult.success) {
@@ -541,7 +540,6 @@ async function executeProductionDeployment() {
         console.log(`   💸 Deployment Cost: ${ethers.formatEther(deploymentResult.deploymentCost)} ETH`);
         console.log(`   🔗 Health Check: http://localhost:${CONFIG.PORT}/health`);
         console.log(`   📊 Status: http://localhost:${CONFIG.PORT}/kernel/status`);
-        console.log(`   🌐 RPC Status: http://localhost:${CONFIG.PORT}/rpc/status`);
         console.log("   🌍 INTEROPERABILITY READY: Same wallet works on Ethereum, Solana, Polygon, BWAEZI Chain");
         console.log("=".repeat(70));
         
@@ -559,10 +557,6 @@ async function executeProductionDeployment() {
         
     } catch (error) {
         console.error("💥 PRODUCTION DEPLOYMENT FAILED:", error.message);
-        console.log("   🔧 SUGGESTED ACTIONS:");
-        console.log("   • Set custom RPC: export BWAEZI_RPC_URL='your_rpc_url'");
-        console.log("   • Check internet connection");
-        console.log("   • Verify private key has sufficient ETH");
         
         return {
             success: false,
@@ -578,11 +572,11 @@ async function executeProductionDeployment() {
 if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`
     ╔══════════════════════════════════════════════════════════════╗
-    ║                   BWAEZI SOVEREIGN KERNEL v8.4              ║
+    ║                   BWAEZI SOVEREIGN KERNEL v8.5              ║
     ║                    PRODUCTION GOD MODE                      ║
+    ║               FIXED CONSTRUCTOR - NO ARGUMENTS              ║
     ║               MULTIPLE RPC FALLBACKS - CERT FIXED           ║
     ║               SINGLE SOVEREIGN WALLET - ALL ROLES           ║
-    ║               INTEROPERABLE ACROSS ALL CHAINS               ║
     ║                   0.0072 ETH OPTIMIZED                      ║
     ╚══════════════════════════════════════════════════════════════╝
     `);
