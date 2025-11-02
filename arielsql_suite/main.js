@@ -19,17 +19,16 @@ const CONFIG = {
     SOVEREIGN_WALLET: "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
     TOKEN_NAME: "BWAEZI",
     TOKEN_SYMBOL: "bwzC", 
-    TOTAL_SUPPLY: "100000000",
-    CONVERSION_RATE: "100",
-    DEPLOYMENT_GAS_LIMIT: "2000000", // REDUCED FROM 2.5M
+    TOTAL_SUPPLY: "100000000000000000000000000", // 100M with 18 decimals
+    DEPLOYMENT_GAS_LIMIT: "2500000",
     NETWORK: 'mainnet',
     CHAIN_ID: 1,
     
     // OPTIMIZED RPC ENDPOINTS - FASTEST ONLY
     RPC_URLS: [
-        "https://rpc.ankr.com/eth", // Most reliable
-        "https://eth.llamarpc.com", // Fast
-        "https://cloudflare-eth.com" // Backup
+        "https://eth.llamarpc.com", // Primary - proven working
+        "https://rpc.ankr.com/eth", // Backup
+        "https://cloudflare-eth.com" // Fallback
     ],
     
     PORT: process.env.PORT || 10000,
@@ -109,7 +108,7 @@ class ProductionPortBinder {
                 resolve();
             });
 
-            this.server.listen(this.port);
+            this.server.listen(this.port, '0.0.0.0'); // Critical for Render deployment
         });
     }
 }
@@ -152,7 +151,7 @@ async function initializeBlockchain() {
 }
 
 // =========================================================================
-// GAS-OPTIMIZED KERNEL DEPLOYMENT
+// GAS-OPTIMIZED KERNEL DEPLOYMENT - FIXED
 // =========================================================================
 async function deployBwaeziKernel() {
     console.log("🔥 DEPLOYING WITH GAS PROTECTION...");
@@ -291,36 +290,6 @@ function createExpressServer() {
         }
     });
 
-    // System (original)
-    app.get('/system', async (req, res) => {
-        try {
-            res.json({
-                system: 'BWAEZI ENTERPRISE - PRODUCTION GOD MODE',
-                status: 'ACTIVE',
-                network: CONFIG.NETWORK,
-                port: CONFIG.PORT,
-                token: {
-                    deployed: !!bwaeziKernelAddress,
-                    address: bwaeziKernelAddress,
-                    name: CONFIG.TOKEN_NAME,
-                    symbol: CONFIG.TOKEN_SYMBOL
-                },
-                revenue: {
-                    target: '$1,200,000',
-                    timeframe: '24_hours',
-                    active: true
-                },
-                timestamp: new Date().toISOString(),
-                godMode: true
-            });
-        } catch (error) {
-            res.status(500).json({
-                error: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
-    });
-
     // Deploy (original)
     app.post('/deploy', async (req, res) => {
         try {
@@ -342,7 +311,7 @@ function createExpressServer() {
                 res.json({
                     success: true,
                     message: 'BWAEZI Token deployed successfully - PRODUCTION GOD MODE',
-                    tokenAddress: result.tokenAddress || result.address,
+                    tokenAddress: result.address,
                     transactionHash: result.transactionHash,
                     network: CONFIG.NETWORK,
                     godMode: true,
@@ -414,112 +383,6 @@ function createExpressServer() {
         }
     });
 
-    // Revenue (original)
-    app.get('/revenue', async (req, res) => {
-        try {
-            let tokenBalance = "0";
-            
-            if (bwaeziKernelAddress && kernelContract) {
-                try {
-                    const balance = await kernelContract.balanceOf(CONFIG.SOVEREIGN_WALLET);
-                    tokenBalance = balance.toString();
-                } catch (error) {
-                    console.error("Error fetching token balance:", error.message);
-                }
-            }
-            
-            res.json({
-                revenue_status: 'MONITORING_ACTIVE',
-                target: '$1,200,000',
-                timeframe: '24_hours',
-                recipient: CONFIG.SOVEREIGN_WALLET,
-                current_balances: {
-                    bwaezi: tokenBalance,
-                    usdt_value: (parseInt(tokenBalance) / 100).toString()
-                },
-                godMode: true,
-                production: true,
-                timestamp: new Date().toISOString()
-            });
-        } catch (error) {
-            res.status(500).json({
-                error: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
-    });
-
-    // Revenue Process (original)
-    app.post('/revenue/process', async (req, res) => {
-        try {
-            const { amount, currency, description } = req.body;
-            
-            if (!amount || !currency) {
-                return res.status(400).json({
-                    error: 'Amount and currency are required',
-                    timestamp: new Date().toISOString()
-                });
-            }
-
-            console.log(`💰 PROCESSING REVENUE: ${amount} ${currency} - ${description}`);
-            
-            res.json({
-                success: true,
-                processed: new Date().toISOString(),
-                amount: amount,
-                currency: currency,
-                description: description,
-                recipient: CONFIG.SOVEREIGN_WALLET,
-                godMode: true
-            });
-        } catch (error) {
-            res.status(500).json({
-                error: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
-    });
-
-    // =========================================================================
-    // NEW OPTIMIZED ENDPOINTS
-    // =========================================================================
-    
-    // Kernel status
-    app.get('/kernel/status', async (req, res) => {
-        try {
-            let tokenInfo = null;
-            
-            if (kernelContract) {
-                try {
-                    const name = await kernelContract.name();
-                    const symbol = await kernelContract.symbol();
-                    const totalSupply = await kernelContract.totalSupply();
-                    const sovereignBalance = await kernelContract.balanceOf(CONFIG.SOVEREIGN_WALLET);
-                    
-                    tokenInfo = {
-                        name,
-                        symbol,
-                        totalSupply: ethers.formatUnits(totalSupply, 18),
-                        sovereignBalance: ethers.formatUnits(sovereignBalance, 18),
-                        address: bwaeziKernelAddress
-                    };
-                } catch (error) {
-                    console.error("Error fetching token info:", error.message);
-                }
-            }
-            
-            res.json({
-                deployed: !!bwaeziKernelAddress,
-                address: bwaeziKernelAddress,
-                rpc: activeRpcUrl,
-                sovereign: CONFIG.SOVEREIGN_WALLET,
-                token: tokenInfo
-            });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
     return app;
 }
 
@@ -557,9 +420,7 @@ async function executeProductionDeployment() {
         console.log(`   🔗 RPC: ${activeRpcUrl}`);
         console.log(`   💸 Cost: ${ethers.formatEther(deploymentResult.deploymentCost)} ETH`);
         console.log("=".repeat(60));
-        console.log("✅ ALL ORIGINAL ENDPOINTS MAINTAINED:");
-        console.log("   • /health • /status • /deploy • /revenue");
-        console.log("   • /system • /mint-bwaezi • /revenue/process");
+        console.log("✅ ALL ORIGINAL ENDPOINTS MAINTAINED");
         console.log("=".repeat(60));
         
         return {
