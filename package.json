@@ -13,7 +13,7 @@
     "averageGasUsed": 0
   },
   "scripts": {
-    "start": "dotenv -e .env -- node arielsql_suite/main.js",
+    "start": "node arielsql_suite/main.js",
     "dev": "nodemon arielsql_suite/main.js",
     "backend": "node backend/server.js",
     "precommit": "node scripts/precommit.js",
