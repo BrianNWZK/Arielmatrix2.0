@@ -10,7 +10,7 @@ import cors from 'cors';
 import http from 'http';
 
 // Import OPTIMIZED BWAEZI Kernel Contract
-import { BWAEZI_KERNEL_ABI, BWAEZI_KERNEL_BYTECODE, BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
+import { BWAEZI_KERNEL_ABI, getBWAEZIBytecode, BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
 // PRODUCTION CONFIGURATION - GAS OPTIMIZED
@@ -44,25 +44,36 @@ let kernelDeployer = null;
 let activeRpcUrl = null;
 
 // =========================================================================
-// GAS-OPTIMIZED PROVIDER WITH FAST FALLBACKS
+// ROBUST PROVIDER WITH RETRY MECHANISM
 // =========================================================================
-class GasOptimizedProvider {
+class RobustProvider {
     constructor(rpcUrls) {
         this.rpcUrls = rpcUrls;
         this.currentIndex = 0;
+        this.retryCount = 0;
+        this.maxRetries = 3;
     }
 
     async initializeProvider() {
-        console.log("🌐 INITIALIZING GAS-OPTIMIZED PROVIDER...");
+        console.log("🌐 INITIALIZING ROBUST PROVIDER WITH RETRY MECHANISM...");
         
-        for (let i = 0; i < this.rpcUrls.length; i++) {
+        for (let attempt = 0; attempt < this.maxRetries; attempt++) {
             const rpcUrl = this.rpcUrls[this.currentIndex];
-            console.log(`   🔄 Testing: ${rpcUrl}`);
+            console.log(`   🔄 Attempt ${attempt + 1}: ${rpcUrl}`);
             
             try {
-                const provider = new ethers.JsonRpcProvider(rpcUrl);
-                const network = await provider.getNetwork();
-                const block = await provider.getBlockNumber();
+                const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, {
+                    staticNetwork: true
+                });
+                
+                // Test connection with timeout
+                const networkPromise = provider.getNetwork();
+                const blockPromise = provider.getBlockNumber();
+                
+                const [network, block] = await Promise.all([
+                    networkPromise,
+                    blockPromise
+                ]);
                 
                 console.log(`   ✅ CONNECTED: ${rpcUrl}`);
                 console.log(`      • Block: ${block} | Chain: ${network.chainId}`);
@@ -71,12 +82,17 @@ class GasOptimizedProvider {
                 return provider;
                 
             } catch (error) {
-                console.log(`   ❌ FAILED: ${rpcUrl}`);
+                console.log(`   ❌ FAILED: ${rpcUrl} - ${error.message}`);
                 this.currentIndex = (this.currentIndex + 1) % this.rpcUrls.length;
-                if (i === this.rpcUrls.length - 1) throw new Error('All RPCs failed');
-                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                if (attempt < this.maxRetries - 1) {
+                    console.log(`   💤 Retrying in 1 second...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
             }
         }
+        
+        throw new Error('All RPC providers failed after retries');
     }
 }
 
@@ -114,13 +130,13 @@ class ProductionPortBinder {
 }
 
 // =========================================================================
-// GAS-PROTECTED BLOCKCHAIN INITIALIZATION
+// ROBUST BLOCKCHAIN INITIALIZATION
 // =========================================================================
 async function initializeBlockchain() {
-    console.log("🚀 INITIALIZING BLOCKCHAIN (GAS OPTIMIZED)...");
+    console.log("🚀 INITIALIZING BLOCKCHAIN (ROBUST MODE)...");
     
     try {
-        const providerManager = new GasOptimizedProvider(CONFIG.RPC_URLS);
+        const providerManager = new RobustProvider(CONFIG.RPC_URLS);
         provider = await providerManager.initializeProvider();
         
         if (!CONFIG.PRIVATE_KEY) {
@@ -129,7 +145,19 @@ async function initializeBlockchain() {
         
         wallet = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
         
-        const balance = await provider.getBalance(wallet.address);
+        // Robust balance check with retry
+        let balance;
+        for (let i = 0; i < 3; i++) {
+            try {
+                balance = await provider.getBalance(wallet.address);
+                break;
+            } catch (error) {
+                if (i === 2) throw error;
+                console.log(`   💤 Balance check failed, retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+        
         const gasData = await provider.getFeeData();
         
         console.log("✅ BLOCKCHAIN INITIALIZED");
@@ -151,7 +179,7 @@ async function initializeBlockchain() {
 }
 
 // =========================================================================
-// GAS-OPTIMIZED KERNEL DEPLOYMENT - FIXED
+// ROBUST KERNEL DEPLOYMENT - FIXED
 // =========================================================================
 async function deployBwaeziKernel() {
     console.log("🔥 DEPLOYING WITH GAS PROTECTION...");
@@ -387,16 +415,17 @@ function createExpressServer() {
 }
 
 // =========================================================================
-// MAIN DEPLOYMENT EXECUTION - GAS PROTECTED
+// MAIN DEPLOYMENT EXECUTION - ROBUST & GAS PROTECTED
 // =========================================================================
 async function executeProductionDeployment() {
-    console.log("🚀 STARTING GAS-OPTIMIZED DEPLOYMENT");
+    console.log("🚀 STARTING ROBUST DEPLOYMENT");
     console.log("   👑 Sovereign:", CONFIG.SOVEREIGN_WALLET);
     console.log("   💰 Gas Protection: ACTIVE");
     console.log("   🌐 Render Ready: 0.0.0.0 binding");
+    console.log("   🔄 Retry Mechanism: ENABLED");
     
     try {
-        // 1. Initialize blockchain with gas protection
+        // 1. Initialize blockchain with robust provider
         await initializeBlockchain();
         
         // 2. Deploy contract with gas optimization
