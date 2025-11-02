@@ -119,6 +119,21 @@
             cursor: not-allowed;
             transform: none;
         }
+        .get-deploy-btn {
+            background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 0 0.5rem;
+        }
+        .get-deploy-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
         .last-updated {
             font-size: 0.875rem;
             color: #718096;
@@ -142,6 +157,19 @@
             color: #718096;
             margin-top: 0.25rem;
         }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -150,12 +178,15 @@
     <div class="header">
         <h1 class="title">🚀 BWAEZI Sovereign Kernel Dashboard</h1>
         <p class="subtitle">Production God Mode v8.5 - Live Mainnet Deployment Ready</p>
-        <div class="flex justify-center gap-4 mt-4">
+        <div class="flex justify-center gap-4 mt-4 flex-wrap">
             <button class="refresh-btn" onclick="fetchSystemStatus()">
                 🔄 Refresh Status
             </button>
-            <button class="deploy-btn" onclick="deployKernel()" id="deployBtn">
-                🚀 Deploy BWAEZI Kernel
+            <button class="deploy-btn" onclick="deployKernel('POST')" id="deployBtn">
+                🚀 Deploy (POST)
+            </button>
+            <button class="get-deploy-btn" onclick="deployKernel('GET')" id="getDeployBtn">
+                🚀 Deploy (GET)
             </button>
         </div>
     </div>
@@ -213,6 +244,18 @@
             <div id="lastUpdated" class="balance-info text-center text-sm">
                 Never
             </div>
+        </div>
+    </div>
+
+    <!-- Deployment Progress -->
+    <div class="card hidden" id="deploymentProgress">
+        <h2 class="text-xl font-bold text-gray-800 text-center">🚀 Deployment in Progress</h2>
+        <div class="w-full text-center">
+            <div id="progressText" class="balance-info">Initializing deployment...</div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div id="progressDetails" class="chain-label mt-2"></div>
         </div>
     </div>
 
@@ -284,6 +327,10 @@
 
 <script>
     const statusMessage = document.getElementById('statusMessage');
+    const deploymentProgress = document.getElementById('deploymentProgress');
+    const progressText = document.getElementById('progressText');
+    const progressFill = document.getElementById('progressFill');
+    const progressDetails = document.getElementById('progressDetails');
     const serverUrl = 'https://arielmatrix2-0-6xd4.onrender.com';
 
     function showMessage(message, type = 'error') {
@@ -299,11 +346,27 @@
         }
         statusMessage.classList.remove('hidden');
         
-        // Auto-hide success messages after 5 seconds
+        // Auto-hide success messages after 8 seconds
         if (type === 'success') {
             setTimeout(() => {
                 statusMessage.classList.add('hidden');
-            }, 5000);
+            }, 8000);
+        }
+    }
+
+    function updateProgress(percent, text, details = '') {
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = text;
+        progressDetails.textContent = details;
+        
+        if (percent > 0) {
+            deploymentProgress.classList.remove('hidden');
+        }
+        
+        if (percent >= 100) {
+            setTimeout(() => {
+                deploymentProgress.classList.add('hidden');
+            }, 3000);
         }
     }
 
@@ -337,20 +400,24 @@
             document.getElementById('kernelStatus').textContent = '🟢 Live';
             document.getElementById('kernelAddress').textContent = `${data.token.address.substring(0, 8)}...`;
             document.getElementById('deployBtn').disabled = true;
-            document.getElementById('deployBtn').textContent = '✅ Already Deployed';
+            document.getElementById('deployBtn').textContent = '✅ Deployed';
+            document.getElementById('getDeployBtn').disabled = true;
+            document.getElementById('getDeployBtn').textContent = '✅ Deployed';
         } else {
             document.getElementById('kernelDeploymentStatus').innerHTML = '<span class="status-indicator status-offline"></span>Not Deployed';
             document.getElementById('kernelStatus').textContent = '🟡 Ready to Deploy';
             document.getElementById('kernelAddress').textContent = 'Not Deployed';
             document.getElementById('deployBtn').disabled = false;
-            document.getElementById('deployBtn').textContent = '🚀 Deploy BWAEZI Kernel';
+            document.getElementById('deployBtn').textContent = '🚀 Deploy (POST)';
+            document.getElementById('getDeployBtn').disabled = false;
+            document.getElementById('getDeployBtn').textContent = '🚀 Deploy (GET)';
         }
 
-        // Update Ethereum balance if available
-        if (data.ethereum) {
-            document.getElementById('ethBalance').textContent = `${data.ethereum.balance || '0.000000'} ETH`;
-            document.getElementById('ethAddress').textContent = `Sovereign: ${data.ethereum.address.substring(0, 8)}...`;
-            document.getElementById('sovereignWallet').textContent = `${data.ethereum.address.substring(0, 8)}...`;
+        // Update wallet information
+        if (data.wallet?.initialized) {
+            document.getElementById('ethBalance').textContent = `${data.wallet.balance || '0.000000'} ETH`;
+            document.getElementById('ethAddress').textContent = `Wallet: ${data.wallet.address.substring(0, 8)}...`;
+            document.getElementById('sovereignWallet').textContent = `${data.wallet.address.substring(0, 8)}...`;
         }
 
         // Update last updated time
@@ -382,52 +449,97 @@
         }
     }
 
-    async function deployKernel() {
+    async function deployKernel(method = 'POST') {
         const deployBtn = document.getElementById('deployBtn');
+        const getDeployBtn = document.getElementById('getDeployBtn');
         const originalText = deployBtn.textContent;
         
         try {
             deployBtn.disabled = true;
+            getDeployBtn.disabled = true;
             deployBtn.textContent = '🚀 Deploying...';
-            showMessage('🚀 Starting BWAEZI Kernel deployment to Ethereum Mainnet...', 'warning');
+            getDeployBtn.textContent = '🚀 Deploying...';
+            
+            showMessage(`🚀 Starting BWAEZI Kernel deployment using ${method}...`, 'warning');
+            updateProgress(10, 'Initializing deployment...', 'Preparing transaction');
 
-            const response = await fetch(`${serverUrl}/deploy`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ action: 'deploy' })
-            });
+            let response;
+            if (method === 'POST') {
+                response = await fetch(`${serverUrl}/deploy`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({})
+                });
+            } else {
+                // Try GET endpoint as fallback
+                updateProgress(20, 'Trying GET endpoint...', 'Alternative deployment method');
+                response = await fetch(`${serverUrl}/deploy-now`, {
+                    method: 'GET'
+                });
+            }
+
+            updateProgress(40, 'Transaction submitted...', 'Waiting for blockchain confirmation');
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Deployment failed');
+                const errorText = await response.text();
+                throw new Error(errorText || `HTTP ${response.status}: ${response.statusText}`);
             }
 
             const data = await response.json();
+            updateProgress(70, 'Processing deployment...', 'Contract creation in progress');
             
             if (data.success) {
-                showMessage(`✅ BWAEZI Kernel deployed successfully! Contract: ${data.tokenAddress}`, 'success');
-                deployBtn.textContent = '✅ Deployed Successfully';
+                updateProgress(100, 'Deployment Successful!', 'BWAEZI Kernel is now live on Mainnet');
+                
+                showMessage(`✅ BWAEZI Kernel deployed successfully! Contract: ${data.address}`, 'success');
                 
                 // Update UI with new contract address
                 document.getElementById('kernelStatus').textContent = '🟢 Live';
-                document.getElementById('kernelAddress').textContent = `${data.tokenAddress.substring(0, 8)}...`;
+                document.getElementById('kernelAddress').textContent = `${data.address.substring(0, 8)}...`;
                 document.getElementById('kernelDeploymentStatus').innerHTML = '<span class="status-indicator status-online"></span>Deployed';
+                
+                deployBtn.textContent = '✅ Deployed';
+                getDeployBtn.textContent = '✅ Deployed';
                 
                 // Show explorer link
                 setTimeout(() => {
-                    showMessage(`📝 View on Etherscan: https://etherscan.io/address/${data.tokenAddress}`, 'success');
+                    if (data.explorer) {
+                        showMessage(`📝 View on Etherscan: ${data.explorer}`, 'success');
+                    } else if (data.address) {
+                        showMessage(`📝 View on Etherscan: https://etherscan.io/address/${data.address}`, 'success');
+                    }
                 }, 2000);
+
+                // Refresh status to show deployed contract
+                setTimeout(fetchSystemStatus, 3000);
+                
             } else {
-                throw new Error(data.error || 'Deployment failed');
+                throw new Error(data.error || 'Deployment failed without error details');
             }
 
         } catch (error) {
             console.error('Deployment error:', error);
-            showMessage(`❌ Deployment failed: ${error.message}`, 'error');
+            
+            let errorMessage = error.message;
+            if (errorMessage.includes('Failed to fetch')) {
+                errorMessage = 'Network error: Cannot connect to server. Check if the service is running.';
+            } else if (errorMessage.includes('404')) {
+                errorMessage = 'Endpoint not found. The server may need GET endpoint support.';
+            }
+            
+            showMessage(`❌ Deployment failed: ${errorMessage}`, 'error');
+            
             deployBtn.disabled = false;
-            deployBtn.textContent = originalText;
+            getDeployBtn.disabled = false;
+            deployBtn.textContent = '🚀 Deploy (POST)';
+            getDeployBtn.textContent = '🚀 Deploy (GET)';
+            
+            updateProgress(0, 'Deployment Failed', 'See error message above');
+            setTimeout(() => {
+                deploymentProgress.classList.add('hidden');
+            }, 5000);
         }
     }
 
@@ -437,18 +549,17 @@
     // Initial fetch on page load
     window.onload = fetchSystemStatus;
 
-    // Add keyboard shortcut (Ctrl+R or Cmd+R) to refresh
+    // Add keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
             e.preventDefault();
             fetchSystemStatus();
         }
-    });
-
-    // Add Enter key to trigger deployment
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !document.getElementById('deployBtn').disabled) {
-            deployKernel();
+        if (e.key === '1' && !document.getElementById('deployBtn').disabled) {
+            deployKernel('POST');
+        }
+        if (e.key === '2' && !document.getElementById('getDeployBtn').disabled) {
+            deployKernel('GET');
         }
     });
 </script>
