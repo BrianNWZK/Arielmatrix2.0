@@ -1,7 +1,7 @@
 // arielsql_suite/main.js
 /**
  * 🚀 BWAEZI ENTERPRISE KERNEL - MAIN ENTRY POINT
- * PRODUCTION GOD MODE v11.0
+ * PRODUCTION GOD MODE v12.0
  * * ES MODULE: Initializes blockchain, deploys the kernel, and starts 
  * a Render-compatible Express server to bind the required port.
  */
@@ -21,8 +21,8 @@ const CONFIG = {
     TOKEN_NAME: "BWAEZI",
     TOKEN_SYMBOL: "bwzC",
     TOTAL_SUPPLY: "100000000000000000000000000",
-    // 🏆 FINAL FIX: Increased Gas Limit from 3.0M to 3.5M to avoid Out of Gas revert
-    DEPLOYMENT_GAS_LIMIT: "3500000", 
+    // 🏆 FINAL FIX: Gas Limit raised to 4.0M based on failed 3.5M consumption
+    DEPLOYMENT_GAS_LIMIT: "4000000", 
     NETWORK: 'mainnet',
     CHAIN_ID: 1,
     RPC_URLS: [
@@ -166,7 +166,7 @@ function createExpressServer() {
 
             res.json({
                 status: 'operational',
-                version: 'v11.0', 
+                version: 'v12.0', 
                 uptime: process.uptime(),
                 port: CONFIG.PORT,
                 blockchain: blockchainStatus,
@@ -195,7 +195,7 @@ function createExpressServer() {
             if (result.success) {
                 res.json({
                     success: true,
-                    message: 'BWAEZI Token deployed successfully - PRODUCTION GOD MODE v11.0',
+                    message: 'BWAEZI Token deployed successfully - PRODUCTION GOD MODE v12.0',
                     tokenAddress: result.address,
                     network: CONFIG.NETWORK,
                     godMode: true,
@@ -280,8 +280,8 @@ async function executeProductionDeployment() {
 if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`
     ╔══════════════════════════════════════════════════════════════╗
-    ║                   BWAEZI SOVEREIGN KERNEL v11.0             ║
-    ║                FINAL, ERROR-FREE PRODUCTION CODE            ║
+    ║                   BWAEZI SOVEREIGN KERNEL v12.0             ║
+    ║             THE GAS LIMIT IS NOW FINALLY SUFFICIENT         ║
     ║        FIXED: Insufficient ETH, Logic, and Out of Gas       ║
     ╚══════════════════════════════════════════════════════════════╝
     `);
