@@ -1,454 +1,121 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🚀 Three Wallet Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #1a202c;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            padding: 1rem;
-        }
-        .container {
-            background-color: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 1.5rem;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-            padding: 2.5rem;
-            max-width: 1400px;
-            width: 100%;
-            display: flex;
-            flex-direction: column;
-            gap: 2rem;
-        }
-        .header {
-            text-align: center;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 1.5rem;
-        }
-        .title {
-            font-size: 2rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        .subtitle {
-            font-size: 1.1rem;
-            color: #718096;
-            margin-top: 0.5rem;
-        }
-        .card {
-            background: linear-gradient(135deg, #ffffff 0%, #f7fafc 100%);
-            border-radius: 1rem;
-            padding: 1.5rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            border: 1px solid #e2e8f0;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
-        }
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-        .balance-info {
-            font-weight: 600;
-            color: #2d3748;
-            font-size: 1.25rem;
-        }
-        .chain-label {
-            font-size: 0.875rem;
-            color: #718096;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .total-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        .total-card h2, .total-card .balance-info, .total-card .chain-label {
-            color: white;
-        }
-        .refresh-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.75rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin: 0 0.5rem;
-        }
-        .refresh-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-        .deploy-btn {
-            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.75rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin: 0 0.5rem;
-        }
-        .deploy-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-        .deploy-btn:disabled {
-            background: #a0aec0;
-            cursor: not-allowed;
-        }
-        .last-updated {
-            font-size: 0.875rem;
-            color: #718096;
-            text-align: center;
-        }
-        .status-indicator {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
-        .status-online {
-            background-color: #48bb78;
-        }
-        .status-offline {
-            background-color: #f56565;
-        }
-        .wallet-address {
-            font-size: 0.75rem;
-            color: #718096;
-            margin-top: 0.5rem;
-            text-align: center;
-            word-break: break-all;
-        }
-        .token-amount {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #2d3748;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSFM Live Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f0f4f8;
+      color: #1a202c;
+      padding: 2rem;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+      display: grid;
+      gap: 2rem;
+    }
+    .card {
+      background: white;
+      border-radius: 1rem;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .title {
+      font-size: 1.5rem;
+      font-weight: bold;
+      margin-bottom: 1rem;
+    }
+  </style>
 </head>
 <body>
-
-<div class="container">
-    <div class="header">
-        <h1 class="title">🚀 Three Wallet Dashboard</h1>
-        <p class="subtitle">Live balances from your backend/agents/wallet.js - All using 0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA</p>
-        <div class="flex justify-center gap-4 mt-4">
-            <button class="refresh-btn" onclick="fetchAllBalances()">
-                🔄 Refresh Balances
-            </button>
-            <button class="deploy-btn" onclick="deployKernel()" id="deployBtn">
-                🚀 Deploy BWAEZI Kernel
-            </button>
-        </div>
-    </div>
-
-    <div id="wallets-container" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <!-- Ethereum Wallet -->
-        <div class="card">
-            <div class="chain-label">Ethereum Wallet</div>
-            <h2 class="text-xl font-bold text-gray-800">ETH Balance</h2>
-            <div id="ethBalance" class="balance-info text-center">
-                Fetching...
-            </div>
-            <div class="chain-label">USDT Balance</div>
-            <div id="ethUsdtBalance" class="balance-info text-center">
-                Fetching...
-            </div>
-            <div id="ethAddress" class="wallet-address">
-                0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA
-            </div>
-            <div id="ethStatus" class="chain-label">
-                <span class="status-indicator status-offline"></span>Connecting...
-            </div>
-        </div>
-
-        <!-- USDT Wallet -->
-        <div class="card">
-            <div class="chain-label">USDT Wallet</div>
-            <h2 class="text-xl font-bold text-gray-800">USDT Balance</h2>
-            <div id="usdtBalance" class="balance-info text-center">
-                Fetching...
-            </div>
-            <div class="chain-label">Ethereum Network</div>
-            <div id="usdtNetwork" class="balance-info text-center">
-                ERC-20
-            </div>
-            <div id="usdtAddress" class="wallet-address">
-                0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA
-            </div>
-            <div id="usdtStatus" class="chain-label">
-                <span class="status-indicator status-offline"></span>Connecting...
-            </div>
-        </div>
-
-        <!-- BWAEZI Sovereign Wallet -->
-        <div class="card">
-            <div class="chain-label">BWAEZI Sovereign Wallet</div>
-            <h2 class="text-xl font-bold text-gray-800">ETH Balance</h2>
-            <div id="bwaeziEthBalance" class="balance-info text-center">
-                Fetching...
-            </div>
-            <div class="chain-label">BWAEZI Tokens</div>
-            <div id="bwaeziTokenBalance" class="token-amount text-center">
-                0 BWAEZI
-            </div>
-            <div class="chain-label">After Deployment</div>
-            <div id="bwaeziAfterDeploy" class="balance-info text-center text-green-600">
-                100,000,000 BWAEZI
-            </div>
-            <div id="bwaeziAddress" class="wallet-address">
-                0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA
-            </div>
-            <div id="bwaeziStatus" class="chain-label">
-                <span class="status-indicator status-offline"></span>Connecting...
-            </div>
-        </div>
-    </div>
-
-    <!-- Deployment Status -->
-    <div class="card total-card">
-        <div class="chain-label">Deployment Status</div>
-        <h2 class="text-xl font-bold">BWAEZI Token Distribution</h2>
-        <div id="deploymentStatus" class="balance-info text-center text-2xl">
-            READY FOR 100M TOKEN DEPLOYMENT
-        </div>
-        <div class="grid grid-cols-3 gap-4 w-full mt-4">
-            <div class="text-center">
-                <div class="chain-label">ETH Balance</div>
-                <div id="totalEthBalance" class="balance-info">0.006183 ETH</div>
-            </div>
-            <div class="text-center">
-                <div class="chain-label">Gas Protection</div>
-                <div id="gasProtection" class="balance-info">ACTIVE ✅</div>
-            </div>
-            <div class="text-center">
-                <div class="chain-label">Tokens to Mint</div>
-                <div id="tokenSupply" class="balance-info">100,000,000</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Token Distribution Info -->
+  <div class="container">
     <div class="card">
-        <h2 class="text-xl font-bold text-gray-800 text-center">🎯 Token Distribution Plan</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-            <div class="text-center">
-                <div class="chain-label">Ethereum Wallet</div>
-                <div class="balance-info">Holds ETH for gas</div>
-                <div class="chain-label">Funded: 0.006183 ETH</div>
-            </div>
-            <div class="text-center">
-                <div class="chain-label">USDT Wallet</div>
-                <div class="balance-info">Stablecoin operations</div>
-                <div class="chain-label">Ready for USDT</div>
-            </div>
-            <div class="text-center">
-                <div class="chain-label">BWAEZI Wallet</div>
-                <div class="balance-info">Receives 100M tokens</div>
-                <div class="chain-label">Sovereign address</div>
-            </div>
-        </div>
+      <div class="title">BWAEZI Kernel Status</div>
+      <div id="kernelStatus">Loading...</div>
     </div>
 
-    <!-- Status Messages -->
-    <div id="statusMessage" class="mt-4 p-4 rounded-xl hidden text-sm font-semibold text-center">
-        <p>System messages will appear here</p>
+    <div class="card">
+      <div class="title">Global Revenue (ETH)</div>
+      <div id="globalRevenue">Loading...</div>
     </div>
 
-    <!-- Last Updated -->
-    <div class="last-updated">
-        All wallets use: <span class="font-mono">0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA</span>
-        | BWAEZI Sovereign Kernel v8.5 | Auto-refresh every 30 seconds
+    <div class="card">
+      <div class="title">Wallet Balances</div>
+      <ul id="walletBalances" class="list-disc pl-6 text-sm"></ul>
     </div>
-</div>
 
-<script>
-    const statusMessage = document.getElementById('statusMessage');
-    const apiUrl = 'https://arielmatrix2-0-6xd4.onrender.com';
+    <div class="card">
+      <div class="title">Active Modules</div>
+      <ul id="activeModules" class="list-disc pl-6 text-sm"></ul>
+    </div>
 
-    function showMessage(message, type = 'error') {
-        statusMessage.textContent = message;
-        statusMessage.classList.remove('hidden', 'bg-red-100', 'bg-yellow-100', 'bg-green-100', 'text-red-700', 'text-yellow-700', 'text-green-700');
-        
-        if (type === 'error') {
-            statusMessage.classList.add('bg-red-100', 'text-red-700');
-        } else if (type === 'warning') {
-            statusMessage.classList.add('bg-yellow-100', 'text-yellow-700');
-        } else {
-            statusMessage.classList.add('bg-green-100', 'text-green-700');
-        }
-        statusMessage.classList.remove('hidden');
-        
-        if (type === 'success') {
-            setTimeout(() => statusMessage.classList.add('hidden'), 5000);
-        }
+    <div class="card">
+      <div class="title">Recent Activity Log</div>
+      <ul id="activityLog" class="list-disc pl-6 text-sm"></ul>
+    </div>
+  </div>
+
+  <script>
+    async function fetchBSFMStatus() {
+      try {
+        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/bsfm-status');
+        const data = await res.json();
+
+        document.getElementById('kernelStatus').textContent = data.kernel_active ? '✅ Active' : '❌ Inactive';
+        document.getElementById('globalRevenue').textContent = `${data.revenue_eth} ETH`;
+
+        const modules = document.getElementById('activeModules');
+        modules.innerHTML = '';
+        data.active_modules.forEach(m => {
+          const li = document.createElement('li');
+          li.textContent = m;
+          modules.appendChild(li);
+        });
+
+        const log = document.getElementById('activityLog');
+        log.innerHTML = '';
+        data.activity_log.forEach(entry => {
+          const li = document.createElement('li');
+          li.textContent = `${entry.timestamp} — ${entry.action} by ${entry.agent}`;
+          log.appendChild(li);
+        });
+      } catch (err) {
+        console.error('Dashboard fetch error:', err);
+      }
     }
 
-    async function fetchAllBalances() {
-        try {
-            showMessage('🔄 Fetching live wallet balances...', 'warning');
-            
-            // Fetch from your backend/agents/wallet.js via API
-            const healthResponse = await fetch(`${apiUrl}/health`);
-            if (!healthResponse.ok) {
-                throw new Error('API health check failed');
-            }
-            const healthData = await healthResponse.json();
+    async function fetchWalletBalances() {
+      try {
+        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/wallet-balances');
+        const data = await res.json();
 
-            // Update Ethereum Wallet (Funded with 0.006183 ETH)
-            if (healthData.wallet) {
-                document.getElementById('ethBalance').textContent = `${healthData.wallet.balance || '0.006183'} ETH`;
-                document.getElementById('totalEthBalance').textContent = `${healthData.wallet.balance || '0.006183'} ETH`;
-                document.getElementById('ethStatus').innerHTML = '<span class="status-indicator status-online"></span>Funded ✅';
-            }
+        const walletList = document.getElementById('walletBalances');
+        walletList.innerHTML = '';
 
-            // Update USDT Wallet (Same address, different purpose)
-            document.getElementById('usdtBalance').textContent = '0.00 USDT'; // Will update when you have USDT
-            document.getElementById('usdtStatus').innerHTML = '<span class="status-indicator status-online"></span>Ready';
-
-            // Update BWAEZI Sovereign Wallet
-            document.getElementById('bwaeziEthBalance').textContent = `${healthData.wallet.balance || '0.006183'} ETH`;
-            
-            // Update token status
-            if (healthData.token && healthData.token.deployed) {
-                document.getElementById('bwaeziTokenBalance').textContent = '100,000,000 BWAEZI';
-                document.getElementById('bwaeziTokenBalance').classList.add('text-green-600');
-                document.getElementById('deployBtn').disabled = true;
-                document.getElementById('deployBtn').textContent = '✅ Tokens Deployed';
-                document.getElementById('deploymentStatus').textContent = '100M TOKENS DEPLOYED ✅';
-                document.getElementById('bwaeziStatus').innerHTML = '<span class="status-indicator status-online"></span>Tokens Active';
-            } else {
-                document.getElementById('bwaeziTokenBalance').textContent = '0 BWAEZI';
-                document.getElementById('bwaeziTokenBalance').classList.remove('text-green-600');
-                document.getElementById('deployBtn').disabled = false;
-                document.getElementById('deployBtn').textContent = '🚀 Deploy 100M Tokens';
-                document.getElementById('deploymentStatus').textContent = 'READY FOR 100M TOKEN DEPLOYMENT';
-                document.getElementById('bwaeziStatus').innerHTML = '<span class="status-indicator status-online"></span>Ready for Tokens';
-            }
-
-            // Try to get detailed wallet status from your backend
-            try {
-                const walletResponse = await fetch(`${apiUrl}/wallet-status`);
-                if (walletResponse.ok) {
-                    const walletData = await walletResponse.json();
-                    // Update with detailed balance information if available
-                    if (walletData.balance) {
-                        document.getElementById('ethBalance').textContent = `${parseFloat(walletData.balance).toFixed(6)} ETH`;
-                        document.getElementById('bwaeziEthBalance').textContent = `${parseFloat(walletData.balance).toFixed(6)} ETH`;
-                    }
-                }
-            } catch (walletError) {
-                // Continue with basic data if detailed endpoint not available
-            }
-
-            showMessage('✅ All wallet balances updated!', 'success');
-
-        } catch (error) {
-            console.error('Error fetching balances:', error);
-            showMessage(`❌ Error: ${error.message}`, 'error');
-            
-            // Set offline status but show the addresses
-            document.getElementById('ethStatus').innerHTML = '<span class="status-indicator status-offline"></span>Offline';
-            document.getElementById('usdtStatus').innerHTML = '<span class="status-indicator status-offline"></span>Offline';
-            document.getElementById('bwaeziStatus').innerHTML = '<span class="status-indicator status-offline"></span>Offline';
-        }
+        ['ethereum', 'solana', 'bwaezi'].forEach(chain => {
+          const li = document.createElement('li');
+          li.textContent = `${chain.toUpperCase()}: ${data[chain].native} ${data[chain].symbol}`;
+          walletList.appendChild(li);
+        });
+      } catch (err) {
+        console.error('Wallet fetch error:', err);
+      }
     }
 
-    async function deployKernel() {
-        const deployBtn = document.getElementById('deployBtn');
-        const originalText = deployBtn.textContent;
-        
-        try {
-            deployBtn.disabled = true;
-            deployBtn.textContent = '🚀 Deploying 100M Tokens...';
-            showMessage('🚀 Starting 100M BWAEZI token deployment to Sovereign wallet...', 'warning');
+    setInterval(() => {
+      fetchBSFMStatus();
+      fetchWalletBalances();
+    }, 10000);
 
-            const response = await fetch(`${apiUrl}/deploy`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({})
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Deployment failed');
-            }
-
-            const data = await response.json();
-            
-            if (data.success) {
-                showMessage(`✅ 100M BWAEZI tokens deployed successfully! Sovereign: ${data.address}`, 'success');
-                deployBtn.textContent = '✅ 100M Tokens Deployed';
-                document.getElementById('deploymentStatus').textContent = '100M TOKENS DEPLOYED ✅';
-                document.getElementById('bwaeziTokenBalance').textContent = '100,000,000 BWAEZI';
-                document.getElementById('bwaeziTokenBalance').classList.add('text-green-600');
-                document.getElementById('bwaeziStatus').innerHTML = '<span class="status-indicator status-online"></span>Tokens Active';
-                
-                // Show explorer link
-                setTimeout(() => {
-                    if (data.explorer) {
-                        showMessage(`📝 View on Etherscan: ${data.explorer}`, 'success');
-                    } else if (data.address) {
-                        showMessage(`📝 View on Etherscan: https://etherscan.io/address/${data.address}`, 'success');
-                    }
-                }, 2000);
-
-                // Refresh data to show deployed status
-                setTimeout(fetchAllBalances, 3000);
-            } else {
-                throw new Error(data.error || 'Deployment failed');
-            }
-
-        } catch (error) {
-            console.error('Deployment error:', error);
-            showMessage(`❌ Deployment failed: ${error.message}`, 'error');
-            deployBtn.disabled = false;
-            deployBtn.textContent = originalText;
-        }
-    }
-
-    // Fetch data every 30 seconds for real-time monitoring
-    setInterval(fetchAllBalances, 30000);
-
-    // Initial fetch on page load
-    window.onload = fetchAllBalances;
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-            e.preventDefault();
-            fetchAllBalances();
-        }
-        if (e.key === 'd' && !document.getElementById('deployBtn').disabled) {
-            deployKernel();
-        }
-    });
-</script>
+    window.onload = () => {
+      fetchBSFMStatus();
+      fetchWalletBalances();
+    };
+  </script>
 </body>
 </html>
