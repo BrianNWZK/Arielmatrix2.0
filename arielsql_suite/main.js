@@ -1,7 +1,7 @@
 // arielsql_suite/main.js
 /**
  * 🚀 BWAEZI ENTERPRISE KERNEL - MAIN ENTRY POINT
- * PRODUCTION GOD MODE v10.0
+ * PRODUCTION GOD MODE v11.0
  * * ES MODULE: Initializes blockchain, deploys the kernel, and starts 
  * a Render-compatible Express server to bind the required port.
  */
@@ -21,8 +21,8 @@ const CONFIG = {
     TOKEN_NAME: "BWAEZI",
     TOKEN_SYMBOL: "bwzC",
     TOTAL_SUPPLY: "100000000000000000000000000",
-    // 🏆 FINAL FIX: Increased Gas Limit from 2.5M to 3.0M to avoid Out of Gas revert
-    DEPLOYMENT_GAS_LIMIT: "3000000", 
+    // 🏆 FINAL FIX: Increased Gas Limit from 3.0M to 3.5M to avoid Out of Gas revert
+    DEPLOYMENT_GAS_LIMIT: "3500000", 
     NETWORK: 'mainnet',
     CHAIN_ID: 1,
     RPC_URLS: [
@@ -109,7 +109,7 @@ async function initializeBlockchain() {
         console.log(` 💰 Balance: ${ethers.formatEther(balance)} ETH`);
         console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasData.gasPrice, 'gwei')} gwei`);
         
-        // ✅ FINAL FIX: Lowered minimum ETH requirement to 0.005 ETH to pass initial balance check
+        // Final Fix for Insufficient ETH Check (0.005 ETH)
         const minEth = ethers.parseEther("0.005");
 
         if (balance < minEth) {
@@ -166,7 +166,7 @@ function createExpressServer() {
 
             res.json({
                 status: 'operational',
-                version: 'v10.0', // Updated version number
+                version: 'v11.0', 
                 uptime: process.uptime(),
                 port: CONFIG.PORT,
                 blockchain: blockchainStatus,
@@ -195,7 +195,7 @@ function createExpressServer() {
             if (result.success) {
                 res.json({
                     success: true,
-                    message: 'BWAEZI Token deployed successfully - PRODUCTION GOD MODE v10.0',
+                    message: 'BWAEZI Token deployed successfully - PRODUCTION GOD MODE v11.0',
                     tokenAddress: result.address,
                     network: CONFIG.NETWORK,
                     godMode: true,
@@ -280,7 +280,7 @@ async function executeProductionDeployment() {
 if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`
     ╔══════════════════════════════════════════════════════════════╗
-    ║                   BWAEZI SOVEREIGN KERNEL v10.0             ║
+    ║                   BWAEZI SOVEREIGN KERNEL v11.0             ║
     ║                FINAL, ERROR-FREE PRODUCTION CODE            ║
     ║        FIXED: Insufficient ETH, Logic, and Out of Gas       ║
     ╚══════════════════════════════════════════════════════════════╝
