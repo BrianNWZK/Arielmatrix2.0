@@ -1192,6 +1192,47 @@ class BrianNwaezikeChain extends EventEmitter {
         return "0x742E4C2F2E4E6b4f8E8a1C7D5f3A2B1C8E9F0A3B";
     }
 
+
+    // ✅ Get Active Modules from on-chain logs
+async getActiveModules() {
+  try {
+    const logs = await this.provider.getLogs({
+      address: this.config.CONTRACT_ADDRESS,
+      topics: [ethers.id("ModuleActivated(bytes32)")],
+      fromBlock: "0x0"
+    });
+
+    const decoded = logs.map(log => {
+      const moduleIdHex = log.topics[1];
+      return ethers.decodeBytes32String(moduleIdHex);
+    });
+
+    return [...new Set(decoded)];
+  } catch (error) {
+    console.error("❌ getActiveModules failed:", error.message);
+    return [];
+  }
+}
+
+// ✅ Get Recent Activity from contract events
+async getRecentActivity(limit = 10) {
+  try {
+    const logs = await this.provider.getLogs({
+      address: this.config.CONTRACT_ADDRESS,
+      fromBlock: "0x0"
+    });
+
+    return logs.slice(-limit).map(log => ({
+      timestamp: new Date().toISOString(),
+      action: log.topics[0] === ethers.id("ModuleActivated(bytes32)") ? "ModuleActivated" : "AIExecutionRequested",
+      agent: "BlockchainEventParser"
+    }));
+  } catch (error) {
+    console.error("❌ getRecentActivity failed:", error.message);
+    return [];
+  }
+}
+
     // ====================================================================
     // PUBLIC API METHODS - PRODUCTION READY
     // ====================================================================
