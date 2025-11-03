@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { BrianNwaezikeChain } from './blockchain/BrianNwaezikeChain.js';
-import { getRevenueAnalytics } from './agents/dataAgent.js';
+import { getRevenueAnalytics, getWalletBalances } from './agents/dataAgent.js';
 
 dotenv.config();
 
@@ -47,6 +47,20 @@ export class EnterpriseServer {
           revenue_eth: revenue.totalRevenue || '0.0000',
           active_modules,
           activity_log
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ✅ Wallet Balances
+    this.app.get('/wallet-balances', async (req, res) => {
+      try {
+        const balances = await getWalletBalances();
+        res.json({
+          ethereum: balances.ethereum,
+          solana: balances.solana,
+          bwaezi: balances.bwaezi
         });
       } catch (err) {
         res.status(500).json({ error: err.message });
