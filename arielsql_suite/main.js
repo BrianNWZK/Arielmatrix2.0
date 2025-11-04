@@ -157,11 +157,10 @@ async function executeMasterProcess() {
     
     // 1. Instantiate the SINGLE, TRUE Database Engine
     const masterDbEngine = new ArielSQLiteEngine(CONFIG.db);
-    // ⬇️ CRITICAL FIX: The ArielSQLiteEngine method is .init(), not .initialize()
-    await masterDbEngine.init(); 
+    // ⬇️ CRITICAL FIX: ArielSQLiteEngine appears to initialize itself in the constructor (as per logs), so we remove the unnecessary and crashing initialization call here.
+    // await masterDbEngine.init(); 
     
     // 2. Instantiate the SINGLE, TRUE Sovereign Core (for its God Mode Loop)
-    // ⬇️ FIX: Removed redundant 'new' keyword.
     const masterCore = new ProductionSovereignCore(CONFIG, masterDbEngine);
     await masterCore.initialize(); 
 
