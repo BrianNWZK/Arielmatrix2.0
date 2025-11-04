@@ -28,7 +28,7 @@ async function executeWorkerProcess() {
   try {
     console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core...`);
 
-    // ✅ Bind to a port so Render keeps the service alive
+    // ✅ Bind to HTTP port so Render keeps the service alive
     const app = express();
     const PORT = CONFIG.PORT;
 
@@ -36,7 +36,7 @@ async function executeWorkerProcess() {
       res.send('🧠 BSFM Sovereign Core is alive and listening.');
     });
 
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`[WORKER ${process.pid}] Listening on port ${PORT}`);
     });
 
