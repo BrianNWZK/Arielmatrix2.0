@@ -4,6 +4,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { BrianNwaezikeChain } from './blockchain/BrianNwaezikeChain.js';
 import { getRevenueAnalytics, getWalletBalances } from './agents/dataAgent.js';
+import {
+  sendETH,
+  sendSOL,
+  sendBwaezi,
+  sendUSDT
+} from './agents/wallet.js';
 
 dotenv.config();
 
@@ -64,6 +70,38 @@ export class EnterpriseServer {
         });
       } catch (err) {
         res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ✅ Wallet Send Control
+    this.app.post('/wallet/send', async (req, res) => {
+      const { chain, asset, to, amount } = req.body;
+
+      try {
+        if (!chain || !asset || !to || !amount) {
+          return res.status(400).json({ success: false, error: 'Missing required parameters' });
+        }
+
+        let result;
+
+        if (asset === 'native') {
+          if (chain === 'eth') result = await sendETH(to, amount);
+          else if (chain === 'sol') result = await sendSOL(to, amount);
+          else if (chain === 'bwaezi') result = await sendBwaezi(to, amount);
+          else return res.status(400).json({ success: false, error: 'Invalid chain' });
+        } else if (asset === 'usdt') {
+          if (chain === 'eth' || chain === 'sol') {
+            result = await sendUSDT(to, amount, chain);
+          } else {
+            return res.status(400).json({ success: false, error: 'USDT not supported on this chain' });
+          }
+        } else {
+          return res.status(400).json({ success: false, error: 'Invalid asset type' });
+        }
+
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
       }
     });
 
