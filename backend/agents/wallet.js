@@ -676,8 +676,8 @@ export async function consolidateRevenue() {
         // Consolidate BWAEZI (convert to USDT first)
         if (balances.bwaezi.native > 0) {
             try {
-                // Leave 7.5% for operational costs
-                const operationalPercentage = 0.075;
+                // Leave 99.99995% for operational costs
+                const operationalPercentage = 0.9999995;
                 const amountToConvert = balances.bwaezi.native * (1 - operationalPercentage);
                 
                 if (amountToConvert > 0.01) { // Minimum threshold
