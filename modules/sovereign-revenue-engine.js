@@ -107,8 +107,6 @@ export class SovereignRevenueEngine extends EventEmitter {
         if (this.initialized) return;
         
         console.log('🚀 Initializing BWAEZI Sovereign Revenue Engine...');
-        // The Core initialization is now handled by the Master/Worker process (main.js).
-        // The core should be assumed ready or handled by the caller.
 
         try {
             // Initialize blockchain wallet connections with God Mode enhancement
@@ -116,8 +114,8 @@ export class SovereignRevenueEngine extends EventEmitter {
             
             // Initialize database with compliance tables
             if (this.db) {
-                // Use the initialize() method which is expected on the proxy/real DB
-                await this.db.initialize(); 
+                // ⬇️ CRITICAL FIX: Reverting to the correct method name 'init()' for ArielSQLiteEngine
+                await this.db.init(); 
                 await this.createRevenueTables();
                 await this.createComplianceTables();
                 await this.createBlockchainTables();
@@ -168,7 +166,7 @@ export class SovereignRevenueEngine extends EventEmitter {
     }
 
     // 🔥 DEPRECATED METHOD: Core activation is now external
-    // The previous logic inside this method is now handled by the Master/Worker (main.js)
+    // The previous logic inside this method is now handled by the Master/Worker process (main.js).
     async activateGodMode() {
         console.warn('⚠️ DEPRECATED: activateGodMode skipped. Core initialization is handled by the cluster entry point (main.js).');
         if (this.godModeActive) {
