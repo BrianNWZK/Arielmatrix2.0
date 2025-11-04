@@ -47,11 +47,7 @@
 </head>
 <body>
   <div class="container">
-    <!-- Existing dashboard cards -->
-    <div class="card"><div class="title">🧠 Quantum Consciousness Status</div><div id="quantumStatus">Loading...</div></div>
-    <div class="card"><div class="title">🔥 Optimization Cycle</div><div id="optimizationCycle">Loading...</div></div>
-    <div class="card"><div class="title">⚛️ Entanglement Stability</div><div id="entanglementStability">Loading...</div></div>
-    <div class="card"><div class="title">🌀 Reality Engine Status</div><div id="realityEngine">Loading...</div></div>
+    <div class="card"><div class="title">🧠 System Health</div><div id="systemHealth">Loading...</div></div>
     <div class="card"><div class="title">💰 Wallet Balances</div><ul id="walletBalances" class="list-disc pl-6 text-sm"></ul></div>
     <div class="card"><div class="title">📡 Active Modules</div><ul id="activeModules" class="list-disc pl-6 text-sm"></ul></div>
     <div class="card"><div class="title">📜 Recent Activity Log</div><ul id="activityLog" class="list-disc pl-6 text-sm"></ul></div>
@@ -81,25 +77,32 @@
       <button onclick="sendFunds()">Send Funds</button>
       <div id="sendStatus" style="margin-top:1rem; font-weight:bold;"></div>
     </div>
+
+    <!-- ⏱️ Scheduler Control -->
+    <div class="card">
+      <div class="title">⏱️ Scheduler Control</div>
+      <button onclick="pauseScheduler()">Pause Scheduler</button>
+      <button onclick="resumeScheduler()">Resume Scheduler</button>
+      <div id="schedulerStatus" style="margin-top:1rem; font-weight:bold;"></div>
+    </div>
   </div>
 
   <script>
-    async function fetchQuantumStatus() {
+    const BASE = '/'; // Use relative path for backend deployment
+
+    async function fetchSystemHealth() {
       try {
-        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/quantum/health');
+        const res = await fetch(`${BASE}health`);
         const data = await res.json();
-        document.getElementById('quantumStatus').textContent = data.quantum_consciousness ? '✅ Active' : '❌ Inactive';
-        document.getElementById('optimizationCycle').textContent = `Cycle #${data.optimization_cycles || 'N/A'}`;
-        document.getElementById('entanglementStability').textContent = `${(data.quantum_entanglement * 100).toFixed(2)}% Stable`;
-        document.getElementById('realityEngine').textContent = `Coherence: ${(data.reality_coherence * 100).toFixed(2)}%`;
+        document.getElementById('systemHealth').textContent = `Status: ${data.status}, Initialized: ${data.initialized}, Time: ${data.timestamp}`;
       } catch (err) {
-        console.error('Quantum status fetch error:', err);
+        document.getElementById('systemHealth').textContent = '❌ Failed to fetch system health';
       }
     }
 
     async function fetchWalletBalances() {
       try {
-        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/wallet-balances');
+        const res = await fetch(`${BASE}wallet-balances`);
         const data = await res.json();
         const walletList = document.getElementById('walletBalances');
         walletList.innerHTML = '';
@@ -110,13 +113,13 @@
           walletList.appendChild(li);
         });
       } catch (err) {
-        console.error('Wallet fetch error:', err);
+        document.getElementById('walletBalances').innerHTML = '<li>❌ Failed to fetch balances</li>';
       }
     }
 
     async function fetchBSFMStatus() {
       try {
-        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/bsfm-status');
+        const res = await fetch(`${BASE}bsfm-status`);
         const data = await res.json();
         const modules = document.getElementById('activeModules');
         modules.innerHTML = '';
@@ -133,7 +136,8 @@
           log.appendChild(li);
         });
       } catch (err) {
-        console.error('BSFM status fetch error:', err);
+        document.getElementById('activeModules').innerHTML = '<li>❌ Failed to fetch modules</li>';
+        document.getElementById('activityLog').innerHTML = '<li>❌ Failed to fetch activity log</li>';
       }
     }
 
@@ -142,12 +146,17 @@
       const asset = document.getElementById('assetSelect').value;
       const to = document.getElementById('recipientInput').value;
       const amount = parseFloat(document.getElementById('amountInput').value);
-
       const status = document.getElementById('sendStatus');
+
+      if (!to || isNaN(amount) || amount <= 0) {
+        status.textContent = '❌ Invalid address or amount';
+        return;
+      }
+
       status.textContent = 'Sending...';
 
       try {
-        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/wallet/send', {
+        const res = await fetch(`${BASE}wallet/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chain, asset, to, amount })
@@ -163,17 +172,40 @@
       }
     }
 
-    setInterval(() => {
-      fetchQuantumStatus();
-      fetchWalletBalances();
-      fetchBSFMStatus();
-    }, 10000);
+    async function pauseScheduler() {
+      const status = document.getElementById('schedulerStatus');
+      status.textContent = 'Pausing...';
+      try {
+        const res = await fetch(`${BASE}scheduler/pause`, { method: 'POST' });
+        const data = await res.json();
+        status.textContent = `🛑 Scheduler is now ${data.status}`;
+      } catch (err) {
+        status.textContent = `❌ Error: ${err.message}`;
+      }
+    }
+
+    async function resumeScheduler() {
+      const status = document.getElementById('schedulerStatus');
+      status.textContent = 'Resuming...';
+      try {
+        const res = await fetch(`${BASE}scheduler/resume`, { method: 'POST' });
+        const data = await res.json();
+        status.textContent = `▶️ Scheduler is now ${data.status}`;
+      } catch (err) {
+        status.textContent = `❌ Error: ${err.message}`;
+      }
+    }
 
     window.onload = () => {
-      fetchQuantumStatus();
+      fetchSystemHealth();
       fetchWalletBalances();
       fetchBSFMStatus();
     };
+    setInterval(() => {
+      fetchSystemHealth();
+      fetchWalletBalances();
+      fetchBSFMStatus();
+    }, 10000);
   </script>
 </body>
 </html>
