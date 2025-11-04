@@ -4,7 +4,8 @@
 import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
-import express from 'express'; // <=== FIX: Added the Express import
+import express from 'express';
+// Assuming this is a local file in your project
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 
 const CONFIG = {
@@ -19,16 +20,18 @@ const CONFIG = {
     "https://cloudflare-eth.com"
   ],
   GOD_MODE_INTERVAL: parseInt(process.env.GOD_MODE_INTERVAL) || 5000,
-  CLUSTER_WORKERS: parseInt(process.env.CLUSTER_WORKERS) || os.cpus().length,
+  // 👇 TEMPORARY OOM FIX: Reducing default workers from 8 to 2 for 512MiB instance
+  CLUSTER_WORKERS: parseInt(process.env.CLUSTER_WORKERS) || 2, 
   QUANTUM_PROCESSING_UNITS: parseInt(process.env.QUANTUM_PROCESSING_UNITS) || 8,
   QUANTUM_ENTANGLEMENT_NODES: parseInt(process.env.QUANTUM_ENTANGLEMENT_NODES) || 16
 };
 
-async function executeWorkerProcess() {
-  try {
-    console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core...`);
+// Global reference for the core in the worker process
+let sovereignCore = null;
 
-    // --- 1. Initialize Sovereign Core ---
+async function initializeCore() {
+    console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core initialization...`);
+    
     const coreConfig = {
       token: {
         contractAddress: CONFIG.BWAEZI_KERNEL_ADDRESS,
@@ -59,61 +62,71 @@ async function executeWorkerProcess() {
       }
     };
 
-    const sovereignCore = new ProductionSovereignCore(coreConfig);
+    sovereignCore = new ProductionSovereignCore(coreConfig);
     await sovereignCore.initialize();
-    
-    console.log(`[WORKER ${process.pid}] BSFM Sovereign Core components initialized.`);
 
-    // --- 2. Bind to HTTP port for Render/Load Balancer Health Checks ---
-    const app = express();
-    const PORT = CONFIG.PORT;
+    console.log(`[WORKER ${process.pid}] BSFM Sovereign Core is fully operational.`);
+}
 
-    // Health Check Endpoint and Status
-    app.get('/', (req, res) => {
-      // Only respond with 200 OK after the core is initialized
-      res.status(200).send('🧠 BSFM Sovereign Core is **operational** and listening.');
-    });
-    
-    // The listen call binds the worker to the required port and IP
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`[WORKER ${process.pid}] ✅ Port Binding successful. Listening on 0.0.0.0:${PORT}`);
-    });
+async function executeWorkerProcess() {
+    try {
+        const app = express();
+        const PORT = CONFIG.PORT;
 
-    console.log(`[WORKER ${process.pid}] BSFM Sovereign Core is operational.`);
+        // FIX: Port Binding MUST happen immediately to pass Render's health check
+        app.get('/', (req, res) => {
+            // Respond with a 503 Service Unavailable if the core isn't ready yet
+            if (sovereignCore) {
+                res.status(200).send('🧠 BSFM Sovereign Core is operational.');
+            } else {
+                res.status(503).send('⏳ BSFM Sovereign Core is initializing...');
+            }
+        });
+        
+        // Start the HTTP server first and wait for it to listen
+        const server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`[WORKER ${process.pid}] ✅ Port Binding successful. Listening on 0.0.0.0:${PORT}`);
+        });
 
-    process.on('SIGINT', async () => {
-      console.log(`[WORKER ${process.pid}] SIGINT received. Shutting down...`);
-      // Ensure graceful shutdown is called on SIGINT
-      await sovereignCore.emergencyShutdown();
-      process.exit(0);
-    });
+        // Then, immediately proceed with the core's asynchronous and expensive initialization
+        await initializeCore();
 
-  } catch (error) {
-    console.error(`💥 FATAL ERROR [${process.pid}]:`, error.stack); // Changed to .stack for better debug info
-    process.exit(1);
-  }
+        // Graceful Shutdown Handler
+        process.on('SIGINT', async () => {
+            console.log(`[WORKER ${process.pid}] SIGINT received. Shutting down...`);
+            server.close(() => {
+                console.log(`[WORKER ${process.pid}] HTTP server closed.`);
+                if (sovereignCore) sovereignCore.emergencyShutdown().then(() => process.exit(0));
+                else process.exit(0);
+            });
+        });
+
+    } catch (error) {
+        console.error(`💥 FATAL ERROR [${process.pid}]:`, error.stack);
+        process.exit(1);
+    }
 }
 
 function executeMasterProcess() {
-  console.log(`👑 MASTER PROCESS (PID ${process.pid}) — Forking ${CONFIG.CLUSTER_WORKERS} workers...`);
-  for (let i = 0; i < CONFIG.CLUSTER_WORKERS; i++) {
-    cluster.fork();
-  }
+    console.log(`👑 MASTER PROCESS (PID ${process.pid}) — Forking ${CONFIG.CLUSTER_WORKERS} workers...`);
+    for (let i = 0; i < CONFIG.CLUSTER_WORKERS; i++) {
+        cluster.fork();
+    }
 
-  cluster.on('exit', (worker, code, signal) => {
-    console.error(`🛑 Worker ${worker.process.pid} exited with code ${code}. Respawning...`);
-    cluster.fork();
-  });
+    cluster.on('exit', (worker, code, signal) => {
+        console.error(`🛑 Worker ${worker.process.pid} exited with code ${code}. Respawning...`);
+        cluster.fork();
+    });
 }
 
 if (cluster.isPrimary) {
-  executeMasterProcess();
+    executeMasterProcess();
 } else {
-  if (!CONFIG.PRIVATE_KEY || !CONFIG.BWAEZI_KERNEL_ADDRESS) {
-    console.error("❌ Missing PRIVATE_KEY or BWAEZI_KERNEL_ADDRESS. Worker cannot initialize.");
-    process.exit(1);
-  }
-  executeWorkerProcess();
+    if (!CONFIG.PRIVATE_KEY || !CONFIG.BWAEZI_KERNEL_ADDRESS) {
+        console.error("❌ Missing PRIVATE_KEY or BWAEZI_KERNEL_ADDRESS. Worker cannot initialize.");
+        process.exit(1);
+    }
+    executeWorkerProcess();
 }
 
 export { executeWorkerProcess, CONFIG };
