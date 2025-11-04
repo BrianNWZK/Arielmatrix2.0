@@ -1,6 +1,9 @@
-// modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED
+// modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v18.1)
+// 💸 REVISED: DEPENDENCY INJECTION & IPC COMPATIBLE
+
 import { EventEmitter } from 'events';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
+// NOTE: These imports are kept for type reference but not instantiated internally
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js'; 
 import { SovereignTokenomics } from './tokenomics-engine/index.js';
 import { SovereignGovernance } from './governance-engine/index.js';
 import { 
@@ -17,7 +20,7 @@ import {
 } from '../backend/agents/wallet.js';
 import { createHash, randomBytes } from 'crypto';
 
-// 🔥 GOD MODE INTEGRATION
+// 🔥 GOD MODE INTEGRATION: The import remains, but instantiation is removed
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 
 import {
@@ -34,35 +37,43 @@ import {
 // PRODUCTION-READY SOVEREIGN REVENUE ENGINE - GOD MODE ACTIVATED
 // =========================================================================
 export class SovereignRevenueEngine extends EventEmitter {
-    constructor(config = {}) {
+    // ⬇️ CRITICAL FIX: Accepts injected Core and DB instances
+    constructor(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) { 
         super();
         this.config = {
             ...BWAEZI_SOVEREIGN_CONFIG,
             ...config
         };
         
-        // 🔥 GOD MODE CORE INTEGRATION
-        this.sovereignCore = new ProductionSovereignCore({
-            quantumSecurity: true,
-            consciousnessIntegration: true,
-            realityProgramming: true,
-            godMode: true
-        });
+        // 🔥 CRITICAL FIX 1: Use the injected core instance
+        this.sovereignCore = sovereignCoreInstance;
+        // God Mode is active only if the Core instance was successfully injected
+        this.godModeActive = !!sovereignCoreInstance; 
         
         this.registeredServices = new Map();
         this.revenueStreams = new Map();
         this.treasuryBalance = 0;
         this.ecosystemFund = 0;
         this.reinvestmentPool = 0;
-        this.db = new ArielSQLiteEngine({ path: './data/sovereign_revenue.db' });
-        this.tokenomics = new SovereignTokenomics();
-        this.governance = new SovereignGovernance();
+        
+        // 🔥 CRITICAL FIX 2: Use the injected DB instance (Master DB or Worker Proxy)
+        this.db = dbEngineInstance; 
+        
+        // ⬇️ Instantiate Tokenomics and Governance, passing the injected DB instance
+        if (this.db) {
+            this.tokenomics = new SovereignTokenomics(this.db);
+            this.governance = new SovereignGovernance(this.db);
+        } else {
+            // Fallback for Tokenomics/Governance if DB is not available
+            this.tokenomics = new SovereignTokenomics(); 
+            this.governance = new SovereignGovernance();
+        }
+
         this.initialized = false;
         this.blockchainConnected = false;
         this.walletInitialized = false;
-        this.godModeActive = false;
         
-        // Revenue tracking
+        // ... (rest of properties remain the same)
         this.dailyRevenue = 0;
         this.weeklyRevenue = 0;
         this.monthlyRevenue = 0;
@@ -95,21 +106,24 @@ export class SovereignRevenueEngine extends EventEmitter {
     async initialize() {
         if (this.initialized) return;
         
-        console.log('🚀 Initializing BWAEZI Sovereign Revenue Engine - GOD MODE ACTIVATION...');
-        console.log('👑 SOVEREIGN CORE INTEGRATION: INITIALIZING');
-        
+        console.log('🚀 Initializing BWAEZI Sovereign Revenue Engine...');
+        // The Core initialization is now handled by the Master/Worker process (main.js).
+        // The core should be assumed ready or handled by the caller.
+
         try {
-            // 🔥 INITIALIZE GOD MODE FIRST
-            await this.activateGodMode();
-            
             // Initialize blockchain wallet connections with God Mode enhancement
             await this.initializeWalletConnections();
             
             // Initialize database with compliance tables
-            await this.db.init();
-            await this.createRevenueTables();
-            await this.createComplianceTables();
-            await this.createBlockchainTables();
+            if (this.db) {
+                // Use the initialize() method which is expected on the proxy/real DB
+                await this.db.initialize(); 
+                await this.createRevenueTables();
+                await this.createComplianceTables();
+                await this.createBlockchainTables();
+            } else {
+                 console.warn('⚠️ WARNING: Database Engine not injected. Revenue and compliance tracking will be disabled.');
+            }
             
             // Initialize tokenomics and governance with God Mode optimization
             await this.tokenomics.initialize();
@@ -126,10 +140,14 @@ export class SovereignRevenueEngine extends EventEmitter {
             this.startComplianceMonitoring();
             this.startWalletHealthMonitoring();
             this.startRevenueConsolidationMonitoring();
-            this.startGodModeOptimization();
+            
+            // Only start God Mode loop if the Core was successfully injected
+            if (this.godModeActive) {
+                this.startGodModeOptimization();
+            }
             
             this.initialized = true;
-            console.log('✅ BWAEZI Sovereign Revenue Engine Initialized - GOD MODE ACTIVE');
+            console.log(`✅ BWAEZI Sovereign Revenue Engine Initialized - GOD MODE ${this.godModeActive ? 'ACTIVE' : 'INACTIVE'}`);
             this.emit('initialized', { 
                 timestamp: Date.now(),
                 treasury: this.treasuryBalance,
@@ -142,20 +160,19 @@ export class SovereignRevenueEngine extends EventEmitter {
         } catch (error) {
             console.error('❌ Failed to initialize Sovereign Revenue Engine:', error);
             // 🔥 GOD MODE ERROR RECOVERY
-            await this.sovereignCore.executeQuantumComputation('error_recovery', { error, context: 'initialization' });
+            if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
+                 await this.sovereignCore.executeQuantumComputation('error_recovery', { error, context: 'initialization' });
+            }
             throw error;
         }
     }
 
-    // 🔥 GOD MODE ACTIVATION METHOD
+    // 🔥 DEPRECATED METHOD: Core activation is now external
+    // The previous logic inside this method is now handled by the Master/Worker (main.js)
     async activateGodMode() {
-        console.log('👑 ACTIVATING GOD MODE - SOVEREIGN CORE INTEGRATION...');
-        
-        try {
-            await this.sovereignCore.initialize();
-            this.godModeActive = true;
-            
-            // Apply quantum optimizations to revenue engine
+        console.warn('⚠️ DEPRECATED: activateGodMode skipped. Core initialization is handled by the cluster entry point (main.js).');
+        if (this.godModeActive) {
+             // If core is injected, run the initial optimization calculation
             const optimizationResult = await this.sovereignCore.executeQuantumComputation(
                 'revenue_optimization', 
                 {
@@ -172,18 +189,12 @@ export class SovereignRevenueEngine extends EventEmitter {
                     intensity: 1.0
                 }
             );
-            
-            console.log('✅ GOD MODE ACTIVATED - Quantum optimizations applied:', optimizationResult);
+            console.log('✅ GOD MODE ACTIVATION OPTIMIZATION APPLIED:', optimizationResult);
             this.emit('godModeActivated', {
                 timestamp: Date.now(),
                 optimization: optimizationResult,
                 sovereignCore: true
             });
-            
-        } catch (error) {
-            console.error('❌ God Mode activation failed:', error);
-            // Continue without God Mode but log the issue
-            this.godModeActive = false;
         }
     }
 
@@ -192,7 +203,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         
         try {
             // 🔥 Use God Mode for connection optimization
-            if (this.godModeActive) {
+            if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
                 const connectionOptimization = await this.sovereignCore.executeQuantumComputation(
                     'blockchain_connection',
                     { networks: ['ethereum', 'solana', 'bwaezi'] },
@@ -209,7 +220,7 @@ export class SovereignRevenueEngine extends EventEmitter {
             const health = await checkBlockchainHealth();
             if (!health.healthy) {
                 // 🔥 GOD MODE HEALING
-                if (this.godModeActive) {
+                if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
                     await this.sovereignCore.executeQuantumComputation(
                         'blockchain_healing',
                         { health, networks: ['ethereum', 'solana', 'bwaezi'] },
@@ -232,7 +243,7 @@ export class SovereignRevenueEngine extends EventEmitter {
             this.blockchainConnected = false;
             
             // 🔥 GOD MODE RECOVERY ATTEMPT
-            if (this.godModeActive) {
+            if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
                 await this.attemptGodModeRecovery('wallet_initialization', error);
             }
             throw error;
@@ -242,6 +253,10 @@ export class SovereignRevenueEngine extends EventEmitter {
     // 🔥 GOD MODE RECOVERY SYSTEM
     async attemptGodModeRecovery(context, error) {
         try {
+            if (!this.sovereignCore || !this.sovereignCore.executeQuantumComputation) {
+                 console.warn('⚠️ Sovereign Core unavailable for recovery.');
+                 return null;
+            }
             const recoveryResult = await this.sovereignCore.executeQuantumComputation(
                 'system_recovery',
                 {
@@ -279,10 +294,12 @@ export class SovereignRevenueEngine extends EventEmitter {
         if (!service) {
             throw new Error(`Service not registered: ${serviceId}`);
         }
+        
+        const originalAmount = amount; // Store original amount for logging
 
         // 🔥 GOD MODE REVENUE OPTIMIZATION
-        if (this.godModeActive) {
-            const optimizedRevenue = await this.sovereignCore.executeQuantumComputation(
+        if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
+            const optimizedResult = await this.sovereignCore.executeQuantumComputation(
                 'revenue_maximization',
                 {
                     serviceId,
@@ -305,37 +322,50 @@ export class SovereignRevenueEngine extends EventEmitter {
                 console.log(`💰 GOD MODE REVENUE OPTIMIZATION: $${amount} (was: $${originalAmount})`);
             }
         }
-
+        
         // Log data processing for compliance (encrypted hashes only)
         await this.logDataProcessing(serviceId, 'revenue', metadata.encryptedHash);
 
         const revenueId = ConfigUtils.generateZKId(`revenue_${serviceId}`);
         
-        // Record revenue stream with architectural compliance metadata
-        await this.db.run(`
-            INSERT INTO revenue_streams (id, serviceId, amount, currency, type, chain, compliance_metadata, verification_methodology, blockchain_tx_hash, wallet_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [revenueId, serviceId, amount, currency, revenueType, chain, 
-            JSON.stringify({ 
-                architectural_compliant: true, 
-                data_encrypted: true,
-                pii_excluded: true,
-                alignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
-                godModeEnhanced: this.godModeActive
-            }),
-            JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY),
-            metadata.blockchainTxHash,
-            metadata.walletAddress]);
+        if (this.db) {
+            // Record revenue stream with architectural compliance metadata
+            await this.db.run(`
+                INSERT INTO revenue_streams (id, serviceId, amount, currency, type, chain, compliance_metadata, verification_methodology, blockchain_tx_hash, wallet_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [revenueId, serviceId, amount, currency, revenueType, chain, 
+                JSON.stringify({ 
+                    architectural_compliant: true, 
+                    data_encrypted: true,
+                    pii_excluded: true,
+                    alignment: COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT,
+                    godModeEnhanced: this.godModeActive
+                }),
+                JSON.stringify(COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY),
+                metadata.blockchainTxHash,
+                metadata.walletAddress]);
 
-        // Update service revenue metrics
-        service.totalRevenue += amount;
-        service.transactionCount += 1;
-        
-        await this.db.run(`
-            UPDATE sovereign_services 
-            SET totalRevenue = totalRevenue + ?, transactionCount = transactionCount + 1 
-            WHERE id = ?
-        `, [amount, serviceId]);
+            // Update service revenue metrics
+            service.totalRevenue += amount;
+            service.transactionCount += 1;
+            
+            await this.db.run(`
+                UPDATE sovereign_services 
+                SET totalRevenue = totalRevenue + ?, transactionCount = transactionCount + 1 
+                WHERE id = ?
+            `, [amount, serviceId]);
+            
+            // Record compliance evidence with professional framing
+            await this.recordComplianceEvidence('REVENUE_PROCESSING', {
+                revenueId,
+                amount,
+                currency,
+                architecturalCompliant: true,
+                dataProcessed: 'encrypted_hashes_only',
+                verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
+                godModeEnhanced: this.godModeActive
+            });
+        }
 
         // Update period revenue tracking
         await this.updateRevenueTracking(amount);
@@ -348,17 +378,6 @@ export class SovereignRevenueEngine extends EventEmitter {
 
         // Record treasury transaction
         await this.recordTreasuryTransaction(amount, 'REVENUE', `${revenueType} from ${service.name}`);
-
-        // Record compliance evidence with professional framing
-        await this.recordComplianceEvidence('REVENUE_PROCESSING', {
-            revenueId,
-            amount,
-            currency,
-            architecturalCompliant: true,
-            dataProcessed: 'encrypted_hashes_only',
-            verificationMethodology: COMPLIANCE_STRATEGY.VERIFICATION_METHODOLOGY,
-            godModeEnhanced: this.godModeActive
-        });
 
         // Trigger AI governance review if significant revenue
         if (amount > 10000) {
@@ -392,7 +411,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         
         try {
             // 🔥 GOD MODE DISTRIBUTION OPTIMIZATION
-            if (this.godModeActive) {
+            if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
                 const optimizedDistribution = await this.sovereignCore.executeQuantumComputation(
                     'distribution_optimization',
                     {
@@ -432,20 +451,22 @@ export class SovereignRevenueEngine extends EventEmitter {
             // Process ecosystem funding (remaining from 20%)
             await this.processEcosystemFunding(distribution.ecosystem, chain);
 
-            // Record distribution with architectural compliance metadata
-            await this.db.run(`
-                INSERT INTO distributions (id, amount, sovereignShare, ecosystemShare, reinvestmentShare, chain, serviceId, distributionType, compliance_metadata, architectural_alignment, blockchain_network, wallet_transaction_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [distributionId, distribution.total, distribution.sovereign, 
-                distribution.ecosystem, distribution.reinvestment, chain, serviceId, 
-                'revenue_distribution', 
-                JSON.stringify({ 
-                    architectural_compliant: true,
-                    godModeEnhanced: this.godModeActive
-                }),
-                JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT),
-                chain,
-                sovereignPayment.transactionHash]);
+            if (this.db) {
+                // Record distribution with architectural compliance metadata
+                await this.db.run(`
+                    INSERT INTO distributions (id, amount, sovereignShare, ecosystemShare, reinvestmentShare, chain, serviceId, distributionType, compliance_metadata, architectural_alignment, blockchain_network, wallet_transaction_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [distributionId, distribution.total, distribution.sovereign, 
+                    distribution.ecosystem, distribution.reinvestment, chain, serviceId, 
+                    'revenue_distribution', 
+                    JSON.stringify({ 
+                        architectural_compliant: true,
+                        godModeEnhanced: this.godModeActive
+                    }),
+                    JSON.stringify(COMPLIANCE_STRATEGY.ARCHITECTURAL_ALIGNMENT),
+                    chain,
+                    sovereignPayment.transactionHash]);
+            }
 
             // Update treasury balance
             await this.updateTreasuryBalance(distribution.sovereign + distribution.reinvestment);
@@ -471,7 +492,7 @@ export class SovereignRevenueEngine extends EventEmitter {
             console.error('❌ Revenue distribution failed:', error);
             
             // 🔥 GOD MODE ERROR RECOVERY
-            if (this.godModeActive) {
+            if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
                 await this.attemptGodModeRecovery('revenue_distribution', error);
             }
             
@@ -485,7 +506,9 @@ export class SovereignRevenueEngine extends EventEmitter {
                 godModeRecoveryAttempted: this.godModeActive
             });
             
-            await this.db.run('UPDATE revenue_streams SET processed = false WHERE serviceId = ? AND processed = false', [serviceId]);
+            if (this.db) {
+                await this.db.run('UPDATE revenue_streams SET processed = false WHERE serviceId = ? AND processed = false', [serviceId]);
+            }
             
             this.emit('distributionFailed', {
                 distributionId,
@@ -517,7 +540,7 @@ export class SovereignRevenueEngine extends EventEmitter {
     }
 
     async performGodModeOptimization() {
-        if (!this.godModeActive) return;
+        if (!this.godModeActive || !this.sovereignCore || !this.sovereignCore.executeQuantumComputation) return;
 
         try {
             const optimizationResults = await Promise.all([
@@ -564,7 +587,8 @@ export class SovereignRevenueEngine extends EventEmitter {
 
         } catch (error) {
             console.error('❌ God Mode optimization cycle failed:', error);
-            await this.monitoring.trackError('god_mode_optimization_failed', error);
+            // Assuming 'this.monitoring' is another module that handles tracking errors
+            // await this.monitoring.trackError('god_mode_optimization_failed', error); 
         }
     }
 
@@ -614,7 +638,7 @@ export class SovereignRevenueEngine extends EventEmitter {
 
         // 🔥 GOD MODE ENHANCED METRICS
         let godModeMetrics = {};
-        if (this.godModeActive) {
+        if (this.godModeActive && this.sovereignCore && this.sovereignCore.executeQuantumComputation) {
             godModeMetrics = await this.sovereignCore.executeQuantumComputation(
                 'metrics_enhancement',
                 {
@@ -672,7 +696,9 @@ export class SovereignRevenueEngine extends EventEmitter {
     // =========================================================================
     // MAINTAIN ALL ORIGINAL FUNCTIONS WITH GOD MODE ENHANCEMENTS
     // =========================================================================
-
+    // NOTE: All private/helper functions like createRevenueTables, loadTreasuryFromBlockchain, 
+    // calculateDistribution, etc., must be retained and updated to use 'this.db'
+    // and 'this.sovereignCore' properties correctly.
     // ... [ALL ORIGINAL FUNCTIONS REMAIN THE SAME BUT CAN BE ENHANCED] ...
 
     async shutdown() {
@@ -685,15 +711,15 @@ export class SovereignRevenueEngine extends EventEmitter {
         if (this.revenueConsolidationInterval) clearInterval(this.revenueConsolidationInterval);
         if (this.godModeOptimizationInterval) clearInterval(this.godModeOptimizationInterval);
         
-        // Close database connection
-        if (this.db) await this.db.close();
+        // Close database connection (Only the Master's real DB connection will actually close)
+        if (this.db && typeof this.db.close === 'function') await this.db.close();
         
         // Shutdown governance and tokenomics
         if (this.governance) await this.governance.shutdown();
         if (this.tokenomics) await this.tokenomics.shutdown();
         
-        // 🔥 SHUTDOWN SOVEREIGN CORE
-        if (this.sovereignCore) {
+        // 🔥 SHUTDOWN SOVEREIGN CORE (The Master Process will handle the real core shutdown)
+        if (this.sovereignCore && this.sovereignCore.emergencyShutdown) {
             await this.sovereignCore.emergencyShutdown();
         }
         
@@ -715,15 +741,17 @@ export class SovereignRevenueEngine extends EventEmitter {
 // Global production instance
 let globalRevenueEngine = null;
 
-export function getSovereignRevenueEngine(config = {}) {
+export function getSovereignRevenueEngine(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
     if (!globalRevenueEngine) {
-        globalRevenueEngine = new SovereignRevenueEngine(config);
+        // ⬇️ Pass dependencies when creating the global instance
+        globalRevenueEngine = new SovereignRevenueEngine(config, sovereignCoreInstance, dbEngineInstance);
     }
     return globalRevenueEngine;
 }
 
-export async function initializeSovereignRevenueEngine(config = {}) {
-    const engine = getSovereignRevenueEngine(config);
+export async function initializeSovereignRevenueEngine(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
+    // ⬇️ Pass dependencies to the getter
+    const engine = getSovereignRevenueEngine(config, sovereignCoreInstance, dbEngineInstance);
     await engine.initialize();
     return engine;
 }
