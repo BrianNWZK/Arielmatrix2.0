@@ -30,43 +30,56 @@
       font-weight: bold;
       margin-bottom: 1rem;
     }
+    input, select, button {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 0.5rem;
+    }
+    button {
+      background-color: #1a202c;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card">
-      <div class="title">🧠 Quantum Consciousness Status</div>
-      <div id="quantumStatus">Loading...</div>
-    </div>
+    <!-- Existing dashboard cards -->
+    <div class="card"><div class="title">🧠 Quantum Consciousness Status</div><div id="quantumStatus">Loading...</div></div>
+    <div class="card"><div class="title">🔥 Optimization Cycle</div><div id="optimizationCycle">Loading...</div></div>
+    <div class="card"><div class="title">⚛️ Entanglement Stability</div><div id="entanglementStability">Loading...</div></div>
+    <div class="card"><div class="title">🌀 Reality Engine Status</div><div id="realityEngine">Loading...</div></div>
+    <div class="card"><div class="title">💰 Wallet Balances</div><ul id="walletBalances" class="list-disc pl-6 text-sm"></ul></div>
+    <div class="card"><div class="title">📡 Active Modules</div><ul id="activeModules" class="list-disc pl-6 text-sm"></ul></div>
+    <div class="card"><div class="title">📜 Recent Activity Log</div><ul id="activityLog" class="list-disc pl-6 text-sm"></ul></div>
 
+    <!-- 🔐 Wallet Control Panel -->
     <div class="card">
-      <div class="title">🔥 Optimization Cycle</div>
-      <div id="optimizationCycle">Loading...</div>
-    </div>
+      <div class="title">🔐 Wallet Control Panel</div>
+      <label>Chain</label>
+      <select id="chainSelect">
+        <option value="eth">Ethereum</option>
+        <option value="sol">Solana</option>
+        <option value="bwaezi">BWAEZI</option>
+      </select>
 
-    <div class="card">
-      <div class="title">⚛️ Entanglement Stability</div>
-      <div id="entanglementStability">Loading...</div>
-    </div>
+      <label>Asset</label>
+      <select id="assetSelect">
+        <option value="native">Native Token</option>
+        <option value="usdt">USDT</option>
+      </select>
 
-    <div class="card">
-      <div class="title">🌀 Reality Engine Status</div>
-      <div id="realityEngine">Loading...</div>
-    </div>
+      <label>Recipient Address</label>
+      <input type="text" id="recipientInput" placeholder="Enter wallet address" />
 
-    <div class="card">
-      <div class="title">💰 Wallet Balances</div>
-      <ul id="walletBalances" class="list-disc pl-6 text-sm"></ul>
-    </div>
+      <label>Amount</label>
+      <input type="number" id="amountInput" placeholder="Enter amount" />
 
-    <div class="card">
-      <div class="title">📡 Active Modules</div>
-      <ul id="activeModules" class="list-disc pl-6 text-sm"></ul>
-    </div>
-
-    <div class="card">
-      <div class="title">📜 Recent Activity Log</div>
-      <ul id="activityLog" class="list-disc pl-6 text-sm"></ul>
+      <button onclick="sendFunds()">Send Funds</button>
+      <div id="sendStatus" style="margin-top:1rem; font-weight:bold;"></div>
     </div>
   </div>
 
@@ -75,7 +88,6 @@
       try {
         const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/quantum/health');
         const data = await res.json();
-
         document.getElementById('quantumStatus').textContent = data.quantum_consciousness ? '✅ Active' : '❌ Inactive';
         document.getElementById('optimizationCycle').textContent = `Cycle #${data.optimization_cycles || 'N/A'}`;
         document.getElementById('entanglementStability').textContent = `${(data.quantum_entanglement * 100).toFixed(2)}% Stable`;
@@ -89,16 +101,9 @@
       try {
         const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/wallet-balances');
         const data = await res.json();
-
         const walletList = document.getElementById('walletBalances');
         walletList.innerHTML = '';
-
-        const symbolMap = {
-          ethereum: 'ETH',
-          solana: 'SOL',
-          bwaezi: 'bwzC'
-        };
-
+        const symbolMap = { ethereum: 'ETH', solana: 'SOL', bwaezi: 'bwzC' };
         ['ethereum', 'solana', 'bwaezi'].forEach(chain => {
           const li = document.createElement('li');
           li.textContent = `${chain.toUpperCase()}: ${data[chain].native} ${symbolMap[chain]}`;
@@ -113,7 +118,6 @@
       try {
         const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/bsfm-status');
         const data = await res.json();
-
         const modules = document.getElementById('activeModules');
         modules.innerHTML = '';
         data.active_modules.forEach(m => {
@@ -121,7 +125,6 @@
           li.textContent = m;
           modules.appendChild(li);
         });
-
         const log = document.getElementById('activityLog');
         log.innerHTML = '';
         data.activity_log.forEach(entry => {
@@ -131,6 +134,32 @@
         });
       } catch (err) {
         console.error('BSFM status fetch error:', err);
+      }
+    }
+
+    async function sendFunds() {
+      const chain = document.getElementById('chainSelect').value;
+      const asset = document.getElementById('assetSelect').value;
+      const to = document.getElementById('recipientInput').value;
+      const amount = parseFloat(document.getElementById('amountInput').value);
+
+      const status = document.getElementById('sendStatus');
+      status.textContent = 'Sending...';
+
+      try {
+        const res = await fetch('https://arielmatrix2-0-73pu.onrender.com/wallet/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chain, asset, to, amount })
+        });
+        const result = await res.json();
+        if (result.success) {
+          status.textContent = `✅ Sent successfully. Tx: ${result.hash || result.signature}`;
+        } else {
+          status.textContent = `❌ Error: ${result.error}`;
+        }
+      } catch (err) {
+        status.textContent = `❌ Failed to send: ${err.message}`;
       }
     }
 
