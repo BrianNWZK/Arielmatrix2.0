@@ -1,6 +1,3 @@
-// arielsql_suite/main.js — BSFM MASTER LAUNCHER (v18.0)
-// 🌍 GLOBAL SOVEREIGN FINANCIAL MATRIX — INTELLIGENCE-FIRST DEPLOYMENT
-
 import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
@@ -20,7 +17,7 @@ const CONFIG = {
     "https://cloudflare-eth.com"
   ],
   GOD_MODE_INTERVAL: parseInt(process.env.GOD_MODE_INTERVAL) || 5000,
-  // 👇 TEMPORARY OOM FIX: Reducing default workers from 8 to 2 for 512MiB instance
+  // Retaining the reduced worker count to help with the OOM problem
   CLUSTER_WORKERS: parseInt(process.env.CLUSTER_WORKERS) || 2, 
   QUANTUM_PROCESSING_UNITS: parseInt(process.env.QUANTUM_PROCESSING_UNITS) || 8,
   QUANTUM_ENTANGLEMENT_NODES: parseInt(process.env.QUANTUM_ENTANGLEMENT_NODES) || 16
@@ -28,83 +25,73 @@ const CONFIG = {
 
 // Global reference for the core in the worker process
 let sovereignCore = null;
+let isCoreReady = false;
 
+// --- 1. ASYNCHRONOUS CORE INITIALIZATION (Called AFTER port binding) ---
 async function initializeCore() {
-    console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core initialization...`);
-    
-    const coreConfig = {
-      token: {
-        contractAddress: CONFIG.BWAEZI_KERNEL_ADDRESS,
-        founderAddress: CONFIG.SOVEREIGN_WALLET,
-        rpcUrl: CONFIG.RPC_URLS[0],
-        privateKey: CONFIG.PRIVATE_KEY
-      },
-      db: {
-        path: './data/arielsql_production.db',
-        maxConnections: os.cpus().length * 2
-      },
-      revenue: {
-        initialRiskTolerance: 0.05,
-        cycleLengthMs: 10
-      },
-      crypto: {
-        algorithm: 'PQC_DILITHIUM_KYBER',
-        keyRefreshInterval: 3600000
-      },
-      ai: {
-        omnipotent: { logLevel: 'high' },
-        omnipresent: { networkInterfaces: os.networkInterfaces() },
-        evolving: { geneticPoolSize: 1000 }
-      },
-      quantum: {
-        processingUnits: CONFIG.QUANTUM_PROCESSING_UNITS,
-        entanglementNodes: CONFIG.QUANTUM_ENTANGLEMENT_NODES
-      }
-    };
+    try {
+        console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core initialization...`);
+        
+        const coreConfig = {
+            // ... (omitted coreConfig for brevity, same as before) ...
+            token: { contractAddress: CONFIG.BWAEZI_KERNEL_ADDRESS, founderAddress: CONFIG.SOVEREIGN_WALLET, rpcUrl: CONFIG.RPC_URLS[0], privateKey: CONFIG.PRIVATE_KEY },
+            db: { path: './data/arielsql_production.db', maxConnections: os.cpus().length * 2 },
+            revenue: { initialRiskTolerance: 0.05, cycleLengthMs: 10 },
+            crypto: { algorithm: 'PQC_DILITHIUM_KYBER', keyRefreshInterval: 3600000 },
+            ai: { omnipotent: { logLevel: 'high' }, omnipresent: { networkInterfaces: os.networkInterfaces() }, evolving: { geneticPoolSize: 1000 } },
+            quantum: { processingUnits: CONFIG.QUANTUM_PROCESSING_UNITS, entanglementNodes: CONFIG.QUANTUM_ENTANGLEMENT_NODES }
+        };
 
-    sovereignCore = new ProductionSovereignCore(coreConfig);
-    await sovereignCore.initialize();
+        sovereignCore = new ProductionSovereignCore(coreConfig);
+        await sovereignCore.initialize();
+        isCoreReady = true; // Set flag once initialization is complete
 
-    console.log(`[WORKER ${process.pid}] BSFM Sovereign Core is fully operational.`);
+        console.log(`[WORKER ${process.pid}] BSFM Sovereign Core is fully operational.`);
+    } catch (error) {
+        console.error(`💥 CORE INITIALIZATION ERROR [${process.pid}]:`, error.stack);
+        // Do NOT exit here. Keep the port bound, but respond 503 on the API.
+    }
 }
 
-async function executeWorkerProcess() {
+// --- 2. WORKER PROCESS (Starts Server Synchronously) ---
+function executeWorkerProcess() {
+    // Synchronous block to guarantee Express setup and port binding first.
+    const app = express();
+    const PORT = CONFIG.PORT;
+    let server = null;
+
+    // Health Check Endpoint and Status Route
+    app.get('/', (req, res) => {
+        // Check the flag for core readiness before responding 200
+        if (isCoreReady) {
+            res.status(200).send('🧠 BSFM Sovereign Core is **operational** and generating revenue.');
+        } else {
+            // Respond 503 if the port is bound but initialization is not yet complete
+            res.status(503).send('⏳ BSFM Sovereign Core is initializing. Please wait...');
+        }
+    });
+    
     try {
-        const app = express();
-        const PORT = CONFIG.PORT;
-
-        // FIX: Port Binding MUST happen immediately to pass Render's health check
-        app.get('/', (req, res) => {
-            // Respond with a 503 Service Unavailable if the core isn't ready yet
-            if (sovereignCore) {
-                res.status(200).send('🧠 BSFM Sovereign Core is operational.');
-            } else {
-                res.status(503).send('⏳ BSFM Sovereign Core is initializing...');
-            }
+        // CRITICAL FIX: The Express server starts LISTENING synchronously.
+        server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`[WORKER ${process.pid}] ✅ CRITICAL BINDING SUCCESSFUL. Listening on 0.0.0.0:${PORT}`);
+            
+            // Only AFTER the server is successfully bound, start the heavy asynchronous core initialization.
+            initializeCore();
         });
-        
-        // Start the HTTP server first and wait for it to listen
-        const server = app.listen(PORT, '0.0.0.0', () => {
-            console.log(`[WORKER ${process.pid}] ✅ Port Binding successful. Listening on 0.0.0.0:${PORT}`);
-        });
-
-        // Then, immediately proceed with the core's asynchronous and expensive initialization
-        await initializeCore();
-
-        // Graceful Shutdown Handler
-        process.on('SIGINT', async () => {
-            console.log(`[WORKER ${process.pid}] SIGINT received. Shutting down...`);
-            server.close(() => {
-                console.log(`[WORKER ${process.pid}] HTTP server closed.`);
-                if (sovereignCore) sovereignCore.emergencyShutdown().then(() => process.exit(0));
-                else process.exit(0);
-            });
-        });
-
     } catch (error) {
-        console.error(`💥 FATAL ERROR [${process.pid}]:`, error.stack);
+        // If the port binding fails here, the error is critical and should exit
+        console.error(`💥 FATAL PORT BINDING ERROR [${process.pid}]:`, error.stack);
         process.exit(1);
     }
+    
+    // Graceful Shutdown Handler
+    process.on('SIGINT', async () => {
+        console.log(`[WORKER ${process.pid}] SIGINT received. Shutting down...`);
+        if (server) server.close();
+        if (sovereignCore) await sovereignCore.emergencyShutdown();
+        process.exit(0);
+    });
 }
 
 function executeMasterProcess() {
