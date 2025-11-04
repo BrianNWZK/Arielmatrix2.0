@@ -706,14 +706,13 @@ class BrianNwaezikeChain extends EventEmitter {
         
         // Mainnet configuration from your logs
         this.config = {
-            CHAIN_ID: 777777,
-            RPC_URL: process.env.BWAEZI_RPC_URL || "https://rpc.winr.games",
-            EXPLORER_URL: "https://explorer.bwaezi.com",
+            CHAIN_ID: 1,
+            RPC_URL: process.env.BWAEZI_RPC_URL || "https://eth.llamarpc.com",
             SYMBOL: "bwzC",
             DECIMALS: 18,
             BLOCK_TIME: 2.5,
             NATIVE_CURRENCY: "Bwaezi",
-            CONTRACT_ADDRESS: "0x00000000000000000000000000000000000a4b05",
+            CONTRACT_ADDRESS: "0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F",
             ...config
         };
 
