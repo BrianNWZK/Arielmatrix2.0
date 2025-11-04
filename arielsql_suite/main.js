@@ -4,6 +4,7 @@
 import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
+import express from 'express';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 
 const CONFIG = {
@@ -27,6 +28,19 @@ async function executeWorkerProcess() {
   try {
     console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core...`);
 
+    // ✅ Bind to a port so Render keeps the service alive
+    const app = express();
+    const PORT = CONFIG.PORT;
+
+    app.get('/', (req, res) => {
+      res.send('🧠 BSFM Sovereign Core is alive and listening.');
+    });
+
+    app.listen(PORT, () => {
+      console.log(`[WORKER ${process.pid}] Listening on port ${PORT}`);
+    });
+
+    // ✅ Initialize the Sovereign Core
     const coreConfig = {
       token: {
         contractAddress: CONFIG.BWAEZI_KERNEL_ADDRESS,
