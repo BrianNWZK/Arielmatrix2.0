@@ -48,7 +48,6 @@ export class EnterpriseServer {
   }
 
   registerRoutes() {
-    // 🧠 Sovereign Brain Status
     this.app.get('/api/sovereign-brain', async (req, res) => {
       res.json({
         optimizationCycle: 2049,
@@ -58,7 +57,6 @@ export class EnterpriseServer {
       });
     });
 
-    // 💸 Revenue Engine
     this.app.get('/api/revenue-engine', async (req, res) => {
       const revenue = await getRevenueAnalytics('30d');
       res.json({
@@ -67,13 +65,11 @@ export class EnterpriseServer {
       });
     });
 
-    // 💰 Wallet Balances (Sovereign Address)
     this.app.get('/api/wallet-balances', async (req, res) => {
       const balances = await getWalletBalances('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA');
       res.json(balances);
     });
 
-    // 🔗 Consolidation Monitor
     this.app.get('/api/wallet/consolidation-status', async (req, res) => {
       const balances = await getConsolidationBalances();
       res.json({
@@ -83,7 +79,6 @@ export class EnterpriseServer {
       });
     });
 
-    // 🔄 Trigger Consolidation
     this.app.post('/api/wallet/consolidate', async (req, res) => {
       await consolidateSolanaWallet();
       await consolidateEthereumWallet();
@@ -91,7 +86,6 @@ export class EnterpriseServer {
       res.json({ status: 'Consolidation completed', timestamp: process.env.CONSOLIDATION_LAST_RUN });
     });
 
-    // 🚀 Send Funds Anywhere
     this.app.post('/api/wallet/send', async (req, res) => {
       const { chain, asset, to, amount } = req.body;
       try {
@@ -121,7 +115,6 @@ export class EnterpriseServer {
       }
     });
 
-    // ✅ Health Check
     this.app.get('/api/health', (req, res) => {
       res.json({
         status: 'OK',
