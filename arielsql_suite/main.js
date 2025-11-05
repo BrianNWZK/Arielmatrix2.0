@@ -1,9 +1,8 @@
-// main.js - BSFM PRODUCTION CLUSTER ENTRY POINT (IPC SYNCHRONIZED)
+// arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (GOD MODE READY)
 import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
-// Assuming these are local files in your project
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 
@@ -22,207 +21,218 @@ const CONFIG = {
     NODE_ENV: process.env.NODE_ENV || 'production',
     RPC_URLS: ["https://eth.llamarpc.com", "https://rpc.ankr.com/eth", "https://cloudflare-eth.com"],
     GOD_MODE_INTERVAL: parseInt(process.env.GOD_MODE_INTERVAL) || 5000,
-    CLUSTER_WORKERS: parseInt(process.env.CLUSTER_WORKERS) || 2, 
+    CLUSTER_WORKERS: parseInt(process.env.CLUSTER_WORKERS) || os.cpus().length,
     QUANTUM_PROCESSING_UNITS: parseInt(process.env.QUANTUM_PROCESSING_UNITS) || 8,
-    QUANTUM_ENTANGLEMENT_NODES: parseInt(process.env.QUANTUM_ENTANGLEMENT_NODES) || 16
+    QUANTUM_ENTANGLEMENT_NODES: parseInt(process.env.QUANTUM_ENTANGLEMENT_NODES) || 16,
+
+    // ✅ FIXED: AI configuration block (Ensures Omnipotent config is available)
+    ai: {
+        omnipotent: { type: 'QUANTUM_AGI', budget: 'UNLIMITED' },
+        omnipresent: { type: 'GLOBAL_MONITOR', sensitivity: 0.95 },
+        evolving: { type: 'GENETIC_ALGORITHM', mutationRate: 0.05 }
+    },
+    // Adding placeholder configs for new features to ensure core initialization
+    token: { supply: '10B' },
+    crypto: { algorithm: 'QR-ECDSA' },
+    revenue: { currency: 'BWAEZI' },
+    reality: { dimension: 'BWAEZI_REALM' },
+    cortex: { model: 'NEURAL_QUANTUM' },
+    qpu: { vendor: 'QUANTUM_X' }
+};
+
+// Database configurations (ArielSQLiteEngine)
+const DB_CONFIGS = {
+    transactions: { path: './data/ariel/transactions.db', autoBackup: true, module: 'ArielSQLiteEngine' },
+    quantum_crypto: { path: './data/quantum_crypto.db', autoBackup: true, module: 'ArielSQLiteEngine' }
 };
 
 // --- IPC PROXY FOR WORKERS (Replaces direct DB connection) ---
-// Workers use this object to send messages to the Master for DB operations.
 class ArielSQLiteEngineIpcProxy {
     constructor(dbConfig) {
         this.path = dbConfig.path;
         console.log(`[WORKER ${process.pid}] Initialized ArielSQLiteEngine **IPC Proxy**.`);
         this.nextMessageId = 0;
         this.callbacks = new Map();
+        process.on('message', this.handleMasterResponse.bind(this));
     }
     
-    // Workers only need a minimal set of DB methods proxied
-    async initialize() { return true; } // Initialization is a no-op for the proxy
-    async run(query, params) { return this.sendMessage({ cmd: 'db_run', query, params }); }
+    handleMasterResponse(msg) {
+        if (msg.cmd === 'db_response' && this.callbacks.has(msg.id)) {
+            const { resolve } = this.callbacks.get(msg.id);
+            this.callbacks.delete(msg.id);
+            resolve(msg.result);
+        } else if (msg.cmd === 'core_update' && msg.data) {
+            globalMasterCoreProxy.optimizationCycle = msg.data.optimizationCycle;
+            isCoreReady = msg.data.isCoreReady;
+        }
+    }
+    
+    sendMessage(payload) {
+        return new Promise((resolve) => {
+            const id = this.nextMessageId++;
+            this.callbacks.set(id, { resolve, reject: (err) => { throw err; } });
+            process.send({ ...payload, id, sourcePid: process.pid });
+        });
+    }
+    async initialize() { return true; } 
+    async run(query, params) { return this.sendMessage({ cmd: 'db_run', query, params }); }
     async get(query, params) { return this.sendMessage({ cmd: 'db_get', query, params }); }
     async all(query, params) { return this.sendMessage({ cmd: 'db_all', query, params }); }
-
-    sendMessage(message) {
-        return new Promise((resolve, reject) => {
-            const id = this.nextMessageId++;
-            this.callbacks.set(id, { resolve, reject });
-            
-            // Add ID and send to Master
-            process.send({ ...message, id, sourcePid: process.pid });
-            
-            // Set a timeout for safety
-            setTimeout(() => {
-                if (this.callbacks.has(id)) {
-                    this.callbacks.delete(id);
-                    reject(new Error(`IPC timeout for DB command: ${message.cmd}`));
-                }
-            }, 5000); 
-        });
-    }
-
-    handleResponse({ id, result, error }) {
-        const handler = this.callbacks.get(id);
-        if (handler) {
-            this.callbacks.delete(id);
-            if (error) {
-                handler.reject(new Error(error));
-            } else {
-                handler.resolve(result);
-            }
-        }
-    }
+    async close() { return true; } 
 }
 
-// --- 1. ASYNCHRONOUS CORE INITIALIZATION (Called AFTER port binding) ---
-async function initializeCore(dbEngineInstance) {
-    try {
-        console.log(`[WORKER ${process.pid}] Starting BSFM Sovereign Core initialization...`);
-        
-        const coreConfig = {
-            token: { contractAddress: CONFIG.BWAEZI_KERNEL_ADDRESS, founderAddress: CONFIG.SOVEREIGN_WALLET, rpcUrl: CONFIG.RPC_URLS[0], privateKey: CONFIG.PRIVATE_KEY },
-            db: { path: './data/arielsql_production.db', maxConnections: os.cpus().length * 2 },
-            revenue: { initialRiskTolerance: 0.05, cycleLengthMs: 10 },
-            crypto: { algorithm: 'PQC_DILITHIUM_KYBER', keyRefreshInterval: 3600000 },
-            ai: { omnipotent: { logLevel: 'high' }, omnipresent: { networkInterfaces: os.networkInterfaces() }, evolving: { geneticPoolSize: 1000 } },
-            quantum: { processingUnits: CONFIG.QUANTUM_PROCESSING_UNITS, entanglementNodes: CONFIG.QUANTUM_ENTANGLEMENT_NODES }
-        };
+// =========================================================================
+// MASTER PROCESS EXECUTION 
+// =========================================================================
 
-        // ⬇️ CRITICAL: Pass the DB Proxy to the Core
-        sovereignCore = new ProductionSovereignCore(coreConfig, dbEngineInstance);
-        
-        await sovereignCore.initialize();
-        isCoreReady = true; // Set flag once initialization is complete
-
-        console.log(`[WORKER ${process.pid}] BSFM Sovereign Core is fully operational.`);
-    } catch (error) {
-        console.error(`💥 CORE INITIALIZATION ERROR [${process.pid}]:`, error.stack);
-        // Do NOT exit here. Keep the port bound, but respond 503 on the API.
-    }
-}
-
-// --- 2. WORKER PROCESS (Starts Server Synchronously) ---
-function executeWorkerProcess() {
-    // Instantiate the IPC Proxy for the worker's core
-    const dbProxy = new ArielSQLiteEngineIpcProxy(CONFIG.db);
-    
-    // Set up IPC listener for responses from the Master
-    process.on('message', (message) => {
-        if (message.cmd === 'db_response' && message.id !== undefined) {
-            dbProxy.handleResponse(message);
-        }
-        if (message.cmd === 'core_update' && message.optimizationCycle !== undefined) {
-            globalMasterCoreProxy.optimizationCycle = message.optimizationCycle;
-        }
-    });
-
-    const app = express();
-    const PORT = CONFIG.PORT;
-    let server = null;
-
-    // Health Check Endpoint and Status Route
-    app.get('/', (req, res) => {
-        if (isCoreReady) {
-            res.status(200).send(`🧠 BSFM Sovereign Core **operational** (Cycle ${globalMasterCoreProxy.optimizationCycle}).`);
-        } else {
-            res.status(503).send('⏳ BSFM Sovereign Core is initializing. Please wait...');
-        }
-    });
-    
-    try {
-        server = app.listen(PORT, '0.0.0.0', () => {
-            console.log(`[WORKER ${process.pid}] ✅ CRITICAL BINDING SUCCESSFUL. Listening on 0.0.0.0:${PORT}`);
-            
-            // Only AFTER the server is successfully bound, start the heavy asynchronous core initialization,
-            // passing the IPC proxy instead of a real DB instance.
-            initializeCore(dbProxy);
-        });
-    } catch (error) {
-        console.error(`💥 FATAL PORT BINDING ERROR [${process.pid}]:`, error.stack);
-        process.exit(1);
-    }
-    
-    // Graceful Shutdown Handler
-    process.on('SIGINT', async () => {
-        console.log(`[WORKER ${process.pid}] SIGINT received. Shutting down...`);
-        if (server) server.close();
-        if (sovereignCore) await sovereignCore.emergencyShutdown();
-        process.exit(0);
-    });
-}
-
-// --- 3. MASTER PROCESS (Manages State and Forks Workers) ---
 async function executeMasterProcess() {
-    console.log(`👑 MASTER PROCESS (PID ${process.pid}) — Initializing Global Core & Database...`);
-    
-    // 1. Instantiate the SINGLE, TRUE Database Engine
-    const masterDbEngine = new ArielSQLiteEngine(CONFIG.db);
-    // ⬇️ CRITICAL FIX: ArielSQLiteEngine appears to initialize itself in the constructor (as per logs), so we remove the unnecessary and crashing initialization call here.
-    // await masterDbEngine.init(); 
-    
-    // 2. Instantiate the SINGLE, TRUE Sovereign Core (for its God Mode Loop)
-    const masterCore = new ProductionSovereignCore(CONFIG, masterDbEngine);
-    await masterCore.initialize(); 
+    console.log(`👑 MASTER PROCESS (PID ${process.pid}) — Initializing Global Core & Database...`);
+    
+    // 1. Initialize Centralized Databases
+    const masterDbEngine = new ArielSQLiteEngine(DB_CONFIGS.transactions);
+    await masterDbEngine.initialize();
+    
+    const quantumCryptoDbEngine = new ArielSQLiteEngine(DB_CONFIGS.quantum_crypto);
+    await quantumCryptoDbEngine.initialize();
 
-    // Update worker proxies with core state changes via broadcast
-    const broadcastCoreUpdate = () => {
-        for (const id in cluster.workers) {
-            cluster.workers[id].send({ 
-                cmd: 'core_update', 
-                optimizationCycle: masterCore.optimizationCycle 
-            });
-        }
-    };
-    setInterval(broadcastCoreUpdate, 1000); // Broadcast core state every second
+    // 2. Initialize Sovereign Core (AIGOVERNOR)
+    // Pass the main CONFIG object
+    const masterCoreInstance = new ProductionSovereignCore(CONFIG, masterDbEngine); 
+    await masterCoreInstance.initialize();
+    
+    console.log(`✅ Master Core and DBs Initialized. Starting ${CONFIG.CLUSTER_WORKERS} workers...`);
 
-    console.log("✅ MASTER CORE is fully initialized. Ready to fork workers.");
-
-    // 3. Set up IPC listener for worker DB requests
-    cluster.on('message', async (worker, message, handle) => {
-        if (message.cmd && message.cmd.startsWith('db_')) {
-            const { cmd, id, query, params, sourcePid } = message;
-            
-            try {
-                let result;
-                if (cmd === 'db_run') {
-                    result = await masterDbEngine.run(query, params);
-                } else if (cmd === 'db_get') {
-                    result = await masterDbEngine.get(query, params);
-                } else if (cmd === 'db_all') {
-                    result = await masterDbEngine.all(query, params);
-                }
-                
-                // Send response back to the worker
-                worker.send({ cmd: 'db_response', id, result });
-            } catch (error) {
-                console.error(`🛑 Master DB Error from Worker ${sourcePid}:`, error.message);
-                worker.send({ cmd: 'db_response', id, error: error.message });
-            }
-        }
-    });
-
-    // 4. Fork Workers
-    console.log(`— Forking ${CONFIG.CLUSTER_WORKERS} workers to handle web traffic...`);
-    for (let i = 0; i < CONFIG.CLUSTER_WORKERS; i++) {
-        cluster.fork();
-    }
-
-    cluster.on('exit', (worker, code, signal) => {
-      console.error(`🛑 Worker ${worker.process.pid} exited with code ${code}. Respawning...`);
-      cluster.fork();
-    });
+    // 3. Fork Worker Processes
+    for (let i = 0; i < CONFIG.CLUSTER_WORKERS; i++) {
+        const worker = cluster.fork();
+        
+        // Handle IPC messages from workers
+        worker.on('message', async (msg) => {
+            if (msg.cmd && msg.cmd.startsWith('db_')) {
+                const { cmd, id, query, params, sourcePid } = msg;
+                let result = null;
+                
+                try {
+                    if (cmd === 'db_run') {
+                        result = await masterDbEngine.run(query, params);
+                    } else if (cmd === 'db_get') {
+                        result = await masterDbEngine.get(query, params);
+                    } else if (cmd === 'db_all') {
+                        result = await masterDbEngine.all(query, params);
+                    }
+                    
+                    worker.send({ cmd: 'db_response', id, result });
+                } catch (error) {
+                    console.error(`🛑 Master DB Error from Worker ${sourcePid}:`, error.message);
+                    worker.send({ cmd: 'db_response', id, error: error.message });
+                }
+            }
+        });
+    }
+    
+    // 4. Cluster Management
+    cluster.on('exit', (worker, code, signal) => {
+        console.log(`⚠️ Worker ${worker.process.pid} died with code ${code}, signal ${signal}. Respawning...`);
+        cluster.fork();
+    });
+    
+    // 5. Master-to-Worker communication loop (To sync Core state)
+    setInterval(() => {
+        const coreState = {
+            isCoreReady: masterCoreInstance.isInitialized,
+            optimizationCycle: masterCoreInstance.optimizationCycle
+        };
+        for (const id in cluster.workers) {
+            if (cluster.workers[id]) {
+                cluster.workers[id].send({ cmd: 'core_update', data: coreState });
+            }
+        }
+    }, 1000); 
 }
 
-// --- EXECUTION START ---
+// =========================================================================
+// WORKER PROCESS EXECUTION 
+// =========================================================================
+
+async function executeWorkerProcess() {
+    console.log(`🛠️ WORKER PROCESS (PID ${process.pid}) — Initializing IPC and Core Proxy...`);
+
+    // 1. Initialize IPC Proxy for DB access
+    const workerDbProxy = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.transactions);
+    
+    // 2. Initialize Sovereign Core (AIGOVERNOR) using the IPC Proxy
+    sovereignCore = new ProductionSovereignCore(CONFIG, workerDbProxy);
+    await sovereignCore.initialize(); 
+
+    // =========================================================
+    // 🔥 CRITICAL FIX 3: Start Web Server for Port Binding
+    // =========================================================
+    const app = express();
+    app.use(express.json());
+
+    // Middleware to ensure Core is initialized 
+    app.use((req, res, next) => {
+        if (!isCoreReady) { 
+            return res.status(503).json({ 
+                error: 'Service Unavailable',
+                message: 'Global Sovereign Core is still initializing. Try again shortly.' 
+            });
+        }
+        req.sovereignCore = sovereignCore; 
+        next();
+    });
+
+    // Production Endpoints (Example: Health Check and Core Status)
+    app.get('/status', (req, res) => {
+        res.json({
+            status: 'OK',
+            pid: process.pid,
+            coreReady: isCoreReady,
+            optimizationCycle: globalMasterCoreProxy.optimizationCycle,
+            environment: CONFIG.NODE_ENV,
+            sovereignCoreStatus: sovereignCore.getStatus() // Use the enhanced status method
+        });
+    });
+    
+    // Add more API endpoints here (e.g., /api/revenue, /api/governance)
+
+    const PORT = CONFIG.PORT;
+    try {
+        const server = app.listen(PORT, () => {
+            console.log(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT}`);
+        });
+        
+        // Enhanced Error handling for port binding
+        server.on('error', (err) => {
+            console.error(`🛑 WORKER PROCESS FAILED TO BIND PORT ${PORT}:`, err.message);
+            process.exit(1);
+        });
+        
+    } catch (error) {
+        console.error(`🛑 WORKER PROCESS ERROR during express listen:`, error.message);
+        process.exit(1);
+    }
+}
+
+// =========================================================================
+// MAIN ENTRY POINT
+// =========================================================================
+
+// Use cluster.isPrimary (Node.js standard) instead of cluster.isMaster (deprecated)
 if (cluster.isPrimary) {
-    executeMasterProcess().catch(err => {
-        console.error("💥 FATAL MASTER PROCESS ERROR:", err.stack);
-        process.exit(1);
-    });
+    if (!CONFIG.PRIVATE_KEY) {
+        console.error("🛑 FATAL: PRIVATE_KEY environment variable is required.");
+        process.exit(1);
+    }
+    executeMasterProcess().catch(err => {
+        console.error('💥 FATAL MASTER PROCESS ERROR:', err.name, ':', err.message);
+        console.error(err.stack);
+        process.exit(1);
+    });
 } else {
-    if (!CONFIG.PRIVATE_KEY || !CONFIG.BWAEZI_KERNEL_ADDRESS) {
-        console.error("❌ Missing PRIVATE_KEY or BWAEZI_KERNEL_ADDRESS. Worker cannot initialize.");
-        process.exit(1);
-    }
-    executeWorkerProcess();
+    executeWorkerProcess().catch(err => {
+        console.error('💥 FATAL WORKER PROCESS ERROR:', err.name, ':', err.message);
+        console.error(err.stack);
+        process.exit(1);
+    });
 }
