@@ -12,16 +12,15 @@
       color: #e2e8f0;
       margin: 0;
       padding: 2rem;
-      overflow-x: hidden;
     }
     .dashboard {
-      display: flex;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      gap: 1.5rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 2rem;
+      max-width: 90vw;
+      margin: 0 auto;
     }
     .card {
-      flex: 0 0 320px;
       background-color: #1e293b;
       border-radius: 1rem;
       padding: 1.5rem;
@@ -29,13 +28,14 @@
       transition: transform 0.3s ease;
     }
     .card:hover {
-      transform: scale(1.03);
+      transform: scale(1.02);
     }
     h1 {
       font-size: 2rem;
       font-weight: 800;
       margin-bottom: 2rem;
       color: #38bdf8;
+      text-align: center;
     }
     h3 {
       font-size: 1.25rem;
@@ -52,37 +52,44 @@
       font-weight: bold;
       color: #f8fafc;
     }
+    .button {
+      background-color: #2563eb;
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      margin-top: 1rem;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <h1>🧠 BSFM Quantum Dashboard</h1>
   <div class="dashboard">
-    <div id="status" class="card">
-      <h3>Service Status</h3>
-      <p class="label">Status:</p><p id="statusText" class="value">Loading...</p>
-      <p class="label">Uptime:</p><p id="uptimeText" class="value">--</p>
+    <div id="agents" class="card">
+      <h3>🧩 Active Agents</h3>
+      <ul id="agentList"><li class="label">Loading...</li></ul>
+    </div>
+
+    <div id="sovereignBrain" class="card">
+      <h3>🧠 Sovereign Brain Activity</h3>
+      <div id="brainActivity"><p class="label">Loading...</p></div>
+    </div>
+
+    <div id="revenueEngine" class="card">
+      <h3>💸 Revenue Engine</h3>
+      <div id="revenueActivity"><p class="label">Loading...</p></div>
     </div>
 
     <div id="wallets" class="card">
-      <h3>💰 Wallet Balances</h3>
-      <div id="walletList">
-        <p class="label">Loading...</p>
-      </div>
+      <h3>💰 Wallet Control</h3>
+      <div id="walletList"><p class="label">Loading...</p></div>
+      <button class="button" onclick="sendFunds()">Send Funds</button>
     </div>
 
-    <div id="logs" class="card">
-      <h3>📜 System Logs</h3>
-      <pre id="logText" class="text-sm text-slate-400 whitespace-pre-wrap">Loading logs...</pre>
-    </div>
-
-    <div id="products" class="card">
-      <h3>🛍️ Shopify Products</h3>
-      <div id="productList"><p class="label">Loading...</p></div>
-    </div>
-
-    <div id="bitcoin" class="card">
-      <h3>₿ Bitcoin Price</h3>
-      <p class="label">USD:</p><p id="btcPrice" class="value">--</p>
+    <div id="consolidation" class="card">
+      <h3>🔗 Multi-Chain Consolidation</h3>
+      <div id="consolidationStatus"><p class="label">Loading...</p></div>
+      <button class="button" onclick="triggerConsolidation()">Trigger Consolidation</button>
     </div>
   </div>
 
@@ -99,74 +106,80 @@
       }
     }
 
-    function renderStatus(data) {
-      document.getElementById('statusText').textContent = data.status || 'Unknown';
-      document.getElementById('uptimeText').textContent = data.uptime ? `${data.uptime.toFixed(2)}s` : '--';
+    function renderAgents(data) {
+      const agentList = document.getElementById('agentList');
+      agentList.innerHTML = '';
+      data.agents.forEach(agent => {
+        const li = document.createElement('li');
+        li.className = 'value';
+        li.textContent = agent;
+        agentList.appendChild(li);
+      });
+    }
+
+    function renderBrain(data) {
+      const div = document.getElementById('brainActivity');
+      div.innerHTML = `<p class="label">Cycle:</p><p class="value">${data.optimizationCycle}</p>
+                       <p class="label">Status:</p><p class="value">${data.status}</p>`;
+    }
+
+    function renderRevenue(data) {
+      const div = document.getElementById('revenueActivity');
+      div.innerHTML = `<p class="label">Treasury:</p><p class="value">$${data.treasury}</p>
+                       <p class="label">Monthly Revenue:</p><p class="value">$${data.monthly}</p>`;
     }
 
     function renderWallets(data) {
       const walletList = document.getElementById('walletList');
       walletList.innerHTML = '';
-      const chains = ['ethereum', 'solana', 'bwaezi'];
-      const symbols = { ethereum: 'ETH', solana: 'SOL', bwaezi: 'bwzC' };
-
-      chains.forEach(chain => {
-        const balance = data[chain];
-        if (balance) {
-          const div = document.createElement('div');
-          div.innerHTML = `
-            <p class="label">${chain.toUpperCase()} (${symbols[chain]}):</p>
-            <p class="value">${balance.native} ${symbols[chain]}</p>
-            <p class="label text-xs">USDT: ${balance.usdt || 0}</p>
-          `;
-          walletList.appendChild(div);
-        }
+      Object.entries(data).forEach(([chain, balance]) => {
+        const div = document.createElement('div');
+        div.innerHTML = `<p class="label">${chain.toUpperCase()}:</p>
+                         <p class="value">${balance.native} ${chain}</p>
+                         <p class="label text-xs">USDT: ${balance.usdt}</p>`;
+        walletList.appendChild(div);
       });
     }
 
-    function renderLogs(data) {
-      const logText = document.getElementById('logText');
-      logText.textContent = Array.isArray(data.logs) ? data.logs.join('\n') : (data.message || 'No logs available.');
+    function renderConsolidation(data) {
+      const div = document.getElementById('consolidationStatus');
+      div.innerHTML = `<p class="label">Last Run:</p><p class="value">${data.lastRun}</p>
+                       <p class="label">Status:</p><p class="value">${data.status}</p>`;
     }
 
-    function renderProducts(data) {
-      const productList = document.getElementById('productList');
-      productList.innerHTML = '';
-      if (Array.isArray(data.products)) {
-        data.products.forEach(p => {
-          const div = document.createElement('div');
-          div.innerHTML = `<p class="value">${p.name}</p><p class="label text-sm">${p.price}</p>`;
-          productList.appendChild(div);
-        });
-      } else {
-        productList.innerHTML = `<p class="label">${data.message || 'No products found.'}</p>`;
-      }
+    function sendFunds() {
+      fetch('/api/wallet/send', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => alert(`Funds sent: ${data.txHash}`))
+        .catch(err => alert('Error sending funds'));
     }
 
-    function renderBitcoin(data) {
-      const price = data.price;
-      document.getElementById('btcPrice').textContent = price ? `$${price.toLocaleString()}` : 'N/A';
+    function triggerConsolidation() {
+      fetch('/api/wallet/consolidate', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => alert(`Consolidation triggered: ${data.status}`))
+        .catch(err => alert('Error triggering consolidation'));
     }
 
     // Fetch all data
-    fetchData('/api/health', renderStatus, () => {
-      document.getElementById('statusText').textContent = 'Unavailable';
+    fetchData('/api/agents', renderAgents, () => {
+      document.getElementById('agentList').innerHTML = '<li class="label">Error loading agents</li>';
+    });
+
+    fetchData('/api/sovereign-brain', renderBrain, () => {
+      document.getElementById('brainActivity').innerHTML = '<p class="label">Error loading brain activity</p>';
+    });
+
+    fetchData('/api/revenue-engine', renderRevenue, () => {
+      document.getElementById('revenueActivity').innerHTML = '<p class="label">Error loading revenue</p>';
     });
 
     fetchData('/api/wallet-balances', renderWallets, () => {
       document.getElementById('walletList').innerHTML = '<p class="label">Error loading balances</p>';
     });
 
-    fetchData('/api/logs', renderLogs, () => {
-      document.getElementById('logText').textContent = 'Error loading logs';
-    });
-
-    fetchData('/api/shopify/products', renderProducts, () => {
-      document.getElementById('productList').innerHTML = '<p class="label">Error loading products</p>';
-    });
-
-    fetchData('/api/bitcoin-price', renderBitcoin, () => {
-      document.getElementById('btcPrice').textContent = 'Error';
+    fetchData('/api/wallet/consolidation-status', renderConsolidation, () => {
+      document.getElementById('consolidationStatus').innerHTML = '<p class="label">Error loading consolidation status</p>';
     });
   </script>
 </body>
