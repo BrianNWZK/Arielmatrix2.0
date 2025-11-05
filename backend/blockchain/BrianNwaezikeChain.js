@@ -116,7 +116,7 @@ import {
     getBwaeziProvider,
     getEthereumAccount,
     getSolanaKeypair,
-    getBwaeziAccount,
+    getBwaeziWallet,
     consolidateRevenue
 } from '../agents/wallet.js';
 
