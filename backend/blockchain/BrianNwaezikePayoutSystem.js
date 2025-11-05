@@ -43,7 +43,7 @@ import { ConfigUtils } from "../../config/bwaezi-config.js";
 // CORE PAYOUT SYSTEM - PRODUCTION READY
 // =========================================================================
 
-export class BrianNwaezikePayoutSystem extends EventEmitter {
+export default class BrianNwaezikePayoutSystem extends EventEmitter {
     constructor(db, sovereignCore, config = {}) {
         super();
         this.config = config;
