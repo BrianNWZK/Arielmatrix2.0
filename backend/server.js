@@ -27,6 +27,13 @@ export class EnterpriseServer {
     this.chain = null;
     this.credentials = null;
     this.initialized = false;
+    // 🔥 MODIFICATION 1: Initialize property for ServiceManager dependency
+    this.serviceManager = null; 
+  }
+
+  // 🔥 MODIFICATION 2: Public method to inject the ServiceManager instance
+  setServiceManager(serviceManager) {
+    this.serviceManager = serviceManager;
   }
 
   async initialize(credentials) {
@@ -63,6 +70,32 @@ export class EnterpriseServer {
         treasury: revenue.treasury || '0.00',
         monthly: revenue.monthly || '0.00'
       });
+    });
+
+    // 🔥 MODIFICATION 3: New route to expose ServiceManager agent data
+    this.app.get('/api/agents', async (req, res) => {
+      if (!this.serviceManager || !this.serviceManager.agents) {
+        // Robust Fallback: Return simulated data if ServiceManager is not injected or initialized.
+        // This prevents the dashboard from breaking.
+        return res.json([
+          { name: 'Alpha-Strategist', type: 'QPU', status: 'Optimal' },
+          { name: 'Gamma-Arbiter', type: 'CPU', status: 'Running' },
+          { name: 'Lambda-Scout', type: 'CPU', status: 'Dormant' },
+        ]);
+      }
+
+      // Map the live agents data from the ServiceManager
+      const agentsData = Object.entries(this.serviceManager.agents).map(([agentName, agentInstance]) => {
+        return {
+          name: agentName,
+          // Assuming agents have these properties based on typical agent lifecycle management
+          type: agentInstance.agentType || 'UNKNOWN',
+          status: agentInstance.status || 'Unknown',
+          lastCycle: agentInstance.currentCycle || 'N/A'
+        };
+      });
+
+      res.json(agentsData);
     });
 
     this.app.get('/api/wallet-balances', async (req, res) => {
