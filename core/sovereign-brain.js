@@ -1,66 +1,81 @@
-// core/sovereign-brain.js — BSFM SOVEREIGN BRAIN (v18.1)
-// 🧠 QUANTUM-AWARE INTELLIGENCE-FIRST ORCHESTRATOR - IPC & DEPENDENCY INJECTION READY
+// core/sovereign-brain.js — BSFM Sovereign Brain (Quantum-Aware, GOD MODE, Full Capacity)
 
 import { EventEmitter } from 'events';
-// ⬇️ REMOVED: No longer locally instantiates the DB engine
-// import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; 
 import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { BWAEZIToken } from '../modules/bwaezi-token.js';
 import { QuantumResistantCrypto } from '../modules/quantum-resistant-crypto/index.js';
 import ProductionOmnipotentBWAEZI from '../modules/production-omnipotent-bwaezi.js';
 import ProductionOmnipresentBWAEZI from '../modules/production-omnipresent-bwaezi.js';
 import ProductionEvolvingBWAEZI from '../modules/production-evolving-bwaezi.js';
+// Maintaining all required core components (New features confirmed from logs)
+import { QuantumNeuroCortex } from '../core/consciousness-reality-engine.js'; 
+import { RealityProgrammingEngine } from '../core/consciousness-reality-advanced.js';
+import { QuantumProcessingUnit } from '../core/quantumhardware-layer.js'; 
 
 export class ProductionSovereignCore {
-  // ⬇️ REVISED: Accepts the injected DB Engine instance
-  constructor(config, dbEngineInstance = null) {
+  // 🔥 NOVELTY/ROBUSTNESS: Added default {} for config to prevent initialization errors
+  constructor(config = {}, dbEngineInstance = null) { 
     this.config = config;
+    this.dbEngine = dbEngineInstance;
     this.isInitialized = false;
     this.godModeActive = false;
     this.optimizationCycle = 0;
     this.modules = new Map();
-    
-    // ⬇️ CRITICAL FIX 1: Use the injected DB instance (Master DB or Worker Proxy)
-    this.dbEngine = dbEngineInstance;
-    
-    // ⬇️ CRITICAL FIX 2: Pass 'this' (the core instance) and the DB instance
-    // This breaks the circular dependency with SovereignRevenueEngine
-    this.revenueEngine = new SovereignRevenueEngine(config.revenue, this, dbEngineInstance);
-    
-    this.tokenKernel = new BWAEZIToken(config.token);
-    this.quantumCrypto = new QuantumResistantCrypto(config.crypto);
-    
-    // Pass the INJECTED dbEngine to other AI modules
-    this.omnipotentAI = new ProductionOmnipotentBWAEZI(config.ai.omnipotent, this.dbEngine, this.quantumCrypto);
-    this.omnipresentAI = new ProductionOmnipresentBWAEZI(config.ai.omnipresent, this.dbEngine, this.quantumCrypto);
-    this.evolvingAI = new ProductionEvolvingBWAEZI(config.ai.evolving, this.dbEngine, this.quantumCrypto);
-  }
 
-  async initialize() {
-    console.log(`🧠 Initializing Sovereign Core (PID: ${process.pid})...`);
+    // 🔥 CRITICAL FIX & NOVELTY: Safe access to nested configuration objects
+    const aiConfig = this.config.ai || {}; 
+    const coreConfig = {
+        token: this.config.token || {},
+        crypto: this.config.crypto || {},
+        revenue: this.config.revenue || {},
+        reality: this.config.reality || {},
+        cortex: this.config.cortex || {}
+    };
+
+    // Core Pillars Initialization
+    this.tokenKernel = new BWAEZIToken(coreConfig.token);
+    this.quantumCrypto = new QuantumResistantCrypto(coreConfig.crypto);
     
-    // Ensure DB is present (either real or IPC proxy)
-    if (!this.dbEngine) {
-        throw new Error("CRITICAL: ProductionSovereignCore cannot initialize without a valid ArielSQLiteEngine instance or IPC proxy.");
+    // AI Trinity Initialization (Omnipotent, Omnipresent, Evolving)
+    this.omnipotentAI = new ProductionOmnipotentBWAEZI(aiConfig.omnipotent || {}, this.dbEngine, this.quantumCrypto);
+    this.omnipresentAI = new ProductionOmnipresentBWAEZI(aiConfig.omnipresent || {}, this.dbEngine, this.quantumCrypto);
+    this.evolvingAI = new ProductionEvolvingBWAEZI(aiConfig.evolving || {}, this.dbEngine, this.quantumCrypto);
+    
+    // Reality and Consciousness Engines
+    this.realityEngine = new RealityProgrammingEngine(coreConfig.reality, this.dbEngine);
+    this.neuroCortex = new QuantumNeuroCortex(coreConfig.cortex, this.dbEngine);
+    
+    // Revenue Engine (CRITICAL DEPENDENCY INJECTION)
+    this.revenueEngine = new SovereignRevenueEngine(coreConfig.revenue, this, dbEngineInstance);
+    
+    // Hardware Abstraction
+    this.qpu = new QuantumProcessingUnit(this.config.qpu || {}); 
+  }
+  
+  async initialize() {
+    if (this.isInitialized) return;
+    console.log('🔬 Initializing Sovereign Core modules...');
+    
+    if (this.dbEngine && this.dbEngine.initialize) {
+        await this.dbEngine.initialize();
     }
     
     await Promise.all([
-      // This calls the Master DB initialize (real I/O) or Worker Proxy initialize (no-op)
-      this.dbEngine.initialize(), 
-      this.tokenKernel.initialize(),
-      this.quantumCrypto.initialize()
+        this.tokenKernel.initialize(),
+        this.quantumCrypto.initialize(),
+        this.revenueEngine.initialize(), 
+        this.omnipotentAI.initialize(),
+        this.omnipresentAI.initialize(),
+        this.evolvingAI.initialize(),
+        this.realityEngine.initialize(),
+        this.neuroCortex.initialize(),
+        this.qpu.initialize()
     ]);
 
-    this.godModeActive = true;
     this.isInitialized = true;
-    this.startGodModeLoop(); // Starts the optimization cycle
-
-    await Promise.all([
-      this.revenueEngine.initialize(this.tokenKernel),
-      this.omnipotentAI.initialize(),
-      this.omnipresentAI.initialize(),
-      this.evolvingAI.initialize()
-    ]);
+    this.godModeActive = true;
+    
+    setImmediate(() => this.startGodModeLoop());
 
     console.log("✅ Sovereign Core fully operational.");
     return true;
@@ -71,30 +86,53 @@ export class ProductionSovereignCore {
 
     try {
       this.optimizationCycle++;
-      // Log PID to confirm which process (Master or Worker) is running the loop
       console.log(`🔥 GOD MODE CYCLE #${this.optimizationCycle} (PID: ${process.pid})`); 
 
       const globalState = await this.omnipresentAI.captureGlobalState();
-      const optimizationPlan = await this.omnipotentAI.generateOptimizationPlan(globalState);
-      const evolutionResult = await this.evolvingAI.applyGeneticOptimization(optimizationPlan);
-      await this.omnipresentAI.executePlan(evolutionResult.optimizedInstructions);
-      
-      // Revenue Engine uses the core's optimization cycle result
-      await this.revenueEngine.finalizeCycle(this.optimizationCycle, evolutionResult.performanceMetrics);
+      const plan = await this.omnipotentAI.generateOptimizationPlan(globalState);
+      const evolved = await this.evolvingAI.applyGeneticOptimization(plan);
 
-      // Use setImmediate to ensure non-blocking, event-loop friendly recursion
+      // Execute Reality Programming and Cognitive Processing
+      await this.realityEngine.orchestrateReality(evolved.optimizedInstructions);
+      await this.neuroCortex.processCognitiveSignals(globalState);
+      
+      await this.revenueEngine.finalizeCycle(this.optimizationCycle, evolved.performanceMetrics);
+
       setImmediate(() => this.startGodModeLoop());
 
     } catch (error) {
-      console.error(`🛑 GOD MODE ERROR (Cycle ${this.optimizationCycle}, PID: ${process.pid}):`, error.message);
+      console.error(`🛑 GOD MODE ERROR (Cycle ${this.optimizationCycle}):`, error.message);
       await this.evolvingAI.initiateEmergencyProtocol(error);
       setTimeout(() => this.startGodModeLoop(), 5000);
     }
   }
 
+  async executeQuantumComputation(task, data, options) {
+    // Delegates to Omnipotent AI
+    return this.omnipotentAI.execute(task, data, options);
+  }
+
   async emergencyShutdown() {
     this.godModeActive = false;
     this.isInitialized = false;
-    console.log(`💀 Sovereign Core shutdown complete on PID ${process.pid}.`);
+    console.log("💀 Sovereign Brain shutdown complete.");
+  }
+
+  getStatus() {
+    return {
+      godMode: this.godModeActive,
+      optimizationCycle: this.optimizationCycle,
+      quantumOperations: this.qpu.getStatus().isOnline,
+      consciousnessEngineActive: this.neuroCortex.getStatus().active,
+      modulesLoaded: ['TrinityAI', 'RevenueEngine', 'RealityEngine', 'NeuroCortex', 'QPU']
+    };
+  }
+
+  async getQuantumStatus() {
+    return {
+      entanglementStability: this.qpu.getStability(),
+      realityCoherence: this.realityEngine.getCoherence(),
+      temporalResonanceActive: true
+    };
   }
 }
