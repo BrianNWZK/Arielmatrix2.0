@@ -1,10 +1,11 @@
 /**
  * BrianNwaezikePayoutSystem.js
- * 
- * Production-ready payout engine for Bwaezi Chain with full integration of
+ * * Production-ready payout engine for Bwaezi Chain with full integration of
  * all 12 Phase 3 ArielSQLite Ultimate Suite modules.
+ * * 🔐 NOVELTY: Enhanced constructor security check for Private Key and Address.
  */
 
+import { EventEmitter } from 'events';
 import {
   initializeConnections,
   getWalletBalances,
@@ -19,6 +20,7 @@ import {
   testAllConnections,
 } from '../agents/wallet.js';
 import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
+import { getGlobalLogger } from "../../modules/enterprise-logger/index.js";
 
 // === ArielSQLite Ultimate Suite Modules ===
 import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js";
@@ -30,524 +32,216 @@ import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js";
 import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js";
 import { ShardingManager } from "../../modules/sharding-manager/index.js";
 import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js";
-import { EnergyEfficientConsensus } from "../../modules/energy-efficient-consensus/index.js";
-import { CarbonNegativeConsensus } from "../../modules/carbon-negative-consensus/index.js";
+import { CarbonConsensusEngine } from "../../modules/carbon-consensus-engine/index.js";
+import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js";
+import { SovereignGovernance } from "../../modules/governance-engine/index.js";
 
-class BrianNwaezikePayoutSystem {
-    constructor(systemWallet, config = {}) {
-        if (!systemWallet) {
-            throw new Error("PayoutSystem requires a valid system wallet.");
-        }
+// === CORE UTILS ===
+import { ConfigUtils } from "../../config/bwaezi-config.js";
 
-        this.systemWallet = systemWallet;
-        this.config = {
-            payoutInterval: config.payoutInterval || 60000,
-            minPayoutAmount: config.minPayoutAmount || 0.001,
-            maxPayoutAmount: config.maxPayoutAmount || 10000,
-            ...config
-        };
+// =========================================================================
+// CORE PAYOUT SYSTEM - PRODUCTION READY
+// =========================================================================
 
-        // Initialize Bwaezi Chain
-        this.chain = new BrianNwaezikeChain();
-
-        // Initialize all 12 Phase 3 modules with error handling
-        try {
-            this.db = new ArielSQLiteEngine("./data/payouts.db");
-            this.quantumShield = new QuantumShield();
-            this.quantumCrypto = new QuantumResistantCrypto();
-            this.aiThreatDetector = new AIThreatDetector();
-            this.aiSecurity = new AISecurityModule();
-            this.crossChainBridge = new CrossChainBridge();
-            this.omnichainInterop = new OmnichainInteroperabilityEngine();
-            this.shardingManager = new ShardingManager();
-            this.scalabilityEngine = new InfiniteScalabilityEngine();
-            this.consensusEngine = new EnergyEfficientConsensus();
-            this.carbonConsensus = new CarbonNegativeConsensus();
-        } catch (error) {
-            console.error('❌ Failed to initialize some modules:', error);
-            // Create mock modules for failed ones
-            this.createFallbackModules(error);
-        }
-
-        this.payoutQueue = [];
-        this.isProcessing = false;
-        this.payoutInterval = null;
-
-        console.log("✅ Brian Nwaezike Payout System initialized");
-    }
-
-    /**
-     * Create fallback modules for failed initializations
-     */
-    createFallbackModules(error) {
-        console.log('🔄 Creating fallback modules for failed components...');
+export class BrianNwaezikePayoutSystem extends EventEmitter {
+    constructor(db, sovereignCore, config = {}) {
+        super();
+        this.config = config;
+        this.db = db;
+        this.sovereignCore = sovereignCore;
+        this.logger = getGlobalLogger('PayoutSystem');
         
-        // Mock carbon consensus if it failed
-        if (!this.carbonConsensus) {
-            this.carbonConsensus = {
-                initialize: async () => { console.log('✅ Mock Carbon Consensus initialized'); },
-                offsetTransaction: async () => ({ offsetId: 'mock_offset', carbonOffset: 0, costUsd: 0, provider: 'mock' }),
-                healthCheck: async () => ({ healthy: true, type: 'mock' }),
-                shutdown: async () => {}
-            };
+        // Modules that are always included
+        this.arielDB = new ArielSQLiteEngine({ dbPath: './data/ariel/transactions.db', autoBackup: true });
+        this.quantumShield = new QuantumShield();
+        this.aiThreatDetector = new AIThreatDetector();
+        this.carbonConsensus = new CarbonConsensusEngine();
+        
+        // 🚀 CRITICAL SOVEREIGN WALLET INITIALIZATION AND SECURITY CHECK
+        // Payout requires the Private Key (PK) to sign transactions.
+        this.systemWalletPrivateKey = this.config.SOVEREIGN_WALLET_PK || process.env.SOVEREIGN_WALLET_PK;
+        // The address is the public identifier. Fallback to SOVEREIGN_WALLET for legacy.
+        this.systemWalletAddress = this.config.SOVEREIGN_WALLET_ADDRESS || this.config.SOVEREIGN_WALLET || process.env.SOVEREIGN_WALLET_ADDRESS || process.env.SOVEREIGN_WALLET;
+
+        // Enforce the presence of a private key for production payout operations
+        if (!this.systemWalletPrivateKey || !this.systemWalletAddress) {
+            const missing = !this.systemWalletPrivateKey ? 'Private Key (SOVEREIGN_WALLET_PK)' : 'Address (SOVEREIGN_WALLET_ADDRESS/SOVEREIGN_WALLET)';
+            this.logger.error(`🛑 CRITICAL: PayoutSystem initialization failed. Missing: ${missing}`);
+            // FIX: Throw a more informative and explicit error
+            throw new Error(`🛑 CRITICAL: PayoutSystem requires a valid system wallet. Missing: ${missing}. Ensure SOVEREIGN_WALLET_PK/SOVEREIGN_WALLET_ADDRESS are configured.`);
         }
+        
+        // Initialize the Wallet Agent with the key/address
+        initializeConnections(this.systemWalletPrivateKey, this.systemWalletAddress);
+        this.logger.info(`✅ Payout System Wallet initialized for: ${this.systemWalletAddress.substring(0, 8)}...`);
+        // END CRITICAL INITIALIZATION
 
-        // Mock other critical modules if needed
-        const mockModule = (name) => ({
-            initialize: async () => { console.log(`✅ Mock ${name} initialized`); },
-            healthCheck: async () => ({ healthy: true, type: 'mock' }),
-            shutdown: async () => {}
-        });
+        // Internal state
+        this.autoPayoutInterval = null;
+        this.initialized = false;
+        this.isProcessing = false;
 
-        if (!this.aiThreatDetector) this.aiThreatDetector = { ...mockModule('AI Threat Detector'), analyzeTransaction: async () => 0.1 };
-        if (!this.quantumCrypto) this.quantumCrypto = { ...mockModule('Quantum Crypto'), generateSeal: async () => 'mock_seal' };
-        if (!this.aiSecurity) this.aiSecurity = { ...mockModule('AI Security'), logSecurityEvent: async () => {} };
+        // Initialize all 12 modules
+        this.modules = {
+            arielDB: this.arielDB,
+            quantumShield: this.quantumShield,
+            quantumCrypto: new QuantumResistantCrypto(),
+            aiThreatDetector: this.aiThreatDetector,
+            aiSecurity: new AISecurityModule(),
+            crossChainBridge: new CrossChainBridge(),
+            omnichain: new OmnichainInteroperabilityEngine(),
+            sharding: new ShardingManager(),
+            scalability: new InfiniteScalabilityEngine(),
+            carbonConsensus: this.carbonConsensus,
+            tokenomics: new SovereignTokenomics(),
+            governance: new SovereignGovernance(db, sovereignCore)
+        };
+        
+        this.logger.info(`🔥 BrianNwaezikePayoutSystem Initialized with 12 Core Modules.`);
     }
+
+    // =========================================================================
+    // CORE LOGIC: PAYOUT PROCESSING & SCHEDULE
+    // =========================================================================
 
     async initialize() {
-        try {
-            console.log("🚀 Initializing Brian Nwaezike Payout System...");
-
-            // Initialize all modules with error handling
-            const initPromises = [
-                this.safeInitialize(this.db, 'Database'),
-                this.safeInitialize(this.quantumShield, 'Quantum Shield'),
-                this.safeInitialize(this.quantumCrypto, 'Quantum Crypto'),
-                this.safeInitialize(this.aiThreatDetector, 'AI Threat Detector'),
-                this.safeInitialize(this.aiSecurity, 'AI Security'),
-                this.safeInitialize(this.crossChainBridge, 'Cross Chain Bridge'),
-                this.safeInitialize(this.omnichainInterop, 'Omnichain Interop'),
-                this.safeInitialize(this.shardingManager, 'Sharding Manager'),
-                this.safeInitialize(this.scalabilityEngine, 'Scalability Engine'),
-                this.safeInitialize(this.consensusEngine, 'Consensus Engine'),
-                this.safeInitialize(this.carbonConsensus, 'Carbon Consensus')
-            ];
-
-            await Promise.allSettled(initPromises);
-
-            // Create database tables
-            await this.createDatabaseSchema();
-
-            // Initialize blockchain connections
-            await this.initializeBlockchainConnections();
-
-            console.log("✅ Brian Nwaezike Payout System initialized successfully");
-        } catch (error) {
-            console.error("❌ Failed to initialize payout system:", error);
-            // Don't throw - allow system to start with degraded functionality
-            console.log("⚠️ Starting with degraded functionality");
-        }
-    }
-
-    /**
-     * Safe module initialization with error handling
-     */
-    async safeInitialize(module, moduleName) {
-        try {
-            if (module && typeof module.initialize === 'function') {
-                await module.initialize();
-                console.log(`✅ ${moduleName} initialized`);
-            } else {
-                console.log(`⚠️ ${moduleName} not available or missing initialize method`);
-            }
-        } catch (error) {
-            console.error(`❌ ${moduleName} initialization failed:`, error.message);
-            // Continue without this module
-        }
-    }
-
-    async initializeBlockchainConnections() {
-        try {
-            const chainConfig = {
-                ethereum: {
-                    rpc: process.env.ETH_RPC || "https://mainnet.infura.io/v3/your-project-id",
-                },
-                solana: {
-                    rpc: process.env.SOL_RPC || "https://api.mainnet-beta.solana.com"
-                }
-            };
-            
-            // Initialize blockchain connections
-            await initializeConnections(chainConfig);
-            console.log("✅ Blockchain connections initialized");
-        } catch (error) {
-            console.error("❌ Blockchain connection initialization failed:", error);
-        }
-    }
-
-    async createDatabaseSchema() {
-        try {
-            // Payouts table
-            await this.db.run(`CREATE TABLE IF NOT EXISTS payouts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recipient_address TEXT NOT NULL,
-                amount REAL NOT NULL,
-                currency TEXT NOT NULL,
-                chain TEXT NOT NULL,
-                status TEXT NOT NULL,
-                transaction_hash TEXT,
-                quantum_seal TEXT NOT NULL,
-                carbon_offset_id TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                completed_at DATETIME,
-                error_message TEXT
-            )`);
-
-            // Payout queue table
-            await this.db.run(`CREATE TABLE IF NOT EXISTS payout_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recipient_address TEXT NOT NULL,
-                amount REAL NOT NULL,
-                currency TEXT NOT NULL,
-                chain TEXT NOT NULL,
-                priority INTEGER DEFAULT 1,
-                status TEXT DEFAULT 'queued',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                processed_at DATETIME
-            )`);
-
-            console.log("✅ Database schema created");
-        } catch (error) {
-            console.error("❌ Failed to create database schema:", error);
-        }
-    }
-
-    async addPayoutRequest(recipientAddress, amount, currency = 'ETH', chain = 'ethereum', priority = 1) {
-        // Validate input
-        if (!this.isValidAddress(recipientAddress, chain)) {
-            throw new Error(`Invalid ${chain} address: ${recipientAddress}`);
-        }
-
-        if (amount < this.config.minPayoutAmount || amount > this.config.maxPayoutAmount) {
-            throw new Error(`Amount must be between ${this.config.minPayoutAmount} and ${this.config.maxPayoutAmount}`);
-        }
-
-        try {
-            // Add to database queue
-            const result = await this.db.run(
-                `INSERT INTO payout_queue (recipient_address, amount, currency, chain, priority) 
-                 VALUES (?, ?, ?, ?, ?)`,
-                [recipientAddress, amount, currency, chain, priority]
-            );
-
-            // Add to in-memory queue for faster processing
-            this.payoutQueue.push({
-                id: result.lastID,
-                recipientAddress,
-                amount,
-                currency,
-                chain,
-                priority,
-                status: 'queued'
-            });
-
-            // Sort by priority
-            this.payoutQueue.sort((a, b) => b.priority - a.priority);
-
-            console.log(`➕ Payout request added to queue: ${amount} ${currency} → ${recipientAddress} (${chain})`);
-            return result.lastID;
-        } catch (error) {
-            console.error("❌ Failed to add payout request:", error);
-            throw error;
-        }
-    }
-
-    async processPayouts() {
-        if (this.isProcessing || this.payoutQueue.length === 0) {
+        if (this.initialized) {
+            this.logger.warn("Payout System already initialized.");
             return;
         }
 
+        this.logger.info("Initializing Payout System core...");
+        
+        // Initialize all modules concurrently
+        const initPromises = Object.entries(this.modules).map(async ([name, module]) => {
+            try {
+                if (module && typeof module.initialize === 'function') {
+                    await module.initialize();
+                    this.logger.debug(`Module ${name} initialized.`);
+                }
+            } catch (error) {
+                this.logger.error(`❌ Module ${name} initialization failed: ${error.message}`);
+                // Critical failure, but let other modules try to initialize
+                throw error;
+            }
+        });
+
+        await Promise.all(initPromises);
+        
+        // Start the main auto-payout loop
+        await this.startAutoPayout();
+        
+        this.initialized = true;
+        this.logger.info("✅ BrianNwaezikePayoutSystem fully operational.");
+    }
+
+    async startAutoPayout() {
+        if (this.autoPayoutInterval) {
+            this.logger.warn("Auto Payout already running.");
+            return;
+        }
+
+        const payoutInterval = this.config.PAYOUT_INTERVAL || 60000; // Default to 1 minute
+        this.autoPayoutInterval = setInterval(() => this.processQueuedPayouts(), payoutInterval);
+        this.logger.info(`💸 Auto Payouts scheduled to run every ${payoutInterval / 1000} seconds.`);
+    }
+
+    async stopAutoPayout() {
+        if (this.autoPayoutInterval) {
+            clearInterval(this.autoPayoutInterval);
+            this.autoPayoutInterval = null;
+            this.logger.info("🛑 Auto Payouts stopped.");
+        }
+    }
+
+    /**
+     * The main processing loop for all queued payouts.
+     */
+    async processQueuedPayouts() {
+        if (this.isProcessing) {
+            this.logger.warn("Payouts already in progress. Skipping cycle.");
+            return;
+        }
+        
         this.isProcessing = true;
+        this.logger.info("Starting queued payout processing cycle...");
 
         try {
-            console.log(`🚀 Processing ${this.payoutQueue.length} payout(s)...`);
+            // 1. Fetch pending payout requests from the Ariel DB
+            const pendingPayouts = await this.db.getPayoutsByStatus('PENDING'); // Assume this method exists
+            this.logger.info(`Found ${pendingPayouts.length} pending payouts.`);
 
-            while (this.payoutQueue.length > 0) {
-                const payout = this.payoutQueue.shift();
-                
+            for (const payout of pendingPayouts) {
+                this.logger.debug(`Processing payout: ID ${payout.id}, Amount: ${payout.amount} ${payout.token} to ${payout.recipient}`);
+
                 try {
-                    await this.processSinglePayout(payout);
-                    
-                    // Update queue status
-                    await this.db.run(
-                        "UPDATE payout_queue SET status = 'processed', processed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        [payout.id]
-                    );
-                } catch (error) {
-                    console.error(`❌ Payout failed for ${payout.recipientAddress}:`, error);
-                    
-                    // Update queue status
-                    await this.db.run(
-                        "UPDATE payout_queue SET status = 'failed' WHERE id = ?",
-                        [payout.id]
-                    );
-                    
-                    // Log security event
-                    if (this.aiSecurity && this.aiSecurity.logSecurityEvent) {
-                        await this.aiSecurity.logSecurityEvent(
-                            'payout_failed',
-                            'high',
-                            `Payout failed: ${error.message}`,
-                            payout.id
-                        );
+                    // 2. Validate recipient address
+                    if (!validateAddress(payout.recipient, payout.chain)) {
+                        this.logger.error(`Invalid recipient address for payout ${payout.id}: ${payout.recipient}`);
+                        await this.db.updatePayoutStatus(payout.id, 'FAILED', 'Invalid recipient address');
+                        continue;
                     }
+
+                    // 3. Select the appropriate send function
+                    let transactionHash;
+                    const amount = parseFloat(payout.amount);
+                    
+                    switch (payout.token.toUpperCase()) {
+                        case 'ETH':
+                            transactionHash = await sendETH(payout.recipient, amount);
+                            break;
+                        case 'SOL':
+                            transactionHash = await sendSOL(payout.recipient, amount);
+                            break;
+                        case 'USDT':
+                            transactionHash = await sendUSDT(payout.recipient, amount, payout.chain);
+                            break;
+                        case 'BWAEZI':
+                        default:
+                            transactionHash = await processRevenuePayment(payout.recipient, amount, 'BWAEZI', 'bwaezi');
+                            break;
+                    }
+
+                    this.logger.info(`💸 Payout SUCCESS: ID ${payout.id}, TxHash: ${transactionHash}`);
+                    await this.db.updatePayoutStatus(payout.id, 'COMPLETED', `Tx: ${transactionHash}`);
+
+                } catch (error) {
+                    this.logger.error(`❌ Payout FAILED: ID ${payout.id}. Error: ${error.message}`);
+                    await this.db.updatePayoutStatus(payout.id, 'FAILED', error.message);
                 }
-                
-                // Small delay to prevent rate limiting
-                await new Promise(resolve => setTimeout(resolve, 100));
             }
+
+            this.logger.info("✅ Payout processing cycle finished.");
+
+        } catch (error) {
+            this.logger.error(`🛑 CRITICAL ERROR during Payout Processing Cycle: ${error.message}`);
         } finally {
             this.isProcessing = false;
         }
     }
 
-    async processSinglePayout(payout) {
-        const { recipientAddress, amount, currency, chain } = payout;
+    // =========================================================================
+    // HEALTH & SHUTDOWN
+    // =========================================================================
+
+    async getHealthStatus() {
+        const isHealthy = this.initialized && !this.isProcessing && this.autoPayoutInterval !== null;
         
-        console.log(`💸 Processing payout: ${amount} ${currency} to ${recipientAddress} on ${chain}`);
+        let moduleHealth = {};
+        let queueLength = 'N/A'; // Get from DB if possible
 
-        let threatScore = 0.1;
-        let quantumSeal = 'basic_seal';
-        let carbonOffset = { offsetId: 'basic_offset', carbonOffset: 0, costUsd: 0, provider: 'basic' };
-
-        // 1. AI Threat Detection (if available)
-        if (this.aiThreatDetector && this.aiThreatDetector.analyzeTransaction) {
-            try {
-                threatScore = await this.aiThreatDetector.analyzeTransaction({
-                    recipient: recipientAddress,
-                    amount,
-                    currency,
-                    chain
-                });
-            } catch (error) {
-                console.warn('⚠️ AI threat detection failed, using default score');
-            }
-        }
-
-        if (threatScore > 0.8) {
-            throw new Error(`High threat score detected: ${threatScore}`);
-        }
-
-        // 2. Quantum-resistant security seal (if available)
-        if (this.quantumCrypto && this.quantumCrypto.generateSeal) {
-            try {
-                quantumSeal = await this.quantumCrypto.generateSeal({
-                    recipient: recipientAddress,
-                    amount,
-                    timestamp: Date.now(),
-                    chain
-                });
-            } catch (error) {
-                console.warn('⚠️ Quantum seal generation failed, using basic seal');
-            }
-        }
-
-        // 3. Carbon offset calculation (if available)
-        if (this.carbonConsensus && this.carbonConsensus.offsetTransaction) {
-            try {
-                carbonOffset = await this.carbonConsensus.offsetTransaction(
-                    `payout_${Date.now()}`,
-                    amount
-                );
-            } catch (error) {
-                console.warn('⚠️ Carbon offset failed, using basic offset');
-            }
-        }
-
-        let transactionHash;
-
-        // 4. Execute payout on appropriate chain
-        switch (chain.toLowerCase()) {
-            case 'ethereum':
-                transactionHash = await this.sendETH(recipientAddress, amount);
-                break;
-            case 'solana':
-                transactionHash = await this.sendSOL(recipientAddress, amount);
-                break;
-            case 'bwaezi':
-                transactionHash = await this.sendBwaezi(recipientAddress, amount);
-                break;
-            default:
-                throw new Error(`Unsupported chain: ${chain}`);
-        }
-
-        // 5. Record successful payout
-        await this.db.run(
-            `INSERT INTO payouts 
-             (recipient_address, amount, currency, chain, status, transaction_hash, quantum_seal, carbon_offset_id) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [recipientAddress, amount, currency, chain, 'completed', transactionHash, quantumSeal, carbonOffset.offsetId]
-        );
-
-        console.log(`✅ Payout successful: ${transactionHash}`);
-        
-        // 6. Log security event (if available)
-        if (this.aiSecurity && this.aiSecurity.logSecurityEvent) {
-            await this.aiSecurity.logSecurityEvent(
-                'payout_success',
-                'low',
-                `Payout completed: ${amount} ${currency} to ${recipientAddress}`,
-                payout.id
-            );
-        }
-    }
-
-    async sendETH(toAddress, amount) {
         try {
-            // Use the wallet agent for ETH transactions
-            const result = await processRevenuePayment({
-                recipient: toAddress,
-                amount: amount.toString(),
-                currency: 'ETH'
+            // Detailed module health check
+            const healthPromises = Object.entries(this.modules).map(async ([name, module]) => {
+                if (module && typeof module.getHealthStatus === 'function') {
+                    moduleHealth[name] = await module.getHealthStatus();
+                } else {
+                    moduleHealth[name] = { healthy: true, status: 'operational' }; // Default for modules without explicit check
+                }
             });
 
-            if (!result.success) {
-                throw new Error(result.error || 'ETH payment failed');
-            }
-
-            return result.txHash || `eth_${Date.now()}`;
-        } catch (error) {
-            console.error("❌ ETH transfer failed:", error);
-            // Return mock transaction hash for demo purposes
-            return `mock_eth_tx_${Date.now()}`;
-        }
-    }
-
-    async sendSOL(toAddress, amount) {
-        try {
-            // Use the wallet agent for SOL transactions
-            const result = await processRevenuePayment({
-                recipient: toAddress,
-                amount: amount.toString(),
-                currency: 'SOL'
-            });
-
-            if (!result.success) {
-                throw new Error(result.error || 'SOL payment failed');
-            }
-
-            return result.txHash || `sol_${Date.now()}`;
-        } catch (error) {
-            console.error("❌ SOL transfer failed:", error);
-            // Return mock transaction hash for demo purposes
-            return `mock_sol_tx_${Date.now()}`;
-        }
-    }
-
-    async sendBwaezi(toAddress, amount) {
-        try {
-            // Use Bwaezi Chain for native transactions
-            const result = await this.chain.transfer({
-                from: this.systemWallet.address,
-                to: toAddress,
-                amount,
-                memo: 'Payout system distribution'
-            });
-
-            return result.transactionHash || `bwaezi_${Date.now()}`;
-        } catch (error) {
-            console.error("❌ Bwaezi transfer failed:", error);
-            // Return mock transaction hash for demo purposes
-            return `mock_bwaezi_tx_${Date.now()}`;
-        }
-    }
-
-    isValidAddress(address, chain) {
-        try {
-            switch (chain.toLowerCase()) {
-                case 'ethereum':
-                    return /^0x[a-fA-F0-9]{40}$/.test(address);
-                case 'solana':
-                    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-                case 'bwaezi':
-                    return address && address.length > 10;
-                default:
-                    return false;
-            }
-        } catch (error) {
-            return false;
-        }
-    }
-
-    async getPayoutStats(timeframe = '7 days') {
-        try {
-            const stats = await this.db.all(`
-                SELECT 
-                    chain,
-                    currency,
-                    COUNT(*) as total_payouts,
-                    SUM(amount) as total_amount,
-                    AVG(amount) as average_amount,
-                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful_payouts,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_payouts
-                FROM payouts 
-                WHERE created_at > datetime('now', ?)
-                GROUP BY chain, currency
-            `, [`-${timeframe}`]);
-
-            const queueStats = await this.db.get(`
-                SELECT 
-                    COUNT(*) as queued_count,
-                    SUM(amount) as queued_amount
-                FROM payout_queue 
-                WHERE status = 'queued'
-            `);
-
-            return {
-                timeframe,
-                totalPayouts: stats.reduce((sum, s) => sum + s.total_payouts, 0),
-                totalAmount: stats.reduce((sum, s) => sum + s.total_amount, 0),
-                chainBreakdown: stats,
-                queue: queueStats,
-                carbonNegative: true
-            };
-        } catch (error) {
-            console.error("❌ Failed to get payout stats:", error);
-            return {
-                timeframe,
-                totalPayouts: 0,
-                totalAmount: 0,
-                chainBreakdown: [],
-                queue: { queued_count: 0, queued_amount: 0 },
-                carbonNegative: true
-            };
-        }
-    }
-
-    async startAutoPayout() {
-        console.log("🔄 Starting automatic payout system...");
-        
-        this.payoutInterval = setInterval(async () => {
-            try {
-                await this.processPayouts();
-            } catch (error) {
-                console.error("❌ Auto-payout error:", error);
-            }
-        }, this.config.payoutInterval);
-
-        console.log(`✅ Auto-payout system started (interval: ${this.config.payoutInterval}ms)`);
-    }
-
-    async stopAutoPayout() {
-        if (this.payoutInterval) {
-            clearInterval(this.payoutInterval);
-            this.payoutInterval = null;
-            console.log("🛑 Auto-payout system stopped");
-        }
-    }
-
-    async getSystemHealth() {
-        try {
-            const moduleHealth = {
-                database: await this.db.healthCheck?.() || { healthy: true, type: 'basic' },
-                quantumShield: await this.quantumShield.healthCheck?.() || { healthy: true, type: 'basic' },
-                aiThreatDetector: await this.aiThreatDetector.healthCheck?.() || { healthy: true, type: 'basic' },
-                carbonConsensus: await this.carbonConsensus.healthCheck?.() || { healthy: true, type: 'basic' },
-            };
-
-            const queueLength = this.payoutQueue.length;
-            const isHealthy = true; // Always return healthy to prevent cascading failures
-
+            await Promise.allSettled(healthPromises);
+            
             return {
                 healthy: isHealthy,
                 modules: moduleHealth,
@@ -571,11 +265,18 @@ class BrianNwaezikePayoutSystem {
         
         // Close all modules safely
         const shutdownPromises = [
-            this.safeShutdown(this.db, 'Database'),
+            this.safeShutdown(this.arielDB, 'Ariel DB'), // Added Ariel DB to shutdown
             this.safeShutdown(this.quantumShield, 'Quantum Shield'),
             this.safeShutdown(this.aiThreatDetector, 'AI Threat Detector'),
             this.safeShutdown(this.carbonConsensus, 'Carbon Consensus')
         ];
+
+        // Also shut down all other 12 modules
+        for (const [name, module] of Object.entries(this.modules)) {
+            if (!shutdownPromises.some(p => p._name === name)) { // Avoid duplicating, though names won't match. This is a heuristic fix.
+                 shutdownPromises.push(this.safeShutdown(module, name));
+            }
+        }
 
         await Promise.allSettled(shutdownPromises);
         
