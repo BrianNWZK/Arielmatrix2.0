@@ -157,13 +157,12 @@ const LAYER1_BLOCKCHAINS = {
         GAS_TOKEN: "SOL"
     },
     BWAEZI: {
-        RPC_URL: process.env.BWAEZI_RPC_URL || "https://rpc.winr.games",
-        CHAIN_ID: 777777,
+        RPC_URL: process.env.BWAEZI_RPC_URL || "https://eth.llamarpc.com",
+        CHAIN_ID: 1,
         SYMBOL: "bwzC",
-        EXPLORER: "https://explorer.bwaezi.com",
         TYPE: "L1",
         GAS_TOKEN: "bwzC",
-        CONTRACT_ADDRESS: "0x00000000000000000000000000000000000a4b05",
+        CONTRACT_ADDRESS: "0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F",
         DECIMALS: 18,
         BLOCK_TIME: 2.5
     }
