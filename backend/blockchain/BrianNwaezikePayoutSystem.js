@@ -20,24 +20,23 @@ import {
   testAllConnections,
 } from '../agents/wallet.js';
 import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
-import { getGlobalLogger } from "../../modules/enterprise-logger/index.js";
-
+import { getGlobalLogger } from "../modules/enterprise-logger/index.js"; // 🛠️ FIX: Adjusted path
 // === ArielSQLite Ultimate Suite Modules ===
-import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js";
-import { QuantumShield } from "../../modules/quantum-shield/index.js";
-import { QuantumResistantCrypto } from "../../modules/quantum-resistant-crypto/index.js";
-import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js";
-import { AISecurityModule } from "../../modules/ai-security-module/index.js";
-import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js";
-import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js";
-import { ShardingManager } from "../../modules/sharding-manager/index.js";
-import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js";
-import { CarbonConsensusEngine } from "../../modules/carbon-consensus-engine/index.js";
-import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js";
-import { SovereignGovernance } from "../../modules/governance-engine/index.js";
+import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js"; // 🛠️ FIX: Adjusted path
+import { QuantumShield } from "../modules/quantum-shield/index.js"; // 🛠️ FIX: Adjusted path
+import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js"; // 🛠️ FIX: Adjusted path
+import { AIThreatDetector } from "../modules/ai-threat-detector/index.js"; // 🛠️ FIX: Adjusted path
+import { AISecurityModule } from "../modules/ai-security-module/index.js"; // 🛠️ FIX: Adjusted path
+import { CrossChainBridge } from "../modules/cross-chain-bridge/index.js"; // 🛠️ FIX: Adjusted path
+import { OmnichainInteroperabilityEngine } from "../modules/omnichain-interoperability/index.js"; // 🛠️ FIX: Adjusted path
+import { ShardingManager } from "../modules/sharding-manager/index.js"; // 🛠️ FIX: Adjusted path
+import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js"; // 🛠️ FIX: Adjusted path
+import { CarbonConsensusEngine } from "../modules/carbon-consensus-engine/index.js"; // 🛠️ FIX: Adjusted path
+import { SovereignTokenomics } from "../modules/tokenomics-engine/index.js"; // 🛠️ FIX: Adjusted path
+import { SovereignGovernance } from "../modules/governance-engine/index.js"; // 🛠️ FIX: Adjusted path
 
 // === CORE UTILS ===
-import { ConfigUtils } from "../../config/bwaezi-config.js";
+import { ConfigUtils } from "../config/bwaezi-config.js"; // 🛠️ FIX: Adjusted path
 
 // =========================================================================
 // CORE PAYOUT SYSTEM - PRODUCTION READY
@@ -50,13 +49,13 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
         this.db = db;
         this.sovereignCore = sovereignCore;
         this.logger = getGlobalLogger('PayoutSystem');
-        
+
         // Modules that are always included
         this.arielDB = new ArielSQLiteEngine({ dbPath: './data/ariel/transactions.db', autoBackup: true });
         this.quantumShield = new QuantumShield();
         this.aiThreatDetector = new AIThreatDetector();
         this.carbonConsensus = new CarbonConsensusEngine();
-        
+
         // 🚀 CRITICAL SOVEREIGN WALLET INITIALIZATION AND SECURITY CHECK
         // Payout requires the Private Key (PK) to sign transactions.
         this.systemWalletPrivateKey = this.config.SOVEREIGN_WALLET_PK || process.env.SOVEREIGN_WALLET_PK;
@@ -65,7 +64,8 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
         // Enforce the presence of a private key for production payout operations
         if (!this.systemWalletPrivateKey || !this.systemWalletAddress) {
-            const missing = !this.systemWalletPrivateKey ? 'Private Key (SOVEREIGN_WALLET_PK)' : 'Address (SOVEREIGN_WALLET_ADDRESS/SOVEREIGN_WALLET)';
+            const missing = !this.systemWalletPrivateKey ?
+            'Private Key (SOVEREIGN_WALLET_PK)' : 'Address (SOVEREIGN_WALLET_ADDRESS/SOVEREIGN_WALLET)';
             this.logger.error(`🛑 CRITICAL: PayoutSystem initialization failed. Missing: ${missing}`);
             // FIX: Throw a more informative and explicit error
             throw new Error(`🛑 CRITICAL: PayoutSystem requires a valid system wallet. Missing: ${missing}. Ensure SOVEREIGN_WALLET_PK/SOVEREIGN_WALLET_ADDRESS are configured.`);
@@ -88,7 +88,8 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             quantumCrypto: new QuantumResistantCrypto(),
             aiThreatDetector: this.aiThreatDetector,
             aiSecurity: new AISecurityModule(),
-            crossChainBridge: new CrossChainBridge(),
+            crossChainBridge: 
+            new CrossChainBridge(),
             omnichain: new OmnichainInteroperabilityEngine(),
             sharding: new ShardingManager(),
             scalability: new InfiniteScalabilityEngine(),
@@ -96,7 +97,6 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             tokenomics: new SovereignTokenomics(),
             governance: new SovereignGovernance(db, sovereignCore)
         };
-        
         this.logger.info(`🔥 BrianNwaezikePayoutSystem Initialized with 12 Core Modules.`);
     }
 
@@ -111,23 +111,23 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
         }
 
         this.logger.info("Initializing Payout System core...");
-        
         // Initialize all modules concurrently
         const initPromises = Object.entries(this.modules).map(async ([name, module]) => {
             try {
                 if (module && typeof module.initialize === 'function') {
                     await module.initialize();
                     this.logger.debug(`Module ${name} initialized.`);
+  
                 }
             } catch (error) {
                 this.logger.error(`❌ Module ${name} initialization failed: ${error.message}`);
                 // Critical failure, but let other modules try to initialize
                 throw error;
+        
             }
         });
 
         await Promise.all(initPromises);
-        
         // Start the main auto-payout loop
         await this.startAutoPayout();
         
@@ -141,7 +141,8 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             return;
         }
 
-        const payoutInterval = this.config.PAYOUT_INTERVAL || 60000; // Default to 1 minute
+        const payoutInterval = this.config.PAYOUT_INTERVAL || 60000;
+        // Default to 1 minute
         this.autoPayoutInterval = setInterval(() => this.processQueuedPayouts(), payoutInterval);
         this.logger.info(`💸 Auto Payouts scheduled to run every ${payoutInterval / 1000} seconds.`);
     }
@@ -168,12 +169,11 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
         try {
             // 1. Fetch pending payout requests from the Ariel DB
-            const pendingPayouts = await this.db.getPayoutsByStatus('PENDING'); // Assume this method exists
+            const pendingPayouts = await this.db.getPayoutsByStatus('PENDING');
+            // Assume this method exists
             this.logger.info(`Found ${pendingPayouts.length} pending payouts.`);
-
             for (const payout of pendingPayouts) {
                 this.logger.debug(`Processing payout: ID ${payout.id}, Amount: ${payout.amount} ${payout.token} to ${payout.recipient}`);
-
                 try {
                     // 2. Validate recipient address
                     if (!validateAddress(payout.recipient, payout.chain)) {
@@ -212,7 +212,6 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             }
 
             this.logger.info("✅ Payout processing cycle finished.");
-
         } catch (error) {
             this.logger.error(`🛑 CRITICAL ERROR during Payout Processing Cycle: ${error.message}`);
         } finally {
@@ -226,7 +225,6 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
     async getHealthStatus() {
         const isHealthy = this.initialized && !this.isProcessing && this.autoPayoutInterval !== null;
-        
         let moduleHealth = {};
         let queueLength = 'N/A'; // Get from DB if possible
 
@@ -234,12 +232,12 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             // Detailed module health check
             const healthPromises = Object.entries(this.modules).map(async ([name, module]) => {
                 if (module && typeof module.getHealthStatus === 'function') {
+                    
                     moduleHealth[name] = await module.getHealthStatus();
                 } else {
                     moduleHealth[name] = { healthy: true, status: 'operational' }; // Default for modules without explicit check
                 }
             });
-
             await Promise.allSettled(healthPromises);
             
             return {
@@ -260,7 +258,6 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
     async shutdown() {
         console.log("🛑 Shutting down Payout System...");
-        
         await this.stopAutoPayout();
         
         // Close all modules safely
@@ -273,13 +270,14 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
         // Also shut down all other 12 modules
         for (const [name, module] of Object.entries(this.modules)) {
-            if (!shutdownPromises.some(p => p._name === name)) { // Avoid duplicating, though names won't match. This is a heuristic fix.
+            // This is a heuristic fix to avoid duplicating the shutdown of core modules listed above.
+            // A more robust check might be needed if module names are dynamic.
+            if (!['arielDB', 'quantumShield', 'aiThreatDetector', 'carbonConsensus'].includes(name)) { 
                  shutdownPromises.push(this.safeShutdown(module, name));
             }
         }
 
         await Promise.allSettled(shutdownPromises);
-        
         console.log("✅ Payout System shut down successfully");
     }
 
