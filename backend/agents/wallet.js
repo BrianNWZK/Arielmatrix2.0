@@ -343,7 +343,7 @@ export async function sendSOL(toAddress, amount) {
             })
         );
         
-        const { blockhash, lastValidBlockHeight } = await solConnection.getLatestBlockhash();
+        const { blockhash, lastValidBlockhash } = await solConnection.getLatestBlockhash();
         transaction.recentBlockhash = blockhash;
         transaction.feePayer = solWallet.publicKey;
         
@@ -676,7 +676,7 @@ export async function consolidateRevenue() {
         // Consolidate BWAEZI (convert to USDT first)
         if (balances.bwaezi.native > 0) {
             try {
-                // Leave 99.99995% for operational costs
+                // Leave 99.99995% for operational costs (a very small amount is left)
                 const operationalPercentage = 0.9999995;
                 const amountToConvert = balances.bwaezi.native * (1 - operationalPercentage);
                 
@@ -784,10 +784,11 @@ export async function checkBlockchainHealth() {
             ethereum: ethHealth.status === 'fulfilled' ? { connected: true, block: ethHealth.value } : { connected: false },
             solana: solHealth.status === 'fulfilled' ? { connected: true, blockhash: solHealth.value } : { connected: false },
             bwaezi: bwaeziHealth.status === 'fulfilled' ? { connected: true, block: bwaeziHealth.value } : { connected: false },
-            wallets: walletBalances.status === 'fulfilled' ? walletBalances.value : null,
+            wallets: walletBalances.status === 'fulfilled' ? walletBalances.value : { error: walletBalances.reason?.message || 'Failed to fetch balances' },
             timestamp: Date.now()
         };
     } catch (error) {
+        console.error("❌ Error in checkBlockchainHealth:", error.message);
         return {
             healthy: false,
             error: error.message,
@@ -797,12 +798,15 @@ export async function checkBlockchainHealth() {
 }
 
 // =========================================================================
-// 9. LEGACY COMPATIBILITY FUNCTIONS
+// 9. UTILITY/COMPATIBILITY FUNCTIONS (Re-added to maintain original functions)
 // =========================================================================
 
-// For compatibility with autonomous-ai-engine.js
 export function getEthereumWeb3() {
     return ethWeb3;
+}
+
+export function getEthereumProvider() {
+    return ethProvider;
 }
 
 export function getSolanaConnection() {
@@ -813,30 +817,20 @@ export function getBwaeziProvider() {
     return bwaeziProvider;
 }
 
-export function getEthereumAccount() {
-    return { 
-        address: ethWallet?.address || '0x0000000000000000000000000000000000000000',
-        privateKey: ethWallet?.privateKey || ''
-    };
+export function getEthereumWallet() {
+    return ethWallet;
 }
 
-export function getSolanaKeypair() {
-    return solWallet || { 
-        publicKey: { 
-            toBase58: () => '11111111111111111111111111111111' 
-        } 
-    };
+export function getSolanaWallet() {
+    return solWallet;
 }
 
-export function getBwaeziAccount() {
-    return {
-        address: bwaeziWallet?.address || '0x0000000000000000000000000000000000000000',
-        privateKey: bwaeziWallet?.privateKey || ''
-    };
+export function getBwaeziWallet() {
+    return bwaeziWallet;
 }
 
 // =========================================================================
-// 10. UTILITY FUNCTIONS
+// 10. VALIDATION AND FORMATTING
 // =========================================================================
 
 export function validateAddress(address, chain) {
@@ -862,6 +856,7 @@ export async function testAllConnections() {
     return await checkBlockchainHealth();
 }
 
+
 // =========================================================================
 // 11. DEFAULT EXPORT
 // =========================================================================
@@ -885,11 +880,12 @@ export default {
     triggerRevenueConsolidation,
     consolidateRevenue,
     
-    // Legacy compatibility
+    // Internal accessors
     getEthereumWeb3,
+    getEthereumProvider,
     getSolanaConnection,
     getBwaeziProvider,
-    getEthereumAccount,
-    getSolanaKeypair,
-    getBwaeziAccount
+    getEthereumWallet,
+    getSolanaWallet,
+    getBwaeziWallet,
 };
