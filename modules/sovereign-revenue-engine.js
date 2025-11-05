@@ -43,7 +43,7 @@ export class SovereignRevenueEngine extends EventEmitter {
         super();
         this.config = {
             // These are placeholder; production config should be in BWAEZI_SOVEREIGN_CONFIG
-            revenueCheckInterval: 5000, 
+            revenueCheckInterval: 5000, 
             godModeOptimizationInterval: 300000,
             ...config
         };
