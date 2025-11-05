@@ -82,6 +82,14 @@ export const ZERO_KNOWLEDGE_COMPLIANCE = {
 // SOVEREIGN ECONOMIC ZONE CONFIGURATION
 // =========================================================================
 export const BWAEZI_SOVEREIGN_CONFIG = {
+    // 🔐 CRITICAL WALLET CONFIGURATION (Fix for LOG17 Error)
+    // Wallet is required for the Payout System to sign transactions.
+    SOVEREIGN_WALLET_ADDRESS: process.env.SOVEREIGN_WALLET_ADDRESS || process.env.SOVEREIGN_WALLET,
+    SOVEREIGN_WALLET_PK: process.env.SOVEREIGN_WALLET_PK,
+    PAYOUT_INTERVAL: parseInt(process.env.PAYOUT_INTERVAL) || 60000, // Default 60 seconds
+    REVENUE_CONSOLIDATION_CRON: process.env.REVENUE_CONSOLIDATION_CRON || '0 0 * * *', // Daily at midnight UTC (Cron Schedule)
+    // END CRITICAL FIX
+
     SOVEREIGN_OWNER: BWAEZI_CHAIN.FOUNDER_ADDRESS,
     TOTAL_SUPPLY: 100000000,
     OWNERSHIP: {
