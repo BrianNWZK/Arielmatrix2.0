@@ -5,207 +5,169 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BSFM Quantum Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
     body {
       font-family: 'Inter', sans-serif;
-      background-color: #f0f4f8;
-      color: #1a202c;
+      background-color: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
       padding: 2rem;
+      overflow-x: hidden;
     }
-    .container {
-      max-width: 1200px;
-      margin: auto;
-      display: grid;
-      gap: 2rem;
+    .dashboard {
+      display: flex;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 1.5rem;
     }
     .card {
-      background: white;
+      flex: 0 0 320px;
+      background-color: #1e293b;
       border-radius: 1rem;
       padding: 1.5rem;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      transition: transform 0.3s ease;
     }
-    .title {
-      font-size: 1.5rem;
-      font-weight: bold;
+    .card:hover {
+      transform: scale(1.03);
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 2rem;
+      color: #38bdf8;
+    }
+    h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
       margin-bottom: 1rem;
+      color: #7dd3fc;
     }
-    input, select, button {
-      margin-top: 0.5rem;
-      padding: 0.5rem;
-      width: 100%;
-      border: 1px solid #ccc;
-      border-radius: 0.5rem;
+    .label {
+      font-weight: 500;
+      color: #94a3b8;
     }
-    button {
-      background-color: #1a202c;
-      color: white;
+    .value {
+      font-size: 1.25rem;
       font-weight: bold;
-      cursor: pointer;
+      color: #f8fafc;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="card"><div class="title">🧠 System Health</div><div id="systemHealth">Loading...</div></div>
-    <div class="card"><div class="title">💰 Wallet Balances</div><ul id="walletBalances" class="list-disc pl-6 text-sm"></ul></div>
-    <div class="card"><div class="title">📡 Active Modules</div><ul id="activeModules" class="list-disc pl-6 text-sm"></ul></div>
-    <div class="card"><div class="title">📜 Recent Activity Log</div><ul id="activityLog" class="list-disc pl-6 text-sm"></ul></div>
-
-    <!-- 🔐 Wallet Control Panel -->
-    <div class="card">
-      <div class="title">🔐 Wallet Control Panel</div>
-      <label>Chain</label>
-      <select id="chainSelect">
-        <option value="eth">Ethereum</option>
-        <option value="sol">Solana</option>
-        <option value="bwaezi">BWAEZI</option>
-      </select>
-
-      <label>Asset</label>
-      <select id="assetSelect">
-        <option value="native">Native Token</option>
-        <option value="usdt">USDT</option>
-      </select>
-
-      <label>Recipient Address</label>
-      <input type="text" id="recipientInput" placeholder="Enter wallet address" />
-
-      <label>Amount</label>
-      <input type="number" id="amountInput" placeholder="Enter amount" />
-
-      <button onclick="sendFunds()">Send Funds</button>
-      <div id="sendStatus" style="margin-top:1rem; font-weight:bold;"></div>
+  <h1>🧠 BSFM Quantum Dashboard</h1>
+  <div class="dashboard">
+    <div id="status" class="card">
+      <h3>Service Status</h3>
+      <p class="label">Status:</p><p id="statusText" class="value">Loading...</p>
+      <p class="label">Uptime:</p><p id="uptimeText" class="value">--</p>
     </div>
 
-    <!-- ⏱️ Scheduler Control -->
-    <div class="card">
-      <div class="title">⏱️ Scheduler Control</div>
-      <button onclick="pauseScheduler()">Pause Scheduler</button>
-      <button onclick="resumeScheduler()">Resume Scheduler</button>
-      <div id="schedulerStatus" style="margin-top:1rem; font-weight:bold;"></div>
+    <div id="wallets" class="card">
+      <h3>💰 Wallet Balances</h3>
+      <div id="walletList">
+        <p class="label">Loading...</p>
+      </div>
+    </div>
+
+    <div id="logs" class="card">
+      <h3>📜 System Logs</h3>
+      <pre id="logText" class="text-sm text-slate-400 whitespace-pre-wrap">Loading logs...</pre>
+    </div>
+
+    <div id="products" class="card">
+      <h3>🛍️ Shopify Products</h3>
+      <div id="productList"><p class="label">Loading...</p></div>
+    </div>
+
+    <div id="bitcoin" class="card">
+      <h3>₿ Bitcoin Price</h3>
+      <p class="label">USD:</p><p id="btcPrice" class="value">--</p>
     </div>
   </div>
 
   <script>
-    const BASE = '/'; // Use relative path for backend deployment
-
-    async function fetchSystemHealth() {
+    async function fetchData(url, onSuccess, onError) {
       try {
-        const res = await fetch(`${BASE}health`);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        document.getElementById('systemHealth').textContent = `Status: ${data.status}, Initialized: ${data.initialized}, Time: ${data.timestamp}`;
+        onSuccess(data);
       } catch (err) {
-        document.getElementById('systemHealth').textContent = '❌ Failed to fetch system health';
+        console.error(`Fetch error from ${url}:`, err);
+        onError(err);
       }
     }
 
-    async function fetchWalletBalances() {
-      try {
-        const res = await fetch(`${BASE}wallet-balances`);
-        const data = await res.json();
-        const walletList = document.getElementById('walletBalances');
-        walletList.innerHTML = '';
-        const symbolMap = { ethereum: 'ETH', solana: 'SOL', bwaezi: 'bwzC' };
-        ['ethereum', 'solana', 'bwaezi'].forEach(chain => {
-          const li = document.createElement('li');
-          li.textContent = `${chain.toUpperCase()}: ${data[chain].native} ${symbolMap[chain]}`;
-          walletList.appendChild(li);
-        });
-      } catch (err) {
-        document.getElementById('walletBalances').innerHTML = '<li>❌ Failed to fetch balances</li>';
-      }
+    function renderStatus(data) {
+      document.getElementById('statusText').textContent = data.status || 'Unknown';
+      document.getElementById('uptimeText').textContent = data.uptime ? `${data.uptime.toFixed(2)}s` : '--';
     }
 
-    async function fetchBSFMStatus() {
-      try {
-        const res = await fetch(`${BASE}bsfm-status`);
-        const data = await res.json();
-        const modules = document.getElementById('activeModules');
-        modules.innerHTML = '';
-        data.active_modules.forEach(m => {
-          const li = document.createElement('li');
-          li.textContent = m;
-          modules.appendChild(li);
-        });
-        const log = document.getElementById('activityLog');
-        log.innerHTML = '';
-        data.activity_log.forEach(entry => {
-          const li = document.createElement('li');
-          li.textContent = `${entry.timestamp} — ${entry.action} by ${entry.agent}`;
-          log.appendChild(li);
-        });
-      } catch (err) {
-        document.getElementById('activeModules').innerHTML = '<li>❌ Failed to fetch modules</li>';
-        document.getElementById('activityLog').innerHTML = '<li>❌ Failed to fetch activity log</li>';
-      }
-    }
+    function renderWallets(data) {
+      const walletList = document.getElementById('walletList');
+      walletList.innerHTML = '';
+      const chains = ['ethereum', 'solana', 'bwaezi'];
+      const symbols = { ethereum: 'ETH', solana: 'SOL', bwaezi: 'bwzC' };
 
-    async function sendFunds() {
-      const chain = document.getElementById('chainSelect').value;
-      const asset = document.getElementById('assetSelect').value;
-      const to = document.getElementById('recipientInput').value;
-      const amount = parseFloat(document.getElementById('amountInput').value);
-      const status = document.getElementById('sendStatus');
-
-      if (!to || isNaN(amount) || amount <= 0) {
-        status.textContent = '❌ Invalid address or amount';
-        return;
-      }
-
-      status.textContent = 'Sending...';
-
-      try {
-        const res = await fetch(`${BASE}wallet/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chain, asset, to, amount })
-        });
-        const result = await res.json();
-        if (result.success) {
-          status.textContent = `✅ Sent successfully. Tx: ${result.hash || result.signature}`;
-        } else {
-          status.textContent = `❌ Error: ${result.error}`;
+      chains.forEach(chain => {
+        const balance = data[chain];
+        if (balance) {
+          const div = document.createElement('div');
+          div.innerHTML = `
+            <p class="label">${chain.toUpperCase()} (${symbols[chain]}):</p>
+            <p class="value">${balance.native} ${symbols[chain]}</p>
+            <p class="label text-xs">USDT: ${balance.usdt || 0}</p>
+          `;
+          walletList.appendChild(div);
         }
-      } catch (err) {
-        status.textContent = `❌ Failed to send: ${err.message}`;
+      });
+    }
+
+    function renderLogs(data) {
+      const logText = document.getElementById('logText');
+      logText.textContent = Array.isArray(data.logs) ? data.logs.join('\n') : (data.message || 'No logs available.');
+    }
+
+    function renderProducts(data) {
+      const productList = document.getElementById('productList');
+      productList.innerHTML = '';
+      if (Array.isArray(data.products)) {
+        data.products.forEach(p => {
+          const div = document.createElement('div');
+          div.innerHTML = `<p class="value">${p.name}</p><p class="label text-sm">${p.price}</p>`;
+          productList.appendChild(div);
+        });
+      } else {
+        productList.innerHTML = `<p class="label">${data.message || 'No products found.'}</p>`;
       }
     }
 
-    async function pauseScheduler() {
-      const status = document.getElementById('schedulerStatus');
-      status.textContent = 'Pausing...';
-      try {
-        const res = await fetch(`${BASE}scheduler/pause`, { method: 'POST' });
-        const data = await res.json();
-        status.textContent = `🛑 Scheduler is now ${data.status}`;
-      } catch (err) {
-        status.textContent = `❌ Error: ${err.message}`;
-      }
+    function renderBitcoin(data) {
+      const price = data.price;
+      document.getElementById('btcPrice').textContent = price ? `$${price.toLocaleString()}` : 'N/A';
     }
 
-    async function resumeScheduler() {
-      const status = document.getElementById('schedulerStatus');
-      status.textContent = 'Resuming...';
-      try {
-        const res = await fetch(`${BASE}scheduler/resume`, { method: 'POST' });
-        const data = await res.json();
-        status.textContent = `▶️ Scheduler is now ${data.status}`;
-      } catch (err) {
-        status.textContent = `❌ Error: ${err.message}`;
-      }
-    }
+    // Fetch all data
+    fetchData('/api/health', renderStatus, () => {
+      document.getElementById('statusText').textContent = 'Unavailable';
+    });
 
-    window.onload = () => {
-      fetchSystemHealth();
-      fetchWalletBalances();
-      fetchBSFMStatus();
-    };
-    setInterval(() => {
-      fetchSystemHealth();
-      fetchWalletBalances();
-      fetchBSFMStatus();
-    }, 10000);
+    fetchData('/api/wallet-balances', renderWallets, () => {
+      document.getElementById('walletList').innerHTML = '<p class="label">Error loading balances</p>';
+    });
+
+    fetchData('/api/logs', renderLogs, () => {
+      document.getElementById('logText').textContent = 'Error loading logs';
+    });
+
+    fetchData('/api/shopify/products', renderProducts, () => {
+      document.getElementById('productList').innerHTML = '<p class="label">Error loading products</p>';
+    });
+
+    fetchData('/api/bitcoin-price', renderBitcoin, () => {
+      document.getElementById('btcPrice').textContent = 'Error';
+    });
   </script>
 </body>
 </html>
