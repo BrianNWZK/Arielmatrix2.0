@@ -20,23 +20,23 @@ import {
   testAllConnections,
 } from '../agents/wallet.js';
 import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
-import { getGlobalLogger } from "../modules/enterprise-logger/index.js"; // 🛠️ FIX: Adjusted path
+import { getGlobalLogger } from "../../modules/enterprise-logger/index.js"; // 🛠️ FIX: Reverted to correct path
 // === ArielSQLite Ultimate Suite Modules ===
-import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js"; // 🛠️ FIX: Adjusted path
-import { QuantumShield } from "../modules/quantum-shield/index.js"; // 🛠️ FIX: Adjusted path
-import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js"; // 🛠️ FIX: Adjusted path
-import { AIThreatDetector } from "../modules/ai-threat-detector/index.js"; // 🛠️ FIX: Adjusted path
-import { AISecurityModule } from "../modules/ai-security-module/index.js"; // 🛠️ FIX: Adjusted path
-import { CrossChainBridge } from "../modules/cross-chain-bridge/index.js"; // 🛠️ FIX: Adjusted path
-import { OmnichainInteroperabilityEngine } from "../modules/omnichain-interoperability/index.js"; // 🛠️ FIX: Adjusted path
-import { ShardingManager } from "../modules/sharding-manager/index.js"; // 🛠️ FIX: Adjusted path
-import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js"; // 🛠️ FIX: Adjusted path
-import { CarbonConsensusEngine } from "../modules/carbon-consensus-engine/index.js"; // 🛠️ FIX: Adjusted path
-import { SovereignTokenomics } from "../modules/tokenomics-engine/index.js"; // 🛠️ FIX: Adjusted path
-import { SovereignGovernance } from "../modules/governance-engine/index.js"; // 🛠️ FIX: Adjusted path
+import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js"; // 🛠️ FIX: Reverted to correct path
+import { QuantumShield } from "../../modules/quantum-shield/index.js"; // 🛠️ FIX: Reverted to correct path
+import { QuantumResistantCrypto } from "../../modules/quantum-resistant-crypto/index.js"; // 🛠️ FIX: Reverted to correct path
+import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js"; // 🛠️ FIX: Reverted to correct path
+import { AISecurityModule } from "../../modules/ai-security-module/index.js"; // 🛠️ FIX: Reverted to correct path
+import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js"; // 🛠️ FIX: Reverted to correct path
+import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js"; // 🛠️ FIX: Reverted to correct path
+import { ShardingManager } from "../../modules/sharding-manager/index.js"; // 🛠️ FIX: Reverted to correct path
+import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js"; // 🛠️ FIX: Reverted to correct path
+import { CarbonConsensusEngine } from "../../modules/carbon-consensus-engine/index.js"; // 🛠️ FIX: Reverted to correct path
+import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js"; // 🛠️ FIX: Reverted to correct path
+import { SovereignGovernance } from "../../modules/governance-engine/index.js"; // 🛠️ FIX: Reverted to correct path
 
 // === CORE UTILS ===
-import { ConfigUtils } from "../config/bwaezi-config.js"; // 🛠️ FIX: Adjusted path
+import { ConfigUtils } from "../../config/bwaezi-config.js"; // 🛠️ FIX: Reverted to correct path
 
 // =========================================================================
 // CORE PAYOUT SYSTEM - PRODUCTION READY
