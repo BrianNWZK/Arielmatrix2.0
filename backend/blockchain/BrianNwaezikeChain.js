@@ -103,21 +103,30 @@ import { ProductionOmnipresentBWAEZI } from "../../modules/production-omnipresen
 import { 
     initializeConnections,
     getWalletBalances,
-    sendETH,
+    getWalletAddresses,
     sendSOL,
+    sendETH,
     sendBwaezi,
     sendUSDT,
+    convertBwaeziToUSDT,
+    getBwaeziConversionRate,
+    getPendingConversions,
     processRevenuePayment,
     checkBlockchainHealth,
     validateAddress,
+    formatBalance,
+    testAllConnections,
     triggerRevenueConsolidation,
+    consolidateRevenue,
+    
+    // Internal accessors
     getEthereumWeb3,
+    getEthereumProvider,
     getSolanaConnection,
     getBwaeziProvider,
-    getEthereumAccount,
-    getSolanaKeypair,
+    getEthereumWallet,
+    getSolanaWallet,
     getBwaeziWallet,
-    consolidateRevenue
 } from '../agents/wallet.js';
 
 import { 
