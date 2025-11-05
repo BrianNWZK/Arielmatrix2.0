@@ -33,7 +33,7 @@ const CONFIG = {
         evolving: { type: 'GENETIC_ALGORITHM', mutationRate: 0.05 }
     },
     // Adding placeholder configs for new features to ensure core initialization
-    token: { supply: '10B' },
+    token: { supply: '100M' },
     crypto: { algorithm: 'QR-ECDSA' },
     revenue: { currency: 'BWAEZI' },
     reality: { dimension: 'BWAEZI_REALM' },
