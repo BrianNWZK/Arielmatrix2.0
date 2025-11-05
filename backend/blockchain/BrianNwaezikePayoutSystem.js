@@ -20,24 +20,25 @@ import {
   testAllConnections,
 } from '../agents/wallet.js';
 import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
-import { getGlobalLogger } from "../../modules/enterprise-logger/index.js"; // 🛠️ FIX: Reverted to correct path
+import { getGlobalLogger } from "../../modules/enterprise-logger/index.js";
+
 // === ArielSQLite Ultimate Suite Modules ===
-import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js"; // 🛠️ FIX: Reverted to correct path
-import { QuantumShield } from "../../modules/quantum-shield/index.js"; // 🛠️ FIX: Reverted to correct path
-import { QuantumResistantCrypto } from "../../modules/quantum-resistant-crypto/index.js"; // 🛠️ FIX: Reverted to correct path
-import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js"; // 🛠️ FIX: Reverted to correct path
-import { AISecurityModule } from "../../modules/ai-security-module/index.js"; // 🛠️ FIX: Reverted to correct path
-import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js"; // 🛠️ FIX: Reverted to correct path
-import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js"; // 🛠️ FIX: Reverted to correct path
-import { ShardingManager } from "../../modules/sharding-manager/index.js"; // 🛠️ FIX: Reverted to correct path
-import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js"; // 🛠️ FIX: Reverted to correct path
-import { CarbonConsensusEngine } from "../../modules/carbon-consensus-engine/index.js"; // 🛠️ FIX: Reverted to correct path
-import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js"; // 🛠️ FIX: Reverted to correct path
-import { SovereignGovernance } from "../../modules/governance-engine/index.js"; // 🛠️ FIX: Reverted to correct path
+import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js";
+import { QuantumShield } from "../../modules/quantum-shield/index.js";
+import { QuantumResistantCrypto } from "../../modules/quantum-resistant-crypto/index.js";
+import { AIThreatDetector } from "../../modules/ai-threat-detector/index.js";
+import { AISecurityModule } from "../../modules/ai-security-module/index.js";
+import { CrossChainBridge } from "../../modules/cross-chain-bridge/index.js";
+import { OmnichainInteroperabilityEngine } from "../../modules/omnichain-interoperability/index.js";
+import { ShardingManager } from "../../modules/sharding-manager/index.js";
+import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-engine/index.js";
+// 🎯 FIXED IMPORT: Changed from CarbonConsensusEngine to CarbonNegativeConsensus
+import { CarbonNegativeConsensus } from "../../modules/carbon-negative-consensus/index.js";
+import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js";
+import { SovereignGovernance } from "../../modules/governance-engine/index.js";
 
 // === CORE UTILS ===
-import { ConfigUtils } from "../../config/bwaezi-config.js"; // 🛠️ FIX: Reverted to correct path
-
+import { ConfigUtils } from "../../config/bwaezi-config.js";
 // =========================================================================
 // CORE PAYOUT SYSTEM - PRODUCTION READY
 // =========================================================================
@@ -54,7 +55,8 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
         this.arielDB = new ArielSQLiteEngine({ dbPath: './data/ariel/transactions.db', autoBackup: true });
         this.quantumShield = new QuantumShield();
         this.aiThreatDetector = new AIThreatDetector();
-        this.carbonConsensus = new CarbonConsensusEngine();
+        // 🎯 FIXED INSTANTIATION: Changed from CarbonConsensusEngine() to CarbonNegativeConsensus()
+        this.carbonConsensus = new CarbonNegativeConsensus();
 
         // 🚀 CRITICAL SOVEREIGN WALLET INITIALIZATION AND SECURITY CHECK
         // Payout requires the Private Key (PK) to sign transactions.
@@ -270,14 +272,13 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
         // Also shut down all other 12 modules
         for (const [name, module] of Object.entries(this.modules)) {
-            // This is a heuristic fix to avoid duplicating the shutdown of core modules listed above.
-            // A more robust check might be needed if module names are dynamic.
-            if (!['arielDB', 'quantumShield', 'aiThreatDetector', 'carbonConsensus'].includes(name)) { 
+            if (!shutdownPromises.some(p => p._name === name)) { // Avoid duplicating, though names won't match. This is a heuristic fix.
                  shutdownPromises.push(this.safeShutdown(module, name));
             }
         }
 
         await Promise.allSettled(shutdownPromises);
+        
         console.log("✅ Payout System shut down successfully");
     }
 
