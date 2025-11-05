@@ -40,14 +40,14 @@ const SOLANA_RPC_URLS = [
 
 // BWAEZI Chain Configuration
 const BWAEZI_RPC_URLS = [
-    process.env.BWAEZI_RPC_URL || 'https://rpc.winr.games',
-    'https://rpc.bwaezi.com'
+    process.env.BWAEZI_RPC_URL || 'https://eth.llamarpc.com',
+    'https://rpc.ankr.com/eth'
 ];
 
 // Contract addresses
 const USDT_CONTRACT_ADDRESS_ETH = process.env.USDT_CONTRACT_ADDRESS_ETH || '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 const USDT_MINT_ADDRESS_SOL = process.env.USDT_MINT_ADDRESS_SOL || 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
-const BWAEZI_CONTRACT_ADDRESS = process.env.BWAEZI_CONTRACT_ADDRESS || '0x00000000000000000000000000000000000a4b05';
+const BWAEZI_CONTRACT_ADDRESS = process.env.BWAEZI_CONTRACT_ADDRESS || '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F';
 
 // BWAEZI Bridge Contract ABI
 const BWAEZI_BRIDGE_ABI = [
