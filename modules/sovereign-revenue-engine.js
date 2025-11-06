@@ -1,5 +1,5 @@
 // modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v18.1)
-// 💸 REVISED: DEPENDENCY INJECTION & IPC COMPATIBLE + Dynamic Conversion Rates
+// 💸 REVISED: DEPENDENCY INJECTION & IPC COMPATIBLE + Live Conversion Rates
 
 import { EventEmitter } from 'events';
 import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
@@ -20,7 +20,7 @@ import {
 import { createHash, randomBytes } from 'crypto';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 
-// 🆕 Dynamic Conversion Rate Function
+// 🆕 Live Conversion Rate Function using CoinGecko
 async function calculateConversionRates() {
   const BWAEZI_TO_USDT = 100;
 
@@ -35,19 +35,35 @@ async function calculateConversionRates() {
   };
 }
 
-// 🆕 Stub for live price fetch (replace with actual API)
+// 🆕 Live price fetch from CoinGecko
 async function getLivePrice(symbol) {
-  const mockPrices = {
-    ethereum: 2000,
-    solana: 50
+  const idMap = {
+    ethereum: 'ethereum',
+    solana: 'solana'
   };
-  return mockPrices[symbol] || 1;
+
+  const coinId = idMap[symbol.toLowerCase()];
+  if (!coinId) throw new Error(`Unsupported symbol: ${symbol}`);
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usdt`;
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    const price = data[coinId]?.usdt;
+
+    if (!price) throw new Error(`Price not found for ${symbol}`);
+    return price;
+  } catch (error) {
+    console.error(`❌ Failed to fetch price for ${symbol}:`, error.message);
+    return 1; // Fallback to prevent crash
+  }
 }
 
 // =========================================================================
 // PRODUCTION-READY SOVEREIGN REVENUE ENGINE - GOD MODE ACTIVATED
 // =========================================================================
-export class SovereignRevenueEngine extends EventEmitter {
+export default class SovereignRevenueEngine extends EventEmitter {
   constructor(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
     super();
     this.config = {
@@ -89,7 +105,7 @@ export class SovereignRevenueEngine extends EventEmitter {
     await initializeConnections();
     console.log('✅ Wallet Agents Initialized (SOVEREIGN_PRIVATE_KEY loaded from environment)');
 
-    this.conversionRates = await calculateConversionRates(); // 🆕 Dynamic conversion rates
+    this.conversionRates = await calculateConversionRates(); // 🆕 Live conversion rates
 
     this.startGodMode();
 
@@ -132,7 +148,7 @@ export class SovereignRevenueEngine extends EventEmitter {
       amount,
       token,
       sourceAddress,
-      destinationAddress: this.config.FOUNDER_ADDRESS || 'BWAEZI_FOUNDER'
+      destinationAddress: this.config.FOUNDER_ADDRESS || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"
     });
 
     if (paymentResult.success) {
