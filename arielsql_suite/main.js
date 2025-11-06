@@ -1,4 +1,5 @@
 // arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (ULTIMATE EXECUTION MODE)
+// 🎯 CRITICAL FIX: Integrated Enterprise Logger and Sequential Initialization
 
 import process from 'process';
 import cluster from 'cluster';
@@ -6,14 +7,18 @@ import os from 'os';
 import express from 'express';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
-import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // 🆕 NOVELTY: Atomic Initialization Export
-import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; // Assuming this import path from logs
+import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; 
+import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
+
+// 🆕 CRITICAL FIX: Import Enterprise Logger Initialization/Access
+import { initializeGlobalLogger, getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 
 // Global reference for the core and IPC helpers in the worker process
 let sovereignCore = null;
 let revenueEngine = null;
 let dbInitializer = null;
 let payoutSystem = null;
+let masterLogger = null;
 
 let globalMasterCoreProxy = {
     optimizationCycle: 0, 
@@ -27,7 +32,7 @@ const CONFIG = {
     PORT: process.env.PORT || 10000,
     NODE_ENV: process.env.NODE_ENV || 'production',
     RPC_URLS: ["https://eth.llamarpc.com", "https://rpc.ankr.com/eth", "https://cloudflare-eth.com"],
-    // ... other config (kept minimal for focus)
+    // All configuration is centralized here, adhering to "REMOVE GLOBAL CONFIG"
 };
 
 // =========================================================================
@@ -35,17 +40,18 @@ const CONFIG = {
 // =========================================================================
 
 async function executeMasterProcess() {
-    console.log(`🧠 MASTER PROCESS (PID ${process.pid}) - Starting BSFM Ultimate Execution Cluster`);
+    // 🎯 CRITICAL FIX: Initialize Logger in Master Process
+    masterLogger = initializeGlobalLogger('MasterController', CONFIG);
+    masterLogger.info(`🧠 MASTER PROCESS (PID ${process.pid}) - Starting BSFM Ultimate Execution Cluster`);
 
-    // 1. Core sanity check
     if (!CONFIG.PRIVATE_KEY) {
-        console.error("🛑 FATAL: PRIVATE_KEY environment variable is required.");
+        // Using logger for FATAL error
+        masterLogger.error("🛑 FATAL: PRIVATE_KEY environment variable is required.");
         process.exit(1);
     }
     
-    // 2. Fork workers based on CPU count
     const numCPUs = os.cpus().length;
-    console.log(`🌐 Forking ${numCPUs} worker processes...`);
+    masterLogger.info(`🌐 Forking ${numCPUs} worker processes...`);
 
     for (let i = 0; i < numCPUs; i++) {
         cluster.fork();
@@ -53,12 +59,9 @@ async function executeMasterProcess() {
 
     cluster.on('exit', (worker, code, signal) => {
         // 🔥 NEVER EXIT: If a worker dies, replace it immediately.
-        console.log(`💀 Worker ${worker.process.pid} died with code ${code}, signal ${signal}. Forking new worker.`);
+        masterLogger.warn(`💀 Worker ${worker.process.pid} died with code ${code}, signal ${signal}. Forking new worker.`);
         cluster.fork();
     });
-
-    // 3. IPC Handling (Master is responsible for global state sync)
-    // ... (IPC logic remains for state synchronization)
 }
 
 
@@ -66,20 +69,21 @@ async function executeMasterProcess() {
 // WORKER PROCESS (ULTIMATE EXECUTION ARCHITECTURE)
 // =========================================================================
 
-async function bindingRetryLoop(app, PORT) {
+async function bindingRetryLoop(app, PORT, workerLogger) {
     let isBound = false;
     let attempt = 0;
     while (!isBound) {
         attempt++;
         try {
             const server = app.listen(PORT, () => {
-                console.log(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
+                // Replaced console.log with workerLogger.info
+                workerLogger.info(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
                 isBound = true;
             });
             
             server.on('error', (err) => {
-                console.error(`🛑 WORKER PROCESS FAILED TO BIND PORT ${PORT} (Attempt ${attempt}):`, err.message);
-                // Set isBound to false and throw to exit the current attempt
+                // Replaced console.error with workerLogger.error
+                workerLogger.error(`🛑 WORKER PROCESS FAILED TO BIND PORT ${PORT} (Attempt ${attempt}):`, err.message);
                 isBound = false;
                 throw err;
             });
@@ -90,10 +94,9 @@ async function bindingRetryLoop(app, PORT) {
             });
             
         } catch (error) {
-            // 🔥 NEVER EXIT: Log the error, wait, and retry.
-            const waitTime = Math.min(2**attempt * 1000, 60000); // Exponential backoff up to 60s
-            console.warn(`⏳ Retrying server binding in ${waitTime / 1000}s...`);
-            // Only exit the retry loop if bound, otherwise continue
+            const waitTime = Math.min(2**attempt * 1000, 60000); 
+            // Replaced console.warn with workerLogger.warn
+            workerLogger.warn(`⏳ Retrying server binding in ${waitTime / 1000}s...`);
             await new Promise(resolve => setTimeout(resolve, waitTime)); 
         }
     }
@@ -101,9 +104,16 @@ async function bindingRetryLoop(app, PORT) {
 
 
 async function executeWorkerProcess() {
-    console.log(`⚙️ WORKER PROCESS (PID ${process.pid}) - Starting Initialization Orchestration...`);
+    // 🎯 CRITICAL FIX: Initialize Logger instance first
+    const workerLogger = initializeGlobalLogger('WorkerOrchestrator', CONFIG);
+    workerLogger.info(`⚙️ WORKER PROCESS (PID ${process.pid}) - Starting Initialization Orchestration...`);
+    
     const app = express();
     app.use(express.json());
+    
+    let transactionsDb = null;
+    let quantumCryptoDb = null;
+
 
     // -------------------------------------------------------------------------
     // 1. CRITICAL SYSTEMS SEQUENTIAL INITIALIZATION (AGENT-FIRST)
@@ -111,29 +121,35 @@ async function executeWorkerProcess() {
     try {
         // A. DB Initializer (Foundation Layer)
         dbInitializer = getDatabaseInitializer(CONFIG);
-        const { mainDb, quantumCryptoDb, transactionsDb } = await dbInitializer.initialize();
-        console.log('✅ BSFM Database Initializer Ready.');
+        const dbResult = await dbInitializer.initialize();
+        transactionsDb = dbResult.transactionsDb;
+        quantumCryptoDb = dbResult.quantumCryptoDb;
+
+        // 🆕 CRITICAL FIX: Enable database logging AFTER DB is initialized
+        await enableDatabaseLoggingSafely(dbResult.mainDb); 
+        workerLogger.info('✅ BSFM Database Initializer Ready.');
 
         // B. Sovereign Core (The Brain)
-        sovereignCore = new ProductionSovereignCore(CONFIG, mainDb); // Pass DB instance
+        // ProductionSovereignCore now uses getGlobalLogger() internally
+        sovereignCore = new ProductionSovereignCore(CONFIG, dbResult.mainDb); 
         await sovereignCore.initialize();
-        console.log('✅ Production Sovereign Core Ready.');
+        workerLogger.info('✅ Production Sovereign Core Ready.');
 
         // C. Revenue Engine (The Priority)
+        // initializeSovereignRevenueEngine now uses getGlobalLogger() internally
         revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, transactionsDb);
         // Inject the initialized Revenue Engine back into the Core
         await sovereignCore.injectRevenueEngine(revenueEngine); 
-        console.log('✅ Sovereign Revenue Engine Orchestration Initiated.');
+        workerLogger.info('✅ Sovereign Revenue Engine Orchestration Initiated.');
 
         // D. Payout System (The Wallets)
         payoutSystem = new BrianNwaezikePayoutSystem(CONFIG, transactionsDb); 
         await payoutSystem.initialize();
-        console.log('✅ Brian Nwaezike Payout System Ready.');
+        workerLogger.info('✅ Brian Nwaezike Payout System Ready.');
 
     } catch (error) {
-        // 🛑 Agent failure should NOT stop the worker if the foundation (DB/Core) is somewhat functional.
-        console.error(`🛑 CRITICAL AGENT/SYSTEM FAILURE DURING ORCHESTRATION:`, error.message, 'Continuing with available agents.');
-        // The worker process continues to run even if some agents failed, relying on the RevenueEngine's internal non-fatal agent orchestration.
+        // Using workerLogger instance for non-fatal catch block
+        workerLogger.error(`🛑 CRITICAL AGENT/SYSTEM FAILURE DURING ORCHESTRATION:`, error.message, 'Continuing with available agents.', { stack: error.stack });
     }
 
 
@@ -141,11 +157,8 @@ async function executeWorkerProcess() {
     // 2. IMMEDIATE & NON-FATAL PORT BINDING (GUARANTEED BINDING)
     // -------------------------------------------------------------------------
 
-    // 🆕 NOVELTY: Bind immediately, but non-blockingly, and without exiting on error.
-    bindingRetryLoop(app, CONFIG.PORT).catch(err => {
-        // This catch block should realistically never be hit as the loop manages its own errors, 
-        // but is here for the absolute edge case.
-        console.error('💥 FATAL BINDING RETRY ERROR:', err);
+    bindingRetryLoop(app, CONFIG.PORT, workerLogger).catch(err => {
+        workerLogger.error('💥 FATAL BINDING RETRY ERROR:', err);
     });
 
     // -------------------------------------------------------------------------
@@ -153,7 +166,6 @@ async function executeWorkerProcess() {
     // -------------------------------------------------------------------------
     
     app.use((req, res, next) => {
-        // Pass initialized engines to request context
         req.core = sovereignCore;
         req.revenue = revenueEngine;
         req.payout = payoutSystem;
@@ -162,7 +174,7 @@ async function executeWorkerProcess() {
         next();
     });
 
-    // 3.1: Health Check Endpoint (Essential for system monitoring)
+    // Health Check Endpoint
     app.get('/system/health', async (req, res) => {
         const coreStatus = req.core ? req.core.getStatus() : { status: 'core_uninitialized' };
         const revenueStatus = req.revenue ? await req.revenue.healthCheck() : { status: 'revenue_uninitialized' };
@@ -170,20 +182,19 @@ async function executeWorkerProcess() {
             system: 'Ultimate Execution Ready',
             core: coreStatus,
             revenue: revenueStatus,
-            webServerOnline: true // This is true because the endpoint is hit, even if a retry happened.
+            webServerOnline: true
         });
     });
 
-    // 3.2: Revenue Trigger Endpoint (To demonstrate agent prioritization)
+    // Revenue Trigger Endpoint 
     app.post('/revenue/trigger', async (req, res) => {
         if (!req.revenue) {
+            workerLogger.warn('Attempted revenue trigger but engine is offline.');
             return res.status(503).json({ status: 'error', message: 'Revenue Engine not available. Agents are currently offline.' });
         }
         const results = await req.revenue.orchestrateRevenueAgents(req.body.instructions);
         res.json({ status: 'success', message: 'Revenue orchestration attempt complete. See results for agent status.', results });
     });
-
-    // The worker process will never call process.exit(1) on failure, delivering 0% failure exit rate.
 }
 
 
@@ -193,14 +204,15 @@ async function executeWorkerProcess() {
 
 if (cluster.isPrimary) {
     executeMasterProcess().catch(err => {
+        // Fallback to console is kept here because masterLogger might fail on process exit.
         console.error('💥 FATAL MASTER PROCESS ERROR:', err.name, ':', err.message);
         console.error(err.stack);
         process.exit(1);
     });
 } else {
     executeWorkerProcess().catch(err => {
-        // 🔥 NEVER EXIT: Final line of defense against unexpected worker crash.
-        console.error(`🛑 FATAL WORKER PROCESS CRASH. Initiating Emergency Log and Non-Exit Protocol.`, err);
-        // Do NOT call process.exit(1). Worker will die naturally and master will re-fork.
+        // Workers should not exit; rely on the master to re-fork. Log the crash.
+        const fallbackLogger = getGlobalLogger('CrashHandler');
+        fallbackLogger.error(`🛑 FATAL WORKER PROCESS CRASH. Initiating Emergency Log and Non-Exit Protocol.`, err);
     });
 }
