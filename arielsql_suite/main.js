@@ -5,7 +5,7 @@ import os from 'os';
 import express from 'express';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
-import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // ✅ Import Revenue Engine
+import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // ✅ Import Revenue Engine Initializer
 import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; // ✅ Import Payout System
 
 let sovereignCore = null;
@@ -93,25 +93,31 @@ async function executeMasterProcess() {
   sovereignCore = masterCoreInstance;
   isCoreReady = true;
 
-  // ✅ Initialize Sovereign Revenue Engine
+  // ✅ Initialize Sovereign Revenue Engine (Addressing user concern)
   try {
-    await initializeSovereignRevenueEngine(CONFIG, sovereignCore, masterDbEngine);
+    let revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, masterDbEngine);
+    global.revenueEngine = revenueEngine; // Register globally for access by other modules
     console.log("✅ Sovereign Revenue Engine initialized.");
   } catch (error) {
     console.error("❌ Failed to initialize Sovereign Revenue Engine:", error.message);
     process.exit(1);
   }
-
+  
   // ✅ Instantiate and Initialize BrianNwaezikePayoutSystem
   try {
+    if (!sovereignCore || typeof sovereignCore.initialize !== 'function') {
+      throw new Error("Invalid Sovereign Core instance passed to PayoutSystem check.");
+    }
+    
     let payoutSystem = new BrianNwaezikePayoutSystem(masterDbEngine, sovereignCore, CONFIG);
     await payoutSystem.initialize();
-    global.payoutSystem = payoutSystem;
+    global.payoutSystem = payoutSystem; // Register globally for access by other modules
     console.log("✅ Payout System initialized successfully.");
   } catch (error) {
     console.error("❌ Payout System initialization failed:", error.message);
     process.exit(1);
   }
+
 
   const masterDbConnections = {
     [DB_CONFIGS.transactions.path]: masterDbEngine,
@@ -167,12 +173,11 @@ async function executeWorkerProcess() {
   const transactionsDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.transactions);
   const quantumCryptoDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.quantum_crypto);
 
-  // ✅ PREVIOUS FIX CONFIRMED: Correct 2-argument constructor for the proxy core.
+  // ✅ CORRECT CONSTRUCTOR: Only pass CONFIG and the primary transactionsDb (2 arguments).
   sovereignCore = new ProductionSovereignCore(CONFIG, transactionsDb);
   
   // 🛑 FINAL CRITICAL FIX: Skip core.initialize() in the worker process.
-  // This prevents the proxy core from running the full master module load,
-  // which was failing due to the IPC Proxy not passing internal validation checks.
+  // The worker's core instance is a proxy only and receives status updates via IPC.
   console.log(`✅ WORKER CORE (PID ${process.pid}) - Instantiated. Awaiting Master signal...`);
 
   const app = express();
