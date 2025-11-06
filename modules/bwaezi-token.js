@@ -1,7 +1,7 @@
 // modules/bwaezi-token.js
 import { SovereignTokenomics } from './tokenomics-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { 
     BWAEZI_CHAIN,
     BWAEZI_SOVEREIGN_CONFIG,
