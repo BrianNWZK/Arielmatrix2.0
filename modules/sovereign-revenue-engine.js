@@ -207,4 +207,4 @@ export async function initializeSovereignRevenueEngine(config = {}, sovereignCor
   return engine;
 }
 
-export SovereignRevenueEngine;
+export { SovereignRevenueEngine };
