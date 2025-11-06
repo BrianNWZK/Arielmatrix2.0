@@ -60,17 +60,17 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
         // 🚀 CRITICAL SOVEREIGN WALLET INITIALIZATION AND SECURITY CHECK
         // Payout requires the Private Key (PK) to sign transactions.
-        this.systemWalletPrivateKey = this.config.SOVEREIGN_WALLET_PK || process.env.SOVEREIGN_WALLET_PK;
+        this.systemWalletPrivateKey = this.config.SOVEREIGN_PRIVATE_KEY || process.env.SOVEREIGN_PRIVATE_KEY;
         // The address is the public identifier. Fallback to SOVEREIGN_WALLET for legacy.
         this.systemWalletAddress = this.config.SOVEREIGN_WALLET_ADDRESS || this.config.SOVEREIGN_WALLET || process.env.SOVEREIGN_WALLET_ADDRESS || process.env.SOVEREIGN_WALLET;
 
         // Enforce the presence of a private key for production payout operations
         if (!this.systemWalletPrivateKey || !this.systemWalletAddress) {
             const missing = !this.systemWalletPrivateKey ?
-            'Private Key (SOVEREIGN_WALLET_PK)' : 'Address (SOVEREIGN_WALLET_ADDRESS/SOVEREIGN_WALLET)';
+            'Private Key (SOVEREIGN_PRIVATE_KEY)' : 'Address (SOVEREIGN_WALLET_ADDRESS/SOVEREIGN_WALLET)';
             this.logger.error(`🛑 CRITICAL: PayoutSystem initialization failed. Missing: ${missing}`);
             // FIX: Throw a more informative and explicit error
-            throw new Error(`🛑 CRITICAL: PayoutSystem requires a valid system wallet. Missing: ${missing}. Ensure SOVEREIGN_WALLET_PK/SOVEREIGN_WALLET_ADDRESS are configured.`);
+            throw new Error(`🛑 CRITICAL: PayoutSystem requires a valid system wallet. Missing: ${missing}. Ensure SOVEREIGN_PRIVATE_KEY/SOVEREIGN_WALLET_ADDRESS are configured.`);
         }
         
         // Initialize the Wallet Agent with the key/address
