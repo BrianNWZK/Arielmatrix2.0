@@ -95,16 +95,21 @@ async function executeMasterProcess() {
     const initializationResult = await dbInitializer.initializeAllDatabases(DB_CONFIGS);
     const masterDbEngine = initializationResult.arielEngine;
     const quantumCryptoDbEngine = initializationResult.quantumCryptoDb;
+
+    if (!masterDbEngine) {
+        throw new Error("Critical Initialization Failure: Ariel Transaction Engine is undefined.");
+    }
     
     // 2. PHASE A: Initialize Sovereign Core (Decoupled with both DBs)
     console.log('🧠 PHASE A: Initializing Sovereign Core...');
-    const masterCoreInstance = new ProductionSovereignCore(CONFIG, masterDbEngine, quantumCryptoDbEngine);
+    // 🔥 CRITICAL FIX: Pass both DB engines here
+    const masterCoreInstance = new ProductionSovereignCore(CONFIG, masterDbEngine, quantumCryptoDbEngine); 
     
-    // 3. PHASE B: Initialize Revenue Engine (Requires Core/DB for its own logic)
+    // 3. PHASE B: Initialize Revenue Engine
     console.log('💰 PHASE B: Initializing Sovereign Revenue Engine...');
     const revenueEngineInstance = await initializeSovereignRevenueEngine(CONFIG.revenue, masterCoreInstance, masterDbEngine);
     
-    // 4. PHASE C: Inject Engine back into Core (Completes the circular dependency via safe injection)
+    // 4. PHASE C: Inject Engine back into Core
     console.log('🔗 PHASE C: Injecting Revenue Engine back into Core...');
     masterCoreInstance.injectRevenueEngine(revenueEngineInstance);
 
@@ -135,6 +140,10 @@ async function executeMasterProcess() {
             if (msg.cmd && (msg.cmd.startsWith('db_'))) {
                 const { cmd, query, params, id, path, sourcePid } = msg;
                 const dbEngine = masterDbConnections[path];
+                if (!dbEngine) {
+                    console.error(`DB Proxy Error: No engine found for path ${path}`);
+                    return;
+                }
                 dbEngine[cmd.replace('db_', '')](query, params)
                     .then(result => {
                         cluster.workers[sourcePid].send({ cmd: 'db_response', id, result });
@@ -182,6 +191,7 @@ async function executeWorkerProcess() {
     const quantumCryptoDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.quantum_crypto);
 
     // 1. Instantiate Core: DO NOT INITIALIZE YET.
+    // 🔥 CRITICAL FIX: Pass both DB proxies here
     sovereignCore = new ProductionSovereignCore(CONFIG, transactionsDb, quantumCryptoDb); 
     
     // 2. Set up Express App and Middleware
