@@ -5,7 +5,8 @@ import os from 'os';
 import express from 'express';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
-import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // ✅ NEW: Import Revenue Engine
+import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // ✅ Import Revenue Engine
+import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; // ✅ FIX STEP 1: Import Payout System
 
 let sovereignCore = null;
 let isCoreReady = false;
@@ -92,12 +93,23 @@ async function executeMasterProcess() {
   sovereignCore = masterCoreInstance;
   isCoreReady = true;
 
-  // ✅ NEW: Initialize Sovereign Revenue Engine
+  // ✅ Initialize Sovereign Revenue Engine
   try {
     await initializeSovereignRevenueEngine(CONFIG, sovereignCore, masterDbEngine);
     console.log("✅ Sovereign Revenue Engine initialized.");
   } catch (error) {
     console.error("❌ Failed to initialize Sovereign Revenue Engine:", error.message);
+    process.exit(1);
+  }
+
+  // ✅ FIX STEP 2: Instantiate and Initialize BrianNwaezikePayoutSystem
+  try {
+    let payoutSystem = new BrianNwaezikePayoutSystem(masterDbEngine, sovereignCore, CONFIG);
+    await payoutSystem.initialize();
+    global.payoutSystem = payoutSystem; // FIX STEP 3: Optional but recommended global access
+    console.log("✅ Payout System initialized successfully.");
+  } catch (error) {
+    console.error("❌ Payout System initialization failed:", error.message);
     process.exit(1);
   }
 
@@ -155,8 +167,7 @@ async function executeWorkerProcess() {
   const transactionsDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.transactions);
   const quantumCryptoDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.quantum_crypto);
 
-  // 🛑 CRITICAL FIX: Removed quantumCryptoDb to match the two-argument constructor signature (CONFIG, primaryDB).
-  // This resolves the 'Invalid engine instance' deployment error.
+  // ✅ PREVIOUS FIX CONFIRMED: Only pass CONFIG and the primary transactionsDb (2 arguments).
   sovereignCore = new ProductionSovereignCore(CONFIG, transactionsDb);
   await sovereignCore.initialize();
 
@@ -179,7 +190,6 @@ async function executeWorkerProcess() {
       console.log(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT}`);
     });
 
-    // Guarantee port binding success or graceful exit
     server.on('error', (err) => {
       console.error(`🛑 WORKER PROCESS FAILED TO BIND PORT ${PORT}:`, err.message);
       process.exit(1);
