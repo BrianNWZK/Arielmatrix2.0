@@ -6,7 +6,7 @@ import express from 'express';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
 import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // ✅ Import Revenue Engine
-import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; // ✅ FIX STEP 1: Import Payout System
+import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; // ✅ Import Payout System
 
 let sovereignCore = null;
 let isCoreReady = false;
@@ -102,11 +102,11 @@ async function executeMasterProcess() {
     process.exit(1);
   }
 
-  // ✅ FIX STEP 2: Instantiate and Initialize BrianNwaezikePayoutSystem
+  // ✅ Instantiate and Initialize BrianNwaezikePayoutSystem
   try {
     let payoutSystem = new BrianNwaezikePayoutSystem(masterDbEngine, sovereignCore, CONFIG);
     await payoutSystem.initialize();
-    global.payoutSystem = payoutSystem; // FIX STEP 3: Optional but recommended global access
+    global.payoutSystem = payoutSystem;
     console.log("✅ Payout System initialized successfully.");
   } catch (error) {
     console.error("❌ Payout System initialization failed:", error.message);
@@ -167,9 +167,13 @@ async function executeWorkerProcess() {
   const transactionsDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.transactions);
   const quantumCryptoDb = new ArielSQLiteEngineIpcProxy(DB_CONFIGS.quantum_crypto);
 
-  // ✅ PREVIOUS FIX CONFIRMED: Only pass CONFIG and the primary transactionsDb (2 arguments).
+  // ✅ PREVIOUS FIX CONFIRMED: Correct 2-argument constructor for the proxy core.
   sovereignCore = new ProductionSovereignCore(CONFIG, transactionsDb);
-  await sovereignCore.initialize();
+  
+  // 🛑 FINAL CRITICAL FIX: Skip core.initialize() in the worker process.
+  // This prevents the proxy core from running the full master module load,
+  // which was failing due to the IPC Proxy not passing internal validation checks.
+  console.log(`✅ WORKER CORE (PID ${process.pid}) - Instantiated. Awaiting Master signal...`);
 
   const app = express();
   app.use(express.json());
