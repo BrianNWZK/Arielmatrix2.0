@@ -1,7 +1,7 @@
 // modules/bwaezi-token.js
 import { SovereignTokenomics } from './tokenomics-engine/index.js';
 import { SovereignRevenueEngine } from './sovereign-revenue-engine.js';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from './ariel-sqlite-engine.js';
 import { 
     BWAEZI_CHAIN,
     BWAEZI_SOVEREIGN_CONFIG,
@@ -9,6 +9,45 @@ import {
 } from '../config/bwaezi-config.js';
 import { createHash, randomBytes, createHmac } from 'crypto';
 import { EventEmitter } from 'events';
+
+// 🆕 Dynamic Conversion Rate Function
+async function calculateConversionRates() {
+  const BWAEZI_TO_USDT = 100;
+
+  const ethPrice = await getLivePrice('ethereum'); // ETH/USDT
+  const solPrice = await getLivePrice('solana');    // SOL/USDT
+
+  return {
+    BWAEZI: 1.0,
+    USDT: BWAEZI_TO_USDT,
+    ETH: BWAEZI_TO_USDT / ethPrice,
+    SOL: BWAEZI_TO_USDT / solPrice
+  };
+}
+
+async function getLivePrice(symbol) {
+  const idMap = {
+    ethereum: 'ethereum',
+    solana: 'solana'
+  };
+
+  const coinId = idMap[symbol.toLowerCase()];
+  if (!coinId) throw new Error(`Unsupported symbol: ${symbol}`);
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usdt`;
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    const price = data[coinId]?.usdt;
+
+    if (!price) throw new Error(`Price not found for ${symbol}`);
+    return price;
+  } catch (error) {
+    console.error(`❌ Failed to fetch price for ${symbol}:`, error.message);
+    return 1; // Fallback to prevent crash
+  }
+}
 
 export class BWAEZIToken {
     constructor(config = {}) {
@@ -18,7 +57,8 @@ export class BWAEZIToken {
             decimals: 18,
             totalSupply: 100000000, // 100 million tokens
             initialSupply: 0, // All tokens held by sovereign initially
-            maxSupply: 100000000,
+  
+           maxSupply: 100000000,
             transferFee: 0.001, // 0.1% transfer fee
             burnRate: 0.0001, // 0.01% burn rate
             ...config
@@ -44,19 +84,18 @@ export class BWAEZIToken {
             averageTransferSize: 0,
             totalBurned: 0,
             totalFees: 0
+    
         };
     }
 
     async initialize() {
         if (this.initialized) return;
-        
         await this.db.init();
         await this.createDatabaseTables();
         await this.tokenomics.initialize();
         
         this.sovereignService = new SovereignRevenueEngine();
         await this.sovereignService.initialize();
-        
         this.serviceId = await this.sovereignService.registerService({
             name: 'BWAEZIToken',
             description: 'BWAEZI Sovereign Token with advanced economic features',
@@ -64,10 +103,10 @@ export class BWAEZIToken {
             annualLicenseFee: 2500,
             revenueShare: 0.12,
             serviceType: 'token_infrastructure',
-            dataPolicy: 'Encrypted token transaction data only - No sensitive wallet data storage',
+            dataPolicy: 
+'Encrypted token transaction data only - No sensitive wallet data storage',
             compliance: ['Token Standards', 'Financial Compliance']
         });
-
         await this.initializeTokenSupply();
         await this.loadTokenMetrics();
         this.initialized = true;
@@ -87,54 +126,57 @@ export class BWAEZIToken {
                 address TEXT PRIMARY KEY,
                 balance TEXT NOT NULL,
                 lockedBalance TEXT DEFAULT '0',
-                lastUpdated DATETIME DEFAULT CURRENT_TIMESTAMP,
+          
+              lastUpdated DATETIME DEFAULT CURRENT_TIMESTAMP,
                 transactionCount INTEGER DEFAULT 0,
                 totalReceived TEXT DEFAULT '0',
                 totalSent TEXT DEFAULT '0'
             )
         `);
-
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS token_allowances (
                 id TEXT PRIMARY KEY,
                 owner TEXT NOT NULL,
                 spender TEXT NOT NULL,
                 amount TEXT NOT NULL,
+     
                 createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 expiresAt DATETIME,
                 isActive BOOLEAN DEFAULT true
             )
         `);
-
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS token_transactions (
                 id TEXT PRIMARY KEY,
                 fromAddress TEXT NOT NULL,
                 toAddress TEXT NOT NULL,
                 amount TEXT NOT NULL,
+     
                 fee TEXT DEFAULT '0',
                 burned TEXT DEFAULT '0',
                 transactionType TEXT NOT NULL,
                 transactionHash TEXT NOT NULL,
                 blockNumber INTEGER,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'confirmed',
                 metadata TEXT
             )
         `);
-
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS staking_positions (
                 id TEXT PRIMARY KEY,
                 address TEXT NOT NULL,
                 amount TEXT NOT NULL,
                 poolId TEXT NOT NULL,
+     
                 startTime DATETIME NOT NULL,
                 unlockTime DATETIME,
                 rewards TEXT DEFAULT '0',
                 isActive BOOLEAN DEFAULT true,
                 createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
+            
+)
         `);
 
         await this.db.run(`
@@ -142,22 +184,24 @@ export class BWAEZIToken {
                 id TEXT PRIMARY KEY,
                 address TEXT NOT NULL,
                 totalAmount TEXT NOT NULL,
+               
                 vestedAmount TEXT DEFAULT '0',
                 startTime DATETIME NOT NULL,
                 endTime DATETIME NOT NULL,
                 cliffPeriod INTEGER DEFAULT 0,
                 isActive BOOLEAN DEFAULT true,
                 createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+ 
             )
         `);
-
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS token_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 totalSupply TEXT NOT NULL,
                 circulatingSupply TEXT NOT NULL,
-                totalHolders INTEGER DEFAULT 0,
+    
+              totalHolders INTEGER DEFAULT 0,
                 dailyVolume TEXT DEFAULT '0',
                 totalBurned TEXT DEFAULT '0',
                 totalFees TEXT DEFAULT '0'
@@ -174,7 +218,6 @@ export class BWAEZIToken {
             INSERT OR REPLACE INTO token_balances (address, balance, totalReceived, transactionCount)
             VALUES (?, ?, ?, 1)
         `, [sovereignAddress, totalSupplyWei, totalSupplyWei]);
-
         this.balances.set(sovereignAddress, {
             balance: totalSupplyWei,
             lockedBalance: '0',
@@ -182,7 +225,6 @@ export class BWAEZIToken {
             totalReceived: totalSupplyWei,
             totalSent: '0'
         });
-
         // Record initial supply transaction
         const transactionId = this.generateTransactionId();
         await this.db.run(`
@@ -190,14 +232,14 @@ export class BWAEZIToken {
             VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
             transactionId,
-            '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA', // Mint address
+            '0x0000000000000000000000000000000000000000', // Mint address
             sovereignAddress,
-            totalSupplyWei,
+           
+              totalSupplyWei,
             'mint',
             this.generateTransactionHash('mint', sovereignAddress, totalSupplyWei),
             'confirmed'
         ]);
-
         await this.updateTokenMetrics();
 
         this.events.emit('supplyInitialized', {
@@ -209,18 +251,15 @@ export class BWAEZIToken {
 
     async transfer(fromAddress, toAddress, amount, metadata = {}) {
         if (!this.initialized) await this.initialize();
-        
         await this.validateTransfer(fromAddress, toAddress, amount);
 
         const amountWei = this.toWei(amount);
         const transactionId = this.generateTransactionId();
-        
         try {
             // Calculate fees and burn
             const feeAmount = this.calculateTransferFee(amountWei);
             const burnAmount = this.calculateBurnAmount(amountWei);
             const netAmount = this.subtract(amountWei, this.add(feeAmount, burnAmount));
-
             // Check balance sufficiency
             const fromBalance = await this.getBalance(fromAddress);
             if (this.compare(fromBalance.balance, amountWei) < 0) {
@@ -233,18 +272,16 @@ export class BWAEZIToken {
                 fromAddress,
                 toAddress,
                 amountWei,
-                netAmount,
+      
+              netAmount,
                 feeAmount,
                 burnAmount,
                 metadata
             );
-
             // Update local balances
             await this.updateLocalBalances(fromAddress, toAddress, amountWei, netAmount);
-
             // Record metrics
             await this.recordTransferMetrics(amountWei, feeAmount, burnAmount);
-
             // Process revenue from fees
             if (this.sovereignService && this.serviceId) {
                 const feeValue = this.fromWei(feeAmount);
@@ -253,10 +290,12 @@ export class BWAEZIToken {
                     feeValue * 100, // Convert to USD equivalent
                     'token_transfer_fee',
                     'USD',
-                    'bwaezi',
+            
+                'bwaezi',
                     {
                         transactionId,
                         fromAddress,
+                        
                         toAddress,
                         amount: this.fromWei(amountWei),
                         fee: feeValue
@@ -270,21 +309,21 @@ export class BWAEZIToken {
                 toAddress,
                 amount: this.fromWei(amountWei),
                 netAmount: this.fromWei(netAmount),
+     
                 fee: this.fromWei(feeAmount),
                 burned: this.fromWei(burnAmount),
                 timestamp: new Date()
             });
-
             return {
                 success: true,
                 transactionId,
                 transactionHash: this.generateTransactionHash('transfer', fromAddress, toAddress, amountWei),
                 amount: this.fromWei(amountWei),
                 fee: this.fromWei(feeAmount),
-                burned: this.fromWei(burnAmount),
+            
+        burned: this.fromWei(burnAmount),
                 netAmount: this.fromWei(netAmount)
             };
-
         } catch (error) {
             await this.recordFailedTransaction(transactionId, fromAddress, toAddress, amountWei, error.message);
             throw error;
@@ -294,28 +333,29 @@ export class BWAEZIToken {
     async executeTransfer(transactionId, fromAddress, toAddress, amountWei, netAmount, feeAmount, burnAmount, metadata) {
         // Start database transaction
         await this.db.run('BEGIN TRANSACTION');
-
         try {
             // Update sender balance
             await this.db.run(`
                 UPDATE token_balances 
                 SET balance = balance - ?, 
                     totalSent = totalSent + ?,
-                    transactionCount = transactionCount + 1,
+       
+              transactionCount = transactionCount + 1,
                     lastUpdated = CURRENT_TIMESTAMP
                 WHERE address = ? AND balance >= ?
             `, [amountWei, amountWei, fromAddress, amountWei]);
-
             // Update receiver balance
             await this.db.run(`
                 INSERT OR REPLACE INTO token_balances (address, balance, totalReceived, transactionCount, lastUpdated)
                 VALUES (?, 
                     COALESCE((SELECT balance FROM token_balances WHERE address = ?), 0) + ?,
-                    COALESCE((SELECT totalReceived FROM token_balances WHERE address = ?), 0) + ?,
+           
+          COALESCE((SELECT totalReceived FROM token_balances WHERE address = ?), 0) + ?,
                     COALESCE((SELECT transactionCount FROM token_balances WHERE address = ?), 0) + 1,
                     CURRENT_TIMESTAMP
                 )
-            `, [toAddress, toAddress, netAmount, toAddress, netAmount, toAddress]);
+            `, [toAddress, toAddress, 
+              netAmount, toAddress, netAmount, toAddress]);
 
             // Collect fee to sovereign
             if (this.compare(feeAmount, '0') > 0) {
@@ -324,7 +364,8 @@ export class BWAEZIToken {
                     UPDATE token_balances 
                     SET balance = balance + ?,
                         totalReceived = totalReceived + ?,
-                        lastUpdated = CURRENT_TIMESTAMP
+                        
+              lastUpdated = CURRENT_TIMESTAMP
                     WHERE address = ?
                 `, [feeAmount, feeAmount, sovereignAddress]);
             }
@@ -334,11 +375,11 @@ export class BWAEZIToken {
                 await this.db.run(`
                     UPDATE token_balances 
                     SET balance = balance - ?,
-                        totalSent = totalSent + ?,
+   
+                      totalSent = totalSent + ?,
                         lastUpdated = CURRENT_TIMESTAMP
                     WHERE address = ?
                 `, [burnAmount, burnAmount, fromAddress]);
-
                 this.metrics.totalBurned = this.add(this.metrics.totalBurned, burnAmount);
             }
 
@@ -347,17 +388,18 @@ export class BWAEZIToken {
                 INSERT INTO token_transactions (id, fromAddress, toAddress, amount, fee, burned, transactionType, transactionHash, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
+    
                 transactionId,
                 fromAddress,
                 toAddress,
                 amountWei,
                 feeAmount,
                 burnAmount,
+        
                 'transfer',
                 this.generateTransactionHash('transfer', fromAddress, toAddress, amountWei),
                 JSON.stringify(metadata)
             ]);
-
             await this.db.run('COMMIT');
 
         } catch (error) {
@@ -403,14 +445,12 @@ export class BWAEZIToken {
 
     async approve(spender, amount, owner = null) {
         if (!this.initialized) await this.initialize();
-
         const actualOwner = owner || BWAEZI_CHAIN.FOUNDER_ADDRESS;
         const amountWei = this.toWei(amount);
         
         await this.validateApproval(actualOwner, spender, amountWei);
 
         const allowanceId = this.generateAllowanceId(actualOwner, spender);
-        
         await this.db.run(`
             INSERT OR REPLACE INTO token_allowances (id, owner, spender, amount, expiresAt)
             VALUES (?, ?, ?, ?, ?)
@@ -419,9 +459,9 @@ export class BWAEZIToken {
             actualOwner,
             spender,
             amountWei,
-            new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year expiry
+    
+              new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year expiry
         ]);
-
         this.allowances.set(allowanceId, {
             id: allowanceId,
             owner: actualOwner,
@@ -429,9 +469,9 @@ export class BWAEZIToken {
             amount: amountWei,
             createdAt: new Date(),
             expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-            isActive: true
+         
+              isActive: true
         });
-
         this.events.emit('approvalGranted', {
             allowanceId,
             owner: actualOwner,
@@ -439,19 +479,16 @@ export class BWAEZIToken {
             amount: this.fromWei(amountWei),
             timestamp: new Date()
         });
-
         return allowanceId;
     }
 
     async transferFrom(spender, fromAddress, toAddress, amount) {
         if (!this.initialized) await this.initialize();
-
         const amountWei = this.toWei(amount);
         await this.validateTransferFrom(spender, fromAddress, toAddress, amountWei);
 
         const allowanceId = this.generateAllowanceId(fromAddress, spender);
         const currentAllowance = await this.getAllowance(fromAddress, spender);
-
         if (this.compare(currentAllowance, amountWei) < 0) {
             throw new Error('Insufficient allowance');
         }
@@ -461,13 +498,11 @@ export class BWAEZIToken {
             spender: spender,
             allowanceUsed: amountWei
         });
-
         // Update allowance
         const newAllowance = this.subtract(currentAllowance, amountWei);
         await this.db.run(`
             UPDATE token_allowances SET amount = ? WHERE id = ?
         `, [newAllowance, allowanceId]);
-
         if (this.allowances.has(allowanceId)) {
             this.allowances.get(allowanceId).amount = newAllowance;
         }
@@ -477,7 +512,6 @@ export class BWAEZIToken {
 
     async validateTransferFrom(spender, fromAddress, toAddress, amountWei) {
         await this.validateTransfer(fromAddress, toAddress, this.fromWei(amountWei));
-
         if (!this.isValidAddress(spender)) {
             throw new Error('Invalid spender address');
         }
@@ -509,28 +543,25 @@ export class BWAEZIToken {
 
     async stake(address, amount, poolId = 'default', lockPeriod = 30) {
         if (!this.initialized) await this.initialize();
-
         const amountWei = this.toWei(amount);
         await this.validateStake(address, amountWei);
 
         const stakeId = this.generateStakeId(address, poolId);
         const unlockTime = new Date(Date.now() + lockPeriod * 24 * 60 * 60 * 1000);
-
         // Lock tokens for staking
         await this.db.run(`
             UPDATE token_balances 
             SET balance = balance - ?,
                 lockedBalance = lockedBalance + ?,
                 lastUpdated = CURRENT_TIMESTAMP
-            WHERE address = ? AND balance >= ?
+            WHERE address = ? AND balance 
+        >= ?
         `, [amountWei, amountWei, address, amountWei]);
-
         // Create staking position
         await this.db.run(`
             INSERT INTO staking_positions (id, address, amount, poolId, startTime, unlockTime)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
         `, [stakeId, address, amountWei, poolId, unlockTime]);
-
         this.stakingPools.set(stakeId, {
             id: stakeId,
             address,
@@ -539,9 +570,9 @@ export class BWAEZIToken {
             startTime: new Date(),
             unlockTime,
             rewards: '0',
-            isActive: true
+          
+              isActive: true
         });
-
         this.events.emit('tokensStaked', {
             stakeId,
             address,
@@ -551,13 +582,11 @@ export class BWAEZIToken {
             unlockTime,
             timestamp: new Date()
         });
-
         return stakeId;
     }
 
     async unstake(stakeId, address) {
         if (!this.initialized) await this.initialize();
-
         const position = await this.getStakingPosition(stakeId);
         if (!position) {
             throw new Error('Staking position not found');
@@ -573,23 +602,21 @@ export class BWAEZIToken {
 
         // Calculate rewards (simplified - would use real APY calculation)
         const rewards = await this.calculateStakingRewards(position);
-
         // Unlock tokens and add rewards
         await this.db.run(`
             UPDATE token_balances 
             SET balance = balance + ? + ?,
                 lockedBalance = lockedBalance - ?,
                 lastUpdated = CURRENT_TIMESTAMP
-            WHERE address = ?
+            WHERE address = 
+        ?
         `, [position.amount, rewards, position.amount, address]);
-
         // Mark position as inactive
         await this.db.run(`
             UPDATE staking_positions 
             SET isActive = false, rewards = ?
             WHERE id = ?
         `, [rewards, stakeId]);
-
         if (this.stakingPools.has(stakeId)) {
             this.stakingPools.get(stakeId).isActive = false;
             this.stakingPools.get(stakeId).rewards = rewards;
@@ -602,7 +629,6 @@ export class BWAEZIToken {
             rewards: this.fromWei(rewards),
             timestamp: new Date()
         });
-
         return {
             stakedAmount: this.fromWei(position.amount),
             rewards: this.fromWei(rewards),
@@ -613,7 +639,6 @@ export class BWAEZIToken {
     async calculateStakingRewards(position) {
         const stakingDuration = Date.now() - new Date(position.startTime).getTime();
         const daysStaked = stakingDuration / (24 * 60 * 60 * 1000);
-        
         // Simplified APY calculation - 5% annual rate
         const apy = 0.05;
         const dailyRate = apy / 365;
@@ -622,13 +647,11 @@ export class BWAEZIToken {
             position.amount,
             this.toWei(dailyRate * daysStaked)
         );
-
         return rewards;
     }
 
     async createVestingSchedule(address, totalAmount, vestingPeriod = 365, cliffPeriod = 90) {
         if (!this.initialized) await this.initialize();
-
         const totalAmountWei = this.toWei(totalAmount);
         const sovereignAddress = BWAEZI_CHAIN.FOUNDER_ADDRESS;
 
@@ -641,7 +664,6 @@ export class BWAEZIToken {
         const vestingId = this.generateVestingId(address);
         const startTime = new Date();
         const endTime = new Date(Date.now() + vestingPeriod * 24 * 60 * 60 * 1000);
-
         // Lock tokens for vesting
         await this.db.run(`
             UPDATE token_balances 
@@ -649,14 +671,14 @@ export class BWAEZIToken {
                 lockedBalance = lockedBalance + ?,
                 lastUpdated = CURRENT_TIMESTAMP
             WHERE address = ?
-        `, [totalAmountWei, totalAmountWei, sovereignAddress]);
+   
+          `, [totalAmountWei, totalAmountWei, sovereignAddress]);
 
         // Create vesting schedule
         await this.db.run(`
             INSERT INTO vesting_schedules (id, address, totalAmount, startTime, endTime, cliffPeriod)
             VALUES (?, ?, ?, ?, ?, ?)
         `, [vestingId, address, totalAmountWei, startTime, endTime, cliffPeriod]);
-
         this.vestingSchedules.set(vestingId, {
             id: vestingId,
             address,
@@ -665,9 +687,9 @@ export class BWAEZIToken {
             startTime,
             endTime,
             cliffPeriod,
+            
             isActive: true
         });
-
         this.events.emit('vestingScheduleCreated', {
             vestingId,
             address,
@@ -676,7 +698,8 @@ export class BWAEZIToken {
             cliffPeriod,
             startTime,
             endTime,
-            timestamp: new Date()
+            timestamp: new 
+        Date()
         });
 
         return vestingId;
@@ -684,7 +707,6 @@ export class BWAEZIToken {
 
     async claimVestedTokens(vestingId, address) {
         if (!this.initialized) await this.initialize();
-
         const schedule = await this.getVestingSchedule(vestingId);
         if (!schedule) {
             throw new Error('Vesting schedule not found');
@@ -696,21 +718,18 @@ export class BWAEZIToken {
 
         const vestedAmount = await this.calculateVestedAmount(schedule);
         const claimableAmount = this.subtract(vestedAmount, schedule.vestedAmount);
-
         if (this.compare(claimableAmount, '0') <= 0) {
             throw new Error('No vested tokens available to claim');
         }
 
         // Transfer vested tokens from sovereign to beneficiary
         const sovereignAddress = BWAEZI_CHAIN.FOUNDER_ADDRESS;
-        
         await this.db.run(`
             UPDATE token_balances 
             SET lockedBalance = lockedBalance - ?,
                 lastUpdated = CURRENT_TIMESTAMP
             WHERE address = ?
         `, [claimableAmount, sovereignAddress]);
-
         await this.db.run(`
             UPDATE token_balances 
             SET balance = balance + ?,
@@ -718,7 +737,6 @@ export class BWAEZIToken {
                 lastUpdated = CURRENT_TIMESTAMP
             WHERE address = ?
         `, [claimableAmount, claimableAmount, address]);
-
         // Update vesting schedule
         const newVestedAmount = this.add(schedule.vestedAmount, claimableAmount);
         await this.db.run(`
@@ -726,7 +744,6 @@ export class BWAEZIToken {
             SET vestedAmount = ?
             WHERE id = ?
         `, [newVestedAmount, vestingId]);
-
         if (this.vestingSchedules.has(vestingId)) {
             this.vestingSchedules.get(vestingId).vestedAmount = newVestedAmount;
         }
@@ -741,11 +758,11 @@ export class BWAEZIToken {
             sovereignAddress,
             address,
             claimableAmount,
-            'vesting_claim',
+  
+              'vesting_claim',
             this.generateTransactionHash('vesting_claim', sovereignAddress, address, claimableAmount),
             JSON.stringify({ vestingId, vestedAmount: newVestedAmount })
         ]);
-
         this.events.emit('vestingTokensClaimed', {
             vestingId,
             address,
@@ -754,7 +771,6 @@ export class BWAEZIToken {
             remaining: this.fromWei(this.subtract(schedule.totalAmount, newVestedAmount)),
             timestamp: new Date()
         });
-
         return {
             claimedAmount: this.fromWei(claimableAmount),
             totalVested: this.fromWei(newVestedAmount),
@@ -766,7 +782,6 @@ export class BWAEZIToken {
         const now = Date.now();
         const startTime = new Date(schedule.startTime).getTime();
         const endTime = new Date(schedule.endTime).getTime();
-
         // Check cliff period
         if (now < startTime + schedule.cliffPeriod * 24 * 60 * 60 * 1000) {
             return '0';
@@ -785,7 +800,8 @@ export class BWAEZIToken {
 
     // Utility methods for big number arithmetic
     toWei(amount) {
-        return (BigInt(Math.floor(amount * 1e6)) * BigInt(1e12)).toString(); // Convert to wei with 18 decimals
+        return (BigInt(Math.floor(amount * 1e6)) * BigInt(1e12)).toString();
+        // Convert to wei with 18 decimals
     }
 
     fromWei(amountWei) {
@@ -822,7 +838,6 @@ export class BWAEZIToken {
 
     async getBalance(address) {
         if (!this.initialized) await this.initialize();
-
         if (this.balances.has(address)) {
             return this.balances.get(address);
         }
@@ -830,7 +845,6 @@ export class BWAEZIToken {
         const balance = await this.db.get(`
             SELECT * FROM token_balances WHERE address = ?
         `, [address]);
-
         const defaultBalance = {
             balance: '0',
             lockedBalance: '0',
@@ -839,7 +853,6 @@ export class BWAEZIToken {
             totalSent: '0',
             lastUpdated: new Date()
         };
-
         if (balance) {
             this.balances.set(address, balance);
             return balance;
@@ -850,7 +863,6 @@ export class BWAEZIToken {
 
     async getAllowance(owner, spender) {
         const allowanceId = this.generateAllowanceId(owner, spender);
-        
         if (this.allowances.has(allowanceId)) {
             const allowance = this.allowances.get(allowanceId);
             if (allowance.isActive && new Date() < new Date(allowance.expiresAt)) {
@@ -862,7 +874,6 @@ export class BWAEZIToken {
             SELECT amount FROM token_allowances 
             WHERE owner = ? AND spender = ? AND isActive = true AND expiresAt > CURRENT_TIMESTAMP
         `, [owner, spender]);
-
         return allowance ? allowance.amount : '0';
     }
 
@@ -874,7 +885,6 @@ export class BWAEZIToken {
         const position = await this.db.get(`
             SELECT * FROM staking_positions WHERE id = ?
         `, [stakeId]);
-
         if (position) {
             this.stakingPools.set(stakeId, position);
         }
@@ -890,7 +900,6 @@ export class BWAEZIToken {
         const schedule = await this.db.get(`
             SELECT * FROM vesting_schedules WHERE id = ?
         `, [vestingId]);
-
         if (schedule) {
             this.vestingSchedules.set(vestingId, schedule);
         }
@@ -900,26 +909,24 @@ export class BWAEZIToken {
 
     async getTokenMetrics() {
         if (!this.initialized) await this.initialize();
-
         const totalSupply = this.toWei(this.config.totalSupply);
         const burned = this.metrics.totalBurned;
         const circulating = this.subtract(totalSupply, burned);
-
         const holders = await this.db.get(`
             SELECT COUNT(*) as count FROM token_balances WHERE balance > '0'
         `);
-
         const dailyVolume = await this.db.get(`
             SELECT SUM(amount) as volume FROM token_transactions 
             WHERE timestamp >= datetime('now', '-24 hours') AND status = 'confirmed'
         `);
-
         return {
             totalSupply: this.fromWei(totalSupply),
             circulatingSupply: this.fromWei(circulating),
             totalBurned: this.fromWei(burned),
-            totalHolders: holders?.count || 0,
-            dailyVolume: dailyVolume ? this.fromWei(dailyVolume.volume) : 0,
+            totalHolders: holders?.count ||
+        0,
+            dailyVolume: dailyVolume ?
+        this.fromWei(dailyVolume.volume) : 0,
             totalTransactions: this.metrics.totalTransfers,
             totalFees: this.fromWei(this.metrics.totalFees),
             timestamp: new Date()
@@ -928,7 +935,6 @@ export class BWAEZIToken {
 
     async updateTokenMetrics() {
         const metrics = await this.getTokenMetrics();
-        
         await this.db.run(`
             INSERT INTO token_metrics (totalSupply, circulatingSupply, totalHolders, dailyVolume, totalBurned, totalFees)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -937,6 +943,7 @@ export class BWAEZIToken {
             this.toWei(metrics.circulatingSupply),
             metrics.totalHolders,
             this.toWei(metrics.dailyVolume),
+    
             this.toWei(metrics.totalBurned),
             this.toWei(metrics.totalFees)
         ]);
@@ -946,14 +953,14 @@ export class BWAEZIToken {
         const latestMetrics = await this.db.get(`
             SELECT * FROM token_metrics ORDER BY timestamp DESC LIMIT 1
         `);
-
         if (latestMetrics) {
             this.metrics = {
                 totalTransfers: await this.getTotalTransactions(),
                 totalVolume: latestMetrics.dailyVolume,
                 activeHolders: latestMetrics.totalHolders,
                 averageTransferSize: 0, // Would calculate from history
-                totalBurned: latestMetrics.totalBurned,
+          
+              totalBurned: latestMetrics.totalBurned,
                 totalFees: latestMetrics.totalFees
             };
         }
@@ -964,14 +971,12 @@ export class BWAEZIToken {
         this.metrics.totalVolume = this.add(this.metrics.totalVolume, amountWei);
         this.metrics.totalFees = this.add(this.metrics.totalFees, feeAmount);
         this.metrics.totalBurned = this.add(this.metrics.totalBurned, burnAmount);
-
         // Update average transfer size
         const totalTransfers = this.metrics.totalTransfers;
         const totalVolume = this.metrics.totalVolume;
         this.metrics.averageTransferSize = this.fromWei(
             this.divide(totalVolume, this.toWei(totalTransfers))
         );
-
         await this.updateTokenMetrics();
     }
 
@@ -982,13 +987,13 @@ export class BWAEZIToken {
         `, [
             transactionId,
             fromAddress,
-            toAddress,
+      
+              toAddress,
             amountWei,
             'transfer',
             'failed',
             JSON.stringify({ error: errorMessage })
         ]);
-
         this.events.emit('transferFailed', {
             transactionId,
             fromAddress,
@@ -1022,7 +1027,8 @@ export class BWAEZIToken {
                 lockedBalance: '0',
                 transactionCount: 1,
                 totalReceived: netAmount,
-                totalSent: '0',
+                totalSent: 
+        '0',
                 lastUpdated: new Date()
             });
         }
@@ -1073,14 +1079,12 @@ export class BWAEZIToken {
 
     async getTransactionHistory(address, limit = 100) {
         if (!this.initialized) await this.initialize();
-
         const transactions = await this.db.all(`
             SELECT * FROM token_transactions 
             WHERE (fromAddress = ? OR toAddress = ?) 
             ORDER BY timestamp DESC 
             LIMIT ?
         `, [address, address, limit]);
-
         return transactions.map(tx => ({
             id: tx.id,
             fromAddress: tx.fromAddress,
@@ -1089,7 +1093,8 @@ export class BWAEZIToken {
             fee: this.fromWei(tx.fee),
             burned: this.fromWei(tx.burned),
             transactionType: tx.transactionType,
-            transactionHash: tx.transactionHash,
+      
+              transactionHash: tx.transactionHash,
             timestamp: tx.timestamp,
             status: tx.status,
             metadata: tx.metadata ? JSON.parse(tx.metadata) : {}
@@ -1098,7 +1103,6 @@ export class BWAEZIToken {
 
     async getTopHolders(limit = 100) {
         if (!this.initialized) await this.initialize();
-
         const holders = await this.db.all(`
             SELECT address, balance, transactionCount, totalReceived, totalSent
             FROM token_balances 
@@ -1106,7 +1110,6 @@ export class BWAEZIToken {
             ORDER BY balance DESC 
             LIMIT ?
         `, [limit]);
-
         return holders.map(holder => ({
             address: holder.address,
             balance: this.fromWei(holder.balance),
@@ -1119,7 +1122,6 @@ export class BWAEZIToken {
 
     async burn(amount, fromAddress = null) {
         if (!this.initialized) await this.initialize();
-
         const actualFromAddress = fromAddress || BWAEZI_CHAIN.FOUNDER_ADDRESS;
         const amountWei = this.toWei(amount);
 
@@ -1134,12 +1136,11 @@ export class BWAEZIToken {
             SET balance = balance - ?,
                 totalSent = totalSent + ?,
                 lastUpdated = CURRENT_TIMESTAMP
-            WHERE address = ?
+            
+        WHERE address = ?
         `, [amountWei, amountWei, actualFromAddress]);
-
         // Update metrics
         this.metrics.totalBurned = this.add(this.metrics.totalBurned, amountWei);
-
         // Record burn transaction
         const transactionId = this.generateTransactionId();
         await this.db.run(`
@@ -1149,12 +1150,12 @@ export class BWAEZIToken {
             transactionId,
             actualFromAddress,
             '0x0000000000000000000000000000000000000000', // Burn address
-            amountWei,
+           
+              amountWei,
             'burn',
             this.generateTransactionHash('burn', actualFromAddress, '0x0', amountWei),
             JSON.stringify({ purpose: 'token_burn' })
         ]);
-
         this.events.emit('tokensBurned', {
             transactionId,
             fromAddress: actualFromAddress,
@@ -1162,7 +1163,6 @@ export class BWAEZIToken {
             totalBurned: this.fromWei(this.metrics.totalBurned),
             timestamp: new Date()
         });
-
         await this.updateTokenMetrics();
 
         return {
