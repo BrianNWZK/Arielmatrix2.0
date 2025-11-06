@@ -107,7 +107,7 @@ export const QUANTUM_SECURITY_FRAMEWORK = {
 export const BWAEZI_SOVEREIGN_CONFIG = {
     // 🔐 CRITICAL WALLET CONFIGURATION (Protected by environment variables)
     SOVEREIGN_WALLET_ADDRESS: process.env.SOVEREIGN_WALLET_ADDRESS || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
-    SOVEREIGN_WALLET_PK: process.env.SOVEREIGN_WALLET_PK, // MUST be set in a secure .env file/HSM
+    SOVEREIGN_PRIVATE_KEY: process.env.SOVEREIGN_PRIVATE_KEY, // MUST be set in a secure .env file/HSM
     PAYOUT_INTERVAL: parseInt(process.env.PAYOUT_INTERVAL) || 60000, 
     REVENUE_CONSOLIDATION_CRON: process.env.REVENUE_CONSOLIDATION_CRON || '0 0 * * *', 
     // END CRITICAL FIX
