@@ -1,8 +1,9 @@
 // core/sovereign-brain.js — BSFM Sovereign Brain (Quantum-Aware, GOD MODE, Full Capacity)
 // 🔥 NOVELTY: COMPLETE CIRCULAR DEPENDENCY RESOLUTION & LAZY INJECTION
+// 🎯 CRITICAL FIX: Integrated Enterprise Logger
 
 import { EventEmitter } from 'events';
-// 🚫 REMOVED: SovereignRevenueEngine import - breaking circular dependency
+// NOTE: Imports are for structure/reference
 import { BWAEZIToken } from '../modules/bwaezi-token.js';
 import { QuantumResistantCrypto } from '../modules/quantum-resistant-crypto/index.js';
 import ProductionOmnipotentBWAEZI from '../modules/production-omnipotent-bwaezi.js';
@@ -12,8 +13,10 @@ import { QuantumNeuroCortex } from '../core/consciousness-reality-engine.js';
 import { RealityProgrammingEngine } from '../core/consciousness-reality-advanced.js';
 import { QuantumProcessingUnit } from '../core/quantumhardware-layer.js';
 
+// 🆕 CRITICAL FIX: Import the Enterprise Logger
+import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
+
 export class ProductionSovereignCore {
-  // 🔥 NOVELTY/ROBUSTNESS: Added default {} for config to prevent initialization errors
   constructor(config = {}, dbEngineInstance = null) { 
     this.config = config;
     this.dbEngine = dbEngineInstance;
@@ -22,7 +25,9 @@ export class ProductionSovereignCore {
     this.optimizationCycle = 0;
     this.modules = new Map();
     
-    // 🔥 CRITICAL FIX & NOVELTY: The Revenue Engine is now NULL and must be INJECTED.
+    // 🎯 CRITICAL FIX: Get the Enterprise Logger instance for this service
+    this.logger = getGlobalLogger('SovereignCore'); 
+
     this.revenueEngine = null; 
 
     // Initialize all independent modules
@@ -41,20 +46,20 @@ export class ProductionSovereignCore {
     this.modules.set('RealityEngine', this.realityEngine);
   }
 
-  // 🆕 NOVEL INJECTION METHOD: Used by main.js to inject the now-decoupled Revenue Engine
+  // 🆕 NOVEL INJECTION METHOD
   async injectRevenueEngine(engineInstance) {
     if (!engineInstance) {
-      console.error("🛑 FATAL INJECTION ERROR: Revenue Engine instance is null.");
+      this.logger.error("🛑 FATAL INJECTION ERROR: Revenue Engine instance is null.");
       return;
     }
     this.revenueEngine = engineInstance;
     this.modules.set('RevenueEngine', this.revenueEngine);
-    console.log("✅ Sovereign Revenue Engine initialized and injected into Core.");
+    this.logger.info("✅ Sovereign Revenue Engine initialized and injected into Core.");
   }
 
   async initialize() {
     if (this.isInitialized) {
-      console.warn("⚠️ Sovereign Core already initialized.");
+      this.logger.warn("⚠️ Sovereign Core already initialized.");
       return;
     }
 
@@ -68,16 +73,15 @@ export class ProductionSovereignCore {
         this.cryptoEngine.initialize(),
         this.neuroCortex.initialize(),
         this.realityEngine.initialize(),
-        // Revenue engine initialization must happen outside and be injected before first use
       ]);
       
       this.isInitialized = true;
       this.godModeActive = true;
       this.startGodModeLoop();
-      console.log("✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE");
+      this.logger.info("✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE");
 
     } catch (error) {
-      console.error("🛑 CORE INITIALIZATION FAILURE:", error);
+      this.logger.error("🛑 CORE INITIALIZATION FAILURE:", error);
       throw new Error("Core initialization failed.");
     }
   }
@@ -85,10 +89,8 @@ export class ProductionSovereignCore {
   startGodModeLoop() {
     if (!this.godModeActive) return;
     this.optimizationCycle++;
-    // Use setImmediate to ensure non-blocking, continuous operation
     setImmediate(() => this.executeGodModeCycle().catch(err => {
-      console.error(`💥 CRITICAL GOD MODE LOOP CRASH (Cycle ${this.optimizationCycle}):`, err);
-      // 🔥 NEVER EXIT: Just log the error and wait before trying again
+      this.logger.error(`💥 CRITICAL GOD MODE LOOP CRASH (Cycle ${this.optimizationCycle}):`, err);
       setTimeout(() => this.startGodModeLoop(), 10000); 
     }));
   }
@@ -102,31 +104,27 @@ export class ProductionSovereignCore {
 
     await this.omnipresentAI.updateRealtimeMetrics(evolved.realtimeMetrics);
     
-    // Execute Reality Programming and Cognitive Processing
     await this.realityEngine.orchestrateReality(evolved.optimizedInstructions);
     await this.neuroCortex.processCognitiveSignals(globalState);
     
-    // 🔥 CRITICAL: Check if engine is injected before finalizing cycle
     if (this.revenueEngine) {
       await this.revenueEngine.finalizeCycle(this.optimizationCycle, evolved.performanceMetrics);
-      // 🆕 NOVELTY: Attempt immediate revenue generation after finalization
       setImmediate(() => this.revenueEngine.orchestrateRevenueAgents(evolved.revenueInstructions));
     } else {
-      console.warn(`⚠️ Skipping revenue finalization/orchestration (Cycle ${this.optimizationCycle}): Revenue Engine not injected/ready.`);
+      this.logger.warn(`⚠️ Skipping revenue finalization/orchestration (Cycle ${this.optimizationCycle}): Revenue Engine not injected/ready.`);
     }
 
     setImmediate(() => this.startGodModeLoop());
   }
 
   async executeQuantumComputation(task, data, options) {
-    // Delegates to Omnipotent AI
     return this.omnipotentAI.execute(task, data, options);
   }
 
   async emergencyShutdown() {
     this.godModeActive = false;
     this.isInitialized = false;
-    console.log("💀 Sovereign Brain shutdown complete.");
+    this.logger.info("💀 Sovereign Brain shutdown complete.");
   }
 
   getStatus() {
@@ -135,7 +133,6 @@ export class ProductionSovereignCore {
       optimizationCycle: this.optimizationCycle,
       quantumOperations: this.qpu.getStatus().isOnline,
       consciousnessEngineActive: this.neuroCortex.getStatus().active,
-      // 🆕 DYNAMIC MODULE STATUS CHECK:
       modulesLoaded: ['TrinityAI', this.revenueEngine ? 'RevenueEngine' : 'RevenueEngine(NULL)', 'RealityEngine', 'NeuroCortex', 'QPU']
     };
   }
