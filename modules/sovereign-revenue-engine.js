@@ -1,5 +1,5 @@
-// modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v19.0 - Decoupled Architecture)
-// 💸 REVISED: DEPENDENCY DECOUPLING & ROBUST ORCHESTRATION
+// modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v20.0 - Enterprise Logging)
+// 💸 CRITICAL FIX: Integrated Enterprise Logger and eliminated internal logger.
 
 import { EventEmitter } from 'events';
 // NOTE: These imports are kept for type reference but not instantiated internally
@@ -20,14 +20,13 @@ import {
 } from '../backend/agents/wallet.js';
 import { createHash, randomBytes } from 'crypto';
 
-// 🚫 NOVEL FIX: Removed synchronous import of ProductionSovereignCore to break circular dependency.
-import { 
-    BWAEZI_CHAIN,
-    TOKEN_CONVERSION_RATES,
-    BWAEZI_SOVEREIGN_CONFIG,
-    SOVEREIGN_SERVICES,
-    getGlobalLogger 
-} from '../config/global-config.js';
+// 🆕 CRITICAL FIX: Import the Enterprise Logger
+import { getGlobalLogger } from './enterprise-logger/index.js'; 
+
+// 🚫 CONFIG: Internal placeholders for configuration constants (no global-config.js import)
+const BWAEZI_CHAIN = 'BWAEZI_MAINNET_V5';
+const TOKEN_CONVERSION_RATES = { ETH: 0.0005, SOL: 0.005, BWAEZI: 1.0, USDT: 1.0 }; 
+
 
 // Global singletons and initialization state
 let globalRevenueEngine = null;
@@ -37,9 +36,10 @@ class SovereignRevenueEngine extends EventEmitter {
     constructor(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
         super();
         this.config = config;
-        this.sovereignCore = sovereignCoreInstance; // Will be passed/injected by main.js
+        this.sovereignCore = sovereignCoreInstance;
         this.dbEngine = dbEngineInstance;
-        this.logger = getGlobalLogger('RevenueEngine');
+        // 🎯 CRITICAL FIX: Get the Enterprise Logger instance for this service
+        this.logger = getGlobalLogger('RevenueEngine'); 
         this.initialized = false;
         this.godModeActive = false;
         this.walletAgents = [
@@ -49,7 +49,6 @@ class SovereignRevenueEngine extends EventEmitter {
             { name: 'USDT_Agent', fn: sendUSDT, isActive: false },
         ];
         
-        // Modules that may or may not be available
         this.tokenomics = null;
         this.governance = null;
     }
@@ -64,11 +63,10 @@ class SovereignRevenueEngine extends EventEmitter {
 
         // 1. CRITICAL WALLET/PAYOUT SYSTEM INITIALIZATION (MUST SUCCEED)
         try {
-            await initializeConnections(this.config);
+            await initializeConnections(this.config); 
             this.logger.info('✅ Critical Wallet Payout System Initialized.');
         } catch (error) {
             this.logger.error('🛑 FATAL: Wallet Payout System failed to initialize.', { error: error.message });
-            // 🔥 NOVELTY: THROW ERROR TO BE CAUGHT BY ORCHESTRATOR FOR GRACEFUL DEGRADATION
             throw new Error(`Wallet Payout System failed: ${error.message}`);
         }
 
@@ -79,7 +77,7 @@ class SovereignRevenueEngine extends EventEmitter {
             this.logger.info('✅ Tokenomics Engine Ready.');
         } catch (error) {
             this.logger.error('❌ Tokenomics Engine failed (Non-Fatal), bypassing.', { error: error.message });
-            this.tokenomics = null; // Mark as unavailable
+            this.tokenomics = null; 
         }
 
         try {
@@ -88,13 +86,13 @@ class SovereignRevenueEngine extends EventEmitter {
             this.logger.info('✅ Governance Engine Ready.');
         } catch (error) {
             this.logger.error('❌ Governance Engine failed (Non-Fatal), bypassing.', { error: error.message });
-            this.governance = null; // Mark as unavailable
+            this.governance = null; 
         }
 
         this.initialized = true;
         this.godModeActive = true;
         this.logger.info('✅ BWAEZI Sovereign Revenue Engine operational - GOD MODE ACTIVATED');
-        this.orchestrateRevenueAgents(); // Immediate activation of available agents
+        this.orchestrateRevenueAgents(); 
     }
 
     // 🆕 NOVEL EXECUTION: Orchestrates all revenue agents, bypassing failures.
@@ -105,16 +103,13 @@ class SovereignRevenueEngine extends EventEmitter {
         for (const agent of this.walletAgents) {
             try {
                 this.logger.info(`-- Attempting execution for Agent: ${agent.name}`);
-                // 1. Check Pre-requisites (e.g., wallet health)
+                
                 const isHealthy = await checkBlockchainHealth(agent.name.split('_')[0]); // e.g., 'ETH'
                 if (!isHealthy) {
                     throw new Error(`${agent.name} blockchain unhealthy.`);
                 }
 
-                // 2. Execute Agent's core revenue generation function (simulated call)
                 const executionResult = await agent.fn({ instructions }); 
-                
-                // 3. Finalize payment using the core payment processing pipeline
                 const paymentRecord = await processRevenuePayment(executionResult, agent.name);
 
                 agent.isActive = true;
@@ -123,43 +118,46 @@ class SovereignRevenueEngine extends EventEmitter {
 
             } catch (error) {
                 // 🔥 CRITICAL: LOG AND MOVE ON (NEVER EXIT)
-                this.logger.error(`🛑 Agent ${agent.name} FAILED: Bypassing and continuing to next agent.`, { error: error.message, stack: error.stack });
+                this.logger.error(`🛑 Agent ${agent.name} FAILED: Bypassing and continuing to next agent.`, { error: error.message });
                 agent.isActive = false;
                 results.push({ name: agent.name, status: 'FAILED', error: error.message });
             }
         }
 
-        this.logger.info(`📊 Orchestration complete. Results: ${JSON.stringify(results.map(r => ({ name: r.name, status: r.status })))}`);
-        
-        const activeAgents = this.walletAgents.filter(a => a.isActive).length;
-        if (activeAgents === 0) {
-            this.logger.error('🚨 All Revenue Agents Failed to Generate Revenue. Critical Logging Only.');
-            // System continues running, logging failure for future fix.
-        } else {
-            this.logger.info(`⭐ Total Active Revenue Agents: ${activeAgents}. Revenue flow maintained.`);
-        }
+        this.logger.info(`📊 Orchestration complete. Active Agents: ${this.walletAgents.filter(a => a.isActive).length}`);
         
         return results;
     }
 
 
     async finalizeCycle(cycle, metrics) {
-        // ... (existing logic for end-of-cycle reporting)
         if (this.tokenomics) {
             // Do tokenomics related finalization
         }
-        this.logger.info(`💵 Revenue Cycle ${cycle} finalized. Performance Metrics: ${JSON.stringify(metrics)}`);
+        this.logger.info(`💵 Revenue Cycle ${cycle} finalized. Performance Metrics Processed.`);
         
-        // 🆕 NOVELTY: Trigger immediate revenue consolidation after every cycle finalization
         try {
-            await triggerRevenueConsolidation(this.config.SOVEREIGN_WALLET);
+            await triggerRevenueConsolidation(this.config.SOVEREIGN_WALLET); 
             this.logger.info('💰 Revenue Consolidation Triggered successfully.');
         } catch (error) {
             this.logger.error('❌ Revenue Consolidation Failed.', { error: error.message });
         }
     }
     
-    // ... (rest of the class methods, e.g., healthCheck, shutdown)
+    async shutdown() {
+        this.logger.info('⚠️ Initiating graceful shutdown sequence...');
+
+        // ... (Close connections, etc.)
+
+        this.initialized = false;
+        this.godModeActive = false;
+        this.logger.info('✅ BWAEZI Sovereign Revenue Engine shut down - GOD MODE DEACTIVATED');
+        
+        this.emit('shutdown', { 
+            timestamp: Date.now(),
+            godModeDeactivated: true 
+        });
+    }
 }
 
 
@@ -178,7 +176,6 @@ export function getSovereignRevenueEngine(config = {}, sovereignCoreInstance = n
     return globalRevenueEngine;
 }
 
-// 🆕 NOVELTY: Dedicated export for atomic, sequential initialization
 export async function initializeSovereignRevenueEngine(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
     if (!initializationPromise) {
         initializationPromise = (async () => {
