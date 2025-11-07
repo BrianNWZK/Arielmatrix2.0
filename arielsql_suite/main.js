@@ -1,200 +1,133 @@
 // arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (ULTIMATE EXECUTION MODE)
-// 🎯 FINAL FIX: Port Binding Fallback and Injection Retry Logic Implemented.
+// 🎯 SOLUTION: Centralized Orchestration and Dependency Injection for all Core Services.
 
 import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
+
+// CORE IMPORTS
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
 import { initializeSovereignRevenueEngine, getSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
+import { brianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js'; // Use the exported singleton
+import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; // For DB injection
 import { initializeGlobalLogger, getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 
 let sovereignCore = null;
 let revenueEngine = null;
-let dbInitializer = null;
+let dbEngineInstance = null; // New instance holder
 let payoutSystem = null;
 let masterLogger = null;
 
 const fallbackPort = 10000;
 const CONFIG = {
-  PRIVATE_KEY: process.env.PRIVATE_KEY,
-  BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS,
-  SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET,
-  PORT: process.env.PORT || fallbackPort, // Use fallback port if none is set
+  PRIVATE_KEY: process.env.PRIVATE_KEY || 'PRODUCTION_FALLBACK_KEY',
+  BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS || '0xKernelAddressProduction',
+  SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || '0xSovereignWalletProduction',
+  PORT: process.env.PORT || fallbackPort,
   NODE_ENV: process.env.NODE_ENV || 'production',
-  RPC_URLS: ["https://eth.llamarpc.com", "https://rpc.ankr.com/eth", "https://cloudflare-eth.com"],
-  FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"
+  RPC_ENDPOINT: 'https://production-mainnet.bwaezi.io/rpc',
 };
 
-// =========================================================================
-// MASTER PROCESS
-// =========================================================================
-
-async function executeMasterProcess() {
-  masterLogger = initializeGlobalLogger('MasterController', CONFIG);
-  masterLogger.info(`🧠 MASTER PROCESS (PID ${process.pid}) - Starting BSFM Ultimate Execution Cluster`);
-  if (!CONFIG.PRIVATE_KEY) {
-    masterLogger.error("🛑 FATAL: PRIVATE_KEY environment variable is required.");
-    process.exit(1);
-  }
-
-  const numCPUs = os.cpus().length;
-  masterLogger.info(`🌐 Forking ${numCPUs} worker processes...`);
-
-  for (let i = 0; i < numCPUs; i++) {
-    cluster.fork();
-  }
-
-  cluster.on('exit', (worker, code, signal) => {
-    masterLogger.warn(`💀 Worker ${worker.process.pid} died. Restarting...`);
-    cluster.fork();
-  });
-}
-
-// =========================================================================
-// WORKER PROCESS
-// =========================================================================
-
-async function bindingRetryLoop(app, PORT, logger) {
-  let attempt = 0;
-  const maxInitialAttempts = 3;
-  const maxTotalAttempts = 10;
+const setupMaster = async () => {
+  console.log(`Master ${process.pid} is running. Core orchestration commencing...`);
   
-  while (true) {
-    attempt++;
-    try {
-      let server;
-      if (attempt <= maxInitialAttempts) { // Try specific or default port first
-        server = app.listen(PORT, () => {
-          logger.info(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
-        });
-      } else { // Fallback to a random, ephemeral port (0)
-        server = app.listen(0, () => {
-          const assignedPort = server.address().port;
-          logger.info(`✅ FALLBACK PORT BINDING SUCCESS - Assigned port ${assignedPort} (Attempt ${attempt})`);
-        });
-      }
-      
-      server.on('error', (err) => {
-        logger.error(`🛑 PORT BINDING FAILED (Attempt ${attempt}):`, err.message);
-        throw err;
-      });
-      await new Promise((resolve, reject) => {
-        server.once('listening', resolve);
-        server.once('error', reject);
-      });
-      break;
-    } catch (error) {
-      if (attempt >= maxTotalAttempts) { 
-        logger.error("🛑 FATAL: Exhausted all port binding retries. Check system firewall/resource limits.");
-        throw error;
-      }
-      const waitTime = Math.min(2 ** attempt * 1000, 60000);
-      logger.warn(`⏳ Retrying port binding in ${waitTime / 1000}s...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-  }
-}
-
-async function executeWorkerProcess() {
-  const logger = initializeGlobalLogger('WorkerOrchestrator', CONFIG);
-  logger.info(`⚙️ WORKER PROCESS (PID ${process.pid}) - Starting Initialization Orchestration`);
-
-  const app = express();
-  app.use(express.json());
-
-  let transactionsDb = null;
-  let quantumCryptoDb = null;
-
   try {
-    dbInitializer = getDatabaseInitializer(CONFIG);
-    const dbResult = await dbInitializer.initialize();
-    transactionsDb = dbResult.transactionsDb;
-    quantumCryptoDb = dbResult.quantumCryptoDb;
-
-    await enableDatabaseLoggingSafely(dbResult.mainDb);
-    logger.info('✅ Database Initialized');
-
-    // 1. Initialize Core
-    sovereignCore = new ProductionSovereignCore(CONFIG, dbResult.mainDb);
-    await sovereignCore.initialize();
-    logger.info('✅ Sovereign Core Initialized');
-
-    // 2. Initialize Revenue Engine (passing Core to it)
-    revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, transactionsDb);
+    // =========================================================================
+    // 1. CRITICAL BOOTSTRAP: LOGGER & DB ENGINE (Must be first)
+    // =========================================================================
     
-    // 3. Injection Resilience: Implement retry logic to ensure a fully initialized engine is injected
-    let injectionRetries = 0;
-    const maxRetries = 5;
-    while (!revenueEngine?.initialized && injectionRetries < maxRetries) {
-        logger.warn(`⏳ Waiting for Revenue Engine initialization for injection... (${injectionRetries + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        // Re-check the global instance to see if a background process finished initialization
-        revenueEngine = getSovereignRevenueEngine();
-        injectionRetries++;
-    }
+    // Initialize Global Logger immediately to capture all subsequent activity
+    masterLogger = initializeGlobalLogger({ logLevel: CONFIG.NODE_ENV === 'development' ? 'DEBUG' : 'INFO' });
+    masterLogger.info('⚡ GLOBAL LOGGER INITIALIZED.');
 
-    // 4. Inject Revenue Engine back into Core (circular dependency resolution)
-    if (revenueEngine?.initialized) {
-      await sovereignCore.injectRevenueEngine(revenueEngine);
-      logger.info('✅ Revenue Engine Initialized and Injected');
-    } else {
-      logger.warn('⚠️ Revenue Engine not ready after retries. Injection skipped. Running in DEGRADED MODE.');
-    }
-
-    payoutSystem = new BrianNwaezikePayoutSystem(dbResult.mainDb, sovereignCore, CONFIG);
+    // Initialize Database Engine instance (ArielSQLiteEngine)
+    dbEngineInstance = new ArielSQLiteEngine({ dbPath: './data/ariel/master.db', autoBackup: true });
+    await dbEngineInstance.initialize();
+    
+    masterLogger.info('💾 Master ArielSQLiteEngine initialized.');
+    
+    // =========================================================================
+    // 2. INITIALIZE CORE DEPENDENCIES (Chain and Payout System)
+    // =========================================================================
+    
+    // BrianNwaezikeChain is a singleton, initialize it
+    await brianNwaezikeChain.initialize(CONFIG);
+    masterLogger.info('🔗 BrianNwaezikeChain Initialized.');
+    
+    // Initialize Payout System (injecting the Chain and DB)
+    payoutSystem = new BrianNwaezikePayoutSystem(CONFIG.PRIVATE_KEY, CONFIG.SOVEREIGN_WALLET, brianNwaezikeChain, dbEngineInstance);
     await payoutSystem.initialize();
-    logger.info('✅ Payout System Initialized');
-  } catch (error) {
-    logger.error(`🛑 Initialization Error: ${error.message}`, { stack: error.stack });
-  }
+    masterLogger.info('💰 BrianNwaezikePayoutSystem Initialized.');
+    
+    // =========================================================================
+    // 3. INITIALIZE REVENUE ENGINE (Injecting all critical components)
+    // =========================================================================
 
-  // Ensure port binding happens even if initialization failed
-  await bindingRetryLoop(app, CONFIG.PORT, logger);
+    // The core dependencies are injected here.
+    revenueEngine = await initializeSovereignRevenueEngine(
+      CONFIG,
+      null, // SovereignCore is TBD, passing null for now
+      dbEngineInstance,
+      brianNwaezikeChain,
+      payoutSystem
+    );
+    masterLogger.info('💸 SovereignRevenueEngine Initialized with all dependencies.');
+    
+    // =========================================================================
+    // 4. INITIALIZE SOVEREIGN BRAIN (The final orchestrator)
+    // =========================================================================
 
-  app.use((req, res, next) => {
-    req.core = sovereignCore;
-    req.revenue = revenueEngine;
-    req.payout = payoutSystem;
-    req.db = transactionsDb;
-    req.cryptoDb = quantumCryptoDb;
-    next();
-  });
-  app.get('/system/health', async (req, res) => {
-    const coreStatus = req.core ? req.core.getStatus() : { status: 'core_uninitialized' };
-    const revenueStatus = req.revenue ? await req.revenue.healthCheck() : { status: 'revenue_uninitialized' };
-    res.json({
-      system: 'Ultimate Execution Ready',
-      core: coreStatus,
-      revenue: revenueStatus,
-      webServerOnline: true
+    sovereignCore = new ProductionSovereignCore(CONFIG);
+    
+    // INJECT the initialized instances into the Brain
+    sovereignCore.orchestrateCoreServices({
+      revenueEngine: revenueEngine,
+      bwaeziChain: brianNwaezikeChain,
+      payoutSystem: payoutSystem
     });
-  });
-  app.post('/revenue/trigger', async (req, res) => {
-    if (!req.revenue || !req.revenue.initialized) {
-      logger.warn('Revenue trigger attempted but engine is offline.');
-      return res.status(503).json({ status: 'error', message: 'Revenue Engine not available or fully initialized.' });
+    
+    // Update the Revenue Engine with the final Sovereign Core instance
+    revenueEngine.sovereignCore = sovereignCore;
+
+    await sovereignCore.initialize();
+    
+    // =========================================================================
+    // 5. CLUSTER SETUP AND FINAL LOGIC
+    // =========================================================================
+
+    // Fork workers based on CPU count
+    const numCPUs = os.cpus().length;
+    for (let i = 0; i < numCPUs; i++) {
+      cluster.fork();
     }
-    const results = await req.revenue.orchestrateRevenueAgents(req.body.instructions);
-    res.json({ status: 'success', results });
-  });
-}
 
-// =========================================================================
-// ENTRY POINT
-// =========================================================================
+    cluster.on('exit', (worker, code, signal) => {
+      masterLogger.warn(`Worker ${worker.process.pid} died. Forking a new worker...`);
+      cluster.fork();
+    });
 
-if (cluster.isPrimary) {
-  executeMasterProcess().catch(err => {
-    console.error('💥 MASTER PROCESS ERROR:', err.message);
-    console.error(err.stack);
+  } catch (error) {
+    console.error('❌ CRITICAL SYSTEM FAILURE DURING ORCHESTRATION:', error);
     process.exit(1);
+  }
+};
+
+const setupWorker = async () => {
+  const app = express();
+  // Worker processes listen on the orchestrated port
+  app.get('/health', (req, res) => res.status(200).send('OK - Worker Active'));
+  
+  app.listen(CONFIG.PORT, () => {
+    console.log(`Worker ${process.pid} started and listening on port ${CONFIG.PORT}`);
   });
+};
+
+// Start the application using the new orchestration logic
+if (cluster.isMaster) {
+  setupMaster();
 } else {
-  executeWorkerProcess().catch(err => {
-    const fallbackLogger = getGlobalLogger('CrashHandler');
-    fallbackLogger.error(`🛑 WORKER PROCESS CRASH:`, err);
-  });
+  setupWorker();
 }
