@@ -13,19 +13,19 @@
     "averageGasUsed": 0
   },
   "scripts": {
-    "start": "NODE_PATH=./ node arielsql_suite/main.js",
-    "dev": "NODE_PATH=./ nodemon arielsql_suite/main.js",
-    "backend": "NODE_PATH=./ node backend/server.js",
+    "start": "node arielsql_suite/main.js",
+    "dev": "nodemon arielsql_suite/main.js",
+    "backend": "node backend/server.js",
     "precommit": "node scripts/precommit.js",
     "test": "jest",
     "refresh-lock": "rm -f package-lock.json && npm install",
     "build": "vite build",
     "train-ai": "node scripts/train-models.js",
     "monitor": "node scripts/system-monitor.js",
-    "payout-agent": "NODE_PATH=./ node backend/agents/payoutAgent.js",
+    "payout-agent": "node backend/agents/payoutAgent.js",
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
     "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
-    "deploy-kernel": "NODE_PATH=./ node arielsql_suite/main.js"
+    "deploy-kernel": "node arielsql_suite/main.js"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -85,7 +85,7 @@
     "serialport": "^12.0.0",
     "onoff": "^6.0.3",
     "web3.storage": "^4.4.0",
-    "nft.storage": "^7.1.1",
+    "nft.storage": "^7.1.1", 
     "arweave": "^1.15.7",
     "websocket": "^1.0.34",
     "solc": "^0.8.20",
