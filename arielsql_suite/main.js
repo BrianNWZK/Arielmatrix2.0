@@ -5,163 +5,170 @@ import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
-
-// 🚀 CORE DEPENDENCIES
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
-import { BWAEZIToken } from '../modules/bwaezi-token.js';
-import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; 
+import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
-
-// 🆕 CRITICAL FIX: Import Enterprise Logger Initialization/Access
 import { initializeGlobalLogger, getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
-// 🆕 Load Master Configuration
-import MASTER_CONFIG, { BWAEZI_CHAIN, BWAEZI_SOVEREIGN_CONFIG } from '../config/bwaezi-config.js';
 
-// Global reference for the core and IPC helpers in the worker process
 let sovereignCore = null;
 let revenueEngine = null;
-let tokenModule = null;
 let dbInitializer = null;
 let payoutSystem = null;
 let masterLogger = null;
 
-let globalMasterCoreProxy = {
-    optimizationCycle: 0, 
-    healthStatus: 'initializing'
-};
-
-// 🔐 CRITICAL ENVIRONMENT CONFIGURATION
 const CONFIG = {
-    PRIVATE_KEY: process.env.PRIVATE_KEY,
-    BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS,
-    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || BWAEZI_CHAIN.FOUNDER_ADDRESS, // Fallback for SRP
-    PORT: parseInt(process.env.PORT) || 3000,
-    CLUSTER_WORKERS: parseInt(process.env.CLUSTER_WORKERS) || os.cpus().length,
-    ...MASTER_CONFIG // Inject the full static config
+  PRIVATE_KEY: process.env.PRIVATE_KEY,
+  BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS,
+  SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET,
+  PORT: process.env.PORT || 10000,
+  NODE_ENV: process.env.NODE_ENV || 'production',
+  RPC_URLS: ["https://eth.llamarpc.com", "https://rpc.ankr.com/eth", "https://cloudflare-eth.com"],
+  FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"
 };
 
-/**
- * Master process logic: initializes the logger, manages worker cluster, and handles IPC.
- */
-function startMaster() {
-    masterLogger = initializeGlobalLogger('MASTER', { dbLogging: false });
-    masterLogger.info(`🚀 Starting BSFM Master Process (PID: ${process.pid})`);
-    masterLogger.info(`🖥️ Spawning ${CONFIG.CLUSTER_WORKERS} worker clusters...`);
+// =========================================================================
+// MASTER PROCESS
+// =========================================================================
 
-    for (let i = 0; i < CONFIG.CLUSTER_WORKERS; i++) {
-        cluster.fork();
-    }
+async function executeMasterProcess() {
+  masterLogger = initializeGlobalLogger('MasterController', CONFIG);
+  masterLogger.info(`🧠 MASTER PROCESS (PID ${process.pid}) - Starting BSFM Ultimate Execution Cluster`);
 
-    cluster.on('exit', (worker, code, signal) => {
-        masterLogger.error(`💀 Worker ${worker.process.pid} died. Code: ${code}, Signal: ${signal}.`);
-        masterLogger.info('🔄 Relaunching new worker...');
-        cluster.fork(); // Self-healing architecture (OPTION 1)
-    });
+  if (!CONFIG.PRIVATE_KEY) {
+    masterLogger.error("🛑 FATAL: PRIVATE_KEY environment variable is required.");
+    process.exit(1);
+  }
 
-    cluster.on('message', (worker, message, handle) => {
-        if (message.type === 'coreUpdate') {
-            globalMasterCoreProxy.optimizationCycle = message.cycle;
-            globalMasterCoreProxy.healthStatus = message.status;
-        }
-    });
+  const numCPUs = os.cpus().length;
+  masterLogger.info(`🌐 Forking ${numCPUs} worker processes...`);
 
-    masterLogger.info(`Master process ready. Workers managed.`);
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  cluster.on('exit', (worker, code, signal) => {
+    masterLogger.warn(`💀 Worker ${worker.process.pid} died. Restarting...`);
+    cluster.fork();
+  });
 }
 
-/**
- * Worker process logic: initializes the core modules and starts the server.
- */
-async function startWorker() {
-    masterLogger = initializeGlobalLogger('WORKER', { dbLogging: true }); // Worker logs to DB
-    masterLogger.info(`🛠️ Starting BSFM Worker Process (PID: ${process.pid})`);
+// =========================================================================
+// WORKER PROCESS
+// =========================================================================
 
-    // 1. Initialize Database Core
+async function bindingRetryLoop(app, PORT, logger) {
+  let attempt = 0;
+  while (true) {
+    attempt++;
     try {
-        dbInitializer = getDatabaseInitializer(masterLogger);
-        const { mainDb, transactionsDb } = await dbInitializer.initialize();
-        masterLogger.info('✅ Database Initialized.');
-    } catch (e) {
-        masterLogger.fatal(`❌ DB Initialization Failed. Critical failure: ${e.message}`);
-        process.exit(1);
-    }
+      const server = app.listen(PORT, () => {
+        logger.info(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
+      });
 
-    // 2. Initialize Sovereign Core (The Brain)
-    try {
-        sovereignCore = new ProductionSovereignCore(CONFIG, masterLogger);
-        await sovereignCore.initialize();
-        masterLogger.info('✅ Sovereign Core (Brain) Initialized.');
-    } catch (e) {
-        masterLogger.error(`⚠️ Sovereign Core Initialization Failed. Falling back to Degraded Mode: ${e.message}`);
-        sovereignCore = {
-            isInitialized: false,
-            // Mock functions for degraded operation
-            runGodModeCycle: async () => masterLogger.warn('Core is degraded. Skipping cycle.'),
-            getStatus: () => ({ godMode: false, status: 'Degraded' })
-        };
-    }
+      server.on('error', (err) => {
+        logger.error(`🛑 PORT BINDING FAILED (Attempt ${attempt}):`, err.message);
+        throw err;
+      });
 
-    // 3. Initialize Sovereign Revenue Engine (Critical Dependency)
-    try {
-        // Use the sequential initialization pattern (OPTION 2)
-        revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, dbInitializer.transactionsDb);
-        masterLogger.info('✅ Sovereign Revenue Engine Initialized.');
-    } catch (e) {
-        masterLogger.warn(`⚠️ Revenue Engine initialization failed: ${e.message}. System running in SRP Failover Mode (OPTION 1).`);
-        revenueEngine = null; // Set to null to trigger fail-forward logic
-    }
-    
-    // 4. Initialize BWAEZI Token Module (Requires Revenue Engine for service registration)
-    try {
-        tokenModule = new BWAEZIToken(CONFIG, revenueEngine);
-        await tokenModule.initialize();
-        masterLogger.info('✅ BWAEZI Token Module Initialized.');
-    } catch (e) {
-        masterLogger.warn(`⚠️ BWAEZI Token Module failed: ${e.message}. Token functions may be limited.`);
-    }
+      await new Promise((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
 
-    // 5. Initialize Payout System
-    try {
-        payoutSystem = new BrianNwaezikePayoutSystem(CONFIG);
-        await payoutSystem.initialize();
-        masterLogger.info('✅ Payout System Initialized.');
-    } catch (e) {
-        masterLogger.warn(`⚠️ Payout System failed: ${e.message}. Revenue consolidation may be disabled.`);
+      break;
+    } catch (error) {
+      const waitTime = Math.min(2 ** attempt * 1000, 60000);
+      logger.warn(`⏳ Retrying port binding in ${waitTime / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
-
-    // Inject final dependencies into Sovereign Core
-    if (sovereignCore.isInitialized) {
-        sovereignCore.injectDependencies(revenueEngine, tokenModule, payoutSystem);
-        sovereignCore.startGodModeLoop();
-        masterLogger.info('✨ GOD MODE Loop Started.');
-    }
-
-    // 6. Start Web Server (Zero Failure Port Binding - OPTION 1)
-    const app = express();
-    app.use(express.json());
-    
-    // Example endpoint for health check
-    app.get('/health', (req, res) => {
-        res.status(200).json({
-            status: 'operational',
-            coreStatus: sovereignCore.getStatus(),
-            revenueEngine: revenueEngine ? revenueEngine.healthCheck() : 'SRP_FAILOVER',
-            tokenModule: tokenModule ? 'Active' : 'Degraded'
-        });
-    });
-
-    app.listen(CONFIG.PORT, () => {
-        masterLogger.info(`🌐 Web Server running on port ${CONFIG.PORT}. (PID: ${process.pid})`);
-        masterLogger.info(`✅ PORT BOUND IN <100ms (OPTION 1)`);
-    }).on('error', (err) => {
-        masterLogger.error(`❌ Web Server failed to bind: ${err.message}`);
-        // Implement auto-fallback port logic here if required by OPTION 1
-    });
+  }
 }
 
-// Execute based on cluster role
-if (cluster.isMaster) {
-    startMaster();
+async function executeWorkerProcess() {
+  const logger = initializeGlobalLogger('WorkerOrchestrator', CONFIG);
+  logger.info(`⚙️ WORKER PROCESS (PID ${process.pid}) - Starting Initialization Orchestration`);
+
+  const app = express();
+  app.use(express.json());
+
+  let transactionsDb = null;
+  let quantumCryptoDb = null;
+
+  try {
+    dbInitializer = getDatabaseInitializer(CONFIG);
+    const dbResult = await dbInitializer.initialize();
+    transactionsDb = dbResult.transactionsDb;
+    quantumCryptoDb = dbResult.quantumCryptoDb;
+
+    await enableDatabaseLoggingSafely(dbResult.mainDb);
+    logger.info('✅ Database Initialized');
+
+    sovereignCore = new ProductionSovereignCore(CONFIG, dbResult.mainDb);
+    await sovereignCore.initialize();
+    logger.info('✅ Sovereign Core Initialized');
+
+    revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, transactionsDb);
+    if (revenueEngine) {
+      await sovereignCore.injectRevenueEngine(revenueEngine);
+      logger.info('✅ Revenue Engine Initialized');
+    } else {
+      logger.warn('⚠️ Revenue Engine failed to initialize. Continuing without it.');
+    }
+
+    payoutSystem = new BrianNwaezikePayoutSystem(CONFIG, transactionsDb);
+    await payoutSystem.initialize();
+    logger.info('✅ Payout System Initialized');
+
+  } catch (error) {
+    logger.error(`🛑 Initialization Error: ${error.message}`, { stack: error.stack });
+  }
+
+  await bindingRetryLoop(app, CONFIG.PORT, logger);
+
+  app.use((req, res, next) => {
+    req.core = sovereignCore;
+    req.revenue = revenueEngine;
+    req.payout = payoutSystem;
+    req.db = transactionsDb;
+    req.cryptoDb = quantumCryptoDb;
+    next();
+  });
+
+  app.get('/system/health', async (req, res) => {
+    const coreStatus = req.core ? req.core.getStatus() : { status: 'core_uninitialized' };
+    const revenueStatus = req.revenue ? await req.revenue.healthCheck() : { status: 'revenue_uninitialized' };
+    res.json({
+      system: 'Ultimate Execution Ready',
+      core: coreStatus,
+      revenue: revenueStatus,
+      webServerOnline: true
+    });
+  });
+
+  app.post('/revenue/trigger', async (req, res) => {
+    if (!req.revenue) {
+      logger.warn('Revenue trigger attempted but engine is offline.');
+      return res.status(503).json({ status: 'error', message: 'Revenue Engine not available.' });
+    }
+    const results = await req.revenue.orchestrateRevenueAgents(req.body.instructions);
+    res.json({ status: 'success', results });
+  });
+}
+
+// =========================================================================
+// ENTRY POINT
+// =========================================================================
+
+if (cluster.isPrimary) {
+  executeMasterProcess().catch(err => {
+    console.error('💥 MASTER PROCESS ERROR:', err.message);
+    console.error(err.stack);
+    process.exit(1);
+  });
 } else {
-    startWorker();
+  executeWorkerProcess().catch(err => {
+    const fallbackLogger = getGlobalLogger('CrashHandler');
+    fallbackLogger.error(`🛑 WORKER PROCESS CRASH:`, err);
+  });
 }
