@@ -140,3 +140,4 @@ export async function initializeSovereignRevenueEngine(config, sovereignCoreInst
     }
     throw new Error("SovereignRevenueEngine could not be initialized due to missing dependencies in the orchestration layer.");
 }
+export { SovereignRevenueEngine };
