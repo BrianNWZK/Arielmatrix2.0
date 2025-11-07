@@ -1,9 +1,10 @@
-// arielsql_suite/serviceManager.js - PRODUCTION GOD MODE v5.0 (V4 - ALL REVENUE AGENT NAMES CORRECTED)
+// arielsql_suite/serviceManager.js - PRODUCTION GOD MODE v5.1 (DECOUPLED ORCHESTRATION)
 /**
  * 🚀 ArielSQL Suite Service Manager
  * Manages all core services: Express API, WebSocket, Sovereign Core (GOD MODE), 
  * Revenue Agents, Database, and Blockchain components.
  * 🛡️ Designed for high-availability, clustering, and graceful shutdown.
+ * 🔥 NOVELTY: COMPLETE DECOUPLING from Core Systems - All critical dependencies are INJECTED.
  */
 import express from "express";
 import bodyParser from "body-parser";
@@ -17,34 +18,30 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs/promises';
 
-// 🔥 REAL PRODUCTION IMPORTS - NO SIMULATIONS
+// Enterprise Modules (Non-decoupled modules maintained)
 import { SovereignGovernance } from "../modules/governance-engine/index.js";
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { getDatabaseInitializer } from "../modules/database-initializer.js";
-
-// Enterprise Modules (CRITICAL: Re-added missing core dependencies)
 import { getGlobalLogger } from "../modules/enterprise-logger/index.js"; 
 import MonitoringSystem from "../modules/monitoring/index.js"; 
 
-// 🔥 REAL REVENUE AGENTS - LIVE PRODUCTION (NAME CORRECTIONS APPLIED)
+// 🔥 REAL REVENUE AGENTS - LIVE PRODUCTION (Agent imports maintained for internal reference)
 import AdRevenueAgent from "../backend/agents/adRevenueAgent.js";
 import AdsenseAgent from "../backend/agents/adsenseAgent.js";
 import ApiScoutAgent from "../backend/agents/apiScoutAgent.js";
 import { QuantumBrowserManager } from "../backend/agents/browserManager.js";
-import ConfigAgent from "../backend/agents/configAgent.js"; // ✅ CORRECTION: Changed to TitleCase
+import ConfigAgent from "../backend/agents/configAgent.js"; 
 import ContractDeployAgent from "../backend/agents/contractDeployAgent.js";
 import { EnhancedCryptoAgent } from "../backend/agents/cryptoAgent.js";
 import DataAgent from "../backend/agents/dataAgent.js";
-import ForexSignalAgent from "../backend/agents/forexSignalAgent.js"; // ✅ CORRECTION: Changed to TitleCase
+import ForexSignalAgent from "../backend/agents/forexSignalAgent.js"; 
 import HealthAgent from "../backend/agents/healthAgent.js";
 import PayoutAgent from "../backend/agents/payoutAgent.js";
-import ShopifyAgent from "../backend/agents/shopifyAgent.js"; // ✅ CORRECTION: Changed to TitleCase
-import SocialAgent from "../backend/agents/socialAgent.js"; // ✅ CORRECTION: Changed to TitleCase
+import ShopifyAgent from "../backend/agents/shopifyAgent.js"; 
+import SocialAgent from "../backend/agents/socialAgent.js"; 
 
-// 🔥 REAL WALLET INTEGRATION (UPDATED IMPORTS)
+// 🔥 REAL WALLET INTEGRATION (Imports maintained)
 import { consolidateRevenue } from "../backend/agents/wallet.js";
-// NOTE: initializeConnections and getWalletBalances were imported but not used in ServiceManager, 
-// so only consolidateRevenue is carried over for the handler logic.
 
 // =========================================================================
 // SERVICE MANAGER CLASS
@@ -53,24 +50,20 @@ import { consolidateRevenue } from "../backend/agents/wallet.js";
 export class ServiceManager {
   /**
    * @param {object} config - Application configuration.
-   * @param {ArielSQLiteEngine} dbEngine - Primary database instance.
-   * @param {ProductionSovereignCore} sovereignCore - AI Core instance.
-   * @param {MonitoringSystem} monitoring - System monitoring instance.
-   * @param {BrianNwaezikeChain} bwaeziChain - Blockchain component.
-   * @param {BrianNwaezikePayoutSystem} payoutSystem - Payout component.
    */
   constructor(config = {}) {
     this.config = config;
     this.logger = getGlobalLogger('ServiceManager');
     this.isInitialized = false;
 
-    // Core Components (injected or set in initialize)
+    // Core Components (Placeholders for INJECTED dependencies)
     this.dbEngine = null;
     this.sovereignCore = null;
     this.monitoring = null;
     this.bwaeziChain = null;
     this.payoutSystem = null;
-    this.revenueEngine = null;
+    this.revenueEngine = null; 
+    this.autonomousAIEngine = null; // New Placeholder for the injected AI Engine
 
     // Agent Management
     this.agents = {};
@@ -95,32 +88,33 @@ export class ServiceManager {
   }
 
   /**
-   * Main initialization routine.
+   * Main initialization routine. Accepts all core systems via injection.
+   * @param {object} dependencies - All initialized core system instances.
    */
-  async initialize({ dbEngine, sovereignCore, monitoring, bwaeziChain, payoutSystem }) {
+  async initialize({ dbEngine, sovereignCore, monitoring, bwaeziChain, payoutSystem, revenueEngine, autonomousAIEngine }) {
     if (this.isInitialized) {
       this.logger.warn('ServiceManager already initialized. Skipping.');
       return;
     }
 
-    this.logger.info('🚀 Initializing ServiceManager...');
+    this.logger.info('🚀 Initializing ServiceManager with INJECTED dependencies...');
 
-    // 1. Dependency Injection
+    // 1. Dependency Injection 
     this.dbEngine = dbEngine;
     this.sovereignCore = sovereignCore;
     this.monitoring = monitoring;
     this.bwaeziChain = bwaeziChain;
     this.payoutSystem = payoutSystem;
-    
-    // Core utility setup
-    this.revenueEngine = getSovereignRevenueEngine(this.config, sovereignCore, dbEngine);
+    this.revenueEngine = revenueEngine;
+    this.autonomousAIEngine = autonomousAIEngine; // Injected AI Engine
 
     // 2. Setup Server Infrastructure
     this._setupExpress();
     this._setupRoutes();
     this._setupWebSockets();
 
-    // 3. Setup and Start Agents
+    // 3. Setup and Start Agents (Agents are *deployed* by the AI Engine, but *managed/interfaced* here)
+    // NOTE: This now initializes the ServiceManager's *interface* to the agents deployed by the AI Engine.
     await this._setupAgents();
 
     // 4. Start Core Loops and Tasks
@@ -143,6 +137,7 @@ export class ServiceManager {
     this.app.use(bodyParser.json());
 
     this.app.use((req, res, next) => {
+      // Inject core components into the request object for handler access
       req.dbEngine = this.dbEngine;
       req.sovereignCore = this.sovereignCore;
       req.serviceManager = this;
@@ -196,7 +191,7 @@ export class ServiceManager {
     
     this.app.get('/api/governance/policies', async (req, res) => {
         const initializer = getDatabaseInitializer();
-        const governance = initializer.getSovereignGovernance();
+        const governance = initializer.getSovereignGovernance(); 
         if (governance && governance.policyFramework) {
             return res.json(governance.policyFramework);
         }
@@ -210,7 +205,6 @@ export class ServiceManager {
   async triggerConsolidationHandler(req, res) {
     this.logger.info('Manual revenue consolidation triggered by API request.');
     try {
-      // ✅ CORRECTION: Using consolidateRevenue as requested
       const result = await consolidateRevenue(); 
       
       this.broadcastStatusUpdate(); 
@@ -277,49 +271,54 @@ export class ServiceManager {
 
   /**
    * Instantiates and stores an agent instance.
+   * NOTE: Agents are now initialized by the AI Engine, this function is mostly
+   * for local agent logic interface/status aggregation.
    */
   _initializeAgent(AgentClass, agentName) {
     try {
+        // Agents receive the fully injected core instances
         const agent = new AgentClass({
           config: this.config, 
           db: this.dbEngine, 
-          core: this.sovereignCore,
+          core: this.sovereignCore, 
+          revenueEngine: this.revenueEngine, 
+          bwaeziChain: this.bwaeziChain, 
+          payoutSystem: this.payoutSystem,
+          autonomousAIEngine: this.autonomousAIEngine, // Pass the initialized AI Engine
           logger: getGlobalLogger(agentName)
         });
         this.agents[agentName] = agent;
-        this.logger.info(`Agent '${agentName}' initialized.`);
+        this.logger.info(`Agent Interface '${agentName}' initialized.`);
     } catch (error) {
-        this.logger.error(`❌ Failed to initialize agent ${agentName}: ${error.message}`);
+        this.logger.error(`❌ Failed to initialize agent interface ${agentName}: ${error.message}`);
     }
   }
 
   /**
    * Initializes all production revenue agents.
+   * NOTE: The AI Engine handles the deployment/start, this ensures ServiceManager
+   * has a local reference for status/shutdown management.
    */
   async _setupAgents() {
-    this.logger.info('Initializing production agents...');
+    this.logger.info('Initializing production agent interfaces...');
     const agentPromises = [];
 
-    // Instantiate all agents using the vetted agentClasses map
+    // Instantiate local interfaces for all agents
     for (const [agentName, AgentClass] of Object.entries(this.agentClasses)) {
       this._initializeAgent(AgentClass, agentName);
     }
     
-    // Start all agents concurrently
+    // We only call 'start' if agents need a secondary, non-AI-controlled loop
     for (const [agentName, agent] of Object.entries(this.agents)) {
       if (agent && typeof agent.start === 'function') {
-        agentPromises.push(agent.start().then(() => {
-          this.logger.info(`Agent ${agentName} started.`);
-        }).catch(error => {
-          this.logger.error(`❌ Failed to start agent ${agentName}: ${error.message}`);
+        agentPromises.push(agent.start().catch(error => {
+          this.logger.error(`❌ Failed to start agent interface ${agentName}: ${error.message}`);
         }));
-      } else {
-        this.logger.warn(`Agent ${agentName} does not have a 'start' function or is invalid.`);
       }
     }
 
     await Promise.allSettled(agentPromises);
-    this.logger.info(`✅ All agents finished their initial setup/start routines.`);
+    this.logger.info(`✅ All agent interfaces finished their initial setup routines.`);
   }
 
   /**
@@ -334,11 +333,11 @@ export class ServiceManager {
       this.monitoring?.runHealthCheck();
     }, this.config.HEALTH_CHECK_INTERVAL || 60000); 
 
-    // 🔥 Start GOD MODE Optimization Loop
+    // 🔥 Delegate the start of the GOD MODE Optimization Loop to the injected Core
     if (this.sovereignCore && typeof this.sovereignCore.startGodModeLoop === 'function') {
       this.godModeActive = true;
       this.sovereignCore.startGodModeLoop(); 
-      this.logger.info(`🧠 GOD MODE Optimization Loop initiated.`);
+      this.logger.info(`🧠 GOD MODE Optimization Loop initiated by Sovereign Core.`);
     }
   }
 
@@ -352,7 +351,7 @@ export class ServiceManager {
   async getStatus() {
     const agentStatus = await this.getAgentStatus();
     const coreStatus = this.sovereignCore ? this.sovereignCore.getStatus() : { godMode: false, optimizationCycle: 0 };
-    const bwaeziHealth = await this.payoutSystem?.checkHealth();
+    const bwaeziHealth = await this.payoutSystem?.checkHealth(); 
 
     return {
       managerStatus: this.isInitialized ? 'ONLINE' : 'SHUTDOWN',
@@ -372,11 +371,12 @@ export class ServiceManager {
   
   /**
    * Retrieves the status of all managed agents.
-   * MAINTAINED: /api/status/agents endpoint functionality.
    */
   async getAgentStatus() {
+    // The manager retrieves status from its local agent interface list
     const statusPromises = Object.entries(this.agents).map(async ([name, agent]) => {
       try {
+        // Agents are expected to report their operational status
         const agentStatus = agent && typeof agent.getStatus === 'function' 
           ? await agent.getStatus() 
           : { status: 'UNKNOWN', lastRun: 'N/A' };
@@ -414,18 +414,12 @@ export class ServiceManager {
     this.logger.info('🛑 Initiating graceful ServiceManager shutdown...');
 
     // Clear all intervals
-    if (this.backgroundInterval) {
-      clearInterval(this.backgroundInterval);
-    }
-    if (this.healthCheckInterval) {
-      clearInterval(this.healthCheckInterval);
-    }
-    if (this.godModeOptimizationInterval) {
-        clearInterval(this.godModeOptimizationInterval);
-    }
+    if (this.backgroundInterval) clearInterval(this.backgroundInterval);
+    if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
+    if (this.godModeOptimizationInterval) clearInterval(this.godModeOptimizationInterval);
 
 
-    // Close WebSocket connections gracefully (Code 1000 - Normal Closure)
+    // Close WebSocket connections gracefully
     this.connectedClients.forEach(client => {
       try {
         client.close(1000, 'Service shutdown');
@@ -435,28 +429,27 @@ export class ServiceManager {
     });
     this.connectedClients.clear();
 
-    // Stop agents concurrently with robust error handling
+    // Stop agent interfaces concurrently
     const agentStopPromises = [];
     for (const [agentName, agent] of Object.entries(this.agents)) {
       try {
         if (agent && typeof agent.stop === 'function') {
           agentStopPromises.push(agent.stop().catch(error => {
-             this.logger.error(`Error stopping agent ${agentName}: ${error.message}`);
+             this.logger.error(`Error stopping agent interface ${agentName}: ${error.message}`);
           }));
         }
       } catch (error) {
-        this.logger.error(`Error stopping agent ${agentName}: ${error.message}`);
+        this.logger.error(`Error stopping agent interface ${agentName}: ${error.message}`);
       }
     }
     await Promise.allSettled(agentStopPromises);
-    this.logger.info('✅ All agents stopped.');
+    this.logger.info('✅ All agent interfaces stopped.');
 
-    // Stop core components
     if (this.monitoring) {
       await this.monitoring.stop().catch(e => this.logger.error('Monitoring shutdown failed:', e.message));
     }
     
-    // 🔥 DEACTIVATE GOD MODE
+    // 🔥 DELEGATE SHUTDOWN to core components
     if (this.sovereignCore && this.godModeActive) {
       await this.sovereignCore.emergencyShutdown().catch(e => this.logger.error('SovereignCore shutdown failed:', e.message));
       this.godModeActive = false;
