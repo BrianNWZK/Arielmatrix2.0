@@ -3,7 +3,8 @@
 import { COMPLIANCE_STRATEGY, BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
 import { ProductionSovereignCore } from '../../core/sovereign-brain.js';
 
-class default SovereignGovernance {
+// 🎯 CRITICAL FIX: Changed 'class default SovereignGovernance' to 'export class SovereignGovernance'
+export class SovereignGovernance {
     constructor(dbInstance = null, sovereignCoreInstance = null) {
         this.db = dbInstance;
         this.core = sovereignCoreInstance;
@@ -73,17 +74,14 @@ class default SovereignGovernance {
 
     async adjustServiceFees(params) {
         console.log('🔧 Adjusting service fees:', params);
-        // Implement fee adjustment logic here
     }
 
     async launchNewService(params) {
         console.log('🚀 Launching new service:', params);
-        // Implement service launch logic here
     }
 
     async manageTreasury(params) {
         console.log('🏦 Managing treasury strategy:', params);
-        // Implement treasury management logic here
     }
 
     async shutdown() {
@@ -91,5 +89,4 @@ class default SovereignGovernance {
         this.initialized = false;
     }
 }
-
-export { SovereignGovernance };
+// Note: Removed the redundant 'export { SovereignGovernance };' for clean ESM code
