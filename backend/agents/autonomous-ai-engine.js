@@ -12,12 +12,20 @@ import {
     getWalletBalances,
     getWalletAddresses,
     sendSOL,
+    sendETH,
+    sendBwaezi,
     sendUSDT,
-    testAllConnections,
-    getEthereumWeb3,
-    getSolanaConnection,
+    convertBwaeziToUSDT,
+    getBwaeziConversionRate,
+    getPendingConversions,
     processRevenuePayment,
-    getSolanaKeypair
+    validateAddress,
+    testAllConnections,
+    triggerRevenueConsolidation,
+    consolidateRevenue,
+    getEthereumWallet,
+    getSolanaWallet,
+    getBwaeziWallet,
 } from './wallet.js';
 import { Mutex } from 'async-mutex';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, watch } from 'fs';
