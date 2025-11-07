@@ -16,7 +16,7 @@ import {
     testAllConnections,
     getEthereumWeb3,
     getSolanaConnection,
-    getEthereumAccount,
+    processRevenuePayment,
     getSolanaKeypair
 } from './wallet.js';
 import { Mutex } from 'async-mutex';
