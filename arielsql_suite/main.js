@@ -26,7 +26,6 @@ const CONFIG = {
   RPC_URLS: ["https://eth.llamarpc.com", "https://rpc.ankr.com/eth", "https://cloudflare-eth.com"],
   FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"
 };
-
 // =========================================================================
 // MASTER PROCESS
 // =========================================================================
@@ -34,7 +33,6 @@ const CONFIG = {
 async function executeMasterProcess() {
   masterLogger = initializeGlobalLogger('MasterController', CONFIG);
   masterLogger.info(`🧠 MASTER PROCESS (PID ${process.pid}) - Starting BSFM Ultimate Execution Cluster`);
-
   if (!CONFIG.PRIVATE_KEY) {
     masterLogger.error("🛑 FATAL: PRIVATE_KEY environment variable is required.");
     process.exit(1);
@@ -65,17 +63,14 @@ async function bindingRetryLoop(app, PORT, logger) {
       const server = app.listen(PORT, () => {
         logger.info(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
       });
-
       server.on('error', (err) => {
         logger.error(`🛑 PORT BINDING FAILED (Attempt ${attempt}):`, err.message);
         throw err;
       });
-
       await new Promise((resolve, reject) => {
         server.once('listening', resolve);
         server.once('error', reject);
       });
-
       break;
     } catch (error) {
       const waitTime = Math.min(2 ** attempt * 1000, 60000);
@@ -104,12 +99,15 @@ async function executeWorkerProcess() {
     await enableDatabaseLoggingSafely(dbResult.mainDb);
     logger.info('✅ Database Initialized');
 
+    // 1. Initialize Core
     sovereignCore = new ProductionSovereignCore(CONFIG, dbResult.mainDb);
     await sovereignCore.initialize();
     logger.info('✅ Sovereign Core Initialized');
 
+    // 2. Initialize Revenue Engine (passing Core to it)
     revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, transactionsDb);
     if (revenueEngine) {
+      // 3. Inject Revenue Engine back into Core (circular dependency resolution)
       await sovereignCore.injectRevenueEngine(revenueEngine);
       logger.info('✅ Revenue Engine Initialized');
     } else {
@@ -119,7 +117,6 @@ async function executeWorkerProcess() {
     payoutSystem = new BrianNwaezikePayoutSystem(CONFIG, transactionsDb);
     await payoutSystem.initialize();
     logger.info('✅ Payout System Initialized');
-
   } catch (error) {
     logger.error(`🛑 Initialization Error: ${error.message}`, { stack: error.stack });
   }
@@ -134,7 +131,6 @@ async function executeWorkerProcess() {
     req.cryptoDb = quantumCryptoDb;
     next();
   });
-
   app.get('/system/health', async (req, res) => {
     const coreStatus = req.core ? req.core.getStatus() : { status: 'core_uninitialized' };
     const revenueStatus = req.revenue ? await req.revenue.healthCheck() : { status: 'revenue_uninitialized' };
@@ -145,7 +141,6 @@ async function executeWorkerProcess() {
       webServerOnline: true
     });
   });
-
   app.post('/revenue/trigger', async (req, res) => {
     if (!req.revenue) {
       logger.warn('Revenue trigger attempted but engine is offline.');
