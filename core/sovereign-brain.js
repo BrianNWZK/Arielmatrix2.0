@@ -68,12 +68,10 @@ export class ProductionSovereignCore {
         this.neuroCortex.initialize(),
         this.realityEngine.initialize()
       ]);
-
       this.isInitialized = true;
       this.godModeActive = true;
       this.startGodModeLoop();
       this.logger.info("✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE");
-
     } catch (error) {
       this.logger.error("🛑 CORE INITIALIZATION FAILURE:", error);
       throw new Error("Core initialization failed.");
@@ -93,13 +91,11 @@ export class ProductionSovereignCore {
     if (!this.godModeActive) return;
 
     const globalState = { cycle: this.optimizationCycle, status: 'Active' };
-
     try {
       const evolved = await this.evolvingAI.executeEvolve(globalState);
       await this.omnipresentAI.updateRealtimeMetrics(evolved.realtimeMetrics);
       await this.realityEngine.orchestrateReality(evolved.optimizedInstructions);
       await this.neuroCortex.processCognitiveSignals(globalState);
-
       if (this.revenueEngine) {
         await this.revenueEngine.finalizeCycle(this.optimizationCycle, evolved.performanceMetrics);
         setImmediate(() => this.revenueEngine.orchestrateRevenueAgents(evolved.revenueInstructions));
@@ -132,7 +128,8 @@ export class ProductionSovereignCore {
       consciousnessEngineActive: this.neuroCortex.getStatus().active,
       modulesLoaded: [
         'TrinityAI',
-        this.revenueEngine ? 'RevenueEngine' : 'RevenueEngine(NULL)',
+        this.revenueEngine ?
+        'RevenueEngine' : 'RevenueEngine(NULL)',
         'RealityEngine',
         'NeuroCortex',
         'QPU'
