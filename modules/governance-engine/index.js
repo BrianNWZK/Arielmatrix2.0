@@ -3,7 +3,7 @@
 import { COMPLIANCE_STRATEGY, BWAEZI_SOVEREIGN_CONFIG } from '../../config/bwaezi-config.js';
 import { ProductionSovereignCore } from '../../core/sovereign-brain.js';
 
-class SovereignGovernance {
+class default SovereignGovernance {
     constructor(dbInstance = null, sovereignCoreInstance = null) {
         this.db = dbInstance;
         this.core = sovereignCoreInstance;
