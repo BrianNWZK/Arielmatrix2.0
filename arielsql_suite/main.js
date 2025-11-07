@@ -106,12 +106,14 @@ async function executeWorkerProcess() {
 
     // 2. Initialize Revenue Engine (passing Core to it)
     revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, transactionsDb);
-    if (revenueEngine) {
+    
+    // Check if the engine instance is the actual engine (not the Null-Safe Proxy)
+    if (revenueEngine && revenueEngine.initialized) {
       // 3. Inject Revenue Engine back into Core (circular dependency resolution)
       await sovereignCore.injectRevenueEngine(revenueEngine);
-      logger.info('✅ Revenue Engine Initialized');
+      logger.info('✅ Revenue Engine Initialized and Injected');
     } else {
-      logger.warn('⚠️ Revenue Engine failed to initialize. Continuing without it.');
+      logger.warn('⚠️ Revenue Engine failed to initialize completely. Injection skipped. Running in DEGRADED MODE.');
     }
 
     payoutSystem = new BrianNwaezikePayoutSystem(CONFIG, transactionsDb);
@@ -142,7 +144,7 @@ async function executeWorkerProcess() {
     });
   });
   app.post('/revenue/trigger', async (req, res) => {
-    if (!req.revenue) {
+    if (!req.revenue || req.revenue.status === 'FALLBACK_MODE') {
       logger.warn('Revenue trigger attempted but engine is offline.');
       return res.status(503).json({ status: 'error', message: 'Revenue Engine not available.' });
     }
