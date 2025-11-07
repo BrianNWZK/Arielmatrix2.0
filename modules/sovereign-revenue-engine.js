@@ -1,40 +1,26 @@
 // modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v18.1)
-// 💸 REVISED: DEPENDENCY INJECTION & IPC COMPATIBLE + Live Conversion Rates
+// 💸 FAIL-FORWARD DUAL-CONFIG RESILIENCE ENGINE
 
 import { EventEmitter } from 'events';
 import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
 import { SovereignTokenomics } from './tokenomics-engine/index.js';
 import { SovereignGovernance } from './governance-engine/index.js';
-// 🆕 CRITICAL STRUCTURAL ADDITION: Import the definitive BWAEZI_CHAIN config
-import { BWAEZI_CHAIN } from '../config/bwaezi-config.js';
 import {
   initializeConnections,
-  getWalletBalances,
-  sendETH,
-  sendSOL,
-  sendBwaezi,
-  sendUSDT,
   processRevenuePayment,
-  checkBlockchainHealth,
-  validateAddress,
   triggerRevenueConsolidation
 } from '../backend/agents/wallet.js';
-import { createHash, randomBytes } from 'crypto';
+import { createHash } from 'crypto';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
-import { getGlobalLogger } from './enterprise-logger/index.js'; // Added for OPTION 2 compatibility
+
+// ✅ Direct config fallback
+import { BWAEZI_CHAIN, BWAEZI_SOVEREIGN_CONFIG } from '../config/bwaezi-config.js';
 
 // 🆕 Live Conversion Rate Function using CoinGecko
 async function calculateConversionRates() {
   const BWAEZI_TO_USDT = 100;
-  // Fallback values used here for demonstration, actual fetch is assumed to work
-  const ethPrice = 3000; 
-  const solPrice = 150; 
-
-  // NOTE: getLivePrice function is assumed to be defined elsewhere per snippet
-  /*
-  const ethPrice = await getLivePrice('ethereum'); // ETH/USDT
-  const solPrice = await getLivePrice('solana'); // SOL/USDT
-  */
+  const ethPrice = await getLivePrice('ethereum');
+  const solPrice = await getLivePrice('solana');
 
   return {
     BWAEZI: 1.0,
@@ -44,140 +30,194 @@ async function calculateConversionRates() {
   };
 }
 
-// 🆕 Live price fetch from CoinGecko (Placeholder)
 async function getLivePrice(symbol) {
-    // Logic from OPTION 2 snippet
-    const idMap = { ethereum: 'ethereum', solana: 'solana' };
-    const coinId = idMap[symbol.toLowerCase()];
-    if (!coinId) throw new Error(`Unsupported symbol: ${symbol}`);
-    // ... actual fetch logic (omitted for brevity)
-    return 1; // Fallback value
+  const coinId = { ethereum: 'ethereum', solana: 'solana' }[symbol.toLowerCase()];
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usdt`;
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    return data[coinId]?.usdt || 1;
+  } catch (error) {
+    console.warn(`⚠️ Price fetch failed for ${symbol}:`, error.message);
+    return 1;
+  }
 }
 
+export default class SovereignRevenueEngine extends EventEmitter {
+  constructor(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
+    super();
+    this.config = {
+      ...BWAEZI_SOVEREIGN_CONFIG, // ✅ Direct fallback
+      ...config
+    };
 
-export class SovereignRevenueEngine extends EventEmitter {
-    constructor(config = {}, sovereignCore = null, dbInstance = null) {
-        super();
-        this.config = config;
-        this.sovereignCore = sovereignCore;
-        this.db = dbInstance; // Assumed to be transactionsDb from main.js
-        this.logger = getGlobalLogger('RevenueEngine'); // OPTION 2 integration
-        this.initialized = false;
-        this.godModeActive = false;
-        this.conversionRates = null;
-        this.godModeOptimizationInterval = null;
+    this.sovereignCore = sovereignCoreInstance;
+    this.db = dbEngineInstance;
+
+    this.initialized = false;
+    this.godModeActive = false;
+    this.tokenomics = null;
+    this.governance = null;
+
+    console.log('🚧 BWAEZI Sovereign Revenue Engine Ready for Initialization');
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+
+    try {
+      if (!this.sovereignCore || typeof this.sovereignCore.initialize !== 'function') {
+        throw new Error("Invalid Sovereign Core instance");
+      }
+
+      try {
+        this.tokenomics = new SovereignTokenomics(this.db);
+        await this.tokenomics.initialize();
+      } catch (error) {
+        console.warn("⚠️ Tokenomics failed:", error.message);
         this.tokenomics = null;
+      }
+
+      try {
+        this.governance = new SovereignGovernance(this.db, this.sovereignCore);
+        await this.governance.initialize();
+      } catch (error) {
+        console.warn("⚠️ Governance failed:", error.message);
         this.governance = null;
-        this.logger.info('🚧 BWAEZI Sovereign Revenue Engine Ready for Initialization');
+      }
+
+      await initializeConnections();
+      this.conversionRates = await calculateConversionRates();
+
+      this.startGodMode();
+      this.initialized = true;
+      console.log('🚀 BWAEZI Sovereign Revenue Engine Initialized - GOD MODE ACTIVATED');
+
+    } catch (error) {
+      console.error("❌ Revenue Engine initialization failed:", error.message);
+    }
+  }
+
+  startGodMode() {
+    if (this.godModeActive) return;
+
+    this.godModeOptimizationInterval = setInterval(() => {
+      this.executeGodModeOptimization().catch(error => {
+        console.warn('⚠️ GOD MODE Optimization failed:', error.message);
+      });
+    }, this.config.godModeOptimizationInterval || 300000);
+
+    this.godModeActive = true;
+  }
+
+  async executeGodModeOptimization() {
+    if (this.governance) {
+      await this.governance.executeAIGovernance().catch(err => {
+        console.warn("⚠️ Governance cycle failed:", err.message);
+      });
     }
 
-    async initialize() {
-        if (this.initialized) {
-            this.logger.warn('⚠️ Engine already initialized.');
-            return;
-        }
-        if (!this.sovereignCore) {
-            throw new Error("Sovereign Core (AIGOVERNOR) instance is required for initialization.");
-        }
-        
-        // Sequential Initialization (OPTION 2) with Fail-Forward (OPTION 1 philosophy)
-        try {
-            this.tokenomics = new SovereignTokenomics(this.db);
-            await this.tokenomics.initialize();
-        } catch (e) { this.logger.error(`Tokenomics failed: ${e.message}`); }
+    await triggerRevenueConsolidation(this.sovereignCore).catch(err => {
+      console.warn("⚠️ Revenue consolidation failed:", err.message);
+    });
 
-        try {
-            this.governance = new SovereignGovernance(this.db, this.sovereignCore);
-            await this.governance.initialize();
-        } catch (e) { this.logger.error(`Governance failed: ${e.message}`); }
-
-        try {
-            await initializeConnections();
-            this.logger.info('✅ Wallet Agents Initialized (SOVEREIGN_PRIVATE_KEY loaded from environment)');
-        } catch (e) { this.logger.error(`Wallet connection failed: ${e.message}`); }
-
-        this.conversionRates = await calculateConversionRates(); // 🆕 Live conversion rates
-        this.startGodMode();
-        this.initialized = true;
-        this.logger.info('🚀 BWAEZI Sovereign Revenue Engine Initialized - GOD MODE ACTIVATED');
+    if (this.tokenomics) {
+      await this.tokenomics.runAdjustmentCycle().catch(err => {
+        console.warn("⚠️ Tokenomics cycle failed:", err.message);
+      });
     }
 
-    startGodMode() {
-        if (this.godModeActive) return;
-        this.logger.info('✨ Starting GOD MODE Optimization Cycle...');
-        this.godModeOptimizationInterval = setInterval(() => {
-            this.executeGodModeOptimization().catch(error => {
-                this.logger.error('🛑 GOD MODE Optimization failed:', error);
-            });
-        }, this.config.godModeOptimizationInterval || 5000); // Default to 5000ms
-        this.godModeActive = true;
+    this.emit('godModeCycleComplete', { timestamp: Date.now() });
+  }
+
+  async handleIncomingRevenue(amount, token, sourceAddress) {
+    if (!this.initialized) return { success: false, error: 'Engine not initialized' };
+
+    const transactionId = createHash('sha256').update(String(Date.now())).digest('hex');
+
+    const paymentResult = await processRevenuePayment({
+      amount,
+      token,
+      sourceAddress,
+      destinationAddress: this.config.FOUNDER_ADDRESS || BWAEZI_CHAIN.FOUNDER_ADDRESS
+    });
+
+    if (paymentResult.success && this.tokenomics) {
+      await this.tokenomics.recordRevenue(amount, token, sourceAddress, paymentResult.txHash);
     }
 
-    async executeGodModeOptimization() {
-        this.logger.info('🔬 Executing AI Governance Cycle...');
-        if (this.governance) await this.governance.executeAIGovernance();
-        
-        this.logger.info('💰 Triggering Revenue Consolidation...');
-        await triggerRevenueConsolidation(this.sovereignCore);
-        
-        this.logger.info('📈 Running Tokenomics Adjustment Cycle...');
-        if (this.tokenomics) await this.tokenomics.runAdjustmentCycle();
-        this.emit('godModeCycleComplete', { timestamp: Date.now() });
+    if (this.sovereignCore?.analyzeRevenue) {
+      this.sovereignCore.analyzeRevenue({ amount, token });
     }
 
-    async handleIncomingRevenue(amount, token, sourceAddress) {
-        if (!this.initialized) throw new Error('Engine not initialized.');
-        const transactionId = createHash('sha256').update(String(Date.now())).digest('hex');
-        
-        // 🎯 ULTIMATE FOUNDER_ADDRESS FIX (The ONLY change requested):
-        // 1. Prioritize SOVEREIGN_WALLET from main.js CONFIG
-        // 2. Fallback to the immutable BWAEZI_CHAIN.FOUNDER_ADDRESS
-        const destinationAddress = this.config.SOVEREIGN_WALLET || BWAEZI_CHAIN.FOUNDER_ADDRESS;
+    return paymentResult;
+  }
 
-        const paymentResult = await processRevenuePayment({ 
-            amount, 
-            token, 
-            sourceAddress, 
-            destinationAddress
-        });
+  async shutdown() {
+    if (this.godModeOptimizationInterval) clearInterval(this.godModeOptimizationInterval);
+    if (this.db?.close) await this.db.close();
+    if (this.governance?.shutdown) await this.governance.shutdown();
+    if (this.tokenomics?.shutdown) await this.tokenomics.shutdown();
+    if (this.sovereignCore?.emergencyShutdown) await this.sovereignCore.emergencyShutdown();
 
-        if (paymentResult.success) {
-            this.logger.info(`💵 Revenue received: ${amount} ${token}. Tx: ${paymentResult.txHash}`);
-            if (this.tokenomics) {
-                await this.tokenomics.recordRevenue(amount, token, sourceAddress, paymentResult.txHash);
-            }
-            if (this.sovereignCore && this.sovereignCore.analyzeRevenue) {
-                this.sovereignCore.analyzeRevenue({ amount, token });
-            }
-        }
-        return paymentResult;
-    }
-    
-    // Additional methods (orchestrateRevenueAgents, healthCheck, etc.) follow...
-    async orchestrateRevenueAgents(instructions) {
-        // Implementation combining OPTION 1's Revenue Orchestration Bus logic
-        this.logger.info(`Orchestrating revenue agents with instructions: ${JSON.stringify(instructions)}`);
-        // ... (execution logic)
-        return { success: true, message: "Orchestration attempted." };
+    this.initialized = false;
+    this.godModeActive = false;
+    console.log('✅ BWAEZI Sovereign Revenue Engine shut down - GOD MODE DEACTIVATED');
+    this.emit('shutdown', { timestamp: Date.now(), godModeDeactivated: true });
+  }
+
+  async healthCheck() {
+    return {
+      initialized: this.initialized,
+      godModeActive: this.godModeActive,
+      conversionRates: this.conversionRates,
+      timestamp: Date.now()
+    };
+  }
+
+  async orchestrateRevenueAgents(instructions = {}) {
+    const results = [];
+
+    try {
+      if (this.tokenomics) {
+        const result = await this.tokenomics.runAdjustmentCycle(instructions);
+        results.push({ agent: 'Tokenomics', result });
+      }
+    } catch (error) {
+      results.push({ agent: 'Tokenomics', error: error.message });
     }
 
-    async healthCheck() {
-        return { 
-            status: this.initialized ? 'Operational' : 'Degraded', 
-            governanceReady: !!this.governance, 
-            tokenomicsReady: !!this.tokenomics, 
-            godModeActive: this.godModeActive 
-        };
+    try {
+      if (this.governance) {
+        const result = await this.governance.executeAIGovernance(instructions);
+        results.push({ agent: 'Governance', result });
+      }
+    } catch (error) {
+      results.push({ agent: 'Governance', error: error.message });
     }
+
+    return results;
+  }
 }
 
-// Export the initialization function used by main.js (OPTION 2 structure)
-export const initializeSovereignRevenueEngine = async (config, sovereignCore, transactionsDb) => {
-    const engine = new SovereignRevenueEngine(config, sovereignCore, transactionsDb);
-    await engine.initialize();
-    return engine;
-};
-export default SovereignRevenueEngine;
+// =========================================================================
+// PRODUCTION EXPORT AND INSTANCE MANAGEMENT - GOD MODE READY
+// =========================================================================
 
+let globalRevenueEngine = null;
 
+export function getSovereignRevenueEngine(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
+  if (!globalRevenueEngine) {
+    globalRevenueEngine = new SovereignRevenueEngine(config, sovereignCoreInstance, dbEngineInstance);
+  }
+  return globalRevenueEngine;
+}
 
+export async function initializeSovereignRevenueEngine(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
+  const engine = getSovereignRevenueEngine(config, sovereignCoreInstance, dbEngineInstance);
+  await engine.initialize();
+  return engine;
+}
+
+export { SovereignRevenueEngine };
