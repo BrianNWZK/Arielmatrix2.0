@@ -15,7 +15,7 @@ const REVENUE_AGENTS = new Map();
  * @description The financial heart of the BWAEZI Enterprise. Requires all core components to be
  * INJECTED by the orchestrator (main.js) and receives a direct reference to the Sovereign Core.
  */
-export class SovereignRevenueEngine extends EventEmitter {
+export default class SovereignRevenueEngine extends EventEmitter {
     constructor(config = {}, sovereignCoreInstance = null, dbEngineInstance = null, bwaeziChainInstance = null, payoutSystemInstance = null) {
         super();
         this.logger = getGlobalLogger('RevenueEngine');
