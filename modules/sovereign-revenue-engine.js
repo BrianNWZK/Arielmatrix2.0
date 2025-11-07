@@ -1,5 +1,5 @@
-// modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v18.4)
-// 🎯 CRITICAL FIX: Fail-Forward dependency resilience to prevent deployment crash.
+// modules/sovereign-revenue-engine.js - GOD MODE INTEGRATED (v18.5)
+// 🎯 FINAL SURGICAL FIX: Getter returns safe fallback object to prevent TypeError crash.
 
 import { 
   EventEmitter } from 'events';
@@ -58,10 +58,6 @@ export default class SovereignRevenueEngine extends EventEmitter {
     console.log('🚧 BWAEZI Sovereign Revenue Engine Ready for Initialization');
   }
 
-  /**
-   * Allows external injection of the Sovereign Core instance after construction.
-   * This is the mechanism for fixing the bootstrap race condition.
-   */
   async bindCore(coreInstance) {
     if (!coreInstance || typeof coreInstance.initialize !== 'function') {
       console.error("❌ Attempted to bind an invalid Sovereign Core instance.");
@@ -72,7 +68,6 @@ export default class SovereignRevenueEngine extends EventEmitter {
     this.coreBound = true;
     console.log("🔗 Sovereign Core successfully bound. Re-initializing engine...");
 
-    // Re-initialize to spin up dependent agents
     if (!this.initialized) {
       await this.initialize();
     }
@@ -87,7 +82,6 @@ export default class SovereignRevenueEngine extends EventEmitter {
     }
     
     try {
-      // ✅ AGENT RESILIENCE: Only initialize dependent agents if the core is ready
       if (this.coreBound) {
         try {
           this.tokenomics = new SovereignTokenomics(this.db);
@@ -117,7 +111,6 @@ export default class SovereignRevenueEngine extends EventEmitter {
       const initStatus = this.coreBound ? 'FULLY ACTIVATED' : 'DEGRADED (Awaiting Core)';
       console.log(`🚀 BWAEZI Sovereign Revenue Engine Initialized - ${initStatus}`);
     } catch (error) {
-      // ✅ CRITICAL FIX: Do not throw a hard error that crashes the deployment
       console.error("❌ Revenue Engine partial initialization failed (Non-fatal):", error.message);
       this.initialized = false;
     }
@@ -139,7 +132,6 @@ export default class SovereignRevenueEngine extends EventEmitter {
   startGodMode() {
     if (this.godModeActive) return;
     this.godModeOptimizationInterval = setInterval(() => {
-      // Only execute God Mode if the core is bound
       if (this.coreBound) {
           this.executeGodModeOptimization().catch(error => {
               console.warn('⚠️ GOD MODE Optimization failed:', error.message);
@@ -246,19 +238,30 @@ export default class SovereignRevenueEngine extends EventEmitter {
 
 let _initializedSovereignEngine = null;
 
+// The safe fallback object for early calls, preventing TypeError crashes.
+const SAFE_REVENUE_ENGINE_FALLBACK = {
+  healthCheck: () => ({ initialized: false, coreBound: false, status: 'FALLBACK_MODE' }),
+  handleIncomingRevenue: async () => ({ success: false, error: 'Engine uninitialized' }),
+  orchestrateRevenueAgents: async () => ([{ agent: 'Orchestration', error: 'Engine uninitialized' }]),
+  finalizeCycle: () => {},
+  shutdown: () => {}
+};
+
 /**
  * Retrieves the currently active, initialized Sovereign Revenue Engine instance.
+ * Returns a null-safe proxy if the engine is not initialized, preventing TypeErrors.
  */
 export function getSovereignRevenueEngine() {
   if (!_initializedSovereignEngine) {
-     console.warn("⚠️ CRITICAL WARNING: Attempted to get SovereignRevenueEngine before initialization. Null returned. Check module bootstrap order.");
+     console.warn("⚠️ CRITICAL WARNING: Attempted to get SovereignRevenueEngine before initialization. Fallback object returned. Check module bootstrap order.");
+     // CRITICAL FIX: Return safe fallback object instead of raw null.
+     return SAFE_REVENUE_ENGINE_FALLBACK;
   }
   return _initializedSovereignEngine;
 }
 
 /**
  * Initializes and returns the Sovereign Revenue Engine instance for the current process/worker.
- * This is the only function that sets the canonical instance.
  */
 export async function initializeSovereignRevenueEngine(config = {}, sovereignCoreInstance = null, dbEngineInstance = null) {
   if (_initializedSovereignEngine) {
@@ -272,8 +275,6 @@ export async function initializeSovereignRevenueEngine(config = {}, sovereignCor
     await engine.initialize();
   } catch (error) {
     console.error(`❌ Failed to initialize and set canonical engine instance: ${error.message}`);
-    // Allowing the app to continue running by not re-throwing here,
-    // relying on the engine's internal degraded state.
   }
   
   _initializedSovereignEngine = engine;
