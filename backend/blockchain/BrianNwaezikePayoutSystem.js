@@ -21,7 +21,6 @@ import {
 } from '../agents/wallet.js';
 import BrianNwaezikeChain from "./BrianNwaezikeChain.js";
 import { getGlobalLogger } from "../../modules/enterprise-logger/index.js";
-
 // === ArielSQLite Ultimate Suite Modules ===
 import { ArielSQLiteEngine } from "../../modules/ariel-sqlite-engine/index.js";
 import { QuantumShield } from "../../modules/quantum-shield/index.js";
@@ -36,7 +35,6 @@ import { InfiniteScalabilityEngine } from "../../modules/infinite-scalability-en
 import { CarbonNegativeConsensus } from "../../modules/carbon-negative-consensus/index.js";
 import { SovereignTokenomics } from "../../modules/tokenomics-engine/index.js";
 import { SovereignGovernance } from "../../modules/governance-engine/index.js";
-
 // === CORE UTILS ===
 import { ConfigUtils } from "../../config/bwaezi-config.js";
 // =========================================================================
@@ -50,14 +48,12 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
         this.db = db;
         this.sovereignCore = sovereignCore;
         this.logger = getGlobalLogger('PayoutSystem');
-
         // Modules that are always included
         this.arielDB = new ArielSQLiteEngine({ dbPath: './data/ariel/transactions.db', autoBackup: true });
         this.quantumShield = new QuantumShield();
         this.aiThreatDetector = new AIThreatDetector();
         // 🎯 FIXED INSTANTIATION: Changed from CarbonConsensusEngine() to CarbonNegativeConsensus()
         this.carbonConsensus = new CarbonNegativeConsensus();
-
         // 🚀 CRITICAL SOVEREIGN WALLET INITIALIZATION AND SECURITY CHECK
         // Payout requires the Private Key (PK) to sign transactions.
         this.systemWalletPrivateKey = this.config.SOVEREIGN_PRIVATE_KEY || process.env.SOVEREIGN_PRIVATE_KEY;
@@ -83,23 +79,25 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
         this.initialized = false;
         this.isProcessing = false;
 
-        // Initialize all 12 modules
+        // 🎯 CRITICAL FIX: Governance module instantiation is DEFERRED to initialize()
+        this.governanceModule = null;
+
+        // Initialize all 12 modules (Governance omitted from synchronous instantiation)
         this.modules = {
             arielDB: this.arielDB,
             quantumShield: this.quantumShield,
             quantumCrypto: new QuantumResistantCrypto(),
             aiThreatDetector: this.aiThreatDetector,
             aiSecurity: new AISecurityModule(),
-            crossChainBridge: 
-            new CrossChainBridge(),
+            crossChainBridge: new CrossChainBridge(),
             omnichain: new OmnichainInteroperabilityEngine(),
             sharding: new ShardingManager(),
             scalability: new InfiniteScalabilityEngine(),
             carbonConsensus: this.carbonConsensus,
             tokenomics: new SovereignTokenomics(),
-            governance: new SovereignGovernance(db, sovereignCore)
-        };
-        this.logger.info(`🔥 BrianNwaezikePayoutSystem Initialized with 12 Core Modules.`);
+            // governance module is now added asynchronously in initialize()
+         };
+        this.logger.info(`🔥 BrianNwaezikePayoutSystem Initialized with ${Object.keys(this.modules).length} Core Modules (Governance deferred).`);
     }
 
     // =========================================================================
@@ -113,23 +111,34 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
         }
 
         this.logger.info("Initializing Payout System core...");
+        
+        // 🎯 CRITICAL FIX: Instantiate SovereignGovernance asynchronously here
+        try {
+            this.governanceModule = new SovereignGovernance(this.db, this.sovereignCore);
+            // Add the governance module to the modules map for initialization
+            this.modules.governance = this.governanceModule; 
+            this.logger.debug('SovereignGovernance module instantiated (deferred).');
+        } catch (error) {
+            this.logger.error(`❌ Governance Module CRASH: Instantiation failed: ${error.message}. Continuing without Governance.`);
+            this.modules.governance = null;
+        }
+
+
         // Initialize all modules concurrently
+        // Switched to Promise.allSettled for non-fatal module bootstrap resilience
         const initPromises = Object.entries(this.modules).map(async ([name, module]) => {
             try {
                 if (module && typeof module.initialize === 'function') {
                     await module.initialize();
                     this.logger.debug(`Module ${name} initialized.`);
-  
                 }
             } catch (error) {
                 this.logger.error(`❌ Module ${name} initialization failed: ${error.message}`);
-                // Critical failure, but let other modules try to initialize
-                throw error;
-        
+                // Do not throw, rely on AllSettled for resilience
             }
         });
+        await Promise.allSettled(initPromises); // Using Promise.allSettled for resilient module bootstrap
 
-        await Promise.all(initPromises);
         // Start the main auto-payout loop
         await this.startAutoPayout();
         
@@ -239,7 +248,8 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
                 } else {
                     moduleHealth[name] = { healthy: true, status: 'operational' }; // Default for modules without explicit check
                 }
-            });
+         
+           });
             await Promise.allSettled(healthPromises);
             
             return {
