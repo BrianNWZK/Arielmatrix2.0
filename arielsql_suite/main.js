@@ -6,18 +6,18 @@ import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
 
-// CORE IMPORTS
+// CORE IMPORTS (Note: These are direct imports, but instantiation order is controlled below)
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
-import { getDatabaseInitializer } from '../modules/database-initializer.js';
+// We need the raw functions/exports, not the class definition directly for the chain/payout system
 import { initializeSovereignRevenueEngine, getSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
-import { brianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js'; // Use the exported singleton
-import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; // For DB injection
+import { brianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js'; // Assumed exported singleton instance
+import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 import { initializeGlobalLogger, getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 
 let sovereignCore = null;
 let revenueEngine = null;
-let dbEngineInstance = null; // New instance holder
+let dbEngineInstance = null;
 let payoutSystem = null;
 let masterLogger = null;
 
@@ -36,40 +36,45 @@ const setupMaster = async () => {
   
   try {
     // =========================================================================
-    // 1. CRITICAL BOOTSTRAP: LOGGER & DB ENGINE (Must be first)
+    // 1. BOOTSTRAP: LOGGER & DB ENGINE (Must be first)
     // =========================================================================
     
-    // Initialize Global Logger immediately to capture all subsequent activity
     masterLogger = initializeGlobalLogger({ logLevel: CONFIG.NODE_ENV === 'development' ? 'DEBUG' : 'INFO' });
     masterLogger.info('⚡ GLOBAL LOGGER INITIALIZED.');
 
-    // Initialize Database Engine instance (ArielSQLiteEngine)
     dbEngineInstance = new ArielSQLiteEngine({ dbPath: './data/ariel/master.db', autoBackup: true });
     await dbEngineInstance.initialize();
-    
     masterLogger.info('💾 Master ArielSQLiteEngine initialized.');
     
     // =========================================================================
-    // 2. INITIALIZE CORE DEPENDENCIES (Chain and Payout System)
+    // 2. INITIALIZE CORE SYSTEMS (Chain, Payout)
     // =========================================================================
     
-    // BrianNwaezikeChain is a singleton, initialize it
+    // BrianNwaezikeChain (Singleton) initialization
     await brianNwaezikeChain.initialize(CONFIG);
     masterLogger.info('🔗 BrianNwaezikeChain Initialized.');
     
-    // Initialize Payout System (injecting the Chain and DB)
+    // Initialize Payout System (Injecting the Chain and DB)
     payoutSystem = new BrianNwaezikePayoutSystem(CONFIG.PRIVATE_KEY, CONFIG.SOVEREIGN_WALLET, brianNwaezikeChain, dbEngineInstance);
     await payoutSystem.initialize();
     masterLogger.info('💰 BrianNwaezikePayoutSystem Initialized.');
     
     // =========================================================================
-    // 3. INITIALIZE REVENUE ENGINE (Injecting all critical components)
+    // 3. INITIALIZE SOVEREIGN BRAIN (The destination for injections)
     // =========================================================================
 
-    // The core dependencies are injected here.
+    // Instantiate the brain first
+    sovereignCore = new ProductionSovereignCore(CONFIG, dbEngineInstance);
+    masterLogger.info('🧠 ProductionSovereignCore instantiated.');
+
+    // =========================================================================
+    // 4. INITIALIZE REVENUE ENGINE (Injecting all critical components including the Brain)
+    // =========================================================================
+
+    // The core dependencies are injected into the Revenue Engine here, resolving the circular dependency.
     revenueEngine = await initializeSovereignRevenueEngine(
       CONFIG,
-      null, // SovereignCore is TBD, passing null for now
+      sovereignCore, // Inject the Brain instance here
       dbEngineInstance,
       brianNwaezikeChain,
       payoutSystem
@@ -77,28 +82,25 @@ const setupMaster = async () => {
     masterLogger.info('💸 SovereignRevenueEngine Initialized with all dependencies.');
     
     // =========================================================================
-    // 4. INITIALIZE SOVEREIGN BRAIN (The final orchestrator)
+    // 5. INJECT ALL SYSTEMS INTO THE BRAIN AND START
     // =========================================================================
 
-    sovereignCore = new ProductionSovereignCore(CONFIG);
-    
-    // INJECT the initialized instances into the Brain
+    // Inject all fully initialized systems into the Brain for orchestration
     sovereignCore.orchestrateCoreServices({
       revenueEngine: revenueEngine,
       bwaeziChain: brianNwaezikeChain,
       payoutSystem: payoutSystem
     });
-    
-    // Update the Revenue Engine with the final Sovereign Core instance
-    revenueEngine.sovereignCore = sovereignCore;
 
+    // Start the ultimate execution sequence
     await sovereignCore.initialize();
     
+    masterLogger.info('👑 SYSTEM ORCHESTRATION SUCCESS: Starting cluster workers.');
+    
     // =========================================================================
-    // 5. CLUSTER SETUP AND FINAL LOGIC
+    // 6. CLUSTER SETUP
     // =========================================================================
 
-    // Fork workers based on CPU count
     const numCPUs = os.cpus().length;
     for (let i = 0; i < numCPUs; i++) {
       cluster.fork();
@@ -117,15 +119,13 @@ const setupMaster = async () => {
 
 const setupWorker = async () => {
   const app = express();
-  // Worker processes listen on the orchestrated port
-  app.get('/health', (req, res) => res.status(200).send('OK - Worker Active'));
+  app.get('/health', (req, res) => res.status(200).send(`OK - Worker ${process.pid} Active`));
   
   app.listen(CONFIG.PORT, () => {
     console.log(`Worker ${process.pid} started and listening on port ${CONFIG.PORT}`);
   });
 };
 
-// Start the application using the new orchestration logic
 if (cluster.isMaster) {
   setupMaster();
 } else {
