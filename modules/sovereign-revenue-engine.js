@@ -177,3 +177,7 @@ export const initializeSovereignRevenueEngine = async (config, sovereignCore, tr
     await engine.initialize();
     return engine;
 };
+export default SovereignRevenueEngine;
+
+
+
