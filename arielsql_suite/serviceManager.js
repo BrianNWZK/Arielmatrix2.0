@@ -18,17 +18,13 @@ import { dirname, join } from 'path';
 import fs from 'fs/promises';
 
 // 🔥 REAL PRODUCTION IMPORTS - NO SIMULATIONS
-import BrianNwaezikeChain from "../backend/blockchain/BrianNwaezikeChain.js";
-import { BrianNwaezikePayoutSystem } from "../backend/blockchain/BrianNwaezikePayoutSystem.js";
 import { SovereignGovernance } from "../modules/governance-engine/index.js";
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { getDatabaseInitializer } from "../modules/database-initializer.js";
 
 // Enterprise Modules (CRITICAL: Re-added missing core dependencies)
-import { ProductionSovereignCore } from "../core/sovereign-brain.js";
 import { getGlobalLogger } from "../modules/enterprise-logger/index.js"; 
 import MonitoringSystem from "../modules/monitoring/index.js"; 
-import { getSovereignRevenueEngine } from "../modules/sovereign-revenue-engine.js";
 
 // 🔥 REAL REVENUE AGENTS - LIVE PRODUCTION (NAME CORRECTIONS APPLIED)
 import AdRevenueAgent from "../backend/agents/adRevenueAgent.js";
