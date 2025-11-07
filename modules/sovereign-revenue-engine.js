@@ -4,7 +4,7 @@
 import { EventEmitter } from 'events';
 import { createHash, randomBytes } from 'crypto';
 import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js'; // Retained for type reference
-import { BWAEZI_CHAIN, BWAEZI_SOVEREIGN_CONFIG } from '../config/sovereign-config.js'; // Assume config exists
+import { BWAEZI_CHAIN, BWAEZI_SOVEREIGN_CONFIG } from '../config/bwaezi-config.js';
 import { getGlobalLogger } from './enterprise-logger/index.js';
 
 // Global state for revenue agent management
