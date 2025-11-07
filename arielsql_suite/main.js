@@ -1,5 +1,5 @@
 // arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (ULTIMATE EXECUTION MODE)
-// 🎯 CRITICAL FIX: Integrated Enterprise Logger and Sequential Initialization
+// 🎯 FINAL FIX: Port Binding Fallback and Injection Retry Logic Implemented.
 
 import process from 'process';
 import cluster from 'cluster';
@@ -7,7 +7,7 @@ import os from 'os';
 import express from 'express';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { getDatabaseInitializer } from '../modules/database-initializer.js';
-import { initializeSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
+import { initializeSovereignRevenueEngine, getSovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
 import { initializeGlobalLogger, getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 
@@ -17,15 +17,17 @@ let dbInitializer = null;
 let payoutSystem = null;
 let masterLogger = null;
 
+const fallbackPort = 10000;
 const CONFIG = {
   PRIVATE_KEY: process.env.PRIVATE_KEY,
   BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS,
   SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET,
-  PORT: process.env.PORT || 10000,
+  PORT: process.env.PORT || fallbackPort, // Use fallback port if none is set
   NODE_ENV: process.env.NODE_ENV || 'production',
   RPC_URLS: ["https://eth.llamarpc.com", "https://rpc.ankr.com/eth", "https://cloudflare-eth.com"],
   FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"
 };
+
 // =========================================================================
 // MASTER PROCESS
 // =========================================================================
@@ -57,12 +59,24 @@ async function executeMasterProcess() {
 
 async function bindingRetryLoop(app, PORT, logger) {
   let attempt = 0;
+  const maxInitialAttempts = 3;
+  const maxTotalAttempts = 10;
+  
   while (true) {
     attempt++;
     try {
-      const server = app.listen(PORT, () => {
-        logger.info(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
-      });
+      let server;
+      if (attempt <= maxInitialAttempts) { // Try specific or default port first
+        server = app.listen(PORT, () => {
+          logger.info(`✅ WORKER PROCESS (PID ${process.pid}) - Web Server listening on port ${PORT} (Attempt ${attempt})`);
+        });
+      } else { // Fallback to a random, ephemeral port (0)
+        server = app.listen(0, () => {
+          const assignedPort = server.address().port;
+          logger.info(`✅ FALLBACK PORT BINDING SUCCESS - Assigned port ${assignedPort} (Attempt ${attempt})`);
+        });
+      }
+      
       server.on('error', (err) => {
         logger.error(`🛑 PORT BINDING FAILED (Attempt ${attempt}):`, err.message);
         throw err;
@@ -73,6 +87,10 @@ async function bindingRetryLoop(app, PORT, logger) {
       });
       break;
     } catch (error) {
+      if (attempt >= maxTotalAttempts) { 
+        logger.error("🛑 FATAL: Exhausted all port binding retries. Check system firewall/resource limits.");
+        throw error;
+      }
       const waitTime = Math.min(2 ** attempt * 1000, 60000);
       logger.warn(`⏳ Retrying port binding in ${waitTime / 1000}s...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -107,22 +125,33 @@ async function executeWorkerProcess() {
     // 2. Initialize Revenue Engine (passing Core to it)
     revenueEngine = await initializeSovereignRevenueEngine(CONFIG, sovereignCore, transactionsDb);
     
-    // Check if the engine instance is the actual engine (not the Null-Safe Proxy)
-    if (revenueEngine && revenueEngine.initialized) {
-      // 3. Inject Revenue Engine back into Core (circular dependency resolution)
+    // 3. Injection Resilience: Implement retry logic to ensure a fully initialized engine is injected
+    let injectionRetries = 0;
+    const maxRetries = 5;
+    while (!revenueEngine?.initialized && injectionRetries < maxRetries) {
+        logger.warn(`⏳ Waiting for Revenue Engine initialization for injection... (${injectionRetries + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Re-check the global instance to see if a background process finished initialization
+        revenueEngine = getSovereignRevenueEngine();
+        injectionRetries++;
+    }
+
+    // 4. Inject Revenue Engine back into Core (circular dependency resolution)
+    if (revenueEngine?.initialized) {
       await sovereignCore.injectRevenueEngine(revenueEngine);
       logger.info('✅ Revenue Engine Initialized and Injected');
     } else {
-      logger.warn('⚠️ Revenue Engine failed to initialize completely. Injection skipped. Running in DEGRADED MODE.');
+      logger.warn('⚠️ Revenue Engine not ready after retries. Injection skipped. Running in DEGRADED MODE.');
     }
 
-    payoutSystem = new BrianNwaezikePayoutSystem(CONFIG, transactionsDb);
+    payoutSystem = new BrianNwaezikePayoutSystem(dbResult.mainDb, sovereignCore, CONFIG);
     await payoutSystem.initialize();
     logger.info('✅ Payout System Initialized');
   } catch (error) {
     logger.error(`🛑 Initialization Error: ${error.message}`, { stack: error.stack });
   }
 
+  // Ensure port binding happens even if initialization failed
   await bindingRetryLoop(app, CONFIG.PORT, logger);
 
   app.use((req, res, next) => {
@@ -144,9 +173,9 @@ async function executeWorkerProcess() {
     });
   });
   app.post('/revenue/trigger', async (req, res) => {
-    if (!req.revenue || req.revenue.status === 'FALLBACK_MODE') {
+    if (!req.revenue || !req.revenue.initialized) {
       logger.warn('Revenue trigger attempted but engine is offline.');
-      return res.status(503).json({ status: 'error', message: 'Revenue Engine not available.' });
+      return res.status(503).json({ status: 'error', message: 'Revenue Engine not available or fully initialized.' });
     }
     const results = await req.revenue.orchestrateRevenueAgents(req.body.instructions);
     res.json({ status: 'success', results });
