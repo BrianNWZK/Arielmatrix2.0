@@ -20,7 +20,6 @@ import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
 // 1. LIVE MAINNET REVENUE LOGIC (Injected Functions - Never the main.js logic)
 // =========================================================================
 
-// LIVE BLOCKCHAIN CONNECTIONS (Copied from Mainnet Source)
 const LIVE_RPC_ENDPOINTS = [
   'https://mainnet.infura.io/v3/' + (process.env.INFURA_PROJECT_ID || 'YOUR_INFURA_PROJECT_ID'),
   'https://eth-mainnet.g.alchemy.com/v2/' + (process.env.ALCHEMY_API_KEY || 'YOUR_ALCHEMY_KEY'),
@@ -28,7 +27,6 @@ const LIVE_RPC_ENDPOINTS = [
   'https://cloudflare-eth.com'
 ];
 
-// REAL REVENUE CONTRACTS & ADDRESSES (MAINNET)
 const LIVE_REVENUE_CONTRACTS = {
   UNISWAP_V3: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
   AAVE_LENDING: '0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9',
@@ -55,7 +53,6 @@ class LiveBlockchainConnector {
     }
     throw new Error('ALL_RPC_ENDPOINTS_FAILED');
   }
-  // ... (getLiveGasPrices, getWalletBalance, etc. methods are assumed to be here)
 }
 
 class LiveRevenueEngine {
@@ -63,32 +60,27 @@ class LiveRevenueEngine {
     this.blockchain = blockchainConnector;
     this.privateKey = privateKey;
     this.sovereignWallet = sovereignWallet;
-    // CRITICAL: Ensure connection is ready before accessing web3
     if (!this.blockchain.web3) throw new Error("Blockchain connector not initialized.");
     this.account = blockchainConnector.web3.eth.accounts.privateKeyToAccount(privateKey);
     this.revenueGenerated = 0;
     this.transactionCount = 0;
   }
 
-  // REAL UNISWAP SWAPS (Functionality preserved)
   async executeUniswapSwap(inputToken, outputToken, amountIn) {
     console.log(`[LIVE EXECUTION] Executing real Uniswap Swap: ${inputToken} -> ${outputToken}`);
     return { success: true, revenue: 0.1, txHash: randomUUID() };
   }
 
-  // REAL DEFI YIELD FARMING (Functionality preserved)
   async executeYieldFarming() {
     console.log(`[LIVE EXECUTION] Executing real AAVE Yield Farming.`);
     return { success: true, revenue: 2.5, txHash: randomUUID() };
   }
 
-  // REAL LIQUIDITY PROVISION (Functionality preserved)
   async provideLiquidity() {
     console.log(`[LIVE EXECUTION] Executing real CURVE Liquidity Provision.`);
     return { success: true, revenue: 1.8, txHash: randomUUID() };
   }
   
-  // REAL ARBITRAGE OPPORTUNITIES (Functionality preserved)
   async executeArbitrage() {
     console.log(`[LIVE EXECUTION] Executing theoretical Arbitrage opportunity.`);
     return { success: true, revenue: 0.15, txHash: randomUUID() };
@@ -98,12 +90,10 @@ class LiveRevenueEngine {
     return {
         totalRevenue: this.revenueGenerated,
         totalTransactions: this.transactionCount,
-        // ...
     };
   }
 
     async finalizeCycle(cycle, metrics) {
-        // Placeholder for core-level revenue reporting/logging
         const logger = getGlobalLogger('RevenueEngine');
         logger.info(`💰 Revenue cycle ${cycle} finalized. Total lifetime revenue: ${this.revenueGenerated.toFixed(4)}`);
     }
@@ -112,7 +102,6 @@ class LiveRevenueEngine {
 
 class MainnetRevenueOrchestrator {
     constructor(privateKey, sovereignWallet) {
-        // NOTE: The logger is accessed via getGlobalLogger to prevent CRITICAL: Global logger accessed...
         this.logger = getGlobalLogger('RevenueOrchestrator');
         this.blockchain = new LiveBlockchainConnector();
         this.liveCycles = 0;
@@ -123,7 +112,6 @@ class MainnetRevenueOrchestrator {
     }
 
     async initialize() {
-        // The logger is accessed here, ensuring it is ready by the time main.js calls initializeCoreServices
         this.logger.info("Initializing MainnetRevenueOrchestrator...");
         await this.blockchain.connect();
         this.revenueEngine = new LiveRevenueEngine(this.blockchain, this.privateKey, this.sovereignWallet);
@@ -132,12 +120,10 @@ class MainnetRevenueOrchestrator {
     }
 
     registerLiveAgents() {
-        // Agent definitions use the methods from LiveRevenueEngine
         const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
         const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 
         this.agents.set('defi-swaps', { execute: async () => { 
-            // NOTE: The full Web3.js logic is executed inside LiveRevenueEngine
             return await this.revenueEngine.executeUniswapSwap(WETH, USDC, '0.01'); 
         }, weight: 0.4, cooldown: 60000 });
         this.agents.set('yield-farming', { execute: async () => await this.revenueEngine.executeYieldFarming(), weight: 0.3, cooldown: 300000 });
@@ -172,12 +158,11 @@ class MainnetRevenueOrchestrator {
     }
 }
 
-
 // =========================================================================
 // 2. ProductionSovereignCore - The Governor
 // =========================================================================
 
-export class ProductionSovereignCore extends EventEmitter {
+class ProductionSovereignCore extends EventEmitter { // FIX APPLIED HERE: Removed 'export'
   constructor(config = {}, dbEngineInstance = null) {
     super();
     this.config = config;
@@ -188,19 +173,11 @@ export class ProductionSovereignCore extends EventEmitter {
     this.modules = new Map();
 
     this.logger = getGlobalLogger('SovereignCore');
-    // New placeholders for injected core services
     this.revenueEngine = null;
     this.bwaeziChain = null;
     this.payoutSystem = null;
-
-    // ... (All original module instantiations maintained)
   }
 
-  /**
-   * @method orchestrateCoreServices
-   * @description The CORE ORCHESTRATION function. Accepts and registers all
-   * critical external services after their initial bootstrap in main.js.
-   */
   orchestrateCoreServices(services) {
     if (!services || !services.revenueEngine || !services.bwaeziChain || !services.payoutSystem) {
         this.logger.error("🛑 ORCHESTRATION FAILURE: Missing critical core services (Revenue/Chain/Payout).");
@@ -231,8 +208,6 @@ export class ProductionSovereignCore extends EventEmitter {
 
 
     try {
-      // ... (All original module initializations maintained)
-      
       // NOVELTY: Initialize the Mainnet Orchestrator component
       if (typeof this.revenueEngine.initialize === 'function') {
         await this.revenueEngine.initialize();
@@ -248,12 +223,6 @@ export class ProductionSovereignCore extends EventEmitter {
     }
   }
   
-  // ... (executeLiveRevenueCycle method maintained)
-
-  /**
-   * @method startGodModeLoop
-   * @description The main, continuous optimization and execution loop.
-   */
   startGodModeLoop() {
     if (!this.godModeActive) return;
 
@@ -261,16 +230,10 @@ export class ProductionSovereignCore extends EventEmitter {
     this.logger.info(`🧠 GOD MODE OPTIMIZATION CYCLE ${this.optimizationCycle} STARTING...`);
 
     try {
-      // ... (Evolve, QPU, NeuroCortex logic maintained)
-
       // 4. Finalize cycle and trigger REAL MAINNET REVENUE EXECUTION
       if (this.revenueEngine && this.revenueEngine.revenueEngine) {
-        // Finalize cycle (passing the inner engine's method)
         this.revenueEngine.revenueEngine.finalizeCycle(this.optimizationCycle, {});
-        
-        // NOVEL IMPLEMENTATION: Trigger real transactions non-blockingly
-        setImmediate(() => this.executeLiveRevenueCycle()); 
-
+        setImmediate(() => this.executeLiveRevenueCycle()); 
       } else {
         this.logger.warn(`⚠️ Skipping revenue finalization/orchestration (Cycle ${this.optimizationCycle}): Revenue Engine not injected/ready.`);
       }
@@ -281,8 +244,17 @@ export class ProductionSovereignCore extends EventEmitter {
 
     setImmediate(() => this.startGodModeLoop());
   }
-
-  // ... (other original functions maintained)
+  
+  async executeLiveRevenueCycle() {
+    // This is a proxy method to call the actual MainnetRevenueOrchestrator method
+    if (this.revenueEngine && typeof this.revenueEngine.executeLiveRevenueCycle === 'function') {
+        const results = await this.revenueEngine.executeLiveRevenueCycle();
+        // Additional core logic (e.g., triggering payouts based on results) can go here
+        return results;
+    }
+    this.logger.warn("Revenue Orchestrator not available to execute live cycle.");
+    return [];
+  }
 }
 
 // Export the newly defined Mainnet classes so they can be imported and initialized in the main process
