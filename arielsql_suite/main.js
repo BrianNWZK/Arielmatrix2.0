@@ -17,6 +17,7 @@ const LIVE_RPC_ENDPOINTS = [
   'https://mainnet.infura.io/v3/' + (process.env.INFURA_PROJECT_ID || '685df4c728494989874e2a874e653755'),
   'https://eth-mainnet.g.alchemy.com/v2/' + (process.env.ALCHEMY_API_KEY || 'alcht_iGap3xffDnGvrefsRQfQl8120rI6mi'),
   'https://rpc.ankr.com/eth',
+  'https://eth.llamarpc.com',
   'https://cloudflare-eth.com'
 ];
 
