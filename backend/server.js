@@ -2,6 +2,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 import { BrianNwaezikeChain } from './blockchain/BrianNwaezikeChain.js';
 import {
   getRevenueAnalytics,
@@ -20,6 +23,7 @@ import {
 } from './agents/consolidationAgent.js';
 
 dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class EnterpriseServer {
   constructor() {
@@ -27,11 +31,9 @@ export class EnterpriseServer {
     this.chain = null;
     this.credentials = null;
     this.initialized = false;
-    // 🔥 MODIFICATION 1: Initialize property for ServiceManager dependency
-    this.serviceManager = null; 
+    this.serviceManager = null;
   }
 
-  // 🔥 MODIFICATION 2: Public method to inject the ServiceManager instance
   setServiceManager(serviceManager) {
     this.serviceManager = serviceManager;
   }
@@ -50,6 +52,10 @@ export class EnterpriseServer {
 
     this.app.use(cors());
     this.app.use(express.json());
+
+    // ✅ Serve dashboard from public/index.html
+    this.app.use(express.static(path.join(__dirname, 'public')));
+
     this.registerRoutes();
     this.initialized = true;
   }
@@ -72,11 +78,8 @@ export class EnterpriseServer {
       });
     });
 
-    // 🔥 MODIFICATION 3: New route to expose ServiceManager agent data
     this.app.get('/api/agents', async (req, res) => {
       if (!this.serviceManager || !this.serviceManager.agents) {
-        // Robust Fallback: Return simulated data if ServiceManager is not injected or initialized.
-        // This prevents the dashboard from breaking.
         return res.json([
           { name: 'Alpha-Strategist', type: 'QPU', status: 'Optimal' },
           { name: 'Gamma-Arbiter', type: 'CPU', status: 'Running' },
@@ -84,16 +87,12 @@ export class EnterpriseServer {
         ]);
       }
 
-      // Map the live agents data from the ServiceManager
-      const agentsData = Object.entries(this.serviceManager.agents).map(([agentName, agentInstance]) => {
-        return {
-          name: agentName,
-          // Assuming agents have these properties based on typical agent lifecycle management
-          type: agentInstance.agentType || 'UNKNOWN',
-          status: agentInstance.status || 'Unknown',
-          lastCycle: agentInstance.currentCycle || 'N/A'
-        };
-      });
+      const agentsData = Object.entries(this.serviceManager.agents).map(([name, agent]) => ({
+        name,
+        type: agent.agentType || 'UNKNOWN',
+        status: agent.status || 'Unknown',
+        lastCycle: agent.currentCycle || 'N/A'
+      }));
 
       res.json(agentsData);
     });
