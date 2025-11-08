@@ -2,45 +2,177 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>ArielMatrix 2.0</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSFM Quantum Dashboard - Live Monitoring</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: 'Segoe UI', sans-serif; margin: 40px; line-height: 1.6; }
-    h1, h2 { color: #2c3e50; }
-    .endpoint { background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0; }
-    .error { color: #e74c3c; }
+    :root {
+      --color-bg-dark: #080c16;
+      --color-card-dark: #121827;
+      --color-quantum-blue: #00e0ff;
+      --color-text-light: #e0f7fa;
+      --color-label: #78909c;
+    }
+    body {
+      font-family: 'Roboto Mono', monospace;
+      background-color: var(--color-bg-dark);
+      color: var(--color-text-light);
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    .card {
+      background: rgba(18, 24, 39, 0.6);
+      backdrop-filter: blur(5px);
+      border-radius: 0.75rem;
+      padding: 2rem;
+      border: 1px solid rgba(0, 224, 255, 0.1);
+      box-shadow: 0 0 10px rgba(0, 224, 255, 0.2), 0 4px 20px rgba(0, 0, 0, 0.5);
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 0 15px rgba(0, 224, 255, 0.4), 0 8px 30px rgba(0, 0, 0, 0.7);
+    }
+    h1 {
+      text-shadow: 0 0 15px var(--color-quantum-blue);
+      color: var(--color-quantum-blue);
+    }
+    h3 {
+      color: var(--color-quantum-blue);
+      border-bottom: 2px solid rgba(0, 224, 255, 0.2);
+      padding-bottom: 0.5rem;
+    }
+    .label {
+      color: var(--color-label);
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--color-text-light);
+      line-height: 1.2;
+    }
+    .button {
+      background-color: var(--color-quantum-blue);
+      color: var(--color-bg-dark);
+      font-weight: 700;
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.5rem;
+      transition: all 0.3s ease;
+      box-shadow: 0 0 10px rgba(0, 224, 255, 0.5);
+    }
+    .button:hover {
+      background-color: #00ffff;
+      box-shadow: 0 0 20px rgba(0, 224, 255, 0.8);
+      transform: scale(1.05);
+    }
+    .data-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .wallet-item {
+      border-left: 2px solid var(--color-quantum-blue);
+      padding-left: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
   </style>
 </head>
 <body>
-  <h1>🚀 ArielMatrix 2.0</h1>
-  <p><strong>Autonomous Revenue Engine Active</strong></p>
+  <h1 class="text-4xl font-bold mb-8 text-center">⚡ BSFM Quantum Command Center</h1>
 
-  <h2>🔧 Endpoints</h2>
-  <div class="endpoint"><a href="/revenue">/revenue</a> - View real-time revenue</div>
-  <div class="endpoint"><a href="/health">/health</a> - Check system status</div>
+  <div class="dashboard grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6 max-w-7xl mx-auto">
+    
+    <div id="sovereignBrain" class="card lg:col-span-2">
+      <h3 class="text-xl font-semibold mb-4">🧠 Sovereign Brain: AGI Core</h3>
+      <div class="data-grid">
+        <p class="label">Status</p><p class="value" data-status>Loading...</p>
+        <p class="label">Optimization Cycle</p><p class="value" data-cycle>Loading...</p>
+        <p class="label">Entanglement Stability</p><p class="value text-green-400" data-entanglement>N/A</p>
+        <p class="label">Reality Coherence</p><p class="value text-green-400" data-coherence>N/A</p>
+      </div>
+    </div>
 
-  <h2>📊 Dashboard</h2>
-  <p><strong>USDT Wallet Balances:</strong> <span id="wallets">Loading...</span></p>
-  <p><strong>Revenue (Last Cycle):</strong> <span id="revenue">Loading...</span></p>
+    <div id="revenueEngine" class="card">
+      <h3 class="text-xl font-semibold mb-4">💸 Revenue Engine: P&L</h3>
+      <div class="data-grid">
+        <p class="label">Sovereign Treasury</p><p class="value text-green-500" data-treasury>Loading...</p>
+        <p class="label">Monthly Revenue</p><p class="value text-green-500" data-monthly>Loading...</p>
+      </div>
+    </div>
 
+    <div id="agents" class="card">
+      <h3 class="text-xl font-semibold mb-4">🧩 Active Agents (CPU/QPU)</h3>
+      <ul id="agentList" class="space-y-2"><li class="label">Loading...</li></ul>
+    </div>
+
+    <div id="wallets" class="card lg:col-span-2">
+      <h3 class="text-xl font-semibold mb-4">💰 Multi-Chain Wallets</h3>
+      <div id="walletList" class="grid grid-cols-2 gap-4"></div>
+      <p class="label mt-4">Ethereum Sovereign Address</p>
+      <p class="value text-sm">0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA</p>
+    </div>
+
+    <div id="consolidation" class="card">
+      <h3 class="text-xl font-semibold mb-4">🔗 Fund Consolidation Monitor</h3>
+      <div class="data-grid">
+        <p class="label">Last Run</p><p class="value" data-last-run>Loading...</p>
+        <p class="label">Status</p><p class="value" data-status>Loading...</p>
+      </div>
+      <button class="button w-full mt-6" onclick="triggerConsolidation()">TRIGGER CONSOLIDATION RUN</button>
+    </div>
+
+    <div id="transferControl" class="card lg:col-span-2">
+      <h3 class="text-xl font-semibold mb-4">🚀 Quantum Transfer Control</h3>
+      <form id="transferForm" class="space-y-4">
+        <div>
+          <label class="label">Chain</label>
+          <select name="chain" class="w-full p-2 rounded bg-gray-800 text-white">
+            <option value="eth">Ethereum</option>
+            <option value="sol">Solana</option>
+            <option value="bwaezi">BWAEZI</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Asset</label>
+          <select name="asset" class="w-full p-2 rounded bg-gray-800 text-white">
+            <option value="native">Native</option>
+            <option value="usdt">USDT</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Recipient Address</label>
+          <input type="text" name="to" class="w-full p-2 rounded bg-gray-800 text-white" placeholder="0x... or Solana address" required />
+        </div>
+        <div>
+          <label class="label">Amount</label>
+          <input type="text" name="amount" class="w-full p-2 rounded bg-gray-800 text-white" placeholder="e.g. 1.5" required />
+        </div>
+        <button type="submit" class="button w-full">SEND ASSET</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ✅ Embedded dashboard controller -->
   <script>
-    fetch('/health')
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById('wallets').textContent = 'Active';
-      })
-      .catch(() => {
-        document.getElementById('wallets').innerHTML = '<span class="error">Failed to load</span>';
-      });
+    document.addEventListener("DOMContentLoaded", () => {
+      loadSovereignBrain();
+      loadRevenueEngine();
+      loadAgents();
+      loadWallets();
+      loadConsolidationStatus();
 
-    fetch('/revenue')
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById('revenue').textContent = `$${data.revenue.adfly + data.revenue.amazon + data.revenue.crypto}`;
-      })
-      .catch(() => {
-        document.getElementById('revenue').innerHTML = '<span class="error">Failed to load</span>';
-      });
-  </script>
-</body>
-</html>
+      document.getElementById("transferForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const payload = {
+          chain: form.chain.value,
+          asset: form.asset.value,
+          to: form.to.value,
+          amount: form.amount.value
+        };
+
+        const
