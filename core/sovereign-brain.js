@@ -74,42 +74,11 @@ const ULTIMATE_RPC_ENDPOINTS = [
     'https://1rpc.io/eth',
     'https://rpc.payload.de',
     'https://api.securerpc.com/v1',
-    'https://cloudflare-eth.com' // Keep as fallback
-];
-
-// WebSocket endpoints for real-time connectivity
-const WS_RPC_ENDPOINTS = [
-    'wss://eth-mainnet.g.alchemy.com/v2/demo',
-    'wss://mainnet.infura.io/ws/v3/84842078b09946638c03157f83405213' // Public Infura
+    'https://cloudflare-eth.com'
 ];
 
 // =========================================================================
-// ULTIMATE OPTIMIZED REVENUE CONTRACTS - PREMIUM STRATEGIES
-// =========================================================================
-const LIVE_REVENUE_CONTRACTS = {
-    // DEX ROUTERS
-    UNISWAP_V3: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-    UNISWAP_V2: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
-    SUSHI_ROUTER: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
-    BALANCER_VAULT: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
-    
-    // LENDING PROTOCOLS
-    AAVE_LENDING: '0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9',
-    COMPOUND: '0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B',
-    
-    // TOKENS
-    WETH: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-    USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-    WBTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
-    
-    // BWAEZI TOKEN
-    BWAEZI: BWAEZI_TOKEN_CONFIG.CONTRACT_ADDRESS
-};
-
-// =========================================================================
-// 1. ULTIMATE OPTIMIZED TRANSACTION MANAGER - MAXIMUM THROUGHPUT
+// 1. ULTIMATE OPTIMIZED TRANSACTION MANAGER - FIXED BIGINT ERRORS
 // =========================================================================
 
 class UltimateOptimizedTransactionManager {
@@ -155,9 +124,9 @@ class UltimateOptimizedTransactionManager {
                 this.blockchain.web3.eth.getBlockNumber()
             ]);
             
-            // Initialize nonce manager
-            this.nonceManager.set('current', nonce);
-            this.nonceManager.set('pending', nonce);
+            // 🎯 FIX: Proper BigInt handling
+            this.nonceManager.set('current', Number(nonce));
+            this.nonceManager.set('pending', Number(nonce));
             
             console.log(`🎯 OPTIMIZED SECURITY VERIFICATION:`);
             console.log(`   Wallet: ${this.account.address}`);
@@ -171,7 +140,7 @@ class UltimateOptimizedTransactionManager {
         }
     }
 
-    // 🎯 OPTIMIZED: Get next nonce with parallel support
+    // 🎯 FIXED: Proper BigInt handling for nonce
     async getNextNonce() {
         const current = this.nonceManager.get('pending') || 0;
         this.nonceManager.set('pending', current + 1);
@@ -199,7 +168,7 @@ class UltimateOptimizedTransactionManager {
         }
     }
 
-    // 🎯 OPTIMIZED: Enhanced pre-flight simulation
+    // 🎯 FIXED: Enhanced pre-flight simulation with proper BigInt handling
     async simulateOptimizedTransaction(txData) {
         try {
             console.log('🔍 OPTIMIZED PRE-FLIGHT SIMULATION...');
@@ -210,10 +179,17 @@ class UltimateOptimizedTransactionManager {
                 from: this.account.address
             });
 
+            // 🎯 FIX: Convert BigInt to Number for calculations
+            const estimatedGasNumber = Number(estimatedGas);
+            
             // Check optimized balance requirements
             const balance = await this.blockchain.getWalletBalance(this.account.address);
-            const gasCost = estimatedGas * parseInt(txData.gasPrice || '50000000000');
-            const totalCost = gasCost + (parseInt(txData.value) || 0);
+            const gasPrice = txData.gasPrice || '50000000000';
+            
+            // 🎯 FIX: Proper BigInt arithmetic
+            const gasCost = estimatedGasNumber * parseInt(gasPrice);
+            const value = parseInt(txData.value) || 0;
+            const totalCost = gasCost + value;
             
             const requiredBalance = parseFloat(this.blockchain.web3.utils.fromWei(totalCost.toString(), 'ether'));
             const currentBalance = parseFloat(balance);
@@ -224,7 +200,7 @@ class UltimateOptimizedTransactionManager {
 
             return {
                 success: true,
-                estimatedGas: Math.floor(estimatedGas * 1.2), // 20% optimized buffer
+                estimatedGas: Math.floor(estimatedGasNumber * 1.2), // 20% optimized buffer
                 totalCost: this.blockchain.web3.utils.fromWei(totalCost.toString(), 'ether'),
                 securityCheck: 'OPTIMIZED_PASSED',
                 gasOptimization: 'ENABLED'
@@ -248,7 +224,7 @@ class UltimateOptimizedTransactionManager {
             };
         }
 
-        const MAX_RETRIES = 2; // Reduced for optimization
+        const MAX_RETRIES = 2;
         const transactionId = randomUUID();
 
         try {
@@ -271,11 +247,11 @@ class UltimateOptimizedTransactionManager {
                 ...txData,
                 from: this.account.address,
                 gas: simulation.estimatedGas,
-                gasPrice: gasPrices.rapid, // Always use rapid for optimization
+                gasPrice: gasPrices.rapid,
                 nonce: nextNonce
             };
 
-            // 🎯 OPTIMIZED SECURITY STEP 4: Fast execution with single confirmation
+            // 🎯 OPTIMIZED SECURITY STEP 4: Fast execution
             console.log(`🔄 EXECUTING OPTIMIZED ${operationType}...`);
             
             const receipt = await this.blockchain.web3.eth.sendTransaction(finalTxData);
@@ -286,7 +262,11 @@ class UltimateOptimizedTransactionManager {
 
             // 🎯 SUCCESS: Track optimized transaction
             this.successfulTransactions++;
-            this.gasSpent += parseInt(receipt.gasUsed) * parseInt(finalTxData.gasPrice);
+            
+            // 🎯 FIX: Proper BigInt to Number conversion
+            const gasUsed = Number(receipt.gasUsed);
+            const gasPriceNum = parseInt(finalTxData.gasPrice);
+            this.gasSpent += gasUsed * gasPriceNum;
 
             // 🎯 OPTIMIZED: Fast database logging
             if (this.dbEngine) {
@@ -329,7 +309,7 @@ class UltimateOptimizedTransactionManager {
             // 🎯 OPTIMIZED: Fast retry with minimal backoff
             if (retryCount < MAX_RETRIES) {
                 console.log(`🔄 FAST RETRY ${retryCount + 1}/${MAX_RETRIES}...`);
-                await this.delay(1000 * (retryCount + 1)); // Minimal backoff
+                await this.delay(1000 * (retryCount + 1));
                 return this.executeOptimizedTransaction(txData, operationType, retryCount + 1);
             }
 
@@ -346,7 +326,7 @@ class UltimateOptimizedTransactionManager {
     async waitForSingleConfirmation(txHash) {
         let confirmations = 0;
         const startTime = Date.now();
-        const timeout = 45000; // 45 second timeout
+        const timeout = 45000;
         
         while (confirmations < 1 && (Date.now() - startTime) < timeout) {
             try {
@@ -360,7 +340,7 @@ class UltimateOptimizedTransactionManager {
                         return confirmations;
                     }
                 }
-                await this.delay(2000); // Fast polling
+                await this.delay(2000);
             } catch (error) {
                 await this.delay(3000);
             }
@@ -413,37 +393,21 @@ class EnhancedBlockchainConnector {
             blocksPerSecond: 0,
             networkHealth: 'EXCELLENT'
         };
-        this.connectionTimeout = 10000; // 10 second timeout
+        this.connectionTimeout = 10000;
     }
 
     async connect() {
         console.log('🔗 INITIALIZING ULTIMATE OPTIMIZED BLOCKCHAIN CONNECTOR...');
         
-        // Try concurrent connection to multiple endpoints
-        const connectionPromises = ULTIMATE_RPC_ENDPOINTS.map((endpoint, index) => 
-            this.tryConnectToEndpoint(endpoint, index)
-        );
-        
-        // Wait for first successful connection
-        const results = await Promise.allSettled(connectionPromises);
-        const successfulConnection = results.find(result => 
-            result.status === 'fulfilled' && result.value
-        );
-        
-        if (successfulConnection) {
-            console.log('✅ ULTIMATE OPTIMIZED CONNECTION ESTABLISHED');
-            this.startPerformanceMonitoring();
-            return true;
-        }
-        
-        // Fallback to WebSocket if HTTP endpoints fail
-        console.log('🔄 ATTEMPTING WEBSOCKET CONNECTION...');
-        const wsSuccess = await this.tryWebSocketConnection();
-        
-        if (wsSuccess) {
-            console.log('✅ WEBSOCKET CONNECTION ESTABLISHED');
-            this.startPerformanceMonitoring();
-            return true;
+        // Try endpoints with better error handling
+        for (let i = 0; i < ULTIMATE_RPC_ENDPOINTS.length; i++) {
+            const endpoint = ULTIMATE_RPC_ENDPOINTS[i];
+            const success = await this.tryConnectToEndpoint(endpoint, i);
+            if (success) {
+                console.log('✅ ULTIMATE OPTIMIZED CONNECTION ESTABLISHED');
+                this.startPerformanceMonitoring();
+                return true;
+            }
         }
         
         throw new Error('❌ ULTIMATE_OPTIMIZED_CONNECTION_FAILED: All endpoints exhausted');
@@ -453,12 +417,10 @@ class EnhancedBlockchainConnector {
         try {
             console.log(`🔄 Testing endpoint ${index + 1}/${ULTIMATE_RPC_ENDPOINTS.length}: ${endpoint}`);
             
-            // Create Web3 instance with timeout
             const web3 = new Web3(new Web3.providers.HttpProvider(endpoint, {
                 timeout: this.connectionTimeout
             }));
             
-            // Test connection with timeout
             const blockNumber = await Promise.race([
                 web3.eth.getBlockNumber(),
                 new Promise((_, reject) => 
@@ -466,16 +428,19 @@ class EnhancedBlockchainConnector {
                 )
             ]);
             
-            if (blockNumber > 0) {
+            // 🎯 FIX: Proper BigInt to Number conversion
+            const blockNumberNum = Number(blockNumber);
+            
+            if (blockNumberNum > 0) {
                 this.web3 = web3;
                 this.ethersProvider = new ethers.JsonRpcProvider(endpoint);
                 this.connected = true;
                 this.currentEndpoint = index;
-                this.lastBlock = blockNumber;
+                this.lastBlock = blockNumberNum;
                 this.healthStatus = 'OPTIMIZED_HEALTHY';
                 this.connectionStats.successfulConnections++;
                 
-                console.log(`✅ CONNECTED: ${endpoint} (Block: #${blockNumber})`);
+                console.log(`✅ CONNECTED: ${endpoint} (Block: #${blockNumberNum})`);
                 return true;
             }
         } catch (error) {
@@ -485,48 +450,21 @@ class EnhancedBlockchainConnector {
         return false;
     }
 
-    async tryWebSocketConnection() {
-        for (const wsEndpoint of WS_RPC_ENDPOINTS) {
-            try {
-                console.log(`🔄 Testing WebSocket: ${wsEndpoint}`);
-                const web3 = new Web3(wsEndpoint);
-                
-                const blockNumber = await Promise.race([
-                    web3.eth.getBlockNumber(),
-                    new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('WebSocket timeout')), 10000)
-                    )
-                ]);
-                
-                if (blockNumber > 0) {
-                    this.web3 = web3;
-                    this.ethersProvider = new ethers.WebSocketProvider(wsEndpoint);
-                    this.connected = true;
-                    this.lastBlock = blockNumber;
-                    this.healthStatus = 'WEBSOCKET_OPTIMIZED';
-                    
-                    console.log(`✅ WEBSOCKET CONNECTED: ${wsEndpoint} (Block: #${blockNumber})`);
-                    return true;
-                }
-            } catch (error) {
-                console.warn(`❌ WebSocket failed: ${wsEndpoint} - ${error.message}`);
-            }
-        }
-        return false;
-    }
-
-    // 🎯 OPTIMIZED: Enhanced gas pricing for high-frequency trading
+    // 🎯 FIXED: Enhanced gas pricing with proper BigInt handling
     async getOptimizedGasPrices() {
         try {
             const gasPrice = await this.web3.eth.getGasPrice();
-            const currentBaseFee = Math.floor(Number(gasPrice) * 1.12); // Reduced buffer for optimization
+            
+            // 🎯 FIX: Convert BigInt to Number for calculations
+            const gasPriceNum = Number(gasPrice);
+            const currentBaseFee = Math.floor(gasPriceNum * 1.12);
             
             return {
                 low: Math.floor(currentBaseFee * 0.85),
                 medium: currentBaseFee,
                 high: Math.floor(currentBaseFee * 1.15),
-                rapid: Math.floor(currentBaseFee * 1.25), // Optimized for speed
-                ultra: Math.floor(currentBaseFee * 1.4),   // Maximum speed
+                rapid: Math.floor(currentBaseFee * 1.25),
+                ultra: Math.floor(currentBaseFee * 1.4),
                 baseFee: currentBaseFee
             };
         } catch (error) {
@@ -581,8 +519,9 @@ class EnhancedBlockchainConnector {
                 tokenContract.methods.totalSupply().call()
             ]);
             
-            const readableBalance = this.web3.utils.fromWei(balance, 'ether');
-            const readableSupply = this.web3.utils.fromWei(totalSupply, 'ether');
+            // 🎯 FIX: Convert BigInt to readable numbers
+            const readableBalance = this.web3.utils.fromWei(balance.toString(), 'ether');
+            const readableSupply = this.web3.utils.fromWei(totalSupply.toString(), 'ether');
             
             console.log(`💰 OPTIMIZED BWAEZI BALANCE: ${readableBalance} / Total Supply: ${readableSupply}`);
             return { balance: readableBalance, totalSupply: readableSupply };
@@ -592,20 +531,17 @@ class EnhancedBlockchainConnector {
         }
     }
 
-    // 🎯 OPTIMIZED: Health check with fallback
+    // 🎯 FIXED: Health check with proper error handling
     async healthCheck() {
         if (!this.web3) return false;
         
         try {
-            const [blockNumber, peerCount] = await Promise.all([
-                this.web3.eth.getBlockNumber(),
-                this.web3.eth.net.getPeerCount ? this.web3.eth.net.getPeerCount() : Promise.resolve(1)
-            ]);
+            const blockNumber = await this.web3.eth.getBlockNumber();
+            const isHealthy = Number(blockNumber) > 0;
             
-            const isHealthy = blockNumber > 0;
             if (!isHealthy) {
                 console.warn('🔄 Health check failed, attempting reconnection...');
-                await this.connect(); // Auto-reconnect
+                await this.connect();
             }
             
             return isHealthy;
@@ -615,18 +551,19 @@ class EnhancedBlockchainConnector {
         }
     }
 
-    // 🎯 OPTIMIZED: Performance monitoring
+    // 🎯 FIXED: Performance monitoring without BigInt errors
     startPerformanceMonitoring() {
         setInterval(async () => {
             try {
                 const currentBlock = await this.web3.eth.getBlockNumber();
-                const blockDiff = currentBlock - this.lastBlock;
+                const currentBlockNum = Number(currentBlock);
+                const blockDiff = currentBlockNum - this.lastBlock;
                 const timeDiff = Date.now() - this.performanceMetrics.lastBlockUpdate;
                 
                 if (this.performanceMetrics.lastBlockUpdate > 0) {
                     this.performanceMetrics.blocksPerSecond = blockDiff / (timeDiff / 1000);
                     
-                    if (this.performanceMetrics.blocksPerSecond > 0.05) { // ~3 seconds per block
+                    if (this.performanceMetrics.blocksPerSecond > 0.05) {
                         this.performanceMetrics.networkHealth = 'EXCELLENT';
                     } else if (this.performanceMetrics.blocksPerSecond > 0.03) {
                         this.performanceMetrics.networkHealth = 'GOOD';
@@ -635,17 +572,14 @@ class EnhancedBlockchainConnector {
                     }
                 }
                 
-                this.lastBlock = currentBlock;
+                this.lastBlock = currentBlockNum;
                 this.performanceMetrics.lastBlockUpdate = Date.now();
                 
-                // Auto health check every minute
-                if (Date.now() % 60000 < 1000) {
-                    await this.healthCheck();
-                }
             } catch (error) {
-                console.warn('Performance monitoring error:', error.message);
+                // 🎯 FIX: Proper error handling without BigInt mixing
+                console.warn('Performance monitoring:', error.message);
             }
-        }, 10000); // Monitor every 10 seconds
+        }, 15000);
     }
 
     async delay(ms) {
@@ -728,14 +662,19 @@ class EnhancedRevenueEngine {
 
             const router = new this.blockchain.web3.eth.Contract(routerABI, LIVE_REVENUE_CONTRACTS.UNISWAP_V3);
             
-            // 🎯 OPTIMIZED: Increased amounts for premium revenue
-            const realAmountIn = this.blockchain.web3.utils.toWei('0.0015', 'ether'); // 3x increase
+            // 🎯 FIX: Check balance before attempting transaction
+            const balance = await this.blockchain.getWalletBalance(this.transactionManager.account.address);
+            if (parseFloat(balance) < 0.001) {
+                throw new Error(`Insufficient balance: ${balance} ETH`);
+            }
+            
+            const realAmountIn = this.blockchain.web3.utils.toWei('0.0005', 'ether'); // Reduced for safety
             const params = {
                 tokenIn: this.transactionManager.validateAddressSecurity(inputToken, 'UNISWAP_PREMIUM'),
                 tokenOut: this.transactionManager.validateAddressSecurity(outputToken, 'UNISWAP_PREMIUM'),
                 fee: 3000,
                 recipient: this.transactionManager.account.address,
-                deadline: Math.floor(Date.now() / 1000) + 1200, // Reduced deadline for speed
+                deadline: Math.floor(Date.now() / 1000) + 1200,
                 amountIn: realAmountIn,
                 amountOutMinimum: 1,
                 sqrtPriceLimitX96: 0
@@ -747,14 +686,13 @@ class EnhancedRevenueEngine {
                 value: inputToken === LIVE_REVENUE_CONTRACTS.WETH ? realAmountIn : 0
             };
 
-            // 🎯 OPTIMIZED EXECUTION
             const result = await this.transactionManager.executeOptimizedTransaction(
                 txData, 
                 'UNISWAP_V3_PREMIUM'
             );
 
             if (result.success && result.optimized) {
-                this.revenueGenerated += 2.00; // Premium pricing
+                this.revenueGenerated += 2.00;
                 this.optimizedTrades++;
                 this.totalProfit += 2.00;
                 
@@ -784,7 +722,6 @@ class EnhancedRevenueEngine {
     // 🎯 OPTIMIZED: Enhanced Yield Strategy - $1.50 per operation
     async executeYieldFarming() {
         try {
-            // Premium WETH-AAVE strategy
             const aaveABI = [{
                 "inputs": [
                     {"internalType": "address", "name": "asset", "type": "address"},
@@ -799,7 +736,7 @@ class EnhancedRevenueEngine {
             }];
 
             const aavePool = new this.blockchain.web3.eth.Contract(aaveABI, LIVE_REVENUE_CONTRACTS.AAVE_LENDING);
-            const depositAmount = this.blockchain.web3.utils.toWei('0.0008', 'ether'); // Increased amount
+            const depositAmount = this.blockchain.web3.utils.toWei('0.0003', 'ether'); // Reduced for safety
 
             const txData = {
                 to: LIVE_REVENUE_CONTRACTS.AAVE_LENDING,
@@ -812,14 +749,13 @@ class EnhancedRevenueEngine {
                 value: depositAmount
             };
 
-            // 🎯 OPTIMIZED EXECUTION
             const result = await this.transactionManager.executeOptimizedTransaction(
                 txData, 
                 'PREMIUM_YIELD_FARMING'
             );
 
             if (result.success && result.optimized) {
-                this.revenueGenerated += 1.50; // Enhanced yield
+                this.revenueGenerated += 1.50;
                 this.optimizedTrades++;
                 this.totalProfit += 1.50;
                 
@@ -846,273 +782,16 @@ class EnhancedRevenueEngine {
         }
     }
 
-    // 🎯 OPTIMIZED: Premium BWAEZI Operations - $3.00 per trade
-    async executeBwaeziTrade(action = 'buy', amount = '500') { // Increased amount
-        try {
-            const tokenABI = [{
-                "constant": false,
-                "inputs": [
-                    {"name": "_to", "type": "address"},
-                    {"name": "_value", "type": "uint256"}
-                ],
-                "name": "transfer",
-                "outputs": [{"name": "", "type": "bool"}],
-                "type": "function"
-            }];
-
-            const tokenContract = new this.blockchain.web3.eth.Contract(tokenABI, LIVE_REVENUE_CONTRACTS.BWAEZI);
-            const transferAmount = this.blockchain.web3.utils.toWei(amount, 'ether');
-
-            const txData = {
-                to: LIVE_REVENUE_CONTRACTS.BWAEZI,
-                data: tokenContract.methods.transfer(
-                    this.transactionManager.account.address, 
-                    transferAmount
-                ).encodeABI()
-            };
-
-            // 🎯 OPTIMIZED EXECUTION
-            const result = await this.transactionManager.executeOptimizedTransaction(
-                txData, 
-                'PREMIUM_BWAEZI_OPERATION'
-            );
-
-            if (result.success && result.optimized) {
-                this.bwaeziTrades++;
-                this.revenueGenerated += 3.00; // Premium BWAEZI pricing
-                this.totalProfit += 3.00;
-                
-                console.log(`✅ PREMIUM BWAEZI OPERATION: +$3.0000`);
-                return { 
-                    success: true, 
-                    revenue: 3.00, 
-                    txHash: result.txHash,
-                    type: 'BWAEZI_OPERATION_PREMIUM',
-                    profit: 3.00,
-                    bwaeziTrades: this.bwaeziTrades,
-                    action: action,
-                    amount: amount,
-                    optimized: true,
-                    strategy: 'PREMIUM_BWAEZI'
-                };
-            } else {
-                throw new Error(result.error);
-            }
-        } catch (error) {
-            console.error(`❌ Premium BWAEZI operation failed: ${error.message}`);
-            return { 
-                success: false, 
-                error: error.message, 
-                optimized: false 
-            };
-        }
-    }
-
-    // 🎯 OPTIMIZED: Premium Arbitrage - $1.00 per execution
-    async executeArbitrage() {
-        try {
-            const sushiABI = [{
-                "inputs": [
-                    {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-                    {"internalType": "address[]", "name": "path", "type": "address[]"},
-                    {"internalType": "address", "name": "to", "type": "address"},
-                    {"internalType": "uint256", "name": "deadline", "type": "uint256"}
-                ],
-                "name": "swapExactETHForTokens",
-                "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
-                "stateMutability": "payable",
-                "type": "function"
-            }];
-
-            const sushiRouter = new this.blockchain.web3.eth.Contract(sushiABI, LIVE_REVENUE_CONTRACTS.SUSHI_ROUTER);
-            const amountIn = this.blockchain.web3.utils.toWei('0.0005', 'ether'); // Increased amount
-            const path = [
-                this.transactionManager.validateAddressSecurity(LIVE_REVENUE_CONTRACTS.WETH, 'PREMIUM_ARBITRAGE'),
-                this.transactionManager.validateAddressSecurity(LIVE_REVENUE_CONTRACTS.USDC, 'PREMIUM_ARBITRAGE'),
-                this.transactionManager.validateAddressSecurity(LIVE_REVENUE_CONTRACTS.WETH, 'PREMIUM_ARBITRAGE')
-            ];
-            const deadline = Math.floor(Date.now() / 1000) + 900; // Reduced deadline
-
-            const txData = {
-                to: LIVE_REVENUE_CONTRACTS.SUSHI_ROUTER,
-                data: sushiRouter.methods.swapExactETHForTokens(
-                    1, 
-                    path, 
-                    this.transactionManager.account.address, 
-                    deadline
-                ).encodeABI(),
-                value: amountIn
-            };
-
-            // 🎯 OPTIMIZED EXECUTION
-            const result = await this.transactionManager.executeOptimizedTransaction(
-                txData, 
-                'PREMIUM_ARBITRAGE'
-            );
-
-            if (result.success && result.optimized) {
-                this.revenueGenerated += 1.00; // Enhanced arbitrage
-                this.optimizedTrades++;
-                this.totalProfit += 1.00;
-                
-                console.log(`✅ PREMIUM ARBITRAGE: +$1.0000`);
-                return { 
-                    success: true, 
-                    revenue: 1.00, 
-                    txHash: result.txHash,
-                    type: 'ARBITRAGE_PREMIUM',
-                    profit: 1.00,
-                    optimized: true,
-                    strategy: 'PREMIUM_ARBITRAGE'
-                };
-            } else {
-                throw new Error(result.error);
-            }
-        } catch (error) {
-            console.error(`❌ Premium arbitrage failed: ${error.message}`);
-            return { 
-                success: false, 
-                error: error.message, 
-                optimized: false 
-            };
-        }
-    }
-
-    // 🎯 NEW: Premium Cross-DEX Strategy - $2.50 per execution
-    async executeCrossDexArbitrage() {
-        try {
-            // Advanced cross-DEX arbitrage between Uniswap and Sushi
-            const uniswapABI = [{
-                "inputs": [
-                    {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-                    {"internalType": "address[]", "name": "path", "type": "address[]"},
-                    {"internalType": "address", "name": "to", "type": "address"},
-                    {"internalType": "uint256", "name": "deadline", "type": "uint256"}
-                ],
-                "name": "swapExactETHForTokens",
-                "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
-                "stateMutability": "payable",
-                "type": "function"
-            }];
-
-            const uniswapRouter = new this.blockchain.web3.eth.Contract(uniswapABI, LIVE_REVENUE_CONTRACTS.UNISWAP_V2);
-            const amountIn = this.blockchain.web3.utils.toWei('0.001', 'ether');
-            const path = [
-                this.transactionManager.validateAddressSecurity(LIVE_REVENUE_CONTRACTS.WETH, 'CROSS_DEX'),
-                this.transactionManager.validateAddressSecurity(LIVE_REVENUE_CONTRACTS.USDT, 'CROSS_DEX')
-            ];
-            const deadline = Math.floor(Date.now() / 1000) + 600;
-
-            const txData = {
-                to: LIVE_REVENUE_CONTRACTS.UNISWAP_V2,
-                data: uniswapRouter.methods.swapExactETHForTokens(
-                    1, 
-                    path, 
-                    this.transactionManager.account.address, 
-                    deadline
-                ).encodeABI(),
-                value: amountIn
-            };
-
-            const result = await this.transactionManager.executeOptimizedTransaction(
-                txData, 
-                'CROSS_DEX_PREMIUM'
-            );
-
-            if (result.success && result.optimized) {
-                this.revenueGenerated += 2.50;
-                this.optimizedTrades++;
-                this.totalProfit += 2.50;
-                
-                console.log(`✅ PREMIUM CROSS-DEX: +$2.5000`);
-                return { 
-                    success: true, 
-                    revenue: 2.50, 
-                    txHash: result.txHash,
-                    type: 'CROSS_DEX_PREMIUM',
-                    profit: 2.50,
-                    optimized: true,
-                    strategy: 'ADVANCED_ARBITRAGE'
-                };
-            } else {
-                throw new Error(result.error);
-            }
-        } catch (error) {
-            console.error(`❌ Premium cross-DEX failed: ${error.message}`);
-            return { 
-                success: false, 
-                error: error.message, 
-                optimized: false 
-            };
-        }
-    }
-
-    // 🎯 NEW: Advanced Liquidity Strategy - $2.00 per operation
-    async executeLiquidityStrategy() {
-        try {
-            // WETH wrapping and unwrapping for liquidity provision
-            const wethABI = [{
-                "constant": false,
-                "inputs": [],
-                "name": "deposit",
-                "outputs": [],
-                "payable": true,
-                "stateMutability": "payable",
-                "type": "function"
-            }];
-
-            const wethContract = new this.blockchain.web3.eth.Contract(wethABI, LIVE_REVENUE_CONTRACTS.WETH);
-            const depositAmount = this.blockchain.web3.utils.toWei('0.002', 'ether');
-
-            const txData = {
-                to: LIVE_REVENUE_CONTRACTS.WETH,
-                data: wethContract.methods.deposit().encodeABI(),
-                value: depositAmount
-            };
-
-            const result = await this.transactionManager.executeOptimizedTransaction(
-                txData, 
-                'LIQUIDITY_STRATEGY'
-            );
-
-            if (result.success && result.optimized) {
-                this.revenueGenerated += 2.00;
-                this.optimizedTrades++;
-                this.totalProfit += 2.00;
-                
-                console.log(`✅ LIQUIDITY STRATEGY: +$2.0000`);
-                return { 
-                    success: true, 
-                    revenue: 2.00, 
-                    txHash: result.txHash,
-                    type: 'LIQUIDITY_STRATEGY',
-                    profit: 2.00,
-                    optimized: true,
-                    strategy: 'ADVANCED_LIQUIDITY'
-                };
-            } else {
-                throw new Error(result.error);
-            }
-        } catch (error) {
-            console.error(`❌ Liquidity strategy failed: ${error.message}`);
-            return { 
-                success: false, 
-                error: error.message, 
-                optimized: false 
-            };
-        }
-    }
-
     registerLiveAgents() {
         // 🎯 OPTIMIZED: Premium revenue agents for $5,000+ target
         this.liveAgents.set('premium-defi-swaps', { 
             execute: async () => await this.executeUniswapSwap(
                 LIVE_REVENUE_CONTRACTS.WETH, 
                 LIVE_REVENUE_CONTRACTS.USDC, 
-                this.blockchain.web3.utils.toWei('0.0015', 'ether')
+                this.blockchain.web3.utils.toWei('0.0005', 'ether')
             ),
             weight: 0.25, 
-            cooldown: 30000, // Reduced cooldown
+            cooldown: 30000,
             type: 'PREMIUM_DEX',
             security: 'MAXIMUM_OPTIMIZED',
             revenue: 2.00
@@ -1125,42 +804,6 @@ class EnhancedRevenueEngine {
             type: 'PREMIUM_YIELD',
             security: 'MAXIMUM_OPTIMIZED',
             revenue: 1.50
-        });
-        
-        this.liveAgents.set('premium-bwaezi-trading', { 
-            execute: async () => await this.executeBwaeziTrade('buy', '500'), 
-            weight: 0.20, 
-            cooldown: 35000,
-            type: 'PREMIUM_BWAEZI',
-            security: 'MAXIMUM_OPTIMIZED',
-            revenue: 3.00
-        });
-
-        this.liveAgents.set('premium-arbitrage', { 
-            execute: async () => await this.executeArbitrage(), 
-            weight: 0.15, 
-            cooldown: 25000,
-            type: 'PREMIUM_ARBITRAGE',
-            security: 'MAXIMUM_OPTIMIZED',
-            revenue: 1.00
-        });
-
-        this.liveAgents.set('premium-cross-dex', { 
-            execute: async () => await this.executeCrossDexArbitrage(), 
-            weight: 0.10, 
-            cooldown: 40000,
-            type: 'CROSS_DEX_PREMIUM',
-            security: 'MAXIMUM_OPTIMIZED',
-            revenue: 2.50
-        });
-
-        this.liveAgents.set('premium-liquidity', { 
-            execute: async () => await this.executeLiquidityStrategy(), 
-            weight: 0.10, 
-            cooldown: 50000,
-            type: 'LIQUIDITY_STRATEGY',
-            security: 'MAXIMUM_OPTIMIZED',
-            revenue: 2.00
         });
 
         console.log(`🎯 REGISTERED ${this.liveAgents.size} PREMIUM OPTIMIZED AGENTS`);
@@ -1205,18 +848,10 @@ class EnhancedRevenueEngine {
                 if (result.success && result.optimized) {
                     cycleRevenue += result.revenue;
                     logger.info(`✅ ${agentId}: +$${result.revenue.toFixed(4)} | OPTIMIZED SUCCESS`);
-                    
-                    // Premium payout processing
-                    if (result.type.includes('BWAEZI')) {
-                        console.log(`🔷 PREMIUM BWAEZI: ${result.bwaeziTrades} optimized transactions`);
-                    } else {
-                        console.log(`💰 PREMIUM PAYOUT: $${result.revenue.toFixed(4)} at maximum speed`);
-                    }
                 } else {
                     logger.warn(`⚠️ ${agentId} failed: ${result.error}`);
                 }
                 
-                // Optimized cooldown
                 await this.transactionManager.delay(agent.cooldown);
                 
             } catch (error) {
@@ -1234,7 +869,6 @@ class EnhancedRevenueEngine {
         const optimizedResults = results.filter(r => r.optimized);
         const successRate = results.length > 0 ? (optimizedResults.length / results.length) * 100 : 0;
         
-        // 🎯 OPTIMIZED: Performance analytics
         const performance = {
             cycleDuration,
             successRate: Math.round(successRate),
@@ -1246,9 +880,6 @@ class EnhancedRevenueEngine {
         logger.info(`\n💰 ULTIMATE OPTIMIZED CYCLE COMPLETE:`);
         logger.info(`   Revenue: $${cycleRevenue.toFixed(4)} | Target: $${this.cycleTarget}`);
         logger.info(`   Duration: ${cycleDuration}ms | Success: ${performance.successRate}%`);
-        logger.info(`   Efficiency: ${(performance.revenueEfficiency * 100).toFixed(1)}% of target`);
-        logger.info(`   TPS: ${performance.transactionsPerSecond.toFixed(2)}`);
-        logger.info(`   Optimization: ${performance.optimizationLevel}`);
         
         return { 
             results, 
@@ -1266,7 +897,7 @@ class EnhancedRevenueEngine {
 
     getRevenueStats() {
         const securityStatus = this.transactionManager.getOptimizedStatus();
-        const dailyProjection = this.revenueGenerated * 600; // Based on 600 cycles/day
+        const dailyProjection = this.revenueGenerated * 600;
         
         return {
             totalRevenue: this.revenueGenerated,
@@ -1312,14 +943,13 @@ class EnhancedMainnetOrchestrator {
             dailyProjection: 0
         };
         
-        // 🎯 OPTIMIZED: High-performance database
         this.dbEngine = getArielSQLiteEngine({
             dbPath: './data/optimized/transactions.db',
             backupPath: './backups/optimized',
             autoBackup: true,
-            backupInterval: 3600000, // 1 hour
+            backupInterval: 3600000,
             walMode: true,
-            queryTimeout: 15000 // Reduced timeout for performance
+            queryTimeout: 15000
         });
     }
 
@@ -1328,13 +958,9 @@ class EnhancedMainnetOrchestrator {
         this.logger.info(`💰 TARGET: $${REVENUE_OPTIMIZATION.DAILY_TARGET}/DAY REVENUE`);
         
         try {
-            // Initialize optimized database
             await this.dbEngine.connect();
-            
-            // Initialize high-performance blockchain connection
             await this.blockchain.connect();
             
-            // Initialize ultimate optimized revenue engine
             this.revenueEngine = new EnhancedRevenueEngine(
                 this.blockchain, 
                 this.privateKey, 
@@ -1345,13 +971,11 @@ class EnhancedMainnetOrchestrator {
             this.revenueEngine.registerLiveAgents();
             this.isRunning = true;
             
-            // Verify BWAEZI token status with optimization
             const bwaeziStatus = await this.blockchain.getBwaeziTokenBalance(this.sovereignWallet);
             this.logger.info(`🔷 OPTIMIZED BWAEZI STATUS: ${bwaeziStatus.totalSupply} tokens`);
             
             this.logger.info('✅ ULTIMATE OPTIMIZED MAINNET ORCHESTRATOR READY');
             this.logger.info(`💰 $5,000+ REVENUE: ${this.revenueEngine.liveMode ? 'OPTIMIZATION ACTIVE' : 'AWAITING_PRIVATE_KEY'}`);
-            this.logger.info(`⚡ PERFORMANCE: MAXIMUM THROUGHPUT ENABLED`);
             
         } catch (error) {
             this.logger.error(`❌ ORCHESTRATOR INITIALIZATION FAILED: ${error.message}`);
@@ -1379,7 +1003,6 @@ class EnhancedMainnetOrchestrator {
         
         const cycleDuration = Date.now() - cycleStartTime;
         
-        // 🎯 OPTIMIZED: Advanced performance tracking
         this.cycleStats.push({
             cycle: this.liveCycles,
             timestamp: new Date().toISOString(),
@@ -1393,17 +1016,14 @@ class EnhancedMainnetOrchestrator {
             targetAchievement: result.targetAchievement
         });
         
-        // Keep optimized statistics (last 200 cycles)
         if (this.cycleStats.length > 200) {
             this.cycleStats = this.cycleStats.slice(-200);
         }
         
-        // Update performance metrics
         this.updatePerformanceMetrics();
         
         this.logger.info(`⏱️ Optimized cycle: ${cycleDuration}ms`);
         this.logger.info(`💰 Lifetime: $${this.totalRevenue.toFixed(2)} | Projected: $${this.performanceMetrics.dailyProjection.toFixed(2)}/day`);
-        this.logger.info(`🎯 Target Achievement: ${result.targetAchievement.toFixed(1)}%`);
         
         return result;
     }
@@ -1411,7 +1031,7 @@ class EnhancedMainnetOrchestrator {
     updatePerformanceMetrics() {
         if (this.cycleStats.length === 0) return;
         
-        const recentCycles = this.cycleStats.slice(-50); // Last 50 cycles
+        const recentCycles = this.cycleStats.slice(-50);
         this.performanceMetrics.averageCycleTime = 
             recentCycles.reduce((sum, cycle) => sum + cycle.duration, 0) / recentCycles.length;
         
@@ -1431,7 +1051,6 @@ class EnhancedMainnetOrchestrator {
         this.logger.info('🔄 STARTING CONTINUOUS OPTIMIZED REVENUE GENERATION...');
         this.logger.info(`⚡ TARGET: $${REVENUE_OPTIMIZATION.DAILY_TARGET}/day with ${REVENUE_OPTIMIZATION.OPTIMIZATION_LEVEL}`);
         
-        // 🎯 OPTIMIZED: High-frequency revenue generation
         const revenueInterval = setInterval(async () => {
             if (!this.isRunning) {
                 clearInterval(revenueInterval);
@@ -1441,17 +1060,16 @@ class EnhancedMainnetOrchestrator {
             try {
                 await this.executeLiveRevenueCycle();
                 
-                // 🎯 OPTIMIZED: Dynamic interval adjustment based on performance
-                const targetInterval = Math.max(30000, this.performanceMetrics.averageCycleTime * 1.1);
+                const targetInterval = Math.max(60000, this.performanceMetrics.averageCycleTime * 1.1);
                 if (revenueInterval._idleTimeout !== targetInterval) {
                     clearInterval(revenueInterval);
                     this.startContinuousRevenueGenerationWithInterval(targetInterval);
                 }
             } catch (error) {
                 this.logger.error(`Optimized revenue cycle error: ${error.message}`);
-                await this.blockchain.delay(10000); // Minimal backoff
+                await this.blockchain.delay(15000);
             }
-        }, 45000); // Start with 45-second intervals
+        }, 60000);
         
         this.revenueInterval = revenueInterval;
     }
@@ -1471,7 +1089,7 @@ class EnhancedMainnetOrchestrator {
                 await this.executeLiveRevenueCycle();
             } catch (error) {
                 this.logger.error(`Optimized revenue cycle error: ${error.message}`);
-                await this.blockchain.delay(10000);
+                await this.blockchain.delay(15000);
             }
         }, interval);
         
@@ -1563,7 +1181,6 @@ class ProductionSovereignCore extends EventEmitter {
         this.bwaeziChain = null;
         this.payoutSystem = null;
 
-        // 🎯 OPTIMIZED: Environment variable validation for $5,000+ target
         this.privateKey = config.privateKey || process.env.MAINNET_PRIVATE_KEY;
         this.sovereignWallet = config.sovereignWallet || BWAEZI_TOKEN_CONFIG.FOUNDER_WALLET;
 
@@ -1585,14 +1202,12 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.info("🔥 ACTIVATING GOD MODE WITH $5,000+ CAPACITY...");
 
         try {
-            // Initialize Ultimate Optimized Mainnet Orchestrator for $5,000+ income
             if (this.privateKey && this.privateKey.startsWith('0x')) {
                 this.revenueOrchestrator = new EnhancedMainnetOrchestrator(this.privateKey, this.sovereignWallet);
                 await this.revenueOrchestrator.initialize();
                 this.logger.info('💰 ULTIMATE OPTIMIZED REVENUE ENGINE: READY FOR $5,000+ TRADING');
                 this.logger.info('⚡ PERFORMANCE: PREMIUM STRATEGIES + PARALLEL EXECUTION ACTIVE');
                 
-                // Start continuous $5,000+ revenue generation
                 this.startRevenueGeneration();
             }
 
@@ -1620,13 +1235,12 @@ class ProductionSovereignCore extends EventEmitter {
     async attemptRecovery(error) {
         this.logger.info('🔄 ATTEMPTING ULTIMATE OPTIMIZED RECOVERY...');
         try {
-            // Optimized reset and retry with minimal backoff
             if (this.revenueOrchestrator) {
                 this.revenueOrchestrator.stopRevenueGeneration();
                 this.revenueOrchestrator = null;
             }
             
-            await this.delay(8000); // Reduced backoff for optimization
+            await this.delay(10000);
             await this.initialize();
         } catch (recoveryError) {
             this.logger.error(`❌ ULTIMATE OPTIMIZED RECOVERY FAILED: ${recoveryError.message}`);
@@ -1642,30 +1256,6 @@ class ProductionSovereignCore extends EventEmitter {
         
         this.logger.info('🚀 STARTING CONTINUOUS $5,000+ REVENUE GENERATION...');
         this.revenueOrchestrator.startContinuousRevenueGeneration();
-    }
-
-    orchestrateCoreServices(services) {
-        this.logger.info("🔄 ORCHESTRATING ULTIMATE OPTIMIZED SERVICES...");
-        
-        // Enhanced optimized service integration
-        if (services.bwaeziChain) {
-            this.bwaeziChain = services.bwaeziChain;
-            this.modules.set('bwaeziChain', services.bwaeziChain);
-            this.logger.info('🔷 OPTIMIZED BWAEZI CHAIN INTEGRATED');
-        }
-        
-        if (services.payoutSystem) {
-            this.payoutSystem = services.payoutSystem;
-            this.modules.set('payoutSystem', services.payoutSystem);
-            this.logger.info('💰 ULTIMATE OPTIMIZED PAYOUT SYSTEM INTEGRATED');
-        }
-        
-        if (services.quantumNeuroCortex) {
-            this.modules.set('quantumNeuroCortex', services.quantumNeuroCortex);
-            this.logger.info('🧠 QUANTUM OPTIMIZED NEURO CORTEX INTEGRATED');
-        }
-
-        this.logger.info("✅ ULTIMATE OPTIMIZED SERVICE ORCHESTRATION COMPLETE");
     }
 
     async executePureMainnetRevenueCycle() {
@@ -1726,7 +1316,6 @@ class ProductionSovereignCore extends EventEmitter {
         };
     }
 
-    // Optimized cleanup method
     shutdown() {
         if (this.revenueInterval) {
             clearInterval(this.revenueInterval);
@@ -1735,54 +1324,22 @@ class ProductionSovereignCore extends EventEmitter {
             this.revenueOrchestrator.stopRevenueGeneration();
         }
         this.logger.info('🛑 ULTIMATE OPTIMIZED SOVEREIGN CORE SHUTDOWN COMPLETE');
-        this.logger.info('💰 REVENUE STATUS: $5,000+ DAILY CAPACITY MAINTAINED');
-        this.logger.info('🛡️ SECURITY: ALL FUNDS 100% SAFE AND OPTIMIZED');
     }
 }
 
 // =========================================================================
-// EMERGENCY RPC FIX MODULE - GUARANTEED CONNECTIVITY
+// LIVE REVENUE CONTRACTS - WHITELISTED ADDRESSES
 // =========================================================================
-
-class EmergencyRPCFix {
-    static getWorkingEndpoints() {
-        return [
-            'https://eth-mainnet.g.alchemy.com/v2/demo',
-            'https://rpc.flashbots.net',
-            'https://api.mycryptoapi.com/eth',
-            'https://nodes.mewapi.io/rpc/eth',
-            'https://mainnet-nethermind.blockscout.com',
-            'https://eth-rpc.gateway.pokt.network'
-        ];
-    }
-    
-    static async getReliableProvider() {
-        const endpoints = this.getWorkingEndpoints();
-        
-        for (const endpoint of endpoints) {
-            try {
-                const provider = new ethers.JsonRpcProvider(endpoint);
-                const network = await provider.getNetwork();
-                if (network.chainId === 1) { // Mainnet
-                    console.log(`✅ EMERGENCY FIX: Using reliable endpoint: ${endpoint}`);
-                    return provider;
-                }
-            } catch (error) {
-                console.warn(`Emergency endpoint failed: ${endpoint}`);
-            }
-        }
-        throw new Error('❌ EMERGENCY: No reliable RPC endpoints available');
-    }
-}
-
-// Export the enhanced optimized classes
-export { 
-    ProductionSovereignCore, 
-    EnhancedMainnetOrchestrator, 
-    EnhancedRevenueEngine, 
-    EnhancedBlockchainConnector, 
-    LIVE_REVENUE_CONTRACTS,
-    EmergencyRPCFix
+const LIVE_REVENUE_CONTRACTS = {
+    UNISWAP_V3: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+    UNISWAP_V2: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+    SUSHI_ROUTER: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+    AAVE_LENDING: '0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9',
+    WETH: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    BWAEZI: BWAEZI_TOKEN_CONFIG.CONTRACT_ADDRESS
 };
 
 // =========================================================================
@@ -1797,11 +1354,10 @@ console.log('🎯 REVENUE TARGET: $5,000+ PER DAY CONFIRMED');
 console.log('⚡ OPTIMIZATION: PREMIUM STRATEGIES + PARALLEL EXECUTION');
 console.log('🌐 RPC STATUS: MULTI-ENDPOINT LOAD BALANCING ACTIVE');
 
-// Ultimate optimized auto-initialization for $5,000+ target with guaranteed connectivity
+// Ultimate optimized auto-initialization
 if (process.env.MAINNET_PRIVATE_KEY && process.env.MAINNET_PRIVATE_KEY.startsWith('0x')) {
     const optimizedCore = new ProductionSovereignCore();
     
-    // Enhanced initialization with emergency fallback
     const initializeWithFallback = async () => {
         try {
             await optimizedCore.initialize();
@@ -1811,13 +1367,11 @@ if (process.env.MAINNET_PRIVATE_KEY && process.env.MAINNET_PRIVATE_KEY.startsWit
             console.error('❌ PRIMARY INITIALIZATION FAILED:', error.message);
             console.log('🔄 ACTIVATING EMERGENCY RPC FALLBACK...');
             
-            // Emergency fallback initialization
             try {
                 await optimizedCore.initialize();
                 console.log('✅ EMERGENCY FALLBACK: SYSTEM OPERATIONAL');
             } catch (fallbackError) {
                 console.error('❌ EMERGENCY FALLBACK FAILED:', fallbackError.message);
-                console.log('⚠️ MANUAL INTERVENTION REQUIRED - CHECK RPC ENDPOINTS');
             }
         }
     };
@@ -1825,11 +1379,16 @@ if (process.env.MAINNET_PRIVATE_KEY && process.env.MAINNET_PRIVATE_KEY.startsWit
     initializeWithFallback();
 } else {
     console.log('⚠️ ULTIMATE OPTIMIZED MODE: Set REAL MAINNET_PRIVATE_KEY (0x...) for $5,000+ trading');
-    console.log('🎯 TARGET: $5,000+ daily revenue with premium optimization');
-    console.log('⚡ PERFORMANCE: Maximum throughput ready for activation');
-    console.log('🌐 RPC STATUS: Multi-endpoint connectivity verified');
-    console.log('💡 Private key status:', process.env.MAINNET_PRIVATE_KEY ? 'SET' : 'NOT_SET');
 }
 
 // Export default for easy importing
 export default ProductionSovereignCore;
+
+// Export the enhanced optimized classes
+export { 
+    ProductionSovereignCore, 
+    EnhancedMainnetOrchestrator, 
+    EnhancedRevenueEngine, 
+    EnhancedBlockchainConnector, 
+    LIVE_REVENUE_CONTRACTS
+};
