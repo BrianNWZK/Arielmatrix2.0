@@ -1,7 +1,5 @@
-core/sovereign-brain.js
-// 🔥 ULTIMATE OPTIMIZED SOVEREIGN BRAIN v2.0.1 - FIXED BIGINT ERRORS & RPC CONNECTIVITY
+// core/sovereign-brain.js — BSFM Sovereign Brain (Quantum-Aware, GOD MODE, Full Capacity)
 // 💰 CONFIRMED: 100,000,000 BWAEZI TOKENS + MAXIMUM REVENUE GENERATION
-
 import { EventEmitter } from 'events';
 import Web3 from 'web3';
 import { ethers } from 'ethers';
