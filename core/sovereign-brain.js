@@ -1,5 +1,6 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.0.1
-// 🔥 OPTIMIZED FOR $5,000+ DAILY REVENUE + 100% SECURITY GUARANTEE - FIXED RPC CONNECTIVITY
+[file name]: core/sovereign-brain.js
+[file content begin]
+// 🔥 ULTIMATE OPTIMIZED SOVEREIGN BRAIN v2.0.1 - FIXED BIGINT ERRORS & RPC CONNECTIVITY
 // 💰 CONFIRMED: 100,000,000 BWAEZI TOKENS + MAXIMUM REVENUE GENERATION
 
 import { EventEmitter } from 'events';
@@ -124,7 +125,7 @@ class UltimateOptimizedTransactionManager {
                 this.blockchain.web3.eth.getBlockNumber()
             ]);
             
-            // 🎯 FIX: Proper BigInt handling
+            // 🎯 FIX: Proper BigInt handling - convert to numbers
             this.nonceManager.set('current', Number(nonce));
             this.nonceManager.set('pending', Number(nonce));
             
@@ -186,7 +187,7 @@ class UltimateOptimizedTransactionManager {
             const balance = await this.blockchain.getWalletBalance(this.account.address);
             const gasPrice = txData.gasPrice || '50000000000';
             
-            // 🎯 FIX: Proper BigInt arithmetic
+            // 🎯 FIX: Proper BigInt arithmetic - convert to numbers first
             const gasCost = estimatedGasNumber * parseInt(gasPrice);
             const value = parseInt(txData.value) || 0;
             const totalCost = gasCost + value;
@@ -333,7 +334,7 @@ class UltimateOptimizedTransactionManager {
                 const receipt = await this.blockchain.web3.eth.getTransactionReceipt(txHash);
                 if (receipt && receipt.blockNumber) {
                     const currentBlock = await this.blockchain.web3.eth.getBlockNumber();
-                    confirmations = currentBlock - receipt.blockNumber;
+                    confirmations = Number(currentBlock) - Number(receipt.blockNumber);
                     
                     if (confirmations >= 1) {
                         console.log(`✅ FAST CONFIRMATION: ${confirmations} blocks`);
@@ -1392,3 +1393,4 @@ export {
     EnhancedBlockchainConnector, 
     LIVE_REVENUE_CONTRACTS
 };
+[file content end]
