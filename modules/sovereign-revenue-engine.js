@@ -25,6 +25,7 @@ export default class SovereignRevenueEngine extends EventEmitter {
         
         // 🚨 SINGLETON ENFORCEMENT - Prevent multiple instances
         if (GLOBAL_ENGINE_INSTANCE) {
+            this.logger = getGlobalLogger('RevenueEngine');
             this.logger.warn('⚠️ Revenue Engine instance already exists. Returning existing instance.');
             return GLOBAL_ENGINE_INSTANCE;
         }
