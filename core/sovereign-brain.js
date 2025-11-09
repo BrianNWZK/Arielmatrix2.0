@@ -21,7 +21,7 @@ import { getArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 // =========================================================================
 // ULTIMATE OPTIMIZED CONFIGURATION - $5,000+/DAY CAPACITY
 // =========================================================================
-export const BWAEZI_TOKEN_CONFIG = {
+export default const BWAEZI_TOKEN_CONFIG = {
     CONTRACT_ADDRESS: '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
     TOTAL_SUPPLY: '100000000',
     DECIMALS: 18,
