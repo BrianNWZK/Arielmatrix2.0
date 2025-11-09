@@ -1,5 +1,5 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.0.1
-// 🔥 OPTIMIZED FOR $5,000+ DAILY REVENUE + 100% SECURITY GUARANTEE - FIXED RPC CONNECTIVITY
+core/sovereign-brain.js
+// 🔥 ULTIMATE OPTIMIZED SOVEREIGN BRAIN v2.0.1 - FIXED BIGINT ERRORS & RPC CONNECTIVITY
 // 💰 CONFIRMED: 100,000,000 BWAEZI TOKENS + MAXIMUM REVENUE GENERATION
 
 import { EventEmitter } from 'events';
@@ -25,7 +25,8 @@ export const BWAEZI_TOKEN_CONFIG = {
     CONTRACT_ADDRESS: '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
     TOTAL_SUPPLY: '100000000',
     DECIMALS: 18,
-    SYMBOL: 'BWAEZI',
+    NATIVE_TOKEN: 'BWAEZI',
+    SYMBOL: 'bwzC',
     FOUNDER_WALLET: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
     MINTED: true,
     PRODUCTION_READY: true,
@@ -812,7 +813,7 @@ class EnhancedRevenueEngine {
 
     calculateExpectedCycleRevenue() {
         let total = 0;
-        for (const [_, agent] of this.liveAgents) {
+        for ( const [_, agent] of this.liveAgents) {
             total += agent.revenue * agent.weight;
         }
         return total.toFixed(2);
@@ -1392,4 +1393,3 @@ export {
     EnhancedBlockchainConnector, 
     LIVE_REVENUE_CONTRACTS
 };
-
