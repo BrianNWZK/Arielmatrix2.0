@@ -10,10 +10,10 @@ import http from 'http';
 
 // CRITICAL IMPORTS from fixed core/sovereign-brain.js
 import {
-    ProductionSovereignCore,
-    MainnetRevenueOrchestrator,
-    LiveRevenueEngine,
-    LiveBlockchainConnector,
+    ProductionSovereignCore, 
+    EnhancedMainnetOrchestrator, 
+    EnhancedRevenueEngine, 
+    EnhancedBlockchainConnector, 
     LIVE_REVENUE_CONTRACTS
 } from '../core/sovereign-brain.js';
 
