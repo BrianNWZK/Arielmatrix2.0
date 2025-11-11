@@ -77,7 +77,7 @@ import { BwaeziPaymentGateway } from '../modules/bwaezi-payment-gateway.js';
 import { QuantumTransactionProcessor } from '../modules/quantum-transaction-processor.js';
 import { ZeroCostDPoS } from '../modules/zero-cost-dpos.js';
 // NEW PRODUCTION MODULES
-import { BrianNwaezikePayoutSystem } from "./BrianNwaezikePayoutSystem.js";
+import { BrianNwaezikePayoutSystem } from "../BrianNwaezikePayoutSystem.js";
 import { getDatabaseInitializer } from "../modules/database-initializer.js";
 import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
 import { QuantumShield } from "../modules/quantum-shield/index.js";
