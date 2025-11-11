@@ -12,7 +12,6 @@ import http from 'http';
 import {
     ProductionSovereignCore, 
     EnhancedMainnetOrchestrator, 
-    EnhancedRevenueEngine, 
     EnhancedBlockchainConnector, 
     LIVE_REVENUE_CONTRACTS
 } from '../core/sovereign-brain.js';
