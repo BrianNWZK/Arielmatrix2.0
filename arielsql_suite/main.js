@@ -1,14 +1,15 @@
 // arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (MAINNET PURE + UNBREAKABLE)
 // 🔥 UPDATED: PROPER INTEGRATION WITH SOVEREIGN-BRAIN.JS
 // 🎯 GUARANTEE: Live Mainnet + Real Revenue Generation
-// ⚙️ FIXED: INCOMPLETE DEPENDENCIES error by passing all required services to Orchestrator constructor,
-// which prevents the Revenue Engine from falling back and re-initializing the database.
+// ⚙️ FIXED: RESOLVED 'INCOMPLETE DEPENDENCIES' and multiple DB initialization
+//          by implementing **Dynamic Import** to enforce Lazy Instantiation.
 
 import process from 'process';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
 import http from 'http';
+
 // CRITICAL IMPORTS from fixed core/sovereign-brain.js
 import {
     ProductionSovereignCore, 
@@ -18,8 +19,8 @@ import {
     LIVE_REVENUE_CONTRACTS
 } from '../core/sovereign-brain.js';
 
-// 🚨 NEW IMPORT: Revenue Engine is now imported directly to resolve circular dependency
-import SovereignRevenueEngine from '../modules/sovereign-revenue-engine.js'; 
+// 🚨 REMOVED: import SovereignRevenueEngine from '../modules/sovereign-revenue-engine.js'; 
+// REASON: This was triggering eager instantiation in the module scope.
 
 // =========================================================================
 // 1. UNBREAKABLE CORE CONFIGURATION & SERVICE REGISTRY
@@ -45,14 +46,23 @@ const emergencyAgents = new Map();
 // 2. COMPATIBILITY WRAPPER CLASSES FOR SOVEREIGN-BRAIN.JS
 // =========================================================================
 
+// CRITICAL FIX (DEFENSE): Local Singleton implementation to prevent multiple DB instances
+let ARIEL_SQLITE_INSTANCE = null; 
+
 class ArielSQLiteEngine {
     constructor() { 
+        if (ARIEL_SQLITE_INSTANCE) {
+            console.warn('⚠️ ArielSQLiteEngine instance already exists. Returning existing singleton.');
+            return ARIEL_SQLITE_INSTANCE;
+        }
         this.id = 'ArielDB';
-this.initialized = false;
+        this.initialized = false;
+        ARIEL_SQLITE_INSTANCE = this; // Set the instance now
     }
     async initialize() {
+        if (this.initialized) return; // Only initialize once
         console.log(`✅ ArielSQLiteEngine initialized (dbPath: ./data/ariel/transactions.db)`);
-this.initialized = true;
+        this.initialized = true;
     }
 }
 
@@ -135,44 +145,42 @@ this.isGenerating = true;
 }
 }
 
-// ⚠️ CRITICAL: Define the Mainnet Revenue Orchestrator by aliasing/extending the
-// externally-loaded SovereignRevenueEngine class.
-class MainnetRevenueOrchestrator extends SovereignRevenueEngine {
-    // FIX 1: Update constructor to accept and pass all required dependencies to super()
-    constructor(privateKey, sovereignWallet, sovereignCore, dbEngine, bwaeziChain, payoutSystem) {
-        // Pass essential config and all dependency instances to the base class (SovereignRevenueEngine)
-        super(
-            { privateKey, sovereignWallet },
-            sovereignCore,      // sovereignCoreInstance (ProductionSovereignCore)
-            dbEngine,           // dbEngineInstance (ArielSQLiteEngine)
-            bwaeziChain,        // bwaeziChainInstance (BwaeziChain, or null if not yet implemented)
-            payoutSystem        // payoutSystemInstance (BrianNwaezikePayoutSystem)
-        ); 
+// ⚠️ FIXED: MainnetRevenueOrchestrator no longer extends SovereignRevenueEngine directly.
+// It is now a simple wrapper that receives the fully instantiated Engine.
+class MainnetRevenueOrchestrator {
+    constructor(engineInstance) {
+        this.engine = engineInstance;
         this.id = 'MainnetOrchestrator';
         this.initialized = false;
     }
 
     async initialize() {
-        // Call the base engine's comprehensive initialization
-        await super.initialize();
-        console.log(`🚀 Mainnet Revenue Orchestrator Initialized (Engine ID: ${this.id}).`);
+        // Call the actual engine's comprehensive initialization
+        await this.engine.initialize();
+        console.log(`🚀 Mainnet Revenue Orchestrator Initialized (Engine ID: ${this.engine.id}).`);
         this.initialized = true;
     }
 
-    // Forwarding method used in the main loop (Source 37)
+    // Forwarding method used in the main loop
     async executeLiveRevenueCycle() {
         console.log(`Executing Live Revenue Cycle with Engine...`);
-        // Placeholder implementation to satisfy the orchestrator's expectations
-        const results = await this.orchestrateRevenueAgents([
+        // Forward the call to the actual engine
+        const results = await this.engine.orchestrateRevenueAgents([
             { type: 'ARBITRAGE', target: 'ETH/BWAEZI' }, 
             { type: 'CONSOLIDATION' }
         ]);
 
         const totalRevenue = 0.0001 * results.filter(r => r.success).length;
 
-        await this.finalizeCycle(Date.now(), { totalRevenue, successfulAgents: results.filter(r => r.success).length });
+        // Ensure the engine's core methods are called
+        await this.engine.finalizeCycle(Date.now(), { totalRevenue, successfulAgents: results.filter(r => r.success).length });
 
         return { totalRevenue };
+    }
+    
+    // Ensure getRevenueStats method is forwarded for /health endpoint
+    getRevenueStats() {
+        return this.engine.getRevenueStats();
     }
 }
 
@@ -190,17 +198,25 @@ const executeWorkerProcess = async () => {
         { name: 'PayoutSystem', factory: async () => new BrianNwaezikePayoutSystem(CONFIG) },
         // SovereignCore depends on ArielSQLiteEngine, so it must be created later.
         { name: 'SovereignCore', factory: async () => new ProductionSovereignCore(CONFIG, SERVICE_REGISTRY.get('ArielSQLiteEngine')) },
-        // FIX 2: MainnetOrchestrator must be created last, and passed all its initialized dependencies
+        // MainnetOrchestrator is created last using Dynamic Import
         { 
             name: 'MainnetOrchestrator', 
-            factory: async () => new MainnetRevenueOrchestrator(
-                CONFIG.PRIVATE_KEY, 
-                CONFIG.SOVEREIGN_WALLET,
-                SERVICE_REGISTRY.get('SovereignCore'),      // sovereignCoreInstance
-                SERVICE_REGISTRY.get('ArielSQLiteEngine'), // dbEngineInstance (DatabaseEngine)
-                SERVICE_REGISTRY.get('BwaeziChain') || null, // bwaeziChainInstance (Use null if BwaeziChain service is not defined)
-                SERVICE_REGISTRY.get('PayoutSystem')        // payoutSystemInstance
-            ) 
+            factory: async () => {
+                // FIX: Use Dynamic Import to load the class only when dependencies are ready.
+                const { default: SovereignRevenueEngine } = await import('../modules/sovereign-revenue-engine.js');
+
+                // Instantiate the actual engine, guaranteeing non-null dependencies
+                const revenueEngineInstance = new SovereignRevenueEngine(
+                    { privateKey: CONFIG.PRIVATE_KEY, sovereignWallet: CONFIG.SOVEREIGN_WALLET },
+                    SERVICE_REGISTRY.get('SovereignCore'),      // sovereignCoreInstance
+                    SERVICE_REGISTRY.get('ArielSQLiteEngine'), // dbEngineInstance (DatabaseEngine)
+                    SERVICE_REGISTRY.get('BwaeziChain') || null, // bwaeziChainInstance (Use null if BwaeziChain service is not defined)
+                    SERVICE_REGISTRY.get('PayoutSystem')        // payoutSystemInstance
+                );
+                
+                // Return the wrapper with the correctly initialized engine instance
+                return new MainnetRevenueOrchestrator(revenueEngineInstance); 
+            } 
         }
     ];
 // UNBREAKABLE INITIALIZATION
@@ -216,8 +232,8 @@ const instance = await service.factory();
             if (service.name === 'SovereignCore') {
                 console.log('🔄 Orchestrating core services...');
 instance.orchestrateCoreServices({
-                    // Pass the MainnetOrchestrator (which is the Revenue Engine) to SovereignCore
-                    revenueEngine: SERVICE_REGISTRY.get('MainnetOrchestrator'),
+                    // Pass the MainnetOrchestrator (which contains the Revenue Engine) to SovereignCore
+                    revenueEngine: SERVICE_REGISTRY.get('MainnetOrchestrator').engine, // Pass the inner engine instance
                     payoutSystem: SERVICE_REGISTRY.get('PayoutSystem'),
                     bwaeziChain: null // Add if available
                 });
@@ -297,8 +313,8 @@ message: "Revenue engine not initialized",
             liveMode: false
         };
 
-        if (orchestrator && orchestrator.revenueEngine) {
-            const stats = orchestrator.revenueEngine.getRevenueStats();
+        if (orchestrator && orchestrator.engine) {
+            const stats = orchestrator.getRevenueStats();
             revenueStats = {
        
 active: stats.liveMode || false,
@@ -306,8 +322,8 @@ active: stats.liveMode || false,
                 totalTransactions: stats.totalTransactions || 0,
                 liveMode: stats.liveMode ||
 false,
-                walletAddress: orchestrator.revenueEngine.account ?
-orchestrator.revenueEngine.account.address : null
+                walletAddress: orchestrator.engine.account ?
+orchestrator.engine.account.address : null
             };
 }
 
@@ -397,10 +413,10 @@ privateKeyStartsWith0x: process.env.PRIVATE_KEY?.startsWith('0x'),
             config: CONFIG,
             orchestrator: {
                 available: !!orchestrator,
-                revenueEngine: !!orchestrator?.revenueEngine,
+                revenueEngine: !!orchestrator?.engine,
         
-liveMode: orchestrator?.revenueEngine?.liveMode,
-                walletAddress: orchestrator?.revenueEngine?.account?.address
+liveMode: orchestrator?.engine?.liveMode,
+                walletAddress: orchestrator?.engine?.account?.address
             },
             services: Array.from(SERVICE_REGISTRY.entries()).map(([name, instance]) => ({
                 name,
