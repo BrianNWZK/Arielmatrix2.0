@@ -1,7 +1,8 @@
 // arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (MAINNET PURE + UNBREAKABLE)
 // 🔥 UPDATED: PROPER INTEGRATION WITH SOVEREIGN-BRAIN.JS
 // 🎯 GUARANTEE: Live Mainnet + Real Revenue Generation
-// ⚙️ FIXED: INCOMPLETE DEPENDENCIES error by passing all required services to Orchestrator constructor.
+// ⚙️ FIXED: INCOMPLETE DEPENDENCIES error by passing all required services to Orchestrator constructor,
+// which prevents the Revenue Engine from falling back and re-initializing the database.
 
 import process from 'process';
 import cluster from 'cluster';
@@ -183,6 +184,7 @@ const executeWorkerProcess = async () => {
     console.log(`👷 WORKER PROCESS ${process.pid} - STARTING PURE MAINNET EXECUTION.`);
     // NOTE: Services are initialized in the order listed.
     const services = [
+        // ArielSQLiteEngine (DB) must be first to be available for SovereignCore
         { name: 'ArielSQLiteEngine', factory: async () => new ArielSQLiteEngine() },
         { name: 'AutonomousAIEngine', factory: async () => new AutonomousAIEngine() },
         { name: 'PayoutSystem', factory: async () => new BrianNwaezikePayoutSystem(CONFIG) },
