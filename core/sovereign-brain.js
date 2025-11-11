@@ -86,7 +86,7 @@ import { AISecurityModule } from "../modules/ai-security-module/index.js";
 import { CrossChainBridge } from "../modules/cross-chain-bridge/index.js";
 import { OmnichainInteroperabilityEngine } from "../modules/omnichain-interoperability/index.js";
 import { ShardingManager } from "../modules/sharding-manager/index.js";
-import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine.js";
+import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js";
 import { EnergyEfficientConsensus } from "../modules/energy-efficient-consensus/index.js";
 import { CarbonNegativeConsensus } from "../modules/carbon-negative-consensus/index.js";
 
