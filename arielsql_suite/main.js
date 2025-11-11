@@ -1,6 +1,7 @@
 // arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (MAINNET PURE + UNBREAKABLE)
 // 🔥 UPDATED: PROPER INTEGRATION WITH SOVEREIGN-BRAIN.JS
 // 🎯 GUARANTEE: Live Mainnet + Real Revenue Generation
+// ⚙️ FIXED: INCOMPLETE DEPENDENCIES error by passing all required services to Orchestrator constructor.
 
 import process from 'process';
 import cluster from 'cluster';
@@ -134,13 +135,18 @@ this.isGenerating = true;
 }
 
 // ⚠️ CRITICAL: Define the Mainnet Revenue Orchestrator by aliasing/extending the
-// externally-loaded SovereignRevenueEngine class. This fixes the 'not defined' error.
+// externally-loaded SovereignRevenueEngine class.
 class MainnetRevenueOrchestrator extends SovereignRevenueEngine {
-    // The SovereignRevenueEngine constructor accepts the necessary dependencies
-    // The arguments passed here are kept for compatibility with the service factory.
-    constructor(privateKey, sovereignWallet) {
-        // Pass essential config to the base class (SovereignRevenueEngine)
-        super({ privateKey, sovereignWallet }); 
+    // FIX 1: Update constructor to accept and pass all required dependencies to super()
+    constructor(privateKey, sovereignWallet, sovereignCore, dbEngine, bwaeziChain, payoutSystem) {
+        // Pass essential config and all dependency instances to the base class (SovereignRevenueEngine)
+        super(
+            { privateKey, sovereignWallet },
+            sovereignCore,      // sovereignCoreInstance (ProductionSovereignCore)
+            dbEngine,           // dbEngineInstance (ArielSQLiteEngine)
+            bwaeziChain,        // bwaeziChainInstance (BwaeziChain, or null if not yet implemented)
+            payoutSystem        // payoutSystemInstance (BrianNwaezikePayoutSystem)
+        ); 
         this.id = 'MainnetOrchestrator';
         this.initialized = false;
     }
@@ -175,12 +181,25 @@ class MainnetRevenueOrchestrator extends SovereignRevenueEngine {
 
 const executeWorkerProcess = async () => {
     console.log(`👷 WORKER PROCESS ${process.pid} - STARTING PURE MAINNET EXECUTION.`);
-const services = [
+    // NOTE: Services are initialized in the order listed.
+    const services = [
         { name: 'ArielSQLiteEngine', factory: async () => new ArielSQLiteEngine() },
         { name: 'AutonomousAIEngine', factory: async () => new AutonomousAIEngine() },
         { name: 'PayoutSystem', factory: async () => new BrianNwaezikePayoutSystem(CONFIG) },
+        // SovereignCore depends on ArielSQLiteEngine, so it must be created later.
         { name: 'SovereignCore', factory: async () => new ProductionSovereignCore(CONFIG, SERVICE_REGISTRY.get('ArielSQLiteEngine')) },
-        { name: 'MainnetOrchestrator', factory: async () => new MainnetRevenueOrchestrator(CONFIG.PRIVATE_KEY, CONFIG.SOVEREIGN_WALLET) }
+        // FIX 2: MainnetOrchestrator must be created last, and passed all its initialized dependencies
+        { 
+            name: 'MainnetOrchestrator', 
+            factory: async () => new MainnetRevenueOrchestrator(
+                CONFIG.PRIVATE_KEY, 
+                CONFIG.SOVEREIGN_WALLET,
+                SERVICE_REGISTRY.get('SovereignCore'),      // sovereignCoreInstance
+                SERVICE_REGISTRY.get('ArielSQLiteEngine'), // dbEngineInstance (DatabaseEngine)
+                SERVICE_REGISTRY.get('BwaeziChain') || null, // bwaeziChainInstance (Use null if BwaeziChain service is not defined)
+                SERVICE_REGISTRY.get('PayoutSystem')        // payoutSystemInstance
+            ) 
+        }
     ];
 // UNBREAKABLE INITIALIZATION
     for (const service of services) {
