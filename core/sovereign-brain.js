@@ -12,15 +12,15 @@ import axios from 'axios';
 // GLOBAL PRODUCTION CONSTANTS
 // =========================================================================
 const GLOBAL_CONFIG = {
-    // Corrected the address from user input, removing trailing comma
+    // Contract address for revenue tracking/vault
     CONTRACT_ADDRESS: '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
-    // Matches the SOVEREIGN_WALLET in main.js
+    // Founder address/Sovereign Wallet for revenue distribution
     FOUNDER_ADDRESS: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
 };
 
 // CORRECTED IMPORTS - ALL MODULES EXIST AND ARE PRODUCTION-READY
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
-import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
+// 🚨 REMOVED: import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { BWAEZIToken } from '../modules/bwaezi-token.js';
 import { DigitalIdentityEngine } from '../modules/digital-identity-engine.js';
 import { SmartContractEngine } from '../modules/smart-contract-engine.js';
@@ -77,7 +77,7 @@ import { BwaeziPaymentGateway } from '../modules/bwaezi-payment-gateway.js';
 import { QuantumTransactionProcessor } from '../modules/quantum-transaction-processor.js';
 import { ZeroCostDPoS } from '../modules/zero-cost-dpos.js';
 // NEW PRODUCTION MODULES
-import { BrianNwaezikePayoutSystem } from "../backend/blockchain/BrianNwaezikePayoutSystem.js";
+import { BrianNwaezikePayoutSystem } from "./BrianNwaezikePayoutSystem.js";
 import { getDatabaseInitializer } from "../modules/database-initializer.js";
 import { QuantumResistantCrypto } from "../modules/quantum-resistant-crypto/index.js";
 import { QuantumShield } from "../modules/quantum-shield/index.js";
@@ -86,7 +86,7 @@ import { AISecurityModule } from "../modules/ai-security-module/index.js";
 import { CrossChainBridge } from "../modules/cross-chain-bridge/index.js";
 import { OmnichainInteroperabilityEngine } from "../modules/omnichain-interoperability/index.js";
 import { ShardingManager } from "../modules/sharding-manager/index.js";
-import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine/index.js";
+import { InfiniteScalabilityEngine } from "../modules/infinite-scalability-engine.js";
 import { EnergyEfficientConsensus } from "../modules/energy-efficient-consensus/index.js";
 import { CarbonNegativeConsensus } from "../modules/carbon-negative-consensus/index.js";
 
@@ -458,7 +458,9 @@ class AIServiceGenerator {
                 }
                 
                 // Track execution for revenue distribution
-                this.coreModules.revenueEngine.recordServiceFee(service.price);
+                if (this.coreModules.revenueEngine) {
+                    this.coreModules.revenueEngine.recordServiceFee(service.price);
+                }
             } catch (error) {
                 result.status = 'FAILED';
                 result.error = error.message;
@@ -506,7 +508,8 @@ class SovereignCore extends EventEmitter {
             stakingSystem: new StakingSystem(),
            
             sovereignTokenomics: new SovereignTokenomics(),
-            revenueEngine: new SovereignRevenueEngine(this.blockchain, this.api), // Centralized revenue logic
+            // 🚨 Dependency Injection: Revenue Engine will be passed in from main.js orchestrator
+            revenueEngine: null, 
             
             // AI/Advanced
             aiOracle: new AIOracleEngine(this.api),
@@ -534,22 +537,25 @@ class SovereignCore extends EventEmitter {
             console.log('--- SOVEREIGN CORE INITIALIZING ---');
             // 1. Database Initialization
             await getDatabaseInitializer().initializeDatabase();
-            // Assuming ArielSQLiteEngine has a connect method or is initialized by getDatabaseInitializer
-            // await this.database.connect(); // Assuming this is handled by getDatabaseInitializer or a separate module
             console.log('✅ DATABASE: Initialized & Connected');
             
             // 2. Real Blockchain Connection
             await this.blockchain.initialize();
             // 3. Core Module Initialization
             for (const key in this.coreModules) {
-                if (this.coreModules[key].initialize) {
+                if (this.coreModules[key] && this.coreModules[key].initialize) {
                     await this.coreModules[key].initialize();
                 }
             }
             console.log('✅ CORE MODULES: Initialized');
-            // 4. Start Real Revenue Generation
-            await this.coreModules.revenueEngine.startRevenueGeneration();
-            console.log('🚀 REAL REVENUE ENGINE: Started Micro-Arbitrage and Flash Loan Monitoring');
+            
+            // 4. Start Real Revenue Generation (if engine was injected/instantiated)
+            if (this.coreModules.revenueEngine) {
+                await this.coreModules.revenueEngine.startRevenueGeneration();
+                console.log('🚀 REAL REVENUE ENGINE: Started Micro-Arbitrage and Flash Loan Monitoring');
+            } else {
+                console.log('⚠️ REVENUE ENGINE: Not yet injected. Revenue generation must be started externally.');
+            }
             
             this.initialized = true;
             this.mainnetActive = true;
@@ -584,14 +590,20 @@ class SovereignCore extends EventEmitter {
             
             // Execute the service processor, which uses the real blockchain/API
             const executionResult = await service.processor(parameters);
+            
             // The SovereignRevenueEngine records the profits
-            this.coreModules.revenueEngine.recordTransaction(executionResult); 
+            if (this.coreModules.revenueEngine) {
+                this.coreModules.revenueEngine.recordTransaction(executionResult); 
+            }
             
             return executionResult;
         } catch (error) {
             console.error(`AI Strategy Execution Failed: ${error.message}`);
             // Fallback to simpler revenue stream
-            return this.coreModules.revenueEngine.executeFallbackArbitrage();
+            if (this.coreModules.revenueEngine) {
+                return this.coreModules.revenueEngine.executeFallbackArbitrage();
+            }
+            return { status: 'FAILED', message: 'Revenue Engine not available for fallback.' };
         }
     }
     
@@ -602,9 +614,9 @@ class SovereignCore extends EventEmitter {
     }
 
     async getSystemStatus() {
-        const totalRevenue = this.coreModules.revenueEngine.getTotalRevenue();
-        const dailyRevenue = this.coreModules.revenueEngine.getDailyRevenue();
-        const serviceStats = this.coreModules.revenueEngine.getServiceStats();
+        const totalRevenue = this.coreModules.revenueEngine ? this.coreModules.revenueEngine.getTotalRevenue() : 0;
+        const dailyRevenue = this.coreModules.revenueEngine ? this.coreModules.revenueEngine.getDailyRevenue() : 0;
+        const serviceStats = this.coreModules.revenueEngine ? this.coreModules.revenueEngine.getServiceStats() : { executions: 0 };
 
         return {
             mainnetActive: this.mainnetActive,
@@ -617,7 +629,7 @@ class SovereignCore extends EventEmitter {
     }
     
     getRevenueReport() {
-        return this.coreModules.revenueEngine.getReport();
+        return this.coreModules.revenueEngine ? this.coreModules.revenueEngine.getReport() : { message: 'Revenue Engine not injected.' };
     }
     
     // Exposing the required DeFi Systems
@@ -630,12 +642,22 @@ class SovereignCore extends EventEmitter {
     getUserAuthentication() { return this.coreModules.userAuthentication; }
     
     // UTILITY: Function required by main.js orchestration logic
-    // This allows main.js to pass the PayoutSystem instance to the RevenueEngine
+    // This allows main.js to pass the PayoutSystem instance and the RevenueEngine instance itself
     orchestrateCoreServices(services) {
         console.log("🔄 SovereignCore: Core service orchestration complete.");
-        if (services.payoutSystem && this.coreModules.revenueEngine.setPayoutSystem) {
+        
+        // 1. Inject Revenue Engine if provided by Orchestrator (from main.js)
+        if (services.revenueEngine) {
+            this.coreModules.revenueEngine = services.revenueEngine;
+            console.log("✅ Revenue Engine instance successfully injected.");
+        }
+        
+        // 2. Pass Payout System to Revenue Engine
+        if (services.payoutSystem && this.coreModules.revenueEngine && typeof this.coreModules.revenueEngine.setPayoutSystem === 'function') {
             this.coreModules.revenueEngine.setPayoutSystem(services.payoutSystem);
             console.log("✅ Payout System connected to Revenue Engine.");
+        } else if (services.payoutSystem && !this.coreModules.revenueEngine) {
+             console.log("⚠️ Payout System not connected: Revenue Engine has not been injected.");
         }
     }
 }
@@ -653,8 +675,7 @@ export const EnhancedMainnetOrchestrator = SovereignCore;
 // 3. Export the internal Blockchain component with the alias
 export { RealBlockchainIntegration as EnhancedBlockchainConnector };
 
-// 4. Re-export the SovereignRevenueEngine class with the alias
-export { SovereignRevenueEngine as EnhancedRevenueEngine };
+// 🚨 REMOVED: export { SovereignRevenueEngine as EnhancedRevenueEngine };
 
 // 5. Export the main contract address for main.js's use
 export const LIVE_REVENUE_CONTRACTS = [GLOBAL_CONFIG.CONTRACT_ADDRESS];
