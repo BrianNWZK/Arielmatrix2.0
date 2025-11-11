@@ -8,6 +8,16 @@ import { ethers } from 'ethers';
 import { randomUUID, randomBytes, createHash } from 'crypto';
 import axios from 'axios';
 
+// =========================================================================
+// GLOBAL PRODUCTION CONSTANTS
+// =========================================================================
+const GLOBAL_CONFIG = {
+    // Corrected the address from user input, removing trailing comma
+    CONTRACT_ADDRESS: '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
+    // Matches the SOVEREIGN_WALLET in main.js
+    FOUNDER_ADDRESS: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
+};
+
 // CORRECTED IMPORTS - ALL MODULES EXIST AND ARE PRODUCTION-READY
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
@@ -95,9 +105,14 @@ class RealBlockchainIntegration {
         this.provider = new ethers.JsonRpcProvider('https://eth.llamarpc.com');
         this.web3 = new Web3('https://eth.llamarpc.com');
         // NOTE: Requires process.env.PRIVATE_KEY for real transactions
-        this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY || '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', this.provider);
-        // Placeholder private key for local dev if not set
+        // Fallback private key is a standard local development key
+        const privateKey = process.env.PRIVATE_KEY || '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+        this.wallet = new ethers.Wallet(privateKey, this.provider);
         this.activeConnections = new Map();
+        
+        // Expose the founder address/sovereign wallet for the revenue engine to use
+        this.founderAddress = GLOBAL_CONFIG.FOUNDER_ADDRESS;
+        this.contractAddress = GLOBAL_CONFIG.CONTRACT_ADDRESS;
     }
 
     async initialize() {
@@ -641,5 +656,5 @@ export { RealBlockchainIntegration as EnhancedBlockchainConnector };
 // 4. Re-export the SovereignRevenueEngine class with the alias
 export { SovereignRevenueEngine as EnhancedRevenueEngine };
 
-// 5. Placeholder constant for the contracts
-export const LIVE_REVENUE_CONTRACTS = [];
+// 5. Export the main contract address for main.js's use
+export const LIVE_REVENUE_CONTRACTS = [GLOBAL_CONFIG.CONTRACT_ADDRESS];
