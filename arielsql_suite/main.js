@@ -95,7 +95,8 @@ const executeWorkerProcess = async () => {
     // The global stub above should prevent the ReferenceError during these imports.
     const CoreDBModule = await import('../modules/ariel-sqlite-engine/index.js');
     const PayoutModule = await import('../backend/blockchain/BrianNwaezikePayoutSystem.js');
-    const AIMachineModule = await import('../modules/autonomous-ai-engine.js');
+    // 🔥 CRITICAL MODULE NOT FOUND FIX: Corrected path from '../modules/' to '../backend/agents/'
+    const AIMachineModule = await import('../backend/agents/autonomous-ai-engine.js');
     const SovereignCoreModule = await import('../core/sovereign-brain.js');
     // 🚨 NEW IMPORTS to enforce dependency injection order
     const ChainModule = await import('../backend/blockchain/BrianNwaezikeChain.js');
