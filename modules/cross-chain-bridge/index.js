@@ -189,8 +189,7 @@ false,
       annualLicenseFee: 2500,
       revenueShare: this.options.sovereignRevenueShare,
       minDeposit: 10000,
-      compliance: ['Zero-Knowledge Architecture', 'Encrypted Data 
-Only'],
+      compliance: ['Zero-Knowledge Architecture', 'Encrypted Data Only'],
       serviceType: 'infrastructure',
       dataPolicy: 'No PII Storage - Encrypted Bridge Operations Only',
       architecturalAlignment: this.complianceStrategy.ARCHITECTURAL_ALIGNMENT
