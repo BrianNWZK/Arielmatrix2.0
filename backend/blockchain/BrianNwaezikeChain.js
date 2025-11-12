@@ -1361,14 +1361,15 @@ async getRecentActivity(limit = 10) {
 // EXPORT SINGLETON INSTANCE - PRODUCTION READY
 // ====================================================================
 
-// Create and export the singleton instance
-const brianNwaezikeChain = new BrianNwaezikeChain();
+// ===================================================================
+// FIXED EXPORTS - ONLY EXPORT THE CLASS, PREVENTING SYNCHRONOUS CRASH
+// ===================================================================
 
-// Export both the class and the singleton instance
-export { BrianNwaezikeChain, brianNwaezikeChain };
+// Export the class for instantiation by the Orchestrator
+export { BrianNwaezikeChain };
 
-// Export the singleton as default for convenience
-export default brianNwaezikeChain;
+// Export the class as default for convenience
+export default BrianNwaezikeChain;
 
 console.log('👑 BrianNwaezikeChain ES Module Loaded - PRODUCTION READY');
 console.log('🚀 MAINNET GLOBAL ENTERPRISE-GRADE BLOCKCHAIN ACTIVE');
