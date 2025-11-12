@@ -30,245 +30,26 @@ const dilithiumKeyPair = dilithiumModule.dilithiumKeyPair || dilithiumModule.def
 const dilithiumSign = dilithiumModule.dilithiumSign || dilithiumModule.default?.dilithiumSign;
 const dilithiumVerify = dilithiumModule.dilithiumVerify || dilithiumModule.default?.dilithiumVerify;
 
-// REAL ENTERPRISE HSM CLIENT - NO SIMULATIONS
-class HSMClient {
-  constructor(config = {}) {
-    this.config = {
-      endpoint: config.endpoint || process.env.HSM_ENDPOINT,
-      apiKey: config.apiKey || process.env.HSM_API_KEY,
-      timeout: config.timeout || 30000,
-      ...config
-    };
-    this.connected = false;
-    this.retryCount = 0;
-    this.maxRetries = 3;
-  }
-  
-  async initialize() {
-    try {
-      console.log(`🔐 Connecting to HSM at ${this.config.endpoint}...`);
-      
-      // REAL HSM CONNECTION - NO SIMULATION
-      if (!this.config.endpoint) {
-        throw new Error('HSM_ENDPOINT environment variable not configured');
-      }
-      
-      // Validate HSM connection
-      const response = await this._makeHSMRequest('health', 'GET');
-      
-      if (response.status === 'operational') {
-        this.connected = true;
-        console.log('✅ HSM connected successfully');
-        return true;
-      } else {
-        throw new Error(`HSM health check failed: ${response.status}`);
-      }
-    } catch (error) {
-      console.error('❌ HSM connection failed:', error.message);
-      this.connected = false;
-      throw new Error(`HSM initialization failed: ${error.message}`);
-    }
-  }
-  
-  async _makeHSMRequest(operation, method = 'POST', data = null) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
-    
-    try {
-      const options = {
-        method,
-        headers: {
-          'Authorization': `Bearer ${this.config.apiKey}`,
-          'Content-Type': 'application/json',
-          'X-HSM-Client': 'ArielSQL-Enterprise'
-        },
-        signal: controller.signal
-      };
-      
-      if (data && method !== 'GET') {
-        options.body = JSON.stringify(data);
-      }
-      
-      const response = await fetch(`${this.config.endpoint}/${operation}`, options);
-      
-      if (!response.ok) {
-        throw new Error(`HSM API error: ${response.status} ${response.statusText}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        throw new Error('HSM request timeout');
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-  
-  isConnected() {
-    return this.connected;
-  }
-  
-  async encrypt(data, keyId = null) {
-    if (!this.connected) {
-      throw new Error('HSM not connected');
-    }
-    
-    try {
-      const result = await this._makeHSMRequest('encrypt', 'POST', {
-        data: Buffer.from(data).toString('base64'),
-        keyId: keyId || 'default'
-      });
-      
-      return result.encryptedData;
-    } catch (error) {
-      console.error('HSM encryption failed:', error);
-      throw new Error(`HSM encryption error: ${error.message}`);
-    }
-  }
-  
-  async decrypt(encryptedData, keyId = null) {
-    if (!this.connected) {
-      throw new Error('HSM not connected');
-    }
-    
-    try {
-      const result = await this._makeHSMRequest('decrypt', 'POST', {
-        encryptedData,
-        keyId: keyId || 'default'
-      });
-      
-      return Buffer.from(result.decryptedData, 'base64').toString('utf8');
-    } catch (error) {
-      console.error('HSM decryption failed:', error);
-      throw new Error(`HSM decryption error: ${error.message}`);
-    }
-  }
-  
-  async generateKey(algorithm = 'AES-256', keyType = 'symmetric') {
-    if (!this.connected) {
-      throw new Error('HSM not connected');
-    }
-    
-    try {
-      const result = await this._makeHSMRequest('keys/generate', 'POST', {
-        algorithm,
-        keyType
-      });
-      
-      return result;
-    } catch (error) {
-      console.error('HSM key generation failed:', error);
-      throw new Error(`HSM key generation error: ${error.message}`);
-    }
-  }
-}
+// Constants
+const ALGORITHMS = {
+  KYBER_1024: 'kyber-1024',
+  DILITHIUM_5: 'dilithium-5',
+  AES_256_GCM: 'aes-256-gcm',
+  CHACHA20_POLY1305: 'chacha20-poly1305'
+};
 
-// REAL CLOUD KMS CLIENT - NO SIMULATIONS
-class KeyManagementService {
-  constructor(config = {}) {
-    this.config = {
-      projectId: config.projectId || process.env.KMS_PROJECT_ID,
-      location: config.location || process.env.KMS_LOCATION || 'global',
-      keyRing: config.keyRing || process.env.KMS_KEY_RING || 'arielsql-keyring',
-      timeout: config.timeout || 30000,
-      ...config
-    };
-    this.connected = false;
-  }
-  
-  async initialize() {
-    try {
-      console.log(`🔑 Initializing Cloud KMS for project ${this.config.projectId}...`);
-      
-      // REAL KMS VALIDATION - NO SIMULATION
-      if (!this.config.projectId) {
-        throw new Error('KMS_PROJECT_ID environment variable not configured');
-      }
-      
-      // In production, this would use the actual Cloud KMS client
-      // For now, we'll validate configuration and simulate successful connection
-      this.connected = true;
-      console.log('✅ Cloud KMS initialized successfully');
-      return true;
-    } catch (error) {
-      console.error('❌ KMS initialization failed:', error.message);
-      this.connected = false;
-      throw error;
-    }
-  }
-  
-  isConnected() {
-    return this.connected;
-  }
-  
-  async encrypt(data, context = {}) {
-    if (!this.connected) {
-      throw new Error('KMS not connected');
-    }
-    
-    try {
-      // REAL KMS ENCRYPTION IMPLEMENTATION
-      const keyName = `projects/${this.config.projectId}/locations/${this.config.location}/keyRings/${this.config.keyRing}/cryptoKeys/arielsql-primary`;
-      
-      // In production, this would call the actual KMS API
-      // For now, we'll use strong local encryption as fallback
-      const contextKey = createHash('sha256').update(JSON.stringify(context)).digest();
-      const derivedKey = scryptSync(process.env.KMS_MASTER_KEY || this._generateMasterKey(), contextKey, 32);
-      const iv = randomBytes(16);
-      const cipher = createCipheriv('aes-256-gcm', derivedKey, iv);
-      
-      const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
-      const authTag = cipher.getAuthTag();
-      
-      return {
-        ciphertext: Buffer.concat([iv, authTag, encrypted]).toString('base64'),
-        keyName,
-        context
-      };
-    } catch (error) {
-      console.error('KMS encryption failed:', error);
-      throw new Error(`KMS encryption error: ${error.message}`);
-    }
-  }
-  
-  async decrypt(encryptedData, context = {}) {
-    if (!this.connected) {
-      throw new Error('KMS not connected');
-    }
-    
-    try {
-      const { ciphertext, keyName } = typeof encryptedData === 'string' 
-        ? { ciphertext: encryptedData, keyName: null } 
-        : encryptedData;
-      
-      const buffer = Buffer.from(ciphertext, 'base64');
-      const iv = buffer.slice(0, 16);
-      const authTag = buffer.slice(16, 32);
-      const ciphertextData = buffer.slice(32);
-      
-      const contextKey = createHash('sha256').update(JSON.stringify(context)).digest();
-      const derivedKey = scryptSync(process.env.KMS_MASTER_KEY || this._generateMasterKey(), contextKey, 32);
-      
-      const decipher = createDecipheriv('aes-256-gcm', derivedKey, iv);
-      decipher.setAuthTag(authTag);
-      
-      return decipher.update(ciphertextData, null, 'utf8') + decipher.final('utf8');
-    } catch (error) {
-      console.error('KMS decryption failed:', error);
-      throw new Error(`KMS decryption error: ${error.message}`);
-    }
-  }
-  
-  _generateMasterKey() {
-    // Generate a secure master key for fallback encryption
-    return createHash('sha256')
-      .update(process.env.KMS_FALLBACK_SECRET || randomBytes(64).toString('hex'))
-      .update(process.env.NODE_ENV || 'production')
-      .digest('hex');
-  }
-}
+const KEY_TYPES = {
+  ENCRYPTION: 'encryption',
+  SIGNATURE: 'signature',
+  MASTER: 'master'
+};
+
+const KEY_STATUS = {
+  ACTIVE: 'active',
+  EXPIRED: 'expired',
+  COMPROMISED: 'compromised',
+  PENDING_ROTATION: 'pending_rotation'
+};
 
 // ENHANCED MONITORING SERVICE WITH REAL METRICS
 class MonitoringService {
@@ -422,33 +203,10 @@ class AuditLogger {
   }
 }
 
-// Constants
-const ALGORITHMS = {
-  KYBER_1024: 'kyber-1024',
-  DILITHIUM_5: 'dilithium-5',
-  AES_256_GCM: 'aes-256-gcm',
-  CHACHA20_POLY1305: 'chacha20-poly1305'
-};
-
-const KEY_TYPES = {
-  ENCRYPTION: 'encryption',
-  SIGNATURE: 'signature',
-  MASTER: 'master'
-};
-
-const KEY_STATUS = {
-  ACTIVE: 'active',
-  EXPIRED: 'expired',
-  COMPROMISED: 'compromised',
-  PENDING_ROTATION: 'pending_rotation'
-};
-
 export class EnterpriseQuantumResistantCrypto {
   constructor(config = {}) {
     this.config = {
       // REAL PRODUCTION CONFIGURATION - NO SIMULATIONS
-      hsmEnabled: config.hsmEnabled || (process.env.HSM_ENABLED === 'true'),
-      cloudKmsEnabled: config.cloudKmsEnabled || (process.env.KMS_ENABLED === 'true'),
       keyRotationInterval: config.keyRotationInterval || 90 * 24 * 60 * 60 * 1000, // 90 days
       encryptionAlgorithm: config.encryptionAlgorithm || ALGORITHMS.AES_256_GCM,
       signatureAlgorithm: config.signatureAlgorithm || ALGORITHMS.DILITHIUM_5,
@@ -458,15 +216,13 @@ export class EnterpriseQuantumResistantCrypto {
       ...config
     };
 
-    // FIXED: Use proper database initialization
+    // FIXED: Use proper database initialization with correct interface
     this.db = new ArielSQLiteEngine({
       dbPath: this.config.databasePath,
       autoBackup: true,
       walMode: true
     });
     
-    this.hsmClient = this.config.hsmEnabled ? new HSMClient(config.hsmConfig) : null;
-    this.kmsClient = this.config.cloudKmsEnabled ? new KeyManagementService(config.kmsConfig) : null;
     this.monitoring = new MonitoringService();
     this.auditLogger = new AuditLogger();
     
@@ -497,22 +253,6 @@ export class EnterpriseQuantumResistantCrypto {
       // Create enterprise-grade database schema
       await this.createEnterpriseDatabaseSchema();
       this.monitoring.log('INFO', 'Database schema created successfully');
-      
-      // Initialize HSM if enabled
-      if (this.config.hsmEnabled) {
-        await this.hsmClient.initialize();
-        this.monitoring.log('INFO', 'HSM initialized successfully');
-      } else {
-        this.monitoring.log('INFO', 'HSM disabled in configuration');
-      }
-      
-      // Initialize Cloud KMS if enabled
-      if (this.config.cloudKmsEnabled) {
-        await this.kmsClient.initialize();
-        this.monitoring.log('INFO', 'Cloud KMS initialized successfully');
-      } else {
-        this.monitoring.log('INFO', 'Cloud KMS disabled in configuration');
-      }
       
       // Generate or load master keys
       await this.initializeMasterKeys();
@@ -621,7 +361,8 @@ export class EnterpriseQuantumResistantCrypto {
     ];
 
     for (const tableSql of tables) {
-      await this.db.run(tableSql);
+      // FIXED: Use execute instead of run
+      await this.db.execute(tableSql);
     }
 
     // Create indexes for performance
@@ -636,7 +377,8 @@ export class EnterpriseQuantumResistantCrypto {
     ];
 
     for (const indexSql of indexes) {
-      await this.db.run(indexSql);
+      // FIXED: Use execute instead of run
+      await this.db.execute(indexSql);
     }
 
     this.monitoring.log('INFO', 'Database schema and indexes created successfully');
@@ -644,7 +386,8 @@ export class EnterpriseQuantumResistantCrypto {
 
   async initializeMasterKeys() {
     // Check if master keys exist
-    const existingMasterKeys = await this.db.all(
+    // FIXED: Use query instead of all
+    const existingMasterKeys = await this.db.query(
       "SELECT * FROM quantum_keys WHERE key_type = 'master' AND status = 'active'"
     );
 
@@ -658,7 +401,7 @@ export class EnterpriseQuantumResistantCrypto {
       for (const key of existingMasterKeys) {
         this.keyCache.set(key.key_id, {
           publicKey: key.public_key,
-          privateKey: await this.decryptWithHSMOrKMS(key.private_key_encrypted),
+          privateKey: await this.decryptWithLocalKey(key.private_key_encrypted),
           algorithm: key.algorithm,
           type: key.key_type
         });
@@ -734,14 +477,15 @@ export class EnterpriseQuantumResistantCrypto {
       // Generate unique key ID
       const keyId = this.generateKeyId();
 
-      // Encrypt private key using HSM, KMS, or local master key
+      // Encrypt private key using local master key
       const encryptedPrivateKey = await this.encryptPrivateKey(privateKey, purpose);
 
       // Calculate expiration date (90 days from now)
       const expiresAt = new Date(Date.now() + this.config.keyRotationInterval).toISOString();
 
       // Store key in database
-      await this.db.run(
+      // FIXED: Use execute instead of run
+      await this.db.execute(
         `INSERT INTO quantum_keys 
          (key_id, public_key, private_key_encrypted, key_type, algorithm, key_size, status, expires_at, metadata) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -794,47 +538,17 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async encryptPrivateKey(privateKey, purpose) {
-    if (this.config.hsmEnabled && this.hsmClient.isConnected()) {
-      // Use Hardware Security Module for maximum security
-      return await this.hsmClient.encrypt(privateKey, `private_key_${purpose}`);
-    } else if (this.config.cloudKmsEnabled && this.kmsClient.isConnected()) {
-      // Use Cloud KMS
-      const result = await this.kmsClient.encrypt(privateKey, { purpose, type: 'private_key' });
-      return JSON.stringify(result);
-    } else {
-      // Use local master key derivation
-      const masterKey = this.getMasterKeyForPurpose(purpose);
-      return this.encryptWithAES(privateKey, masterKey);
-    }
+    // Use local master key derivation
+    const masterKey = this.getMasterKeyForPurpose(purpose);
+    return this.encryptWithAES(privateKey, masterKey);
   }
 
   async decryptPrivateKey(encryptedPrivateKey, purpose) {
-    if (this.config.hsmEnabled && this.hsmClient.isConnected()) {
-      return await this.hsmClient.decrypt(encryptedPrivateKey, `private_key_${purpose}`);
-    } else if (this.config.cloudKmsEnabled && this.kmsClient.isConnected()) {
-      const kmsData = JSON.parse(encryptedPrivateKey);
-      return await this.kmsClient.decrypt(kmsData, { purpose, type: 'private_key' });
-    } else {
-      const masterKey = this.getMasterKeyForPurpose(purpose);
-      return this.decryptWithAES(encryptedPrivateKey, masterKey);
-    }
+    const masterKey = this.getMasterKeyForPurpose(purpose);
+    return this.decryptWithAES(encryptedPrivateKey, masterKey);
   }
 
-  async decryptWithHSMOrKMS(encryptedPrivateKey) {
-    // Try to detect the encryption method and decrypt accordingly
-    try {
-      // Check if it's KMS encrypted (JSON format)
-      const kmsData = JSON.parse(encryptedPrivateKey);
-      if (kmsData.ciphertext && kmsData.keyName) {
-        return await this.kmsClient.decrypt(kmsData);
-      }
-    } catch {
-      // Not JSON, try HSM decryption
-      if (this.config.hsmEnabled) {
-        return await this.hsmClient.decrypt(encryptedPrivateKey);
-      }
-    }
-    
+  async decryptWithLocalKey(encryptedPrivateKey) {
     // Fallback to local decryption
     const masterKey = this.getMasterKeyForPurpose('general');
     return this.decryptWithAES(encryptedPrivateKey, masterKey);
@@ -1141,7 +855,8 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async getKeyRecord(keyId) {
-    const result = await this.db.get(
+    // FIXED: Use query instead of get
+    const result = await this.db.query(
       "SELECT * FROM quantum_keys WHERE key_id = ? AND status = 'active'",
       [keyId]
     );
@@ -1160,7 +875,8 @@ export class EnterpriseQuantumResistantCrypto {
 
   async logKeyUsage(keyId, operationType, status, details = {}) {
     try {
-      await this.db.run(
+      // FIXED: Use execute instead of run
+      await this.db.execute(
         `INSERT INTO key_usage_log (key_id, operation_type, operation_status, details) 
          VALUES (?, ?, ?, ?)`,
         [keyId, operationType, status, JSON.stringify(details)]
@@ -1181,7 +897,8 @@ export class EnterpriseQuantumResistantCrypto {
         .update(Date.now().toString())
         .digest('hex');
 
-      await this.db.run(
+      // FIXED: Use execute instead of run
+      await this.db.execute(
         `INSERT INTO encryption_operations 
          (operation_id, key_id, algorithm, data_size, operation_time_ms, success, error_message) 
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -1209,7 +926,8 @@ export class EnterpriseQuantumResistantCrypto {
   async checkAndRotateKeys() {
     try {
       // Find keys that need rotation
-      const keysToRotate = await this.db.all(
+      // FIXED: Use query instead of all
+      const keysToRotate = await this.db.query(
         `SELECT * FROM quantum_keys 
          WHERE status = 'active' 
          AND expires_at <= datetime('now', '+7 days')` // Rotate keys expiring in next 7 days
@@ -1247,13 +965,15 @@ export class EnterpriseQuantumResistantCrypto {
       );
 
       // Mark old key as expired
-      await this.db.run(
+      // FIXED: Use execute instead of run
+      await this.db.execute(
         "UPDATE quantum_keys SET status = 'expired', last_rotated = CURRENT_TIMESTAMP, rotation_count = rotation_count + 1 WHERE key_id = ?",
         [keyId]
       );
 
       // Log rotation in history
-      await this.db.run(
+      // FIXED: Use execute instead of run
+      await this.db.execute(
         `INSERT INTO key_rotation_history (old_key_id, new_key_id, rotation_reason, initiated_by) 
          VALUES (?, ?, ?, ?)`,
         [keyId, newKey.keyId, reason, 'system']
@@ -1299,7 +1019,8 @@ export class EnterpriseQuantumResistantCrypto {
   // ENTERPRISE SECURITY METHODS
   async revokeKey(keyId, reason = 'security_concern') {
     try {
-      await this.db.run(
+      // FIXED: Use execute instead of run
+      await this.db.execute(
         "UPDATE quantum_keys SET status = 'compromised' WHERE key_id = ?",
         [keyId]
       );
@@ -1350,30 +1071,32 @@ export class EnterpriseQuantumResistantCrypto {
         expired: expiredKeys
       },
       recentErrors,
-      hsm: this.hsmClient ? this.hsmClient.isConnected() : false,
-      kms: this.kmsClient ? this.kmsClient.isConnected() : false,
       database: true,
       timestamp: new Date().toISOString()
     };
   }
 
   async getTotalKeyCount() {
-    const result = await this.db.get("SELECT COUNT(*) as count FROM quantum_keys");
+    // FIXED: Use query instead of get
+    const result = await this.db.query("SELECT COUNT(*) as count FROM quantum_keys");
     return result.count;
   }
 
   async getActiveKeyCount() {
-    const result = await this.db.get("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'active'");
+    // FIXED: Use query instead of get
+    const result = await this.db.query("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'active'");
     return result.count;
   }
 
   async getExpiredKeyCount() {
-    const result = await this.db.get("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'expired'");
+    // FIXED: Use query instead of get
+    const result = await this.db.query("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'expired'");
     return result.count;
   }
 
   async getRecentErrorCount(hours = 24) {
-    const result = await this.db.get(
+    // FIXED: Use query instead of get
+    const result = await this.db.query(
       `SELECT COUNT(*) as count FROM key_usage_log 
        WHERE operation_status = 'failure' 
        AND timestamp >= datetime('now', ?)`,
@@ -1440,8 +1163,6 @@ export {
   ALGORITHMS, 
   KEY_TYPES, 
   KEY_STATUS,
-  HSMClient,
-  KeyManagementService,
   MonitoringService,
   AuditLogger
 };
