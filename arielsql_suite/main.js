@@ -1,6 +1,7 @@
 // arielsql_suite/main.js — BSFM PRODUCTION ENTRY POINT (ULTIMATE STABLE DEPLOYMENT FIX)
 // 🔥 FIXED: RESOLVED ReferenceError: Cannot access 'BrianNwaezikePayoutSystem' before initialization 
-// 🎯 METHOD: Implemented Global Stubbing for the Payout System to break the synchronous cyclic dependency during module load.
+// 🎯 METHOD: Implemented Global Stubbing AND enforced strict, explicit dependency injection 
+// to prevent RevenueEngine fallback and multi-DB initialization.
 
 import process from 'process';
 import express from 'express';
@@ -83,26 +84,57 @@ const executeWorkerProcess = async () => {
     const PayoutModule = await import('../backend/blockchain/BrianNwaezikePayoutSystem.js');
     const AIMachineModule = await import('../modules/autonomous-ai-engine.js');
     const SovereignCoreModule = await import('../core/sovereign-brain.js');
+    // 🚨 NEW IMPORTS to enforce dependency injection order
+    const ChainModule = await import('../backend/blockchain/BrianNwaezikeChain.js');
+    const RevenueModule = await import('../modules/sovereign-revenue-engine.js');
     
     const ArielSQLiteEngine = CoreDBModule.ArielSQLiteEngine || CoreDBModule.default;
     const BrianNwaezikePayoutSystem = PayoutModule.BrianNwaezikePayoutSystem || PayoutModule.default;
     const AutonomousAIEngine = AIMachineModule.AutonomousAIEngine || AIMachineModule.default;
     const ProductionSovereignCore = SovereignCoreModule.ProductionSovereignCore || SovereignCoreModule.default;
+    const BrianNwaezikeChain = ChainModule.BrianNwaezikeChain || ChainModule.default;
+    const SovereignRevenueEngine = RevenueModule.SovereignRevenueEngine || RevenueModule.default;
+
 
     // --- SERVICE INITIALIZATION SEQUENCE ---
     const services = [
         // 1. DB Engine must initialize first
         { name: 'ArielSQLiteEngine', factory: async () => new ArielSQLiteEngine() },
-        // 2. Payout System must initialize before the core uses it
+        // 2. Payout System must initialize before the Chain constructor accesses it
         { name: 'PayoutSystem', factory: async () => new BrianNwaezikePayoutSystem(CONFIG) },
-        // 3. AI Engine
+        // 3. Bwaezi Chain must initialize before SovereignCore to be injected into RevenueEngine
+        { name: 'BwaeziChain', factory: async () => {
+             // Pass the PayoutSystem instance to the Chain constructor
+             const payoutSystemInstance = SERVICE_REGISTRY.get('PayoutSystem');
+             const chainInstance = new BrianNwaezikeChain(payoutSystemInstance);
+             return chainInstance;
+        } },
+        // 4. Revenue Engine must be manually created to inject dependencies and prevent fallback mode
+        { name: 'RevenueEngine', factory: async () => {
+            const dbEngineInstance = SERVICE_REGISTRY.get('ArielSQLiteEngine');
+            const chainInstance = SERVICE_REGISTRY.get('BwaeziChain');
+            const payoutSystemInstance = SERVICE_REGISTRY.get('PayoutSystem');
+            // The constructor takes: config, core (null), db, chain, payout
+            const engineInstance = new SovereignRevenueEngine(
+                CONFIG, 
+                null, 
+                dbEngineInstance, 
+                chainInstance, 
+                payoutSystemInstance
+            );
+            return engineInstance;
+        } },
+        // 5. AI Engine
         { name: 'AutonomousAIEngine', factory: async () => new AutonomousAIEngine() },
-        // 4. SovereignCore (which contains the RevenueEngine) must initialize last with dependencies
+        // 6. SovereignCore must initialize last with ALL dependencies
         { name: 'SovereignCore', factory: async () => {
+            // Pass the core services into the Orchestrator/SovereignCore constructor
             const coreInstance = new ProductionSovereignCore(
                 CONFIG, 
                 SERVICE_REGISTRY.get('ArielSQLiteEngine'), 
-                SERVICE_REGISTRY.get('PayoutSystem')
+                SERVICE_REGISTRY.get('PayoutSystem'),
+                SERVICE_REGISTRY.get('RevenueEngine'), 
+                SERVICE_REGISTRY.get('BwaeziChain')
             );
             return coreInstance;
         } },
@@ -114,6 +146,7 @@ const executeWorkerProcess = async () => {
         try {
             console.log(`🧠 Attempting to initialize ${service.name}...`);
             const instance = await service.factory();
+            
             // Check if the service is a stub and skip initialization if it is
             if (instance.constructor.name === 'BrianNwaezikePayoutSystemStub') {
                 SERVICE_REGISTRY.set(service.name, instance);
@@ -121,15 +154,22 @@ const executeWorkerProcess = async () => {
                 continue;
             }
             
-            await instance.initialize();
+            // Ensure the instance has an initialize method before calling it
+            if (typeof instance.initialize === 'function') {
+                await instance.initialize();
+            }
+            
             SERVICE_REGISTRY.set(service.name, instance);
 
             // CRITICAL: Orchestrate internal services after SovereignCore is ready
             if (service.name === 'SovereignCore' && typeof instance.orchestrateCoreServices === 'function') {
                 console.log('🔄 Orchestrating core services...');
+                // Pass ALL core services to the orchestrator to fully activate the Revenue Engine
                 instance.orchestrateCoreServices({
                     payoutSystem: SERVICE_REGISTRY.get('PayoutSystem'),
-                    dbEngine: SERVICE_REGISTRY.get('ArielSQLiteEngine')
+                    dbEngine: SERVICE_REGISTRY.get('ArielSQLiteEngine'),
+                    revenueEngine: SERVICE_REGISTRY.get('RevenueEngine'),
+                    bwaeziChain: SERVICE_REGISTRY.get('BwaeziChain')
                 });
             }
 
@@ -139,7 +179,7 @@ const executeWorkerProcess = async () => {
             // Log full error to find synchronous crash cause
             console.error(`❌ CRITICAL FAILURE BYPASS: ${service.name} failed. System moving on.`, error);
             // Re-throw if a core dependency failed, as we cannot run without it.
-            if (service.name === 'ArielSQLiteEngine' || service.name === 'SovereignCore' || service.name === 'PayoutSystem') {
+            if (service.name === 'ArielSQLiteEngine' || service.name === 'SovereignCore' || service.name === 'PayoutSystem' || service.name === 'BwaeziChain') {
                 throw new Error(`CORE SERVICE FAILED: ${service.name}`);
             }
         }
@@ -152,10 +192,12 @@ const executeWorkerProcess = async () => {
     // EMERGENCY REVENUE GUARANTEE
     try {
         const payoutSystem = SERVICE_REGISTRY.get('PayoutSystem');
-        if (payoutSystem) {
+        if (payoutSystem && payoutSystem !== 'FAILED') {
             const agent = new EmergencyRevenueAgent(`WORKER-${process.pid}`);
             await agent.activate(payoutSystem);
             console.log(`👑 ULTIMATE GUARANTEE: Emergency Revenue Agent activated.`);
+        } else {
+             console.warn('⚠️ Emergency Revenue Agent cannot activate: Payout System failed or is missing.');
         }
     } catch (e) {
         console.error('💥 FATAL ERROR during Emergency Agent activation:', e.message);
@@ -179,7 +221,7 @@ const guaranteePortBinding = async () => {
             revenue: {
                 ...(core && typeof core.getRevenueStats === 'function' ? core.getRevenueStats() : { status: 'UNKNOWN' }) 
             },
-            payouts: payoutSystem ? payoutSystem.getStatus() : { active: false, totalPayouts: 0 },
+            payouts: payoutSystem && payoutSystem !== 'FAILED' ? payoutSystem.getStatus() : { active: false, totalPayouts: 0, status: payoutSystem === 'FAILED' ? 'FAILED' : 'MISSING' },
             services: Array.from(SERVICE_REGISTRY.entries()).map(([name, instance]) => ({
                 name,
                 status: instance === null ? 'PENDING' : 
@@ -234,8 +276,8 @@ const ultimateStartup = async () => {
     
     // Cleanup the global stub immediately after the real modules have been dynamically imported
     if (globalThis.BrianNwaezikePayoutSystem && globalThis.BrianNwaezikePayoutSystem.name === 'BrianNwaezikePayoutSystemStub') {
-         delete globalThis.BrianNwaezikePayoutSystem; 
-         console.log("🧼 GLOBAL STUB: BrianNwaezikePayoutSystemStub cleaned up.");
+          delete globalThis.BrianNwaezikePayoutSystem; 
+          console.log("🧼 GLOBAL STUB: BrianNwaezikePayoutSystemStub cleaned up.");
     }
 
     await guaranteePortBinding();
