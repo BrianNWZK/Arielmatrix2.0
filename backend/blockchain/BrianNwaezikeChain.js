@@ -965,9 +965,10 @@ class BrianNwaezikeChain extends EventEmitter {
         }
     }
 
-    async setupProductionDatabase() {
+   async setupProductionDatabase() {
         try {
-            await this.arielDB.initialize();
+            // 🎯 CRITICAL FIX: Changed from this.arielDB.initialize() to this.arielDB.connect()
+            await this.arielDB.connect();
             console.log('✅ Production Database Initialized');
         } catch (error) {
             console.error('❌ Database Initialization Failed:', error);
