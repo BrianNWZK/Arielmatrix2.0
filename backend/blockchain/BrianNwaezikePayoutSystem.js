@@ -123,6 +123,14 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             this.modules.governance = null;
         }
 
+        // 🎯 CRITICAL FIX: Initialize ArielSQLiteEngine first
+        try {
+            await this.arielDB.connect();
+            this.logger.info('✅ ArielSQLiteEngine connected successfully');
+        } catch (error) {
+            this.logger.error(`❌ ArielSQLiteEngine connection failed: ${error.message}`);
+            // Continue with degraded mode
+        }
 
         // Initialize all modules concurrently
         // Switched to Promise.allSettled for non-fatal module bootstrap resilience
@@ -167,7 +175,40 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
     }
 
     /**
+     * 🎯 CRITICAL FIX: Added missing database methods for payouts
+     */
+    async getPayoutsByStatus(status) {
+        try {
+            // Use ArielSQLiteEngine search functionality
+            const payouts = await this.arielDB.searchTransactions({ status }, 1000, 0);
+            return payouts.map(payout => ({
+                id: payout.id,
+                recipient: payout.recipient_address,
+                amount: payout.amount,
+                token: payout.metadata?.token || 'BWAEZI',
+                chain: payout.metadata?.chain || 'bwaezi',
+                status: payout.status
+            }));
+        } catch (error) {
+            this.logger.error(`❌ Failed to get payouts by status ${status}: ${error.message}`);
+            return [];
+        }
+    }
+
+    async updatePayoutStatus(payoutId, status, errorMessage = null) {
+        try {
+            await this.arielDB.updateTransactionStatus(payoutId, status, errorMessage);
+            this.logger.debug(`✅ Payout ${payoutId} status updated to ${status}`);
+            return { success: true };
+        } catch (error) {
+            this.logger.error(`❌ Failed to update payout status: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
      * The main processing loop for all queued payouts.
+     * 🎯 CRITICAL FIX: Enhanced error handling and fallback mechanisms
      */
     async processQueuedPayouts() {
         if (this.isProcessing) {
@@ -180,16 +221,26 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
 
         try {
             // 1. Fetch pending payout requests from the Ariel DB
-            const pendingPayouts = await this.db.getPayoutsByStatus('PENDING');
-            // Assume this method exists
+            const pendingPayouts = await this.getPayoutsByStatus('pending');
+            
+            if (pendingPayouts.length === 0) {
+                this.logger.debug("No pending payouts found.");
+                return;
+            }
+
             this.logger.info(`Found ${pendingPayouts.length} pending payouts.`);
+            
+            let successCount = 0;
+            let failureCount = 0;
+
             for (const payout of pendingPayouts) {
                 this.logger.debug(`Processing payout: ID ${payout.id}, Amount: ${payout.amount} ${payout.token} to ${payout.recipient}`);
                 try {
                     // 2. Validate recipient address
                     if (!validateAddress(payout.recipient, payout.chain)) {
                         this.logger.error(`Invalid recipient address for payout ${payout.id}: ${payout.recipient}`);
-                        await this.db.updatePayoutStatus(payout.id, 'FAILED', 'Invalid recipient address');
+                        await this.updatePayoutStatus(payout.id, 'failed', 'Invalid recipient address');
+                        failureCount++;
                         continue;
                     }
 
@@ -197,36 +248,121 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
                     let transactionHash;
                     const amount = parseFloat(payout.amount);
                     
-                    switch (payout.token.toUpperCase()) {
-                        case 'ETH':
-                            transactionHash = await sendETH(payout.recipient, amount);
-                            break;
-                        case 'SOL':
-                            transactionHash = await sendSOL(payout.recipient, amount);
-                            break;
-                        case 'USDT':
-                            transactionHash = await sendUSDT(payout.recipient, amount, payout.chain);
-                            break;
-                        case 'BWAEZI':
-                        default:
-                            transactionHash = await processRevenuePayment(payout.recipient, amount, 'BWAEZI', 'bwaezi');
-                            break;
-                    }
+                    // 🎯 ENHANCED ERROR HANDLING: Try-catch for each payment type
+                    try {
+                        switch (payout.token.toUpperCase()) {
+                            case 'ETH':
+                                transactionHash = await sendETH(payout.recipient, amount);
+                                break;
+                            case 'SOL':
+                                transactionHash = await sendSOL(payout.recipient, amount);
+                                break;
+                            case 'USDT':
+                                transactionHash = await sendUSDT(payout.recipient, amount, payout.chain);
+                                break;
+                            case 'BWAEZI':
+                            default:
+                                transactionHash = await processRevenuePayment(payout.recipient, amount, 'BWAEZI', 'bwaezi');
+                                break;
+                        }
 
-                    this.logger.info(`💸 Payout SUCCESS: ID ${payout.id}, TxHash: ${transactionHash}`);
-                    await this.db.updatePayoutStatus(payout.id, 'COMPLETED', `Tx: ${transactionHash}`);
+                        this.logger.info(`💸 Payout SUCCESS: ID ${payout.id}, TxHash: ${transactionHash}`);
+                        await this.updatePayoutStatus(payout.id, 'completed', `Tx: ${transactionHash}`);
+                        successCount++;
+
+                    } catch (paymentError) {
+                        this.logger.error(`❌ Payment processing failed for payout ${payout.id}: ${paymentError.message}`);
+                        await this.updatePayoutStatus(payout.id, 'failed', `Payment failed: ${paymentError.message}`);
+                        failureCount++;
+                    }
 
                 } catch (error) {
                     this.logger.error(`❌ Payout FAILED: ID ${payout.id}. Error: ${error.message}`);
-                    await this.db.updatePayoutStatus(payout.id, 'FAILED', error.message);
+                    await this.updatePayoutStatus(payout.id, 'failed', error.message);
+                    failureCount++;
                 }
             }
 
-            this.logger.info("✅ Payout processing cycle finished.");
+            this.logger.info(`✅ Payout processing cycle finished. Success: ${successCount}, Failed: ${failureCount}`);
+
+            // 🎯 CRITICAL FIX: Emergency recovery for persistent failures
+            if (failureCount > 0 && successCount === 0) {
+                this.logger.warn(`🚨 All payouts failed this cycle. Checking system health...`);
+                await this.performEmergencyRecovery();
+            }
+
         } catch (error) {
             this.logger.error(`🛑 CRITICAL ERROR during Payout Processing Cycle: ${error.message}`);
+            
+            // 🎯 CRITICAL FIX: Emergency fallback to prevent complete system failure
+            try {
+                await this.emergencyFallbackProcessing();
+            } catch (fallbackError) {
+                this.logger.error(`🚨 EMERGENCY FALLBACK ALSO FAILED: ${fallbackError.message}`);
+            }
         } finally {
             this.isProcessing = false;
+        }
+    }
+
+    /**
+     * 🎯 CRITICAL FIX: Emergency recovery for payout system
+     */
+    async performEmergencyRecovery() {
+        try {
+            this.logger.warn("🔄 Initiating emergency payout system recovery...");
+            
+            // 1. Reset database connections
+            try {
+                await this.arielDB.close();
+                await this.arielDB.connect();
+                this.logger.info("✅ Database connection reset");
+            } catch (dbError) {
+                this.logger.error(`❌ Database reset failed: ${dbError.message}`);
+            }
+
+            // 2. Reset blockchain connections
+            try {
+                initializeConnections(this.systemWalletPrivateKey, this.systemWalletAddress);
+                this.logger.info("✅ Blockchain connections reset");
+            } catch (blockchainError) {
+                this.logger.error(`❌ Blockchain reset failed: ${blockchainError.message}`);
+            }
+
+            // 3. Check wallet balances
+            try {
+                const balances = await getWalletBalances();
+                this.logger.info(`💰 Wallet balances: ${JSON.stringify(balances)}`);
+            } catch (balanceError) {
+                this.logger.error(`❌ Balance check failed: ${balanceError.message}`);
+            }
+
+            this.logger.info("✅ Emergency recovery completed");
+
+        } catch (recoveryError) {
+            this.logger.error(`🚨 Emergency recovery failed: ${recoveryError.message}`);
+        }
+    }
+
+    /**
+     * 🎯 CRITICAL FIX: Emergency fallback processing
+     */
+    async emergencyFallbackProcessing() {
+        this.logger.warn("🚨 ACTIVATING EMERGENCY FALLBACK PAYOUT PROCESSING");
+        
+        // Implement minimal payout processing without dependencies
+        try {
+            const pendingPayouts = await this.getPayoutsByStatus('pending');
+            this.logger.info(`🔄 Emergency processing ${pendingPayouts.length} payouts...`);
+            
+            // Simple logging and status update without actual payments
+            for (const payout of pendingPayouts) {
+                this.logger.warn(`🚨 PAYOUT HELD IN EMERGENCY: ID ${payout.id}, Amount: ${payout.amount} to ${payout.recipient}`);
+                await this.updatePayoutStatus(payout.id, 'failed', 'Emergency mode: Payout held due to system issues');
+            }
+            
+        } catch (fallbackError) {
+            this.logger.error(`💥 EMERGENCY FALLBACK CRITICAL FAILURE: ${fallbackError.message}`);
         }
     }
 
@@ -237,9 +373,13 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
     async getHealthStatus() {
         const isHealthy = this.initialized && !this.isProcessing && this.autoPayoutInterval !== null;
         let moduleHealth = {};
-        let queueLength = 'N/A'; // Get from DB if possible
+        let queueLength = 'N/A';
 
         try {
+            // Get actual queue length
+            const pendingPayouts = await this.getPayoutsByStatus('pending');
+            queueLength = pendingPayouts.length;
+
             // Detailed module health check
             const healthPromises = Object.entries(this.modules).map(async ([name, module]) => {
                 if (module && typeof module.getHealthStatus === 'function') {
