@@ -175,22 +175,29 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
     }
 
     /**
-     * 🎯 CRITICAL FIX: Added missing database methods for payouts
+     * 🎯 CRITICAL FIX: Fixed database methods for payouts with SQL syntax error fix
      */
     async getPayoutsByStatus(status) {
         try {
-            // Use ArielSQLiteEngine search functionality
-            const payouts = await this.arielDB.searchTransactions({ status }, 1000, 0);
+            // 🎯 FIX: Use direct SQL query instead of searchTransactions to avoid syntax errors
+            const sql = `SELECT * FROM ariel_transactions WHERE status = ? ORDER BY created_at DESC LIMIT 1000`;
+            
+            // Use the database connection directly
+            const stmt = this.arielDB.db.prepare(sql);
+            const payouts = stmt.all(status);
+            
             return payouts.map(payout => ({
                 id: payout.id,
                 recipient: payout.recipient_address,
                 amount: payout.amount,
-                token: payout.metadata?.token || 'BWAEZI',
-                chain: payout.metadata?.chain || 'bwaezi',
+                token: payout.metadata ? (JSON.parse(payout.metadata)?.token || 'BWAEZI') : 'BWAEZI',
+                chain: payout.metadata ? (JSON.parse(payout.metadata)?.chain || 'bwaezi') : 'bwaezi',
                 status: payout.status
             }));
         } catch (error) {
             this.logger.error(`❌ Failed to get payouts by status ${status}: ${error.message}`);
+            
+            // 🎯 EMERGENCY FALLBACK: Return empty array to prevent complete system failure
             return [];
         }
     }
@@ -225,6 +232,7 @@ export default class BrianNwaezikePayoutSystem extends EventEmitter {
             
             if (pendingPayouts.length === 0) {
                 this.logger.debug("No pending payouts found.");
+                this.isProcessing = false;
                 return;
             }
 
