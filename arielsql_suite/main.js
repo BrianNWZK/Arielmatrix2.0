@@ -6,6 +6,19 @@
 import process from 'process';
 import express from 'express';
 import http from 'http';
+// Add these to the existing imports at the top of main.js
+import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
+import BrianNwaezikePayoutSystem from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
+import { brain as default, 
+    AutonomousAIEngine, 
+    SovereignAIGovernor,
+    SovereignTreasury,
+    SovereignServiceRegistry,
+    AIRevenueOptimizer,
+    AutonomousAIError,
+    PerformanceMonitor,
+    globalAxios,
+    attachRetryAxios } from "../backend/agents/autonomous-ai-engine.js";
 
 // =========================================================================
 // 1. UNBREAKABLE CORE CONFIGURATION & SERVICE REGISTRY
