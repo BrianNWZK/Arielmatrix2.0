@@ -48,7 +48,12 @@ export class AIThreatDetector {
       ...options
     };
 
-    this.db = new ArielSQLiteEngine();
+    // FIXED: Proper database initialization with correct interface
+    this.db = new ArielSQLiteEngine({
+      dbPath: './data/ai_threat_detector.db',
+      autoBackup: true,
+      enableWal: true
+    });
     this.quantumShield = new QuantumShield();
     this.model = null;
     this.isTraining = false;
@@ -95,7 +100,8 @@ export class AIThreatDetector {
     try {
       console.log('🤖 Initializing AI Threat Detector...');
 
-      await this.db.init();
+      // FIXED: Use connect() instead of init()
+      await this.db.connect();
       await this.quantumShield.initialize();
 
       // Load or train model
@@ -230,14 +236,12 @@ export class AIThreatDetector {
    */
   async prepareTrainingData() {
     // Load labeled security events
-    const trainingData = await this.db.all(`
-      SELECT description, severity, event_type, created_at 
+    const trainingData = await this.db.query(`SELECT description, severity, event_type, created_at 
       FROM security_events 
       WHERE severity IN ('critical', 'high', 'medium', 'low')
       AND created_at > datetime('now', '-30 days')
       ORDER BY created_at DESC
-      LIMIT ?
-    `, [this.options.maxTrainingSamples]);
+      LIMIT ?`, [this.options.maxTrainingSamples]);
 
     if (trainingData.length === 0) {
       throw new TrainingError('No training data available');
@@ -700,11 +704,9 @@ export class AIThreatDetector {
   async loadBehavioralBaselines() {
     // Load historical baselines for behavioral analysis
     try {
-      const baselines = await this.db.all(`
-        SELECT metric_type, avg_value, std_dev, min_value, max_value
+      const baselines = await this.db.query(`SELECT metric_type, avg_value, std_dev, min_value, max_value
         FROM behavioral_baselines
-        WHERE updated_at > datetime('now', '-7 days')
-      `);
+        WHERE updated_at > datetime('now', '-7 days')`);
 
       baselines.forEach(baseline => {
         this.behavioralBaselines.set(baseline.metric_type, baseline);
@@ -757,10 +759,12 @@ export class AIThreatDetector {
     if (this.model) {
       this.model.dispose();
     }
+    if (this.db && typeof this.db.close === 'function') {
+      await this.db.close();
+    }
     console.log('✅ AI Threat Detector shut down successfully');
   }
 }
 
 // Export error classes
 export { AIThreatDetectorError, ModelError, TrainingError };
-
