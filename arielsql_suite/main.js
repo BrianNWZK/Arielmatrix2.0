@@ -9,7 +9,7 @@ import http from 'http';
 // Add these to the existing imports at the top of main.js
 import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js';
 import BrianNwaezikePayoutSystem from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
-import { brain as default, 
+import { 
     AutonomousAIEngine, 
     SovereignAIGovernor,
     SovereignTreasury,
