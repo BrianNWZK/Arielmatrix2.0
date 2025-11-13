@@ -49,7 +49,7 @@ class ArielLogger {
   }
 }
 
-// Enhanced Ariel SQLite Engine
+// Enhanced Ariel SQLite Engine - ENTERPRISE GRADE
 class ArielSQLiteEngine extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -62,24 +62,29 @@ class ArielSQLiteEngine extends EventEmitter {
       backupInterval: 3600000, // 1 hour
       queryTimeout: 30000,
       walMode: true,
-      // --- v7.7.7 UNBREAKABLE RESILIENCE PATCH: NEW OPTIONS ---
-      maxReconnectAttempts: 5, // Max attempts before entering degraded mode
-      reconnectInterval: 5000, // 5 seconds between reconnect attempts
-      // --------------------------------------------------------
+      // --- ENTERPRISE RESILIENCE CONFIGURATION ---
+      maxReconnectAttempts: 10,
+      reconnectInterval: 2000,
+      connectionPoolSize: 5,
+      maxQueryRetries: 3,
+      // -------------------------------------------
       ...options
     };
     
     this.db = null;
     this.isConnected = false;
+    this.isInitialized = false;
     this.backupInterval = null;
     this.preparedStatements = new Map();
     this.queryCache = new Map();
     this.maxCacheSize = 1000;
 
-    // --- v7.7.7 UNBREAKABLE RESILIENCE PATCH: NEW STATE ---
-    this.isDegraded = false; // Flag indicating persistent failure, requires manual intervention
+    // --- ENTERPRISE STATE MANAGEMENT ---
+    this.isDegraded = false;
     this.reconnectAttempts = 0;
-    // --------------------------------------------------------
+    this.connectionPool = [];
+    this.activeConnections = 0;
+    // -----------------------------------
     
     // Ensure directories exist
     this.ensureDirectories();
@@ -94,11 +99,23 @@ class ArielSQLiteEngine extends EventEmitter {
     try {
       await fs.mkdir(path.dirname(this.options.dbPath), { recursive: true });
       await fs.mkdir(this.options.backupPath, { recursive: true });
+      await fs.mkdir('./data/ariel', { recursive: true });
+      await fs.mkdir('./logs', { recursive: true });
     } catch (error) {
       ArielLogger.error('Failed to create directories', { error: error.message });
     }
   }
   
+  // 🔥 CRITICAL FIX: Unified initialization method for all modules
+  async init() {
+    return this.connect();
+  }
+
+  // 🔥 CRITICAL FIX: Alias for compatibility
+  async initialize() {
+    return this.connect();
+  }
+
   async connect() {
     if (this.isConnected && this.db) {
       ArielLogger.warn('Database already connected');
@@ -125,13 +142,15 @@ class ArielSQLiteEngine extends EventEmitter {
       this.db.pragma('busy_timeout = 15000');
       this.db.pragma('cache_size = -64000'); // 64MB cache
       this.db.pragma('auto_vacuum = INCREMENTAL');
+      this.db.pragma('mmap_size = 268435456'); // 256MB memory mapping
       
       // Initialize schema
       await this.initializeSchema();
       
       this.isConnected = true;
-      this.reconnectAttempts = 0; // Reset on successful connect
-      this.isDegraded = false; // Reset on successful connect
+      this.isInitialized = true;
+      this.reconnectAttempts = 0;
+      this.isDegraded = false;
       
       // Start auto-backup if enabled
       if (this.options.autoBackup) {
@@ -146,7 +165,7 @@ class ArielSQLiteEngine extends EventEmitter {
       return this;
       
     } catch (error) {
-      this.isDegraded = true; // Mark as degraded on initial failure
+      this.isDegraded = true;
       ArielLogger.error('Failed to connect to database', { 
         error: error.message,
         stack: error.stack 
@@ -201,6 +220,43 @@ class ArielSQLiteEngine extends EventEmitter {
           total_amount TEXT DEFAULT '0',
           network TEXT DEFAULT 'mainnet',
           UNIQUE(date, network)
+        )
+      `);
+
+      // 🔥 ENTERPRISE FEATURE: System-wide configuration table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS system_config (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          description TEXT,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_by TEXT DEFAULT 'system'
+        )
+      `);
+
+      // 🔥 ENTERPRISE FEATURE: Module registry for dependency management
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS module_registry (
+          module_name TEXT PRIMARY KEY,
+          version TEXT NOT NULL,
+          status TEXT DEFAULT 'initializing',
+          dependencies TEXT,
+          initialized_at DATETIME,
+          last_health_check DATETIME,
+          config TEXT
+        )
+      `);
+
+      // 🔥 ENTERPRISE FEATURE: Cross-module communication table
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS inter_module_events (
+          id TEXT PRIMARY KEY,
+          source_module TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          payload TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          processed BOOLEAN DEFAULT FALSE,
+          target_modules TEXT
         )
       `);
       
@@ -264,9 +320,7 @@ class ArielSQLiteEngine extends EventEmitter {
         WHERE id = ?
       `));
       
-      // 🔥 LATEST UPDATE: Prepared statements for daily statistics (ariel_stats)
-      
-      // Increment total transactions (for 'pending')
+      // Statistics prepared statements
       this.preparedStatements.set('incrementTotalTxStat', this.db.prepare(`
           INSERT INTO ariel_stats (date, network, total_transactions)
           VALUES (?, ?, 1)
@@ -274,7 +328,6 @@ class ArielSQLiteEngine extends EventEmitter {
               total_transactions = total_transactions + 1
       `));
 
-      // Update completed stats
       this.preparedStatements.set('updateCompletedStat', this.db.prepare(`
           INSERT INTO ariel_stats (date, network, completed_transactions, total_gas_used, total_amount)
           VALUES (?, ?, 1, ?, ?)
@@ -284,12 +337,55 @@ class ArielSQLiteEngine extends EventEmitter {
               total_amount = CAST(total_amount AS REAL) + CAST(excluded.total_amount AS REAL)
       `));
 
-      // Update failed/cancelled stats
       this.preparedStatements.set('updateFailedStat', this.db.prepare(`
           INSERT INTO ariel_stats (date, network, failed_transactions)
           VALUES (?, ?, 1)
           ON CONFLICT(date, network) DO UPDATE SET
               failed_transactions = failed_transactions + 1
+      `));
+
+      // 🔥 ENTERPRISE FEATURE: System config statements
+      this.preparedStatements.set('getConfig', this.db.prepare(`
+        SELECT value FROM system_config WHERE key = ?
+      `));
+
+      this.preparedStatements.set('setConfig', this.db.prepare(`
+        INSERT OR REPLACE INTO system_config (key, value, description, updated_by)
+        VALUES (?, ?, ?, ?)
+      `));
+
+      // 🔥 ENTERPRISE FEATURE: Module registry statements
+      this.preparedStatements.set('registerModule', this.db.prepare(`
+        INSERT OR REPLACE INTO module_registry 
+        (module_name, version, status, dependencies, initialized_at, config)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `));
+
+      this.preparedStatements.set('updateModuleStatus', this.db.prepare(`
+        UPDATE module_registry 
+        SET status = ?, last_health_check = CURRENT_TIMESTAMP
+        WHERE module_name = ?
+      `));
+
+      this.preparedStatements.set('getModuleDependencies', this.db.prepare(`
+        SELECT dependencies FROM module_registry WHERE module_name = ?
+      `));
+
+      // 🔥 ENTERPRISE FEATURE: Cross-module event statements
+      this.preparedStatements.set('createInterModuleEvent', this.db.prepare(`
+        INSERT INTO inter_module_events (id, source_module, event_type, payload, target_modules)
+        VALUES (?, ?, ?, ?, ?)
+      `));
+
+      this.preparedStatements.set('getPendingEvents', this.db.prepare(`
+        SELECT * FROM inter_module_events 
+        WHERE processed = FALSE AND target_modules LIKE '%' || ? || '%'
+        ORDER BY created_at ASC
+        LIMIT ?
+      `));
+
+      this.preparedStatements.set('markEventProcessed', this.db.prepare(`
+        UPDATE inter_module_events SET processed = TRUE WHERE id = ?
       `));
       
       ArielLogger.debug('Prepared statements initialized');
@@ -299,22 +395,81 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
 
-  // --- v7.7.7 UNBREAKABLE RESILIENCE PATCH: NEW CORE METHODS ---
+  // 🔥 CRITICAL FIX: Unified database operation methods for all modules
+  async run(sql, params = []) {
+    return this._executeDynamic(sql, params, 'run');
+  }
 
-  /**
-   * Centralized error handler for logging and state management.
-   * @param {Error} error
-   * @param {string} operation
-   */
+  async execute(sql, params = []) {
+    return this._executeDynamic(sql, params, 'run');
+  }
+
+  async get(sql, params = []) {
+    return this._executeDynamic(sql, params, 'get');
+  }
+
+  async all(sql, params = []) {
+    return this._executeDynamic(sql, params, 'all');
+  }
+
+  // 🔥 ENTERPRISE FEATURE: Dynamic query execution with resilience
+  async _executeDynamic(sql, params = [], method = 'run') {
+    if (this.isDegraded) {
+      throw new Error('Engine is in degraded mode. Cannot execute query.');
+    }
+
+    if (!this.isConnected || !this.db) {
+      await this._reconnect();
+    }
+    
+    if (this.isDegraded || !this.isConnected || !this.db) {
+      throw new Error('Database is disconnected or in degraded mode. Query execution aborted.');
+    }
+
+    let attempts = 0;
+    const maxAttempts = this.options.maxQueryRetries;
+
+    while (attempts < maxAttempts) {
+      try {
+        const stmt = this.db.prepare(sql);
+        const result = stmt[method](...params);
+        
+        ArielLogger.debug('Dynamic query executed successfully', {
+          sql,
+          method,
+          attempts: attempts + 1
+        });
+        
+        return result;
+
+      } catch (error) {
+        attempts++;
+        this._handleError(error, `dynamic_${method}`);
+        
+        if (attempts < maxAttempts && !this.isDegraded) {
+          ArielLogger.warn(`Query failed, retrying (${attempts}/${maxAttempts})`, {
+            sql,
+            error: error.message
+          });
+          await this._reconnect();
+          await new Promise(resolve => setTimeout(resolve, 100 * attempts));
+        } else {
+          throw new Error(`Failed to execute query after ${attempts} attempts: ${error.message}`);
+        }
+      }
+    }
+  }
+
+  // 🔥 ENTERPRISE FEATURE: Enhanced error handling
   _handleError(error, operation) {
-    // Check for common better-sqlite3 errors indicating connection or lock issues
     const isConnectionError = error.message.includes('closed') || 
                               error.code === 'SQLITE_BUSY' || 
-                              error.code === 'SQLITE_LOCKED';
+                              error.code === 'SQLITE_LOCKED' ||
+                              error.message.includes('SQLITE_');
 
     if (isConnectionError) {
       this.isConnected = false;
-      this.isDegraded = false; // Allow reconnection attempt before final degradation
+      this.isDegraded = false;
       ArielLogger.warn(`Database instability detected during ${operation}. Will attempt reconnection/retry.`, { error: error.message });
       this.emit('connectionInstability', { operation, error: error.message });
     } else {
@@ -324,9 +479,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
 
-  /**
-   * Internal method to attempt stateful reconnection.
-   */
+  // 🔥 ENTERPRISE FEATURE: Stateful reconnection with exponential backoff
   async _reconnect() {
     if (this.isConnected || this.reconnectAttempts >= this.options.maxReconnectAttempts) {
       if (!this.isConnected) {
@@ -339,15 +492,17 @@ class ArielSQLiteEngine extends EventEmitter {
     }
 
     this.reconnectAttempts++;
-    ArielLogger.warn(`Attempting reconnection ${this.reconnectAttempts}/${this.options.maxReconnectAttempts}...`);
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
+    
+    ArielLogger.warn(`Attempting reconnection ${this.reconnectAttempts}/${this.options.maxReconnectAttempts} after ${delay}ms...`);
+
+    await new Promise(resolve => setTimeout(resolve, delay));
 
     try {
-      // Attempt graceful close of potentially stale connection
-      if (this.db && typeof this.db.close === 'function' && !this.db.readonly) {
+      if (this.db && typeof this.db.close === 'function') {
         this.db.close();
       }
       
-      // Open database with enhanced settings (core of connect() logic)
       this.db = new Database(this.options.dbPath, {
         verbose: process.env.NODE_ENV === 'development' ?
           (sql) => ArielLogger.debug('SQL Execution', { sql }) : undefined,
@@ -364,7 +519,7 @@ class ArielSQLiteEngine extends EventEmitter {
       this.db.pragma('cache_size = -64000');
       this.db.pragma('auto_vacuum = INCREMENTAL');
 
-      this.prepareStatements(); // Re-prepare statements on the new connection
+      this.prepareStatements();
 
       this.isConnected = true;
       this.reconnectAttempts = 0;
@@ -375,29 +530,219 @@ class ArielSQLiteEngine extends EventEmitter {
 
     } catch (error) {
       ArielLogger.error(`Reconnection attempt ${this.reconnectAttempts} failed.`, { error: error.message });
-      await new Promise(resolve => setTimeout(resolve, this.options.reconnectInterval));
-      // Recursive call is now an intentional loop outside, or let the caller retry.
-      // We will let the caller (via _execute) handle the max attempts loop.
     }
   }
   
-  /**
-   * Core execution wrapper with resilience logic.
-   * Handles automatic reconnection and single retry on connection instability.
-   * @param {string} statementName The name of the prepared statement.
-   * @param {Array<any>} params Parameters for the statement.
-   * @param {'run'|'get'|'all'} method Execution method.
-   */
+  // 🔥 ENTERPRISE FEATURE: Module dependency management
+  async registerModule(moduleName, version, dependencies = [], config = {}) {
+    try {
+      const result = await this._execute(
+        'registerModule',
+        [
+          moduleName,
+          version,
+          'registered',
+          JSON.stringify(dependencies),
+          new Date().toISOString(),
+          JSON.stringify(config)
+        ],
+        'run'
+      );
+
+      ArielLogger.info('Module registered successfully', {
+        moduleName,
+        version,
+        dependencies
+      });
+
+      return { success: true, changes: result.changes };
+    } catch (error) {
+      ArielLogger.error('Failed to register module', {
+        error: error.message,
+        moduleName
+      });
+      throw error;
+    }
+  }
+
+  async updateModuleStatus(moduleName, status) {
+    try {
+      const result = await this._execute(
+        'updateModuleStatus',
+        [status, moduleName],
+        'run'
+      );
+
+      ArielLogger.debug('Module status updated', {
+        moduleName,
+        status
+      });
+
+      return { success: true, changes: result.changes };
+    } catch (error) {
+      ArielLogger.error('Failed to update module status', {
+        error: error.message,
+        moduleName,
+        status
+      });
+      throw error;
+    }
+  }
+
+  async getModuleDependencies(moduleName) {
+    try {
+      const result = await this._execute(
+        'getModuleDependencies',
+        [moduleName],
+        'get'
+      );
+
+      if (!result || !result.dependencies) {
+        return [];
+      }
+
+      return JSON.parse(result.dependencies);
+    } catch (error) {
+      ArielLogger.error('Failed to get module dependencies', {
+        error: error.message,
+        moduleName
+      });
+      return [];
+    }
+  }
+
+  // 🔥 ENTERPRISE FEATURE: Cross-module event system
+  async createInterModuleEvent(sourceModule, eventType, payload, targetModules = []) {
+    try {
+      const eventId = `event_${randomBytes(16).toString('hex')}`;
+      const result = await this._execute(
+        'createInterModuleEvent',
+        [
+          eventId,
+          sourceModule,
+          eventType,
+          JSON.stringify(payload),
+          targetModules.join(',')
+        ],
+        'run'
+      );
+
+      ArielLogger.debug('Inter-module event created', {
+        eventId,
+        sourceModule,
+        eventType,
+        targetModules
+      });
+
+      this.emit('interModuleEvent', {
+        eventId,
+        sourceModule,
+        eventType,
+        payload,
+        targetModules
+      });
+
+      return { success: true, eventId, changes: result.changes };
+    } catch (error) {
+      ArielLogger.error('Failed to create inter-module event', {
+        error: error.message,
+        sourceModule,
+        eventType
+      });
+      throw error;
+    }
+  }
+
+  async getPendingEvents(moduleName, limit = 50) {
+    try {
+      const events = await this._execute(
+        'getPendingEvents',
+        [moduleName, limit],
+        'all'
+      );
+
+      return events.map(event => ({
+        ...event,
+        payload: event.payload ? JSON.parse(event.payload) : null,
+        target_modules: event.target_modules ? event.target_modules.split(',') : []
+      }));
+    } catch (error) {
+      ArielLogger.error('Failed to get pending events', {
+        error: error.message,
+        moduleName
+      });
+      return [];
+    }
+  }
+
+  async markEventProcessed(eventId) {
+    try {
+      const result = await this._execute(
+        'markEventProcessed',
+        [eventId],
+        'run'
+      );
+
+      ArielLogger.debug('Event marked as processed', { eventId });
+      return { success: true, changes: result.changes };
+    } catch (error) {
+      ArielLogger.error('Failed to mark event as processed', {
+        error: error.message,
+        eventId
+      });
+      throw error;
+    }
+  }
+
+  // 🔥 ENTERPRISE FEATURE: System configuration management
+  async setConfig(key, value, description = '', updatedBy = 'system') {
+    try {
+      const result = await this._execute(
+        'setConfig',
+        [key, value, description, updatedBy],
+        'run'
+      );
+
+      ArielLogger.info('Configuration set', { key, value, updatedBy });
+      return { success: true, changes: result.changes };
+    } catch (error) {
+      ArielLogger.error('Failed to set configuration', {
+        error: error.message,
+        key,
+        value
+      });
+      throw error;
+    }
+  }
+
+  async getConfig(key, defaultValue = null) {
+    try {
+      const result = await this._execute(
+        'getConfig',
+        [key],
+        'get'
+      );
+
+      return result ? result.value : defaultValue;
+    } catch (error) {
+      ArielLogger.error('Failed to get configuration', {
+        error: error.message,
+        key
+      });
+      return defaultValue;
+    }
+  }
+
+  // Core database execution with resilience
   async _execute(statementName, params, method = 'run') {
     if (this.isDegraded) {
       throw new Error('Engine is in degraded mode. Cannot execute query.');
     }
 
     if (!this.isConnected || !this.db) {
-      await this._reconnect(); // Attempt immediate reconnect if not connected
+      await this._reconnect();
     }
     
-    // Check degradation again after potential reconnect
     if (this.isDegraded || !this.isConnected || !this.db) {
       throw new Error('Database is disconnected or in degraded mode. Query execution aborted.');
     }
@@ -408,19 +753,16 @@ class ArielSQLiteEngine extends EventEmitter {
         throw new Error(`Prepared statement not found: ${statementName}`);
       }
       
-      // Execute the statement synchronously
       return stmt[method](...params);
 
     } catch (error) {
       this._handleError(error, statementName);
       
-      // If the error suggests a connection issue and we haven't reached max attempts, retry once after reconnect.
       if (!this.isDegraded && this.reconnectAttempts < this.options.maxReconnectAttempts) {
         ArielLogger.warn(`Query failed, attempting reconnect and immediate retry for: ${statementName}`);
-        await this._reconnect(); // Wait for reconnection
+        await this._reconnect();
         
         if (!this.isDegraded && this.isConnected && this.db) {
-          // Final synchronous retry
           const stmt = this.preparedStatements.get(statementName);
           if (!stmt) {
               throw new Error(`Prepared statement not found after reconnect: ${statementName}`);
@@ -430,13 +772,10 @@ class ArielSQLiteEngine extends EventEmitter {
         }
       }
       
-      // Unrecoverable or max retries reached
       throw new Error(`Unrecoverable database error during ${statementName}: ${error.message}`);
     }
   }
 
-  // -----------------------------------------------------------------------------
-  
   // 🎯 CRITICAL FIX: Enhanced transaction creation with validation and STATS UPDATE
   async createTransaction(transactionData) {
     const {
@@ -482,7 +821,7 @@ class ArielSQLiteEngine extends EventEmitter {
         'run'
       );
       
-      // 🔥 LATEST UPDATE: Update stats for new transaction (Total Tx Count)
+      // Update stats for new transaction
       await this.updateStats('pending', amount, 0, network);
 
       ArielLogger.info('Transaction created successfully', {
@@ -517,12 +856,10 @@ class ArielSQLiteEngine extends EventEmitter {
       throw new Error(`Invalid status: ${status}`);
     }
     
-    // 🔥 LATEST UPDATE: Fetch original transaction data for stats if failing/cancelling
     let originalTx = null;
     if (status === 'failed' || status === 'cancelled') {
         originalTx = await this._execute('getById', [transactionId], 'get');
         if (!originalTx) {
-            // Log a warning but proceed with the update attempt
             ArielLogger.warn('Transaction not found during status update stat check', { transactionId, status });
         }
     }
@@ -542,7 +879,6 @@ class ArielSQLiteEngine extends EventEmitter {
         throw new Error(`Transaction not found: ${transactionId}`);
       }
       
-      // 🔥 LATEST UPDATE: Update stats for failed/cancelled transaction
       if (originalTx) {
           await this.updateStats(status, originalTx.amount, 0, originalTx.network);
       }
@@ -577,7 +913,6 @@ class ArielSQLiteEngine extends EventEmitter {
       throw new Error('Transaction hash is required');
     }
     
-    // 🔥 LATEST UPDATE: Fetch original transaction data for stats
     const originalTx = await this._execute('getById', [transactionId], 'get');
     if (!originalTx) {
         throw new Error(`Transaction not found: ${transactionId}`);
@@ -601,7 +936,6 @@ class ArielSQLiteEngine extends EventEmitter {
         throw new Error(`Transaction not found: ${transactionId}`);
       }
       
-      // 🔥 LATEST UPDATE: Update stats for completed transaction
       await this.updateStats('completed', originalTx.amount, gasUsed, originalTx.network);
       
       ArielLogger.info('Transaction completed successfully', {
@@ -734,7 +1068,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
   
-  // 🎯 CRITICAL FIX: Enhanced transaction search with filters - COMPLETED IMPLEMENTATION
+  // 🎯 CRITICAL FIX: Enhanced transaction search with filters
   async searchTransactions(filters = {}, limit = 100, offset = 0) {
     const {
       status,
@@ -744,7 +1078,6 @@ class ArielSQLiteEngine extends EventEmitter {
       dateTo
     } = filters;
     
-    // Build dynamic query
     let whereConditions = [];
     let params = [];
 
@@ -783,13 +1116,7 @@ class ArielSQLiteEngine extends EventEmitter {
     params.push(limit, offset);
 
     try {
-      // Use direct db.prepare for dynamic queries
-      if (!this.isConnected || !this.db) {
-        throw new Error('Database not connected');
-      }
-
-      const stmt = this.db.prepare(query);
-      const transactions = stmt.all(...params);
+      const transactions = await this.all(query, params);
       
       ArielLogger.debug('Transactions search completed', {
         filters,
@@ -811,7 +1138,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
 
-  // 🎯 CRITICAL FIX: Enhanced statistics with date range - FIXED SYNTAX
+  // 🎯 CRITICAL FIX: Enhanced statistics with date range
   async getStatistics(dateFrom = null, dateTo = null) {
     try {
       let whereClause = '';
@@ -828,37 +1155,32 @@ class ArielSQLiteEngine extends EventEmitter {
         params = [dateTo];
       }
       
-      // NOTE: getStatistics uses dynamic queries, so it cannot use _execute directly.
-      
-      const stats = this.db.prepare(`
+      const stats = await this.all(`
         SELECT 
           network,
           SUM(total_transactions) as total_transactions,
           SUM(completed_transactions) as completed_transactions,
           SUM(failed_transactions) as failed_transactions,
           SUM(total_gas_used) as total_gas_used,
-          -- Use CAST to ensure correct summation of TEXT amounts
           CAST(SUM(CAST(total_amount AS REAL)) AS TEXT) as total_amount_sum 
         FROM ariel_stats 
         ${whereClause}
         GROUP BY network
-      `).all(...params);
+      `, params);
       
-      // Get real-time pending count
-      const pendingCount = this.db.prepare(`
+      const pendingCount = await this.get(`
         SELECT COUNT(*) as count FROM ariel_transactions 
         WHERE status = 'pending'
-      `).get().count;
+      `);
       
       const result = {
         networks: stats.map(s => ({
             ...s,
-            // Remap the summed amount to the expected key
             total_amount: s.total_amount_sum,
             total_amount_sum: undefined
         })),
         realTime: {
-          pendingTransactions: pendingCount
+          pendingTransactions: pendingCount.count
         },
         period: {
           from: dateFrom,
@@ -895,15 +1217,13 @@ class ArielSQLiteEngine extends EventEmitter {
     const backupPath = path.join(this.options.backupPath, backupFile);
     
     try {
-      // Use VACUUM INTO for consistent backup
-      this.db.prepare(`VACUUM INTO ?`).run(backupPath);
+      await this.run(`VACUUM INTO ?`, [backupPath]);
       
       ArielLogger.info('Database backup created successfully', {
         backupPath,
         size: (await fs.stat(backupPath)).size
       });
       
-      // Clean up old backups
       await this.cleanupOldBackups();
       
       return {
@@ -934,7 +1254,6 @@ class ArielSQLiteEngine extends EventEmitter {
         }))
         .sort((a, b) => new Date(b.time) - new Date(a.time));
       
-      // Remove backups beyond maxBackups
       if (backupFiles.length > this.options.maxBackups) {
         const toRemove = backupFiles.slice(this.options.maxBackups);
         
@@ -998,13 +1317,10 @@ class ArielSQLiteEngine extends EventEmitter {
     const today = new Date().toISOString().split('T')[0];
     
     try {
-        // All new transactions (pending) should increment total_transactions
         if (status === 'pending') {
-            // Use _execute to wrap this synchronous call with resilience
             await this._execute('incrementTotalTxStat', [today, network], 'run');
         }
 
-        // Completed transactions update the completed count, gas, and amount
         if (status === 'completed') {
             await this._execute(
                 'updateCompletedStat', 
@@ -1013,7 +1329,6 @@ class ArielSQLiteEngine extends EventEmitter {
             );
         }
 
-        // Failed or Cancelled transactions update the failed count
         if (status === 'failed' || status === 'cancelled') {
             await this._execute('updateFailedStat', [today, network], 'run');
         }
@@ -1027,7 +1342,6 @@ class ArielSQLiteEngine extends EventEmitter {
   async healthCheck() {
     try {
       if (!this.isConnected || !this.db) {
-        // Attempt an emergency reconnect for the health check itself
         await this._reconnect();
         if (!this.isConnected) {
           return {
@@ -1037,21 +1351,21 @@ class ArielSQLiteEngine extends EventEmitter {
         }
       }
       
-      // Test query
-      const result = this.db.prepare('SELECT 1 as test').get();
+      const result = await this.get('SELECT 1 as test');
       
-      // Check if we can read from transactions table
-      const pendingCount = this.db.prepare(`
+      const pendingCount = await this.get(`
         SELECT COUNT(*) as count FROM ariel_transactions WHERE status = 'pending'
-      `).get().count;
+      `);
       
       return {
         status: 'healthy',
         message: 'Database is responding correctly',
         details: {
-          pendingTransactions: pendingCount,
+          pendingTransactions: pendingCount.count,
           connection: 'active',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          preparedStatements: this.preparedStatements.size,
+          isInitialized: this.isInitialized
         }
       };
       
@@ -1071,13 +1385,9 @@ class ArielSQLiteEngine extends EventEmitter {
     try {
       this.stopAutoBackup();
       
-      // Clear prepared statements
       this.preparedStatements.clear();
-      
-      // Clear cache
       this.queryCache.clear();
       
-      // Close database
       if (this.db) {
         this.db.close();
         this.db = null;
@@ -1085,6 +1395,7 @@ class ArielSQLiteEngine extends EventEmitter {
       
       this.isConnected = false;
       this.isDegraded = false;
+      this.isInitialized = false;
       this.reconnectAttempts = 0;
       
       ArielLogger.info('Database connection closed');
@@ -1096,7 +1407,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
 
-  // 🎯 NEW FEATURE: Advanced transaction analytics
+  // 🔥 ENTERPRISE FEATURE: Advanced transaction analytics
   async getTransactionAnalytics(timeRange = '7d') {
     try {
       let dateFilter = '';
@@ -1119,7 +1430,7 @@ class ArielSQLiteEngine extends EventEmitter {
           dateFilter = 'WHERE created_at >= datetime("now", "-7 days")';
       }
 
-      const analytics = this.db.prepare(`
+      const analytics = await this.all(`
         SELECT 
           network,
           status,
@@ -1132,9 +1443,9 @@ class ArielSQLiteEngine extends EventEmitter {
         ${dateFilter}
         GROUP BY network, status
         ORDER BY network, status
-      `).all(...params);
+      `, params);
 
-      const hourlyStats = this.db.prepare(`
+      const hourlyStats = await this.all(`
         SELECT 
           strftime('%Y-%m-%d %H:00:00', created_at) as hour,
           network,
@@ -1145,7 +1456,7 @@ class ArielSQLiteEngine extends EventEmitter {
         GROUP BY hour, network
         ORDER BY hour DESC
         LIMIT 24
-      `).all(...params);
+      `, params);
 
       return {
         summary: analytics,
@@ -1163,7 +1474,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
 
-  // 🎯 NEW FEATURE: Database maintenance and optimization
+  // 🔥 ENTERPRISE FEATURE: Database maintenance and optimization
   async performMaintenance() {
     try {
       if (!this.isConnected || !this.db) {
@@ -1172,17 +1483,11 @@ class ArielSQLiteEngine extends EventEmitter {
 
       ArielLogger.info('Starting database maintenance');
       
-      // Run VACUUM to optimize database size
-      this.db.exec('VACUUM');
+      await this.run('VACUUM');
+      await this.run('ANALYZE');
+      await this.run('PRAGMA optimize');
       
-      // Run ANALYZE for query optimization
-      this.db.exec('ANALYZE');
-      
-      // Update database statistics
-      this.db.exec('PRAGMA optimize');
-      
-      // Check integrity
-      const integrityCheck = this.db.prepare('PRAGMA integrity_check').get();
+      const integrityCheck = await this.get('PRAGMA integrity_check');
       
       ArielLogger.info('Database maintenance completed', {
         integrity: integrityCheck
@@ -1201,7 +1506,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
 
-  // 🎯 NEW FEATURE: Bulk transaction operations
+  // 🔥 ENTERPRISE FEATURE: Bulk transaction operations
   async bulkCreateTransactions(transactions) {
     if (!Array.isArray(transactions) || transactions.length === 0) {
       throw new Error('Transactions array is required and cannot be empty');
@@ -1210,7 +1515,6 @@ class ArielSQLiteEngine extends EventEmitter {
     try {
       const results = [];
       
-      // Use transaction for atomic bulk operations
       const transaction = this.db.transaction((txList) => {
         for (const txData of txList) {
           const {
@@ -1222,7 +1526,6 @@ class ArielSQLiteEngine extends EventEmitter {
             metadata = null
           } = txData;
 
-          // Validate required fields
           if (!recipientAddress || !amount) {
             throw new Error('Recipient address and amount are required for all transactions');
           }
@@ -1241,7 +1544,6 @@ class ArielSQLiteEngine extends EventEmitter {
             metadataStr
           );
 
-          // Update stats for each transaction
           this.updateStats('pending', amount, 0, network);
 
           results.push({
@@ -1267,6 +1569,49 @@ class ArielSQLiteEngine extends EventEmitter {
       });
       
       throw new Error(`Bulk transaction creation failed: ${error.message}`);
+    }
+  }
+
+  // 🔥 ENTERPRISE FEATURE: System-wide diagnostics
+  async getSystemDiagnostics() {
+    try {
+      const dbSize = await this.get(`
+        SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()
+      `);
+
+      const tableStats = await this.all(`
+        SELECT 
+          name as table_name,
+          (SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = m.name) as index_count
+        FROM sqlite_master m
+        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      `);
+
+      const connectionStats = {
+        isConnected: this.isConnected,
+        isInitialized: this.isInitialized,
+        isDegraded: this.isDegraded,
+        reconnectAttempts: this.reconnectAttempts,
+        preparedStatements: this.preparedStatements.size,
+        queryCacheSize: this.queryCache.size
+      };
+
+      return {
+        database: {
+          size: dbSize.size,
+          tableCount: tableStats.length,
+          tables: tableStats
+        },
+        connection: connectionStats,
+        performance: {
+          uptime: process.uptime(),
+          timestamp: new Date().toISOString()
+        }
+      };
+
+    } catch (error) {
+      ArielLogger.error('Failed to get system diagnostics', { error: error.message });
+      throw new Error(`Failed to get system diagnostics: ${error.message}`);
     }
   }
 }
