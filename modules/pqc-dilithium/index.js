@@ -68,15 +68,13 @@ const securityLogger = {
       message,
       ...metadata
     };
-    
-    // In production, this would send to centralized logging
     console.log(JSON.stringify(logEntry));
-    
+
     if (level === 'ERROR' || level === 'SECURITY') {
       performanceMetrics.failures++;
     }
   },
-  
+
   audit: (operation, keyId = null, success = true, metadata = {}) => {
     securityLogger.log('AUDIT', `Operation: ${operation}, Success: ${success}`, {
       operation,
@@ -95,23 +93,23 @@ class SecureMemoryManager {
     this.growthCount = 0;
     this.maxSize = 256 * 65536; // 16MB maximum
   }
-  
+
   growMemory(wasmInstance, requiredSize) {
     if (this.growthCount >= SECURITY_CONFIG.MAX_MEMORY_GROWTH) {
       throw new SecurityError('Maximum memory growth attempts exceeded');
     }
-    
+
     const currentPages = wasmInstance.memory.buffer.byteLength / 65536;
     const requiredPages = Math.ceil(requiredSize / 65536);
     const newPages = currentPages + requiredPages;
-    
+
     if (newPages * 65536 > this.maxSize) {
       throw new SecurityError('Memory allocation would exceed maximum allowed size');
     }
-    
+
     wasmInstance.memory.grow(requiredPages);
     this.growthCount++;
-    
+
     securityLogger.log('DEBUG', `Memory grown by ${requiredPages} pages`, {
       currentPages,
       newPages: currentPages + requiredPages,
@@ -127,28 +125,54 @@ const memoryManager = new SecureMemoryManager();
  */
 function validateInputs(params = {}) {
   const { level = 3, message, publicKey, privateKey, signature } = params;
-  
+
   if (![2, 3, 5].includes(level)) {
     throw new ConfigurationError(`Invalid security level: ${level}. Must be 2, 3, or 5`);
   }
-  
+
   if (message && message.length > SECURITY_CONFIG.MAX_MESSAGE_SIZE) {
     throw new SecurityError(`Message size ${message.length} exceeds maximum allowed ${SECURITY_CONFIG.MAX_MESSAGE_SIZE}`);
   }
-  
+
   if (publicKey && !(publicKey instanceof Uint8Array)) {
     throw new ConfigurationError('Public key must be a Uint8Array');
   }
-  
+
   if (privateKey && !(privateKey instanceof Uint8Array)) {
     throw new ConfigurationError('Private key must be a Uint8Array');
   }
-  
+
   if (signature && !(signature instanceof Uint8Array)) {
     throw new ConfigurationError('Signature must be a Uint8Array');
   }
-  
+
   return { level };
+}
+
+/**
+ * Resolve WASM path with robust fallbacks
+ */
+function resolveWasmPath(level) {
+  const fileName = `dilithium${level}.wasm`;
+
+  const candidates = [
+    path.resolve(__dirname, `./dist/${fileName}`),
+    process.env.DILITHIUM_WASM_DIR ? path.resolve(process.env.DILITHIUM_WASM_DIR, fileName) : null,
+    path.resolve(__dirname, `../pqc-dilithium/dist/${fileName}`),
+    path.resolve(__dirname, `../../dist/${fileName}`),
+    path.resolve(process.cwd(), `modules/pqc-dilithium/dist/${fileName}`)
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const real = fs.realpathSync(candidate);
+      if (fs.existsSync(real)) return real;
+    } catch {
+      // continue
+    }
+  }
+
+  return candidates[0]; // default expected path for logging
 }
 
 /**
@@ -166,35 +190,42 @@ async function initializeWasm(level) {
   initializationPromise = (async () => {
     try {
       securityLogger.log('INFO', `Initializing Dilithium${level} WASM module`);
-      
-      const wasmFileName = `dilithium${level}.wasm`;
-      const wasmPath = path.resolve(__dirname, `./dist/${wasmFileName}`);
 
+      const wasmPath = resolveWasmPath(level);
       if (!fs.existsSync(wasmPath)) {
-        throw new ConfigurationError(`WASM file not found at ${wasmPath}. Please build the WASM modules.`);
+        throw new ConfigurationError(`WASM file not found at ${wasmPath}. Please build or mount the WASM modules at runtime.`);
       }
 
       const wasmBinary = fs.readFileSync(wasmPath);
       const wasmHash = crypto.createHash('sha256').update(wasmBinary).digest('hex');
-      
-      securityLogger.log('DEBUG', `WASM module hash: ${wasmHash}`, { wasmHash });
+
+      securityLogger.log('DEBUG', `WASM module hash: ${wasmHash}`, { wasmHash, wasmPath });
 
       // Configure memory with security limits
-      wasmMemory = new WebAssembly.Memory({ 
-        initial: 256, 
-        maximum: 65536,
+      // initial: 64 pages (4MB), maximum: 256 pages (16MB) to match SecureMemoryManager
+      wasmMemory = new WebAssembly.Memory({
+        initial: 64,
+        maximum: 256,
         shared: false
       });
 
       const env = {
         env: {
           memory: wasmMemory,
+          // Emscripten notifies memory growth by passing the index (ignored here);
+          // we forward to our secure manager using a conservative grow size.
           emscripten_notify_memory_growth: (index) => {
-            memoryManager.growMemory({ memory: wasmMemory }, index);
+            try {
+              memoryManager.growMemory({ memory: wasmMemory }, 65536); // grow by 1 page when notified
+            } catch (e) {
+              securityLogger.log('ERROR', 'Secure memory growth refused', { error: e.message, index });
+              throw e;
+            }
           },
-          abort: (msg, file, line, column) => {
-            const error = new SecurityError(`WASM abort: ${msg} at ${file}:${line}:${column}`);
-            securityLogger.log('ERROR', 'WASM execution aborted', { msg, file, line, column });
+          abort: (msgPtr, filePtr, line, column) => {
+            // In many builds, abort receives numeric pointers; we log numeric context safely
+            const error = new SecurityError(`WASM abort at ${String(filePtr)}:${String(line)}:${String(column)}`);
+            securityLogger.log('ERROR', 'WASM execution aborted', { msgPtr, filePtr, line, column });
             throw error;
           },
           // Enhanced entropy source for cryptographic operations
@@ -215,23 +246,23 @@ async function initializeWasm(level) {
         }
       }
 
-      // Get function pointers with fallbacks
-      // Get function pointers with fallbacks
+      // Get function pointers
       const keypair = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_keypair`];
       const sign = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_signature`];
       const verify = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_crypto_sign_verify`];
-
 
       if (!keypair || !sign || !verify) {
         throw new ConfigurationError(`Required Dilithium${level} functions not found in WASM exports`);
       }
 
       // Get constants
-     // Get constant values with fallbacks
-     const PUBLICKEYBYTES = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_PUBLICKEYBYTES`];
-     const SECRETKEYBYTES = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_SECRETKEYBYTES`];
-     const BYTES = exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_BYTES`];
+      const PUBLICKEYBYTES = Number(exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_PUBLICKEYBYTES`]);
+      const SECRETKEYBYTES = Number(exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_SECRETKEYBYTES`]);
+      const BYTES = Number(exports[`PQCLEAN_DILITHIUM${level}_CLEAN_CRYPTO_BYTES`]);
 
+      if (!Number.isFinite(PUBLICKEYBYTES) || !Number.isFinite(SECRETKEYBYTES) || !Number.isFinite(BYTES)) {
+        throw new ConfigurationError(`Invalid Dilithium${level} constant sizes`);
+      }
 
       dilithium = {
         keypair: () => {
@@ -239,26 +270,27 @@ async function initializeWasm(level) {
           try {
             const pk = new Uint8Array(PUBLICKEYBYTES);
             const sk = new Uint8Array(SECRETKEYBYTES);
-            
-            // Additional entropy for key generation
+
+            // Additional entropy for key generation (pre-fill buffers)
             crypto.randomFillSync(pk);
             crypto.randomFillSync(sk);
-            
+
+            // Some builds expect output pointers; emulate contiguous buffers via offsets
             const result = keypair(
               wasmMemory.buffer, pk.byteOffset,
               wasmMemory.buffer, sk.byteOffset
             );
-            
+
             if (result !== 0) {
               throw new SecurityError(`Keypair generation failed with code: ${result}`);
             }
-            
+
             const duration = Date.now() - startTime;
             performanceMetrics.keyGeneration.push(duration);
             if (performanceMetrics.keyGeneration.length > METRICS_WINDOW) {
               performanceMetrics.keyGeneration.shift();
             }
-            
+
             securityLogger.audit('KEY_GENERATION', null, true, { duration, level });
             return { publicKey: pk, secretKey: sk };
           } catch (error) {
@@ -266,73 +298,73 @@ async function initializeWasm(level) {
             throw error;
           }
         },
-        
+
         sign: (message, secretKey) => {
           const startTime = Date.now();
           try {
             if (secretKey.length !== SECRETKEYBYTES) {
               throw new SecurityError(`Invalid secret key length: expected ${SECRETKEYBYTES}, got ${secretKey.length}`);
             }
-            
+
             const sig = new Uint8Array(BYTES);
             const sigLen = new BigUint64Array(1);
             sigLen[0] = BigInt(BYTES);
-            
+
             const result = sign(
               wasmMemory.buffer, sig.byteOffset, wasmMemory.buffer, sigLen.byteOffset,
               wasmMemory.buffer, message.byteOffset, message.length,
               wasmMemory.buffer, secretKey.byteOffset
             );
-            
+
             if (result !== 0) {
               throw new SecurityError(`Signature generation failed with code: ${result}`);
             }
-            
+
             const duration = Date.now() - startTime;
             performanceMetrics.signing.push(duration);
             if (performanceMetrics.signing.length > METRICS_WINDOW) {
               performanceMetrics.signing.shift();
             }
-            
+
             return sig.slice(0, Number(sigLen[0]));
           } catch (error) {
             securityLogger.audit('SIGNING', null, false, { error: error.message, level });
             throw error;
           }
         },
-        
+
         verify: (message, signature, publicKey) => {
           const startTime = Date.now();
           try {
             if (publicKey.length !== PUBLICKEYBYTES) {
               throw new SecurityError(`Invalid public key length: expected ${PUBLICKEYBYTES}, got ${publicKey.length}`);
             }
-            
+
             const result = verify(
               wasmMemory.buffer, signature.byteOffset, signature.length,
               wasmMemory.buffer, message.byteOffset, message.length,
               wasmMemory.buffer, publicKey.byteOffset
             );
-            
+
             const duration = Date.now() - startTime;
             performanceMetrics.verification.push(duration);
             if (performanceMetrics.verification.length > METRICS_WINDOW) {
               performanceMetrics.verification.shift();
             }
-            
-            securityLogger.audit('VERIFICATION', null, result === 0, { 
-              result: result === 0, 
+
+            securityLogger.audit('VERIFICATION', null, result === 0, {
+              result: result === 0,
               duration,
-              signatureLength: signature.length 
+              signatureLength: signature.length
             });
-            
+
             return result === 0;
           } catch (error) {
             securityLogger.audit('VERIFICATION', null, false, { error: error.message });
             return false;
           }
         },
-        
+
         level,
         constants: { PUBLICKEYBYTES, SECRETKEYBYTES, BYTES },
         instance
@@ -356,25 +388,25 @@ async function initializeWasm(level) {
  */
 export async function dilithiumKeyPair(params = {}) {
   const { level } = validateInputs(params);
-  
+
   try {
     const d = await initializeWasm(level);
     const { publicKey, secretKey } = d.keypair();
-    
+
     // Generate key ID for tracking
     const keyId = crypto.createHash('sha256')
       .update(publicKey)
       .update(await randomBytes(SECURITY_CONFIG.MIN_ENTROPY_BYTES))
       .digest('hex')
       .substring(0, 16);
-    
-    securityLogger.log('INFO', `Generated new key pair`, { 
-      keyId, 
+
+    securityLogger.log('INFO', `Generated new key pair`, {
+      keyId,
       level,
       publicKeyLength: publicKey.length,
       secretKeyLength: secretKey.length
     });
-    
+
     return {
       publicKey: Buffer.from(publicKey),
       privateKey: Buffer.from(secretKey),
@@ -393,25 +425,25 @@ export async function dilithiumKeyPair(params = {}) {
  */
 export async function dilithiumSign(privateKey, message, params = {}) {
   const { level } = validateInputs({ ...params, privateKey, message });
-  
+
   if (!(message instanceof Buffer)) {
     message = Buffer.from(message);
   }
-  
+
   if (!(privateKey instanceof Buffer)) {
     privateKey = Buffer.from(privateKey);
   }
-  
+
   try {
     const d = await initializeWasm(level);
     const signature = d.sign(new Uint8Array(message), new Uint8Array(privateKey));
-    
+
     securityLogger.audit('SIGNING', null, true, {
       messageLength: message.length,
       signatureLength: signature.length,
       level
     });
-    
+
     return Buffer.from(signature);
   } catch (error) {
     securityLogger.audit('SIGNING', null, false, {
@@ -428,19 +460,19 @@ export async function dilithiumSign(privateKey, message, params = {}) {
  */
 export async function dilithiumVerify(publicKey, message, signature, params = {}) {
   const { level } = validateInputs({ ...params, publicKey, message, signature });
-  
+
   if (!(message instanceof Buffer)) {
     message = Buffer.from(message);
   }
-  
+
   if (!(publicKey instanceof Buffer)) {
     publicKey = Buffer.from(publicKey);
   }
-  
+
   if (!(signature instanceof Buffer)) {
     signature = Buffer.from(signature);
   }
-  
+
   try {
     const d = await initializeWasm(level);
     const isValid = d.verify(
@@ -448,7 +480,7 @@ export async function dilithiumVerify(publicKey, message, signature, params = {}
       new Uint8Array(signature),
       new Uint8Array(publicKey)
     );
-    
+
     return isValid;
   } catch (error) {
     securityLogger.audit('VERIFICATION', null, false, {
@@ -476,15 +508,15 @@ export async function dilithiumConstants(params = {}) {
 export function getPerformanceMetrics() {
   const calculateStats = (values) => {
     if (values.length === 0) return { avg: 0, min: 0, max: 0, count: 0 };
-    
+
     const sum = values.reduce((a, b) => a + b, 0);
     const avg = sum / values.length;
     const min = Math.min(...values);
     const max = Math.max(...values);
-    
+
     return { avg, min, max, count: values.length };
   };
-  
+
   return {
     keyGeneration: calculateStats(performanceMetrics.keyGeneration),
     signing: calculateStats(performanceMetrics.signing),
@@ -499,12 +531,11 @@ export function getPerformanceMetrics() {
  */
 export async function healthCheck() {
   try {
-    // Test key generation and signing
     const { publicKey, privateKey } = await dilithiumKeyPair({ level: 3 });
     const testMessage = Buffer.from('health-check-' + Date.now());
     const signature = await dilithiumSign(privateKey, testMessage);
     const isValid = await dilithiumVerify(publicKey, testMessage, signature);
-    
+
     return {
       status: isValid ? 'HEALTHY' : 'UNHEALTHY',
       wasmInitialized: isInitialized,
@@ -535,49 +566,49 @@ export class PQCDilithiumProvider {
     this.keyStore = new Map();
     this.rotationTimers = new Map();
   }
-  
+
   async generateKeyPair(keyId = null) {
     const keyPair = await dilithiumKeyPair({ level: this.level });
     const finalKeyId = keyId || keyPair.keyId;
-    
+
     this.keyStore.set(finalKeyId, {
       ...keyPair,
       lastUsed: Date.now(),
       usageCount: 0
     });
-    
+
     // Schedule key rotation
     this.scheduleKeyRotation(finalKeyId);
-    
+
     return keyPair;
   }
-  
+
   async sign(keyId, data) {
     const keyInfo = this.keyStore.get(keyId);
     if (!keyInfo) {
       throw new SecurityError(`Key not found: ${keyId}`);
     }
-    
+
     keyInfo.lastUsed = Date.now();
     keyInfo.usageCount = (keyInfo.usageCount || 0) + 1;
-    
+
     return dilithiumSign(keyInfo.privateKey, data, { level: this.level });
   }
-  
+
   async verify(keyId, data, signature) {
     const keyInfo = this.keyStore.get(keyId);
     if (!keyInfo) {
       throw new SecurityError(`Key not found: ${keyId}`);
     }
-    
+
     return dilithiumVerify(keyInfo.publicKey, data, signature, { level: this.level });
   }
-  
+
   scheduleKeyRotation(keyId) {
     if (this.rotationTimers.has(keyId)) {
       clearTimeout(this.rotationTimers.get(keyId));
     }
-    
+
     const timer = setTimeout(async () => {
       try {
         securityLogger.log('INFO', `Rotating key: ${keyId}`);
@@ -586,14 +617,14 @@ export class PQCDilithiumProvider {
         securityLogger.log('ERROR', `Key rotation failed for ${keyId}`, { error: error.message });
       }
     }, this.options.keyRotationInterval);
-    
+
     this.rotationTimers.set(keyId, timer);
   }
-  
+
   getKey(keyId) {
     return this.keyStore.get(keyId);
   }
-  
+
   listKeys() {
     return Array.from(this.keyStore.entries()).map(([keyId, info]) => ({
       keyId,
@@ -603,17 +634,17 @@ export class PQCDilithiumProvider {
       usageCount: info.usageCount
     }));
   }
-  
+
   revokeKey(keyId) {
     if (this.rotationTimers.has(keyId)) {
       clearTimeout(this.rotationTimers.get(keyId));
       this.rotationTimers.delete(keyId);
     }
-    
+
     this.keyStore.delete(keyId);
     securityLogger.log('INFO', `Key revoked: ${keyId}`);
   }
-  
+
   cleanup() {
     this.rotationTimers.forEach(timer => clearTimeout(timer));
     this.rotationTimers.clear();
