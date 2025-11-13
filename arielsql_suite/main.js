@@ -31,6 +31,15 @@ const CONFIG = {
     NODE_ENV: process.env.NODE_ENV || 'production',
 };
 
+// Guard: prevent duplicate startup listeners and MaxListenersExceededWarning on long-lived processes
+if (!globalThis.__BSFM_STARTUP_GUARD__) {
+  globalThis.__BSFM_STARTUP_GUARD__ = true;
+  // Allow unlimited listeners safely; we still avoid duplicates below.
+  if (typeof process.setMaxListeners === 'function') {
+    process.setMaxListeners(0);
+  }
+}
+
 console.log('🔧 CONFIG CHECK:', {
     hasPrivateKey: !!CONFIG.PRIVATE_KEY,
     privateKeyLength: CONFIG.PRIVATE_KEY?.length,
@@ -103,24 +112,23 @@ const executeWorkerProcess = async () => {
     const RevenueModule = await import('../modules/sovereign-revenue-engine.js');
     
     const ArielSQLiteEngine = CoreDBModule.ArielSQLiteEngine || CoreDBModule.default;
-    const BrianNwaezikePayoutSystem = PayoutModule.BrianNwaezikePayoutSystem || PayoutModule.default;
-    const AutonomousAIEngine = AIMachineModule.AutonomousAIEngine || AIMachineModule.default;
+    const DynamicBrianNwaezikePayoutSystem = PayoutModule.BrianNwaezikePayoutSystem || PayoutModule.default;
+    const DynamicAutonomousAIEngine = AIMachineModule.AutonomousAIEngine || AIMachineModule.default;
     const ProductionSovereignCore = SovereignCoreModule.ProductionSovereignCore || SovereignCoreModule.default;
-    const BrianNwaezikeChain = ChainModule.BrianNwaezikeChain || ChainModule.default;
+    const DynamicBrianNwaezikeChain = ChainModule.BrianNwaezikeChain || ChainModule.default;
     const SovereignRevenueEngine = RevenueModule.SovereignRevenueEngine || RevenueModule.default;
-
 
     // --- SERVICE INITIALIZATION SEQUENCE ---
     const services = [
         // 1. DB Engine must initialize first
         { name: 'ArielSQLiteEngine', factory: async () => new ArielSQLiteEngine() },
         // 2. Payout System must initialize before the Chain constructor accesses it
-        { name: 'PayoutSystem', factory: async () => new BrianNwaezikePayoutSystem(CONFIG) },
+        { name: 'PayoutSystem', factory: async () => new DynamicBrianNwaezikePayoutSystem(CONFIG) },
         // 3. Bwaezi Chain must initialize before SovereignCore to be injected into RevenueEngine
         { name: 'BwaeziChain', factory: async () => {
              // Pass the PayoutSystem instance to the Chain constructor
              const payoutSystemInstance = SERVICE_REGISTRY.get('PayoutSystem');
-             const chainInstance = new BrianNwaezikeChain(payoutSystemInstance);
+             const chainInstance = new DynamicBrianNwaezikeChain(payoutSystemInstance);
              return chainInstance;
         } },
         // 4. Revenue Engine must be manually created to inject dependencies and prevent fallback mode
@@ -139,7 +147,7 @@ const executeWorkerProcess = async () => {
             return engineInstance;
         } },
         // 5. AI Engine
-        { name: 'AutonomousAIEngine', factory: async () => new AutonomousAIEngine() },
+        { name: 'AutonomousAIEngine', factory: async () => new DynamicAutonomousAIEngine() },
         // 6. SovereignCore must initialize last with ALL dependencies
         { name: 'SovereignCore', factory: async () => {
             // Pass the core services into the Orchestrator/SovereignCore constructor
@@ -266,12 +274,17 @@ const ultimateStartup = async () => {
     console.log('🚀 BSFM PURE MAINNET MODE - STARTING...');
 
     // 🛡️ Global crash handlers to prevent deployment exit (Status 1)
-    process.on('uncaughtException', (error) => {
-        console.error('🛡️ UNCAUGHT EXCEPTION CONTAINED (FATAL):', error);
-    });
-    process.on('unhandledRejection', (reason, promise) => {
-        console.error('🛡️ UNHANDLED REJECTION CONTAINED (FATAL):', reason);
-    });
+    // Guard against duplicate registrations across hot restarts
+    if (process.listenerCount('uncaughtException') === 0) {
+      process.on('uncaughtException', (error) => {
+          console.error('🛡️ UNCAUGHT EXCEPTION CONTAINED (FATAL):', error);
+      });
+    }
+    if (process.listenerCount('unhandledRejection') === 0) {
+      process.on('unhandledRejection', (reason, promise) => {
+          console.error('🛡️ UNHANDLED REJECTION CONTAINED (FATAL):', reason);
+      });
+    }
 
     // 🚨 CRITICAL HACK: Temporarily define the offending class globally to satisfy the 
     // synchronous cyclic dependency access in BrianNwaezikeChain.js upon module import.
