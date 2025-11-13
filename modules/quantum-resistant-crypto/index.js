@@ -4,10 +4,10 @@
 import sqlite3 from 'sqlite3';
 const { Database } = sqlite3;
 import { promisify } from 'util';
-import { 
-  randomBytes, 
-  createCipheriv, 
-  createDecipheriv, 
+import {
+  randomBytes,
+  createCipheriv,
+  createDecipheriv,
   scryptSync,
   createHash,
   generateKeyPairSync,
@@ -67,35 +67,31 @@ class MonitoringService {
       operationTime: 5000 // 5 seconds
     };
   }
-  
+
   log(level, message, context = {}) {
     const timestamp = new Date().toISOString();
-    const logEntry = { 
-      timestamp, 
-      level, 
+    const logEntry = {
+      timestamp,
+      level,
       message,
       context,
       service: 'quantum-crypto'
     };
     this.logs.push(logEntry);
-    
-    // Update metrics
+
     if (level === 'ERROR') this.metrics.errors++;
-    
-    // Keep only last 1000 logs to prevent memory issues
+
     if (this.logs.length > 1000) {
       this.logs = this.logs.slice(-1000);
     }
-    
-    // Structured logging for production
+
     console.log(JSON.stringify(logEntry));
-    
-    // Alert on critical errors
+
     if (level === 'ERROR' && context.operation === 'encryption') {
       this._triggerAlert('encryption_failure', message, context);
     }
   }
-  
+
   _triggerAlert(type, message, context) {
     const alert = {
       type,
@@ -105,40 +101,36 @@ class MonitoringService {
       timestamp: new Date().toISOString(),
       service: 'quantum-crypto'
     };
-    
-    // In production, this would send to alerting system
+
     console.error('🚨 SECURITY ALERT:', JSON.stringify(alert));
   }
-  
+
   recordOperation(operation, duration, success = true) {
     this.metrics[`${operation}Operations`]++;
-    
     if (!success) {
       this.metrics.errors++;
     }
-    
-    // Alert on slow operations
     if (duration > this.alertThresholds.operationTime) {
-      this.log('WARN', `Slow ${operation} operation`, { 
-        operation, 
-        duration, 
-        threshold: this.alertThresholds.operationTime 
+      this.log('WARN', `Slow ${operation} operation`, {
+        operation,
+        duration,
+        threshold: this.alertThresholds.operationTime
       });
     }
   }
-  
+
   getLogs(limit = 100) {
     return this.logs.slice(-limit);
   }
-  
+
   getMetrics() {
     const uptime = Date.now() - this.metrics.startTime;
-    const totalOperations = this.metrics.encryptionOperations + 
-                          this.metrics.decryptionOperations + 
-                          this.metrics.keyGenerations;
-    
+    const totalOperations = this.metrics.encryptionOperations +
+      this.metrics.decryptionOperations +
+      this.metrics.keyGenerations;
+
     const errorRate = totalOperations > 0 ? this.metrics.errors / totalOperations : 0;
-    
+
     return {
       ...this.metrics,
       uptime,
@@ -155,7 +147,7 @@ class AuditLogger {
     this.auditTrail = [];
     this.retentionDays = 90;
   }
-  
+
   async logSecurityEvent(event) {
     const auditEntry = {
       ...event,
@@ -168,29 +160,24 @@ class AuditLogger {
       service: 'quantum-crypto',
       version: '1.0.0'
     };
-    
+
     this.auditTrail.push(auditEntry);
-    
-    // Automatic cleanup of old entries
     this._cleanupOldEntries();
-    
-    // In production, this would also write to secure audit storage
     console.log('🔍 AUDIT:', JSON.stringify(auditEntry));
-    
     return auditEntry;
   }
-  
+
   _cleanupOldEntries() {
     const cutoffTime = Date.now() - (this.retentionDays * 24 * 60 * 60 * 1000);
-    this.auditTrail = this.auditTrail.filter(entry => 
+    this.auditTrail = this.auditTrail.filter(entry =>
       new Date(entry.timestamp) >= new Date(cutoffTime)
     );
   }
-  
+
   getAuditTrail(limit = 100) {
     return this.auditTrail.slice(-limit);
   }
-  
+
   searchAuditEvents(criteria) {
     return this.auditTrail.filter(event => {
       return Object.keys(criteria).every(key => {
@@ -200,6 +187,72 @@ class AuditLogger {
         return event[key] === criteria[key];
       });
     });
+  }
+}
+
+/**
+ * Database adapter shim for ArielSQLiteEngine
+ * - Normalizes execute/query across different engine interfaces
+ * - Adds queryOne for single-row reads
+ * - Ensures returned shapes match call-site expectations
+ */
+class DBAdapter {
+  constructor(engine, monitor) {
+    this.engine = engine;
+    this.monitor = monitor;
+  }
+
+  async connect() {
+    if (typeof this.engine.connect === 'function') {
+      return this.engine.connect();
+    }
+    // If engine auto-connects, log for visibility
+    this.monitor?.log('WARN', 'DB engine has no connect(), assuming auto-connected');
+    return true;
+  }
+
+  async close() {
+    if (typeof this.engine.close === 'function') {
+      return this.engine.close();
+    }
+    return true;
+  }
+
+  async execute(sql, params = []) {
+    if (typeof this.engine.execute === 'function') {
+      return this.engine.execute(sql, params);
+    }
+    if (typeof this.engine.run === 'function') {
+      return this.engine.run(sql, params);
+    }
+    throw new Error('DBAdapter: No execute/run method available on engine');
+  }
+
+  async query(sql, params = []) {
+    // Prefer engine.query, else engine.all, else engine.get for single row
+    if (typeof this.engine.query === 'function') {
+      const res = await this.engine.query(sql, params);
+      // Some engines return array, others return object for SELECT COUNT(*)
+      return res;
+    }
+    if (typeof this.engine.all === 'function') {
+      const rows = await this.engine.all(sql, params);
+      return rows || [];
+    }
+    if (typeof this.engine.get === 'function') {
+      const row = await this.engine.get(sql, params);
+      return row ? [row] : [];
+    }
+    throw new Error('DBAdapter: No query/all/get method available on engine');
+  }
+
+  async queryOne(sql, params = []) {
+    const res = await this.query(sql, params);
+    if (Array.isArray(res)) {
+      return res[0] || null;
+    }
+    // Some engines might return a single object
+    return res || null;
   }
 }
 
@@ -216,16 +269,17 @@ export class EnterpriseQuantumResistantCrypto {
       ...config
     };
 
-    // FIXED: Use proper database initialization with correct interface
-    this.db = new ArielSQLiteEngine({
+    // Proper database initialization with a compatibility adapter
+    const engine = new ArielSQLiteEngine({
       dbPath: this.config.databasePath,
       autoBackup: true,
       walMode: true
     });
-    
     this.monitoring = new MonitoringService();
+    this.db = new DBAdapter(engine, this.monitoring);
+
     this.auditLogger = new AuditLogger();
-    
+
     this.keyDerivationSalt = randomBytes(32);
     this.keyCache = new Map();
     this.initialized = false;
@@ -233,11 +287,9 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async initialize() {
-    // Prevent multiple simultaneous initializations
     if (this.initializationPromise) {
       return this.initializationPromise;
     }
-
     this.initializationPromise = this._initializeInternal();
     return this.initializationPromise;
   }
@@ -245,54 +297,49 @@ export class EnterpriseQuantumResistantCrypto {
   async _initializeInternal() {
     try {
       this.monitoring.log('INFO', 'Starting QuantumResistantCrypto initialization');
-      
-      // FIXED: Use proper database connection method
+
       await this.db.connect();
       this.monitoring.log('INFO', 'Database connected successfully');
-      
-      // Create enterprise-grade database schema
+
       await this.createEnterpriseDatabaseSchema();
       this.monitoring.log('INFO', 'Database schema created successfully');
-      
-      // Generate or load master keys
+
       await this.initializeMasterKeys();
       this.monitoring.log('INFO', 'Master keys initialized successfully');
-      
-      // Start key rotation scheduler
+
       this.startKeyRotationScheduler();
       this.monitoring.log('INFO', 'Key rotation scheduler started');
-      
+
       this.initialized = true;
-      
+
       await this.auditLogger.logSecurityEvent({
         eventType: 'system_initialized',
         severity: 'low',
         description: 'QuantumResistantCrypto system initialized successfully',
         keyId: null
       });
-      
+
       this.monitoring.log('INFO', 'QuantumResistantCrypto initialized successfully');
-      
+
       return true;
     } catch (error) {
       this.monitoring.log('ERROR', `Failed to initialize QuantumResistantCrypto: ${error.message}`, {
         stack: error.stack,
         operation: 'initialization'
       });
-      
+
       await this.auditLogger.logSecurityEvent({
         eventType: 'system_initialization_failed',
         severity: 'critical',
         description: `QuantumResistantCrypto initialization failed: ${error.message}`,
         keyId: null
       });
-      
+
       throw error;
     }
   }
 
   async createEnterpriseDatabaseSchema() {
-    // Enhanced enterprise schema with additional security features
     const tables = [
       `CREATE TABLE IF NOT EXISTS quantum_keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -361,11 +408,9 @@ export class EnterpriseQuantumResistantCrypto {
     ];
 
     for (const tableSql of tables) {
-      // FIXED: Use execute instead of run
       await this.db.execute(tableSql);
     }
 
-    // Create indexes for performance
     const indexes = [
       'CREATE INDEX IF NOT EXISTS idx_quantum_keys_key_id ON quantum_keys(key_id)',
       'CREATE INDEX IF NOT EXISTS idx_quantum_keys_status ON quantum_keys(status)',
@@ -377,7 +422,6 @@ export class EnterpriseQuantumResistantCrypto {
     ];
 
     for (const indexSql of indexes) {
-      // FIXED: Use execute instead of run
       await this.db.execute(indexSql);
     }
 
@@ -385,26 +429,51 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async initializeMasterKeys() {
-    // Check if master keys exist
-    // FIXED: Use query instead of all
+    // Use adapter to fetch all active master keys
     const existingMasterKeys = await this.db.query(
       "SELECT * FROM quantum_keys WHERE key_type = 'master' AND status = 'active'"
     );
 
-    if (existingMasterKeys.length === 0) {
+    if (Array.isArray(existingMasterKeys) && existingMasterKeys.length === 0) {
       this.monitoring.log('INFO', 'No existing master keys found, generating new ones');
-      // Generate new master keys
       await this.generateMasterKeys();
-    } else {
+    } else if (Array.isArray(existingMasterKeys)) {
       this.monitoring.log('INFO', `Found ${existingMasterKeys.length} existing master keys, loading into cache`);
-      // Load existing master keys into cache
       for (const key of existingMasterKeys) {
+        let decrypted = null;
+        try {
+          decrypted = await this.decryptWithLocalKey(key.private_key_encrypted);
+        } catch (e) {
+          this.monitoring.log('ERROR', `Failed to decrypt master key ${key.key_id}: ${e.message}`);
+          continue;
+        }
         this.keyCache.set(key.key_id, {
           publicKey: key.public_key,
-          privateKey: await this.decryptWithLocalKey(key.private_key_encrypted),
+          privateKey: decrypted,
           algorithm: key.algorithm,
-          type: key.key_type
+          type: key.key_type,
+          expiresAt: key.expires_at
         });
+      }
+    } else {
+      // Non-array shape (defensive) -> treat as single record if present
+      const key = existingMasterKeys;
+      if (key && key.key_id) {
+        let decrypted = null;
+        try {
+          decrypted = await this.decryptWithLocalKey(key.private_key_encrypted);
+        } catch (e) {
+          this.monitoring.log('ERROR', `Failed to decrypt master key ${key.key_id}: ${e.message}`);
+        }
+        this.keyCache.set(key.key_id, {
+          publicKey: key.public_key,
+          privateKey: decrypted,
+          algorithm: key.algorithm,
+          type: key.key_type,
+          expiresAt: key.expires_at
+        });
+      } else {
+        await this.generateMasterKeys();
       }
     }
   }
@@ -412,16 +481,15 @@ export class EnterpriseQuantumResistantCrypto {
   async generateMasterKeys() {
     try {
       this.monitoring.log('INFO', 'Generating new master keys');
-      
-      // Generate multiple master keys for different purposes
+
       const encryptionMasterKey = await this.generateKeyPair(
-        ALGORITHMS.KYBER_1024, 
+        ALGORITHMS.KYBER_1024,
         KEY_TYPES.MASTER,
         'encryption_master'
       );
 
       const signatureMasterKey = await this.generateKeyPair(
-        ALGORITHMS.DILITHIUM_5, 
+        ALGORITHMS.DILITHIUM_5,
         KEY_TYPES.MASTER,
         'signature_master'
       );
@@ -445,13 +513,12 @@ export class EnterpriseQuantumResistantCrypto {
 
   async generateKeyPair(algorithm = ALGORITHMS.KYBER_1024, keyType = KEY_TYPES.ENCRYPTION, purpose = 'general') {
     const startTime = Date.now();
-    
+
     try {
       let publicKey, privateKey;
 
       switch (algorithm) {
-        case ALGORITHMS.KYBER_1024:
-          // Kyber for encryption
+        case ALGORITHMS.KYBER_1024: {
           if (!kyberKeyPair) {
             throw new Error('Kyber key pair generation not available');
           }
@@ -459,9 +526,9 @@ export class EnterpriseQuantumResistantCrypto {
           publicKey = kyberKeys.publicKey.toString('base64');
           privateKey = kyberKeys.privateKey.toString('base64');
           break;
+        }
 
-        case ALGORITHMS.DILITHIUM_5:
-          // Dilithium for signatures
+        case ALGORITHMS.DILITHIUM_5: {
           if (!dilithiumKeyPair) {
             throw new Error('Dilithium key pair generation not available');
           }
@@ -469,22 +536,16 @@ export class EnterpriseQuantumResistantCrypto {
           publicKey = dilithiumKeys.publicKey.toString('base64');
           privateKey = dilithiumKeys.privateKey.toString('base64');
           break;
+        }
 
         default:
           throw new Error(`Unsupported algorithm: ${algorithm}`);
       }
 
-      // Generate unique key ID
       const keyId = this.generateKeyId();
-
-      // Encrypt private key using local master key
       const encryptedPrivateKey = await this.encryptPrivateKey(privateKey, purpose);
-
-      // Calculate expiration date (90 days from now)
       const expiresAt = new Date(Date.now() + this.config.keyRotationInterval).toISOString();
 
-      // Store key in database
-      // FIXED: Use execute instead of run
       await this.db.execute(
         `INSERT INTO quantum_keys 
          (key_id, public_key, private_key_encrypted, key_type, algorithm, key_size, status, expires_at, metadata) 
@@ -492,7 +553,6 @@ export class EnterpriseQuantumResistantCrypto {
         [keyId, publicKey, encryptedPrivateKey, keyType, algorithm, this.getKeySize(algorithm), KEY_STATUS.ACTIVE, expiresAt, JSON.stringify({ purpose })]
       );
 
-      // Cache the key
       this.keyCache.set(keyId, {
         publicKey,
         privateKey,
@@ -503,8 +563,7 @@ export class EnterpriseQuantumResistantCrypto {
 
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('keyGeneration', operationTime, true);
-      
-      // Log the operation
+
       await this.logKeyUsage(keyId, 'generate', 'success', { algorithm, keyType, purpose, operationTime });
 
       this.monitoring.log('INFO', `Key pair generated: ${keyId} (${algorithm})`, {
@@ -525,7 +584,7 @@ export class EnterpriseQuantumResistantCrypto {
     } catch (error) {
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('keyGeneration', operationTime, false);
-      
+
       this.monitoring.log('ERROR', `Failed to generate key pair: ${error.message}`, {
         algorithm,
         keyType,
@@ -538,7 +597,6 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async encryptPrivateKey(privateKey, purpose) {
-    // Use local master key derivation
     const masterKey = this.getMasterKeyForPurpose(purpose);
     return this.encryptWithAES(privateKey, masterKey);
   }
@@ -549,34 +607,31 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async decryptWithLocalKey(encryptedPrivateKey) {
-    // Fallback to local decryption
     const masterKey = this.getMasterKeyForPurpose('general');
     return this.decryptWithAES(encryptedPrivateKey, masterKey);
   }
 
   getMasterKeyForPurpose(purpose) {
-    // Derive purpose-specific master key from environment master key
     const masterKey = process.env.QR_MASTER_KEY;
     if (!masterKey) {
       throw new Error('QR_MASTER_KEY environment variable not set');
     }
 
     return scryptSync(
-      masterKey, 
-      Buffer.concat([this.keyDerivationSalt, Buffer.from(purpose)]), 
-      this.config.keyDerivationIterations, 
+      masterKey,
+      Buffer.concat([this.keyDerivationSalt, Buffer.from(purpose)]),
+      this.config.keyDerivationIterations,
       this.config.keyDerivationKeyLength
     );
   }
 
   generateKeyId() {
-    // Generate cryptographically secure key ID
     return createHash('sha256')
       .update(randomBytes(32))
       .update(Date.now().toString())
       .update(process.pid.toString())
       .digest('hex')
-      .slice(0, 32); // 32-character key ID
+      .slice(0, 32);
   }
 
   getKeySize(algorithm) {
@@ -586,19 +641,19 @@ export class EnterpriseQuantumResistantCrypto {
       [ALGORITHMS.AES_256_GCM]: 256,
       [ALGORITHMS.CHACHA20_POLY1305]: 256
     };
-    
+
     return keySizes[algorithm] || 0;
   }
 
   async encryptData(data, publicKeyBase64, algorithm = ALGORITHMS.KYBER_1024) {
     const startTime = Date.now();
-    
+
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
       let encryptedData;
 
       switch (algorithm) {
-        case ALGORITHMS.KYBER_1024:
+        case ALGORITHMS.KYBER_1024: {
           if (!kyberEncrypt) {
             throw new Error('Kyber encryption not available');
           }
@@ -606,6 +661,7 @@ export class EnterpriseQuantumResistantCrypto {
           const ciphertext = await kyberEncrypt(publicKey, dataBuffer);
           encryptedData = ciphertext.toString('base64');
           break;
+        }
 
         default:
           throw new Error(`Unsupported encryption algorithm: ${algorithm}`);
@@ -613,13 +669,12 @@ export class EnterpriseQuantumResistantCrypto {
 
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('encryption', operationTime, true);
-      
-      // Log encryption operation
+
       await this.logEncryptionOperation(
-        'encrypt', 
-        algorithm, 
-        Buffer.from(JSON.stringify(data)).length, 
-        operationTime, 
+        'encrypt',
+        algorithm,
+        Buffer.from(JSON.stringify(data)).length,
+        operationTime,
         true
       );
 
@@ -628,13 +683,12 @@ export class EnterpriseQuantumResistantCrypto {
     } catch (error) {
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('encryption', operationTime, false);
-      
-      // Log failed operation
+
       await this.logEncryptionOperation(
-        'encrypt', 
-        algorithm, 
-        Buffer.from(JSON.stringify(data)).length, 
-        operationTime, 
+        'encrypt',
+        algorithm,
+        Buffer.from(JSON.stringify(data)).length,
+        operationTime,
         false,
         error.message
       );
@@ -650,31 +704,31 @@ export class EnterpriseQuantumResistantCrypto {
 
   async decryptData(encryptedData, keyId) {
     const startTime = Date.now();
-    
+
     try {
-      // Get private key from cache or database
       let privateKey;
       if (this.keyCache.has(keyId)) {
         privateKey = this.keyCache.get(keyId).privateKey;
       } else {
         const keyRecord = await this.getKeyRecord(keyId);
-        privateKey = await this.decryptPrivateKey(keyRecord.private_key_encrypted, keyRecord.metadata?.purpose || 'general');
+        const metadata = keyRecord.metadata ? safeParseJson(keyRecord.metadata) : {};
+        privateKey = await this.decryptPrivateKey(keyRecord.private_key_encrypted, metadata?.purpose || 'general');
       }
 
       const encryptedBuffer = Buffer.from(encryptedData, 'base64');
       let decryptedData;
 
-      // Determine algorithm based on key type or other criteria
       const algorithm = await this.getKeyAlgorithm(keyId);
 
       switch (algorithm) {
-        case ALGORITHMS.KYBER_1024:
+        case ALGORITHMS.KYBER_1024: {
           if (!kyberDecrypt) {
             throw new Error('Kyber decryption not available');
           }
           const decrypted = await kyberDecrypt(Buffer.from(privateKey, 'base64'), encryptedBuffer);
           decryptedData = JSON.parse(decrypted.toString());
           break;
+        }
 
         default:
           throw new Error(`Unsupported algorithm for decryption: ${algorithm}`);
@@ -682,13 +736,12 @@ export class EnterpriseQuantumResistantCrypto {
 
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('decryption', operationTime, true);
-      
-      // Log successful operation
+
       await this.logEncryptionOperation(
-        'decrypt', 
-        algorithm, 
-        encryptedBuffer.length, 
-        operationTime, 
+        'decrypt',
+        algorithm,
+        encryptedBuffer.length,
+        operationTime,
         true
       );
 
@@ -699,13 +752,12 @@ export class EnterpriseQuantumResistantCrypto {
     } catch (error) {
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('decryption', operationTime, false);
-      
-      // Log failed operation
+
       await this.logEncryptionOperation(
-        'decrypt', 
-        'unknown', 
-        Buffer.from(encryptedData, 'base64').length, 
-        operationTime, 
+        'decrypt',
+        'unknown',
+        Buffer.from(encryptedData, 'base64').length,
+        operationTime,
         false,
         error.message
       );
@@ -723,20 +775,20 @@ export class EnterpriseQuantumResistantCrypto {
 
   async signData(data, keyId, algorithm = ALGORITHMS.DILITHIUM_5) {
     const startTime = Date.now();
-    
+
     try {
-      // Get private key
       const privateKey = await this.getPrivateKey(keyId);
       const dataBuffer = Buffer.from(JSON.stringify(data));
       let signature;
 
       switch (algorithm) {
-        case ALGORITHMS.DILITHIUM_5:
+        case ALGORITHMS.DILITHIUM_5: {
           if (!dilithiumSign) {
             throw new Error('Dilithium signing not available');
           }
           signature = await dilithiumSign(Buffer.from(privateKey, 'base64'), dataBuffer);
           break;
+        }
 
         default:
           throw new Error(`Unsupported signature algorithm: ${algorithm}`);
@@ -744,7 +796,7 @@ export class EnterpriseQuantumResistantCrypto {
 
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('signature', operationTime, true);
-      
+
       await this.logKeyUsage(keyId, 'sign', 'success', { algorithm, operationTime });
 
       return signature.toString('base64');
@@ -752,7 +804,7 @@ export class EnterpriseQuantumResistantCrypto {
     } catch (error) {
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('signature', operationTime, false);
-      
+
       await this.logKeyUsage(keyId, 'sign', 'failure', { error: error.message });
 
       this.monitoring.log('ERROR', `Signing failed for key ${keyId}: ${error.message}`, {
@@ -767,21 +819,21 @@ export class EnterpriseQuantumResistantCrypto {
 
   async verifySignature(data, signature, keyId, algorithm = ALGORITHMS.DILITHIUM_5) {
     const startTime = Date.now();
-    
+
     try {
-      // Get public key
       const publicKey = await this.getPublicKey(keyId);
       const dataBuffer = Buffer.from(JSON.stringify(data));
       const signatureBuffer = Buffer.from(signature, 'base64');
       let isValid;
 
       switch (algorithm) {
-        case ALGORITHMS.DILITHIUM_5:
+        case ALGORITHMS.DILITHIUM_5: {
           if (!dilithiumVerify) {
             throw new Error('Dilithium verification not available');
           }
           isValid = await dilithiumVerify(Buffer.from(publicKey, 'base64'), dataBuffer, signatureBuffer);
           break;
+        }
 
         default:
           throw new Error(`Unsupported verification algorithm: ${algorithm}`);
@@ -789,11 +841,11 @@ export class EnterpriseQuantumResistantCrypto {
 
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('verification', operationTime, isValid);
-      
-      await this.logKeyUsage(keyId, 'verify', isValid ? 'success' : 'failure', { 
-        algorithm, 
+
+      await this.logKeyUsage(keyId, 'verify', isValid ? 'success' : 'failure', {
+        algorithm,
         operationTime,
-        result: isValid 
+        result: isValid
       });
 
       return isValid;
@@ -801,7 +853,7 @@ export class EnterpriseQuantumResistantCrypto {
     } catch (error) {
       const operationTime = Date.now() - startTime;
       this.monitoring.recordOperation('verification', operationTime, false);
-      
+
       await this.logKeyUsage(keyId, 'verify', 'failure', { error: error.message });
 
       this.monitoring.log('ERROR', `Signature verification failed for key ${keyId}: ${error.message}`, {
@@ -824,12 +876,12 @@ export class EnterpriseQuantumResistantCrypto {
       throw new Error(`Key not found: ${keyId}`);
     }
 
+    const metadata = keyRecord.metadata ? safeParseJson(keyRecord.metadata) : {};
     const privateKey = await this.decryptPrivateKey(
-      keyRecord.private_key_encrypted, 
-      keyRecord.metadata?.purpose || 'general'
+      keyRecord.private_key_encrypted,
+      metadata?.purpose || 'general'
     );
 
-    // Cache the decrypted key
     this.keyCache.set(keyId, {
       publicKey: keyRecord.public_key,
       privateKey,
@@ -855,17 +907,16 @@ export class EnterpriseQuantumResistantCrypto {
   }
 
   async getKeyRecord(keyId) {
-    // FIXED: Use query instead of get
-    const result = await this.db.query(
+    const row = await this.db.queryOne(
       "SELECT * FROM quantum_keys WHERE key_id = ? AND status = 'active'",
       [keyId]
     );
 
-    if (!result) {
+    if (!row) {
       throw new Error(`Active key not found: ${keyId}`);
     }
 
-    return result;
+    return row;
   }
 
   async getKeyAlgorithm(keyId) {
@@ -875,7 +926,6 @@ export class EnterpriseQuantumResistantCrypto {
 
   async logKeyUsage(keyId, operationType, status, details = {}) {
     try {
-      // FIXED: Use execute instead of run
       await this.db.execute(
         `INSERT INTO key_usage_log (key_id, operation_type, operation_status, details) 
          VALUES (?, ?, ?, ?)`,
@@ -897,7 +947,6 @@ export class EnterpriseQuantumResistantCrypto {
         .update(Date.now().toString())
         .digest('hex');
 
-      // FIXED: Use execute instead of run
       await this.db.execute(
         `INSERT INTO encryption_operations 
          (operation_id, key_id, algorithm, data_size, operation_time_ms, success, error_message) 
@@ -911,7 +960,6 @@ export class EnterpriseQuantumResistantCrypto {
 
   // ENHANCED KEY ROTATION SYSTEM
   startKeyRotationScheduler() {
-    // Check for key rotation every hour
     this.rotationInterval = setInterval(async () => {
       try {
         await this.checkAndRotateKeys();
@@ -925,19 +973,17 @@ export class EnterpriseQuantumResistantCrypto {
 
   async checkAndRotateKeys() {
     try {
-      // Find keys that need rotation
-      // FIXED: Use query instead of all
       const keysToRotate = await this.db.query(
         `SELECT * FROM quantum_keys 
          WHERE status = 'active' 
-         AND expires_at <= datetime('now', '+7 days')` // Rotate keys expiring in next 7 days
+         AND expires_at <= datetime('now', '+7 days')`
       );
 
       for (const key of keysToRotate) {
         await this.rotateKey(key.key_id, 'scheduled_rotation');
       }
 
-      if (keysToRotate.length > 0) {
+      if (Array.isArray(keysToRotate) && keysToRotate.length > 0) {
         this.monitoring.log('INFO', `Rotated ${keysToRotate.length} keys`, {
           rotatedKeys: keysToRotate.map(k => k.key_id),
           operation: 'scheduled_rotation'
@@ -953,37 +999,31 @@ export class EnterpriseQuantumResistantCrypto {
 
   async rotateKey(keyId, reason = 'scheduled_rotation') {
     const startTime = Date.now();
-    
+
     try {
       const oldKey = await this.getKeyRecord(keyId);
-      
-      // Generate new key pair with same parameters
+
       const newKey = await this.generateKeyPair(
         oldKey.algorithm,
         oldKey.key_type,
-        oldKey.metadata?.purpose || 'general'
+        (oldKey.metadata && safeParseJson(oldKey.metadata)?.purpose) || 'general'
       );
 
-      // Mark old key as expired
-      // FIXED: Use execute instead of run
       await this.db.execute(
         "UPDATE quantum_keys SET status = 'expired', last_rotated = CURRENT_TIMESTAMP, rotation_count = rotation_count + 1 WHERE key_id = ?",
         [keyId]
       );
 
-      // Log rotation in history
-      // FIXED: Use execute instead of run
       await this.db.execute(
         `INSERT INTO key_rotation_history (old_key_id, new_key_id, rotation_reason, initiated_by) 
          VALUES (?, ?, ?, ?)`,
         [keyId, newKey.keyId, reason, 'system']
       );
 
-      // Remove old key from cache
       this.keyCache.delete(keyId);
 
       const operationTime = Date.now() - startTime;
-      
+
       await this.auditLogger.logSecurityEvent({
         eventType: 'key_rotated',
         severity: 'medium',
@@ -1005,7 +1045,7 @@ export class EnterpriseQuantumResistantCrypto {
 
     } catch (error) {
       const operationTime = Date.now() - startTime;
-      
+
       this.monitoring.log('ERROR', `Key rotation failed for ${keyId}: ${error.message}`, {
         keyId,
         reason,
@@ -1019,13 +1059,11 @@ export class EnterpriseQuantumResistantCrypto {
   // ENTERPRISE SECURITY METHODS
   async revokeKey(keyId, reason = 'security_concern') {
     try {
-      // FIXED: Use execute instead of run
       await this.db.execute(
         "UPDATE quantum_keys SET status = 'compromised' WHERE key_id = ?",
         [keyId]
       );
 
-      // Remove from cache
       this.keyCache.delete(keyId);
 
       await this.auditLogger.logSecurityEvent({
@@ -1055,10 +1093,15 @@ export class EnterpriseQuantumResistantCrypto {
 
   async getSystemHealth() {
     const metrics = this.monitoring.getMetrics();
-    const totalKeys = await this.getTotalKeyCount();
-    const activeKeys = await this.getActiveKeyCount();
-    const expiredKeys = await this.getExpiredKeyCount();
-    const recentErrors = await this.getRecentErrorCount();
+    const totalKeysRow = await this.db.queryOne("SELECT COUNT(*) as count FROM quantum_keys");
+    const activeKeysRow = await this.db.queryOne("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'active'");
+    const expiredKeysRow = await this.db.queryOne("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'expired'");
+    const recentErrorsRow = await this.db.queryOne(
+      `SELECT COUNT(*) as count FROM key_usage_log 
+       WHERE operation_status = 'failure' 
+       AND timestamp >= datetime('now', ?)`,
+      [`-24 hours`]
+    );
 
     return {
       status: metrics.operational ? 'healthy' : 'degraded',
@@ -1066,43 +1109,14 @@ export class EnterpriseQuantumResistantCrypto {
       totalOperations: metrics.totalOperations,
       errorRate: metrics.errorRate,
       keys: {
-        total: totalKeys,
-        active: activeKeys,
-        expired: expiredKeys
+        total: totalKeysRow?.count ?? 0,
+        active: activeKeysRow?.count ?? 0,
+        expired: expiredKeysRow?.count ?? 0
       },
-      recentErrors,
+      recentErrors: recentErrorsRow?.count ?? 0,
       database: true,
       timestamp: new Date().toISOString()
     };
-  }
-
-  async getTotalKeyCount() {
-    // FIXED: Use query instead of get
-    const result = await this.db.query("SELECT COUNT(*) as count FROM quantum_keys");
-    return result.count;
-  }
-
-  async getActiveKeyCount() {
-    // FIXED: Use query instead of get
-    const result = await this.db.query("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'active'");
-    return result.count;
-  }
-
-  async getExpiredKeyCount() {
-    // FIXED: Use query instead of get
-    const result = await this.db.query("SELECT COUNT(*) as count FROM quantum_keys WHERE status = 'expired'");
-    return result.count;
-  }
-
-  async getRecentErrorCount(hours = 24) {
-    // FIXED: Use query instead of get
-    const result = await this.db.query(
-      `SELECT COUNT(*) as count FROM key_usage_log 
-       WHERE operation_status = 'failure' 
-       AND timestamp >= datetime('now', ?)`,
-      [`-${hours} hours`]
-    );
-    return result.count;
   }
 
   // UTILITY METHODS
@@ -1124,23 +1138,20 @@ export class EnterpriseQuantumResistantCrypto {
     return decipher.update(ciphertext, null, 'utf8') + decipher.final('utf8');
   }
 
-  // CLEANUP AND SHUTDOWN
   async shutdown() {
     try {
       if (this.rotationInterval) {
         clearInterval(this.rotationInterval);
       }
 
-      // Clear key cache
       this.keyCache.clear();
 
-      // Close database connection
       if (this.db) {
         await this.db.close();
       }
 
       this.monitoring.log('INFO', 'QuantumResistantCrypto shutdown completed');
-      
+
       await this.auditLogger.logSecurityEvent({
         eventType: 'system_shutdown',
         severity: 'low',
@@ -1157,11 +1168,20 @@ export class EnterpriseQuantumResistantCrypto {
   }
 }
 
+// Safe JSON parse utility
+function safeParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
 // Export the main class and utilities
 export { EnterpriseQuantumResistantCrypto as QuantumResistantCrypto };
-export { 
-  ALGORITHMS, 
-  KEY_TYPES, 
+export {
+  ALGORITHMS,
+  KEY_TYPES,
   KEY_STATUS,
   MonitoringService,
   AuditLogger
