@@ -5,7 +5,11 @@ import { ethers } from 'ethers';
 import process from 'process';
 
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
-import { SovereignBrain } from './core/sovereign-brain.js';
+import { ProductionSovereignCore, 
+    EnhancedMainnetOrchestrator, 
+    EnhancedRevenueEngine, 
+    EnhancedBlockchainConnector, 
+    LIVE_REVENUE_CONTRACTS } from './core/sovereign-brain.js';
 import { BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
