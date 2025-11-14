@@ -1,404 +1,274 @@
-// arielsql_suite/main.js — BSFM PRODUCTION CLUSTER ENTRY POINT (MAINNET PURE + UNBREAKABLE)
-// 🔥 UPDATED: PROPER INTEGRATION WITH SOVEREIGN-BRAIN.JS
-// 🎯 GUARANTEE: Live Mainnet + Real Revenue Generation
-
-import process from 'process';
-import cluster from 'cluster';
-import os from 'os';
+// arielsql_suite/main.js
 import express from 'express';
-import http from 'http';
+import cors from 'cors';
+import { ethers } from 'ethers';
+import process from 'process';
 
-// CRITICAL IMPORTS from fixed core/sovereign-brain.js
-import {
-    ProductionSovereignCore, 
-    EnhancedMainnetOrchestrator, 
-    EnhancedRevenueEngine, 
-    EnhancedBlockchainConnector, 
-    LIVE_REVENUE_CONTRACTS
-} from '../core/sovereign-brain.js';
+// 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
+import { SovereignBrain } from './core/sovereign-brain.js';
+import { BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
-// 1. UNBREAKABLE CORE CONFIGURATION & SERVICE REGISTRY
+// PRODUCTION CONFIGURATION - UPDATED FOR CONTRACT UPGRADE
 // =========================================================================
-
 const CONFIG = {
-    PRIVATE_KEY: process.env.MAINNET_PRIVATE_KEY || process.env.PRIVATE_KEY,
-    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
+    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET ||
+    "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+    NETWORK: 'mainnet',
+    RPC_URLS: [
+        "https://eth.llamarpc.com", 
+        "https://rpc.ankr.com/eth", 
+        "https://cloudflare-eth.com" 
+    ],
     PORT: process.env.PORT || 10000,
-    NODE_ENV: process.env.NODE_ENV || 'production',
+    PRIVATE_KEY: process.env.PRIVATE_KEY,
+    BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS || null,
+    // USDC Contract for gas payments
+    USDC_ADDRESS: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    UNISWAP_ROUTER: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
 };
 
-console.log('🔧 CONFIG CHECK:', {
-    hasPrivateKey: !!CONFIG.PRIVATE_KEY,
-    privateKeyLength: CONFIG.PRIVATE_KEY?.length,
-    sovereignWallet: CONFIG.SOVEREIGN_WALLET
-});
+// Global state variables
+let bwaeziKernelAddress = CONFIG.BWAEZI_KERNEL_ADDRESS;
+let provider = null;
+let wallet = null;
+let sovereignBrain = null;
 
-const SERVICE_REGISTRY = new Map();
-const emergencyAgents = new Map();
-
-// =========================================================================
-// 2. COMPATIBILITY WRAPPER CLASSES FOR SOVEREIGN-BRAIN.JS
-// =========================================================================
-
-class ArielSQLiteEngine {
-    constructor() { 
-        this.id = 'ArielDB';
-        this.initialized = false;
-    }
-    async initialize() {
-        console.log(`✅ ArielSQLiteEngine initialized (dbPath: ./data/ariel/transactions.db)`);
-        this.initialized = true;
-    }
-}
-
-class AutonomousAIEngine {
-    constructor() { 
-        this.id = 'AI-' + Math.random().toString(36).substr(2, 9);
-        this.initialized = false;
-    }
-    async initialize() {
-        console.log(`🧠 Autonomous AI Engine ${this.id} activated.`);
-        this.initialized = true;
-    }
-}
-
-class BrianNwaezikePayoutSystem {
-    constructor(config) { 
-        this.config = config;
-        this.id = 'PayoutSystem';
-        this.initialized = false;
-        this.generatedPayouts = 0;
-    }
-    async initialize() {
-        console.log("💰 Bwaezi Payout System Initialized and Wallets Ready.");
-        this.initialized = true;
-    }
-    
-    async generateRevenue(amount) {
-        this.generatedPayouts++;
-        console.log(`✅ Payout System: Processing real transaction for ${amount} BWAEZI... (Total: ${this.generatedPayouts})`);
-        return { 
-            success: true, 
-            txId: 'TX_' + Date.now(),
-            amount: amount,
-            totalPayouts: this.generatedPayouts
-        };
-    }
-
-    getStatus() {
-        return {
-            active: this.initialized,
-            totalPayouts: this.generatedPayouts
-        };
-    }
-}
-
-class EmergencyRevenueAgent {
-    constructor(id) {
-        this.id = id;
-        this.isGenerating = false;
-        this.generatedCount = 0;
-    }
-    
-    async activate(payoutSystem) {
-        if (this.isGenerating) return;
-        this.isGenerating = true;
-        console.log(`⚡ ${this.id}: ACTIVATED - Generating minimum viable revenue loop.`);
-
-        // Generate immediately
-        await payoutSystem.generateRevenue(1);
-        this.generatedCount++;
-
-        // Then set interval
-        setInterval(async () => {
-            try {
-                await payoutSystem.generateRevenue(1);
-                this.generatedCount++;
-            } catch (e) {
-                console.error(`❌ ${this.id} Revenue Loop Failed:`, e.message);
-            }
-        }, 30000); // 30-second cycle
-
-        return true;
-    }
-
-    getStatus() {
-        return {
-            active: this.isGenerating,
-            generatedCount: this.generatedCount
-        };
-    }
-}
+// Updated KERNEL ABI with approve() function
+const KERNEL_ABI_STUB = [
+    "function approve(address spender, uint256 amount) external returns (bool)",
+    "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
+    "function allowance(address owner, address spender) external view returns (uint256)",
+    "function activateModule(bytes32 moduleId) external",
+    "function AIExecutionRequested(string task, address requester) external",
+    "function logArbitrage(address user, uint256 bwaeziAmount, uint256 ethEquivalent) external",
+    "function transfer(address to, uint256 amount) external returns (bool)",
+    "function balanceOf(address owner) external view returns (uint256)"
+];
 
 // =========================================================================
-// 3. ENHANCED MAINNET ORCHESTRATION WITH SOVEREIGN-BRAIN.JS INTEGRATION
+// USDC TO ETH CONVERSION FOR GAS
 // =========================================================================
 
-const executeWorkerProcess = async () => {
-    console.log(`👷 WORKER PROCESS ${process.pid} - STARTING PURE MAINNET EXECUTION.`);
+class GasPaymentManager {
+    constructor(wallet, provider) {
+        this.wallet = wallet;
+        this.provider = provider;
+        this.usdcAddress = CONFIG.USDC_ADDRESS;
+        this.uniswapRouter = CONFIG.UNISWAP_ROUTER;
+    }
 
-    const services = [
-        { name: 'ArielSQLiteEngine', factory: async () => new ArielSQLiteEngine() },
-        { name: 'AutonomousAIEngine', factory: async () => new AutonomousAIEngine() },
-        { name: 'PayoutSystem', factory: async () => new BrianNwaezikePayoutSystem(CONFIG) },
-        { name: 'SovereignCore', factory: async () => new ProductionSovereignCore(CONFIG, SERVICE_REGISTRY.get('ArielSQLiteEngine')) },
-        { name: 'MainnetOrchestrator', factory: async () => new MainnetRevenueOrchestrator(CONFIG.PRIVATE_KEY, CONFIG.SOVEREIGN_WALLET) }
-    ];
+    // USDC ABI
+    getUSDCABI() {
+        return [
+            "function balanceOf(address account) external view returns (uint256)",
+            "function approve(address spender, uint256 amount) external returns (bool)",
+            "function transfer(address to, uint256 amount) external returns (bool)"
+        ];
+    }
 
-    // UNBREAKABLE INITIALIZATION
-    for (const service of services) {
-        SERVICE_REGISTRY.set(service.name, null);
+    // Uniswap V2 Router ABI
+    getUniswapABI() {
+        return [
+            "function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)"
+        ];
+    }
+
+    async getUSDCBalance() {
         try {
-            console.log(`🧠 Attempting to initialize ${service.name}...`);
-            const instance = await service.factory();
-            await instance.initialize();
-            SERVICE_REGISTRY.set(service.name, instance);
-
-            // CRITICAL: Orchestrate core services after SovereignCore is ready
-            if (service.name === 'SovereignCore') {
-                console.log('🔄 Orchestrating core services...');
-                instance.orchestrateCoreServices({
-                    revenueEngine: SERVICE_REGISTRY.get('MainnetOrchestrator'),
-                    payoutSystem: SERVICE_REGISTRY.get('PayoutSystem'),
-                    bwaeziChain: null // Add if available
-                });
-            }
-
-            console.log(`✅ ${service.name} is READY.`);
+            const usdcContract = new ethers.Contract(this.usdcAddress, this.getUSDCABI(), this.wallet);
+            const balance = await usdcContract.balanceOf(this.wallet.address);
+            return ethers.formatUnits(balance, 6); // USDC has 6 decimals
         } catch (error) {
-            SERVICE_REGISTRY.set(service.name, 'FAILED');
-            console.error(`❌ CRITICAL FAILURE BYPASS: ${service.name} failed. System moving on.`, error.message);
+            console.error("Error getting USDC balance:", error.message);
+            return "0";
         }
     }
 
-    // START PURE MAINNET REVENUE GENERATION LOOP
-    try {
-        const orchestrator = SERVICE_REGISTRY.get('MainnetOrchestrator');
-        if (orchestrator && typeof orchestrator.executeLiveRevenueCycle === 'function') {
-            console.log('🚀 STARTING PURE MAINNET REVENUE GENERATION');
-
-            const generateRevenue = async () => {
-                try {
-                    const result = await orchestrator.executeLiveRevenueCycle();
-                    if (result && result.totalRevenue > 0) {
-                        console.log(`💰 REAL REVENUE GENERATED: $${result.totalRevenue.toFixed(4)} from cycle`);
-                    } else if (result) {
-                        console.log(`⚠️ REVENUE CYCLE COMPLETED: $${result.totalRevenue.toFixed(4)} revenue`);
-                    }
-                    setTimeout(generateRevenue, 120000); // 2 minutes between cycles
-                } catch (error) {
-                    console.error('💥 Mainnet revenue cycle crashed, restarting in 30 seconds:', error.message);
-                    setTimeout(generateRevenue, 30000);
-                }
-            };
-
-            // Start first cycle immediately
-            setTimeout(generateRevenue, 10000);
-        } else {
-            console.error('❌ MainnetOrchestrator not available or missing executeLiveRevenueCycle method');
-        }
-    } catch (e) {
-        console.error('💥 Mainnet revenue startup failed:', e.message);
-    }
-
-    // EMERGENCY REVENUE GUARANTEE
-    try {
-        const payoutSystem = SERVICE_REGISTRY.get('PayoutSystem');
-        if (payoutSystem) {
-            const agent = new EmergencyRevenueAgent(`WORKER-${process.pid}`);
-            emergencyAgents.set(agent.id, agent);
-            await agent.activate(payoutSystem);
-            console.log(`👑 ULTIMATE GUARANTEE: Emergency Revenue Agent activated.`);
-        } else {
-            console.error('⚠️ EMERGENCY REVENUE GENERATION FAILED: PayoutSystem not ready.');
-        }
-    } catch (e) {
-        console.error('💥 FATAL ERROR during Emergency Agent activation:', e.message);
-    }
-};
-
-// =========================================================================
-// 4. ENHANCED HEALTH ENDPOINTS WITH SOVEREIGN-BRAIN.JS COMPATIBILITY
-// =========================================================================
-
-const guaranteePortBinding = async () => {
-    const app = express();
-    
-    // Enhanced health endpoint with sovereign-brain.js compatibility
-    app.get('/health', (req, res) => {
-        const orchestrator = SERVICE_REGISTRY.get('MainnetOrchestrator');
-        const sovereignCore = SERVICE_REGISTRY.get('SovereignCore');
-        const payoutSystem = SERVICE_REGISTRY.get('PayoutSystem');
-
-        // Get revenue stats with fallbacks for sovereign-brain.js structure
-        let revenueStats = { 
-            active: false, 
-            message: "Revenue engine not initialized",
-            totalRevenue: 0,
-            totalTransactions: 0,
-            liveMode: false
-        };
-
-        if (orchestrator && orchestrator.revenueEngine) {
-            const stats = orchestrator.revenueEngine.getRevenueStats();
-            revenueStats = {
-                active: stats.liveMode || false,
-                totalRevenue: stats.totalRevenue || 0,
-                totalTransactions: stats.totalTransactions || 0,
-                liveMode: stats.liveMode || false,
-                walletAddress: orchestrator.revenueEngine.account ? orchestrator.revenueEngine.account.address : null
-            };
-        }
-
-        // Get emergency agents status
-        const agentsStatus = Array.from(emergencyAgents.entries()).map(([id, agent]) => ({
-            id,
-            ...agent.getStatus()
-        }));
-
-        // Get core status with sovereign-brain.js compatibility
-        let coreStatus = 'FAILED';
-        if (sovereignCore) {
-            coreStatus = {
-                godMode: sovereignCore.godModeActive || false,
-                optimizationCycle: sovereignCore.optimizationCycle || 0,
-                initialized: sovereignCore.isInitialized || false
-            };
-        }
-
-        // Get payout system status
-        const payoutStatus = payoutSystem ? payoutSystem.getStatus() : { active: false, totalPayouts: 0 };
-
-        res.json({
-            status: 'PURE_MAINNET_MODE',
-            uptime: process.uptime(),
-            config: {
-                hasPrivateKey: !!CONFIG.PRIVATE_KEY,
-                privateKeyLength: CONFIG.PRIVATE_KEY?.length,
-                sovereignWallet: CONFIG.SOVEREIGN_WALLET
-            },
-            revenue: revenueStats,
-            core: coreStatus,
-            payouts: payoutStatus,
-            emergencyAgents: agentsStatus.length,
-            agentsStatus: agentsStatus,
-            services: Array.from(SERVICE_REGISTRY.entries()).map(([name, instance]) => ({
-                name,
-                status: instance === null ? 'PENDING' : 
-                       (instance === 'FAILED' ? 'FAILED' : 'READY')
-            }))
-        });
-    });
-
-    // Manual revenue generation endpoint
-    app.get('/generate', async (req, res) => {
-        const orchestrator = SERVICE_REGISTRY.get('MainnetOrchestrator');
-        if (orchestrator && typeof orchestrator.executeLiveRevenueCycle === 'function') {
-            try {
-                const result = await orchestrator.executeLiveRevenueCycle();
-                res.json({
-                    success: true,
-                    ...result
-                });
-            } catch (error) {
-                res.json({
-                    success: false,
-                    error: error.message
-                });
+    async swapUSDCForETH(usdcAmount) {
+        try {
+            console.log(`💱 Converting ${usdcAmount} USDC to ETH for gas...`);
+            
+            const usdcContract = new ethers.Contract(this.usdcAddress, this.getUSDCABI(), this.wallet);
+            const uniswapRouter = new ethers.Contract(this.uniswapRouter, this.getUniswapABI(), this.wallet);
+            
+            // Convert USDC amount to wei (6 decimals)
+            const usdcAmountWei = ethers.parseUnits(usdcAmount, 6);
+            
+            // Check balance
+            const usdcBalance = await usdcContract.balanceOf(this.wallet.address);
+            if (usdcBalance < usdcAmountWei) {
+                throw new Error(`Insufficient USDC. Need ${usdcAmount} USDC, have ${ethers.formatUnits(usdcBalance, 6)} USDC`);
             }
-        } else {
-            res.json({ 
-                success: false, 
-                error: 'MainnetOrchestrator not available' 
-            });
-        }
-    });
 
-    // Debug endpoint for troubleshooting
-    app.get('/debug', (req, res) => {
-        const orchestrator = SERVICE_REGISTRY.get('MainnetOrchestrator');
+            // Approve Uniswap to spend USDC
+            console.log("🔐 Approving USDC for swap...");
+            const approveTx = await usdcContract.approve(this.uniswapRouter, usdcAmountWei);
+            await approveTx.wait();
+
+            // Set up swap parameters
+            const path = [this.usdcAddress, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"]; // USDC -> WETH
+            const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 minutes
+            const amountOutMin = 0; // Accept any amount for simplicity
+
+            console.log("🔄 Executing USDC to ETH swap...");
+            const swapTx = await uniswapRouter.swapExactTokensForETH(
+                usdcAmountWei,
+                amountOutMin,
+                path,
+                this.wallet.address,
+                deadline
+            );
+
+            const receipt = await swapTx.wait();
+            console.log(`✅ Successfully swapped ${usdcAmount} USDC for ETH`);
+            
+            return {
+                success: true,
+                transactionHash: receipt.hash,
+                usdcAmount: usdcAmount
+            };
+        } catch (error) {
+            console.error("❌ USDC to ETH swap failed:", error.message);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    async ensureGasBalance(minETH = "0.01") {
+        const currentBalance = await this.provider.getBalance(this.wallet.address);
+        const minBalanceWei = ethers.parseEther(minETH);
         
-        res.json({
-            environment: {
-                privateKeySet: !!process.env.PRIVATE_KEY,
-                privateKeyLength: process.env.PRIVATE_KEY?.length,
-                privateKeyStartsWith0x: process.env.PRIVATE_KEY?.startsWith('0x'),
-                sovereignWalletSet: !!process.env.SOVEREIGN_WALLET
-            },
-            config: CONFIG,
-            orchestrator: {
-                available: !!orchestrator,
-                revenueEngine: !!orchestrator?.revenueEngine,
-                liveMode: orchestrator?.revenueEngine?.liveMode,
-                walletAddress: orchestrator?.revenueEngine?.account?.address
-            },
-            services: Array.from(SERVICE_REGISTRY.entries()).map(([name, instance]) => ({
-                name,
-                status: instance === null ? 'PENDING' : 
-                       (instance === 'FAILED' ? 'FAILED' : 'READY'),
-                hasInitialize: typeof instance?.initialize === 'function',
-                hasExecute: typeof instance?.executeLiveRevenueCycle === 'function'
-            }))
-        });
-    });
-
-    const server = http.createServer(app);
-    server.listen(CONFIG.PORT, '0.0.0.0', () => {
-        console.log(`🚀 BSFM Pure Mainnet Server bound to port ${CONFIG.PORT}`);
-    }).on('error', (e) => {
-        if (e.code === 'EADDRINUSE') {
-            console.warn(`⚠️ Port ${CONFIG.PORT} in use. Trying ${CONFIG.PORT + 1}...`);
-            CONFIG.PORT = CONFIG.PORT + 1;
-            server.close(() => guaranteePortBinding());
-        } else {
-            console.error("❌ PORT BINDING ERROR:", e.message);
+        if (currentBalance < minBalanceWei) {
+            console.log(`⚠️ Low ETH balance: ${ethers.formatEther(currentBalance)} ETH`);
+            
+            const usdcBalance = await this.getUSDCBalance();
+            if (parseFloat(usdcBalance) > 1) { // If we have at least 1 USDC
+                const swapAmount = Math.min(parseFloat(usdcBalance), 5).toString(); // Swap up to 5 USDC
+                return await this.swapUSDCForETH(swapAmount);
+            } else {
+                throw new Error(`Insufficient funds. Need ${minETH} ETH, have ${ethers.formatEther(currentBalance)} ETH and ${usdcBalance} USDC`);
+            }
         }
-    });
-};
+        
+        return { success: true, balance: ethers.formatEther(currentBalance) };
+    }
+}
 
 // =========================================================================
-// 5. CLUSTER MANAGEMENT & STARTUP SEQUENCE
+// MAIN DEPLOYMENT & UPGRADE EXECUTION 
 // =========================================================================
+async function executeContractUpgrade() {
+    console.log("🚀 STARTING BWAEZI CONTRACT UPGRADE WITH APPROVE() FUNCTION");
+    try {
+        await initializeBlockchain();
+        
+        // Initialize Gas Payment Manager
+        const gasManager = new GasPaymentManager(wallet, provider);
+        
+        // Ensure we have enough ETH for deployment
+        console.log("💰 CHECKING GAS BALANCE...");
+        const gasCheck = await gasManager.ensureGasBalance("0.02"); // Need at least 0.02 ETH
+        if (!gasCheck.success) {
+            throw new Error(`Gas balance check failed: ${gasCheck.error}`);
+        }
 
-const setupMaster = async () => {
-    console.log(`👑 MASTER ORCHESTRATOR ${process.pid} - Setting up ${os.cpus().length} workers.`);
-    await guaranteePortBinding();
+        // Check USDC balance
+        const usdcBalance = await gasManager.getUSDCBalance();
+        console.log(`💵 Current USDC Balance: ${usdcBalance} USDC`);
 
-    for (let i = 0; i < os.cpus().length; i++) {
-        cluster.fork();
+        // --- CONTRACT UPGRADE DEPLOYMENT ---
+        console.log("🛠️ DEPLOYING UPDATED BWAEZI CONTRACT WITH APPROVE() FUNCTION...");
+        const kernelDeployer = new BWAEZIKernelDeployer(wallet, provider, CONFIG);
+        await kernelDeployer.compileAndPrepare(); 
+        const deploymentResult = await kernelDeployer.deploy();
+        
+        if (deploymentResult.success) {
+            bwaeziKernelAddress = deploymentResult.address;
+            console.log(`\n🎉 UPGRADE SUCCESS! New Contract: ${deploymentResult.address}`);
+            console.log(`✅ DEPLOYMENT COST: ${deploymentResult.deploymentCost} ETH`);
+            console.log(`🔑 NEW FEATURES: approve(), transferFrom(), allowance mapping`);
+            
+            // Update environment with new contract address
+            process.env.BWAEZI_KERNEL_ADDRESS = deploymentResult.address;
+            
+        } else {
+            console.error(`\n❌ UPGRADE FAILED: ${deploymentResult.error}`);
+            throw new Error("Contract upgrade failed");
+        }
+        
+        // --- CONTINUE WITH BSFM LAUNCH ---
+        console.log("\n🧠 LAUNCHING BSFM SOVEREIGN BRAIN WITH UPGRADED CONTRACT...");
+        
+        const modulePaths = discoverSovereignModules();
+        const serviceMap = discoverFutureProofServices();
+        
+        sovereignBrain = new SovereignBrain(
+            bwaeziKernelAddress,
+            KERNEL_ABI_STUB,
+            provider.connection.url
+        );
+        
+        const launchSuccess = await sovereignBrain.initialize(CONFIG.PRIVATE_KEY, {
+            modulePaths: modulePaths,
+            serviceMap: serviceMap
+        });
+
+        if (launchSuccess) {
+            console.log("🔥 BSFM GOD MODE ACTIVE WITH UPGRADED CONTRACT!");
+        } else {
+            throw new Error("BSFM failed to initialize with upgraded contract");
+        }
+
+        // Start Express Server
+        const app = express();
+        app.use(cors());
+        app.use(express.json());
+        
+        app.get('/health', (req, res) => res.json({ 
+            status: 'operational', 
+            version: 'v17.0-BSFM-UPGRADED', 
+            contract_upgraded: true,
+            new_contract: bwaeziKernelAddress,
+            features: ['approve()', 'transferFrom()', 'allowance mapping'],
+            god_mode_active: sovereignBrain.isGodModeActive
+        }));
+        
+        const port = CONFIG.PORT;
+        const host = '0.0.0.0'; 
+        app.listen(port, host, () => {
+            console.log("=".repeat(60));
+            console.log(` 🌐 Server: Listening on ${host}:${port}`);
+            console.log(` 🔗 New Contract: ${bwaeziKernelAddress}`);
+            console.log(` ✅ Approve Function: NOW AVAILABLE`);
+            console.log("=".repeat(60));
+        });
+
+        return { success: true, newContract: bwaeziKernelAddress };
+    } catch (error) {
+        console.error("💥 UPGRADE FAILURE:", error);
+        if (sovereignBrain) await sovereignBrain.stop();
+        return { success: false, error: error.message };
     }
+}
 
-    cluster.on('exit', (worker, code, signal) => {
-        console.log(`⚠️ WORKER ${worker.process.pid} died. Auto-rebooting...`);
-        cluster.fork();
+// =========================================================================
+// STARTUP EXECUTION
+// =========================================================================
+if (import.meta.url === `file://${process.argv[1]}`) {
+    console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║          BWAEZI CONTRACT UPGRADE - ADDING APPROVE()          ║
+║    🔥 NOW WITH ERC-20 COMPLIANCE & DEX INTEGRATION 🔥       ║
+╚══════════════════════════════════════════════════════════════╝
+`);
+    executeContractUpgrade().catch(error => {
+        console.error("Upgrade failed:", error);
+        process.exit(1);
     });
-};
+}
 
-const ultimateStartup = async () => {
-    console.log('🚀 BSFM PURE MAINNET MODE - STARTING...');
-
-    process.on('uncaughtException', (error) => {
-        console.error('🛡️ UNCAUGHT EXCEPTION CONTAINED:', error.message);
-    });
-
-    process.on('unhandledRejection', (reason, promise) => {
-        console.error('🛡️ UNHANDLED REJECTION CONTAINED:', reason);
-    });
-
-    if (cluster.isPrimary) {
-        await setupMaster();
-    } else {
-        await executeWorkerProcess();
-    }
-};
-
-// START THE PURE MAINNET SYSTEM
-ultimateStartup().catch((error) => {
-    console.log('💥 CATASTROPHIC STARTUP FAILURE - ACTIVATING SURVIVAL MODE');
-    console.error(error);
-    guaranteePortBinding();
-    executeWorkerProcess();
-});
-
-console.log('👑 BSFM PURE MAINNET ORCHESTRATOR LOADED - REAL BLOCKCHAIN EXECUTION ACTIVE');
+// ... [Keep the existing discoverSovereignModules, discoverFutureProofServices, 
+// RobustProvider, and initializeBlockchain functions from your original code] ...
