@@ -1,9 +1,8 @@
 // arielsql_suite/bwaezi-kernel-contract.js
 import { ethers } from 'ethers';
-// Note: We use the node built-in 'solc' or equivalent package here.
 import solc from 'solc'; 
 
-// The simplified, robust, and correctly initialized ERC-20 contract
+// The UPDATED BWAEZI contract with approve() function and allowance mapping
 const BWAEZI_SOL_SOURCE = `
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
@@ -14,30 +13,97 @@ contract BWAEZIKernel {
     uint8 public decimals = 18;
     uint256 public totalSupply;
     address public owner;
+
+    // ✅ ADDED: ERC-20 Standard Allowance Mapping
     mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => bool) public verifiedIdentities;
+    mapping(bytes32 => bool) public activeModules;
+    mapping(address => bool) public registeredDEXs;
 
+    // ✅ ADDED: ERC-20 Standard Approval Event
     event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
     event Mint(address indexed to, uint256 amount);
+    event IdentityVerified(address indexed user);
+    event ModuleActivated(bytes32 indexed moduleId);
+    event AccessGranted(address indexed user, string service);
+    event DEXRegistered(address indexed dex);
+    event ArbitrageLogged(address indexed user, uint256 bwaeziAmount, uint256 ethEquivalent);
+    event AIExecutionRequested(string task, address indexed requester);
 
-    // CRITICAL FIX: Constructor accepts sovereign address and assigns owner correctly
-    constructor(address _sovereignWallet) {
-        owner = _sovereignWallet; 
-        
-        // Fixed initial supply (100 Million) for minimal gas complexity
-        uint256 initialSupply = 100000000 * 10 ** uint256(decimals); 
-        totalSupply = initialSupply;
-        balanceOf[_sovereignWallet] = initialSupply;
-
-        emit Mint(_sovereignWallet, initialSupply);
-        emit Transfer(address(0), _sovereignWallet, initialSupply);
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not authorized");
+        _;
     }
 
-    function transfer(address to, uint256 amount) public returns (bool) {
+    constructor(address founder) {
+        require(founder != address(0), "Founder address cannot be zero"); 
+        
+        owner = founder; 
+        uint256 initialSupply = 100_000_000 * 10 ** uint256(decimals);
+        totalSupply = initialSupply;
+        balanceOf[founder] = initialSupply;
+        
+        emit Mint(founder, initialSupply);
+        emit Transfer(address(0), founder, initialSupply);
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
         require(balanceOf[msg.sender] >= amount, "Insufficient balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         emit Transfer(msg.sender, to, amount);
         return true;
+    }
+
+    // ✅ ADDED: ERC-20 Standard Approve Function
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    // ✅ ADDED: ERC-20 Standard TransferFrom Function
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        
+        emit Transfer(from, to, amount);
+        return true;
+    }
+
+    function verifyIdentity(address user) external onlyOwner {
+        verifiedIdentities[user] = true;
+        emit IdentityVerified(user);
+    }
+
+    function activateModule(bytes32 moduleId) external onlyOwner {
+        activeModules[moduleId] = true;
+        emit ModuleActivated(moduleId);
+    }
+
+    function grantAccess(address user, string memory service) external {
+        require(verifiedIdentities[user], "Identity not verified");
+        require(balanceOf[user] > 0, "Insufficient BWAEZI");
+        emit AccessGranted(user, service);
+    }
+
+    function registerDEX(address dex) external onlyOwner {
+        registeredDEXs[dex] = true;
+        emit DEXRegistered(dex);
+    }
+
+    function logArbitrage(address user, uint256 bwaeziAmount, uint256 ethEquivalent) external onlyOwner {
+        emit ArbitrageLogged(user, bwaeziAmount, ethEquivalent);
+    }
+
+    function requestAIExecution(string memory task) external {
+        emit AIExecutionRequested(task, msg.sender);
     }
 }
 `;
@@ -51,7 +117,7 @@ export class BWAEZIKernelDeployer {
     }
 
     async compileAndPrepare() {
-        console.log("⚙️ COMPILING BWAEZI KERNEL (Dynamic Mode)...");
+        console.log("⚙️ COMPILING UPDATED BWAEZI KERNEL (With Approve Function)...");
         const input = {
             language: 'Solidity',
             sources: { 'BWAEZI.sol': { content: BWAEZI_SOL_SOURCE } },
@@ -59,19 +125,27 @@ export class BWAEZIKernelDeployer {
         };
 
         const output = JSON.parse(solc.compile(JSON.stringify(input)));
+        
+        // Check for compilation errors
+        if (output.errors) {
+            const errors = output.errors.filter(error => error.severity === 'error');
+            if (errors.length > 0) {
+                throw new Error(`Compilation Failed: ${errors.map(e => e.formattedMessage).join('\n')}`);
+            }
+        }
+
         const contractOutput = output.contracts['BWAEZI.sol'].BWAEZIKernel;
 
-        if (!contractOutput || output.errors) {
-            const error = output.errors ? output.errors.map(e => e.formattedMessage).join('\n') : 'Unknown compilation error.';
-            throw new Error(`Compilation Failed: ${error}`);
+        if (!contractOutput) {
+            throw new Error('Compilation Failed: No contract output generated');
         }
 
         const bytecode = contractOutput.evm.bytecode.object;
         const abi = contractOutput.abi;
 
-        // Factory ready to deploy with the single constructor argument
         this.factory = new ethers.ContractFactory(abi, bytecode, this.wallet);
-        console.log("✅ Contract compiled successfully. Bytecode ready.");
+        console.log("✅ Contract compiled successfully with approve() function");
+        return { abi, bytecode };
     }
 
     async deploy() {
@@ -81,39 +155,50 @@ export class BWAEZIKernelDeployer {
 
         const sovereignWallet = this.config.SOVEREIGN_WALLET;
         const constructorArgs = [sovereignWallet];
-        let deploymentCost = ethers.toBigInt(0);
-
+        
         try {
-            console.log("🔒 PHASE 1: PRE-DEPLOYMENT GAS ESTIMATION (No ETH Spent on Revert)");
-            // 🏆 GUARANTEE: If the contract logic reverts, this line will throw (revert) locally,
-            // preventing the wallet.sendTransaction call from ever happening.
-            const estimatedGas = await this.factory.getDeployTransaction(...constructorArgs).then(tx => {
-                 return this.provider.estimateGas(tx);
-            });
+            console.log("🔒 PHASE 1: PRE-DEPLOYMENT GAS ESTIMATION");
             
-            const gasPrice = await this.provider.getFeeData().then(data => data.gasPrice);
+            // Get current gas price
+            const feeData = await this.provider.getFeeData();
+            const gasPrice = feeData.gasPrice;
+            
             if (!gasPrice) {
                 throw new Error("Could not fetch reliable gas price data.");
             }
 
-            // Add a 20% buffer to the estimated gas for safety
-            const gasLimit = estimatedGas + (estimatedGas / ethers.toBigInt(5)); 
+            // Estimate gas for deployment
+            const deployTransaction = await this.factory.getDeployTransaction(...constructorArgs);
+            const estimatedGas = await this.provider.estimateGas(deployTransaction);
+            
+            // Add 20% buffer
+            const gasLimit = estimatedGas * 120n / 100n;
             const deploymentOptions = { gasLimit, gasPrice };
 
             console.log(` ✅ Estimated Gas: ${estimatedGas.toString()}`);
-            console.log(` ✅ Final Gas Limit (with buffer): ${gasLimit.toString()}`);
-            console.log(` ⛽ Max Deployment Cost (Approx): ${ethers.formatEther(gasLimit * gasPrice)} ETH`);
+            console.log(` ✅ Final Gas Limit: ${gasLimit.toString()}`);
+            console.log(` ⛽ Max Deployment Cost: ${ethers.formatEther(gasLimit * gasPrice)} ETH`);
             
-            console.log("🚀 PHASE 2: FINAL DEPLOYMENT TRANSACTION (On-chain execution)");
-            // If we reach here, Phase 1 succeeded, and the transaction is expected to pass.
+            // Check balance
+            const balance = await this.provider.getBalance(this.wallet.address);
+            const requiredBalance = gasLimit * gasPrice;
+            
+            if (balance < requiredBalance) {
+                throw new Error(`Insufficient ETH. Need ${ethers.formatEther(requiredBalance)} ETH, have ${ethers.formatEther(balance)} ETH`);
+            }
+
+            console.log("🚀 PHASE 2: DEPLOYING UPDATED CONTRACT WITH APPROVE() FUNCTION");
             const contract = await this.factory.deploy(sovereignWallet, deploymentOptions);
 
             console.log("⏳ Waiting for deployment confirmation...");
             const receipt = await contract.deploymentTransaction().wait();
 
-            const address = receipt.contractAddress;
+            const address = await contract.getAddress();
             const deploymentHash = receipt.hash;
-            deploymentCost = receipt.gasUsed * receipt.gasPrice;
+            const deploymentCost = receipt.gasUsed * receipt.gasPrice;
+
+            console.log(`🎉 DEPLOYMENT SUCCESS! Contract: ${address}`);
+            console.log(`💰 FINAL COST: ${ethers.formatEther(deploymentCost)} ETH`);
 
             return {
                 success: true,
@@ -123,13 +208,12 @@ export class BWAEZIKernelDeployer {
                 contract: contract
             };
         } catch (error) {
-            // A Phase 1 error message will contain the revert reason, and no gas was consumed on-chain.
             console.error("❌ DEPLOYMENT FAILED:", error.message);
-            console.log("⚠️ WARNING: Check the log above. If it failed in 'PHASE 1', no ETH was spent on a failed on-chain transaction.");
-
+            
             if (error.message.includes('insufficient funds')) {
-                throw new Error("FATAL: Wallet balance is less than required for the final Phase 2 transaction.");
+                throw new Error(`Insufficient ETH for deployment. Check wallet balance.`);
             }
+            
             return { success: false, error: error.message };
         }
     }
