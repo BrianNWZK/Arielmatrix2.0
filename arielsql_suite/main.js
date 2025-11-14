@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
-import solc from 'solc'; // Used for contract compilation
+// import solc from 'solc'; // REMOVED: Contract compilation is no longer needed
 
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
@@ -21,7 +21,8 @@ const CONFIG = {
     ],
     PORT: process.env.PORT || 10000,
     PRIVATE_KEY: process.env.PRIVATE_KEY,
-    BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS || null
+    // Assumes BWAEZI_KERNEL_ADDRESS is now configured to the deployed address: 0xF1d2208ABc26F8C04b49103280A2667734f24AC6
+    BWAEZI_KERNEL_ADDRESS: process.env.BWAEZI_KERNEL_ADDRESS || null 
 };
 
 // Global state variables
@@ -90,90 +91,6 @@ async function initializeBlockchain() {
         throw error;
     }
 }
-
-// =========================================================================
-// CONTRACT COMPILATION AND DEPLOYMENT LOGIC (FIX)
-// =========================================================================
-
-// Solidity source code for a simple contract to serve as the "Bwaezi Kernel"
-const SIMPLE_STORAGE_SOURCE = `
-    pragma solidity ^0.8.0;
-    contract SimpleStorage {
-        uint256 public data;
-        function set(uint256 _data) public {
-            data = _data;
-        }
-    }
-`;
-
-function compileContract(sourceCode) {
-    const input = {
-        language: 'Solidity',
-        sources: {
-            'SimpleStorage.sol': {
-                content: sourceCode,
-            },
-        },
-        settings: {
-            outputSelection: {
-                '*': {
-                    '*': ['abi', 'evm.bytecode'],
-                },
-            },
-        },
-    };
-
-    const output = JSON.parse(solc.compile(JSON.stringify(input)));
-    const contract = output.contracts['SimpleStorage.sol']['SimpleStorage'];
-
-    if (!contract) {
-        throw new Error("Solidity compilation failed. Check your contract source code.");
-    }
-
-    const bytecode = contract.evm.bytecode.object;
-    const abi = contract.abi;
-
-    return { abi, bytecode };
-}
-
-async function deploySimpleContract() {
-    if (!wallet) {
-        console.error("❌ Cannot deploy: Wallet not initialized.");
-        return null;
-    }
-
-    console.log("⚙️  COMPILING CONTRACT: SimpleStorage (Bwaezi Kernel)...");
-    try {
-        const { abi, bytecode } = compileContract(SIMPLE_STORAGE_SOURCE);
-        console.log("✅ Compilation successful.");
-
-        // Create a ContractFactory (ethers v6)
-        const factory = new ethers.ContractFactory(abi, bytecode, wallet);
-
-        console.log("🚀 DEPLOYING CONTRACT: SimpleStorage...");
-        
-        // Use factory.deploy() and let ethers handle gas estimation and EIP-1559 logic
-        const deployer = await factory.deploy();
-
-        // Wait for the deployment to be mined
-        const contract = await deployer.waitForDeployment();
-        const address = await contract.getAddress();
-
-        console.log(`✅ CONTRACT DEPLOYED: SimpleStorage at ${address}`);
-        bwaeziKernelAddress = address;
-        CONFIG.BWAEZI_KERNEL_ADDRESS = address;
-        console.log(`👑 BWAEZI_KERNEL_ADDRESS UPDATED: ${bwaeziKernelAddress}`);
-        return contract;
-
-    } catch (error) {
-        console.error("❌ CONTRACT DEPLOYMENT FAILED:", error.message);
-        if (error.message.includes('insufficient funds') || error.message.includes('gas')) {
-             console.error("🚨 CRITICAL ALERT: Deployment likely failed due to insufficient ETH balance for gas (see logs).");
-        }
-        return null;
-    }
-}
-
 
 // =========================================================================
 // SOVEREIGN BRAIN INITIALIZATION - COMPATIBLE VERSION
@@ -331,18 +248,8 @@ async function main() {
         console.log("🔗 STEP 1: INITIALIZING BLOCKCHAIN...");
         await initializeBlockchain();
         
-        // Step 1.5: Deploy Bwaezi Kernel Contract (NEW STEP)
-        console.log("\n⚙️ STEP 1.5: DEPLOYING BWAEZI KERNEL CONTRACT...");
-        const deployedContract = await deploySimpleContract();
-
-        // Note: Deployment will likely fail due to INSUFFICIENT FUNDS based on log analysis
-        if (deployedContract) {
-            console.log("✅ DEPLOYMENT SUCCESSFUL.");
-        } else {
-            console.log("⚠️ DEPLOYMENT FAILED/SKIPPED. Check logs and ensure sufficient ETH for gas/liquidity.");
-        }
-
         // Step 2: Initialize Sovereign Brain
+        // Contract deployment step (1.5) is removed as the contract is now live.
         console.log("\n🧠 STEP 2: INITIALIZING SOVEREIGN BRAIN...");
         const sovereignInstance = await initializeSovereignBrain();
         
