@@ -9,7 +9,7 @@ import { ProductionSovereignCore,
     EnhancedMainnetOrchestrator, 
     EnhancedRevenueEngine, 
     EnhancedBlockchainConnector, 
-    LIVE_REVENUE_CONTRACTS } from './core/sovereign-brain.js';
+    LIVE_REVENUE_CONTRACTS } from '../core/sovereign-brain.js';
 import { BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 
 // =========================================================================
