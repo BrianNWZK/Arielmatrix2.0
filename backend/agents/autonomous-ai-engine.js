@@ -175,7 +175,6 @@ export {
     SovereignTreasury,
     SovereignServiceRegistry,
     AIRevenueOptimizer,
-    AutonomousAIError,
     PerformanceMonitor,
     globalAxios,
     attachRetryAxios
