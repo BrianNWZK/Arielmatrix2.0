@@ -14,7 +14,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 const MAX_TRANSACTION_MAP_SIZE = 100000;
 
-export class BrianNwaezikeChain extends EventEmitter {
+export default class BrianNwaezikeChain extends EventEmitter {
     /**
      * @param {Object} payoutSystem - The fully initialized BrianNwaezikePayoutSystem instance.
      */
@@ -153,7 +153,7 @@ export class BrianNwaezikeChain extends EventEmitter {
 }
 
 export { BrianNwaezikeChain };
-export default BrianNwaezikeChain;
+
 
 console.log('👑 BrianNwaezikeChain ES Module Loaded - PRODUCTION READY');
 console.log('🚀 MAINNET GLOBAL ENTERPRISE-GRADE BLOCKCHAIN ACTIVE');
