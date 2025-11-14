@@ -8,12 +8,16 @@ contract BWAEZIKernel {
     uint256 public totalSupply;
     address public owner;
 
+    // ✅ ADDED: ERC-20 Standard Allowance Mapping
     mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
     mapping(address => bool) public verifiedIdentities;
     mapping(bytes32 => bool) public activeModules;
     mapping(address => bool) public registeredDEXs;
 
+    // ✅ ADDED: ERC-20 Standard Approval Event
     event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
     event Mint(address indexed to, uint256 amount);
     event IdentityVerified(address indexed user);
     event ModuleActivated(bytes32 indexed moduleId);
@@ -28,16 +32,13 @@ contract BWAEZIKernel {
     }
 
     constructor(address founder) {
-        // ✅ FIXED LOGIC: Ensure founder address is not address(0) to prevent constructor revert.
         require(founder != address(0), "Founder address cannot be zero"); 
         
-        // Logic Fix: Set owner to the founder address (the token recipient).
         owner = founder; 
         uint256 initialSupply = 100_000_000 * 10 ** uint256(decimals);
         totalSupply = initialSupply;
         balanceOf[founder] = initialSupply;
         
-        // Standard ERC-20 mint events
         emit Mint(founder, initialSupply);
         emit Transfer(address(0), founder, initialSupply);
     }
@@ -47,6 +48,26 @@ contract BWAEZIKernel {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    // ✅ ADDED: ERC-20 Standard Approve Function
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    // ✅ ADDED: ERC-20 Standard TransferFrom Function
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
+        require(balanceOf[from] >= amount, "Insufficient balance");
+        
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        
+        emit Transfer(from, to, amount);
         return true;
     }
 
