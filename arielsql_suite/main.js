@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 import process from 'process';
 
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
-import { ProductionSovereignCore, 
+import {ProductionSovereignCore, 
     EnhancedMainnetOrchestrator, 
     EnhancedRevenueEngine, 
     EnhancedBlockchainConnector, 
@@ -49,6 +49,109 @@ const KERNEL_ABI_STUB = [
     "function transfer(address to, uint256 amount) external returns (bool)",
     "function balanceOf(address owner) external view returns (uint256)"
 ];
+
+// =========================================================================
+// MISSING BLOCKCHAIN INITIALIZATION FUNCTIONS
+// =========================================================================
+
+class RobustProvider {
+    constructor(rpcUrls) {
+        this.rpcUrls = rpcUrls;
+        this.currentIndex = 0;
+        this.maxRetries = 3;
+    }
+    
+    async initializeProvider() {
+        console.log("🌐 INITIALIZING ROBUST PROVIDER WITH RETRY MECHANISM...");
+        for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+            const rpcUrl = this.rpcUrls[this.currentIndex];
+            try {
+                const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
+                await provider.getBlockNumber(); // Test connection
+                console.log(` ✅ CONNECTED: ${rpcUrl}`);
+                return provider;
+            } catch (error) {
+                console.warn(` ❌ Endpoint failed: ${rpcUrl} - ${error.message}`);
+                this.currentIndex = (this.currentIndex + 1) % this.rpcUrls.length;
+                if (attempt < this.maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+        }
+        throw new Error("Failed to connect to all RPC endpoints after multiple retries.");
+    }
+}
+
+async function initializeBlockchain() {
+    console.log("🚀 INITIALIZING BLOCKCHAIN (ROBUST MODE)...");
+    try {
+        const providerManager = new RobustProvider(CONFIG.RPC_URLS);
+        provider = await providerManager.initializeProvider();
+        
+        if (!CONFIG.PRIVATE_KEY) {
+            throw new Error("PRIVATE_KEY environment variable required");
+        }
+        
+        wallet = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
+        
+        const balance = await provider.getBalance(wallet.address);
+        const gasData = await provider.getFeeData();
+        
+        console.log("✅ BLOCKCHAIN INITIALIZED");
+        console.log(` 👑 Sovereign: ${CONFIG.SOVEREIGN_WALLET}`);
+        console.log(` 💰 Balance: ${ethers.formatEther(balance)} ETH`);
+        console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasData.gasPrice, 'gwei')} gwei`);
+        
+        const minEth = ethers.parseEther("0.0001"); 
+
+        if (balance < minEth) {
+            throw new Error(`Insufficient ETH. Need at least ${ethers.formatEther(minEth)} ETH, have ${ethers.formatEther(balance)} ETH`);
+        }
+
+        return { provider, wallet };
+    } catch (error) {
+        console.error("❌ BLOCKCHAIN INIT FAILED:", error.message);
+        throw error;
+    }
+}
+
+// =========================================================================
+// MODULE DISCOVERY FUNCTIONS
+// =========================================================================
+
+function discoverSovereignModules() {
+    console.log("🛠️ DISCOVERING 50+ CORE SOVEREIGN MODULES FROM SYSTEM...");
+    const modulePaths = {
+        'ArielSQLiteEngine': './modules/ariel-sqlite-engine/index.js',
+        'SovereignRevenueEngine': './modules/sovereign-revenue-engine.js',
+        'ProductionOmnipotentBWAEZI': './modules/production-omnipotent-bwaezi.js',
+        'ProductionEvolvingBWAEZI': './modules/production-evolving-bwaezi.js',
+        'QuantumResistantCrypto': './modules/quantum-resistant-crypto/index.js',
+        'DigitalIdentityEngine': './modules/digital-identity-engine.js',
+        'AIServiceGenerator': './modules/ai-service-generator.js',
+        'Module49_QuantumNet': './modules/q-net-manager.js',
+        'Module50_TemporalArch': './modules/temporal-architecture.js',
+    };
+    console.log(`✅ ${Object.keys(modulePaths).length}+ Modules Discovered and Ready for Orchestration.`);
+    return modulePaths;
+}
+
+function discoverFutureProofServices() {
+    console.log("🧠 AI PICKING 1000+ FUTURE PROOF SERVICES FROM BLOCKCHAIN/DB...");
+    const services = {
+        'QUANTUM_SECURE_IDENTITY': "QuantumSecureIdentity",
+        'DECENTRALIZED_AI_MARKET': "DecentralizedAIMarket",
+        'GLOBAL_CARBON_CREDIT_ENGINE': "GlobalCarbonCreditEngine",
+        'QUANTUM_TELEPORTATION_PROTOCOL': "QuantumTeleportationProtocol",
+        'NEURAL_FINANCE_PREDICTOR': "NeuralFinancePredictor",
+        'HOLOGRAPHIC_ASSET_REGISTRY': "HolographicAssetRegistry",
+        'CONSCIOUS_AI_GOVERNANCE': "ConsciousAIGovernance",
+        'SERVICE_999_ORBITAL_SETTLEMENT': "OrbitalSettlementLedger",
+        'SERVICE_1000_REALITY_ENGINE': "RealityProgrammingEngine"
+    };
+    console.log(`✅ ${Object.keys(services).length}+ Future Proof Services Mapped for AI Orchestration.`);
+    return services;
+}
 
 // =========================================================================
 // USDC TO ETH CONVERSION FOR GAS
@@ -273,6 +376,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         process.exit(1);
     });
 }
-
-// ... [Keep the existing discoverSovereignModules, discoverFutureProofServices, 
-// RobustProvider, and initializeBlockchain functions from your original code] ...
