@@ -169,13 +169,4 @@ export default class AutonomousAIEngine {
 const brain = new AutonomousAIEngine();
 const performanceMonitor = new PerformanceMonitor(); 
 
-export {
-    AutonomousAIEngine,
-    SovereignAIGovernor,
-    SovereignTreasury,
-    SovereignServiceRegistry,
-    AIRevenueOptimizer,
-    PerformanceMonitor,
-    globalAxios,
-    attachRetryAxios
-};
+export {AutonomousAIEngine};
