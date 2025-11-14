@@ -71,7 +71,7 @@ export const ZERO_KNOWLEDGE_COMPLIANCE = {
     },
     ENCRYPTION_STRATEGY: {
         CLIENT_SIDE: 'AES-256-GCM for data, RSA-2048 for keys',
-        KEY_MANAGEMENT: 'User-held private 
+        KEY_MANAGEMENT: 'User-held private key',
 keys, platform only sees public keys',
         DATA_AT_REST: 'All data encrypted before storage',
         DATA_IN_TRANSIT: 'TLS 1.3 + E2E encryption'
