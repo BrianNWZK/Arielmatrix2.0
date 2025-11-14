@@ -205,4 +205,5 @@ export const SOVEREIGN_SERVICES = {
             premiumFeatures: 0.25,
             enterpriseLicense: 25000
         },
-        
+        compliance: ['End-to-End Encryption', 'Zero Data Access', 'PQC-Protected'],
+       
