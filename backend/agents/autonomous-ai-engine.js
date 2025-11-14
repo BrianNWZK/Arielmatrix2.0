@@ -102,7 +102,7 @@ class AIRevenueOptimizer {
 
 // ... (AutonomousAIError, SovereignTreasury, SovereignAIGovernor, SovereignServiceRegistry classes maintained) ...
 
-export class AutonomousAIEngine {
+export default class AutonomousAIEngine {
     constructor() {
         this.initialized = false;
         this.mutex = new Mutex();
@@ -170,7 +170,6 @@ const brain = new AutonomousAIEngine();
 const performanceMonitor = new PerformanceMonitor(); 
 
 export {
-    brain as default,
     AutonomousAIEngine,
     SovereignAIGovernor,
     SovereignTreasury,
