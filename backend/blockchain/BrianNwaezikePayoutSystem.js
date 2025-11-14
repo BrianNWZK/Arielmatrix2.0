@@ -52,7 +52,7 @@ const CORE_MODULES = {
     DAOGovernanceEngine: DAOGovernanceEngine,
 };
 
-export class BrianNwaezikePayoutSystem extends EventEmitter {
+export default class BrianNwaezikePayoutSystem extends EventEmitter {
     /**
      * @param {Object} config - System configuration (keys, wallet address, etc.).
      * @param {ArielSQLiteEngine} arielDB - The fully initialized ArielSQLiteEngine instance.
@@ -162,4 +162,4 @@ export class BrianNwaezikePayoutSystem extends EventEmitter {
 }
 
 export { BrianNwaezikePayoutSystem };
-export default BrianNwaezikePayoutSystem;
+
