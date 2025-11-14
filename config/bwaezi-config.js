@@ -4,20 +4,18 @@ import { EventEmitter } from 'events';
 
 // =========================================================================
 // CORE BWAEZI CHAIN CONFIGURATION - PRODUCTION READY
-// 🔥 FIX: Prioritize secure, environment-defined RPC URL to solve 401 Unauthorized (Log Error 1)
 // =========================================================================
 export const BWAEZI_CHAIN = {
     NAME: 'BWAEZI Sovereign Chain',
     NATIVE_TOKEN: 'BWAEZI',
     SYMBOL: 'bwzC',
     DECIMALS: 18,
-    // NOVEL FIX: Use the environment variable for production connection (resolves 401)
     RPC_URLS: process.env.ETHEREUM_RPC_URL || "https://eth.llamarpc.com",
     CONTRACT_ADDRESS: '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
     CHAIN_ID: 1,
     VERSION: '2.0.0-SOVEREIGN',
     FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS ||
-"0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+      "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
     BLOCK_TIME: 2,
     GAS_LIMIT: 30000000,
     GAS_PRICE: '1000000000'
@@ -27,14 +25,14 @@ export const BWAEZI_CHAIN = {
 // TOKEN CONVERSION RATES
 // =========================================================================
 export const TOKEN_CONVERSION_RATES = {
-    BWAEZI_TO_USDT: 100, // 1 BWAEZI = 100 USDT
-    BWAEZI_TO_USDC: 100, // 1 BWAEZI = 100 USDC
-    BWAEZI_TO_DAI: 100,  // 1 BWAEZI = 100 DAI
-    STABLE_COINS: ['USDT', 'USDC', 'DAI', 'BUSD', 'TUSD'] // Supported stable tokens
+    BWAEZI_TO_USDT: 100,
+    BWAEZI_TO_USDC: 100,
+    BWAEZI_TO_DAI: 100,
+    STABLE_COINS: ['USDT', 'USDC', 'DAI', 'BUSD', 'TUSD']
 };
 
 // =========================================================================
-// SOVEREIGN LEGAL STRUCTURE - COMPLIANCE THROUGH ARCHITECTURE
+// SOVEREIGN LEGAL STRUCTURE
 // =========================================================================
 export const SOVEREIGN_LEGAL_STRUCTURE = {
     FOUNDATION: {
@@ -46,8 +44,7 @@ export const SOVEREIGN_LEGAL_STRUCTURE = {
     },
     OPERATING_ENTITY: {
         NAME: 'BWAEZI Technologies LLC',
-        
-JURISDICTION: 'Wyoming, USA',
+        JURISDICTION: 'Wyoming, USA',
         ROLE: 'User Interface Development, Customer Support',
         DATA_HANDLING: 'Encrypted Data Only - No PII/PHI Storage',
         LIABILITY: 'Limited to Interface Operations'
@@ -60,7 +57,7 @@ JURISDICTION: 'Wyoming, USA',
 };
 
 // =========================================================================
-// ZERO-KNOWLEDGE COMPLIANCE FRAMEWORK - LEGAL SHIELD
+// ZERO-KNOWLEDGE COMPLIANCE FRAMEWORK
 // =========================================================================
 export const ZERO_KNOWLEDGE_COMPLIANCE = {
     DATA_PROCESSING: {
@@ -71,8 +68,7 @@ export const ZERO_KNOWLEDGE_COMPLIANCE = {
     },
     ENCRYPTION_STRATEGY: {
         CLIENT_SIDE: 'AES-256-GCM for data, RSA-2048 for keys',
-        KEY_MANAGEMENT: 'User-held private key',
-keys, platform only sees public keys',
+        KEY_MANAGEMENT: 'User-held private keys, platform only sees public keys',
         DATA_AT_REST: 'All data encrypted before storage',
         DATA_IN_TRANSIT: 'TLS 1.3 + E2E encryption'
     },
@@ -84,22 +80,21 @@ keys, platform only sees public keys',
 };
 
 // =========================================================================
-// QUANTUM SECURITY FRAMEWORK - POST-QUANTUM DEFENSE 🛡️
+// QUANTUM SECURITY FRAMEWORK
 // =========================================================================
 export const QUANTUM_SECURITY_FRAMEWORK = {
     STATUS: 'Quantum-Resistant Layer 1 Active',
     CRYPTO_ALGORITHMS: {
-        ASYMMETRIC: 'CRYSTALS-Kyber (PQC-Standard)', // Used for Key Encapsulation
-        SIGNATURES: 'CRYSTALS-Dilithium (PQC-Standard)', // Used for Digital Signatures
+        ASYMMETRIC: 'CRYSTALS-Kyber (PQC-Standard)',
+        SIGNATURES: 'CRYSTALS-Dilithium (PQC-Standard)',
         HASHING: 'SHA3-512 with Salted Pre-Hash',
         KEY_EXCHANGE: 'Supersingular Isogeny Key Encapsulation (SIKE) - Fallback'
     },
     KEY_MANAGEMENT: {
-        
-WALLET_PROTECTION: 'PK stored only in Hardware Security Module (HSM) or Encrypted Process Environment',
+        WALLET_PROTECTION: 'PK stored only in HSM or Encrypted Process Environment',
         DECRYPTION_POLICY: 'Multi-Sig + Zero-Knowledge Proof (ZKP) Validation Required',
         SOVEREIGN_WALLETS_DEFENSE: 'PK is Ephemeral during transaction signing, never at rest in plain text.'
-},
+    },
     THREAT_MITIGATION: {
         QUANTUM_ATTACKS: 'Shor\'s Algorithm Mitigated by PQC Signatures',
         SIDECURRENT_ATTACKS: 'ArielSQLite State Channel Obfuscation',
@@ -111,14 +106,11 @@ WALLET_PROTECTION: 'PK stored only in Hardware Security Module (HSM) or Encrypte
 // SOVEREIGN ECONOMIC ZONE CONFIGURATION
 // =========================================================================
 export const BWAEZI_SOVEREIGN_CONFIG = {
-    // 🔐 CRITICAL WALLET CONFIGURATION (Protected by environment variables)
     SOVEREIGN_WALLET_ADDRESS: process.env.SOVEREIGN_WALLET_ADDRESS ||
-"0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
-    SOVEREIGN_PRIVATE_KEY: process.env.SOVEREIGN_PRIVATE_KEY, // MUST be set in a secure .env file/HSM
-    PAYOUT_INTERVAL: parseInt(process.env.PAYOUT_INTERVAL) ||
-60000, 
-    REVENUE_CONSOLIDATION_CRON: process.env.REVENUE_CONSOLIDATION_CRON || '0 0 * * *', 
-    // END CRITICAL FIX
+      "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+    SOVEREIGN_PRIVATE_KEY: process.env.SOVEREIGN_PRIVATE_KEY,
+    PAYOUT_INTERVAL: parseInt(process.env.PAYOUT_INTERVAL) || 60000,
+    REVENUE_CONSOLIDATION_CRON: process.env.REVENUE_CONSOLIDATION_CRON || '0 0 * * *',
 
     SOVEREIGN_OWNER: BWAEZI_CHAIN.FOUNDER_ADDRESS,
     TOTAL_SUPPLY: 100000000,
@@ -131,8 +123,7 @@ export const BWAEZI_SOVEREIGN_CONFIG = {
         MIN_RESERVES: 1000000,
         REINVESTMENT_RATE: 0.4,
         GOVERNANCE_INTERVAL: 3600000,
-  
-       DECISION_CONFIDENCE_THRESHOLD: 0.8
+        DECISION_CONFIDENCE_THRESHOLD: 0.8
     },
     SOVEREIGN_SERVICES: {
         registrationFee: 1000,
@@ -146,8 +137,7 @@ export const BWAEZI_SOVEREIGN_CONFIG = {
         annual: 2000000
     },
     TOKEN_ECONOMICS: {
-   
-     CONVERSION_RATES: TOKEN_CONVERSION_RATES,
+        CONVERSION_RATES: TOKEN_CONVERSION_RATES,
         STABLE_TOKEN_PAIRS: ['BWAEZI/USDT', 'BWAEZI/USDC', 'BWAEZI/DAI'],
         LIQUIDITY_POOLS: {
             MIN_LIQUIDITY: 100000,
@@ -157,8 +147,7 @@ export const BWAEZI_SOVEREIGN_CONFIG = {
     BLOCKCHAIN_INTEGRATION: {
         ETHEREUM: {
             NETWORK: 'mainnet',
-         
-    CONFIRMATIONS: 12,
+            CONFIRMATIONS: 12,
             GAS_MULTIPLIER: 1.2
         },
         SOLANA: {
@@ -168,15 +157,14 @@ export const BWAEZI_SOVEREIGN_CONFIG = {
         }
     },
     COMPLIANCE_ALIGNMENT: {
-        STATUS: 'Architected 
-in Alignment With',
+        STATUS: 'Architected in Alignment With',
         FRAMEWORKS: ['ISO-27001 Principles', 'SOC-2 Trust Criteria', 'GDPR Data Protection', 'HIPAA Security'],
         CERTIFICATION: 'None - Cryptographic Verification Instead'
     }
 };
 
 // =========================================================================
-// SOVEREIGN SERVICES REGISTRY - PRODUCTION SERVICES
+// SOVEREIGN SERVICES REGISTRY
 // =========================================================================
 export const SOVEREIGN_SERVICES = {
     QUANTUM_SECURE_COMMUNICATIONS: {
@@ -187,8 +175,7 @@ export const SOVEREIGN_SERVICES = {
             baseFee: 0.01,
             transactionFee: 0.001,
             premiumFeatures: 0.1,
-  
-           enterpriseLicense: 10000
+            enterpriseLicense: 10000
         },
         compliance: ['Zero-Knowledge Architecture', 'Client-Side Encryption', 'PQC-Protected'],
         minDeposit: 10000,
@@ -196,10 +183,9 @@ export const SOVEREIGN_SERVICES = {
     },
     SOVEREIGN_IDENTITY_MANAGEMENT: {
         id: 'sovereign_identity_v1',
-        name: 'SovereignIdentityManagement', 
+        name: 'SovereignIdentityManagement',
         description: 'Identity and access management for sovereign infrastructure',
- 
-       feeStructure: {
+        feeStructure: {
             baseFee: 0.02,
             verificationFee: 0.05,
             premiumFeatures: 0.15,
@@ -207,8 +193,7 @@ export const SOVEREIGN_SERVICES = {
         },
         compliance: ['Zero-Knowledge Proofs', 'Selective Disclosure', 'PQC-Protected'],
         minDeposit: 15000,
-        dataPolicy: 'No 
-Identity Data Storage - Cryptographic Claims Only'
+        dataPolicy: 'No Identity Data Storage - Cryptographic Claims Only'
     },
     ENTERPRISE_DATA_SOVEREIGNTY: {
         id: 'enterprise_data_v1',
@@ -218,142 +203,215 @@ Identity Data Storage - Cryptographic Claims Only'
             baseFee: 0.10,
             processingFee: 0.05,
             premiumFeatures: 0.25,
-     
-        enterpriseLicense: 25000
+            enterpriseLicense: 25000
         },
         compliance: ['End-to-End Encryption', 'Zero Data Access', 'PQC-Protected'],
-        minDeposit: 25000,
-        dataPolicy: 'Encrypted Data Blobs Only - No Plaintext Access'
+        minDeposit: 250// config/bwaezi-config.js
+import { randomBytes, createHash } from 'crypto';
+import { EventEmitter } from 'events';
+
+// =========================================================================
+// CORE BWAEZI CHAIN CONFIGURATION - PRODUCTION READY
+// =========================================================================
+export const BWAEZI_CHAIN = {
+    NAME: 'BWAEZI Sovereign Chain',
+    NATIVE_TOKEN: 'BWAEZI',
+    SYMBOL: 'bwzC',
+    DECIMALS: 18,
+    RPC_URLS: process.env.ETHEREUM_RPC_URL || "https://eth.llamarpc.com",
+    CONTRACT_ADDRESS: '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
+    CHAIN_ID: 1,
+    VERSION: '2.0.0-SOVEREIGN',
+    FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS ||
+      "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+    BLOCK_TIME: 2,
+    GAS_LIMIT: 30000000,
+    GAS_PRICE: '1000000000'
+};
+
+// =========================================================================
+// TOKEN CONVERSION RATES
+// =========================================================================
+export const TOKEN_CONVERSION_RATES = {
+    BWAEZI_TO_USDT: 100,
+    BWAEZI_TO_USDC: 100,
+    BWAEZI_TO_DAI: 100,
+    STABLE_COINS: ['USDT', 'USDC', 'DAI', 'BUSD', 'TUSD']
+};
+
+// =========================================================================
+// SOVEREIGN LEGAL STRUCTURE
+// =========================================================================
+export const SOVEREIGN_LEGAL_STRUCTURE = {
+    FOUNDATION: {
+        NAME: 'BWAEZI Sovereign Foundation',
+        JURISDICTION: 'Cayman Islands',
+        ROLE: 'IP Ownership, Protocol R&D, Treasury Management',
+        DATA_HANDLING: 'None',
+        TAX_STATUS: 'Non-Profit Foundation'
+    },
+    OPERATING_ENTITY: {
+        NAME: 'BWAEZI Technologies LLC',
+        JURISDICTION: 'Wyoming, USA',
+        ROLE: 'User Interface Development, Customer Support',
+        DATA_HANDLING: 'Encrypted Data Only - No PII/PHI Storage',
+        LIABILITY: 'Limited to Interface Operations'
+    },
+    AI_GOVERNOR: {
+        LEGAL_STATUS: 'Autonomous Software Process',
+        LIABILITY: 'Limited by Code & Immutable Rules',
+        DECISION_MAKING: 'Algorithmic Execution of Sovereign Constitution'
     }
 };
 
 // =========================================================================
-// COMPLIANCE FRAMEWORKS - PRODUCTION STANDARDS
+// ZERO-KNOWLEDGE COMPLIANCE FRAMEWORK
 // =========================================================================
-export const SOVEREIGN_COMPLIANCE_FRAMEWORKS = {
-    SECURITY: 'ISO-27001',
-    CYBERSECURITY: 'NIST-CSF + PQC Alignment',
-    CONTROLS: 'SOC-2',
-    DATA_PROTECTION: 'GDPR',
-    HEALTHCARE: 'HIPAA',
-    INTERNAL: 'BWAEZI-SOVEREIGN-POLICY-V1'
+export const ZERO_KNOWLEDGE_COMPLIANCE = {
+    DATA_PROCESSING: {
+        ON_CHAIN: 'Encrypted Hashes & Commitments Only',
+        OFF_CHAIN: 'User-Encrypted Data Blobs (Client-Side)',
+        KEY_MANAGEMENT: 'User-Controlled Keys Only',
+        POLICY: 'We Never Store Plaintext PII/PHI'
+    },
+    ENCRYPTION_STRATEGY: {
+        CLIENT_SIDE: 'AES-256-GCM for data, RSA-2048 for keys',
+        KEY_MANAGEMENT: 'User-held private keys, platform only sees public keys',
+        DATA_AT_REST: 'All data encrypted before storage',
+        DATA_IN_TRANSIT: 'TLS 1.3 + E2E encryption'
+    },
+    JURISDICTIONAL_DEFENSE: [
+        'No Personal Data Processing - Only Cryptographic Proofs',
+        'User Maintains Control & Custody of Their Data',
+        'Platform Acts as Encrypted Data Router, Not Data Controller'
+    ]
 };
 
 // =========================================================================
-// COMPLIANCE STRATEGY - ARCHITECTURAL ALIGNMENT & VERIFICATION
+// QUANTUM SECURITY FRAMEWORK
 // =========================================================================
-export const COMPLIANCE_STRATEGY = {
-    ARCHITECTURAL_ALIGNMENT: {
-        SECURITY: 'Built on ISO-27001 security principles without formal certification',
-        DATA_PROTECTION: 'GDPR-compliant architecture through zero-knowledge design',
-        HEALTHCARE: 'HIPAA-aligned encrypted data handling without entity coverage',
-        FINANCIAL: 'Bank-grade security without regulated entity status'
+export const QUANTUM_SECURITY_FRAMEWORK = {
+    STATUS: 'Quantum-Resistant Layer 1 Active',
+    CRYPTO_ALGORITHMS: {
+        ASYMMETRIC: 'CRYSTALS-Kyber (PQC-Standard)',
+        SIGNATURES: 'CRYSTALS-Dilithium (PQC-Standard)',
+        HASHING: 'SHA3-512 with Salted Pre-Hash',
+        KEY_EXCHANGE: 'Supersingular Isogeny Key Encapsulation (SIKE) - Fallback'
     },
-    
-    VERIFICATION_METHODOLOGY: {
-        CERTIFICATION_ALTERNATIVE: 'Real-time cryptographic 
-verification replaces periodic audits',
-        TRANSPARENCY_MECHANISM: 'On-chain verifiable operations instead of paper-based reports',
-        COMPLIANCE_EVIDENCE: 'Automated cryptographic proof generation for all data handling'
+    KEY_MANAGEMENT: {
+        WALLET_PROTECTION: 'PK stored only in HSM or Encrypted Process Environment',
+        DECRYPTION_POLICY: 'Multi-Sig + Zero-Knowledge Proof (ZKP) Validation Required',
+        SOVEREIGN_WALLETS_DEFENSE: 'PK is Ephemeral during transaction signing, never at rest in plain text.'
     },
-    
-    PUBLIC_COMMUNICATION: {
-        COMPLIANCE: 'Architected in alignment with security principles of leading frameworks',
-        TRANSPARENCY: 'Beyond certification - fully verifiable on-chain operations', 
-        INNOVATION: 'Replacing bureaucratic audits with continuous cryptographic verification',
-     
-    SECURITY: 'Enterprise-grade security through architectural design, not just compliance checkboxes'
-    },
-    
-    LEGAL_POSITIONING: {
-        DATA_CONTROLLER: 'Platform acts as encrypted data router, not data controller',
-        JURISDICTIONAL_DEFENSE: 'No personal data processing - only cryptographic proofs',
-        USER_RIGHTS: 'User maintains control & custody of their data at all times'
+    THREAT_MITIGATION: {
+        QUANTUM_ATTACKS: 'Shor\'s Algorithm Mitigated by PQC Signatures',
+        SIDECURRENT_ATTACKS: 'ArielSQLite State Channel Obfuscation',
+        DDOS_ATTACKS: 'Sharding Manager Load Balancing'
     }
 };
 
 // =========================================================================
-// PUBLIC COMPLIANCE STATEMENTS - PRODUCTION READY
+// SOVEREIGN ECONOMIC ZONE CONFIGURATION
 // =========================================================================
-export const PUBLIC_COMPLIANCE_STATEMENTS = {
-    SECURITY: `Our architecture is designed around ISO-27001 security principles, implementing cryptographic verification instead of traditional audits.`,
-    DATA_PROTECTION: `We maintain GDPR-aligned data protection through zero-knowledge architecture where users control their data, eliminating traditional data controller risks.`,
-    TRANSPARENCY: `Real-time on-chain verification provides greater transparency than periodic compliance audits through continuous cryptographic proof generation.`,
-    INNOVATION: `We're advancing compliance beyond paperwork to mathematically verifiable security through architectural design and cryptographic proof systems.`
-};
+export const BWAEZI_SOVEREIGN_CONFIG = {
+    SOVEREIGN_WALLET_ADDRESS: process.env.SOVEREIGN_WALLET_ADDRESS ||
+      "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+    SOVEREIGN_PRIVATE_KEY: process.env.SOVEREIGN_PRIVATE_KEY,
+    PAYOUT_INTERVAL: parseInt(process.env.PAYOUT_INTERVAL) || 60000,
+    REVENUE_CONSOLIDATION_CRON: process.env.REVENUE_CONSOLIDATION_CRON || '0 0 * * *',
 
-// =========================================================================
-// UTILITY FUNCTIONS FOR CONFIGURATION
-// =========================================================================
-export const ConfigUtils = {
-    generateZKId: (prefix = 'zk') => {
-        const hash = createHash('sha256');
-hash.update(prefix + Date.now() + randomBytes(16).toString('hex'));
-        return prefix + '_' + hash.digest('hex').substring(0, 16);
-},
-    
-    validateZKCompliance: (serviceConfig) => {
-        const requiredPolicies = ['dataPolicy', 'compliance'];
-const hasRequired = requiredPolicies.every(policy => serviceConfig[policy]);
-        
-        if (!hasRequired) {
-            console.warn('Service missing required compliance policies');
-return false;
+    SOVEREIGN_OWNER: BWAEZI_CHAIN.FOUNDER_ADDRESS,
+    TOTAL_SUPPLY: 100000000,
+    OWNERSHIP: {
+        FOUNDER: 1.0,
+        ECOSYSTEM: 0.0,
+    },
+    AI_GOVERNANCE: {
+        MAX_TAX_RATE: 0.05,
+        MIN_RESERVES: 1000000,
+        REINVESTMENT_RATE: 0.4,
+        GOVERNANCE_INTERVAL: 3600000,
+        DECISION_CONFIDENCE_THRESHOLD: 0.8
+    },
+    SOVEREIGN_SERVICES: {
+        registrationFee: 1000,
+        annualLicenseFee: 500,
+        revenueShare: 0.15,
+        minServiceDeposit: 5000
+    },
+    REVENUE_TARGETS: {
+        monthly: 100000,
+        quarterly: 500000,
+        annual: 2000000
+    },
+    TOKEN_ECONOMICS: {
+        CONVERSION_RATES: TOKEN_CONVERSION_RATES,
+        STABLE_TOKEN_PAIRS: ['BWAEZI/USDT', 'BWAEZI/USDC', 'BWAEZI/DAI'],
+        LIQUIDITY_POOLS: {
+            MIN_LIQUIDITY: 100000,
+            FEE_STRUCTURE: 0.003
         }
-
-        const dataPolicy = serviceConfig.dataPolicy.toLowerCase();
-const forbiddenTerms = ['plaintext', 'unencrypted', 'pii storage', 'phi storage'];
-        const hasForbiddenTerm = forbiddenTerms.some(term => dataPolicy.includes(term));
-
-        return !hasForbiddenTerm;
-},
-    
-    getTimeFilter: (timeframe) => {
-        const now = Date.now();
-switch (timeframe) {
-            case '24h': return now - (24 * 60 * 60 * 1000);
-case '7d': return now - (7 * 24 * 60 * 60 * 1000);
-case '30d': return now - (30 * 24 * 60 * 60 * 1000);
-case '90d': return now - (90 * 24 * 60 * 60 * 1000);
-default: return now - (30 * 24 * 60 * 60 * 1000);
-}
     },
-
-    generateComplianceHash: (data) => {
-        return createHash('sha256')
-            .update(JSON.stringify(data) + randomBytes(16).toString('hex'))
-            .digest('hex');
-},
-
-    // Token conversion utilities
-    convertBWAEZIToStable: (bwaeziAmount, stableToken = 'USDT') => {
-        const rate = TOKEN_CONVERSION_RATES[`BWAEZI_TO_${stableToken}`];
-return bwaeziAmount * rate;
+    BLOCKCHAIN_INTEGRATION: {
+        ETHEREUM: {
+            NETWORK: 'mainnet',
+            CONFIRMATIONS: 12,
+            GAS_MULTIPLIER: 1.2
+        },
+        SOLANA: {
+            NETWORK: 'mainnet-beta',
+            COMMITMENT: 'confirmed',
+            PRIORITY_FEE: 1000000
+        }
     },
-
-    convertStableToBWAEZI: (stableAmount, stableToken = 'USDT') => {
-        const rate = TOKEN_CONVERSION_RATES[`BWAEZI_TO_${stableToken}`];
-return stableAmount / rate;
-    },
-
-    isValidStableToken: (token) => {
-        return TOKEN_CONVERSION_RATES.STABLE_COINS.includes(token);
-}
+    COMPLIANCE_ALIGNMENT: {
+        STATUS: 'Architected in Alignment With',
+        FRAMEWORKS: ['ISO-27001 Principles', 'SOC-2 Trust Criteria', 'GDPR Data Protection', 'HIPAA Security'],
+        CERTIFICATION: 'None - Cryptographic Verification Instead'
+    }
 };
 
 // =========================================================================
-// DEFAULT EXPORTS
+// SOVEREIGN SERVICES REGISTRY
 // =========================================================================
-export default {
-    BWAEZI_CHAIN,
-    TOKEN_CONVERSION_RATES,
-    SOVEREIGN_LEGAL_STRUCTURE,
-    ZERO_KNOWLEDGE_COMPLIANCE,
-    BWAEZI_SOVEREIGN_CONFIG,
-    SOVEREIGN_SERVICES,
-    SOVEREIGN_COMPLIANCE_FRAMEWORKS,
-    COMPLIANCE_STRATEGY,
-    PUBLIC_COMPLIANCE_STATEMENTS,
-    ConfigUtils,
-    QUANTUM_SECURITY_FRAMEWORK
-};
+export const SOVEREIGN_SERVICES = {
+    QUANTUM_SECURE_COMMUNICATIONS: {
+        id: 'quantum_secure_comms_v1',
+        name: 'QuantumSecureCommunications',
+        description: 'Quantum-resistant secure communication channels for sovereign entities',
+        feeStructure: {
+            baseFee: 0.01,
+            transactionFee: 0.001,
+            premiumFeatures: 0.1,
+            enterpriseLicense: 10000
+        },
+        compliance: ['Zero-Knowledge Architecture', 'Client-Side Encryption', 'PQC-Protected'],
+        minDeposit: 10000,
+        dataPolicy: 'No PII Storage - Encrypted Communications Only'
+    },
+    SOVEREIGN_IDENTITY_MANAGEMENT: {
+        id: 'sovereign_identity_v1',
+        name: 'SovereignIdentityManagement',
+        description: 'Identity and access management for sovereign infrastructure',
+        feeStructure: {
+            baseFee: 0.02,
+            verificationFee: 0.05,
+            premiumFeatures: 0.15,
+            enterpriseLicense: 15000
+        },
+        compliance: ['Zero-Knowledge Proofs', 'Selective Disclosure', 'PQC-Protected'],
+        minDeposit: 15000,
+        dataPolicy: 'No Identity Data Storage - Cryptographic Claims Only'
+    },
+    ENTERPRISE_DATA_SOVEREIGNTY: {
+        id: 'enterprise_data_v1',
+        name: 'EnterpriseDataSovereignty',
+        description: 'Enterprise-grade data sovereignty and governance solutions',
+        feeStructure: {
+            baseFee: 0.10,
+            processingFee: 0.05,
+            premiumFeatures: 0.25,
+            enterpriseLicense: 25000
+        },
+        compliance: ['End-to-End Encryption', 'Zero Data Access', 'PQC-Protected'],
+        minDeposit: 250
