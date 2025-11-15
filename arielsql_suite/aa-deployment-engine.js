@@ -79,11 +79,13 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     console.log("\n🚀 Deploying BWAEZIPaymaster (Loaves & Fishes Engine)...");
     const factory = new ethers.ContractFactory(abi, bytecode, signer);
 
+    // CRITICAL FIX: Normalize all address arguments using ethers.getAddress() 
+    // to resolve the "bad address checksum" error.
     const constructorArgs = [
-        config.ENTRY_POINT_ADDRESS,
-        config.BWAEZI_TOKEN_ADDRESS,
-        config.WETH_TOKEN_ADDRESS,
-        config.UNISWAP_V3_QUOTER_ADDRESS,
+        ethers.getAddress(config.ENTRY_POINT_ADDRESS),
+        ethers.getAddress(config.BWAEZI_TOKEN_ADDRESS),
+        ethers.getAddress(config.WETH_TOKEN_ADDRESS),
+        ethers.getAddress(config.UNISWAP_V3_QUOTER_ADDRESS),
         config.BWAEZI_WETH_FEE || 3000
     ];
 
