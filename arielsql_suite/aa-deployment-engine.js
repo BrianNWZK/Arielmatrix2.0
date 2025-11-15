@@ -24,13 +24,14 @@ function compilePaymaster() {
     
     const mainSource = fs.readFileSync(mainContractPath, 'utf8');
     
-    // Explicitly load all 5 Solidity files, keyed by their relative path used in the main contract
+    // CRITICAL FIX: The keys must be the exact filenames used in the Solidity import statements 
+    // without the leading './' to avoid triggering the unsupported import resolver logic.
     const sources = {
         [mainContractName]: { content: mainSource },
-        './IPaymaster.sol': { content: fs.readFileSync(path.join(__dirname, 'IPaymaster.sol'), 'utf8') },
-        './UserOperation.sol': { content: fs.readFileSync(path.join(__dirname, 'UserOperation.sol'), 'utf8') },
-        './IERC20.sol': { content: fs.readFileSync(path.join(__dirname, 'IERC20.sol'), 'utf8') },
-        './SafeERC20.sol': { content: fs.readFileSync(path.join(__dirname, 'SafeERC20.sol'), 'utf8') },
+        'IPaymaster.sol': { content: fs.readFileSync(path.join(__dirname, 'IPaymaster.sol'), 'utf8') },
+        'UserOperation.sol': { content: fs.readFileSync(path.join(__dirname, 'UserOperation.sol'), 'utf8') },
+        'IERC20.sol': { content: fs.readFileSync(path.join(__dirname, 'IERC20.sol'), 'utf8') },
+        'SafeERC20.sol': { content: fs.readFileSync(path.join(__dirname, 'SafeERC20.sol'), 'utf8') },
     };
 
     const input = {
@@ -42,7 +43,7 @@ function compilePaymaster() {
         },
     };
 
-    // The key change: solc.compile is called without the problematic `findImports` callback.
+    // solc.compile is called without the problematic `findImports` callback.
     const output = JSON.parse(solc.compile(JSON.stringify(input)));
 
     if (output.errors) {
