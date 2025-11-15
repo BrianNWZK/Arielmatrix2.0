@@ -1,3 +1,4 @@
+// arielsql_suite/main.js
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
@@ -48,7 +49,7 @@ const startExpressServer = () => {
 // =========================================================================
 
 async function main() {
-    const expressServer = startExpressServer();
+    const expressServer = startExpressServer(); // Server starts successfully here
     
     try {
         console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.1.0: AA UPGRADE INITIATED");
@@ -106,14 +107,8 @@ async function main() {
     } catch (error) {
         console.error("\n💥 DEPLOYMENT FAILED:", error.message);
         
-        // Start server anyway for debugging
-        try {
-            console.log("🔄 Starting server in recovery mode...");
-            await startExpressServer();
-            console.log("🔧 Server started - system partially operational");
-        } catch (serverError) {
-            console.error("❌ Failed to start server:", serverError.message);
-        }
+        // FIX: Server is already running. Removed redundant server start call to fix EADDRINUSE.
+        console.log("🔧 Server remains started - system in recovery mode.");
 
         return {
             success: false,
