@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "./IERC20.sol"; // Flat import
+import "IERC20.sol"; // Flat import
 
 library SafeERC20 {
     function safeTransfer(IERC20 token, address to, uint256 value) internal {
