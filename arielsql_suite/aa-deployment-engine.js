@@ -1,63 +1,63 @@
-// arielsql_suite/aa-deployment-engine.js - FIXED VERSION
+// arielsql_suite/aa-deployment-engine.js - The Node.js Compiler and Deployment Engine
 import { ethers } from 'ethers';
 import fs from 'fs';
 import path from 'path';
 import solc from 'solc';
 import { fileURLToPath } from 'url';
 
-// Node.js path helpers for ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// IMPROVED Import resolver that handles node_modules properly
+// ────────────────────────────────────────────────────────────────
+// 🔧 FULLY FIXED IMPORT RESOLVER (Handles @openzeppelin & @account-abstraction)
+// ────────────────────────────────────────────────────────────────
 function findImports(importPath) {
     try {
-        // Handle @openzeppelin imports
+        let resolvedPath;
+
+        // Case 1: @openzeppelin/contracts/...
         if (importPath.startsWith('@openzeppelin/')) {
-            const fullPath = path.resolve(process.cwd(), 'node_modules', importPath);
-            if (fs.existsSync(fullPath)) {
-                return { contents: fs.readFileSync(fullPath, 'utf8') };
-            }
+            resolvedPath = path.resolve(__dirname, '..', 'node_modules', importPath);
         }
-        
-        // Handle @account-abstraction imports  
-        if (importPath.startsWith('@account-abstraction/')) {
-            const fullPath = path.resolve(process.cwd(), 'node_modules', importPath);
-            if (fs.existsSync(fullPath)) {
-                return { contents: fs.readFileSync(fullPath, 'utf8') };
-            }
+        // Case 2: @account-abstraction/contracts/...
+        else if (importPath.startsWith('@account-abstraction/')) {
+            resolvedPath = path.resolve(__dirname, '..', 'node_modules', importPath);
         }
-        
-        // Handle relative imports
-        if (importPath.startsWith('./') || importPath.startsWith('../')) {
-            const fullPath = path.resolve(__dirname, 'contracts', importPath);
-            if (fs.existsSync(fullPath)) {
-                return { contents: fs.readFileSync(fullPath, 'utf8') };
-            }
+        // Case 3: Relative paths (should not happen, but safe)
+        else if (importPath.startsWith('./') || importPath.startsWith('../')) {
+            resolvedPath = path.resolve(path.dirname(contractPath), importPath);
         }
-        
-        return { error: `File not found: ${importPath}` };
-    } catch (error) {
-        return { error: `Error reading ${importPath}: ${error.message}` };
+        else {
+            return { error: `Unsupported import: ${importPath}` };
+        }
+
+        // Ensure .sol extension if missing
+        if (!resolvedPath.endsWith('.sol')) {
+            resolvedPath += '.sol';
+        }
+
+        if (fs.existsSync(resolvedPath)) {
+            return { contents: fs.readFileSync(resolvedPath, 'utf8') };
+        } else {
+            return { error: `File not found: ${resolvedPath}` };
+        }
+    } catch (err) {
+        return { error: `Import failed: ${err.message}` };
     }
 }
+
+// Store contract path globally for import callback
+let contractPath;
 
 /**
  * @notice Compiles the BWAEZIPaymaster.sol contract using Node.js 'solc'.
  */
 function compilePaymaster() {
-    // Check if node_modules exists
-    const nodeModulesPath = path.resolve(process.cwd(), 'node_modules');
-    if (!fs.existsSync(nodeModulesPath)) {
-        throw new Error(`COMPILATION FAILED: node_modules directory not found at ${nodeModulesPath}. 
-        Run 'npm install' to install dependencies first.`);
-    }
-
-    const contractPath = path.join(__dirname, 'contracts', 'BWAEZIPaymaster.sol');
+    contractPath = path.join(__dirname, 'contracts', 'BWAEZIPaymaster.sol');
     
     if (!fs.existsSync(contractPath)) {
-        throw new Error(`COMPILATION FAILED: Contract not found at expected path: ${contractPath}. 
-        Ensure you have created the directory 'arielsql_suite/contracts/' and saved BWAEZIPaymaster.sol inside it.`);
+        throw new Error(`COMPILATION FAILED: Contract not found at: ${contractPath}\n` +
+            `Ensure 'arielsql_suite/contracts/BWAEZIPaymaster.sol' exists.`);
     }
 
     const source = fs.readFileSync(contractPath, 'utf8');
@@ -70,88 +70,85 @@ function compilePaymaster() {
             },
         },
         settings: {
-            optimizer: {
-                enabled: true,
-                runs: 200,
-            },
-            outputSelection: {
-                '*': {
-                    '*': ['abi', 'evm.bytecode'],
-                },
-            },
+            optimizer: { enabled: true, runs: 200 },
+            outputSelection: { '*': { '*': ['abi', 'evm.bytecode'] } },
         },
     };
 
-    console.log('🔧 Compiling contract with improved import resolver...');
-    
-    const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports }));
-    
+    console.log("🔧 Compiling BWAEZIPaymaster.sol with full import resolution...");
+
+    const output = JSON.parse(
+        solc.compile(JSON.stringify(input), { import: findImports })
+    );
+
+    // Print warnings (non-fatal)
     if (output.errors) {
-        const errorList = output.errors.filter(e => e.severity === 'error');
-        if (errorList.length > 0) {
-            throw new Error(`Solidity Compilation Errors:\n${errorList.map(e => e.formattedMessage).join('\n')}`);
+        const warnings = output.errors.filter(e => e.severity === 'warning');
+        const errors = output.errors.filter(e => e.severity === 'error');
+
+        if (warnings.length > 0) {
+            console.warn("⚠️ Compilation Warnings:\n", warnings.map(w => w.formattedMessage).join('\n'));
+        }
+
+        if (errors.length > 0) {
+            throw new Error(`❌ SOLIDITY ERRORS:\n${errors.map(e => e.formattedMessage).join('\n')}`);
         }
     }
 
     const contractName = 'BWAEZIPaymaster';
-    const compiledContract = output.contracts['BWAEZIPaymaster.sol'][contractName];
+    const compiled = output.contracts['BWAEZIPaymaster.sol'][contractName];
 
-    if (!compiledContract) {
-        throw new Error(`COMPILATION FAILED: Could not find ${contractName} in compilation output`);
-    }
-
-    console.log(`✅ COMPILATION SUCCESS: ${contractName} ABI and Bytecode generated.`);
+    console.log(`✅ COMPILED: ${contractName} → ABI + Bytecode ready.`);
     return {
-        abi: compiledContract.abi,
-        bytecode: compiledContract.evm.bytecode.object,
+        abi: compiled.abi,
+        bytecode: compiled.evm.bytecode.object,
     };
 }
 
-// Rest of your deployment function remains the same...
+/**
+ * @notice Deploys Paymaster + Returns SCW counterfactual address
+ */
 export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     if (!config.PRIVATE_KEY) {
-        throw new Error("Cannot deploy contracts: PRIVATE_KEY environment variable is not set.");
+        throw new Error("PRIVATE_KEY not set in environment.");
     }
-    const deployerAddress = signer.address;
-    
-    console.log(`\n👑 Deployer EOA: ${deployerAddress}. Balance: ${ethers.formatEther(await provider.getBalance(deployerAddress))} ETH.`);
 
-    // --- 1. COMPILE CONTRACT (Node.js Execution) ---
+    const deployerAddress = signer.address;
+    console.log(`\n👑 Deployer: ${deployerAddress} | Balance: ${ethers.formatEther(await provider.getBalance(deployerAddress))} ETH`);
+
+    // 1. COMPILE
     const { abi, bytecode } = compilePaymaster();
-    
-    // --- 2. DEPLOY THE BWAEZI PAYMASTER CONTRACT ---
-    console.log("👑 2. Deploying BWAEZIPaymaster (Loaves and Fishes Engine)...");
-    
+
+    // 2. DEPLOY PAYMASTER
+    console.log("\n🚀 Deploying BWAEZIPaymaster (Loaves & Fishes Engine)...");
     const factory = new ethers.ContractFactory(abi, bytecode, signer);
-    
+
     const constructorArgs = [
         config.ENTRY_POINT_ADDRESS,
         config.BWAEZI_TOKEN_ADDRESS,
         config.WETH_TOKEN_ADDRESS,
         config.UNISWAP_V3_QUOTER_ADDRESS,
-        config.BWAEZI_WETH_FEE
+        config.BWAEZI_WETH_FEE || 3000
     ];
-    
+
     const deployTx = factory.getDeployTransaction(...constructorArgs);
-    const estimatedGas = await provider.estimateGas(deployTx);
-    console.log(`🔍 Deployment Gas Estimate: ${ethers.formatUnits(estimatedGas, 'gwei')} Gwei`);
+    const gasEstimate = await provider.estimateGas(deployTx);
+    console.log(`⛽ Gas Estimate: ${gasEstimate.toString()} (~${ethers.formatUnits(gasEstimate * 20n, 'gwei')} Gwei @ 20 gwei)`);
 
-    const paymasterContract = await factory.deploy(
-        ...constructorArgs,
-        { gasLimit: estimatedGas * 15n / 10n } // 50% buffer
-    );
+    const paymasterContract = await factory.deploy(...constructorArgs, {
+        gasLimit: gasEstimate + gasEstimate / 2n // 50% buffer
+    });
 
-    console.log(`🔄 Awaiting BWAEZIPaymaster deployment... Tx: ${paymasterContract.deploymentTransaction().hash}`);
+    console.log(`⏳ Tx Hash: ${paymasterContract.deploymentTransaction().hash}`);
     await paymasterContract.waitForDeployment();
-    
+
     const paymasterAddress = await paymasterContract.getAddress();
-    console.log(`✅ BWAEZIPaymaster Deployed at: ${paymasterAddress}`);
-    
-    // --- 3. DETERMINE SMART CONTRACT WALLET ADDRESS (Counterfactual) ---
+    console.log(`✅ BWAEZIPaymaster DEPLOYED: ${paymasterAddress}`);
+
+    // 3. GET SCW ADDRESS
     const smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
-    
-    console.log(`✅ Smart Contract Wallet Address (Counterfactual): ${smartAccountAddress}`);
-    console.log(`\n⚠️ CRITICAL ACTION: TRANSFER BWAEZI TO SCW: Send your 100,000,000 BWAEZI to: ${smartAccountAddress}`);
+    console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
+    console.log(`\n⚠️  ACTION REQUIRED: Send 100,000,000 BWAEZI → ${smartAccountAddress}`);
 
     return { paymasterAddress, smartAccountAddress };
 }
