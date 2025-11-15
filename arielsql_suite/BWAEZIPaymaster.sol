@@ -8,6 +8,8 @@ import "UserOperation.sol"; // The struct is needed directly
 import "IERC20.sol";
 import "SafeERC20.sol";
 
+// CRITICAL FIX: Add 'view' here to satisfy the compiler when this function is called 
+// inside the 'validatePaymasterUserOp' (a 'view' function).
 interface IQuoter {
     function quoteExactOutputSingle(
         address tokenIn,
@@ -15,7 +17,7 @@ interface IQuoter {
         uint24 fee,
         uint256 amountOut,
         uint160 sqrtPriceLimitX96
-    ) external returns (uint256 amountIn);
+    ) external view returns (uint256 amountIn);
 }
 
 contract BWAEZIPaymaster is IPaymaster {
