@@ -27,10 +27,11 @@ const normalizeAddress = (address) => {
 const CONFIG_BASE = {
     SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
     NETWORK: 'mainnet',
+    // --- UPDATED RPC URL LIST for better stability ---
     RPC_URLS: [
+        "https://eth-mainnet.public.blastapi.io", // A fast, stable, public alternative
         "https://eth.llamarpc.com", 
-        "https://rpc.ankr.com/eth", 
-        "https://cloudflare-eth.com" 
+        "https://rpc.ankr.com/eth"
     ],
     PORT: process.env.PORT || 10000,
     PRIVATE_KEY: process.env.PRIVATE_KEY,
@@ -84,6 +85,7 @@ async function main() {
             throw new Error("PRIVATE_KEY is mandatory for deployment. Please set it in the environment.");
         }
 
+        // Use the first, most reliable RPC URL
         const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider); 
         
@@ -114,6 +116,11 @@ async function main() {
                 console.log('🔄 ACTIVATING EMERGENCY RPC FALLBACK...');
                 
                 try {
+                    // Try initializing again using the fallback list
+                    const fallbackProvider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[1]); // Use second RPC
+                    const fallbackSigner = new ethers.Wallet(CONFIG.PRIVATE_KEY, fallbackProvider); 
+                    
+                    // Note: We don't redeploy, just reinitialize the core logic here
                     await optimizedCore.initialize();
                     await optimizedCore.executeQuantumArbitrageVault(); 
 
