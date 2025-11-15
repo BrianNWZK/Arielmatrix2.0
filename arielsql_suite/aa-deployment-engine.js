@@ -3,16 +3,21 @@ import { ethers } from 'ethers';
 import fs from 'fs';
 import path from 'path';
 import solc from 'solc';
+import { fileURLToPath } from 'url';
+
+// Node.js path helpers for ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Helper to resolve Node_modules imports for solc
 function findImports(relativePath) {
     if (relativePath.startsWith('@')) {
+        // Resolve paths for installed npm packages (e.g., @openzeppelin/contracts)
         const fullPath = path.resolve('node_modules', relativePath);
         if (fs.existsSync(fullPath)) {
             return { contents: fs.readFileSync(fullPath, 'utf8') };
         }
     }
-    // Handle local imports if any
     return { error: 'File not found' };
 }
 
@@ -20,17 +25,28 @@ function findImports(relativePath) {
  * @notice Compiles the BWAEZIPaymaster.sol contract using Node.js 'solc'.
  */
 function compilePaymaster() {
-    const contractPath = path.resolve('contracts', 'BWAEZIPaymaster.sol');
+    // 🔥 CRITICAL FIX: Adjusted path to assume 'contracts/BWAEZIPaymaster.sol' is inside the same directory as this script.
+    const contractPath = path.join(__dirname, 'contracts', 'BWAEZIPaymaster.sol');
+    
+    if (!fs.existsSync(contractPath)) {
+        throw new Error(`COMPILATION FAILED: Contract not found at expected path: ${contractPath}. 
+        Ensure you have created the directory 'arielsql_suite/contracts/' and saved BWAEZIPaymaster.sol inside it.`);
+    }
+
     const source = fs.readFileSync(contractPath, 'utf8');
 
     const input = {
         language: 'Solidity',
         sources: {
-            'BWAEZIPaymaster.sol': {
+            'BWAEZIPaymaster.sol': { // Name used internally by solc
                 content: source,
             },
         },
         settings: {
+            optimizer: {
+                enabled: true,
+                runs: 200,
+            },
             outputSelection: {
                 '*': {
                     '*': ['abi', 'evm.bytecode'],
@@ -39,14 +55,18 @@ function compilePaymaster() {
         },
     };
 
+    // The 'import' callback is essential for finding @openzeppelin and @account-abstraction files
     const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports }));
     
+    if (output.errors) {
+        const errorList = output.errors.filter(e => e.severity === 'error');
+        if (errorList.length > 0) {
+            throw new Error(`Solidity Compilation Errors:\n${errorList.map(e => e.formattedMessage).join('\n')}`);
+        }
+    }
+
     const contractName = 'BWAEZIPaymaster';
     const compiledContract = output.contracts['BWAEZIPaymaster.sol'][contractName];
-
-    if (!compiledContract || !compiledContract.evm || !compiledContract.evm.bytecode) {
-        throw new Error(`Solidity Compilation Failed for ${contractName}: ${output.errors ? output.errors.map(e => e.formattedMessage).join('\n') : 'Unknown Error'}`);
-    }
 
     console.log(`✅ COMPILATION SUCCESS: ${contractName} ABI and Bytecode generated.`);
     return {
@@ -60,9 +80,14 @@ function compilePaymaster() {
  * @notice Executes the deployment of the Smart Contract Wallet and BWAEZI Paymaster.
  */
 export async function deployERC4337Contracts(provider, signer, config, AASDK) {
+    if (!config.PRIVATE_KEY) {
+        throw new Error("Cannot deploy contracts: PRIVATE_KEY environment variable is not set.");
+    }
     const deployerAddress = signer.address;
+    
+    console.log(`\n👑 Deployer EOA: ${deployerAddress}. Balance: ${ethers.formatEther(await provider.getBalance(deployerAddress))} ETH.`);
 
-    // --- 1. COMPILE CONTRACT ---
+    // --- 1. COMPILE CONTRACT (Node.js Execution) ---
     const { abi, bytecode } = compilePaymaster();
     
     // --- 2. DEPLOY THE BWAEZI PAYMASTER CONTRACT ---
@@ -85,7 +110,7 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     // WARNING: THIS IS THE ONE-TIME EOA GAS FEE. Ensure 0.015 ETH+ is in the EOA.
     const paymasterContract = await factory.deploy(
         ...constructorArgs,
-        { gasLimit: estimatedGas * 15n / 10n } // 50% buffer for live Mainnet deployment
+        { gasLimit: estimatedGas * 15n / 10n } // 50% buffer
     );
 
     console.log(`🔄 Awaiting BWAEZIPaymaster deployment... Tx: ${paymasterContract.deploymentTransaction().hash}`);
