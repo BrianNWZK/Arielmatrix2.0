@@ -95,15 +95,21 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     const paymasterContract = await factory.deploy(...constructorArgs, { gasLimit: gasLimitWithBuffer });
 
     console.log(`⏳ Tx Hash: ${paymasterContract.deploymentTransaction().hash}`);
-    await paymasterContract.waitForDeployment();
 
-    const paymasterAddress = await paymasterContract.getAddress();
-    console.log(`✅ BWAEZIPaymaster DEPLOYED: ${paymasterAddress}`);
+    // Robust deployment waiting
+    try {
+        const deployedContract = await paymasterContract.waitForDeployment();
+        const paymasterAddress = await deployedContract.getAddress();
+        console.log(`✅ BWAEZIPaymaster DEPLOYED: ${paymasterAddress}`);
+        
+        // 3. GET SCW ADDRESS
+        const smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
+        console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
+        console.log(`\n⚠️ ACTION REQUIRED: Fund the Smart Contract Wallet with BWAEZI for gas payment: ${smartAccountAddress}`);
 
-    // 3. GET SCW ADDRESS
-    const smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
-    console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
-    console.log(`\n⚠️ ACTION REQUIRED: Fund the Smart Contract Wallet with BWAEZI for gas payment: ${smartAccountAddress}`);
-
-    return { paymasterAddress, smartAccountAddress };
+        return { paymasterAddress, smartAccountAddress };
+    } catch (error) {
+        console.error(`💥 Failed to wait for deployment of Tx ${paymasterContract.deploymentTransaction().hash}:`, error.message);
+        throw new Error("Deployment transaction failed or timed out.");
+    }
 }
