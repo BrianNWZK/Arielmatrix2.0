@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 
-// === FLAT DIRECTORY IMPORTS ===
-import "./IPaymaster.sol";
-import "./UserOperation.sol"; // The struct is needed directly
-import "./IERC20.sol";
-import "./SafeERC20.sol";
+// === FLAT DIRECTORY IMPORTS - NON-RELATIVE FIX ===
+import "IPaymaster.sol";
+import "UserOperation.sol"; // The struct is needed directly
+import "IERC20.sol";
+import "SafeERC20.sol";
 
 interface IQuoter {
     function quoteExactOutputSingle(
