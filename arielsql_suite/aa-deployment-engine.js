@@ -1,4 +1,4 @@
-// arielsql_suite/aa-deployment-engine.js - The Node.js Compiler and Deployment Engine
+// arielsql_suite/aa-deployment-engine.js - FIXED VERSION
 import { ethers } from 'ethers';
 import fs from 'fs';
 import path from 'path';
@@ -9,23 +9,50 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Helper to resolve Node_modules imports for solc
-function findImports(relativePath) {
-    if (relativePath.startsWith('@')) {
-        // Resolve paths for installed npm packages (e.g., @openzeppelin/contracts)
-        const fullPath = path.resolve('node_modules', relativePath);
-        if (fs.existsSync(fullPath)) {
-            return { contents: fs.readFileSync(fullPath, 'utf8') };
+// IMPROVED Import resolver that handles node_modules properly
+function findImports(importPath) {
+    try {
+        // Handle @openzeppelin imports
+        if (importPath.startsWith('@openzeppelin/')) {
+            const fullPath = path.resolve(process.cwd(), 'node_modules', importPath);
+            if (fs.existsSync(fullPath)) {
+                return { contents: fs.readFileSync(fullPath, 'utf8') };
+            }
         }
+        
+        // Handle @account-abstraction imports  
+        if (importPath.startsWith('@account-abstraction/')) {
+            const fullPath = path.resolve(process.cwd(), 'node_modules', importPath);
+            if (fs.existsSync(fullPath)) {
+                return { contents: fs.readFileSync(fullPath, 'utf8') };
+            }
+        }
+        
+        // Handle relative imports
+        if (importPath.startsWith('./') || importPath.startsWith('../')) {
+            const fullPath = path.resolve(__dirname, 'contracts', importPath);
+            if (fs.existsSync(fullPath)) {
+                return { contents: fs.readFileSync(fullPath, 'utf8') };
+            }
+        }
+        
+        return { error: `File not found: ${importPath}` };
+    } catch (error) {
+        return { error: `Error reading ${importPath}: ${error.message}` };
     }
-    return { error: 'File not found' };
 }
 
 /**
  * @notice Compiles the BWAEZIPaymaster.sol contract using Node.js 'solc'.
  */
 function compilePaymaster() {
-    // 🔥 CRITICAL FIX: Adjusted path to assume 'contracts/BWAEZIPaymaster.sol' is inside the same directory as this script.
+    // Check if node_modules exists
+    const nodeModulesPath = path.resolve(process.cwd(), 'node_modules');
+    if (!fs.existsSync(nodeModulesPath)) {
+        throw new Error(`COMPILATION FAILED: node_modules directory not found at ${nodeModulesPath}. 
+        Run 'npm install' to install dependencies first.`);
+    }
+
     const contractPath = path.join(__dirname, 'contracts', 'BWAEZIPaymaster.sol');
     
     if (!fs.existsSync(contractPath)) {
@@ -38,7 +65,7 @@ function compilePaymaster() {
     const input = {
         language: 'Solidity',
         sources: {
-            'BWAEZIPaymaster.sol': { // Name used internally by solc
+            'BWAEZIPaymaster.sol': {
                 content: source,
             },
         },
@@ -55,7 +82,8 @@ function compilePaymaster() {
         },
     };
 
-    // The 'import' callback is essential for finding @openzeppelin and @account-abstraction files
+    console.log('🔧 Compiling contract with improved import resolver...');
+    
     const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports }));
     
     if (output.errors) {
@@ -68,6 +96,10 @@ function compilePaymaster() {
     const contractName = 'BWAEZIPaymaster';
     const compiledContract = output.contracts['BWAEZIPaymaster.sol'][contractName];
 
+    if (!compiledContract) {
+        throw new Error(`COMPILATION FAILED: Could not find ${contractName} in compilation output`);
+    }
+
     console.log(`✅ COMPILATION SUCCESS: ${contractName} ABI and Bytecode generated.`);
     return {
         abi: compiledContract.abi,
@@ -75,10 +107,7 @@ function compilePaymaster() {
     };
 }
 
-
-/**
- * @notice Executes the deployment of the Smart Contract Wallet and BWAEZI Paymaster.
- */
+// Rest of your deployment function remains the same...
 export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     if (!config.PRIVATE_KEY) {
         throw new Error("Cannot deploy contracts: PRIVATE_KEY environment variable is not set.");
@@ -107,7 +136,6 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     const estimatedGas = await provider.estimateGas(deployTx);
     console.log(`🔍 Deployment Gas Estimate: ${ethers.formatUnits(estimatedGas, 'gwei')} Gwei`);
 
-    // WARNING: THIS IS THE ONE-TIME EOA GAS FEE. Ensure 0.015 ETH+ is in the EOA.
     const paymasterContract = await factory.deploy(
         ...constructorArgs,
         { gasLimit: estimatedGas * 15n / 10n } // 50% buffer
