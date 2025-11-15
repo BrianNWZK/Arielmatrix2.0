@@ -7,11 +7,9 @@ import { fileURLToPath } from 'url';
 // Resolve __dirname to the arielsql_suite/ directory
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// PROJECT_ROOT is not strictly needed in this simplified version, but kept for context:
-const PROJECT_ROOT = path.resolve(__dirname, '..'); // /usr/src/app
 
 /**
- * @notice Compiles the BWAEZIPaymaster contract using sibling files in the same directory.
+ * Compiles the BWAEZIPaymaster contract using sibling files in the same directory.
  * This explicitly loads all source files into the solc input to bypass import resolution issues.
  */
 function compilePaymaster() {
@@ -26,7 +24,7 @@ function compilePaymaster() {
     
     const mainSource = fs.readFileSync(mainContractPath, 'utf8');
     
-    // Explicitly load all 5 Solidity files, keyed by their relative path used in the main contract (e.g., "./IPaymaster.sol")
+    // Explicitly load all 5 Solidity files, keyed by their relative path used in the main contract
     const sources = {
         [mainContractName]: { content: mainSource },
         './IPaymaster.sol': { content: fs.readFileSync(path.join(__dirname, 'IPaymaster.sol'), 'utf8') },
@@ -44,7 +42,7 @@ function compilePaymaster() {
         },
     };
 
-    // NOTE: We do NOT pass the { import: findImports } callback, because all sources are provided above.
+    // The key change: solc.compile is called without the problematic `findImports` callback.
     const output = JSON.parse(solc.compile(JSON.stringify(input)));
 
     if (output.errors) {
@@ -66,8 +64,12 @@ function compilePaymaster() {
  * @notice Deploys Paymaster + Returns SCW counterfactual address
  */
 export async function deployERC4337Contracts(provider, signer, config, AASDK) {
+    if (!config.PRIVATE_KEY) {
+        throw new Error("PRIVATE_KEY not set in environment.");
+    }
+
     const deployerAddress = signer.address;
-    console.log(`\n👑 Deployer: ${deployerAddress}`);
+    console.log(`\n👑 Deployer: ${deployerAddress} | Balance: ${ethers.formatEther(await provider.getBalance(deployerAddress))} ETH`);
 
     // 1. COMPILE
     const { abi, bytecode } = compilePaymaster();
@@ -86,10 +88,12 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
 
     const deployTx = factory.getDeployTransaction(...constructorArgs);
     const gasEstimate = await provider.estimateGas(deployTx);
+    
+    // Use a robust gas limit buffer for deployment
+    const gasLimitWithBuffer = gasEstimate + gasEstimate / 2n;
+    console.log(`⛽ Gas Estimate: ${gasEstimate.toString()} | Gas Limit: ${gasLimitWithBuffer.toString()}`);
 
-    const paymasterContract = await factory.deploy(...constructorArgs, {
-        gasLimit: gasEstimate + gasEstimate / 2n // 50% buffer
-    });
+    const paymasterContract = await factory.deploy(...constructorArgs, { gasLimit: gasLimitWithBuffer });
 
     console.log(`⏳ Tx Hash: ${paymasterContract.deploymentTransaction().hash}`);
     await paymasterContract.waitForDeployment();
@@ -100,8 +104,7 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     // 3. GET SCW ADDRESS
     const smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
     console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
-    console.log(`\n⚠️  ACTION REQUIRED: Send BWAEZI for gas payment → ${smartAccountAddress}`);
+    console.log(`\n⚠️ ACTION REQUIRED: Fund the Smart Contract Wallet with BWAEZI for gas payment: ${smartAccountAddress}`);
 
     return { paymasterAddress, smartAccountAddress };
 }
-```eof
