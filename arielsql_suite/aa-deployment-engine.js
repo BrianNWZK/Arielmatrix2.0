@@ -10,11 +10,10 @@ const __dirname = path.dirname(__filename);
 
 /**
  * Compiles the BWAEZIPaymaster contract using sibling files in the same directory.
- * This explicitly loads all source files into the solc input to bypass import resolution issues.
  */
 function compilePaymaster() {
     const mainContractName = 'BWAEZIPaymaster.sol';
-    const mainContractPath = path.join(__dirname, mainContractName); // Flat structure path
+    const mainContractPath = path.join(__dirname, mainContractName);
     
     if (!fs.existsSync(mainContractPath)) {
         throw new Error(`Contract not found: ${mainContractPath}`);
@@ -24,8 +23,7 @@ function compilePaymaster() {
     
     const mainSource = fs.readFileSync(mainContractPath, 'utf8');
     
-    // CRITICAL FIX: The keys must be the exact filenames used in the Solidity import statements 
-    // without the leading './' to avoid triggering the unsupported import resolver logic.
+    // Map of Solidity filenames to their content for the compiler
     const sources = {
         [mainContractName]: { content: mainSource },
         'IPaymaster.sol': { content: fs.readFileSync(path.join(__dirname, 'IPaymaster.sol'), 'utf8') },
@@ -43,7 +41,6 @@ function compilePaymaster() {
         },
     };
 
-    // solc.compile is called without the problematic `findImports` callback.
     const output = JSON.parse(solc.compile(JSON.stringify(input)));
 
     if (output.errors) {
@@ -79,13 +76,12 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
     console.log("\n🚀 Deploying BWAEZIPaymaster (Loaves & Fishes Engine)...");
     const factory = new ethers.ContractFactory(abi, bytecode, signer);
 
-    // CRITICAL FIX: Normalize all address arguments using ethers.getAddress() 
-    // to resolve the "bad address checksum" error.
+    // Addresses are now guaranteed to be checksummed from main.js
     const constructorArgs = [
-        ethers.getAddress(config.ENTRY_POINT_ADDRESS),
-        ethers.getAddress(config.BWAEZI_TOKEN_ADDRESS),
-        ethers.getAddress(config.WETH_TOKEN_ADDRESS),
-        ethers.getAddress(config.UNISWAP_V3_QUOTER_ADDRESS),
+        config.ENTRY_POINT_ADDRESS,
+        config.BWAEZI_TOKEN_ADDRESS,
+        config.WETH_TOKEN_ADDRESS,
+        config.UNISWAP_V3_QUOTER_ADDRESS,
         config.BWAEZI_WETH_FEE || 3000
     ];
 
