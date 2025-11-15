@@ -1,3 +1,4 @@
+arielsql_suite/aa-deployment-engine.js
 import { ethers } from 'ethers';
 import fs from 'fs';
 import path from 'path';
@@ -48,13 +49,16 @@ function compilePaymaster() {
         if (errors.length > 0) {
             throw new Error(`Compilation failed:\n${errors.map(e => e.formattedMessage).join('\n')}`);
         }
-        output.errors.filter(e => e.severity === 'warning').forEach(w => 
-            console.warn("Warning:", w.formattedMessage)
-        );
+        // Only show warnings if they're not about unused parameters (common in interfaces)
+        output.errors.filter(e => e.severity === 'warning').forEach(w => {
+            if (!w.formattedMessage.includes('Unused') && !w.formattedMessage.includes('unused')) {
+                console.warn("Warning:", w.formattedMessage);
+            }
+        });
     }
 
     const contract = output.contracts[mainContractName]['BWAEZIPaymaster'];
-    console.log("COMPILED SUCCESSFULLY");
+    console.log("✅ COMPILED SUCCESSFULLY");
     return { abi: contract.abi, bytecode: contract.evm.bytecode.object };
 }
 
@@ -85,31 +89,39 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK) {
         config.BWAEZI_WETH_FEE || 3000
     ];
 
-    const deployTx = factory.getDeployTransaction(...constructorArgs);
-    const gasEstimate = await provider.estimateGas(deployTx);
-    
-    // Use a robust gas limit buffer for deployment
-    const gasLimitWithBuffer = gasEstimate + gasEstimate / 2n;
-    console.log(`⛽ Gas Estimate: ${gasEstimate.toString()} | Gas Limit: ${gasLimitWithBuffer.toString()}`);
-
-    const paymasterContract = await factory.deploy(...constructorArgs, { gasLimit: gasLimitWithBuffer });
-
-    console.log(`⏳ Tx Hash: ${paymasterContract.deploymentTransaction().hash}`);
-
-    // Robust deployment waiting
     try {
+        const deployTx = factory.getDeployTransaction(...constructorArgs);
+        const gasEstimate = await provider.estimateGas(deployTx);
+        
+        // Use a more conservative gas limit buffer for mainnet
+        const gasLimitWithBuffer = (gasEstimate * 120n) / 100n; // 20% buffer instead of 50%
+        console.log(`⛽ Gas Estimate: ${gasEstimate.toString()} | Gas Limit: ${gasLimitWithBuffer.toString()}`);
+
+        const paymasterContract = await factory.deploy(...constructorArgs, { 
+            gasLimit: gasLimitWithBuffer 
+        });
+
+        console.log(`⏳ Tx Hash: ${paymasterContract.deploymentTransaction().hash}`);
+        console.log(`⏳ Waiting for deployment confirmation...`);
+
+        // Robust deployment waiting with timeout
         const deployedContract = await paymasterContract.waitForDeployment();
         const paymasterAddress = await deployedContract.getAddress();
         console.log(`✅ BWAEZIPaymaster DEPLOYED: ${paymasterAddress}`);
         
         // 3. GET SCW ADDRESS
+        console.log(`🔮 Calculating SCW Counterfactual Address...`);
         const smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
         console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
         console.log(`\n⚠️ ACTION REQUIRED: Fund the Smart Contract Wallet with BWAEZI for gas payment: ${smartAccountAddress}`);
 
         return { paymasterAddress, smartAccountAddress };
     } catch (error) {
-        console.error(`💥 Failed to wait for deployment of Tx ${paymasterContract.deploymentTransaction().hash}:`, error.message);
-        throw new Error("Deployment transaction failed or timed out.");
+        console.error(`💥 Deployment failed:`, error.message);
+        if (error.code === 'INSUFFICIENT_FUNDS') {
+            console.error(`💸 INSUFFICIENT FUNDS: Deployer needs more ETH for gas`);
+            console.error(`💸 Current balance: ${ethers.formatEther(await provider.getBalance(signer.address))} ETH`);
+        }
+        throw new Error(`Deployment failed: ${error.message}`);
     }
 }
