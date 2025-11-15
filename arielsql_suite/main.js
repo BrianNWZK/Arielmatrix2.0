@@ -11,7 +11,18 @@ import { deployERC4337Contracts } from './aa-deployment-engine.js'; // The compi
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
 // =========================================================================
-const CONFIG = {
+
+// Helper to normalize addresses for Ethers.js Checksum compliance
+const normalizeAddress = (address) => {
+    // Check if the address is a placeholder (zero address) or null/undefined
+    if (!address || address.match(/^(0x)?[0]{40}$/)) {
+        return address;
+    }
+    // CRITICAL FIX: Normalize address to EIP-55 checksum format
+    return ethers.getAddress(address);
+};
+
+const CONFIG_BASE = {
     SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
     NETWORK: 'mainnet',
     RPC_URLS: [
@@ -23,19 +34,20 @@ const CONFIG = {
     PRIVATE_KEY: process.env.PRIVATE_KEY,
 
     // === 👑 ERC-4337 LOAVES AND FISHES CONSTANTS (MAINNET) 👑 ===
-    ENTRY_POINT_ADDRESS: "0x5FF137D4bEAA7036d654a88Ea898df565D304B88", // Official Mainnet EntryPoint v0.6
-    // Using Ethers zero address as a clear placeholder for deployment
-    BWAEZI_TOKEN_ADDRESS: process.env.BWAEZI_TOKEN_ADDRESS || "0x0000000000000000000000000000000000000000", 
-    WETH_TOKEN_ADDRESS: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH Mainnet
-    // Using Ethers zero address as a clear placeholder for deployment
-    UNISWAP_V3_QUOTER_ADDRESS: "0x0000000000000000000000000000000000000000", 
-    BWAEZI_WETH_FEE: 3000, // 0.3% Uniswap fee tier (must match contract constructor)
+    // Addresses are normalized here immediately
+    ENTRY_POINT_ADDRESS: normalizeAddress("0x5FF137D4bEAA7036d654a88Ea898df565D304B88"), // Official Mainnet EntryPoint v0.6
+    BWAEZI_TOKEN_ADDRESS: normalizeAddress(process.env.BWAEZI_TOKEN_ADDRESS || "0x0000000000000000000000000000000000000000"), 
+    WETH_TOKEN_ADDRESS: normalizeAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // WETH Mainnet
+    UNISWAP_V3_QUOTER_ADDRESS: normalizeAddress(process.env.UNISWAP_V3_QUOTER_ADDRESS || "0x0000000000000000000000000000000000000000"), 
+    BWAEZI_WETH_FEE: 3000, 
     
-    BWAEZI_PAYMASTER_ADDRESS: null, // Will be set after deployment
-    SMART_ACCOUNT_ADDRESS: null,    // Will be set after deterministic calculation
+    BWAEZI_PAYMASTER_ADDRESS: null, 
+    SMART_ACCOUNT_ADDRESS: null,    
 };
 
-// Utility for Express server (maintained from original file)
+const CONFIG = CONFIG_BASE; // Use the normalized config
+
+// Utility for Express server 
 const startExpressServer = () => {
     const app = express();
     app.use(cors());
@@ -61,13 +73,11 @@ const startExpressServer = () => {
 // =========================================================================
 
 async function main() {
-    // Start Express first to handle incoming requests while deployment is running
     const expressServer = startExpressServer(); 
     
     try {
         console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.1.0: AA UPGRADE INITIATED");
         
-        // CRITICAL CHECK: Ensure private key is available before proceeding
         if (!CONFIG.PRIVATE_KEY) {
             throw new Error("PRIVATE_KEY is mandatory for deployment. Please set it in the environment.");
         }
@@ -75,7 +85,7 @@ async function main() {
         const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider); 
         
-        // --- DEPLOY CONTRACTS (Compilation happens inside aa-deployment-engine.js) ---
+        // --- DEPLOY CONTRACTS ---
         const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
 
         // Update config with real deployed addresses
@@ -88,11 +98,10 @@ async function main() {
             smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS 
         });
         
-        // ... (Existing initializeWithFallback logic)
         const initializeWithFallback = async () => {
             try {
                 await optimizedCore.initialize();
-                // 💰 CRITICAL: Initiate Quantum Arbitrage Vault for immediate revenue generation
+                // 💰 CRITICAL: Initiate Quantum Arbitrage Vault
                 await optimizedCore.executeQuantumArbitrageVault();
 
                 console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA ENABLED)');
@@ -104,7 +113,7 @@ async function main() {
                 
                 try {
                     await optimizedCore.initialize();
-                    await optimizedCore.executeQuantumArbitrageVault(); // Also call on fallback
+                    await optimizedCore.executeQuantumArbitrageVault(); 
 
                     console.log('✅ EMERGENCY FALLBACK: SYSTEM OPERATIONAL');
                     console.log('👑 QUANTUM ARBITRAGE VAULT: INITIATED (FALLBACK)');
@@ -125,7 +134,6 @@ async function main() {
     } catch (error) {
         console.error("\n💥 DEPLOYMENT FAILED:", error.message);
         
-        // Ensure server keeps running even if deployment fails
         console.log("🔧 Server remains started - system in recovery mode.");
 
         return {
