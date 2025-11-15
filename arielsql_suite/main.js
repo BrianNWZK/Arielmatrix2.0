@@ -18,8 +18,10 @@ const normalizeAddress = (address) => {
     if (!address || address.match(/^(0x)?[0]{40}$/)) {
         return address;
     }
-    // CRITICAL FIX: Normalize address to EIP-55 checksum format
-    return ethers.getAddress(address);
+    // CRITICAL FIX: Ensure input is lowercase before normalization to prevent 
+    // Ethers V6 from throwing "bad address checksum" on badly mixed-cased strings.
+    const lowercasedAddress = address.toLowerCase();
+    return ethers.getAddress(lowercasedAddress);
 };
 
 const CONFIG_BASE = {
