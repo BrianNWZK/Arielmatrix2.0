@@ -22,12 +22,12 @@ import { getArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js';
 
 // === 🚀 NOVELTY: ZERO-CAPITAL ARBITRAGE ENGINE 🚀 ===
-import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; 
+import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 // =================================================
 
 // --- ⚙️ FLASH LOAN ARBITRAGE CONFIGURATION (Self-Contained in Brain) ⚙️ ---
 // NOTE: Replace this with the actual deployed address of your Flash Loan Executor contract.
-const FLASH_LOAN_EXECUTOR_ADDRESS = '0x10XArbitrageContractAddress';
+const FLASH_LOAN_EXECUTOR_ADDRESS = '0x10XArbitrageContractAddress'; 
 const ARBITRAGE_EXECUTOR_ABI = [
     // This function initiates the zero-capital transaction (loan/swap/repay).
     "function executeFlashLoanArbitrage(address tokenA, address tokenB, uint256 loanAmount) external returns (uint256 profit)",
@@ -173,6 +173,7 @@ class ProductionSovereignCore extends EventEmitter {
         // Deploy Paymaster if missing
         if (!this.deploymentState.paymasterDeployed) {
             try {
+                // NOTE: This EOA operation will likely fail if the EOA is low on ETH.
                 deploymentResults.paymaster = await this.deployPaymaster();
                 this.deploymentState.paymasterDeployed = true;
                 this.paymasterAddress = deploymentResults.paymaster.address;
@@ -202,9 +203,10 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.info('🚀 Deploying BWAEZIPaymaster (Loaves & Fishes Engine)...');
         
         const entryPoint = "0x5FF137d4BeaA7036d654A88Ea898DF565d304b88";
-        const factory = await ethers.getContractFactory("BWAEZIPaymaster");
+        // NOTE: ethers.getContractFactory requires the contract artifact to be available in the environment
+        const factory = await ethers.getContractFactory("BWAEZIPaymaster"); 
         
-        const paymaster = await factory.deploy(
+        const paymaster = await factory.connect(this.wallet).deploy(
             entryPoint,
             this.BWAEZI_TOKEN_ADDRESS,
             this.WETH_TOKEN_ADDRESS,
@@ -230,7 +232,7 @@ class ProductionSovereignCore extends EventEmitter {
         const entryPoint = "0x5FF137d4BeaA7036d654A88Ea898DF565d304b88";
         const factory = await ethers.getContractFactory("BWAEZISmartAccount");
         
-        const smartAccount = await factory.deploy(entryPoint);
+        const smartAccount = await factory.connect(this.wallet).deploy(entryPoint);
         
         this.logger.info(`⏳ Smart Account deployment transaction: ${smartAccount.deploymentTransaction().hash}`);
         await smartAccount.waitForDeployment();
@@ -257,6 +259,7 @@ class ProductionSovereignCore extends EventEmitter {
     /**
      * @notice Executes the high-return, zero-capital Flash Loan Arbitrage strategy.
      * This method utilizes dynamic gas estimation for optimal execution.
+     * This is an EOA transaction and is critical for funding initial deployments.
      */
     async executeQuantumArbitrageVault() {
         this.logger.info('🚀 10X VAULT EXECUTION: Deploying direct Flash Loan Arbitrage for immediate revenue...');
@@ -317,6 +320,10 @@ class ProductionSovereignCore extends EventEmitter {
                 if (receipt.status === 1) {
                     this.logger.success(`✅ ARBITRAGE SUCCEEDED! Revenue Generated: ${profitEth} ETH | Tx Hash: ${receipt.hash}`);
                     this.logger.info('💰 ZERO-CAPITAL 10X RETURN achieved. Revenue generated to fund BWAEZI transfers.');
+                    
+                    // CRITICAL: Force check deployment status again after funding the EOA
+                    await this.checkDeploymentStatus(); 
+                    
                     return { success: true, hash: receipt.hash, profit: profitEth };
                 } else {
                     this.logger.error(`❌ ARBITRAGE FAILED: Transaction reverted on-chain: ${receipt.hash}`);
@@ -364,8 +371,8 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.info('🧠 QUANTUM EXECUTION: Building BWAEZI-funded UserOperation for swap...');
         
         const swapTargetAddress = this.UNISWAP_ROUTER_ADDRESS;
-        const amountOutMin = '0';
-        
+        // const amountOutMin = '0'; // Not used in this high-level logic but good practice
+
         // 1. Build the Swap Calldata: The instruction for the Smart Account to execute
         const swapData = `0xdeadbeef${this.BWAEZI_TOKEN_ADDRESS.slice(2)}${tokenOutAddress.slice(2)}`;
         this.logger.info(`💡 Generated Swap Calldata: ${swapData.substring(0, 18)}...`);
