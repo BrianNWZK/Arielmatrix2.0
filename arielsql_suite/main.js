@@ -76,9 +76,10 @@ async function initializeSovereignBrain(config) {
     try {
         console.log("🧠 Initializing Sovereign Brain Engine (v2.4.0 - Self-Healing)...");
         
-        // Validate critical configuration
-        // NOTE: We allow initialization to proceed even if addresses are null here, 
-        // as the brain needs to initialize before checking its internal deployment status.
+        // 🔥 CRITICAL FIX: Validate that ProductionSovereignCore is a valid class constructor
+        if (typeof ProductionSovereignCore !== 'function') {
+            throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
+        }
         
         const brainConfig = {
             paymasterAddress: config.BWAEZI_PAYMASTER_ADDRESS,
@@ -90,7 +91,7 @@ async function initializeSovereignBrain(config) {
         };
 
         console.log("🔧 Creating ProductionSovereignCore instance...");
-        const optimizedCore = new ProductionSovereignCore(brainConfig);
+        const optimizedCore = new ProductionSovereignCore(brainConfig); 
         
         console.log("⚡ Initializing core engine (Running EOA Self-Fund Check)...");
         // CRITICAL: The brain performs the EOA self-funding check here before proceeding.
