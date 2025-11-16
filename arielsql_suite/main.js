@@ -75,7 +75,7 @@ const startExpressServer = () => {
 // Improved engine initialization with better error handling
 async function initializeSovereignBrain(config) {
     try {
-        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.5 - Self-Healing)...");
+        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.6 - Self-Healing)...");
         
         if (typeof ProductionSovereignCore !== 'function') {
             throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
@@ -96,7 +96,7 @@ async function initializeSovereignBrain(config) {
         const optimizedCore = new ProductionSovereignCore(brainConfig); 
         
         console.log("⚡ Initializing core engine (Running EOA Self-Fund Check)...");
-        // CRITICAL: The brain performs the EOA self-funding check here.
+        // CRITICAL: The brain performs the EOA self-funding check here, which now includes the REAL arbitrage execution.
         await optimizedCore.initialize();
         
         console.log("✅ Sovereign Brain Engine initialized successfully");
@@ -116,7 +116,7 @@ async function main() {
     startExpressServer(); 
     
     try {
-        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.5: FINAL FIX APPLIED");
+        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.6: REAL ARBITRAGE EXECUTION ENABLED");
         console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
         console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
         console.log("🌐 NETWORK:", CONFIG.NETWORK);
@@ -128,7 +128,7 @@ async function main() {
         const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider); 
         
-        // 1. INITIALIZE CORE (Pre-AA state) - needed to run the EOA revenue generator
+        // 1. INITIALIZE CORE (Pre-AA state) - Triggers real EOA funding via arbitrage if needed
         console.log("🚀 Initializing Production Sovereign Core (Pre-Deployment Mode)...");
         sovereignCoreInstance = await initializeSovereignBrain(CONFIG);
 
@@ -151,7 +151,7 @@ async function main() {
         sovereignCoreInstance.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
         await sovereignCoreInstance.checkDeploymentStatus();
         
-        console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, ZERO-LOSS, & SELF-HEALING ENABLED)');
+        console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, REAL REVENUE, & SELF-HEALING ENABLED)');
         console.log('🎯 SYSTEM STATUS: READY FOR PRODUCTION');
         console.log('💎 BWAEZI ECONOMY: ACTIVE - 100M TOKENS READY FOR GAS PAYMENTS');
 
