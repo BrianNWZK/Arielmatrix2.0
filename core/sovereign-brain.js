@@ -80,7 +80,7 @@ class BootstrapRelayerService {
 }
 // --- ⚙️ FLASH LOAN ARBITRAGE CONFIGURATION ---
 // 🔥 FIXED: Address normalized immediately to avoid Ethers.js Checksum error.
-const RAW_FLASH_LOAN_EXECUTOR_ADDRESS = '0x7b233f2601704603B6bE5B8748C6B166c30f4A08';
+const RAW_FLASH_LOAN_EXECUTOR_ADDRESS = '0x7b233F2601704603B6bE5B8748C6B166c30f4A08';
 const FLASH_LOAN_EXECUTOR_ADDRESS = ethers.getAddress(RAW_FLASH_LOAN_EXECUTOR_ADDRESS);
 const ARBITRAGE_EXECUTOR_ABI = [
     "function executeFlashLoanArbitrage(address tokenA, address tokenB, uint256 loanAmount) external returns (uint256 profit)",
