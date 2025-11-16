@@ -78,14 +78,29 @@ class BootstrapRelayerService {
         }
     }
 }
+
+// Helper function to safely normalize addresses
+const safeNormalizeAddress = (address) => {
+    if (!address || address.match(/^(0x)?[0]{40}$/)) {
+        return address;
+    }
+    try {
+        const lowercasedAddress = address.toLowerCase();
+        return ethers.getAddress(lowercasedAddress);
+    } catch (error) {
+        console.warn(`⚠️ Address normalization failed for ${address}: ${error.message}`);
+        return address.toLowerCase();
+    }
+};
+
 // --- ⚙️ FLASH LOAN ARBITRAGE CONFIGURATION ---
-// 🔥 FIXED: Address normalized immediately to avoid Ethers.js Checksum error.
+// 🔥 FIXED: Address normalized safely to avoid Ethers.js Checksum error.
 const RAW_FLASH_LOAN_EXECUTOR_ADDRESS = '0x7b233F2601704603B6bE5B8748C6B166c30f4A08';
-const FLASH_LOAN_EXECUTOR_ADDRESS = ethers.getAddress(RAW_FLASH_LOAN_EXECUTOR_ADDRESS);
+const FLASH_LOAN_EXECUTOR_ADDRESS = safeNormalizeAddress(RAW_FLASH_LOAN_EXECUTOR_ADDRESS);
 const ARBITRAGE_EXECUTOR_ABI = [
     "function executeFlashLoanArbitrage(address tokenA, address tokenB, uint256 loanAmount) external returns (uint256 profit)",
 ];
-const DAI_ADDRESS = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
+const DAI_ADDRESS = safeNormalizeAddress('0x6B175474E89094C44Da98b954EedeAC495271d0F');
 // --------------------------------------------------------------------------
 
 class ProductionSovereignCore extends EventEmitter {
@@ -106,7 +121,13 @@ class ProductionSovereignCore extends EventEmitter {
 
         this.ethersProvider = new ethers.JsonRpcProvider(this.mainnetRpcUrl);
         this.web3 = new Web3(new Web3.providers.HttpProvider(this.mainnetRpcUrl));
-        this.wallet = new ethers.Wallet(process.env.MAINNET_PRIVATE_KEY || process.env.PRIVATE_KEY, this.ethersProvider);
+        
+        // Safely initialize wallet with fallback
+        const privateKey = process.env.MAINNET_PRIVATE_KEY || process.env.PRIVATE_KEY;
+        if (!privateKey) {
+            throw new Error("PRIVATE_KEY environment variable is required");
+        }
+        this.wallet = new ethers.Wallet(privateKey, this.ethersProvider);
         this.walletAddress = this.wallet.address;
 
         this.smartAccountAddress = config.smartAccountAddress || process.env.SMART_ACCOUNT_ADDRESS;
@@ -121,9 +142,9 @@ class ProductionSovereignCore extends EventEmitter {
 
         this.SovereignRevenueEngine = new SovereignRevenueEngine(this.ethersProvider, this.wallet);
         this.MINIMUM_PROFIT_MULTIPLIER = 10;
-        this.BWAEZI_TOKEN_ADDRESS = config.bwaeziTokenAddress || process.env.BWAEZI_TOKEN_ADDRESS;
-        this.WETH_TOKEN_ADDRESS = process.env.WETH_TOKEN_ADDRESS || config.WETH_TOKEN_ADDRESS;
-        this.UNISWAP_ROUTER_ADDRESS = process.env.UNISWAP_ROUTER_ADDRESS || config.UNISWAP_V3_QUOTER_ADDRESS;
+        this.BWAEZI_TOKEN_ADDRESS = safeNormalizeAddress(config.bwaeziTokenAddress || process.env.BWAEZI_TOKEN_ADDRESS);
+        this.WETH_TOKEN_ADDRESS = safeNormalizeAddress(process.env.WETH_TOKEN_ADDRESS || config.WETH_TOKEN_ADDRESS);
+        this.UNISWAP_ROUTER_ADDRESS = safeNormalizeAddress(process.env.UNISWAP_ROUTER_ADDRESS || config.UNISWAP_V3_QUOTER_ADDRESS);
 
         try {
             // Address is already normalized: FLASH_LOAN_EXECUTOR_ADDRESS
