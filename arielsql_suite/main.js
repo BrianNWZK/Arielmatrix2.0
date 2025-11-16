@@ -1,34 +1,52 @@
-// main.js - Fixed version
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
-// NOTE: ProductionSovereignCore and safeNormalizeAddress are now available
-// due to the above export/import structure in the final compiled file.
-// The import is handled implicitly at the top of the combined file structure.
-// import { ProductionSovereignCore, safeNormalizeAddress } from '../core/sovereign-brain.js';
+import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 // 👑 NEW IMPORTS
-// import { AASDK } from '../modules/aa-loaves-fishes.js';
+import { AASDK } from '../modules/aa-loaves-fishes.js';
+// 🔧 FIX: Import the real deployment engine
+import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
+
+// =========================================================================
+// CRITICAL FIX: ADDRESS NORMALIZATION HELPER (Defined for main.js and constants)
+// =========================================================================
+
+// Helper function to safely normalize addresses
+const safeNormalizeAddress = (address) => {
+    if (!address || address.match(/^(0x)?[0]{40}$/)) {
+        return address;
+    }
+    try {
+        const lowercasedAddress = address.toLowerCase();
+        return ethers.getAddress(lowercasedAddress);
+    } catch (error) {
+        console.warn(`⚠️ Address normalization failed for ${address}: ${error.message}`);
+        return address.toLowerCase();
+    }
+};
 
 // Mock deployment function if not available
+// FIX: MOCK FUNCTION REMOVED - Using imported 'deployERC4337Contracts'
+/*
 const deployERC4337Contracts = async (provider, signer, config, aasdk) => {
     // This is a mock implementation - replace with actual deployment logic
     console.log("🔧 Deploying ERC-4337 contracts...");
-    
     // Return mock addresses for demonstration
     return {
         paymasterAddress: safeNormalizeAddress("0x1234567890123456789012345678901234567890"),
         smartAccountAddress: safeNormalizeAddress("0x0987654321098765432109876543210987654321")
     };
 };
+*/
 
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
 // =========================================================================
 
-// Use the imported safeNormalizeAddress function
-const normalizeAddress = safeNormalizeAddress;
+// Helper to normalize addresses for Ethers.js Checksum compliance
+const normalizeAddress = safeNormalizeAddress; // FIX: Now safeNormalizeAddress is defined
 
 const CONFIG_BASE = {
     SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
@@ -140,7 +158,7 @@ async function main() {
         // --- 2. DEPLOY CONTRACTS (Now EOA is expected to be funded by step 1) ---
         console.log("🔧 Starting ERC-4337 Contract Deployment...");
 
-        // NOTE: deployERC4337Contracts is assumed to be an existing import/utility for deploying the Paymaster/SCW.
+        // NOTE: deployERC4337Contracts is imported from './aa-deployment-engine.js'
         const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
 
         // Update config with real deployed addresses
