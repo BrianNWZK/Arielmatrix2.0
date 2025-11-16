@@ -1,4 +1,4 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.0 (ZERO-CAPITAL FIX + AA DEPLOYMENT READY)
+// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.3 (FINAL RPC FIX - ALCHEMY GATEWAY)
 // 🔥 OPTIMIZED FOR $50,000+ DAILY REVENUE + 100% SECURITY GUARANTEE - FIXED RPC CONNECTIVITY
 // 💰 CONFIRMED: 100,000,000 BWAEZI TOKENS + 10X MAXIMUM REVENUE GENERATION
 
@@ -41,9 +41,22 @@ class ProductionSovereignCore extends EventEmitter {
         super();
         this.logger = getGlobalLogger('OptimizedSovereignCore');
         
+        // --- 🔥 CRITICAL FIX: RPC URL Check and Initialization ---
+        const MAINNET_RPC_URL = process.env.MAINNET_RPC_URL;
+        
+        if (!MAINNET_RPC_URL) {
+            this.logger.error("❌ CRITICAL ENVIRONMENT ERROR: MAINNET_RPC_URL is 'undefined'. Using high-performance public Alchemy gateway as TEMPORARY fallback.");
+            this.logger.error("⚠️ ACTION REQUIRED: Set MAINNET_RPC_URL with your dedicated production key immediately for arbitrage execution.");
+            // TEMPORARY HIGH-PERFORMANCE PUBLIC FALLBACK (User-provided Alchemy demo)
+            this.mainnetRpcUrl = 'https://eth-mainnet.g.alchemy.com/v2/demo'; 
+        } else {
+            this.mainnetRpcUrl = MAINNET_RPC_URL;
+        }
+
         // ⚡️ RPC FIX: Prioritizing Ethers for modern RPC reliability
-        this.ethersProvider = new ethers.JsonRpcProvider(process.env.MAINNET_RPC_URL);
-        this.web3 = new Web3(new Web3.providers.HttpProvider(process.env.MAINNET_RPC_URL));
+        this.ethersProvider = new ethers.JsonRpcProvider(this.mainnetRpcUrl);
+        // Web3.js initialization (kept for compatibility)
+        this.web3 = new Web3(new Web3.providers.HttpProvider(this.mainnetRpcUrl));
 
         // The EOA is now the 'Signer' (Owner) for the Smart Account
         this.wallet = new ethers.Wallet(process.env.MAINNET_PRIVATE_KEY, this.ethersProvider);
@@ -88,7 +101,7 @@ class ProductionSovereignCore extends EventEmitter {
     }
 
     async initialize() {
-        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.0 (AA DEPLOYMENT READY)...');
+        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.3 (AA DEPLOYMENT READY)...');
         
         // Initialize quantum engines with error handling
         try {
@@ -420,7 +433,7 @@ class ProductionSovereignCore extends EventEmitter {
      */
     async healthCheck() {
         const health = {
-            version: '2.4.0',
+            version: '2.4.3',
             timestamp: new Date().toISOString(),
             wallet: {
                 address: this.walletAddress,
