@@ -75,7 +75,7 @@ const startExpressServer = () => {
 // Improved engine initialization with better error handling
 async function initializeSovereignBrain(config) {
     try {
-        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.7 - Zero-Capital Genesis Mode)...");
+        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.8 - Checksum Fix)...");
         
         if (typeof ProductionSovereignCore !== 'function') {
             throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
@@ -96,7 +96,6 @@ async function initializeSovereignBrain(config) {
         const optimizedCore = new ProductionSovereignCore(brainConfig); 
         
         console.log("⚡ Initializing core engine (Running EOA Self-Fund Check in Genesis Mode)...");
-        // CRITICAL: The brain performs the EOA self-funding check here.
         await optimizedCore.initialize();
         
         console.log("✅ Sovereign Brain Engine initialized successfully");
@@ -116,7 +115,7 @@ async function main() {
     startExpressServer(); 
     
     try {
-        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.7: ZERO-CAPITAL GENESIS ENABLED");
+        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.8: CHECKPOINT REACHED - ARBITRAGE FIX APPLIED");
         console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
         console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
         console.log("🌐 NETWORK:", CONFIG.NETWORK);
@@ -135,7 +134,6 @@ async function main() {
         // --- 2. DEPLOY CONTRACTS (Now EOA is expected to be funded by step 1) ---
         console.log("🔧 Starting ERC-4337 Contract Deployment...");
         
-        // NOTE: deployERC4337Contracts is expected to perform the deployment.
         const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
 
         // Update config with real deployed addresses
@@ -147,7 +145,6 @@ async function main() {
         console.log(`👛 Smart Account: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
         
         // --- 3. Update Sovereign Core with AA Addresses for operation ---
-        // This is a critical step to tell the core instance the new addresses.
         sovereignCoreInstance.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
         await sovereignCoreInstance.checkDeploymentStatus();
         
@@ -189,7 +186,6 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
             console.log("🚀 BWAEZI ENTERPRISE READY FOR 100M TOKEN ECONOMY!");
         } else {
             console.log("❌ BSFM Production System Started with Errors");
-            // NOTE: Do not exit, keep the Express server alive for recovery/rebuild trigger
         }
     }).catch(error => {
         console.error("💥 FATAL ERROR:", error);
