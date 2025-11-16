@@ -75,7 +75,7 @@ const startExpressServer = () => {
 // Improved engine initialization with better error handling
 async function initializeSovereignBrain(config) {
     try {
-        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.6 - Self-Healing)...");
+        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.7 - Zero-Capital Genesis Mode)...");
         
         if (typeof ProductionSovereignCore !== 'function') {
             throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
@@ -95,8 +95,8 @@ async function initializeSovereignBrain(config) {
         console.log("🔧 Creating ProductionSovereignCore instance...");
         const optimizedCore = new ProductionSovereignCore(brainConfig); 
         
-        console.log("⚡ Initializing core engine (Running EOA Self-Fund Check)...");
-        // CRITICAL: The brain performs the EOA self-funding check here, which now includes the REAL arbitrage execution.
+        console.log("⚡ Initializing core engine (Running EOA Self-Fund Check in Genesis Mode)...");
+        // CRITICAL: The brain performs the EOA self-funding check here.
         await optimizedCore.initialize();
         
         console.log("✅ Sovereign Brain Engine initialized successfully");
@@ -116,7 +116,7 @@ async function main() {
     startExpressServer(); 
     
     try {
-        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.6: REAL ARBITRAGE EXECUTION ENABLED");
+        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.7: ZERO-CAPITAL GENESIS ENABLED");
         console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
         console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
         console.log("🌐 NETWORK:", CONFIG.NETWORK);
@@ -151,7 +151,7 @@ async function main() {
         sovereignCoreInstance.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
         await sovereignCoreInstance.checkDeploymentStatus();
         
-        console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, REAL REVENUE, & SELF-HEALING ENABLED)');
+        console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, REAL REVENUE, & ZERO-CAPITAL GENESIS ENABLED)');
         console.log('🎯 SYSTEM STATUS: READY FOR PRODUCTION');
         console.log('💎 BWAEZI ECONOMY: ACTIVE - 100M TOKENS READY FOR GAS PAYMENTS');
 
