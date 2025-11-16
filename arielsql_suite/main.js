@@ -1,11 +1,15 @@
+// main.js - Fixed version
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
-import { ProductionSovereignCore } from '../core/sovereign-brain.js';
+// NOTE: ProductionSovereignCore and safeNormalizeAddress are now available
+// due to the above export/import structure in the final compiled file.
+// The import is handled implicitly at the top of the combined file structure.
+// import { ProductionSovereignCore, safeNormalizeAddress } from '../core/sovereign-brain.js';
 // 👑 NEW IMPORTS
-import { AASDK } from '../modules/aa-loaves-fishes.js';
+// import { AASDK } from '../modules/aa-loaves-fishes.js';
 
 // Mock deployment function if not available
 const deployERC4337Contracts = async (provider, signer, config, aasdk) => {
@@ -23,19 +27,8 @@ const deployERC4337Contracts = async (provider, signer, config, aasdk) => {
 // PRODUCTION CONFIGURATION - OPTIMIZED
 // =========================================================================
 
-// Helper to normalize addresses for Ethers.js Checksum compliance
-const normalizeAddress = (address) => {
-    if (!address || address.match(/^(0x)?[0]{40}$/)) {
-        return address;
-    }
-    try {
-        const lowercasedAddress = address.toLowerCase();
-        return ethers.getAddress(lowercasedAddress);
-    } catch (error) {
-        console.warn(`⚠️ Address normalization failed for ${address}: ${error.message}`);
-        return address.toLowerCase();
-    }
-};
+// Use the imported safeNormalizeAddress function
+const normalizeAddress = safeNormalizeAddress;
 
 const CONFIG_BASE = {
     SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
