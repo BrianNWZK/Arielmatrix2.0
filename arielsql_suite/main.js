@@ -36,7 +36,6 @@ const CONFIG_BASE = {
     PRIVATE_KEY: process.env.PRIVATE_KEY,
 
     // === 👑 ERC-4337 LOAVES AND FISHES CONSTANTS (MAINNET) 👑 ===
-    // Addresses are normalized here immediately
     ENTRY_POINT_ADDRESS: normalizeAddress("0x5FF137D4bEAA7036d654a88Ea898df565D304B88"), // Official Mainnet EntryPoint v0.6
     BWAEZI_TOKEN_ADDRESS: normalizeAddress("0xF1d2208ABc26F8C04b49103280A2667734f24AC6"), // YOUR BWAEZI TOKEN CONTRACT (Fixed)
     WETH_TOKEN_ADDRESS: normalizeAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // WETH Mainnet
@@ -49,6 +48,8 @@ const CONFIG_BASE = {
 
 const CONFIG = CONFIG_BASE; // Use the normalized config
 
+let sovereignCoreInstance = null; // Used for global access
+
 // Utility for Express server 
 const startExpressServer = () => {
     const app = express();
@@ -56,16 +57,16 @@ const startExpressServer = () => {
     app.use(express.json());
     
     // Add a basic health check endpoint
-    app.get('/health', (req, res) => {
-        const isDeployed = !!CONFIG.BWAEZI_PAYMASTER_ADDRESS;
-        res.status(isDeployed ? 200 : 503).json({
-            status: isDeployed ? 'OPERATIONAL' : 'DEPLOYING_OR_FAILED',
-            paymaster: CONFIG.BWAEZI_PAYMASTER_ADDRESS,
-            scw: CONFIG.SMART_ACCOUNT_ADDRESS,
-            network: CONFIG.NETWORK,
-            bwaeziToken: CONFIG.BWAEZI_TOKEN_ADDRESS,
-            sovereignWallet: CONFIG.SOVEREIGN_WALLET
-        });
+    app.get('/health', async (req, res) => {
+        if (!sovereignCoreInstance) {
+            return res.status(503).json({ status: 'DOWN', reason: 'Engine not initialized' });
+        }
+        try {
+             const health = await sovereignCoreInstance.healthCheck();
+             res.json({ status: 'UP', ...health });
+        } catch (e) {
+             res.status(500).json({ status: 'ERROR', message: e.message });
+        }
     });
 
     return app.listen(CONFIG.PORT, () => console.log(`🚀 API Listening on port ${CONFIG.PORT}`));
@@ -74,9 +75,8 @@ const startExpressServer = () => {
 // Improved engine initialization with better error handling
 async function initializeSovereignBrain(config) {
     try {
-        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.1 - Self-Healing)...");
+        console.log("🧠 Initializing Sovereign Brain Engine (v2.4.5 - Self-Healing)...");
         
-        // 🔥 CRITICAL FIX: Validate that ProductionSovereignCore is a valid class constructor
         if (typeof ProductionSovereignCore !== 'function') {
             throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
         }
@@ -87,14 +87,16 @@ async function initializeSovereignBrain(config) {
             network: config.NETWORK,
             rpcUrls: config.RPC_URLS,
             bwaeziTokenAddress: config.BWAEZI_TOKEN_ADDRESS,
-            sovereignWallet: config.SOVEREIGN_WALLET
+            sovereignWallet: config.SOVEREIGN_WALLET,
+            WETH_TOKEN_ADDRESS: config.WETH_TOKEN_ADDRESS,
+            UNISWAP_V3_QUOTER_ADDRESS: config.UNISWAP_V3_QUOTER_ADDRESS
         };
 
         console.log("🔧 Creating ProductionSovereignCore instance...");
         const optimizedCore = new ProductionSovereignCore(brainConfig); 
         
         console.log("⚡ Initializing core engine (Running EOA Self-Fund Check)...");
-        // CRITICAL: The brain performs the EOA self-funding check here before proceeding.
+        // CRITICAL: The brain performs the EOA self-funding check here.
         await optimizedCore.initialize();
         
         console.log("✅ Sovereign Brain Engine initialized successfully");
@@ -111,10 +113,10 @@ async function initializeSovereignBrain(config) {
 // =========================================================================
 
 async function main() {
-    const expressServer = startExpressServer(); 
+    startExpressServer(); 
     
     try {
-        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.1: ZERO-LOSS GUARDRAIL ENABLED");
+        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.4.5: FINAL FIX APPLIED");
         console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
         console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
         console.log("🌐 NETWORK:", CONFIG.NETWORK);
@@ -128,51 +130,12 @@ async function main() {
         
         // 1. INITIALIZE CORE (Pre-AA state) - needed to run the EOA revenue generator
         console.log("🚀 Initializing Production Sovereign Core (Pre-Deployment Mode)...");
-        // AA addresses are null here, forcing the core to focus on EOA operations
-        const optimizedCore = await initializeSovereignBrain(CONFIG);
+        sovereignCoreInstance = await initializeSovereignBrain(CONFIG);
 
-        // 🚨 CRITICAL: THIS IS THE AUTOMATED ZERO-CAPITAL ARBITRAGE EXECUTION
-        // The EOA must be funded before the expensive contract deployment
-        const executeRevenueVault = async () => {
-            try {
-                console.log("💎 Executing Zero-Capital Revenue Generator (Flash Loan Arbitrage)...");
-                
-                if (optimizedCore.executeQuantumArbitrageVault) {
-                    // NOTE: The executeQuantumArbitrageVault method performs a critical
-                    // Ethers.js 'callStatic' simulation internally before sending the live transaction.
-                    // This ensures the EOA's gas is not wasted on a non-profitable or reverting transaction.
-                    const result = await optimizedCore.executeQuantumArbitrageVault();
-                    
-                    if (result.success) {
-                        console.log('✅ QUANTUM ARBITRAGE VAULT: REVENUE GENERATED SUCCESSFULLY');
-                        console.log(`💰 INJECTED ${result.profit} ETH. $5,000+ REVENUE GENERATION: ACTIVE - SYSTEM NOW SELF-FUNDED`);
-                    } else {
-                        console.log(`⚠️ ZERO-CAPITAL ARBITRAGE FAILED: ${result.error}`);
-                        console.log('🛡️ ZERO-LOSS GUARDRAIL ACTIVE: EOA gas was preserved due to simulation failure.');
-                        console.log('🔄 The EOA is still protected by the self-funding mechanism and remains operational.');
-                    }
-                    return result.success;
-                } else {
-                    console.log('⚠️ Quantum Arbitrage Vault method not available in current core version');
-                    return false;
-                }
-            } catch (vaultError) {
-                console.error('❌ Zero-Capital Vault execution failed:', vaultError.message);
-                console.log('🔄 Continuing system operation in recovery mode.');
-                return false;
-            }
-        };
-
-        // --- 2. PRE-DEPLOYMENT FUNDING EXECUTION ---
-        console.log("💰 Running Pre-Deployment Funding Strategy (Arbitrage First)...");
-        const fundingSuccess = await executeRevenueVault();
-
-        if (!fundingSuccess) {
-            console.log("⚠️ WARNING: Initial funding arbitrage failed. Deployment may fail if EOA is not manually funded.");
-        }
-
-        // --- 3. DEPLOY CONTRACTS (Now EOA is expected to be funded) ---
+        // --- 2. DEPLOY CONTRACTS (Now EOA is expected to be funded by step 1) ---
         console.log("🔧 Starting ERC-4337 Contract Deployment...");
+        
+        // NOTE: deployERC4337Contracts is expected to perform the deployment.
         const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
 
         // Update config with real deployed addresses
@@ -183,22 +146,16 @@ async function main() {
         console.log(`💰 Paymaster: ${CONFIG.BWAEZI_PAYMASTER_ADDRESS}`);
         console.log(`👛 Smart Account: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
         
-        // --- 4. Update Sovereign Core with AA Addresses for operation ---
-        optimizedCore.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
-        await optimizedCore.checkDeploymentStatus();
+        // --- 3. Update Sovereign Core with AA Addresses for operation ---
+        // This is a critical step to tell the core instance the new addresses.
+        sovereignCoreInstance.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
+        await sovereignCoreInstance.checkDeploymentStatus();
         
         console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, ZERO-LOSS, & SELF-HEALING ENABLED)');
         console.log('🎯 SYSTEM STATUS: READY FOR PRODUCTION');
         console.log('💎 BWAEZI ECONOMY: ACTIVE - 100M TOKENS READY FOR GAS PAYMENTS');
 
-        return {
-            success: true,
-            sovereignBrain: optimizedCore,
-            paymasterAddress: CONFIG.BWAEZI_PAYMASTER_ADDRESS,
-            smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS,
-            bwaeziTokenAddress: CONFIG.BWAEZI_TOKEN_ADDRESS,
-            message: "Production system deployed successfully"
-        };
+        return { success: true };
         
     } catch (error) {
         console.error("\n💥 DEPLOYMENT FAILED:", error.message);
@@ -207,10 +164,7 @@ async function main() {
         console.log("🔧 Server remains started - system in recovery mode.");
         console.log("🔄 You can restart the deployment process by triggering a rebuild");
 
-        return {
-            success: false,
-            error: error.message
-        };
+        return { success: false, error: error.message };
     }
 }
 
@@ -218,7 +172,7 @@ async function main() {
 // STARTUP EXECUTION
 // =========================================================================
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
     // Error handling
     process.on('uncaughtException', (error) => {
         console.error('💥 Uncaught Exception:', error);
@@ -235,7 +189,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
             console.log("🚀 BWAEZI ENTERPRISE READY FOR 100M TOKEN ECONOMY!");
         } else {
             console.log("❌ BSFM Production System Started with Errors");
-            process.exit(1);
+            // NOTE: Do not exit, keep the Express server alive for recovery/rebuild trigger
         }
     }).catch(error => {
         console.error("💥 FATAL ERROR:", error);
