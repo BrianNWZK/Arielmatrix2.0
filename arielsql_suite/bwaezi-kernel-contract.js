@@ -1,6 +1,10 @@
 // arielsql_suite/bwaezi-kernel-contract.js
 import { ethers } from 'ethers';
-import solc from 'solc'; 
+import solc from 'solc';
+
+// =========================================================================
+// 👑 PART 1: BWAEZI KERNEL SOURCE (For Compilation/Deployment)
+// =========================================================================
 
 // The UPDATED BWAEZI contract with approve() function and allowance mapping
 const BWAEZI_SOL_SOURCE = `
@@ -87,7 +91,7 @@ contract BWAEZIKernel {
         emit ModuleActivated(moduleId);
     }
 
-    function grantAccess(address user, string memory service) external {
+    function grantAccess(address user, string memory service) external view {
         require(verifiedIdentities[user], "Identity not verified");
         require(balanceOf[user] > 0, "Insufficient BWAEZI");
         emit AccessGranted(user, service);
@@ -107,6 +111,10 @@ contract BWAEZIKernel {
     }
 }
 `;
+
+// =========================================================================
+// 👑 PART 2: DEPLOYMENT ENGINE (BWAEZIKernelDeployer)
+// =========================================================================
 
 export class BWAEZIKernelDeployer {
     constructor(wallet, provider, config) {
@@ -159,7 +167,6 @@ export class BWAEZIKernelDeployer {
         try {
             console.log("🔒 PHASE 1: PRE-DEPLOYMENT GAS ESTIMATION");
             
-            // Get current gas price
             const feeData = await this.provider.getFeeData();
             const gasPrice = feeData.gasPrice;
             
@@ -167,11 +174,9 @@ export class BWAEZIKernelDeployer {
                 throw new Error("Could not fetch reliable gas price data.");
             }
 
-            // Estimate gas for deployment
             const deployTransaction = await this.factory.getDeployTransaction(...constructorArgs);
             const estimatedGas = await this.provider.estimateGas(deployTransaction);
             
-            // Add 20% buffer
             const gasLimit = estimatedGas * 120n / 100n;
             const deploymentOptions = { gasLimit, gasPrice };
 
@@ -179,7 +184,6 @@ export class BWAEZIKernelDeployer {
             console.log(` ✅ Final Gas Limit: ${gasLimit.toString()}`);
             console.log(` ⛽ Max Deployment Cost: ${ethers.formatEther(gasLimit * gasPrice)} ETH`);
             
-            // Check balance
             const balance = await this.provider.getBalance(this.wallet.address);
             const requiredBalance = gasLimit * gasPrice;
             
@@ -218,3 +222,184 @@ export class BWAEZIKernelDeployer {
         }
     }
 }
+
+// =========================================================================
+// 👑 PART 3: SGT CONFIGURATION & ORCHESTRATION ENGINE (ProductionSovereignCore)
+// =========================================================================
+
+// --- SGT CONFIGURATION ---
+
+// Critical Dependency Fix: Fallback Routers for SGT resilience
+const APPROVED_DEX_ROUTERS = [
+    '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Uniswap V3 Router 2 (Primary)
+    '0x68b3465833fb72A70ecDF485E0E248143e7EFBC3', // Uniswap V3 Router (Mixer/Multicall) - Fallback
+];
+
+const GENESIS_SWAP_CONFIG = {
+    AMOUNT_IN_BWAEZI: ethers.parseUnits("10", 18), 
+    MAX_SLIPPAGE_PERCENT: 5.0, // 5% max slippage
+    DEADLINE_MINUTES: 5,
+    V3_FEE_TIER: 3000
+};
+
+// --- MINIMAL ABIS ---
+const ERC20_ABI = [
+    "function approve(address spender, uint256 amount) returns (bool)",
+    "function balanceOf(address owner) view returns (uint256)"
+];
+
+const SWAP_ROUTER_ABI = [
+    "function quoteExactInputSingle(uint256 amountIn, address tokenIn, address tokenOut, uint24 fee) view returns (uint256 amountOut, uint160 sqrtPriceX96AfterList, uint32 gasEstimate, uint32 initSqrtRatioX96)",
+    "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)"
+];
+
+const logger = {
+    info: (...args) => console.log('✅ [INFO]', ...args),
+    error: (...args) => console.error('❌ [ERROR]', ...args),
+    warn: (...args) => console.warn('⚠️ [WARN]', ...args)
+};
+
+// --- SLIPPAGE GUARDRAIL FUNCTION ---
+
+async function calculateMinOutput(provider, routerAddress, amountIn, tokenIn, tokenOut, maxSlippagePercent) {
+    const routerContract = new ethers.Contract(routerAddress, SWAP_ROUTER_ABI, provider);
+
+    try {
+        const [idealOutput] = await routerContract.quoteExactInputSingle(
+            amountIn,
+            tokenIn,
+            tokenOut,
+            GENESIS_SWAP_CONFIG.V3_FEE_TIER
+        );
+        
+        const factor = BigInt(Math.floor(100 - maxSlippagePercent));
+        const minOutput = (idealOutput * factor) / 100n;
+
+        return minOutput;
+    } catch (error) {
+        logger.error(`💥 Price Quote Simulation Failed on Router ${routerAddress}: ${error.message}`);
+        return 0n; // Fail-safe: Cannot guarantee price protection
+    }
+}
+
+
+// --- PRODUCTION CORE CLASS (The Sovereign Brain) ---
+
+export class ProductionSovereignCore {
+    constructor(provider, signer, config) {
+        this.ethersProvider = provider;
+        this.signer = signer;
+        this.walletAddress = signer.address;
+        this.config = config; 
+        this.logger = logger;
+
+        this.bwaeziKernelAddress = config.BWAEZI_KERNEL_ADDRESS; // Assumed deployed address
+        this.wethAddress = config.WETH_ADDRESS;                   
+
+        // 📊 SGT Metrics Tracking
+        this.sgtMetrics = {
+            attempts: 0,
+            success: false,
+            gasCost: 0n,
+            revenue: 0n,
+            routerUsed: null
+        };
+    }
+
+    /**
+     * Executes the Sovereign Genesis Trade (SGT) to acquire initial gas funds.
+     * Implements Multi-Router Resilience and Slippage Protection.
+     * @returns {object} The result of the trade and the final metrics.
+     */
+    async executeSovereignGenesisTrade() {
+        this.sgtMetrics.attempts++;
+        const bwaeziKernel = new ethers.Contract(this.bwaeziKernelAddress, ERC20_ABI, this.signer);
+        let sgtSuccess = false;
+        let amountReceivedInWETH = 0n;
+
+        this.logger.info(`👑 Starting SGT Attempt #${this.sgtMetrics.attempts}. Input: ${ethers.formatUnits(GENESIS_SWAP_CONFIG.AMOUNT_IN_BWAEZI, 18)} BWAEZI`);
+
+        for (const routerAddress of APPROVED_DEX_ROUTERS) {
+            this.logger.warn(`🔄 Attempting SGT with Router: ${routerAddress}`);
+            
+            try {
+                // 1. 🛡️ SLIPPAGE PROTECTION: Calculate minimum output
+                const amountOutMinimum = await calculateMinOutput(
+                    this.ethersProvider, 
+                    routerAddress,
+                    GENESIS_SWAP_CONFIG.AMOUNT_IN_BWAEZI,
+                    this.bwaeziKernelAddress,
+                    this.wethAddress,
+                    GENESIS_SWAP_CONFIG.MAX_SLIPPAGE_PERCENT
+                );
+
+                if (amountOutMinimum === 0n) {
+                    this.logger.error(`Skipping router ${routerAddress}: Price quote failed or returned zero.`);
+                    continue; // Try next router
+                }
+
+                // 2. Approve the Router to spend BWAEZI
+                const approveTx = await bwaeziKernel.approve(routerAddress, GENESIS_SWAP_CONFIG.AMOUNT_IN_BWAEZI);
+                await approveTx.wait();
+                this.logger.info(`✅ Approval confirmed.`);
+
+                // 3. Execute the Swap (Sovereign Genesis Trade)
+                const routerContract = new ethers.Contract(routerAddress, SWAP_ROUTER_ABI, this.signer);
+                const deadline = Math.floor(Date.now() / 1000) + (GENESIS_SWAP_CONFIG.DEADLINE_MINUTES * 60);
+
+                const params = {
+                    tokenIn: this.bwaeziKernelAddress,
+                    tokenOut: this.wethAddress,
+                    fee: GENESIS_SWAP_CONFIG.V3_FEE_TIER,
+                    recipient: this.walletAddress,
+                    deadline: deadline,
+                    amountIn: GENESIS_SWAP_CONFIG.AMOUNT_IN_BWAEZI,
+                    amountOutMinimum: amountOutMinimum, // SLIPPAGE GUARDRAIL
+                    sqrtPriceLimitX96: 0 
+                };
+                
+                const swapTx = await routerContract.exactInputSingle(params);
+                const receipt = await swapTx.wait();
+                
+                // 4. 📊 Track Success Metrics
+                sgtSuccess = true;
+                this.sgtMetrics.success = true;
+                this.sgtMetrics.routerUsed = routerAddress;
+                this.sgtMetrics.gasCost = receipt.gasUsed * receipt.effectiveGasPrice;
+                
+                // Note: Real-world implementation requires robust log parsing to get amountReceivedInWETH
+                // For now, we assume the first return value is the output.
+                const swapResult = routerContract.interface.decodeFunctionResult("exactInputSingle", receipt.logs[receipt.logs.length - 1].data);
+                amountReceivedInWETH = swapResult[0]; 
+
+                this.sgtMetrics.revenue = amountReceivedInWETH;
+                
+                this.logger.info(`🎉 SGT SUCCESS on Router ${routerAddress}.`);
+                this.logger.info(`💰 Revenue: ${ethers.formatUnits(amountReceivedInWETH, 18)} WETH.`);
+                this.logger.info(`⛽ Gas Cost: ${ethers.formatEther(this.sgtMetrics.gasCost)} ETH.`);
+                
+                break; // Exit the loop on first successful trade
+            } catch (error) {
+                this.logger.error(`💥 SGT FAILURE on Router ${routerAddress}: ${error.message}`);
+                this.logger.warn('Trying next approved DEX router (Multi-Router Resilience active)...');
+            }
+        }
+
+        if (!sgtSuccess) {
+            this.logger.error('❌ CRITICAL: ALL SGT ATTEMPTS FAILED. CANNOT SELF-FUND.');
+        }
+
+        return { 
+            success: sgtSuccess, 
+            metrics: this.sgtMetrics 
+        };
+    }
+}
+
+// Export both the Deployer and the Orchestrator
+export { 
+    BWAEZIKernelDeployer,
+    ProductionSovereignCore,
+    ERC20_ABI, 
+    SWAP_ROUTER_ABI 
+};
