@@ -81,6 +81,13 @@ contract BWAEZIKernel {
         return true;
     }
 
+    // 🔥 FIX: Removed 'view' keyword to allow 'emit'
+    function grantAccess(address user, string memory service) external {
+        require(verifiedIdentities[user], "Identity not verified");
+        require(balanceOf[user] > 0, "Insufficient BWAEZI");
+        emit AccessGranted(user, service);
+    }
+
     function verifyIdentity(address user) external onlyOwner {
         verifiedIdentities[user] = true;
         emit IdentityVerified(user);
@@ -89,12 +96,6 @@ contract BWAEZIKernel {
     function activateModule(bytes32 moduleId) external onlyOwner {
         activeModules[moduleId] = true;
         emit ModuleActivated(moduleId);
-    }
-
-    function grantAccess(address user, string memory service) external view {
-        require(verifiedIdentities[user], "Identity not verified");
-        require(balanceOf[user] > 0, "Insufficient BWAEZI");
-        emit AccessGranted(user, service);
     }
 
     function registerDEX(address dex) external onlyOwner {
@@ -113,7 +114,7 @@ contract BWAEZIKernel {
 `;
 
 // =========================================================================
-// 👑 PART 2: DEPLOYMENT ENGINE (BWAEZIKernelDeployer)
+// 👑 PART 2: DEPLOYMENT ENGINE (BWAEZIKernelDeployer) - INCLUDES MIGRATION
 // =========================================================================
 
 // --- MIGRATION CONSTANTS ---
@@ -145,6 +146,7 @@ export class BWAEZIKernelDeployer {
         if (output.errors) {
             const errors = output.errors.filter(error => error.severity === 'error');
             if (errors.length > 0) {
+                // This line will now be fixed by the removal of 'view' in grantAccess
                 throw new Error(`Compilation Failed: ${errors.map(e => e.formattedMessage).join('\n')}`);
             }
         }
@@ -188,8 +190,6 @@ export class BWAEZIKernelDeployer {
             const gasLimit = estimatedGas * 120n / 100n;
             const deploymentOptions = { gasLimit, gasPrice };
             
-            // ... (Balance check omitted for brevity, but assumed to be done) ...
-
             console.log("🚀 PHASE 2: DEPLOYING NEW BWAEZI KERNEL (Fixed ERC-20)");
             const newBwaeziContract = await this.factory.deploy(sovereignWallet, deploymentOptions);
 
@@ -236,7 +236,7 @@ export class BWAEZIKernelDeployer {
             }
             
             console.log(`\n======================================================`);
-            console.log(`🔥 NEXT STEP: UPDATE CONFIGURATION with: ${NEW_TOKEN_ADDRESS}`);
+            console.log(`🔥 CRITICAL NEXT STEP: UPDATE CONFIGURATION with: ${NEW_TOKEN_ADDRESS}`);
             console.log(`======================================================`);
             
             return {
@@ -248,7 +248,7 @@ export class BWAEZIKernelDeployer {
             };
         } catch (error) {
             console.error("❌ DEPLOYMENT/MIGRATION FAILED:", error.message);
-            // ... (error handling) ...
+            
             return { success: false, error: error.message };
         }
     }
@@ -256,10 +256,8 @@ export class BWAEZIKernelDeployer {
 
 // =========================================================================
 // 👑 PART 3: SGT CONFIGURATION & ORCHESTRATION ENGINE (ProductionSovereignCore)
-// ... (Remains the same as the previous iteration, now ready to use the new address) ...
+// ... (Remains the same as the previous iteration) ...
 // =========================================================================
-
-// --- SGT CONFIGURATION ---
 
 const APPROVED_DEX_ROUTERS = [
     '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Uniswap V3 Router 2 (Primary)
@@ -273,7 +271,6 @@ const GENESIS_SWAP_CONFIG = {
     V3_FEE_TIER: 3000
 };
 
-// --- MINIMAL ABIS ---
 const ERC20_ABI = [
     "function approve(address spender, uint256 amount) returns (bool)",
     "function balanceOf(address owner) view returns (uint256)"
@@ -289,8 +286,6 @@ const logger = {
     error: (...args) => console.error('❌ [ERROR]', ...args),
     warn: (...args) => console.warn('⚠️ [WARN]', ...args)
 };
-
-// --- SLIPPAGE GUARDRAIL FUNCTION ---
 
 async function calculateMinOutput(provider, routerAddress, amountIn, tokenIn, tokenOut, maxSlippagePercent) {
     const routerContract = new ethers.Contract(routerAddress, SWAP_ROUTER_ABI, provider);
@@ -313,9 +308,6 @@ async function calculateMinOutput(provider, routerAddress, amountIn, tokenIn, to
     }
 }
 
-
-// --- PRODUCTION CORE CLASS (The Sovereign Brain) ---
-
 export class ProductionSovereignCore {
     constructor(provider, signer, config) {
         this.ethersProvider = provider;
@@ -324,7 +316,6 @@ export class ProductionSovereignCore {
         this.config = config; 
         this.logger = logger;
 
-        // CRITICAL: This address MUST be the NEW token address after migration
         this.bwaeziKernelAddress = config.BWAEZI_KERNEL_ADDRESS; 
         this.wethAddress = config.WETH_ADDRESS;                   
 
