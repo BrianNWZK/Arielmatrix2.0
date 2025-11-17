@@ -421,8 +421,3 @@ export class ProductionSovereignCore {
     }
 }
 
-// Export both the Deployer and the Orchestrator
-export { 
-    ERC20_ABI, 
-    SWAP_ROUTER_ABI 
-};
