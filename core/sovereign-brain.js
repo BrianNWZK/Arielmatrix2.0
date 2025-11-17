@@ -37,12 +37,13 @@ const safeNormalizeAddress = (address) => {
 };
 
 // =========================================================================
-// 👑 NOVEL STRATEGY CONSTANTS: SOVEREIGN GENESIS TRADE (SGT)
+// 👑 NOVEL STRATEGY CONSTANTS: USDC SWAP & SOVEREIGN GENESIS TRADE (SGT)
 // =========================================================================
 const SWAP_ROUTER_ADDRESS = safeNormalizeAddress('0xE592427A0AEce92De3Edee1F18E0157C05861564');
 const GENESIS_SWAP_AMOUNT = ethers.parseUnits("10", 18);
 const MINT_APPROVE_GAS_LIMIT = 45000n; 
 const SWAP_GAS_LIMIT = 150000n; 
+const USDC_DECIMALS = 6; // USDC standard decimals
 
 // Minimal ABIs required for the trade
 const ERC20_ABI = [
@@ -57,6 +58,11 @@ const SWAP_ROUTER_ABI = [
 
 const QUOTER_ABI = [
     "function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) view returns (uint256 amountOut)"
+];
+
+const WETH_ABI = [
+    "function withdraw(uint256 amount) public", // Required to unwrap WETH to ETH
+    "function balanceOf(address owner) view returns (uint256)",
 ];
 // --------------------------------------------------------------------------
 
@@ -117,37 +123,37 @@ class ProductionSovereignCore extends EventEmitter {
             }
         }
     }
-    
-    // =========================================================================
-    // 👑 CRITICAL FIX: Robust Legacy Gas Price Retrieval (v2.5.4 Stabilization)
-    // =========================================================================
-    /**
-     * @notice Safely retrieves a gas price for legacy (Type 0) transactions, 
-     * with a robust fallback to prevent 'getGasPrice is not a function'.
-     * @returns {BigInt} The calculated gas price.
-     */
-    async _getLegacyGasPrice() {
-        try {
-            const feeData = await this.ethersProvider.getFeeData();
-            
-            if (feeData.gasPrice) {
-                this.logger.info(`             Legacy Gas Retrieved via feeData.gasPrice: ${ethers.formatUnits(feeData.gasPrice, 'gwei')} Gwei`);
-                return feeData.gasPrice;
-            }
-            
-            // Fallback: use MaxFee (which is BaseFee + PriorityFee)
-            const maxPriorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'));
-            const baseFee = feeData.lastBaseFeePerGas || ethers.parseUnits('15', 'gwei');
-            const fallbackPrice = baseFee + maxPriorityFee;
-            
-            this.logger.warn(`⚠️ Explicit gasPrice not available. Falling back to Max Fee estimate: ${ethers.formatUnits(fallbackPrice, 'gwei')} Gwei`);
-            return fallbackPrice;
+    
+    // =========================================================================
+    // 👑 CRITICAL FIX: Robust Legacy Gas Price Retrieval (v2.5.4 Stabilization)
+    // =========================================================================
+    /**
+     * @notice Safely retrieves a gas price for legacy (Type 0) transactions, 
+     * with a robust fallback to prevent 'getGasPrice is not a function'.
+     * @returns {BigInt} The calculated gas price.
+     */
+    async _getLegacyGasPrice() {
+        try {
+            const feeData = await this.ethersProvider.getFeeData();
+            
+            if (feeData.gasPrice) {
+                this.logger.info(`             Legacy Gas Retrieved via feeData.gasPrice: ${ethers.formatUnits(feeData.gasPrice, 'gwei')} Gwei`);
+                return feeData.gasPrice;
+            }
+            
+            // Fallback: use MaxFee (which is BaseFee + PriorityFee)
+            const maxPriorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'));
+            const baseFee = feeData.lastBaseFeePerGas || ethers.parseUnits('15', 'gwei');
+            const fallbackPrice = baseFee + maxPriorityFee;
+            
+            this.logger.warn(`⚠️ Explicit gasPrice not available. Falling back to Max Fee estimate: ${ethers.formatUnits(fallbackPrice, 'gwei')} Gwei`);
+            return fallbackPrice;
 
-        } catch (error) {
-            this.logger.error(`❌ CRITICAL: Failed to get any fee data. Using hardcoded 25 Gwei emergency fallback. Error: ${error.message}`);
-            return ethers.parseUnits('25', 'gwei'); // Hardcoded Emergency Fallback
-        }
-    }
+        } catch (error) {
+            this.logger.error(`❌ CRITICAL: Failed to get any fee data. Using hardcoded 25 Gwei emergency fallback. Error: ${error.message}`);
+            return ethers.parseUnits('25', 'gwei'); // Hardcoded Emergency Fallback
+        }
+    }
 
 
     // =========================================================================
@@ -178,7 +184,7 @@ class ProductionSovereignCore extends EventEmitter {
         } catch (error) {
             this.logger.warn(`⚠️ Failed to fetch EIP-1559 fee data. Falling back to legacy gas settings. Error: ${error.message}`);
             
-            const gasPrice = await this._getLegacyGasPrice(); 
+            const gasPrice = await this._getLegacyGasPrice(); 
             const legacyMaxEthCost = gasPrice * targetGasLimit;
             
             return {
@@ -197,7 +203,7 @@ class ProductionSovereignCore extends EventEmitter {
     /**
      * @notice Checks the current deployment status of the Paymaster and Smart Account.
      */
-    async checkDeploymentStatus() { 
+    async checkDeploymentStatus() { 
         this.logger.info('🔍 Checking current ERC-4337 deployment status...');
         // Updates state based on config values passed from main.js
         this.deploymentState.paymasterDeployed = !!this.config.BWAEZI_PAYMASTER_ADDRESS;
@@ -248,7 +254,130 @@ class ProductionSovereignCore extends EventEmitter {
     }
     // =========================================================================
 
+    /**
+     * @notice Implements the critical USDC to ETH swap for EOA gas funding.
+     */
+    async executeUsdcSwap() {
+        this.logger.info("💰 GAS FUNDING: Initiating USDC to ETH Swap...");
+        if (!this.config.usdcTokenAddress || !this.config.usdcFundingGoal || !this.signer) {
+            this.logger.warn("⚠️ USDC configuration or Signer missing. Skipping USDC swap.");
+            return { success: false, error: 'USDC config or signer missing' };
+        }
 
+        try {
+            const EOA_ADDRESS = this.walletAddress;
+            const usdcAddress = this.config.usdcTokenAddress;
+            const wethAddress = this.config.WETH_ADDRESS;
+            const swapAmountString = this.config.usdcFundingGoal;
+            // Convert "5.17" to BigInt with 6 decimals
+            const swapAmount = ethers.parseUnits(swapAmountString, USDC_DECIMALS);
+            const swapRouterAddress = SWAP_ROUTER_ADDRESS;
+            const feeTier = 500; // 0.05% Common fee tier for stable/ETH pools
+
+            const usdcContract = new ethers.Contract(usdcAddress, ERC20_ABI, this.signer);
+            const wethContract = new ethers.Contract(wethAddress, WETH_ABI, this.signer);
+            
+            // 1. Check USDC Balance
+            let usdcBalance = await this._robustCall(usdcContract, 'balanceOf', [EOA_ADDRESS]);
+            this.logger.info(`  📊 EOA USDC Balance: ${ethers.formatUnits(usdcBalance, USDC_DECIMALS)} USDC. Required: ${swapAmountString} USDC.`);
+            
+            if (usdcBalance < swapAmount) {
+                this.logger.warn(`⚠️ Insufficient USDC balance. Skipping Swap.`);
+                return { success: false, error: 'Insufficient USDC balance for swap.' };
+            }
+
+            // 2. Approve the Uniswap Router
+            this.logger.info(`  -> Approving SwapRouter (${swapRouterAddress}) to spend ${swapAmountString} USDC...`);
+
+            const approvalGasParamsResult = await this.getOptimizedGasParams(MINT_APPROVE_GAS_LIMIT);
+            let approvalGasParams = approvalGasParamsResult;
+            delete approvalGasParams.maxEthCost;
+            delete approvalGasParams.isEIP1559;
+
+            const approveNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+            let finalApprovalGasParams = { ...approvalGasParams, nonce: approveNonce };
+
+            let approvalTx = await usdcContract.approve(swapRouterAddress, swapAmount, finalApprovalGasParams);
+            await approvalTx.wait();
+            this.logger.info(`  ✅ Approval Transaction confirmed: ${approvalTx.hash}`);
+
+            // 3. Estimate WETH output (Quoter)
+            const quoterContract = new ethers.Contract(this.config.UNISWAP_V3_QUOTER_ADDRESS, QUOTER_ABI, this.ethersProvider);
+            const amountOutWETH = await this._robustCall(quoterContract, 'quoteExactInputSingle', [
+                usdcAddress,
+                wethAddress,
+                feeTier,
+                swapAmount,
+                0n
+            ]);
+
+            const amountOutMinimum = amountOutWETH * 99n / 100n; // 1% slippage
+            this.logger.info(`  🔍 Quoted WETH Output: ${ethers.formatEther(amountOutWETH)}. Minimum Required (1% slippage): ${ethers.formatEther(amountOutMinimum)}`);
+
+            // 4. Configure and Execute the Exact Input Single Swap (USDC -> WETH)
+            const routerContract = new ethers.Contract(swapRouterAddress, SWAP_ROUTER_ABI, this.signer);
+            const deadline = BigInt(Math.floor(Date.now() / 1000) + (60 * 10));
+
+            const swapGasParamsResult = await this.getOptimizedGasParams(SWAP_GAS_LIMIT);
+            let swapGasParams = swapGasParamsResult;
+            delete swapGasParams.maxEthCost;
+            delete swapGasParams.isEIP1559;
+
+            const swapNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+            let finalSwapGasParams = { ...swapGasParams, nonce: swapNonce };
+            
+            const params = {
+                tokenIn: usdcAddress,
+                tokenOut: wethAddress,
+                fee: feeTier,
+                recipient: EOA_ADDRESS,
+                deadline: deadline,
+                amountIn: swapAmount,
+                amountOutMinimum: amountOutMinimum,
+                sqrtPriceLimitX96: 0n
+            };
+            
+            this.logger.info("  🚀 Executing USDC -> WETH Swap on Uniswap V3...");
+            const swapTx = await routerContract.exactInputSingle(params, finalSwapGasParams);
+            const receipt = await swapTx.wait();
+
+            if (receipt.status !== 1) {
+                this.logger.error(`❌ USDC Swap FAILED on-chain. Tx Hash: ${receipt.hash}`);
+                return { success: false, error: 'USDC Swap transaction reverted.' };
+            }
+            
+            this.logger.info(`  🎉 USDC Swap SUCCESS. Tx Hash: ${receipt.hash}`);
+            
+            // 5. Unwrap WETH to ETH
+            const finalWethBalance = await this._robustCall(wethContract, 'balanceOf', [EOA_ADDRESS]);
+            this.logger.info(`  🔄 Unwrapping ${ethers.formatEther(finalWethBalance)} WETH to Native ETH...`);
+            
+            const withdrawGasParamsResult = await this.getOptimizedGasParams(MINT_APPROVE_GAS_LIMIT);
+            let withdrawGasParams = withdrawGasParamsResult;
+            delete withdrawGasParams.maxEthCost;
+            delete withdrawGasParams.isEIP1559;
+
+            const withdrawNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+            let finalWithdrawGasParams = { ...withdrawGasParams, nonce: withdrawNonce };
+            
+            const withdrawTx = await wethContract.withdraw(finalWethBalance, finalWithdrawGasParams);
+            await withdrawTx.wait();
+            
+            const finalEthBalance = await this.ethersProvider.getBalance(EOA_ADDRESS);
+            this.logger.info(`  ✅ Unwrap SUCCESS! Final EOA ETH Balance: ${ethers.formatEther(finalEthBalance)} ETH`);
+            
+            return {
+                success: true,
+                profit: ethers.formatEther(amountOutWETH),
+                finalEthBalance: ethers.formatEther(finalEthBalance)
+            };
+
+        } catch (error) {
+            this.logger.error(`💥 CRITICAL USDC SWAP FAILURE: ${error.message}`);
+            return { success: false, error: `USDC Swap Failed: ${error.message}` };
+        }
+    }
+    
     /**
      * @notice Replaces Flash Loan Arbitrage with a Sovereign Genesis Trade (SGT).
      */
@@ -258,8 +387,11 @@ class ProductionSovereignCore extends EventEmitter {
             this.logger.error("❌ CRITICAL: Signer not provided. Cannot execute Sovereign Genesis Trade.");
             return { success: false, error: 'Signer not provided to Sovereign Brain.' };
         }
-
-        try {
+        // ... (SGT implementation remains the same)
+        // [Existing SGT logic omitted for brevity]
+        // ... (SGT implementation remains the same)
+        
+        try {
             const EOA_ADDRESS = this.walletAddress;
             const tokenContract = new ethers.Contract(this.config.bwaeziTokenAddress, ERC20_ABI, this.signer);
             const mintAmount = GENESIS_SWAP_AMOUNT; 
@@ -294,7 +426,7 @@ class ProductionSovereignCore extends EventEmitter {
                     this.logger.warn("  -> Falling back to Legacy Gas Price strategy for CRITICAL BOOTSTRAP MINT.");
                     
                     // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
-                    const gasPrice = await this._getLegacyGasPrice(); 
+                    const gasPrice = await this._getLegacyGasPrice(); 
                     mintGasParams = { gasPrice: gasPrice, gasLimit: MINT_APPROVE_GAS_LIMIT };
                     
                     const legacyMaxCost = gasPrice * MINT_APPROVE_GAS_LIMIT;
@@ -342,8 +474,8 @@ class ProductionSovereignCore extends EventEmitter {
             const CURRENT_EOA_BALANCE = await this.ethersProvider.getBalance(EOA_ADDRESS);
             
             if (approvalGasParamsResult.isEIP1559 && CURRENT_EOA_BALANCE < approvalGasParamsResult.maxEthCost) {
-                // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
-                const gasPrice = await this._getLegacyGasPrice(); 
+                // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
+                const gasPrice = await this._getLegacyGasPrice(); 
                 approvalGasParams = { gasPrice: gasPrice, gasLimit: MINT_APPROVE_GAS_LIMIT };
             }
             delete approvalGasParams.maxEthCost;
@@ -381,8 +513,8 @@ class ProductionSovereignCore extends EventEmitter {
             const SWAP_EOA_BALANCE = await this.ethersProvider.getBalance(EOA_ADDRESS);
 
             if (swapGasParamsResult.isEIP1559 && SWAP_EOA_BALANCE < swapGasParamsResult.maxEthCost) {
-                // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
-                const gasPrice = await this._getLegacyGasPrice(); 
+                // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
+                const gasPrice = await this._getLegacyGasPrice(); 
                 swapGasParams = { gasPrice: gasPrice, gasLimit: SWAP_GAS_LIMIT };
             }
             delete swapGasParams.maxEthCost;
@@ -434,7 +566,7 @@ class ProductionSovereignCore extends EventEmitter {
         // ... (QNC and RPE initialization logic assumed here)
 
         // --- Pre-Deployment Checks and Self-Funding Logic ---
-        await this.checkDeploymentStatus(); 
+        await this.checkDeploymentStatus(); 
         const eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
         this.logger.info(`🔍 EOA ETH Balance (GAS WALLET): ${ethers.formatEther(eoaEthBalance)} ETH`);
         const IS_UNDERCAPITALIZED = eoaEthBalance < ethers.parseEther("0.005");
@@ -443,23 +575,13 @@ class ProductionSovereignCore extends EventEmitter {
             this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Preparing for deployment.');
 
             if (IS_UNDERCAPITALIZED) {
-                this.logger.info('💰 EOA is undercapitalized. Initiating self-funding using **SOVEREIGN GENESIS TRADE**...');
+                this.logger.info('💰 EOA is undercapitalized. **PRIORITIZING USDC FUNDING**...');
                 
-                const fundingResult = await this.executeSovereignGenesisTrade(); 
+                let fundingResult = { success: false };
+
+                // 1. Attempt USDC Swap first
+                if (this.config.usdcTokenAddress && this.config.usdcFundingGoal) {
+                    fundingResult = await this.executeUsdcSwap();
+                }
 
                 if (fundingResult.success) {
-                    this.logger.info(`✅ Self-Funding Successful via SGT! Acquired WETH: ${fundingResult.profit} (System Expansion Fund)`);
-                } else {
-                    this.logger.error(`❌ Self-Funding Failed! Reason: ${fundingResult.error}. Deployment may fail.`);
-                }
-            } else {
-                this.logger.info('✅ EOA is sufficiently capitalized. Proceeding to deployment...');
-            }
-        }
-        this.logger.info('🚀 SYSTEM READY: Zero-capital arbitrage and AA transactions available');
-        this.deploymentState.initialized = true;
-    }
-}
-
-// EXPORT: ProductionSovereignCore and the ABIs for main.js consumption
-export { ProductionSovereignCore, ERC20_ABI, SWAP_ROUTER_ABI };
