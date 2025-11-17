@@ -6,19 +6,24 @@ import { EventEmitter } from 'events';
 // CORE BWAEZI CHAIN CONFIGURATION - PRODUCTION READY
 // =========================================================================
 export const BWAEZI_CHAIN = {
-    NAME: 'BWAEZI Sovereign Chain',
-    NATIVE_TOKEN: 'BWAEZI',
-    SYMBOL: 'bwzC',
-    DECIMALS: 18,
-    RPC_URLS: process.env.ETHEREUM_RPC_URL || "https://eth.llamarpc.com",
-    CONTRACT_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
-    CHAIN_ID: 1,
-    VERSION: '2.0.0-SOVEREIGN',
-    FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS ||
-        "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
-    BLOCK_TIME: 2,
-    GAS_LIMIT: 30000000,
-    GAS_PRICE: '1000000000'
+    NAME: 'BWAEZI Sovereign Chain',
+    NATIVE_TOKEN: 'BWAEZI',
+    SYMBOL: 'bwzC',
+    DECIMALS: 18,
+    RPC_URLS: process.env.ETHEREUM_RPC_URL || "https://eth.llamarpc.com",
+    
+    // 🔥 CRITICAL FIX: Explicitly define the two critical contract addresses.
+    // The system MUST use TOKEN_CONTRACT_ADDRESS for SGT to acquire gas.
+    TOKEN_CONTRACT_ADDRESS: '0x4bc3c633a12f5bffcac9080c51b0cd44e17d0a8f', // The ERC-20 Token Contract (The Asset)
+    SMART_ACCOUNT_KERNEL_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da', // The deployed ERC-4337 Kernel (The Wallet/HODLer)
+    
+    CHAIN_ID: 1,
+    VERSION: '2.0.0-SOVEREIGN',
+    FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS ||
+        "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+    BLOCK_TIME: 2,
+    GAS_LIMIT: 30000000,
+    GAS_PRICE: '1000000000'
 };
 
 // =========================================================================
