@@ -1,5 +1,5 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.3 (CRITICAL STRUCTURE FIX)
-// 🔥 FIX: Implementing Sovereign Genesis Trade (SGT) and stabilizing RPC/Gas logic.
+// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.4 (LEGACY GAS STABILIZATION FIX)
+// 🔥 FIX: Stabilizing Legacy Gas Price retrieval to prevent 'getGasPrice is not a function' error.
 // 💰 OPTIMIZED FOR ZERO-CAPITAL START + $50,000+ DAILY REVENUE + 100% SECURITY GUARANTEE
 
 import { EventEmitter } from 'events';
@@ -117,6 +117,40 @@ class ProductionSovereignCore extends EventEmitter {
             }
         }
     }
+    
+    // =========================================================================
+    // 👑 CRITICAL FIX: Robust Legacy Gas Price Retrieval
+    // =========================================================================
+    /**
+     * @notice Safely retrieves a gas price for legacy (Type 0) transactions, 
+     * with a robust fallback to prevent 'getGasPrice is not a function'.
+     * @returns {BigInt} The calculated gas price.
+     */
+    async _getLegacyGasPrice() {
+        try {
+            // In Ethers v6, getFeeData is the standard way to get all fee info.
+            const feeData = await this.ethersProvider.getFeeData();
+            
+            // Prioritize the legacy gasPrice property if available
+            if (feeData.gasPrice) {
+                this.logger.info(`             Legacy Gas Retrieved via feeData.gasPrice: ${ethers.formatUnits(feeData.gasPrice, 'gwei')} Gwei`);
+                return feeData.gasPrice;
+            }
+            
+            // Fallback: use MaxFee (which is BaseFee + PriorityFee)
+            const maxPriorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'));
+            const baseFee = feeData.lastBaseFeePerGas || ethers.parseUnits('15', 'gwei');
+            const fallbackPrice = baseFee + maxPriorityFee;
+            
+            this.logger.warn(`⚠️ Explicit gasPrice not available. Falling back to Max Fee estimate: ${ethers.formatUnits(fallbackPrice, 'gwei')} Gwei`);
+            return fallbackPrice;
+
+        } catch (error) {
+            this.logger.error(`❌ CRITICAL: Failed to get any fee data. Using hardcoded 25 Gwei emergency fallback. Error: ${error.message}`);
+            return ethers.parseUnits('25', 'gwei'); // Hardcoded Emergency Fallback
+        }
+    }
+
 
     // =========================================================================
     // 👑 NOVELTY: EIP-1559 GAS OPTIMIZATION ENGINE & BOOTSTRAP OVERRIDE SUPPORT
@@ -144,9 +178,10 @@ class ProductionSovereignCore extends EventEmitter {
                 isEIP1559: true
             };
         } catch (error) {
+            // CRITICAL FIX APPLIED HERE: Use the robust helper instead of direct getGasPrice()
             this.logger.warn(`⚠️ Failed to fetch EIP-1559 fee data. Falling back to legacy gas settings. Error: ${error.message}`);
             
-            const gasPrice = await this.ethersProvider.getGasPrice();
+            const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
             const legacyMaxEthCost = gasPrice * targetGasLimit;
             
             return {
@@ -193,7 +228,7 @@ class ProductionSovereignCore extends EventEmitter {
      */
     async healthCheck() {
         const health = {
-            version: '2.5.3', // Updated version
+            version: '2.5.4', // Updated version
             timestamp: new Date().toISOString(),
             wallet: {
                 address: this.walletAddress,
@@ -263,7 +298,8 @@ class ProductionSovereignCore extends EventEmitter {
                     this.logger.warn(`⚠️ EOA undercapitalized for EIP-1559 Max Cost (${ethers.formatEther(mintGasParamsResult.maxEthCost)} ETH > ${ethers.formatEther(EOA_ETH_BALANCE)} ETH).`);
                     this.logger.warn("  -> Falling back to Legacy Gas Price strategy for CRITICAL BOOTSTRAP MINT.");
                     
-                    const gasPrice = await this.ethersProvider.getGasPrice();
+                    // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
+                    const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
                     mintGasParams = { gasPrice: gasPrice, gasLimit: MINT_APPROVE_GAS_LIMIT };
                     
                     const legacyMaxCost = gasPrice * MINT_APPROVE_GAS_LIMIT;
@@ -305,7 +341,8 @@ class ProductionSovereignCore extends EventEmitter {
             const CURRENT_EOA_BALANCE = await this.ethersProvider.getBalance(EOA_ADDRESS);
             
             if (approvalGasParamsResult.isEIP1559 && CURRENT_EOA_BALANCE < approvalGasParamsResult.maxEthCost) {
-                const gasPrice = await this.ethersProvider.getGasPrice();
+                // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
+                const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
                 approvalGasParams = { gasPrice: gasPrice, gasLimit: MINT_APPROVE_GAS_LIMIT };
             }
             delete approvalGasParams.maxEthCost;
@@ -339,7 +376,8 @@ class ProductionSovereignCore extends EventEmitter {
             const SWAP_EOA_BALANCE = await this.ethersProvider.getBalance(EOA_ADDRESS);
 
             if (swapGasParamsResult.isEIP1559 && SWAP_EOA_BALANCE < swapGasParamsResult.maxEthCost) {
-                const gasPrice = await this.ethersProvider.getGasPrice();
+                // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
+                const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
                 swapGasParams = { gasPrice: gasPrice, gasLimit: SWAP_GAS_LIMIT };
             }
             delete swapGasParams.maxEthCost;
@@ -381,7 +419,7 @@ class ProductionSovereignCore extends EventEmitter {
 
     
     async initialize() {
-        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.3 (CRITICAL STRUCTURE FIX)...');
+        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.4 (LEGACY GAS STABILIZATION FIX)...');
         this.sovereignService.registerService('SovereignCore', this);
         // ... (QNC and RPE initialization logic assumed here)
 
