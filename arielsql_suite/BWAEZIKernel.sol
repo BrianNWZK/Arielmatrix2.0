@@ -1,3 +1,4 @@
+// arielsql_suite/BWAEZIKernel.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -81,7 +82,7 @@ contract BWAEZIKernel {
         emit ModuleActivated(moduleId);
     }
 
-    function grantAccess(address user, string memory service) external {
+    function grantAccess(address user, string memory service) external view {
         require(verifiedIdentities[user], "Identity not verified");
         require(balanceOf[user] > 0, "Insufficient BWAEZI");
         emit AccessGranted(user, service);
