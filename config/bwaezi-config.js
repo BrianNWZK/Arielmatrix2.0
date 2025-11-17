@@ -11,7 +11,7 @@ export const BWAEZI_CHAIN = {
     SYMBOL: 'bwzC',
     DECIMALS: 18,
     RPC_URLS: process.env.ETHEREUM_RPC_URL || "https://eth.llamarpc.com",
-    CONTRACT_ADDRESS: '0xF1d2208ABc26F8C04b49103280A2667734f24AC6',
+    CONTRACT_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
     CHAIN_ID: 1,
     VERSION: '2.0.0-SOVEREIGN',
     FOUNDER_ADDRESS: process.env.FOUNDER_ADDRESS ||
