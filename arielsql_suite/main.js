@@ -18,7 +18,6 @@ import { deployERC4337Contracts } from './aa-deployment-engine.js';
 const safeNormalizeAddress = (address) => {
     // FIX: Match the partial address placeholder to allow normalization without a crash or warning.
     if (!address || address.match(/^(0x)?[0]{40}$/) || address.includes('<') || address.includes('...')) {
-        // Return original or simple placeholder if it's clearly not a real address
         return address; 
     }
     try {
@@ -45,7 +44,6 @@ const PRODUCTION_CONFIG = {
     WETH_ADDRESS: normalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
     // 🏦 WALLET/INFRASTRUCTURE
     SOVEREIGN_WALLET: normalizeAddress('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
-    // 🔧 FIX: Using a known, valid placeholder address to silence the previous warning.
     ENTRY_POINT_ADDRESS: normalizeAddress('0x5FF137d4BeaA7036d654A88Ea0623B7051B5d859'), 
     PAYMASTER_ADDRESS: null, // Deployed dynamically
     SMART_ACCOUNT_ADDRESS: null, // Deployed dynamically
@@ -55,6 +53,13 @@ const PRODUCTION_CONFIG = {
     MAX_FEE_PER_GAS_MULTIPLIER: 1.5,
     // 🌐 PROVIDER
     RPC_URL: process.env.RPC_URL || 'https://eth.llamarpc.com',
+
+    // 🔥 CRITICAL FIX FOR SGT: MAPPING CONFIG KEYS TO EXPECTED BRAIN KEYS
+    // These keys resolve the 'Contract target: null' error.
+    bwaeziTokenAddress: normalizeAddress('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'), // Mapped from BWAEZI_KERNEL_ADDRESS
+    WETH_TOKEN_ADDRESS: normalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'), // Mapped from WETH_ADDRESS
+    UNISWAP_V3_QUOTER_ADDRESS: normalizeAddress('0xb27308f9F90D607463bb14A1BdeCfD32A464aBc7'), // Uniswap V3 Quoter V2 Mainnet
+    BWAEZI_WETH_FEE: 3000, // 0.3% Fee Tier for the BWAEZI-WETH pool
 };
 
 
@@ -70,16 +75,17 @@ async function main() {
     const signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
 
     // 2. Instantiate AASDK
-    // 🔥 FIX: AASDK is an exported object literal, NOT a class. Remove 'new' and arguments.
-    const aasdk = AASDK; 
+    // AASDK is an exported object literal, NOT a class.
+    const aasdk = AASDK;
 
     // 3. Instantiate Sovereign Brain Orchestrator
-    const brain = new ProductionSovereignCore(provider, signer, PRODUCTION_CONFIG, aasdk);
+    // FIX: Correcting constructor to match brain signature: constructor(config, signer)
+    const brain = new ProductionSovereignCore(PRODUCTION_CONFIG, signer); 
 
     try {
         // 4. Run the Genesis Initialization Sequence
         // This will now execute the SGT if the EOA is undercapitalized
-        await brain.initialize();
+        await brain.initialize(); 
         
         // 5. Start Express API for Health/Metrics
         const app = express();
