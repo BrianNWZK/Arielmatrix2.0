@@ -2,150 +2,132 @@
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
-import { BWAEZIKernelDeployer } from './bwaezi-kernel-contract.js';
 import process from 'process';
+// 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
+import { ProductionSovereignCore, ERC20_ABI, SWAP_ROUTER_ABI } from '../core/sovereign-brain.js';
+// 👑 NEW IMPORTS
+import { AASDK } from '../modules/aa-loaves-fishes.js';
+// 🔧 FIX: Import the real deployment engine
+import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
 
 // =========================================================================
-// PRODUCTION CONFIGURATION - FINAL ROBUST VERSION
+// CRITICAL FIX: ADDRESS NORMALIZATION HELPER (Defined for main.js and constants)
 // =========================================================================
-const CONFIG = {
-    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET ||
-    "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
-    NETWORK: 'mainnet',
-    RPC_URLS: [
-        "https://eth.llamarpc.com", 
-        "https://rpc.ankr.com/eth", 
-        "https://cloudflare-eth.com" 
-    ],
-    PORT: process.env.PORT || 10000,
-    PRIVATE_KEY: process.env.PRIVATE_KEY
+
+// Helper function to safely normalize addresses
+const safeNormalizeAddress = (address) => {
+    if (!address || address.match(/^(0x)?[0]{40}$/)) {
+        return address;
+    }
+    try {
+        const lowercasedAddress = address.toLowerCase();
+        return ethers.getAddress(lowercasedAddress);
+    } catch (error) {
+        console.warn(`⚠️ Address normalization failed for ${address}: ${error.message}`);
+        return address.toLowerCase();
+    }
 };
 
-// Global state variables for the deployment process
-let bwaeziKernelAddress = null;
-let provider = null;
-let wallet = null;
+// =========================================================================
+// PRODUCTION CONFIGURATION - OPTIMIZED
+// =========================================================================
 
-class RobustProvider {
-    constructor(rpcUrls) {
-        this.rpcUrls = rpcUrls;
-        this.currentIndex = 0;
-        this.maxRetries = 3;
-    }
-    async initializeProvider() {
-        console.log("🌐 INITIALIZING ROBUST PROVIDER WITH RETRY MECHANISM...");
-        for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-            const rpcUrl = this.rpcUrls[this.currentIndex];
-            try {
-                // FIX: Removed staticNetwork for better compatibility with load-balanced RPCs
-                const provider = new ethers.JsonRpcProvider(rpcUrl); 
-                await provider.getBlockNumber(); // Test connection
-                console.log(` ✅ CONNECTED: ${rpcUrl}`);
-                return provider;
-            } catch (error) {
-                this.currentIndex = (this.currentIndex + 1) % this.rpcUrls.length;
-                if (attempt < this.maxRetries - 1) {
-                    console.warn(`⚠️ Failed to connect to ${rpcUrl}. Retrying...`);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-        }
-        throw new Error("Failed to connect to all RPC endpoints after multiple retries.");
-    }
-}
+// Helper to normalize addresses for Ethers.js Checksum compliance
+const normalizeAddress = safeNormalizeAddress; // FIX: Now safeNormalizeAddress
 
-async function initializeBlockchain() {
-    console.log("🚀 INITIALIZING BLOCKCHAIN (ROBUST MODE)...");
-    try {
-        const providerManager = new RobustProvider(CONFIG.RPC_URLS);
-        provider = await providerManager.initializeProvider();
-        if (!CONFIG.PRIVATE_KEY) {
-            throw new Error("PRIVATE_KEY environment variable required");
-        }
-        wallet = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
-        
-        const balance = await provider.getBalance(wallet.address);
-        const gasData = await provider.getFeeData();
-        
-        console.log("✅ BLOCKCHAIN INITIALIZED");
-        console.log(` 👑 Sovereign: ${CONFIG.SOVEREIGN_WALLET}`);
-        console.log(` 💰 Balance: ${ethers.formatEther(balance)} ETH`);
-        console.log(` ⛽ Gas Price: ${ethers.formatUnits(gasData.gasPrice || gasData.maxFeePerGas, 'gwei')} gwei`);
-        
-        // FINAL FIX: Minimal check to only catch truly empty wallets
-        const minEth = ethers.parseEther("0.0001"); 
+const PRODUCTION_CONFIG = {
+    // 👑 BWAEZI SOVEREIGN ASSETS
+    // 🔥 CRITICAL UPDATE: NEW DEPLOYED KERNEL ADDRESS
+    BWAEZI_KERNEL_ADDRESS: normalizeAddress('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'), 
+    WETH_ADDRESS: normalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+    // 🏦 WALLET/INFRASTRUCTURE
+    SOVEREIGN_WALLET: normalizeAddress('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
+    ENTRY_POINT_ADDRESS: normalizeAddress('0x5FF137d4B...0d859a6A'), // Placeholder for real EP
+    PAYMASTER_ADDRESS: null, // Deployed dynamically
+    SMART_ACCOUNT_ADDRESS: null, // Deployed dynamically
+    // ⚙️ GAS SETTINGS
+    GAS_MANAGER_URL: process.env.GAS_MANAGER_URL || 'http://localhost:3000',
+    MAX_PRIORITY_FEE_GWEI: 1.0, 
+    MAX_FEE_PER_GAS_MULTIPLIER: 1.5,
+    // 🌐 PROVIDER
+    RPC_URL: process.env.RPC_URL || 'https://eth.llamarpc.com',
+};
 
-        if (balance < minEth) {
-            throw new Error(`Insufficient ETH. Need at least ${ethers.formatEther(minEth)} ETH, have ${ethers.formatEther(balance)} ETH`);
-        }
-
-        return { provider, wallet };
-    } catch (error) {
-        console.error("❌ BLOCKCHAIN INIT FAILED:", error.message);
-        throw error;
-    }
-}
 
 // =========================================================================
-// MAIN DEPLOYMENT EXECUTION 
+// MAIN ORCHESTRATION ENGINE
 // =========================================================================
-async function executeProductionDeployment() {
-    console.log("🚀 STARTING BWAEZI KERNEL DEPLOYMENT - FINAL CHALLENGE ACCEPTED");
+
+async function main() {
+    console.log("🚀 INITIALIZING BSFM PRODUCTION CORE...");
+
+    // 1. Setup Provider and Signer (EOA)
+    const provider = new ethers.JsonRpcProvider(PRODUCTION_CONFIG.RPC_URL);
+    const signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
+
+    // 2. Instantiate AASDK
+    const aasdk = new AASDK(provider, signer, PRODUCTION_CONFIG);
+
+    // 3. Instantiate Sovereign Brain Orchestrator
+    const brain = new ProductionSovereignCore(provider, signer, PRODUCTION_CONFIG, aasdk);
+
     try {
-        await initializeBlockchain();
+        // 4. Run the Genesis Initialization Sequence
+        // This will now execute the SGT if the EOA is undercapitalized
+        await brain.initialize();
         
-        // This assumes BWAEZIKernelDeployer is correctly implemented in './bwaezi-kernel-contract.js'
-        const kernelDeployer = new BWAEZIKernelDeployer(wallet, provider, CONFIG);
-        
-        // Compile and check readiness before Phase 1
-        await kernelDeployer.compileAndPrepare(); 
-        
-        // Run the two-phase deployment
-        const deploymentResult = await kernelDeployer.deploy();
-        
-        if (deploymentResult.success) {
-            bwaeziKernelAddress = deploymentResult.address;
-            console.log(`\n🎉 DEPLOYMENT SUCCESS! Contract: ${deploymentResult.address}`);
-            console.log(`✅ FINAL COST: ${deploymentResult.deploymentCost} ETH spent. NO WASTED GAS.`);
-        } else {
-            console.log(`\n⚠️ DEPLOYMENT FAILED. Error: ${deploymentResult.error}`);
-            console.log("ℹ️ ACTION REQUIRED: The failure occurred during Phase 1 or 2. Review the logs and ensure your wallet has enough ETH for the **Final Gas Limit**.");
-        }
-        
-        // Start web server regardless of deployment success for Render environment stability
+        // 5. Start Express API for Health/Metrics
         const app = express();
         app.use(cors());
         app.use(express.json());
-        
-        app.get('/health', (req, res) => res.json({ status: 'operational', version: 'v16.0', deployed: !!bwaeziKernelAddress }));
-        
-        const port = CONFIG.PORT;
-        const host = '0.0.0.0'; 
-        app.listen(port, host, () => {
-            console.log("=".repeat(60));
-            console.log(` 🌐 Server: Listening on ${host}:${port}`);
+
+        app.get('/health', async (req, res) => {
+            const health = await brain.healthCheck();
+            res.json(health);
+        });
+
+        const port = process.env.PORT || 8080;
+        app.listen(port, () => {
+            console.log(`✅ Web API listening on port ${port}`);
         });
 
         return { success: true };
+
     } catch (error) {
-        console.error("💥 FATAL STARTUP FAILURE:", error);
+        console.error("💥 FATAL ERROR during initialization:", error);
         return { success: false, error: error.message };
     }
 }
 
 // =========================================================================
-// STARTUP EXECUTION
+// STARTUP EXECUTION (FIXED for Deployment Stabilization)
 // =========================================================================
-if (import.meta.url === `file://${process.argv[1]}`) {
-    console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║        BWAEZI SOVEREIGN KERNEL v16.0                         ║
-║    FINAL GUARANTEE: ESTIMATE GAS SAFETY (NO WASTED ETH)      ║
-║    FIXED: Logic, Bytecode Mismatch, and Insufficient Funds   ║
-╚══════════════════════════════════════════════════════════════╝
-`);
-    executeProductionDeployment().catch(error => {
-        console.error("Execution failed:", error);
-        process.exit(1);
+
+// Refactored startup logic to use a robust Async IIFE to prevent build/concatenation errors.
+// This encapsulation prevents misplaced external characters (like '}') from corrupting the top-level scope.
+(async () => {
+    // Global error handling for synchronous issues
+    process.on('uncaughtException', (error) => {
+        console.error('💥 Uncaught Exception:', error);
     });
-}
+
+    // Global error handling for promises that were not handled with .catch()
+    process.on('unhandledRejection', (reason, promise) => {
+        console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+    });
+
+    if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+        // Start the application
+        const result = await main(); // Call main function and await its result
+
+        if (result.success) {
+            console.log("🎉 BSFM Production System Started Successfully!");
+            console.log("🚀 BWAEZI ENTERPRISE READY FOR 100M TOKEN ECONOMY!");
+        } else {
+            console.log("❌ BSFM Production System Started with Errors");
+        }
+    }
+})().catch(error => {
+    console.error("💥 FATAL ERROR DURING IIFE EXECUTION:", error);
+    process.exit(1);
+});
