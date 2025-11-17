@@ -124,6 +124,36 @@ class ProductionSovereignCore extends EventEmitter {
         // this.BwaeziChain = new BwaeziChain(config, this.logger); 
     }
 
+    // =========================================================================
+    // 👑 NOVELTY: EIP-1559 GAS OPTIMIZATION ENGINE (secures minimal EOA ETH)
+    // =========================================================================
+    async getOptimizedGasParams() {
+        try {
+            const feeData = await this.ethersProvider.getFeeData();
+            
+            // Set Max Priority Fee and Max Fee
+            // Use 1.5 Gwei for priority fee for reliable inclusion, ensuring it's not null
+            const maxPriorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'));
+            // Max Fee is Base Fee * 2 + Max Priority Fee. Using 2x max base fee as a safe cap.
+            // Ensure values are BigInt
+            const baseFee = feeData.lastBaseFeePerGas || ethers.parseUnits('15', 'gwei');
+            const maxFee = baseFee * 2n + maxPriorityFee;
+
+            this.logger.info(`⚡ Gas Optimization: MaxFee=${ethers.formatUnits(maxFee, 'gwei')} Gwei, MaxPriority=${ethers.formatUnits(maxPriorityFee, 'gwei')} Gwei`);
+
+            return {
+                maxFeePerGas: maxFee,
+                maxPriorityFeePerGas: maxPriorityFee
+            };
+        } catch (error) {
+            this.logger.warn(`⚠️ Failed to fetch EIP-1559 fee data. Falling back to default gas settings. Error: ${error.message}`);
+            // Fallback to empty object (relying on Ethers.js default handling)
+            return {}; 
+        }
+    }
+    // =========================================================================
+
+
     // =========================================================================
     // 🔧 REINSTATED ORIGINAL FUNCTIONALITIES (AS REQUESTED)
     // =========================================================================
@@ -204,15 +234,29 @@ class ProductionSovereignCore extends EventEmitter {
                 ERC20_ABI, 
                 this.signer 
             );
+            
+            // 🔥 CRITICAL DIAGNOSTIC: Check BWAEZI balance before approving
+            const bwaeziBalance = await tokenContract.balanceOf(this.walletAddress);
+            this.logger.info(`  📊 EOA BWAEZI Balance: ${ethers.formatUnits(bwaeziBalance, 18)} BWAEZI`);
+            
+            if (bwaeziBalance < GENESIS_SWAP_AMOUNT) {
+                this.logger.error("❌ CRITICAL: Insufficient BWAEZI balance in EOA. SGT requires at least 10 BWAEZI seed to proceed.");
+                return { success: false, error: 'Insufficient BWAEZI balance for Sovereign Genesis Trade.' };
+            }
+            // END CRITICAL DIAGNOSTIC
 
-            // 2. Approve the Uniswap Router to spend BWAEZI
+            // 2. Get optimized gas parameters (Novelty to protect minimal EOA ETH)
+            const gasParams = await this.getOptimizedGasParams();
+
+            // 3. Approve the Uniswap Router to spend BWAEZI
             this.logger.info(`  -> Approving SwapRouter (${SWAP_ROUTER_ADDRESS}) to spend ${ethers.formatUnits(GENESIS_SWAP_AMOUNT, 18)} BWAEZI...`);
-            // FIX: Variable name changed from 'tx' to 'approvalTx'
-            let approvalTx = await tokenContract.approve(SWAP_ROUTER_ADDRESS, GENESIS_SWAP_AMOUNT);
+            
+            // 🔥 CRITICAL FIX: Pass EIP-1559 gas optimization parameters to the transaction
+            let approvalTx = await tokenContract.approve(SWAP_ROUTER_ADDRESS, GENESIS_SWAP_AMOUNT, gasParams);
             await approvalTx.wait();
             this.logger.info(`  ✅ Approval Transaction confirmed: ${approvalTx.hash}`);
 
-            // 3. Estimate WETH output (using Quoter) - CRITICAL for slippage guardrail
+            // 4. Estimate WETH output (using Quoter) - CRITICAL for slippage guardrail
             const quoterContract = new ethers.Contract(
                 this.config.UNISWAP_V3_QUOTER_ADDRESS,
                 QUOTER_ABI,
@@ -232,7 +276,7 @@ class ProductionSovereignCore extends EventEmitter {
             const amountOutMinimum = amountOutWETH * 99n / 100n; 
             this.logger.info(`  🔍 Quoted WETH Output: ${ethers.formatEther(amountOutWETH)}. Minimum Required (1% slippage): ${ethers.formatEther(amountOutMinimum)}`);
 
-            // 4. Configure and Execute the Exact Input Single Swap
+            // 5. Configure and Execute the Exact Input Single Swap
             const routerContract = new ethers.Contract(
                 SWAP_ROUTER_ADDRESS, 
                 SWAP_ROUTER_ABI, 
@@ -254,7 +298,8 @@ class ProductionSovereignCore extends EventEmitter {
             
             this.logger.info("  🚀 Executing Sovereign Genesis Trade on Uniswap V3...");
             // FIX: Variable name changed from 'tx' to 'swapTx'
-            const swapTx = await routerContract.exactInputSingle(params);
+            // 🔥 CRITICAL FIX: Pass EIP-1559 gas optimization parameters to the transaction
+            const swapTx = await routerContract.exactInputSingle(params, gasParams);
             const receipt = await swapTx.wait();
 
             if (receipt.status === 1) {
