@@ -1,9 +1,11 @@
+// ORCHESTRATION8.txt (main.js)
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
-import { ProductionSovereignCore } from '../core/sovereign-brain.js';
+// FIX: Update import to include required ABIs for self-containment/export compatibility
+import { ProductionSovereignCore, ERC20_ABI, SWAP_ROUTER_ABI } from '../core/sovereign-brain.js';
 // 👑 NEW IMPORTS
 import { AASDK } from '../modules/aa-loaves-fishes.js';
 // 🔧 FIX: Import the real deployment engine
@@ -35,14 +37,16 @@ const safeNormalizeAddress = (address) => {
 const normalizeAddress = safeNormalizeAddress; // FIX: Now safeNormalizeAddress is defined
 
 const CONFIG_BASE = {
-    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET || "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
+    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET ||
+    "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA",
     NETWORK: 'mainnet',
     RPC_URLS: [
         "https://eth.llamarpc.com",
         "https://rpc.ankr.com/eth",
         "https://cloudflare-eth.com"
     ],
-    PORT: process.env.PORT || 10000,
+    PORT: process.env.PORT ||
+    10000,
     PRIVATE_KEY: process.env.PRIVATE_KEY,
 
     // === 👑 ERC-4337 LOAVES AND FISHES CONSTANTS (MAINNET) 👑 ===
@@ -55,7 +59,6 @@ const CONFIG_BASE = {
     BWAEZI_PAYMASTER_ADDRESS: null,
     SMART_ACCOUNT_ADDRESS: null,
 };
-
 const CONFIG = CONFIG_BASE;
 
 let sovereignCoreInstance = null;
@@ -74,19 +77,19 @@ const startExpressServer = () => {
         try {
             const health = await sovereignCoreInstance.healthCheck();
             res.json({ status: 'UP', ...health });
+    
         } catch (e) {
             res.status(500).json({ status: 'ERROR', message: e.message });
         }
     });
-
     return app.listen(CONFIG.PORT, () => console.log(`🚀 API Listening on port ${CONFIG.PORT}`));
 };
 
 // Improved engine initialization with better error handling
-async function initializeSovereignBrain(config) {
+// FIX: Added signer argument to pass to the core instance
+async function initializeSovereignBrain(config, signer) {
     try {
         console.log("🧠 Initializing Sovereign Brain Engine (v2.5.0 - Deployment Stabilization)...");
-
         if (typeof ProductionSovereignCore !== 'function') {
             throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
         }
@@ -98,19 +101,19 @@ async function initializeSovereignBrain(config) {
             rpcUrls: config.RPC_URLS,
             bwaeziTokenAddress: config.BWAEZI_TOKEN_ADDRESS,
             sovereignWallet: config.SOVEREIGN_WALLET,
-            WETH_TOKEN_ADDRESS: config.WETH_TOKEN_ADDRESS,
-            UNISWAP_V3_QUOTER_ADDRESS: config.UNISWAP_V3_QUOTER_ADDRESS
+           WETH_TOKEN_ADDRESS: config.WETH_TOKEN_ADDRESS,
+            UNISWAP_V3_QUOTER_ADDRESS: config.UNISWAP_V3_QUOTER_ADDRESS,
+            BWAEZI_WETH_FEE: config.BWAEZI_WETH_FEE
         };
-
         console.log("🔧 Creating ProductionSovereignCore instance...");
-        const optimizedCore = new ProductionSovereignCore(brainConfig);
+        // FIX: Pass the signer to the constructor
+        const optimizedCore = new ProductionSovereignCore(brainConfig, signer); 
 
         console.log("⚡ Initializing core engine (Running EOA Self-Fund Check in Genesis Mode)...");
         await optimizedCore.initialize();
 
         console.log("✅ Sovereign Brain Engine initialized successfully");
         return optimizedCore;
-
     } catch (error) {
         console.error("❌ Sovereign Brain initialization failed:", error.message);
         throw new Error(`Engine initialization failed: ${error.message}`);
@@ -123,13 +126,11 @@ async function initializeSovereignBrain(config) {
 
 async function main() {
     startExpressServer();
-
     try {
         console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.0: DEPLOYMENT STABILIZATION COMPLETE");
         console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
         console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
         console.log("🌐 NETWORK:", CONFIG.NETWORK);
-
         if (!CONFIG.PRIVATE_KEY) {
             throw new Error("PRIVATE_KEY is mandatory for deployment. Please set it in the environment.");
         }
@@ -137,20 +138,19 @@ async function main() {
         const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
 
-        // 1. INITIALIZE CORE (Pre-AA state) - Triggers real EOA funding via arbitrage if needed
+        // 1. INITIALIZE CORE (Pre-AA state) - Triggers real EOA funding via SGT
         console.log("🚀 Initializing Production Sovereign Core (Pre-Deployment Mode)...");
-        sovereignCoreInstance = await initializeSovereignBrain(CONFIG);
+        // FIX: Pass the signer to the initialization function
+        sovereignCoreInstance = await initializeSovereignBrain(CONFIG, signer);
 
-        // --- 2. DEPLOY CONTRACTS (Now EOA is expected to be funded by step 1) ---
+        // --- 2. DEPLOY CONTRACTS (Now EOA is expected to be funded by SGT) ---
         console.log("🔧 Starting ERC-4337 Contract Deployment...");
-
         // NOTE: deployERC4337Contracts is imported from './aa-deployment-engine.js'
         const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
 
         // Update config with real deployed addresses
         CONFIG.BWAEZI_PAYMASTER_ADDRESS = paymasterAddress;
         CONFIG.SMART_ACCOUNT_ADDRESS = smartAccountAddress;
-
         console.log("✅ Contract deployment completed successfully");
         console.log(`💰 Paymaster: ${CONFIG.BWAEZI_PAYMASTER_ADDRESS}`);
         console.log(`👛 Smart Account: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
@@ -162,7 +162,6 @@ async function main() {
         console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, REAL REVENUE, & ZERO-CAPITAL GENESIS ENABLED)');
         console.log('🎯 SYSTEM STATUS: READY FOR PRODUCTION');
         console.log('💎 BWAEZI ECONOMY: ACTIVE - 100M TOKENS READY FOR GAS PAYMENTS');
-
         return { success: true };
 
     } catch (error) {
