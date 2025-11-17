@@ -424,7 +424,6 @@ export class ProductionSovereignCore {
 // Export both the Deployer and the Orchestrator
 export { 
     BWAEZIKernelDeployer,
-    ProductionSovereignCore,
     ERC20_ABI, 
     SWAP_ROUTER_ABI 
 };
