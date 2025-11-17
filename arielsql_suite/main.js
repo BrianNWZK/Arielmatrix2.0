@@ -5,8 +5,8 @@ import { ethers } from 'ethers';
 import process from 'process';
 
 // 🔥 BSFM INTEGRATION: Import the Sovereign Brain Orchestrator
-// CRITICAL FIX: Update import to include WETH_ABI for WETH unwrap operation
-import { ProductionSovereignCore, ERC20_ABI, SWAP_ROUTER_ABI, WETH_ABI } from '../core/sovereign-brain.js';
+// FIX: Removed WETH_ABI to avoid the SyntaxError, relying on sovereign-brain.js to define it internally.
+import { ProductionSovereignCore, ERC20_ABI, SWAP_ROUTER_ABI } from '../core/sovereign-brain.js';
 
 // 👑 NEW IMPORTS
 import { AASDK } from '../modules/aa-loaves-fishes.js'; 
@@ -34,10 +34,11 @@ const safeNormalizeAddress = (address) => {
 };
 
 // =========================================================================
-// 👑 NEW CONSTANT: USDC Funding Configuration
-// 5.17 USDC parsed with 6 decimals (standard for USDC)
+// 👑 USDC Funding Configuration (REMOVED BigInt logic from main.js)
 // =========================================================================
-const USDC_AMOUNT_TO_SWAP = ethers.parseUnits("5.17", 6); 
+// Logic for parsing the amount to BigInt is now expected to be inside
+// ProductionSovereignCore to avoid import/dependency issues.
+
 
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
@@ -52,9 +53,10 @@ const PRODUCTION_CONFIG = {
     BWAEZI_KERNEL_ADDRESS: normalizeAddress('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'), 
     WETH_ADDRESS: normalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
     
-    // 🔥 NEW CRITICAL ASSETS for Gas Funding Priority (USDC to ETH)
+    // 🔥 CRITICAL ASSETS for Gas Funding Priority (USDC to ETH)
     usdcTokenAddress: normalizeAddress('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'), // Standard USDC Mainnet Address
-    usdcFundingGoal: USDC_AMOUNT_TO_SWAP, // The 5.17 USDC target amount in BigInt format
+    // Passing the goal as a string for the Brain to parse
+    usdcFundingGoal: "5.17", // The 5.17 USDC target amount
 
     // 🏦 WALLET/INFRASTRUCTURE
     SOVEREIGN_WALLET: normalizeAddress('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
@@ -94,6 +96,7 @@ async function main() {
 
     // 3. Instantiate Sovereign Brain Orchestrator
     // FIX: Correcting constructor to match brain signature: constructor(config, signer)
+    // No WETH_ABI parameter is passed, as the Brain now manages all swap logic and ABIs internally.
     const brain = new ProductionSovereignCore(PRODUCTION_CONFIG, signer); 
 
     try {
