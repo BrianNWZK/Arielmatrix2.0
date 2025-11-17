@@ -27,20 +27,6 @@ const safeNormalizeAddress = (address) => {
     }
 };
 
-// Mock deployment function if not available
-// FIX: MOCK FUNCTION REMOVED - Using imported 'deployERC4337Contracts'
-/*
-const deployERC4337Contracts = async (provider, signer, config, aasdk) => {
-    // This is a mock implementation - replace with actual deployment logic
-    console.log("🔧 Deploying ERC-4337 contracts...");
-    // Return mock addresses for demonstration
-    return {
-        paymasterAddress: safeNormalizeAddress("0x1234567890123456789012345678901234567890"),
-        smartAccountAddress: safeNormalizeAddress("0x0987654321098765432109876543210987654321")
-    };
-};
-*/
-
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
 // =========================================================================
