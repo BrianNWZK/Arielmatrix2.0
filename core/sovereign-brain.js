@@ -143,9 +143,10 @@ class ProductionSovereignCore extends EventEmitter {
 
             // 2. Approve the Uniswap Router to spend BWAEZI
             this.logger.info(`  -> Approving SwapRouter (${SWAP_ROUTER_ADDRESS}) to spend ${ethers.formatUnits(GENESIS_SWAP_AMOUNT, 18)} BWAEZI...`);
-            let tx = await tokenContract.approve(SWAP_ROUTER_ADDRESS, GENESIS_SWAP_AMOUNT);
-            await tx.wait();
-            this.logger.info(`  ✅ Approval Transaction confirmed: ${tx.hash}`);
+            // FIX: Renamed 'tx' to 'approvalTx' to prevent redeclaration error.
+            let approvalTx = await tokenContract.approve(SWAP_ROUTER_ADDRESS, GENESIS_SWAP_AMOUNT);
+            await approvalTx.wait();
+            this.logger.info(`  ✅ Approval Transaction confirmed: ${approvalTx.hash}`);
 
             // 3. Estimate WETH output (using Quoter) - CRITICAL for slippage guardrail
             const quoterContract = new ethers.Contract(
@@ -187,8 +188,9 @@ class ProductionSovereignCore extends EventEmitter {
             };
             
             this.logger.info("  🚀 Executing Sovereign Genesis Trade on Uniswap V3...");
-            const tx = await routerContract.exactInputSingle(params);
-            const receipt = await tx.wait();
+            // FIX: Renamed 'tx' to 'swapTx' to prevent redeclaration error. (This was the source of the SyntaxError)
+            const swapTx = await routerContract.exactInputSingle(params);
+            const receipt = await swapTx.wait();
 
             if (receipt.status === 1) {
                 this.logger.info(`  🎉 Sovereign Genesis Trade SUCCESS. Tx Hash: ${receipt.hash}`);
