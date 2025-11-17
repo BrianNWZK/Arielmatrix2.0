@@ -1,5 +1,5 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.4 (LEGACY GAS STABILIZATION FIX)
-// 🔥 FIX: Stabilizing Legacy Gas Price retrieval to prevent 'getGasPrice is not a function' error.
+// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.5 (CRITICAL ETH SYNCHRONIZATION FIX)
+// 🔥 FIX: Explicitly setting the transaction nonce to resolve RPC INSUFFICIENT_FUNDS due to stale state.
 // 💰 OPTIMIZED FOR ZERO-CAPITAL START + $50,000+ DAILY REVENUE + 100% SECURITY GUARANTEE
 
 import { EventEmitter } from 'events';
@@ -119,7 +119,7 @@ class ProductionSovereignCore extends EventEmitter {
     }
     
     // =========================================================================
-    // 👑 CRITICAL FIX: Robust Legacy Gas Price Retrieval
+    // 👑 CRITICAL FIX: Robust Legacy Gas Price Retrieval (v2.5.4 Stabilization)
     // =========================================================================
     /**
      * @notice Safely retrieves a gas price for legacy (Type 0) transactions, 
@@ -128,10 +128,8 @@ class ProductionSovereignCore extends EventEmitter {
      */
     async _getLegacyGasPrice() {
         try {
-            // In Ethers v6, getFeeData is the standard way to get all fee info.
             const feeData = await this.ethersProvider.getFeeData();
             
-            // Prioritize the legacy gasPrice property if available
             if (feeData.gasPrice) {
                 this.logger.info(`             Legacy Gas Retrieved via feeData.gasPrice: ${ethers.formatUnits(feeData.gasPrice, 'gwei')} Gwei`);
                 return feeData.gasPrice;
@@ -178,10 +176,9 @@ class ProductionSovereignCore extends EventEmitter {
                 isEIP1559: true
             };
         } catch (error) {
-            // CRITICAL FIX APPLIED HERE: Use the robust helper instead of direct getGasPrice()
             this.logger.warn(`⚠️ Failed to fetch EIP-1559 fee data. Falling back to legacy gas settings. Error: ${error.message}`);
             
-            const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
+            const gasPrice = await this._getLegacyGasPrice(); 
             const legacyMaxEthCost = gasPrice * targetGasLimit;
             
             return {
@@ -194,14 +191,13 @@ class ProductionSovereignCore extends EventEmitter {
     }
     
     // =========================================================================
-    // 🔧 REINSTATED ORIGINAL FUNCTIONALITIES (CRITICAL STRUCTURAL FIX HERE)
+    // 🔧 REINSTATED ORIGINAL FUNCTIONALITIES
     // =========================================================================
 
     /**
      * @notice Checks the current deployment status of the Paymaster and Smart Account.
-     * Called by initialize() before attempting self-funding.
      */
-    async checkDeploymentStatus() { // <-- THIS FUNCTION IS NOW FIRMLY WITHIN THE CLASS
+    async checkDeploymentStatus() { 
         this.logger.info('🔍 Checking current ERC-4337 deployment status...');
         // Updates state based on config values passed from main.js
         this.deploymentState.paymasterDeployed = !!this.config.BWAEZI_PAYMASTER_ADDRESS;
@@ -213,7 +209,6 @@ class ProductionSovereignCore extends EventEmitter {
 
     /**
      * @notice Updates the core instance with the final deployment addresses.
-     * Called by main.js after successful contract deployment.
      */
     updateDeploymentAddresses(paymasterAddress, smartAccountAddress) {
         this.config.BWAEZI_PAYMASTER_ADDRESS = paymasterAddress;
@@ -228,7 +223,7 @@ class ProductionSovereignCore extends EventEmitter {
      */
     async healthCheck() {
         const health = {
-            version: '2.5.4', // Updated version
+            version: '2.5.5', // Updated version
             timestamp: new Date().toISOString(),
             wallet: {
                 address: this.walletAddress,
@@ -299,7 +294,7 @@ class ProductionSovereignCore extends EventEmitter {
                     this.logger.warn("  -> Falling back to Legacy Gas Price strategy for CRITICAL BOOTSTRAP MINT.");
                     
                     // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
-                    const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
+                    const gasPrice = await this._getLegacyGasPrice(); 
                     mintGasParams = { gasPrice: gasPrice, gasLimit: MINT_APPROVE_GAS_LIMIT };
                     
                     const legacyMaxCost = gasPrice * MINT_APPROVE_GAS_LIMIT;
@@ -314,9 +309,15 @@ class ProductionSovereignCore extends EventEmitter {
                 // Clean up the object for transaction submission (remove non-tx fields)
                 delete mintGasParams.maxEthCost;
                 delete mintGasParams.isEIP1559;
+
+                // 🔥 CRITICAL FIX (v2.5.5): Explicitly set nonce to force Signer state refresh and overcome RPC INSUFFICIENT_FUNDS
+                const nextNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+                this.logger.info(`  -> Setting Explicit Nonce for Mint TX: ${nextNonce}`);
+                
+                let finalMintGasParams = { ...mintGasParams, nonce: nextNonce };
                 
                 // Assuming EOA is the contract owner
-                let mintTx = await tokenContract.mint(EOA_ADDRESS, mintAmount, mintGasParams);
+                let mintTx = await tokenContract.mint(EOA_ADDRESS, mintAmount, finalMintGasParams); // Use finalMintGasParams
                 await mintTx.wait();
                 this.logger.info(`  ✅ Mint Transaction confirmed: ${mintTx.hash}`);
             } else {
@@ -342,14 +343,18 @@ class ProductionSovereignCore extends EventEmitter {
             
             if (approvalGasParamsResult.isEIP1559 && CURRENT_EOA_BALANCE < approvalGasParamsResult.maxEthCost) {
                 // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
-                const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
+                const gasPrice = await this._getLegacyGasPrice(); 
                 approvalGasParams = { gasPrice: gasPrice, gasLimit: MINT_APPROVE_GAS_LIMIT };
             }
             delete approvalGasParams.maxEthCost;
             delete approvalGasParams.isEIP1559;
 
+            // 🔥 CRITICAL FIX (v2.5.5): Explicitly set nonce for the Approve TX too
+            const approveNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+            this.logger.info(`  -> Setting Explicit Nonce for Approve TX: ${approveNonce}`);
+            let finalApprovalGasParams = { ...approvalGasParams, nonce: approveNonce };
 
-            let approvalTx = await tokenContract.approve(SWAP_ROUTER_ADDRESS, GENESIS_SWAP_AMOUNT, approvalGasParams);
+            let approvalTx = await tokenContract.approve(SWAP_ROUTER_ADDRESS, GENESIS_SWAP_AMOUNT, finalApprovalGasParams);
             await approvalTx.wait();
             this.logger.info(`  ✅ Approval Transaction confirmed: ${approvalTx.hash}`);
 
@@ -377,11 +382,16 @@ class ProductionSovereignCore extends EventEmitter {
 
             if (swapGasParamsResult.isEIP1559 && SWAP_EOA_BALANCE < swapGasParamsResult.maxEthCost) {
                 // FIX: Replaced failing this.ethersProvider.getGasPrice() with robust helper
-                const gasPrice = await this._getLegacyGasPrice(); // <-- FIXED LINE
+                const gasPrice = await this._getLegacyGasPrice(); 
                 swapGasParams = { gasPrice: gasPrice, gasLimit: SWAP_GAS_LIMIT };
             }
             delete swapGasParams.maxEthCost;
             delete swapGasParams.isEIP1559;
+
+            // 🔥 CRITICAL FIX (v2.5.5): Explicitly set nonce for the Swap TX too
+            const swapNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+            this.logger.info(`  -> Setting Explicit Nonce for Swap TX: ${swapNonce}`);
+            let finalSwapGasParams = { ...swapGasParams, nonce: swapNonce };
             
             const params = {
                 tokenIn: this.config.bwaeziTokenAddress,
@@ -395,7 +405,7 @@ class ProductionSovereignCore extends EventEmitter {
             };
             
             this.logger.info("  🚀 Executing Sovereign Genesis Trade on Uniswap V3...");
-            const swapTx = await routerContract.exactInputSingle(params, swapGasParams);
+            const swapTx = await routerContract.exactInputSingle(params, finalSwapGasParams);
             const receipt = await swapTx.wait();
 
             if (receipt.status === 1) {
@@ -419,12 +429,12 @@ class ProductionSovereignCore extends EventEmitter {
 
     
     async initialize() {
-        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.4 (LEGACY GAS STABILIZATION FIX)...');
+        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.5 (CRITICAL ETH SYNCHRONIZATION FIX)...');
         this.sovereignService.registerService('SovereignCore', this);
         // ... (QNC and RPE initialization logic assumed here)
 
         // --- Pre-Deployment Checks and Self-Funding Logic ---
-        await this.checkDeploymentStatus(); // ✅ NOW THIS IS GUARANTEED TO BE A FUNCTION
+        await this.checkDeploymentStatus(); 
         const eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
         this.logger.info(`🔍 EOA ETH Balance (GAS WALLET): ${ethers.formatEther(eoaEthBalance)} ETH`);
         const IS_UNDERCAPITALIZED = eoaEthBalance < ethers.parseEther("0.005");
