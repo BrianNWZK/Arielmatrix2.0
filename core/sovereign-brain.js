@@ -151,6 +151,11 @@ class ProductionSovereignCore extends EventEmitter {
         this.WETH_TOKEN_ADDRESS = safeNormalizeAddress(process.env.WETH_TOKEN_ADDRESS || config.WETH_TOKEN_ADDRESS);
         this.UNISWAP_ROUTER_ADDRESS = safeNormalizeAddress(process.env.UNISWAP_ROUTER_ADDRESS || config.UNISWAP_V3_QUOTER_ADDRESS);
 
+        // FIX 2: Initialize boolean states for module tracking
+        this.QNC_initialized = false;
+        this.RPE_initialized = false;
+
+
         try {
             // Address is already normalized: FLASH_LOAN_EXECUTOR_ADDRESS
             this.arbitrageExecutor = new ethers.Contract(
@@ -183,6 +188,7 @@ class ProductionSovereignCore extends EventEmitter {
             if (typeof this.QuantumNeuroCortex.initialize === 'function') {
                 await this.QuantumNeuroCortex.initialize();
                 this.logger.info('✅ QuantumNeuroCortex initialized successfully');
+                this.QNC_initialized = true; // FIX 2: Update state
             } else {
                 this.logger.warn('⚠️ QuantumNeuroCortex is missing an initialize function. Bypassing.');
             }
@@ -194,6 +200,7 @@ class ProductionSovereignCore extends EventEmitter {
             if (typeof this.RealityProgrammingEngine.initialize === 'function') {
                 await this.RealityProgrammingEngine.initialize();
                 this.logger.info('✅ RealityProgrammingEngine initialized successfully');
+                this.RPE_initialized = true; // FIX 2: Update state
             } else {
                 this.logger.warn('⚠️ RealityProgrammingEngine is missing an initialize function. Bypassing.');
             }
@@ -355,8 +362,16 @@ class ProductionSovereignCore extends EventEmitter {
             }
 
         } catch (error) {
+            // FIX 3: Handle Ethers v6 BAD_DATA/Revert gracefully as a controlled failure
+            if (error.code === 'BAD_DATA' || (error.message && error.message.includes('could not decode result data'))) {
+                 this.logger.warn('🛡️ ZERO-LOSS GUARDRAIL: Arbitrage simulation failed (unprofitable or internal revert). EOA protected from loss-making transaction.');
+                 return { success: false, error: 'Arbitrage simulation failed: Unprofitable trade or internal contract revert during simulation.' };
+            }
+            
+            // FIX 1: Use proper logging level for critical errors and the generic guardrail
             this.logger.error(`💥 CRITICAL ARBITRAGE FAILURE (Transaction Error): ${error.message}`);
-            this.logger.log('🛡️ ZERO-LOSS GUARDRAIL: EOA protected from loss-making transaction.');
+            this.logger.warn('🛡️ ZERO-LOSS GUARDRAIL: EOA protected from loss-making transaction.'); // Using WARN to fix Unknown logger level error
+            
             return { success: false, error: error.message };
         }
     }
@@ -371,8 +386,9 @@ class ProductionSovereignCore extends EventEmitter {
             },
             deployment: this.deploymentState,
             modules: {
-                quantumNeuroCortex: (typeof this.QuantumNeuroCortex.initialize === 'boolean' ? this.QuantumNeuroCortex.initialized : 'UNKNOWN'),
-                realityProgramming: (typeof this.RealityProgrammingEngine.initialize === 'boolean' ? this.RealityProgrammingEngine.initialized : 'UNKNOWN'),
+                // FIX 2: Use the new tracking booleans instead of the buggy typeof check
+                quantumNeuroCortex: this.QNC_initialized ? 'INITIALIZED' : 'BYPASSED/FAILED',
+                realityProgramming: this.RPE_initialized ? 'INITIALIZED' : 'BYPASSED/FAILED',
                 revenueEngine: true,
                 quantumCrypto: true
             },
