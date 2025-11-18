@@ -1,14 +1,17 @@
-// modules/enterprise-logger/index.js (FIXED - Production-Ready with Self-Healing Access)
+// modules/enterprise-logger/index.js (FINALIZED - Production-Ready with Self-Healing Access)
 import winston from 'winston';
-import { createWriteStream, existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+// --- Setup for __dirname in ES Modules ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Internal: keep a single transport registry per service to prevent duplicate handlers and listener warnings.
+// Internal: keep a single transport registry per service to prevent duplicate handlers.
 const transportRegistry = new Map();
+
+// --- Internal Utility Functions ---
 
 // Internal: redact sensitive fields from log meta safely.
 function redactSensitive(meta) {
@@ -19,6 +22,7 @@ function redactSensitive(meta) {
       'INFURA_PROJECT_ID', 'ALCHEMY_API_KEY', 'SOVEREIGN_WALLET',
       'password', 'secret', 'QR_MASTER_KEY'
     ];
+    // Deep clone to avoid mutating the original meta object
     const clone = JSON.parse(JSON.stringify(meta || {}));
     const redact = (obj) => {
       if (!obj || typeof obj !== 'object') return;
@@ -26,7 +30,7 @@ function redactSensitive(meta) {
         const val = obj[key];
         if (SENSITIVE_KEYS.includes(key)) {
           obj[key] = '[REDACTED]';
-        } else if (typeof val === 'object') {
+        } else if (typeof val === 'object' && val !== null) {
           redact(val);
         }
       }
@@ -38,7 +42,7 @@ function redactSensitive(meta) {
   }
 }
 
-// Internal: normalize service names to avoid "[object Object]" and keep logs readable.
+// Internal: normalize service names.
 function normalizeServiceName(serviceName) {
   if (typeof serviceName === 'string' && serviceName.trim().length > 0) {
     return serviceName.trim();
@@ -61,12 +65,16 @@ function safeStringifyMeta(meta) {
   try {
     const redacted = redactSensitive(meta);
     const str = JSON.stringify(redacted);
-    // Prevent massive meta blobs from clogging console; cap length.
+    // Cap length to prevent console clog
     return str.length > 5000 ? str.slice(0, 5000) + '... [truncated]' : str;
   } catch {
     return '';
   }
 }
+
+// =========================================================================
+// 👑 Exported Logger Class
+// =========================================================================
 
 export class EnterpriseLogger {
   constructor(serviceName = 'application', config = {}) {
@@ -76,7 +84,6 @@ export class EnterpriseLogger {
       logToDatabase: config.logToDatabase !== false,
       logToConsole: config.logToConsole !== false,
       logToFile: config.logToFile !== false,
-      enableRealtime: config.enableRealtime !== false,
       databaseInitialized: config.databaseInitialized || false,
       ...config
     };
@@ -88,11 +95,9 @@ export class EnterpriseLogger {
     this.isProcessingQueue = false;
     this.databaseReady = this.config.databaseInitialized;
 
-    // 🎯 CRITICAL FIX: Track database connection state
-    this.databaseConnectionType = null; // 'simple' or 'sharded'
+    this.databaseConnectionType = null;
     this.databaseManager = null;
 
-    // Ensure logs directory exists
     this.ensureLogsDirectory();
 
     // Initialize file-based logger immediately
@@ -111,7 +116,6 @@ export class EnterpriseLogger {
 
   initializeFileLogger() {
     try {
-      // Reuse transports per serviceName to avoid duplicate handlers and MaxListenersExceededWarning
       if (!transportRegistry.has(this.serviceName)) {
         const transports = [];
 
@@ -137,22 +141,13 @@ export class EnterpriseLogger {
             new winston.transports.File({
               filename: `logs/${this.serviceName}-error.log`,
               level: 'error',
-              format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.json()
-              ),
+              format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
               maxsize: 10485760, // 10MB
               maxFiles: 5
-            })
-          );
-          
-          transports.push(
+            }),
             new winston.transports.File({
               filename: `logs/${this.serviceName}-combined.log`,
-              format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.json()
-              ),
+              format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
               maxsize: 10485760, // 10MB
               maxFiles: 10
             })
@@ -174,54 +169,39 @@ export class EnterpriseLogger {
         defaultMeta: { service: this.serviceName },
         transports,
         exceptionHandlers: [
-          new winston.transports.File({ 
-            filename: `logs/${this.serviceName}-exceptions.log` 
-          })
+          new winston.transports.File({ filename: `logs/${this.serviceName}-exceptions.log` })
         ],
         rejectionHandlers: [
-          new winston.transports.File({ 
-            filename: `logs/${this.serviceName}-rejections.log` 
-          })
+          new winston.transports.File({ filename: `logs/${this.serviceName}-rejections.log` })
         ]
       });
 
       this.isInitialized = true;
-      console.log(`File logger initialized for service: ${this.serviceName}`);
+      console.log(`✅ File logger initialized for service: ${this.serviceName}`);
 
     } catch (error) {
-      console.error('File logger initialization failed:', error);
-      // Fallback to basic console logging
+      console.error('❌ File logger initialization failed. Falling back to console:', error);
       this.initializeFallbackLogger();
     }
   }
 
   initializeFallbackLogger() {
     const svc = this.serviceName;
+    const now = new Date().toISOString();
     this.logger = {
-      log: (level, message, meta) => {
-        const timestamp = new Date().toISOString();
-        const metaStr = safeStringifyMeta(meta);
-        console.log(`${timestamp} [${level}] ${svc}: ${message}`, metaStr || '');
-      },
-      info: (message, meta) => {
-        console.log(`[INFO] ${svc}: ${message}`, safeStringifyMeta(meta) || '');
-      },
-      error: (message, meta) => {
-        console.error(`[ERROR] ${svc}: ${message}`, safeStringifyMeta(meta) || '');
-      },
-      warn: (message, meta) => {
-        console.warn(`[WARN] ${svc}: ${message}`, safeStringifyMeta(meta) || '');
-      },
-      debug: (message, meta) => {
-        console.log(`[DEBUG] ${svc}: ${message}`, safeStringifyMeta(meta) || '');
-      }
+        log: (level, message, meta) => {
+            const metaStr = safeStringifyMeta(meta);
+            console.log(`${now} [${level.toUpperCase()}] ${svc}: ${message}`, metaStr || '');
+        },
+        info: (message, meta) => this.logger.log('info', message, meta),
+        error: (message, meta) => this.logger.log('error', message, meta),
+        warn: (message, meta) => this.logger.log('warn', message, meta),
+        debug: (message, meta) => this.logger.log('debug', message, meta),
+        verbose: (message, meta) => this.logger.log('verbose', message, meta),
     };
     this.isInitialized = true;
   }
 
-  /**
-   * 🎯 CRITICAL FIX: Enhanced database detection and connection handling
-   */
   detectDatabaseType() {
     if (!this.db) {
       return 'none';
@@ -250,42 +230,26 @@ export class EnterpriseLogger {
     return 'unknown';
   }
 
-  /**
-   * 🎯 CRITICAL FIX: Safe database operation methods
-   */
   async safeDatabaseRun(sql, params = []) {
     try {
-      if (!this.db) {
-        throw new Error('Database not available');
-      }
-
+      if (!this.db) throw new Error('Database not available');
       const dbType = this.detectDatabaseType();
       
-      switch (dbType) {
-        case 'sharded':
-          // Use the database manager to get a simple database for logging
-          const logDb = this.databaseManager.getSimpleDatabase('./logs/application.db');
-          if (logDb && logDb.run) {
-            return logDb.run(sql, params);
-          }
-          break;
-          
-        case 'simple':
-          const database = this.databaseManager.getDatabase();
-          if (database && database.run) {
-            return database.run(sql, params);
-          }
-          break;
-          
-        case 'direct':
-          return this.db.run(sql, params);
-          
-        default:
-          throw new Error(`Unsupported database type: ${dbType}`);
+      let dbInstance = null;
+      if (dbType === 'sharded') {
+        dbInstance = this.databaseManager.getSimpleDatabase('./logs/application.db');
+      } else if (dbType === 'simple') {
+        dbInstance = this.databaseManager.getDatabase();
+      } else if (dbType === 'direct') {
+        dbInstance = this.db;
+      } else {
+        throw new Error(`Unsupported database type: ${dbType}`);
       }
       
-      throw new Error('No valid database connection found');
-      
+      if (dbInstance && dbInstance.run) {
+        return await dbInstance.run(sql, params);
+      }
+      throw new Error('No valid database connection found for run operation');
     } catch (error) {
       console.error('Safe database run failed:', error.message);
       throw error;
@@ -294,36 +258,24 @@ export class EnterpriseLogger {
 
   async safeDatabaseGet(sql, params = []) {
     try {
-      if (!this.db) {
-        throw new Error('Database not available');
-      }
-
+      if (!this.db) throw new Error('Database not available');
       const dbType = this.detectDatabaseType();
       
-      switch (dbType) {
-        case 'sharded':
-          const logDb = this.databaseManager.getSimpleDatabase('./logs/application.db');
-          if (logDb && logDb.get) {
-            return logDb.get(sql, params);
-          }
-          break;
-          
-        case 'simple':
-          const database = this.databaseManager.getDatabase();
-          if (database && database.get) {
-            return database.get(sql, params);
-          }
-          break;
-          
-        case 'direct':
-          return this.db.get(sql, params);
-          
-        default:
-          throw new Error(`Unsupported database type: ${dbType}`);
+      let dbInstance = null;
+      if (dbType === 'sharded') {
+        dbInstance = this.databaseManager.getSimpleDatabase('./logs/application.db');
+      } else if (dbType === 'simple') {
+        dbInstance = this.databaseManager.getDatabase();
+      } else if (dbType === 'direct') {
+        dbInstance = this.db;
+      } else {
+        throw new Error(`Unsupported database type: ${dbType}`);
       }
       
-      throw new Error('No valid database connection found');
-      
+      if (dbInstance && dbInstance.get) {
+        return await dbInstance.get(sql, params);
+      }
+      throw new Error('No valid database connection found for get operation');
     } catch (error) {
       console.error('Safe database get failed:', error.message);
       throw error;
@@ -332,36 +284,24 @@ export class EnterpriseLogger {
 
   async safeDatabaseAll(sql, params = []) {
     try {
-      if (!this.db) {
-        throw new Error('Database not available');
-      }
-
+      if (!this.db) throw new Error('Database not available');
       const dbType = this.detectDatabaseType();
       
-      switch (dbType) {
-        case 'sharded':
-          const logDb = this.databaseManager.getSimpleDatabase('./logs/application.db');
-          if (logDb && logDb.all) {
-            return logDb.all(sql, params);
-          }
-          break;
-          
-        case 'simple':
-          const database = this.databaseManager.getDatabase();
-          if (database && database.all) {
-            return database.all(sql, params);
-          }
-          break;
-          
-        case 'direct':
-          return this.db.all(sql, params);
-          
-        default:
-          throw new Error(`Unsupported database type: ${dbType}`);
+      let dbInstance = null;
+      if (dbType === 'sharded') {
+        dbInstance = this.databaseManager.getSimpleDatabase('./logs/application.db');
+      } else if (dbType === 'simple') {
+        dbInstance = this.databaseManager.getDatabase();
+      } else if (dbType === 'direct') {
+        dbInstance = this.db;
+      } else {
+        throw new Error(`Unsupported database type: ${dbType}`);
       }
       
-      throw new Error('No valid database connection found');
-      
+      if (dbInstance && dbInstance.all) {
+        return await dbInstance.all(sql, params);
+      }
+      throw new Error('No valid database connection found for all operation');
     } catch (error) {
       console.error('Safe database all failed:', error.message);
       throw error;
@@ -376,12 +316,12 @@ export class EnterpriseLogger {
       try {
         await this.initializeDatabaseLogging();
         this.databaseReady = true;
-        console.log(`✅ Database logging initialized for service: ${this.serviceName}`);
+        this.logger.info(`✅ Database logging initialized and ready.`);
         
         // Process any queued logs
         await this.processLogQueue();
       } catch (error) {
-        console.warn(`⚠️ Database logging deferred for service ${this.serviceName}: ${error.message}`);
+        this.logger.warn(`⚠️ Database logging deferred: ${error.message}`);
         // Don't retry aggressively - database might not be ready
       }
     }
@@ -393,7 +333,7 @@ export class EnterpriseLogger {
     }
 
     try {
-      // 🎯 CRITICAL FIX: Use safe database operations
+      // Test connection
       await this.safeDatabaseGet('SELECT 1 as test');
       
       // Create logs table if it doesn't exist
@@ -411,29 +351,21 @@ export class EnterpriseLogger {
       `);
 
       // Create indexes for better query performance
-      await this.safeDatabaseRun(`
-        CREATE INDEX IF NOT EXISTS idx_logs_level ON application_logs(level)
-      `);
-      await this.safeDatabaseRun(`
-        CREATE INDEX IF NOT EXISTS idx_logs_service ON application_logs(service)
-      `);
-      await this.safeDatabaseRun(`
-        CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON application_logs(timestamp)
-      `);
+      await this.safeDatabaseRun('CREATE INDEX IF NOT EXISTS idx_logs_level ON application_logs(level)');
+      await this.safeDatabaseRun('CREATE INDEX IF NOT EXISTS idx_logs_service ON application_logs(service)');
+      await this.safeDatabaseRun('CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON application_logs(timestamp)');
 
-      console.log('✅ Database logging tables initialized successfully');
+      this.logger.info('✅ Database logging tables initialized successfully');
 
     } catch (error) {
-      console.error('❌ Database logging initialization failed:', error.message);
+      this.logger.error('❌ Database logging initialization failed', { error: error.message });
       throw error;
     }
   }
 
   async setDatabase(database) {
     this.db = database;
-    // 🎯 CRITICAL FIX: Detect database type before attempting to use it
     this.detectDatabaseType();
-    
     if (this.config.logToDatabase) {
       await this.deferDatabaseInitialization();
     }
@@ -447,24 +379,23 @@ export class EnterpriseLogger {
   }
 
   async log(level, message, meta = {}) {
-    // If logger is not initialized, queue the log
+    // If logger is not initialized, queue the log and fall back to console
     if (!this.isInitialized) {
       this.logQueue.push({ level, message, meta });
-      return;
+      this.initializeFallbackLogger(); // Ensure basic console logging works immediately
     }
 
     try {
-      // Redact sensitive meta before logging anywhere
       const safeMeta = redactSensitive(meta);
 
-      // Log to winston immediately
+      // 1. Log to winston immediately (console/file)
       this.logger.log(level, message, safeMeta);
 
-      // Log to database if enabled and ready
+      // 2. Log to database if enabled and ready
       if (this.config.logToDatabase && this.databaseReady) {
         await this.logToDatabase(level, message, safeMeta);
       } else if (this.config.logToDatabase) {
-        // Queue for database when ready
+        // 3. Queue for database when ready
         this.logQueue.push({ level, message, meta: safeMeta });
       }
     } catch (error) {
@@ -476,23 +407,16 @@ export class EnterpriseLogger {
     if (!this.config.logToDatabase || !this.databaseReady || !this.db) return;
 
     try {
-      // 🎯 CRITICAL FIX: Use safe database operations
       await this.safeDatabaseRun(
         'INSERT INTO application_logs (level, service, message, meta, context) VALUES (?, ?, ?, ?, ?)',
         [level, this.serviceName, message, JSON.stringify(meta), meta.context || '']
       );
 
     } catch (error) {
-      console.error('❌ Database logging failed:', error.message);
-      // Fallback to file logging if database fails
-      this.logger.error('Database logging failed', { error: error.message });
-      
-      // 🎯 CRITICAL FIX: Disable database logging on persistent failure
-      if (error.message.includes('not a function') || error.message.includes('not available') || error.message.includes('Unsupported database type')) {
-        console.warn('⚠️ Permanently disabling database logging due to connection issues');
-        this.config.logToDatabase = false;
-        this.databaseReady = false;
-      }
+      this.logger.error('❌ Database logging failed. Disabling DB logging.', { error: error.message });
+      // Disable database logging on persistent failure
+      this.config.logToDatabase = false;
+      this.databaseReady = false;
     }
   }
 
@@ -503,35 +427,27 @@ export class EnterpriseLogger {
     try {
       while (this.logQueue.length > 0) {
         const logEntry = this.logQueue.shift();
-        await this.log(logEntry.level, logEntry.message, logEntry.meta);
+        // Use direct logToDatabase to avoid recursive queuing
+        if (this.config.logToDatabase && this.databaseReady) {
+            await this.logToDatabase(logEntry.level, logEntry.message, logEntry.meta);
+        } else {
+            // Log to winston (console/file) if DB is not ready
+            this.logger.log(logEntry.level, logEntry.message, logEntry.meta);
+        }
       }
     } catch (error) {
-      console.error('Log queue processing failed:', error);
+      this.logger.error('Log queue processing failed:', error);
     } finally {
       this.isProcessingQueue = false;
     }
   }
 
   // Convenience methods
-  async info(message, meta = {}) {
-    await this.log('info', message, meta);
-  }
-
-  async error(message, meta = {}) {
-    await this.log('error', message, meta);
-  }
-
-  async warn(message, meta = {}) {
-    await this.log('warn', message, meta);
-  }
-
-  async debug(message, meta = {}) {
-    await this.log('debug', message, meta);
-  }
-
-  async verbose(message, meta = {}) {
-    await this.log('verbose', message, meta);
-  }
+  async info(message, meta = {}) { await this.log('info', message, meta); }
+  async error(message, meta = {}) { await this.log('error', message, meta); }
+  async warn(message, meta = {}) { await this.log('warn', message, meta); }
+  async debug(message, meta = {}) { await this.log('debug', message, meta); }
+  async verbose(message, meta = {}) { await this.log('verbose', message, meta); }
 
   // Query methods (only work when database is ready)
   async queryLogs(options = {}) {
@@ -587,10 +503,9 @@ export class EnterpriseLogger {
     params.push(limit, offset);
 
     try {
-      // 🎯 CRITICAL FIX: Use safe database operations
       return await this.safeDatabaseAll(query, params);
     } catch (error) {
-      console.error('Log query failed:', error);
+      this.logger.error('Log query failed', { error: error.message });
       throw error;
     }
   }
@@ -601,7 +516,6 @@ export class EnterpriseLogger {
     }
 
     try {
-      // 🎯 CRITICAL FIX: Use safe database operations
       return await this.safeDatabaseAll(`
         SELECT 
           level,
@@ -614,7 +528,7 @@ export class EnterpriseLogger {
         ORDER BY count DESC
       `, [`-${timeRange}`]);
     } catch (error) {
-      console.error('Log statistics query failed:', error);
+      this.logger.error('Log statistics query failed', { error: error.message });
       throw error;
     }
   }
@@ -632,7 +546,6 @@ export class EnterpriseLogger {
 
     if (this.databaseReady && this.db) {
       try {
-        // 🎯 CRITICAL FIX: Use safe database operations
         await this.safeDatabaseGet('SELECT 1 as test');
         status.database = 'connected';
       } catch (error) {
@@ -662,33 +575,45 @@ export class EnterpriseLogger {
   }
 }
 
-// Global logger management with deferred initialization
+// =========================================================================
+// 👑 Global Logger Management and Exports
+// =========================================================================
+
+// Global state variables
 export let globalLogger = null;
 export let globalLoggerPromise = null;
 
-// CRITICAL FIX: Made synchronous to support synchronous callers like constructors.
+/**
+ * Synchronously initializes the single global logger instance.
+ * Subsequent calls will return the existing instance.
+ * @param {string} serviceName - The name of the main service.
+ * @param {object} config - Configuration options.
+ * @returns {EnterpriseLogger} The global logger instance.
+ */
 export function initializeGlobalLogger(serviceName = 'application', config = {}) {
   if (!globalLogger) {
-    // 🎯 CRITICAL FIX: Create logger with file logging only initially
+    // CRITICAL FIX: Ensure database logging is safe on initial setup
     globalLogger = new EnterpriseLogger(serviceName, {
       ...config,
-      logToDatabase: false // Disable database logging initially to prevent startup failures
+      logToDatabase: config.logToDatabase !== undefined ? config.logToDatabase : false 
     });
-    
     globalLoggerPromise = Promise.resolve(globalLogger);
   } else {
-    // If serviceName changes mid-run, normalize it once (optional safety)
+    // Update service name if necessary
     globalLogger.serviceName = normalizeServiceName(serviceName || globalLogger.serviceName);
   }
   return globalLogger;
 }
 
+/**
+ * Accessor for the global logger instance with self-healing fallback.
+ * If called before initializeGlobalLogger, it performs a minimal synchronous setup.
+ * @param {string} serviceName - Optional service name for the fallback logger.
+ * @returns {EnterpriseLogger} The global logger instance.
+ */
 export function getGlobalLogger(serviceName = 'System.EarlyInit') {
   if (!globalLogger) {
-    // 💡 NOVELTY FIX: Self-Healing Logger Access
-    // Prevents fatal crash (Error: Global logger not initialized) by performing 
-    // a synchronous, minimal fallback setup if accessed too early.
-    
+    // 💡 Self-Healing Logger Access: Prevents fatal crash.
     console.error(`⚠️ CRITICAL: Global logger accessed before initialization. Performing self-healing fallback setup for service: ${normalizeServiceName(serviceName)}.`);
 
     // Synchronously initialize the logger with safe defaults
@@ -701,44 +626,49 @@ export function getGlobalLogger(serviceName = 'System.EarlyInit') {
   return globalLogger;
 }
 
+/**
+ * Attempts to set up and enable database logging on the global logger instance.
+ * @param {*} database - The initialized database object (e.g., SQLite instance).
+ */
 export async function enableDatabaseLogging(database) {
   if (!globalLogger) {
     throw new Error('Global logger not initialized');
   }
   
-  // 🎯 CRITICAL FIX: Use safe database setup
   try {
+    // Set the database instance and trigger deferred initialization/queue processing
     await globalLogger.setDatabase(database);
     globalLogger.config.logToDatabase = true;
+    
+    // Explicitly mark ready and process queue
     await globalLogger.markDatabaseReady();
     
-    console.log('✅ Database logging enabled successfully');
+    globalLogger.info('✅ Database logging enabled successfully');
     return globalLogger;
   } catch (error) {
-    console.error('❌ Failed to enable database logging:', error.message);
-    // Don't throw - continue without database logging
-    return globalLogger;
+    globalLogger.error('❌ Failed to enable database logging.', { error: error.message });
+    throw error;
   }
 }
 
 /**
- * 🎯 CRITICAL FIX: Safe database logging function for main.js
+ * Safe wrapper for main.js to enable database logging, preventing application crash.
+ * It uses the self-healing getGlobalLogger() and catches internal errors.
+ * @param {*} database - The initialized database object.
  */
 export async function enableDatabaseLoggingSafely(database) {
-  // This call will now use the Self-Healing mechanism if the logger hasn't been set up yet.
   const logger = getGlobalLogger();
   
   try {
     if (!database) {
-      logger.warn('⚠️ Database not provided for logging, skipping database logging setup');
+      logger.warn('⚠️ Database not provided for logging, skipping database logging setup.');
       return;
     }
 
-    // Use the safe enable method
     await enableDatabaseLogging(database);
     
   } catch (error) {
-    logger.warn('⚠️ Database logging initialization failed, continuing without it:', error.message);
-    // 🎯 CRITICAL FIX: Don't throw error, just log warning and continue
+    // Error already logged internally, just ensuring process continues
+    logger.warn('⚠️ Database logging initialization failed (Error already logged), continuing without it.');
   }
 }
