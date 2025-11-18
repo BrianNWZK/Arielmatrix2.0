@@ -19,7 +19,7 @@ import {
     createVerify,
     randomUUID
 } from 'crypto';
-import { getGlobalLogger } from '../modules/enterprise-logger/index.js'; 
+import { EnterpriseLogger } from '../modules/enterprise-logger/index.js'; 
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js'; 
