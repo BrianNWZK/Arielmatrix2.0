@@ -67,7 +67,7 @@ function startHealthServer(logger) {
 }
 
 // =========================================================================
-// 🚀 PRODUCTION ORCHESTRATION ENGINE - FIXED INITIALIZATION ORDER
+// 🚀 PRODUCTION ORCHESTRATION ENGINE - FIXED INITIALIZATION ORDER & ENV HACK
 // =========================================================================
 
 async function main() {
@@ -76,7 +76,6 @@ async function main() {
     logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.6 (FINAL SYNCH FIX)...');
 
     // CRITICAL FIX 3: Start Health Server IMMEDIATELY after logger init to prevent cloud timeout
-    // (Original Step 7 moved to Step 2)
     const healthServer = startHealthServer(logger);
 
     // CRITICAL FIX 4: Add short delay to ensure port binding completes before heavy logic
@@ -86,9 +85,7 @@ async function main() {
         // 3. CRITICAL: Check for Private Key before proceeding
         if (!CONFIG.PRIVATE_KEY) {
             logger.error('💥 FATAL ERROR: PRIVATE_KEY not set in environment. Cannot proceed with blockchain operations.');
-            // Do not exit. The health server is running and will keep the container alive for diagnostics.
-            // The fatal error will be logged, preventing further execution.
-            return; 
+            return; // Return and keep the health server running for diagnostics
         }
 
         // 4. Initialize Database and Database Logging
@@ -101,18 +98,21 @@ async function main() {
         if (!primaryRpcUrl) {
              throw new Error('MAINNET_RPC_URLS is empty. Cannot connect to blockchain.');
         }
-        // CRITICAL FIX 5: Validate RPC URL format before attempting connection
-        if (!primaryRpcUrl.startsWith('http')) {
-            throw new Error(`Invalid RPC URL format: ${primaryRpcUrl}`);
-        }
-        
         const ethersProvider = new ethers.JsonRpcProvider(primaryRpcUrl);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, ethersProvider);
 
         logger.info(`✅ Initialized Signer EOA: ${signer.address.slice(0, 10)}...`);
 
+        // 🎯 CRITICAL FIX 5: WORKAROUND FOR EXTERNAL MODULE (aa-deployment-engine.js) BUG
+        // The external module is reading process.env.PRIVATE_KEY directly and failing.
+        // We ensure process.env is set right before the call, guaranteeing the external module's check passes.
+        if (CONFIG.PRIVATE_KEY && !process.env.PRIVATE_KEY) {
+            process.env.PRIVATE_KEY = CONFIG.PRIVATE_KEY;
+            logger.warn('⚠️ CRITICAL WORKAROUND: Force-setting process.env.PRIVATE_KEY for external module compatibility.');
+        }
+
         // 6. Deploy ERC-4337 Contracts (Entry Point, Paymaster)
-        // The aa-deployment-engine is calling process.env.PRIVATE_KEY. We must ensure CONFIG.PRIVATE_KEY is available.
+        // Pass the AASDK Class so deployERC4337Contracts can instantiate it if needed
         const aaDeployment = await deployERC4337Contracts(signer, ethersProvider, AASDK, logger);
 
         CONFIG.ENTRY_POINT_ADDRESS = aaDeployment.entryPointAddress;
