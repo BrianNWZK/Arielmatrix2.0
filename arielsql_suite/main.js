@@ -25,12 +25,16 @@ const CONFIG = {
         .filter(url => url.length > 0),
 
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || null,
-    WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C48D6C8091H7D1D4A', // WETH address placeholder
+    WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH address on Mainnet (Corrected for consistency)
     
     // 🎯 CRITICAL FIX: Add missing token and quoter addresses used in aa-deployment-engine.js constructor args
     BWAEZI_TOKEN_ADDRESS: process.env.BWAEZI_TOKEN_ADDRESS || '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F', // Placeholder: Assumed BWAEZI main contract address
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27309fabaa67fe783674238e82a1674681fce88', // Placeholder: Uniswap V3 Quoter Mainnet address
     BWAEZI_WETH_FEE: process.env.BWAEZI_WETH_FEE,
+
+    // 🎯 CRITICAL FIX: Add USDC config for primary funding
+    USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC on Mainnet
+    USDC_FUNDING_GOAL: process.env.USDC_FUNDING_GOAL || '5.17', // $5.17 target swap
 
     PRIVATE_KEY: process.env.PRIVATE_KEY, // CRITICAL: Expose private key from ENV
     DATABASE_PATH: process.env.DATABASE_PATH || './data/production.sqlite',
@@ -64,6 +68,10 @@ function startHealthServer(logger) {
     // CRITICAL FIX 2: Add graceful shutdown for container orchestration
     process.on('SIGTERM', () => {
         logger.info('🛑 SIGTERM received, shutting down gracefully');
+        // CRITICAL FIX: Also call shutdown on the core system if it exists
+        if (global.BWAEZI_PRODUCTION_CORE && typeof global.BWAEZI_PRODUCTION_CORE.shutdown === 'function') {
+            global.BWAEZI_PRODUCTION_CORE.shutdown();
+        }
         server.close(() => {
             process.exit(0);
         });
@@ -91,7 +99,8 @@ async function main() {
         // 3. CRITICAL: Check for Private Key before proceeding
         if (!CONFIG.PRIVATE_KEY) {
             logger.error('💥 FATAL ERROR: PRIVATE_KEY not set in environment. Cannot proceed with blockchain operations.');
-            return; // Return and keep the health server running for diagnostics
+            // Allow health server to run for diagnostics, don't exit here.
+            return; 
         }
 
         // 4. Initialize Database and Database Logging
@@ -110,8 +119,6 @@ async function main() {
         logger.info(`✅ Initialized Signer EOA: ${signer.address.slice(0, 10)}...`);
 
         // 🎯 CRITICAL FIX 5: WORKAROUND FOR EXTERNAL MODULE (aa-deployment-engine.js) BUG
-        // The external module is reading process.env.PRIVATE_KEY directly and failing.
-        // We ensure process.env is set right before the call, guaranteeing the external module's check passes.
         if (CONFIG.PRIVATE_KEY && !process.env.PRIVATE_KEY) {
             process.env.PRIVATE_KEY = CONFIG.PRIVATE_KEY;
             logger.warn('⚠️ CRITICAL WORKAROUND: Force-setting process.env.PRIVATE_KEY for external module compatibility.');
@@ -119,15 +126,7 @@ async function main() {
 
         // 6. Deploy ERC-4337 Contracts (Entry Point, Paymaster)
         // 🎯 CRITICAL FIX: Corrected argument order/type: (Provider, Signer, CONFIG, AASDK).
-        // This fixes the 'provider.getBalance is not a function' error by passing the actual provider object first.
         const aaDeployment = await deployERC4337Contracts(ethersProvider, signer, CONFIG, AASDK);
-
-        // NOTE: aa-deployment-engine.js needs to return the entryPointAddress. Assuming it is calculated/passed.
-        // The original code uses entryPointAddress implicitly, but the function deployERC4337Contracts
-        // only returns { paymasterAddress, smartAccountAddress }.
-        // I will assume the deployment engine is responsible for setting the ENTRY_POINT_ADDRESS if it was deployed,
-        // or that it is an environment variable. I will remove the assignment for safety.
-        // CONFIG.ENTRY_POINT_ADDRESS = aaDeployment.entryPointAddress;
 
         // 7. Initialize Core Sovereign Brain
         const sovereignCore = new ProductionSovereignCore({
@@ -138,6 +137,8 @@ async function main() {
             // 🎯 CRITICAL FIX: Instantiate the AASDK class here
             aaSdk: new AASDK(),
             config: CONFIG,
+            // 🎯 CRITICAL FIX: Pass the list of RPC URLS for EnterpriseRPCProvider initialization
+            rpcUrls: CONFIG.MAINNET_RPC_URLS, 
         });
 
         // Store globally for real-time monitoring
@@ -157,6 +158,9 @@ async function main() {
         console.log('🔄 ACTIVATING BASIC OPERATIONAL MODE / SHUTDOWN...');
 
         // CRITICAL FIX 6: Close the health server before exiting on a fatal error
+        if (global.BWAEZI_PRODUCTION_CORE && typeof global.BWAEZI_PRODUCTION_CORE.shutdown === 'function') {
+            global.BWAEZI_PRODUCTION_CORE.shutdown();
+        }
         healthServer.close(() => {
             process.exit(1);
         });
