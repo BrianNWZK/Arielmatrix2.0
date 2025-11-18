@@ -63,11 +63,14 @@ function compilePaymaster() {
 
 /**
  * @notice Deploys Paymaster + Returns SCW counterfactual address
+ *  * @param provider The Ethers JsonRpcProvider instance.
+ * @param signer The Ethers Wallet instance (EOA) created using the PRIVATE_KEY.
+ * @param config The CONFIG object from main.js containing deployment addresses.
+ * @param AASDK The AASDK Class used to calculate the Smart Contract Wallet address.
  */
 export async function deployERC4337Contracts(provider, signer, config, AASDK) {
-    if (!config.PRIVATE_KEY) {
-        throw new Error("PRIVATE_KEY not set in environment.");
-    }
+    // 🎯 CRITICAL FIX: Removed the redundant and erroneous check on config.PRIVATE_KEY.
+    // The successful creation of the 'signer' object guarantees the key is available.
 
     const deployerAddress = signer.address;
     const balance = await provider.getBalance(deployerAddress);
