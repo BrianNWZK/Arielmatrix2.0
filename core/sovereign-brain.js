@@ -61,8 +61,8 @@ const QUOTER_ABI = [
 ];
 
 const WETH_ABI = [
-    "function withdraw(uint256 amount) public", // Required to unwrap WETH to ETH
-    "function balanceOf(address owner) view returns (uint256)",
+    "function withdraw(uint256 amount) public", // Required to unwrap WETH to ETH
+    "function balanceOf(address owner) view returns (uint256)",
 ];
 // --------------------------------------------------------------------------
 
@@ -294,8 +294,8 @@ class ProductionSovereignCore extends EventEmitter {
             delete approvalGasParams.maxEthCost;
             delete approvalGasParams.isEIP1559;
 
-            const approveNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
-            let finalApprovalGasParams = { ...approvalGasParams, nonce: approveNonce };
+            const approvalNonce = await this.ethersProvider.getTransactionCount(EOA_ADDRESS);
+            let finalApprovalGasParams = { ...approvalGasParams, nonce: approvalNonce };
 
             let approvalTx = await usdcContract.approve(swapRouterAddress, swapAmount, finalApprovalGasParams);
             await approvalTx.wait();
@@ -388,10 +388,10 @@ class ProductionSovereignCore extends EventEmitter {
             return { success: false, error: 'Signer not provided to Sovereign Brain.' };
         }
         // ... (SGT implementation remains the same)
-        // [Existing SGT logic omitted for brevity]
-        // ... (SGT implementation remains the same)
-        
-        try {
+        // [Existing SGT logic omitted for brevity]
+        // ... (SGT implementation remains the same)
+        
+        try {
             const EOA_ADDRESS = this.walletAddress;
             const tokenContract = new ethers.Contract(this.config.bwaeziTokenAddress, ERC20_ABI, this.signer);
             const mintAmount = GENESIS_SWAP_AMOUNT; 
@@ -585,3 +585,27 @@ class ProductionSovereignCore extends EventEmitter {
                 }
 
                 if (fundingResult.success) {
+                    this.logger.info(`✅ Self-Funding Successful via **USDC Swap**! Acquired ETH: ${fundingResult.profit} (Gas Fund)`);
+                } else {
+                    this.logger.info('⚠️ USDC funding failed or skipped. Initiating fallback **SOVEREIGN GENESIS TRADE**...');
+                    // 2. Fallback to SGT
+                    fundingResult = await this.executeSovereignGenesisTrade();
+
+                    if (fundingResult.success) {
+                        this.logger.info(`✅ Self-Funding Successful via SGT! Acquired WETH: ${fundingResult.profit} (System Expansion Fund)`);
+                    } else {
+                        this.logger.error(`❌ Self-Funding Failed! Reason: ${fundingResult.error}. Deployment may fail.`);
+                    }
+                }
+            } else {
+                this.logger.info('✅ EOA is sufficiently capitalized. Proceeding to deployment...');
+            }
+        }
+        this.logger.info('🚀 SYSTEM READY: Zero-capital arbitrage and AA transactions available');
+        this.deploymentState.initialized = true;
+    }
+}
+
+// EXPORT: ProductionSovereignCore and the ABIs for main.js consumption
+// This complete export ensures all required elements are available to other modules like main.js.
+export { ProductionSovereignCore, ERC20_ABI, SWAP_ROUTER_ABI, QUOTER_ABI, WETH_ABI };
