@@ -99,16 +99,38 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger = getGlobalLogger('OptimizedSovereignCore');
         
         // Configuration and Provider Setup
-        this.mainnetRpcUrl = process.env.MAINNET_RPC_URL || config.rpcUrls?.[0] || 'https://eth-mainnet.g.alchemy.com/v2/demo';
+        this.mainnetRpcUrl = config.MAINNET_RPC_URLS?.[0] || process.env.MAINNET_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo';
+        
+        // CRITICAL FIX: Clean RPC URL
+        this.mainnetRpcUrl = this.mainnetRpcUrl.trim();
+        if (this.mainnetRpcUrl.includes('=')) {
+            this.mainnetRpcUrl = this.mainnetRpcUrl.split('=')[1].trim();
+        }
+        
+        this.logger.info(`🔗 Using RPC: ${this.mainnetRpcUrl}`);
         
         try {
+            // CRITICAL FIX: Validate RPC URL before creating providers
+            if (!this.mainnetRpcUrl.startsWith('http')) {
+                throw new Error(`Invalid RPC URL format: ${this.mainnetRpcUrl}`);
+            }
+            
             this.ethersProvider = new ethers.JsonRpcProvider(this.mainnetRpcUrl);
             this.web3 = new Web3(new Web3.providers.HttpProvider(this.mainnetRpcUrl));
         } catch (error) {
             this.logger.error(`❌ Provider initialization failed: ${error.message}`);
-            // Create fallback providers
-            this.ethersProvider = { getBalance: () => Promise.resolve(0n), getFeeData: () => Promise.resolve({}) };
-            this.web3 = { eth: { getBalance: () => Promise.resolve('0') } };
+            // Create fallback providers that won't crash
+            this.ethersProvider = { 
+                getBalance: () => Promise.resolve(0n), 
+                getFeeData: () => Promise.resolve({}),
+                getNetwork: () => Promise.reject(new Error('Fallback provider'))
+            };
+            this.web3 = { 
+                eth: { 
+                    getBalance: () => Promise.resolve('0'),
+                    Contract: class {} 
+                } 
+            };
         }
         
         this.signer = signer; 
@@ -119,7 +141,8 @@ class ProductionSovereignCore extends EventEmitter {
             BWAEZI_TOKEN_ADDRESS: config.BWAEZI_TOKEN_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
             USDC_TOKEN_ADDRESS: config.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
             USDC_FUNDING_GOAL: config.USDC_FUNDING_GOAL || "5.17",
-            BWAEZI_WETH_FEE: config.BWAEZI_WETH_FEE || 3000
+            BWAEZI_WETH_FEE: config.BWAEZI_WETH_FEE || 3000,
+            MAINNET_RPC_URLS: config.MAINNET_RPC_URLS || [this.mainnetRpcUrl]
         };
         
         this.deploymentState = { 
@@ -197,6 +220,9 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.info("💰 GAS FUNDING (PRIMARY): Initiating 5.17 USDC to ETH Swap (CRITICAL LEGACY GAS FIX ENABLED)...");
         
         try {
+            // CRITICAL FIX: Test provider connection first
+            await this.ethersProvider.getNetwork();
+
             const usdcContract = new ethers.Contract(this.config.USDC_TOKEN_ADDRESS, ERC20_ABI, this.signer);
             const swapRouterContract = new ethers.Contract(SWAP_ROUTER_ADDRESS, SWAP_ROUTER_ABI, this.signer);
             const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, this.signer);
@@ -268,6 +294,9 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.warn("💰 GAS FUNDING (FALLBACK): Initiating 10 BWAEZI to ETH Swap...");
         
         try {
+            // CRITICAL FIX: Test provider connection first
+            await this.ethersProvider.getNetwork();
+
             const bwaeziContract = new ethers.Contract(this.config.BWAEZI_TOKEN_ADDRESS, ERC20_ABI, this.signer);
             const swapRouterContract = new ethers.Contract(SWAP_ROUTER_ADDRESS, SWAP_ROUTER_ABI, this.signer);
             const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, this.signer);
