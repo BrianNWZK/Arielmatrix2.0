@@ -52,11 +52,11 @@ const PRODUCTION_CONFIG = {
     // 🔥 CRITICAL UPDATE: NEW DEPLOYED KERNEL ADDRESS
     BWAEZI_KERNEL_ADDRESS: normalizeAddress('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'), 
     WETH_ADDRESS: normalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
-    
-    // 🔥 CRITICAL ASSETS for Gas Funding Priority (USDC to ETH)
-    usdcTokenAddress: normalizeAddress('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'), // Standard USDC Mainnet Address
-    // Passing the goal as a string for the Brain to parse
-    usdcFundingGoal: "5.17", // The 5.17 USDC target amount
+    
+    // 🔥 CRITICAL ASSETS for Gas Funding Priority (USDC to ETH)
+    usdcTokenAddress: normalizeAddress('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'), // Standard USDC Mainnet Address
+    // Passing the goal as a string for the Brain to parse
+    usdcFundingGoal: "5.17", // The 5.17 USDC target amount
 
     // 🏦 WALLET/INFRASTRUCTURE
     SOVEREIGN_WALLET: normalizeAddress('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
@@ -80,7 +80,7 @@ const PRODUCTION_CONFIG = {
 
 
 // =========================================================================
-// MAIN ORCHESTRATION ENGINE
+// MAIN ORCHESTRATION ENGINE (UPDATED FOR DEPLOYMENT)
 // =========================================================================
 
 async function main() {
@@ -96,15 +96,33 @@ async function main() {
 
     // 3. Instantiate Sovereign Brain Orchestrator
     // FIX: Correcting constructor to match brain signature: constructor(config, signer)
-    // No WETH_ABI parameter is passed, as the Brain now manages all swap logic and ABIs internally.
     const brain = new ProductionSovereignCore(PRODUCTION_CONFIG, signer); 
 
     try {
-        // 4. Run the Genesis Initialization Sequence
-        // This will now prioritize checking for USDC funding before the SGT
-        await brain.initialize(); 
-        
-        // 5. Start Express API for Health/Metrics
+        // 4. Run the Genesis Initialization Sequence (Self-Funding Attempt)
+        await brain.initialize(); 
+
+        // 5. CRITICAL STEP: DEPLOY ERC-4337 INFRASTRUCTURE
+        console.log("🛠️ DEPLOYMENT MODE: Initiating ERC-4337 Infrastructure Deployment...");
+        
+        const deploymentAddresses = await deployERC4337Contracts(
+            signer, 
+            provider, 
+            PRODUCTION_CONFIG.ENTRY_POINT_ADDRESS
+        );
+
+        // Update the brain and main config with the new addresses
+        brain.updateDeploymentAddresses(
+            deploymentAddresses.paymasterAddress, 
+            deploymentAddresses.smartAccountAddress
+        );
+        PRODUCTION_CONFIG.PAYMASTER_ADDRESS = deploymentAddresses.paymasterAddress;
+        PRODUCTION_CONFIG.SMART_ACCOUNT_ADDRESS = deploymentAddresses.smartAccountAddress;
+        
+        console.log(`✅ Deployment Complete. Paymaster: ${deploymentAddresses.paymasterAddress}`);
+        console.log(`✅ Smart Account: ${deploymentAddresses.smartAccountAddress}`);
+            
+        // 6. Start Express API for Health/Metrics
         const app = express();
         app.use(cors());
         app.use(express.json());
@@ -122,7 +140,7 @@ async function main() {
         return { success: true };
 
     } catch (error) {
-        console.error("💥 FATAL ERROR during initialization:", error);
+        console.error("💥 FATAL ERROR during initialization/deployment:", error);
         return { success: false, error: error.message };
     }
 }
