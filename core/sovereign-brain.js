@@ -24,7 +24,7 @@ import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
 import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js'; 
 import { BWAEZIToken } from '../modules/bwaezi-token.js';
-import { ProductionQuantumCrypto } from '../modules/quantum-resistant-crypto/index.js';
+import { QuantumResistantCrypto } from '../modules/quantum-resistant-crypto/index.js';
 import ProductionOmnipotentBWAEZI from '../modules/production-omnipotent-bwaezi.js';
 import ProductionEvolvingBWAEZI from '../modules/production-evolving-bwaezi.js';
 import ProductionOmnipresentBWAEZI from '../modules/production-omnipresent-bwaezi.js';
