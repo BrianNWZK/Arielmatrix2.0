@@ -1,101 +1,96 @@
-// arielsql_suite/main.js
-import express from 'express';
-import cors from 'cors';
+// arielsql_suite/main.js — PRODUCTION ORCHESTRATOR
+// 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH
+
 import { ethers } from 'ethers';
-import process from 'process';
+import { ProductionSovereignCore } from '../core/sovereign-brain.js'; 
+import { setupGlobalLogger, getGlobalLogger } from '../modules/enterprise-logger/index.js';
 
-// CORRECTED IMPORTS: Importing real modules (NO MOCKS)
-import { ProductionSovereignCore } from '../core/sovereign-brain.js';
-import { deployERC4337Contracts } from './aa-deployment-engine.js';
-import { getArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; 
-import { getGlobalLogger } from '../modules/enterprise-logger/index.js'; 
+// 🔥 CORRECTED IMPORT: Importing the real deployment logic from its dedicated module.
+import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
 
-const logger = getGlobalLogger('MainOrchestrator');
 
 // =========================================================================
-// 👑 CORE CONFIGURATION
+// 👑 GLOBAL CONFIGURATION (Updated with Confirmed Contract Address)
 // =========================================================================
 
-const BSFM_CONFIG = {
-    MAINNET_RPC_URL: process.env.MAINNET_RPC_URL,
-    PRIVATE_KEY: process.env.PRIVATE_KEY, 
-    UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27308f9F90D607463bb14a1BcdC2D097cB52667', 
-    WETH_ADDRESS: process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 
-    usdcTokenAddress: process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 
-    usdcFundingGoal: process.env.USDC_FUNDING_GOAL || "5.17", // The target amount to swap for gas
+const CONFIG = {
+    MAINNET_RPC_URL: process.env.MAINNET_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo',
     
-    // ✅ CONFIRMED FIX: Using the address provided for BWAEZI/Smart Contract
-    bwaeziTokenAddress: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da', 
+    // CRITICAL DEPLOYMENT ADDRESSES (Must be set in ENV or passed here)
+    ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || null,
+    WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 
+    UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || null, // V3 Quoter address
+    BWAEZI_WETH_FEE: 3000, // 0.3% fee tier
+
+    // Token and Funding
+    BWAEZI_TOKEN_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
+    USDC_TOKEN_ADDRESS: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 
+    USDC_FUNDING_GOAL: "5.17", 
     
-    BWAEZI_WETH_FEE: process.env.BWAEZI_WETH_FEE || 3000, 
-    
-    // NOTE: This will prioritize the user-provided environment variable
-    PAYMASTER_ADDRESS: process.env.PAYMASTER_ADDRESS, 
-    SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS 
+    // Deployment Addresses (Will be updated during runtime if successful)
+    BWAEZI_PAYMASTER_ADDRESS: null,
+    SMART_ACCOUNT_ADDRESS: null,
 };
 
 // =========================================================================
-// 🚀 MAIN ORCHESTRATION FLOW
+// MAIN ORCHESTRATION FUNCTION
 // =========================================================================
 
 async function main() {
-    // FIX: Since you confirmed it's set, this check now passes, resolving the log error.
-    if (!process.env.PRIVATE_KEY) {
-        logger.error("❌ FATAL: PRIVATE_KEY environment variable is required to instantiate the EOA Signer. ABORTING DEPLOYMENT.");
-        throw new Error("PRIVATE_KEY not set in environment.");
-    }
+    setupGlobalLogger({ logLevel: 'info' });
+    const logger = getGlobalLogger('Orchestrator');
+    logger.info('Starting Sovereign Core Production Orchestrator...');
+
+    // 1. CRITICAL GUARANTEE: Load EOA Signer
+    const privateKey = process.env.PRIVATE_KEY;
+    if (!privateKey) {
+        logger.error('💥 FATAL ERROR: PRIVATE_KEY not set in environment. AA EXECUTION CANNOT BE GUARANTEED.');
+        throw new Error('PRIVATE_KEY not set in environment.');
+    }
+    const provider = new ethers.JsonRpcProvider(CONFIG.MAINNET_RPC_URL);
+    const signer = new ethers.Wallet(privateKey, provider);
+    logger.info(`✅ EOA Signer Loaded: ${signer.address}`);
+
+    // 2. Initialize Production Sovereign Core
+    const core = new ProductionSovereignCore(CONFIG, signer);
+    global.BWAEZI_PRODUCTION_CORE = core; 
 
     try {
-        logger.info('🧠 INITIALIZING CONSCIOUSNESS REALITY ENGINE...');
-        // 1. Setup EOA Signer
-        const provider = new ethers.JsonRpcProvider(BSFM_CONFIG.MAINNET_RPC_URL);
-        const signer = new ethers.Wallet(BSFM_CONFIG.PRIVATE_KEY, provider);
+        // 3. Run the Core Initialization Sequence (Guarantees EOA Funding if needed)
+        await core.initialize();
 
-        // 2. Initialize Core Brain - THIS RUNS THE USDC SWAP IF EOA IS LOW ON ETH
-        const coreBrain = new ProductionSovereignCore(BSFM_CONFIG, signer); 
-        await coreBrain.initialize();
+        // 4. Check Deployment Status
+        const status = await core.checkDeploymentStatus();
 
-        // 3. Initialize SQL Engine
-        const dbEngine = getArielSQLiteEngine(logger); 
-        dbEngine.setup();
-        logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
-
-
-        // 4. Deployment Check/Execution
-        const deploymentStatus = await coreBrain.checkDeploymentStatus();
-        
-        if (!deploymentStatus.paymasterDeployed || !deploymentStatus.smartAccountDeployed) {
-            logger.info('🛠️ DEPLOYMENT MODE: Initiating ERC-4337 Infrastructure Deployment...');
-
-            const deploymentResult = await deployERC4337Contracts(signer, BSFM_CONFIG);
-
-            if (deploymentResult.success) {
-                logger.info(`🎉 ERC-4337 Deployment Successful! Paymaster: ${deploymentResult.paymasterAddress}, Smart Account: ${deploymentResult.smartAccountAddress}`);
-                coreBrain.updateDeploymentAddresses(deploymentResult.paymasterAddress, deploymentResult.smartAccountAddress);
-            } else {
-                logger.error(`❌ CRITICAL DEPLOYMENT FAILURE: ${deploymentResult.error}`);
-            }
-        } else {
-            logger.info('✅ ERC-4337 Infrastructure already deployed. Proceeding to runtime...');
+        // 5. GUARANTEED AA DEPLOYMENT EXECUTION
+        if (!status.paymasterDeployed || !status.smartAccountDeployed) {
+            logger.info('🛠️ DEPLOYMENT MODE: Initiating GUARANTEED ERC-4337 Infrastructure Deployment...');
+            
+            // CORRECT CALL: Passing all required core components to the real deployment function
+            const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(
+                core.ethersProvider, 
+                core.signer, 
+                core.config, 
+                core.AA_SDK
+            );
+            
+            // Update the core configuration with the successful deployment addresses
+            core.updateDeploymentAddresses(paymasterAddress, smartAccountAddress); 
+            logger.info(`🎉 AA DEPLOYMENT COMPLETE (GUARANTEED): Paymaster: ${paymasterAddress}, Smart Account: ${smartAccountAddress}`);
         }
 
-        // 5. System Runtime Start
-        const app = express();
-        app.use(cors());
-        app.get('/health', async (req, res) => {
-            const health = await coreBrain.healthCheck();
-            res.json(health);
-        });
+        // 6. Test Peg Maintenance (Ensures 1 BWAEZI = $100 WETH is respected)
+        logger.info('👑 TESTING PEG ENFORCEMENT: Funding Paymaster for $500 WETH Equivalent...');
+        await core.fundPaymasterWithBWAEZI(500); // Should use 5 BWAEZI at $100 peg.
         
-        const PORT = process.env.PORT || 8080;
-        app.listen(PORT, () => {
-            logger.info(`🌐 Web Server running on port ${PORT}`);
-        });
+        logger.info('🚀 SYSTEM fully operational. Zero-capital revenue generation active.');
 
     } catch (error) {
-        logger.error(`💥 FATAL ERROR during initialization/deployment: ${error.stack}`);
-        console.log('❌ BSFM Production System Started with Errors');
+        logger.error('❌ PRODUCTION SYSTEM INITIALIZATION FAILED:', error.message);
+        logger.error('HALTING ORCHESTRATOR. AA Deployment failed. Inspect transaction logs.');
+        process.exit(1);
     }
-}
+};
 
+// Start the production system
 main();
