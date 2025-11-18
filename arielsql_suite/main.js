@@ -22,6 +22,9 @@ const CONFIG = {
         .map(url => url.trim())
         .filter(url => url.length > 0),
 
+    // 🎯 CRITICAL FIX (SGT Blocker): Inject PRIVATE_KEY into CONFIG for deployment-engine access
+    PRIVATE_KEY: process.env.PRIVATE_KEY || null,
+
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || null,
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || null,
@@ -128,7 +131,7 @@ async function main() {
             const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(
                 core.ethersProvider,
                 core.signer,
-                core.config,
+                core.config, // The config now correctly contains the PRIVATE_KEY
                 core.AA_SDK
             );
 
