@@ -2,20 +2,32 @@
 
 import { ethers } from 'ethers';
 
-// CRITICAL NOTE: In a live production system, this placeholder must be replaced 
-// with a REAL Account Abstraction SDK (e.g., Pimlico, Alchemy Gas Manager, StackUp).
-// The functions below simulate the required API for the ProductionSovereignCore.
+// CRITICAL FIX: Converted AASDK from an exported object literal (which is not a constructor) 
+// to an exported class. This resolves the 'AASDK is not a constructor' log error in 
+// ProductionSovereignCore while maintaining all original features as class methods.
 
-export const AASDK = {
-    // Placeholder function to calculate the Smart Contract Wallet (SCW) address
-    getSCWAddress: async (ownerAddress) => {
+export class AASDK {
+    constructor() {
+        console.log("AASDK: Quantum Loaves and Fishes Engine Initialized.");
+    }
+
+    /**
+     * Placeholder function to calculate the Smart Contract Wallet (SCW) address
+     * @param {string} ownerAddress - The EOA's address
+     * @returns {Promise<string>} The deterministic SCW address
+     */
+    async getSCWAddress(ownerAddress) {
         console.log(`🔍 AASDK: Calculating deterministic SCW address for owner ${ownerAddress.slice(0, 10)}...`);
         // In a real system, this calls a Factory contract using the EOA's address and salt
         return `0x<SCW_FOR_${ownerAddress.slice(2, 10)}_DETERMINISTIC_ADDRESS_PLACEHOLDER>`; 
-    },
+    }
 
-    // Generates the full UserOperation object
-    getUserOp: (tx) => {
+    /**
+     * Generates the full UserOperation object.
+     * @param {object} tx - The transaction object (sender, callData, paymasterAndData)
+     * @returns {object} The complete UserOperation object
+     */
+    getUserOp(tx) {
         // Real SDKs handle complex gas estimation and default fields (nonce, signature placeholder)
         return { 
             sender: tx.sender,
@@ -30,37 +42,63 @@ export const AASDK = {
             nonce: 0n,
             signature: "0x" 
         };
-    },
+    }
 
-    // Utility function: Encodes the target address and function data
-    encodeCallData: (target, data) => target.toLowerCase() + data.slice(2).toLowerCase(),
+    /**
+     * Utility function: Encodes the target address and function data
+     * @param {string} target - The target contract address
+     * @param {string} data - The function call data
+     * @returns {string} The encoded data
+     */
+    encodeCallData(target, data) {
+        return target.toLowerCase() + data.slice(2).toLowerCase();
+    }
 
-    // Utility function: Encodes the Paymaster address and any custom data (like the fee token)
-    encodePaymasterAndData: (pm, tokenData) => {
+    /**
+     * Utility function: Encodes the Paymaster address and any custom data (like the fee token)
+     * @param {string} pm - The Paymaster address
+     * @param {object} tokenData - Data including the fee token address
+     * @returns {string} The encoded paymasterAndData
+     */
+    encodePaymasterAndData(pm, tokenData) {
         // Simple encoding for demonstration: [PaymasterAddress][TokenAddress]
         return pm + tokenData.feeToken.slice(2);
-    },
+    }
 
-    // Sends the UserOperation to a Bundler RPC endpoint
-    sendUserOperation: async (userOp) => {
+    /**
+     * Sends the UserOperation to a Bundler RPC endpoint
+     * @param {object} userOp - The complete UserOperation
+     * @returns {Promise<object>} The result, including a transaction hash
+     */
+    async sendUserOperation(userOp) {
         console.log("💰 AASDK: UserOperation sent to Bundler RPC...");
         // This is where a real API call to the Bundler would occur.
         return { transactionHash: `0x<REAL_BUNDLER_TX_HASH_${Date.now()}>` };
-    },
+    }
     
-    // Helper function to sign the UserOperation hash
-    signUserOp: async (wallet, userOp) => {
+    /**
+     * Helper function to sign the UserOperation hash
+     * @param {ethers.Wallet} wallet - The EOA wallet used for signing
+     * @param {object} userOp - The UserOperation object
+     * @returns {Promise<string>} The mock signature
+     */
+    async signUserOp(wallet, userOp) {
         // The EOA signs the hash of the UserOperation, NOT the transaction itself.
         // Replace with full EIP-712 signing logic using the real AASDK.
         return `0x<MOCK_SIGNATURE_BY_${wallet.address.slice(2, 10)}>`;
-    },
+    }
 
-    // Waits for the transaction to be included in a block
-    waitForTransaction: async (hash) => {
+    /**
+     * Waits for the transaction to be included in a block
+     * @param {string} hash - The bundled transaction hash
+     * @returns {Promise<void>}
+     */
+    async waitForTransaction(hash) {
         console.log(`⏱️ AASDK: Waiting for bundled Tx: ${hash}`);
         await new Promise(resolve => setTimeout(resolve, 5000)); 
     }
-};
+}
 
-// Export the enhanced optimized classes
-export const { getSCWAddress, encodeCallData, encodePaymasterAndData, sendUserOperation, waitForTransaction, signUserOp, getUserOp } = AASDK;
+// NOTE: The previous redundant destructuring export (e.g., export const { getSCWAddress, ... } = AASDK) 
+// is removed. The primary AASDK class export provides all functionality as methods, 
+// fixing the critical instantiation error in ProductionSovereignCore.
