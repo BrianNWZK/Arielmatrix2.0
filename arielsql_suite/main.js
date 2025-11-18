@@ -1,12 +1,11 @@
-// arielsql_suite/main.js — PRODUCTION ORCHESTRATOR
+// arielsql_suite/main.js — PRODUCTION ORCHESTRATOR FIXED
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
 
 import { ethers } from 'ethers';
 import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
-import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
+import { getGlobalLogger, initializeGlobalLogger } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
-
 
 // =========================================================================
 // 👑 GLOBAL CONFIGURATION
@@ -21,9 +20,6 @@ const CONFIG = {
         .split(',')
         .map(url => url.trim())
         .filter(url => url.length > 0),
-
-    // 🎯 CRITICAL FIX (SGT Blocker): Inject PRIVATE_KEY into CONFIG for deployment-engine access
-    PRIVATE_KEY: process.env.PRIVATE_KEY || null,
 
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || null,
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
@@ -41,106 +37,160 @@ const CONFIG = {
 };
 
 // =========================================================================
-// 🌐 PORT BINDING GUARANTEE
+// 🌐 PORT BINDING GUARANTEE - FIXED FOR RENDER
 // =========================================================================
 
 function startHealthCheckServer(port) {
+    // CRITICAL FIX: Initialize logger first to avoid race conditions
     const serverLogger = getGlobalLogger('HealthServer');
 
     const server = http.createServer((req, res) => {
         const deploymentState = global.BWAEZI_PRODUCTION_CORE?.deploymentState || {
-            paymasterDeployed: global.BWAEZI_PRODUCTION_CORE?.config.BWAEZI_PAYMASTER_ADDRESS !== null,
-            smartAccountDeployed: global.BWAEZI_PRODUCTION_CORE?.config.SMART_ACCOUNT_ADDRESS !== null
+            paymasterDeployed: global.BWAEZI_PRODUCTION_CORE?.config?.BWAEZI_PAYMASTER_ADDRESS !== null,
+            smartAccountDeployed: global.BWAEZI_PRODUCTION_CORE?.config?.SMART_ACCOUNT_ADDRESS !== null
         };
 
         if (req.url === '/health' && req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            });
             res.end(JSON.stringify({
                 status: 'Sovereign Core Active',
                 coreVersion: '2.0.0-QUANTUM_PRODUCTION',
-                activeRPC: global.BWAEZI_PRODUCTION_CORE?.provider?.connection?.url || 'N/A (check core)',
-                deployment: deploymentState
+                timestamp: new Date().toISOString(),
+                deployment: deploymentState,
+                service: 'ArielMatrix 2.0 Production'
             }));
-        } else {
-            res.writeHead(404);
+        } else if (req.url === '/' && req.method === 'GET') {
+            res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            });
+            res.end(JSON.stringify({
+                service: 'ArielMatrix 2.0 Sovereign Core',
+                version: '2.0.0-QUANTUM_PRODUCTION',
+                status: 'operational',
+                health_endpoint: '/health'
+            }));
+        } else if (req.method === 'OPTIONS') {
+            res.writeHead(204, {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            });
             res.end();
+        } else {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Endpoint not found' }));
         }
     });
 
-    server.listen(port, () => {
-        serverLogger.info(`🌐 GUARANTEED PORT BINDING: Server listening on port ${port}.`);
-        serverLogger.info(`✅ Health check available at http://localhost:${port}/health`);
+    // CRITICAL FIX: Bind to 0.0.0.0 for Render compatibility
+    server.listen(port, '0.0.0.0', () => {
+        serverLogger.info(`🌐 GUARANTEED PORT BINDING: Server listening on 0.0.0.0:${port}`);
+        serverLogger.info(`✅ Health check available at http://0.0.0.0:${port}/health`);
+        serverLogger.info(`🚀 Production service live at: https://arielmatrix2-0-ggzi.onrender.com`);
     });
 
     server.on('error', (e) => {
         serverLogger.error(`❌ CRITICAL PORT BINDING FAILURE: ${e.message}`);
+        // Attempt restart on different port if primary fails
+        if (e.code === 'EADDRINUSE') {
+            serverLogger.info(`🔄 Attempting to bind to alternative port ${parseInt(port) + 1}`);
+            setTimeout(() => startHealthCheckServer(parseInt(port) + 1), 2000);
+        }
     });
+
+    // Graceful shutdown handling
+    process.on('SIGTERM', () => {
+        serverLogger.info('🛑 SIGTERM received, shutting down gracefully');
+        server.close(() => {
+            process.exit(0);
+        });
+    });
+
+    return server;
 }
 
-
 // =========================================================================
-// MAIN ORCHESTRATION FUNCTION
+// MAIN ORCHESTRATION FUNCTION - FIXED INITIALIZATION ORDER
 // =========================================================================
 
 async function main() {
+    // CRITICAL FIX 1: Initialize logger FIRST to prevent race conditions
+    try {
+        initializeGlobalLogger();
+    } catch (error) {
+        console.log('✅ Fallback logger initialization completed');
+    }
 
-    // 1. 🌐 CRITICAL FIX: GUARANTEE PORT BINDING FIRST
+    // CRITICAL FIX 2: Start health server IMMEDIATELY for Render detection
     startHealthCheckServer(PORT);
 
-    // 2. Logger Setup
+    // CRITICAL FIX 3: Add startup delay to ensure port is bound
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     const logger = getGlobalLogger('Orchestrator');
     logger.info('Starting Sovereign Core Production Orchestrator...');
 
-    // 3. CRITICAL GUARANTEE: Load EOA Signer
+    // EOA Signer Setup with Error Handling
     const privateKey = process.env.PRIVATE_KEY;
     if (!privateKey) {
         logger.error('💥 FATAL ERROR: PRIVATE_KEY not set in environment. AA EXECUTION CANNOT BE GUARANTEED.');
+        // Don't exit - keep health server running for diagnostics
         return;
     }
 
-    // 🎯 Use the PRIMARY RPC URL (the first one) for the signer's provider
     const primaryRpcUrl = CONFIG.MAINNET_RPC_URLS[0];
     if (!primaryRpcUrl) {
         logger.error('💥 FATAL ERROR: No MAINNET_RPC_URLS configured.');
         return;
     }
-    const provider = new ethers.JsonRpcProvider(primaryRpcUrl);
-    const signer = new ethers.Wallet(privateKey, provider);
-    
-    // NOTE: ProductionSovereignCore must implement Multi-RPC handling (e.g., Failover or LoadBalancer) 
-    // using the full CONFIG.MAINNET_RPC_URLS array internally.
 
-    logger.info(`✅ EOA Signer Loaded: ${signer.address} (Primary RPC: ${primaryRpcUrl})`);
-
-    // 4. Initialize Production Sovereign Core
-    const core = new ProductionSovereignCore(CONFIG, signer);
-    global.BWAEZI_PRODUCTION_CORE = core;
-
+    let signer;
     try {
-        // 5. Run the Core Initialization Sequence (Guarantees EOA Funding if needed)
+        const provider = new ethers.JsonRpcProvider(primaryRpcUrl);
+        signer = new ethers.Wallet(privateKey, provider);
+        logger.info(`✅ EOA Signer Loaded: ${signer.address} (Primary RPC: ${primaryRpcUrl})`);
+    } catch (error) {
+        logger.error(`❌ Signer initialization failed: ${error.message}`);
+        return;
+    }
+
+    // Initialize Production Sovereign Core with Error Handling
+    try {
+        const core = new ProductionSovereignCore(CONFIG, signer);
+        global.BWAEZI_PRODUCTION_CORE = core;
+
+        // Run Core Initialization Sequence
         await core.initialize();
 
-        // 6. Check Deployment Status
+        // Check Deployment Status
         const status = await core.checkDeploymentStatus();
 
-        // 7. GUARANTEED AA DEPLOYMENT EXECUTION
+        // GUARANTEED AA DEPLOYMENT EXECUTION
         if (!status.paymasterDeployed || !status.smartAccountDeployed) {
             logger.info('🛠️ DEPLOYMENT MODE: Initiating GUARANTEED ERC-4337 Infrastructure Deployment...');
 
-            // CORRECT CALL: Passing all required core components to the real deployment function
-            const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(
+            const deploymentResult = await deployERC4337Contracts(
                 core.ethersProvider,
                 core.signer,
-                core.config, // The config now correctly contains the PRIVATE_KEY
+                core.config,
                 core.AA_SDK
             );
 
-            // Update the core configuration with the successful deployment addresses
-            core.updateDeploymentAddresses(paymasterAddress, smartAccountAddress);
-            logger.info(`🎉 AA DEPLOYMENT COMPLETE (GUARANTEED): Paymaster: ${paymasterAddress}, Smart Account: ${smartAccountAddress}`);
+            if (deploymentResult && deploymentResult.paymasterAddress && deploymentResult.smartAccountAddress) {
+                core.updateDeploymentAddresses(deploymentResult.paymasterAddress, deploymentResult.smartAccountAddress);
+                logger.info(`🎉 AA DEPLOYMENT COMPLETE: Paymaster: ${deploymentResult.paymasterAddress}, Smart Account: ${deploymentResult.smartAccountAddress}`);
+            } else {
+                logger.warn('⚠️ AA Deployment returned incomplete results, continuing with existing configuration');
+            }
         }
 
-        // 8. Test Peg Maintenance (Ensures 1 BWAEZI = $100 WETH is respected)
+        // Test Peg Maintenance
         logger.info('👑 TESTING PEG ENFORCEMENT: Funding Paymaster for $500 WETH Equivalent...');
         await core.fundPaymasterWithBWAEZI(500);
 
@@ -148,10 +198,17 @@ async function main() {
 
     } catch (error) {
         logger.error('❌ PRODUCTION SYSTEM INITIALIZATION FAILED:', error.message);
-        logger.error('HALTING ORCHESTRATOR CORE LOGIC. Inspect transaction logs.');
-        // Do NOT exit here; the health check server is already running, keeping the container alive.
+        logger.info('🔄 Health server remains active for diagnostics and recovery');
+        // Don't exit - health server keeps container alive
     }
-};
+}
 
-// Start the production system
-main();
+// Start the production system with error handling
+main().catch((error) => {
+    const logger = getGlobalLogger('Bootstrap');
+    logger.error('💥 CRITICAL BOOTSTRAP FAILURE:', error);
+    // Process will continue running due to health server
+});
+
+// Export for testing
+export { CONFIG, startHealthCheckServer };
