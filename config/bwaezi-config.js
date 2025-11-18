@@ -14,7 +14,7 @@ export const BWAEZI_CHAIN = {
     
     // 🔥 CRITICAL FIX: Explicitly define the two critical contract addresses.
     // The system MUST use TOKEN_CONTRACT_ADDRESS for SGT to acquire gas.
-    TOKEN_CONTRACT_ADDRESS: '0x4bc3c633a12f5bffcac9080c51b0cd44e17d0a8f', // The ERC-20 Token Contract (The Asset)
+    TOKEN_CONTRACT_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da', // The ERC-20 Token Contract (The Asset)
     SMART_ACCOUNT_KERNEL_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da', // The deployed ERC-4337 Kernel (The Wallet/HODLer)
     
     CHAIN_ID: 1,
