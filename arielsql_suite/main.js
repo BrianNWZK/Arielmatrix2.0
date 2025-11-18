@@ -3,7 +3,13 @@
 
 import { ethers } from 'ethers';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js'; 
-import { EnterpriseLogger } from '../modules/enterprise-logger/index.js';
+// 🔥 CRITICAL FIX: The functions setupGlobalLogger and getGlobalLogger 
+// are named exports and must be imported explicitly alongside the class (if needed).
+import { 
+    EnterpriseLogger, // The class (optional, but good to include)
+    setupGlobalLogger, 
+    getGlobalLogger 
+} from '../modules/enterprise-logger/index.js';
 
 // 🔥 CORRECTED IMPORT: Importing the real deployment logic from its dedicated module.
 import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
@@ -37,6 +43,7 @@ const CONFIG = {
 // =========================================================================
 
 async function main() {
+    // This call is now correctly resolved by the fixed import above.
     setupGlobalLogger({ logLevel: 'info' });
     const logger = getGlobalLogger('Orchestrator');
     logger.info('Starting Sovereign Core Production Orchestrator...');
