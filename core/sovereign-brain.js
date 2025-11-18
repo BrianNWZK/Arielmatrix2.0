@@ -28,20 +28,81 @@ import { ProductionQuantumCrypto } from '../modules/quantum-resistant-crypto/ind
 import ProductionOmnipotentBWAEZI from '../modules/production-omnipotent-bwaezi.js';
 import ProductionEvolvingBWAEZI from '../modules/production-evolving-bwaezi.js';
 import ProductionOmnipresentBWAEZI from '../modules/production-omnipresent-bwaezi.js';
-import { 
-    QuantumNeuroCortex,
-    RealityProgrammingEngine,
+// Quantum Core Modules
+import {
+    HyperDimensionalQuantumEvolution,
+    TemporalQuantumField,
+    HolographicGeneticStorage,
+    ProductionValidator,
+    SovereignModules
+} from './hyper-dimensional-sovereign-modules.js';
+
+// Quantum Hardware Layer
+import {
+    QuantumProcessingUnit,
+    SurfaceCodeErrorCorrection,
+    BB84QKDEngine,
+    HardwareQRNG,
+    QuantumNeuralNetwork,
+    QuantumMonteCarlo,
+    QuantumChemistrySolver
+} from './quantumhardware-layer.js';
+
+// Quantum Hardware Core
+import {
+    MicrowaveControlUnit,
+    CryogenicTemperatureController,
+    QuantumReadoutSystem,
+    SuperconductingQubitArray,
+    SurfaceCodeHardware,
+    QuantumNetworkNode,
+    QuantumHardwareMonitor
+} from './quantum-hardware-core.js';
+
+// Quantum Elemental Hardware Integration
+import {
+    QuantumElementalHardware,
+    ElementalReactionHardware,
+    QuantumFieldHardware,
+    HardwareInterface,
+    ProductionElementalCore,
+    PRODUCTION_ELEMENTAL_ENGINE
+} from './quantum-elemental-hardware.js';
+
+// Advanced Consciousness Reality Integration
+import {
     QuantumGravityConsciousness,
+    UniversalEntropyReversal,
+    CosmicConsciousnessNetwork,
+    RealityProgrammingEngine,
+    AdvancedConsciousnessRealityEngine
+} from './consciousness-reality-advanced.js';
+
+// Consciousness Reality Engine Integration
+import {
+    QuantumNeuroCortex,
+    QuantumEntropyEngine,
+    TemporalResonanceEngine,
+    ConsciousnessRealityCore,
+    CONSCIOUSNESS_ENGINE
+} from './consciousness-reality-engine.js';
+
+// Enhanced Consciousness Reality B-Mode Integration
+import {
+    bModeConsciousnessEngine,
     OmnipotentRealityControl,
     TemporalArchitectureEngine,
-    TemporalResonanceEngine,
-    bModeConsciousnessEngine,
-    QuantumProcessingUnit,
-    ProductionQuantumStateManager,
-    SovereignIntegrationEngine
-    // ... all other Consciousness and Quantum modules ...
-} from './hyper-dimensional-sovereign-modules.js'; 
+    ExistenceMatrixEngine,
+    b_MODE_ENGINE
+} from './consciousness-reality-bmode.js';
 
+// Quantum Elemental Matrix Integration
+import {
+    ElementalRealityEngine,
+    QuantumElementalMatrix,
+    MultidimensionalFieldGenerator,
+    ELEMENTAL_REALITY_ENGINE
+} from './elemental-matrix-complete.js';
 // =========================================================================
 // CRITICAL FIX: ADDRESS NORMALIZATION AND CONSTANTS
 // =========================================================================
