@@ -3,7 +3,7 @@
 
 import { ethers } from 'ethers';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js'; 
-import { setupGlobalLogger, getGlobalLogger } from '../modules/enterprise-logger/index.js';
+import { EnterpriseLogger } from '../modules/enterprise-logger/index.js';
 
 // 🔥 CORRECTED IMPORT: Importing the real deployment logic from its dedicated module.
 import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
