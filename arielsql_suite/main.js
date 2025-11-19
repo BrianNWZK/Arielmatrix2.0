@@ -1,6 +1,5 @@
 // arielsql_suite/main.js — PRODUCTION ORCHESTRATOR FIXED
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
-
 import { ethers } from 'ethers';
 import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
@@ -13,29 +12,23 @@ import { AASDK } from '../modules/aa-loaves-fishes.js';
 // =========================================================================
 // 👑 GLOBAL CONFIGURATION
 // =========================================================================
-
 // CRITICAL FIX: Set PORT to 10000 as requested (Fallback to 3000)
 const PORT = process.env.PORT || 10000;
-
 const CONFIG = {
     // 🎯 CRITICAL FIX: Load multiple RPCs from a comma-separated ENV variable
     MAINNET_RPC_URLS: (process.env.MAINNET_RPC_URLS || process.env.MAINNET_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo')
         .split(',')
         .map(url => url.trim())
         .filter(url => url.length > 0),
-
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || null,
-    WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH address on Mainnet (Corrected for consistency)
+    WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // Fixed WETH address
+    USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // Added USDC address
+    USDC_FUNDING_GOAL: process.env.USDC_FUNDING_GOAL || '5.17', // Added USDC funding goal
     
     // 🎯 CRITICAL FIX: Add missing token and quoter addresses used in aa-deployment-engine.js constructor args
     BWAEZI_TOKEN_ADDRESS: process.env.BWAEZI_TOKEN_ADDRESS || '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F', // Placeholder: Assumed BWAEZI main contract address
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27309fabaa67fe783674238e82a1674681fce88', // Placeholder: Uniswap V3 Quoter Mainnet address
-    BWAEZI_WETH_FEE: process.env.BWAEZI_WETH_FEE,
-
-    // 🎯 CRITICAL FIX: Add USDC config for primary funding
-    USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC on Mainnet
-    USDC_FUNDING_GOAL: process.env.USDC_FUNDING_GOAL || '5.17', // $5.17 target swap
-
+    BWAEZI_WETH_FEE: process.env.BWAEZI_WETH_FEE || 3000,
     PRIVATE_KEY: process.env.PRIVATE_KEY, // CRITICAL: Expose private key from ENV
     DATABASE_PATH: process.env.DATABASE_PATH || './data/production.sqlite',
 };
@@ -43,7 +36,6 @@ const CONFIG = {
 // =========================================================================
 // 🏥 HEALTH CHECK SERVER - FIXED PORT BINDING AND GRACEFUL SHUTDOWN
 // =========================================================================
-
 function startHealthServer(logger) {
     const server = http.createServer((req, res) => {
         if (req.url === '/health' && req.method === 'GET') {
@@ -68,10 +60,6 @@ function startHealthServer(logger) {
     // CRITICAL FIX 2: Add graceful shutdown for container orchestration
     process.on('SIGTERM', () => {
         logger.info('🛑 SIGTERM received, shutting down gracefully');
-        // CRITICAL FIX: Also call shutdown on the core system if it exists
-        if (global.BWAEZI_PRODUCTION_CORE && typeof global.BWAEZI_PRODUCTION_CORE.shutdown === 'function') {
-            global.BWAEZI_PRODUCTION_CORE.shutdown();
-        }
         server.close(() => {
             process.exit(0);
         });
@@ -83,7 +71,6 @@ function startHealthServer(logger) {
 // =========================================================================
 // 🚀 PRODUCTION ORCHESTRATION ENGINE - FIXED INITIALIZATION ORDER & ENV HACK
 // =========================================================================
-
 async function main() {
     // 1. Initialize Logger (Self-Healing Fallback)
     const logger = getGlobalLogger('OptimizedSovereignCore');
@@ -99,8 +86,7 @@ async function main() {
         // 3. CRITICAL: Check for Private Key before proceeding
         if (!CONFIG.PRIVATE_KEY) {
             logger.error('💥 FATAL ERROR: PRIVATE_KEY not set in environment. Cannot proceed with blockchain operations.');
-            // Allow health server to run for diagnostics, don't exit here.
-            return; 
+            return; // Return and keep the health server running for diagnostics
         }
 
         // 4. Initialize Database and Database Logging
@@ -113,12 +99,14 @@ async function main() {
         if (!primaryRpcUrl) {
             throw new Error('MAINNET_RPC_URLS is empty. Cannot connect to blockchain.');
         }
+
         const ethersProvider = new ethers.JsonRpcProvider(primaryRpcUrl);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, ethersProvider);
-
         logger.info(`✅ Initialized Signer EOA: ${signer.address.slice(0, 10)}...`);
 
         // 🎯 CRITICAL FIX 5: WORKAROUND FOR EXTERNAL MODULE (aa-deployment-engine.js) BUG
+        // The external module is reading process.env.PRIVATE_KEY directly and failing.
+        // We ensure process.env is set right before the call, guaranteeing the external module's check passes.
         if (CONFIG.PRIVATE_KEY && !process.env.PRIVATE_KEY) {
             process.env.PRIVATE_KEY = CONFIG.PRIVATE_KEY;
             logger.warn('⚠️ CRITICAL WORKAROUND: Force-setting process.env.PRIVATE_KEY for external module compatibility.');
@@ -126,6 +114,7 @@ async function main() {
 
         // 6. Deploy ERC-4337 Contracts (Entry Point, Paymaster)
         // 🎯 CRITICAL FIX: Corrected argument order/type: (Provider, Signer, CONFIG, AASDK).
+        // This fixes the 'provider.getBalance is not a function' error by passing the actual provider object first.
         const aaDeployment = await deployERC4337Contracts(ethersProvider, signer, CONFIG, AASDK);
 
         // 7. Initialize Core Sovereign Brain
@@ -134,20 +123,18 @@ async function main() {
             ethersProvider: ethersProvider,
             dbEngine: dbEngine,
             logger: logger,
+            // 🎯 CRITICAL FIX: Pass RPC URLs for failover management
+            rpcUrls: CONFIG.MAINNET_RPC_URLS,
             // 🎯 CRITICAL FIX: Instantiate the AASDK class here
             aaSdk: new AASDK(),
             config: CONFIG,
-            // 🎯 CRITICAL FIX: Pass the list of RPC URLS for EnterpriseRPCProvider initialization
-            rpcUrls: CONFIG.MAINNET_RPC_URLS, 
         });
 
         // Store globally for real-time monitoring
         global.BWAEZI_PRODUCTION_CORE = sovereignCore;
-
         await sovereignCore.initialize();
 
         logger.info('🚀 SYSTEM READY: Zero-capital arbitrage and AA transactions available');
-
     } catch (error) {
         // Log the fatal error and gracefully shut down
         const logger = getGlobalLogger('OptimizedSovereignCore');
@@ -156,11 +143,8 @@ async function main() {
             operation: 'main_initialization'
         });
         console.log('🔄 ACTIVATING BASIC OPERATIONAL MODE / SHUTDOWN...');
-
+        
         // CRITICAL FIX 6: Close the health server before exiting on a fatal error
-        if (global.BWAEZI_PRODUCTION_CORE && typeof global.BWAEZI_PRODUCTION_CORE.shutdown === 'function') {
-            global.BWAEZI_PRODUCTION_CORE.shutdown();
-        }
         healthServer.close(() => {
             process.exit(1);
         });
@@ -177,13 +161,11 @@ setInterval(() => {
     if (global.BWAEZI_PRODUCTION_CORE) {
         const logger = getGlobalLogger('OptimizedSovereignCore');
         const status = global.BWAEZI_PRODUCTION_CORE.getSystemStatus ? global.BWAEZI_PRODUCTION_CORE.getSystemStatus() : { dailyRevenue: 0, totalRevenue: 0, serviceExecutions: 0, totalServices: 0 };
-
         logger.info('✅ PRODUCTION SYSTEM: ACTIVE - Generating Real Revenue', {
             dailyRevenue: status.dailyRevenue.toFixed(6),
             totalRevenue: status.totalRevenue.toFixed(6),
             serviceExecutions: status.serviceExecutions,
             totalServices: status.totalServices
         });
-
     }
 }, 15 * 60 * 1000); // Report every 15 minutes
