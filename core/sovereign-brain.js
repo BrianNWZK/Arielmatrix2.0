@@ -28,7 +28,7 @@ import { BWAEZIToken } from '../modules/bwaezi-token.js';
 import { QuantumResistantCrypto } from '../modules/quantum-resistant-crypto/index.js';
 import ProductionOmnipotentBWAEZI from '../modules/production-omnipotent-bwaezi.js';
 import ProductionEvolvingBWAEZI from '../modules/production-evolving-bwaezi.js';
-import ProductionOmnipresentBWAEZI from '../modules/omnipresent-bwaezi.js'; // Corrected module name assumption if needed, using the one provided
+import ProductionOmnipresentBWAEZI from '../modules/production-omnipresent-bwaezi.js';
 // Quantum Core Modules
 import {
     HyperDimensionalQuantumEvolution,
