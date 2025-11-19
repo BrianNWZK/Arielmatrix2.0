@@ -15,20 +15,18 @@ import {
 } from 'crypto';
 import { ethers, BigNumber } from 'ethers'; // Keep ethers for utility functions
 
-// Core Infrastructure
+// 🎯 CRITICAL FIX: Added getGlobalLogger to imports for logger initialization
+import { EnterpriseLogger, getGlobalLogger } from '../modules/enterprise-logger/index.js'; 
 import { ArielSQLiteEngine } from "../modules/ariel-sqlite-engine/index.js";
-import { SovereignRevenueEngine } from "../modules/sovereign-revenue-engine.js";
-// 🎯 CRITICAL FIX: Import the new Account Abstraction SDK
+import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js'; 
-import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
+import { BWAEZIToken } from '../modules/bwaezi-token.js';
+import { QuantumResistantCrypto } from '../modules/quantum-resistant-crypto/index.js';
+import ProductionOmnipotentBWAEZI from '../modules/production-omnipotent-bwaezi.js';
+import ProductionEvolvingBWAEZI from '../modules/production-evolving-bwaezi.js';
+import ProductionOmnipresentBWAEZI from '../modules/production-omnipresent-bwaezi.js';
 
-
-// Production Modules
-import ProductionOmnipotentBWAEZI from "../modules/production-omnipotent-bwaezi.js";
-import ProductionEvolvingBWAEZI from "../modules/production-evolving-bwaezi.js";
-import ProductionOmnipresentBWAEZI from "../modules/production-omnipresent-bwaezi.js";
-
-// Quantum Core Modules (Assuming these are defined in a separate file)
+// Quantum Core Modules
 import {
     HyperDimensionalQuantumEvolution,
     TemporalQuantumField,
@@ -37,7 +35,7 @@ import {
     SovereignModules
 } from './hyper-dimensional-sovereign-modules.js';
 
-// Quantum Hardware Layer (Assuming these are defined in a separate file)
+// Quantum Hardware Layer
 import {
     QuantumProcessingUnit,
     SurfaceCodeErrorCorrection,
@@ -45,29 +43,64 @@ import {
     HardwareQRNG,
     QuantumNeuralNetwork,
     QuantumMonteCarlo,
-    QuantumChemistrySolver,
+    QuantumChemistrySolver
+} from './quantumhardware-layer.js';
+
+// Quantum Hardware Core
+import {
     MicrowaveControlUnit,
     CryogenicTemperatureController,
     QuantumReadoutSystem,
     SuperconductingQubitArray,
     SurfaceCodeHardware,
     QuantumNetworkNode,
-    QuantumHardwareMonitor,
-} from './quantum-hardware-modules.js'; 
+    QuantumHardwareMonitor
+} from './quantum-hardware-core.js';
 
-// Consciousness Reality Layer (Assuming these are defined in a separate file)
+// Quantum Elemental Hardware Integration
+import {
+    QuantumElementalHardware,
+    ElementalReactionHardware,
+    QuantumFieldHardware,
+    HardwareInterface,
+    ProductionElementalCore,
+    PRODUCTION_ELEMENTAL_ENGINE
+} from './quantum-elemental-hardware.js';
+
+// Advanced Consciousness Reality Integration
 import {
     QuantumGravityConsciousness,
     UniversalEntropyReversal,
     CosmicConsciousnessNetwork,
     RealityProgrammingEngine,
+    AdvancedConsciousnessRealityEngine
+} from './consciousness-reality-advanced.js';
+
+// Consciousness Reality Engine Integration
+import {
+    QuantumNeuroCortex,
+    QuantumEntropyEngine,
+    TemporalResonanceEngine,
+    ConsciousnessRealityCore,
+    CONSCIOUSNESS_ENGINE
+} from './consciousness-reality-engine.js';
+
+// Enhanced Consciousness Reality B-Mode Integration
+import {
+    bModeConsciousnessEngine,
     OmnipotentRealityControl,
     TemporalArchitectureEngine,
     ExistenceMatrixEngine,
+    b_MODE_ENGINE
+} from './consciousness-reality-bmode.js';
+
+// Quantum Elemental Matrix Integration
+import {
     ElementalRealityEngine,
-    bModeConsciousnessEngine, // Log suggests this is a key component
-    ConsciousnessRealityCore
-} from './consciousness-reality-advanced.js';
+    QuantumElementalMatrix,
+    MultidimensionalFieldGenerator,
+    ELEMENTAL_REALITY_ENGINE
+} from './elemental-matrix-complete.js';
 
 // =========================================================================
 // 👑 PRODUCTION SOVEREIGN CORE
