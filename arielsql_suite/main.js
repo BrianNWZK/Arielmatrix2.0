@@ -1,4 +1,4 @@
-// arielsql_suite/main.js — ULTIMATE ORCHESTRATOR v2.6.0-CONSCIOUSNESS-QUANTUM-SAFE (FINAL)
+// arielsql_suite/main.js — ULTIMATE ORCHESTRATOR v2.6.1-PORT-BINDING-FIX
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
 import { ethers } from 'ethers'; 
 import http from 'http';
@@ -13,26 +13,25 @@ import { QuantumHardwareFallback } from '../modules/quantum-fallback.js';
 // 👑 GLOBAL CONFIGURATION
 // =========================================================================
 
-const PORT = process.env.PORT || 10000;
+// CRITICAL FIX: Ensure the port is read from the environment or defaults to 10000.
+const PORT = process.env.PORT || 10000; 
+
 const BUNDLER_RPC_URL = process.env.BUNDLER_RPC_URL || 'http://localhost:4337/rpc'; 
 const RPC_TIMEOUT_MS = parseInt(process.env.RPC_TIMEOUT_MS) || 10000; 
-
 const DEPLOYMENT_RUNNER_MODE = process.env.DEPLOYMENT_RUNNER_MODE === 'true';
 
+// ... (CONFIG object retained from previous steps) ...
 const CONFIG = {
     MAINNET_RPC_URLS: (process.env.MAINNET_RPC_URLS || process.env.MAINNET_RPC_URL || 'https://rpc.ankr.com/eth,https://eth-mainnet.g.alchemy.com/v2/demo,https://eth.public-rpc.com')
         .split(',')
         .map(url => url.trim())
         .filter(url => url.length > 0),
 
-    // =========================================================================
-    // 🎯 CRITICAL FINAL DEPLOYMENT ADDRESSES (FIXED)
-    // =========================================================================
-    // CRITICAL FIX: Ensure BWAEZI_TOKEN_ADDRESS is never an empty string
+    // CRITICAL FIX: BWAEZI_TOKEN_ADDRESS is now permanently included or defaulted
     BWAEZI_TOKEN_ADDRESS: (process.env.BWAEZI_TOKEN_ADDRESS && process.env.BWAEZI_TOKEN_ADDRESS.length > 0) 
         ? process.env.BWAEZI_TOKEN_ADDRESS 
-        : '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
-    
+        : '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da', // Hardcoded fix 
+
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
@@ -40,21 +39,22 @@ const CONFIG = {
 
     AA_PAYMASTER_ADDRESS: process.env.BWAEZI_PAYMASTER_ADDRESS, 
     SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS,
-    // =========================================================================
-
     USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     SIGNER_PRIVATE_KEY: process.env.PRIVATE_KEY,
     QUANTUM_NETWORK_ENABLED: process.env.QUANTUM_NETWORK_ENABLED === 'true', 
 };
 
-// ... (startHealthCheckServer is retained) ...
-function startHealthCheckServer() {
-    if (DEPLOYMENT_RUNNER_MODE) return; 
+// =========================================================================
+// 🌐 PORT BINDING FIX: GUARANTEE THE HTTP SERVER STARTS
+// =========================================================================
+function startHealthCheckServer(logger) {
+    // This function must not contain the DEPLOYMENT_RUNNER_MODE check. 
+    // It's called conditionally inside main().
     
     const server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const healthStatus = {
-            status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRADED (Core initializing)',
+            status: global.BWAEZI_PRODUCTION_CORE?.deploymentState?.initialized ? 'OK' : 'DEGRADED (Core initializing)',
             aaEngineStatus: global.BWAEZI_AASDK ? 'ACTIVE' : 'INACTIVE',
             timestamp: new Date().toISOString(),
             coreVersion: global.BWAEZI_PRODUCTION_CORE?.version || 'N/A'
@@ -63,12 +63,14 @@ function startHealthCheckServer() {
     });
 
     server.listen(PORT, '0.0.0.0', () => {
-        console.log(`🌐 GUARANTEED PORT BINDING: Server listening on 0.0.0.0:${PORT}.`);
-        console.log(`✅ Health check available at http://0.0.0.0:${PORT}/health`);
+        logger.info(`🌐 GUARANTEED PORT BINDING: Server listening on 0.0.0.0:${PORT}.`);
+        logger.info(`✅ Health check available at http://0.0.0.0:${PORT}/health`);
     });
     
     server.on('error', (error) => {
-        console.error(`💥 Server error: ${error.message}`, { operation: 'health_check_server', port: PORT });
+        logger.error(`💥 Server error: ${error.message}`, { operation: 'health_check_server', port: PORT });
+        // Allowing the process to crash if the port is essential for service survival.
+        process.exit(1); 
     });
 }
 
@@ -78,24 +80,30 @@ function startHealthCheckServer() {
 // =========================================================================
 
 async function main() {
-    startHealthCheckServer();
-    await new Promise(resolve => setTimeout(resolve, 500)); 
     
     const logger = getGlobalLogger('OptimizedSovereignCore'); 
-    logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.6 (FINAL SYNCH FIX)...');
+    logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.6.1 (PORT BINDING FIX)...');
 
     if (!CONFIG.SIGNER_PRIVATE_KEY) {
         logger.error('💥 CRITICAL WARNING: PRIVATE_KEY not set. Running in **DEGRADED (Health-Only) Mode**.');
-        return;
+        // Start server even in degraded mode to keep the deployment alive
+        startHealthCheckServer(logger);
+        // CRITICAL: Must not return, so we rely on the server to keep the process alive.
+        await new Promise(() => {}); 
     }
 
     let provider = null;
     let wallet = null;
     let connected = false;
 
-    // 3. Setup Ethers Provider with RPC Failover Logic
+    // 1. Start the HTTP server *before* any RPC or blockchain work
+    if (!DEPLOYMENT_RUNNER_MODE) {
+        startHealthCheckServer(logger); // ONLY start in normal production mode
+    }
+
+    // 2. Setup Ethers Provider with RPC Failover Logic
     try {
-        // ... (RPC Failover logic is retained and ensures 'provider' and 'wallet' are set) ...
+        // ... (RPC Failover logic - retained) ...
         for (const rpcUrl of CONFIG.MAINNET_RPC_URLS) {
             try {
                 logger.info(`🔄 Attempting to connect to RPC: ${rpcUrl}`);
@@ -119,30 +127,19 @@ async function main() {
             throw new Error("CRITICAL SYSTEM FAILURE: All configured RPC endpoints failed to connect or timed out.");
         }
         
-        // =========================================================================
-        // 🎯 CRITICAL FIX: DEPLOYMENT RUNNER CONTROL FLOW IS NOW ISOLATED
-        // =========================================================================
+        // 3. ISOLATED DEPLOYMENT MODE
         if (DEPLOYMENT_RUNNER_MODE) {
             logger.info('🛠️ ISOLATED DEPLOYMENT MODE ACTIVATED: Running Paymaster deployment only.');
-            
-            // ⚠️ NOTE: We skip Core and Quantum initialization to avoid crash,
-            // as they are not needed for deployment.
-
             const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
-            
             logger.info('🎉 DEPLOYMENT SUCCESS: Paymaster and SCW Addresses captured.');
             logger.info(`✅ PAYMASTER DEPLOYED ADDRESS: ${deploymentResult.paymasterAddress}`);
             logger.info(`✅ SCW COUNTERFACTUAL ADDRESS: ${deploymentResult.smartAccountAddress}`);
             logger.info('========================================================================');
-            logger.info('⚠️ CRITICAL NEXT STEP: Manually update your environment variables and transfer 100,000,000 BWAEZI to the SCW ADDRESS printed above.');
-            logger.info('========================================================================');
-            
-            // Exit immediately after printing the addresses
-            process.exit(0); 
+            process.exit(0); // Exit immediately after deployment
         } 
         
         // =========================================================================
-        // NORMAL ORCHESTRATION FLOW (ONLY RUNS AFTER DEPLOYMENT)
+        // NORMAL ORCHESTRATION FLOW (Post-Deployment)
         // =========================================================================
         
         // 4. Initialize Ariel DB and Logging
@@ -164,7 +161,7 @@ async function main() {
              CONFIG.QUANTUM_SIMULATION_MODE = false;
         }
 
-        // 6. Initialize Production Sovereign Core (This will now run safely)
+        // 6. Initialize Production Sovereign Core
         if (!CONFIG.AA_PAYMASTER_ADDRESS || !CONFIG.SMART_ACCOUNT_ADDRESS) {
             throw new Error("CRITICAL: AA Paymaster/SCW addresses are missing. Run in DEPLOYMENT_RUNNER_MODE first and update ENV.");
         }
@@ -173,7 +170,8 @@ async function main() {
             walletAddress: wallet.address,
             ethersProvider: provider,
             dbInstance: db,
-            mainnetConfig: CONFIG
+            mainnetConfig: CONFIG,
+            signer: wallet // Pass the wallet as the signer
         });
         
         await core.initialize();
@@ -198,6 +196,9 @@ async function main() {
         logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
+        // 10. CRITICAL FIX: Keep the Node.js process alive indefinitely
+        await new Promise(() => {}); // This promise never resolves.
+
     } catch (error) {
         logger.error(`💥 FATAL ERROR during main orchestration: ${error.message}`, {
              stack: error.stack
@@ -206,7 +207,6 @@ async function main() {
     }
 }
 
-// ... (Error handling remains) ...
 process.on('uncaughtException', (error) => {
     console.error('💥 UNCAUGHT EXCEPTION:', error.message);
 });
