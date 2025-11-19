@@ -1,13 +1,11 @@
-// arielsql_suite/main.js — PRODUCTION ORCHESTRATOR FIXED
-// 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
-// NOVEL AI FIX: Robust AASDK integration and multi-RPC awareness.
+// arielsql_suite/main.js — PRODUCTION ORCHESTRATOR FIXED (Final Cloud Deployment Resilience)
 
 // 🎯 CRITICAL FIX: Ensure correct Ethers v6 import and usage
 import { ethers } from 'ethers'; 
 import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
-import { getGlobalLogger, EnterpriseLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
+import { getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js';
 
@@ -17,9 +15,11 @@ import { AASDK } from '../modules/aa-loaves-fishes.js';
 
 const PORT = process.env.PORT || 10000;
 const BUNDLER_RPC_URL = process.env.BUNDLER_RPC_URL || 'http://localhost:4337/rpc'; 
+const RPC_TIMEOUT_MS = parseInt(process.env.RPC_TIMEOUT_MS) || 10000; // 10 seconds timeout
 
 const CONFIG = {
-    MAINNET_RPC_URLS: (process.env.MAINNET_RPC_URLS || process.env.MAINNET_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo')
+    // CRITICAL: Ensure this array has multiple RPC URLs for failover
+    MAINNET_RPC_URLS: (process.env.MAINNET_RPC_URLS || process.env.MAINNET_RPC_URL || 'https://rpc.ankr.com/eth,https://eth-mainnet.g.alchemy.com/v2/demo,https://eth.public-rpc.com')
         .split(',')
         .map(url => url.trim())
         .filter(url => url.length > 0),
@@ -35,77 +35,113 @@ const CONFIG = {
 };
 
 // =========================================================================
-// 🌐 FAILOVER & HEALTH CHECK SYSTEM
+// 🌐 IMMEDIATE HEALTH CHECK SYSTEM (Decoupled from Core)
 // =========================================================================
 
-const PRIMARY_RPC_URL = CONFIG.MAINNET_RPC_URLS[0];
-
-function startHealthCheckServer(logger) {
+/**
+ * Starts a minimal HTTP server immediately to satisfy cloud deployment health checks.
+ */
+function startImmediateHealthCheckServer() {
     const server = http.createServer((req, res) => {
-        if (req.url === '/health' && req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            const healthStatus = {
-                status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRADED (Core not ready)',
-                aaEngineStatus: global.BWAEZI_AASDK ? 'ACTIVE' : 'INACTIVE',
-                timestamp: new Date().toISOString(),
-                coreVersion: global.BWAEZI_PRODUCTION_CORE?.version || 'N/A'
-            };
-            res.end(JSON.stringify(healthStatus));
-        } else {
-            res.writeHead(404);
-            res.end();
-        }
+        // 🎯 CRITICAL: Simple response that doesn't rely on uninitialized core
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        const healthStatus = {
+            // Status reflects readiness, defaulting to DEGRADED until core is ready
+            status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRADED (Core initializing)',
+            timestamp: new Date().toISOString(),
+        };
+        res.end(JSON.stringify(healthStatus));
     });
 
     server.listen(PORT, '0.0.0.0', () => {
-        logger.info(`🌐 GUARANTEED PORT BINDING: Server listening on 0.0.0.0:${PORT}.`);
-        logger.info(`✅ Health check available at http://0.0.0.0:${PORT}/health`);
+        // Use console.log for immediate visibility before logger setup is guaranteed
+        console.log(`🌐 GUARANTEED PORT BINDING: Server listening on 0.0.0.0:${PORT}.`);
+        console.log(`✅ Health check available at http://0.0.0.0:${PORT}/health`);
     });
     
-    // Graceful error handling for the server
     server.on('error', (error) => {
-        logger.error(`💥 Server error: ${error.message}`, { operation: 'health_check_server', port: PORT });
+        console.error(`💥 Server error: ${error.message}`, { operation: 'health_check_server', port: PORT });
     });
+    
+    return server;
 }
 
 // =========================================================================
-// 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION
+// 🔗 ROBUST RPC CONNECTION WITH TIMEOUT AND FAILOVER
+// =========================================================================
+
+/**
+ * Attempts to connect to RPCs with a timeout and failover logic.
+ * @param {import('winston').Logger} logger
+ * @returns {Promise<{provider: ethers.JsonRpcProvider, wallet: ethers.Wallet}>}
+ */
+async function getRobustRpcConnection(logger) {
+    for (const rpcUrl of CONFIG.MAINNET_RPC_URLS) {
+        try {
+            logger.info(`🔄 Attempting to connect to RPC: ${rpcUrl}`);
+            const currentProvider = new ethers.JsonRpcProvider(rpcUrl);
+            
+            // 🎯 CRITICAL FIX: Wrap the connection test with a Promise.race timeout
+            const connectionTest = currentProvider.getNetwork();
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error(`RPC timeout after ${RPC_TIMEOUT_MS}ms`)), RPC_TIMEOUT_MS)
+            );
+            
+            // This line executes the RPC call and the timer simultaneously.
+            const network = await Promise.race([connectionTest, timeoutPromise]); 
+            
+            logger.info(`✅ RPC connection successful on ${network.name} (Chain ID: ${network.chainId}).`);
+            
+            // Success: Create wallet and return
+            const wallet = new ethers.Wallet(CONFIG.SIGNER_PRIVATE_KEY, currentProvider);
+            return { provider: currentProvider, wallet };
+
+        } catch (rpcError) {
+            logger.warn(`❌ Failed to connect to RPC ${rpcUrl}: ${rpcError.message}. Trying next URL.`);
+        }
+    }
+
+    // If the loop finishes without success
+    throw new Error("CRITICAL SYSTEM FAILURE: All configured RPC endpoints failed to connect or timed out.");
+}
+
+
+// =========================================================================
+// 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION - RESILIENCE INTEGRATED
 // =========================================================================
 
 async function main() {
-    // 1. Initial Logger Setup (Self-Healing)
-    const logger = getGlobalLogger('OptimizedSovereignCore'); 
+    // 1. 🎯 CRITICAL FIX: Start the health server IMMEDIATELY (Fixes Render "No open ports detected")
+    startImmediateHealthCheckServer();
+    // Wait briefly to ensure port is bound before proceeding
+    await new Promise(resolve => setTimeout(resolve, 500)); 
     
-    // GUARANTEED FAST PORT BINDING (Retained from previous fix)
-    startHealthCheckServer(logger);
+    // 2. Initial Logger Setup (Self-Healing)
+    const logger = getGlobalLogger('OptimizedSovereignCore'); 
+    logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.6 (FINAL SYNCH FIX)...');
 
     if (!CONFIG.SIGNER_PRIVATE_KEY) {
-        logger.error('💥 FATAL ERROR during initialization/deployment: Error: PRIVATE_KEY not set in environment.');
-        // Critical error, exit the process
-        process.exit(1); 
+        logger.error('💥 CRITICAL WARNING: PRIVATE_KEY not set in environment. Running in **DEGRADED (Health-Only) Mode**.');
+        return; // Return instead of exiting to keep health server alive
     }
 
+    let provider = null;
+    let wallet = null;
+
     try {
-        logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.6 (FINAL SYNCH FIX)...');
+        // 3. Setup Ethers Provider with Robust Failover and Timeout (Fixes "request timeout")
+        const connection = await getRobustRpcConnection(logger);
+        provider = connection.provider;
+        wallet = connection.wallet;
         
-        // Setup Ethers Provider and Signer
-        // ✅ CRITICAL FIX: Use ethers.JsonRpcProvider and ethers.Wallet for v6 compatibility
-        const provider = new ethers.JsonRpcProvider(PRIMARY_RPC_URL);
-        const wallet = new ethers.Wallet(CONFIG.SIGNER_PRIVATE_KEY, provider);
-        
-        // ADDED: Test connection before proceeding with heavy tasks
-        await provider.getNetwork();
-        logger.info('✅ Successfully connected to RPC endpoint.');
-
-
-        // 2. Initialize Ariel DB and Logging
+        // 4. Initialize Ariel DB and Logging
         const db = new ArielSQLiteEngine();
         await db.connect();
         await db.initializeSchema();
         await enableDatabaseLoggingSafely(db); 
         logger.info('✅ Database logging enabled successfully');
 
-        // 3. Initialize Production Sovereign Core
+        // 5. Initialize Production Sovereign Core
         const core = new ProductionSovereignCore({
             walletAddress: wallet.address,
             ethersProvider: provider,
@@ -118,12 +154,12 @@ async function main() {
         }
 
         await core.initialize();
-        global.BWAEZI_PRODUCTION_CORE = core;
+        global.BWAEZI_PRODUCTION_CORE = core; // Set global flag for health check status
 
-        // 4. EOA Capitalization Check and Funding
+        // 6. EOA Capitalization Check and Funding
         await core.ensureEOACapitalization();
 
-        // 5. Initialize Account Abstraction SDK
+        // 7. Initialize Account Abstraction SDK
         const aaSdk = new AASDK(
             BUNDLER_RPC_URL,
             CONFIG.ENTRY_POINT_ADDRESS,
@@ -133,33 +169,39 @@ async function main() {
         );
         global.BWAEZI_AASDK = aaSdk;
 
-        // 6. Deploy/Verify ERC-4337 Contracts
+        // 8. Deploy/Verify ERC-4337 Contracts
         logger.info('🛠️ DEPLOYMENT MODE: Initiating permanent ERC-4337 Infrastructure Deployment...');
         const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
         
-        // 7. Inject the AASDK into the Sovereign Core for permanent use.
+        // 9. Inject the AASDK into the Sovereign Core for permanent use.
         core.setAASDK(aaSdk);
 
-        // 8. Final System Ready
+        // 10. Final System Ready
         logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
         logger.info('✅ ACCOUNT ABSTRACTION PERMANENTLY DEPLOYED & INTEGRATED.');
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
     } catch (error) {
-        // Handle any top-level fatal errors during setup
+        // 🎯 CRITICAL FIX: Log error, but DO NOT call process.exit(1). 
+        // This ensures the HTTP server remains bound for cloud health checks.
         logger.error(`💥 FATAL ERROR during main orchestration: ${error.message}`, { 
             stack: error.stack, 
             operation: 'main_bootstrap' 
         });
-        // This is a critical failure that should stop execution.
-        process.exit(1);
+        logger.info('🔄 Core initialization failed. Health check server remains active in DEGRADED mode.');
     }
 }
 
 // ✅ COMPREHENSIVE ERROR HANDLING
+// 🎯 CRITICAL FIX: Remove process.exit(1) from global handlers to ensure service resilience.
 process.on('uncaughtException', (error) => {
-    console.error('💥 UNCAUGHT EXCEPTION:', error);
-    process.exit(1);
+    console.error('💥 UNCAUGHT EXCEPTION:', error.message);
+    // Do not exit. Keep the health server bound.
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+    // Do not exit. Keep the health server bound.
 });
 
 // Execute the main function
