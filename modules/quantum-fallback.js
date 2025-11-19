@@ -1,5 +1,5 @@
 // quantum-fallback.js — Quantum Hardware Fallback System v1.0 (Activated November 19, 2025)
-import { getGlobalLogger } from './modules/enterprise-logger/index.js';
+import { getGlobalLogger } from './enterprise-logger/index.js';
 
 export class QuantumHardwareFallback {
     constructor() {
