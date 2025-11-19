@@ -2,7 +2,8 @@
 // 🚀 PRODUCTION AA PAYMASTER SDK - LOAVES & FISHES ENGINE
 // NOVEL AI FIX: Enterprise-grade ERC-4337 functionality for permanent AA execution.
 
-import { ethers, BigNumber } from 'ethers';
+// FIX: Removed 'BigNumber' from destructuring, as it is no longer a named export.
+import { ethers } from 'ethers'; 
 import { getGlobalLogger } from './enterprise-logger/index.js';
 
 // =========================================================================
@@ -46,7 +47,7 @@ export class AASDK {
      */
     constructor(bundlerUrl, entryPointAddress, provider, signer, paymasterAddress) {
         if (!bundlerUrl || !entryPointAddress || !provider || !signer) {
-             throw new Error("AASDK CRITICAL INIT: Missing required parameters (bundlerUrl, entryPointAddress, provider, or signer)");
+            throw new Error("AASDK CRITICAL INIT: Missing required parameters (bundlerUrl, entryPointAddress, provider, or signer)");
         }
 
         this.logger = getGlobalLogger('AASDK');
@@ -103,9 +104,6 @@ export class AASDK {
         // The actual hashing and encoding must be done by the full AA-SDK library, 
         // but for a conceptual fix, we use the basic EOA sign message.
         // In a full implementation, the EntryPoint-specific hash is signed.
-        
-        // For production, we must use a bundler service that supports eth_getUserOperationHash
-        // For this fix, we simulate the required signature format:
         
         const types = { UserOperation: EIP712_USER_OPERATION_FIELDS };
         
