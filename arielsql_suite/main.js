@@ -2,39 +2,35 @@
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
 // NOVEL AI FIX: Robust AASDK integration and multi-RPC awareness.
 
-import { ethers } from 'ethers';
+// 🎯 CRITICAL FIX: Changed import to get the full namespace object for Ethers.js
+import * as ethers from 'ethers'; 
 import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
-// 🎯 CRITICAL FIX: Import all required logger utilities, including enableDatabaseLoggingSafely
 import { getGlobalLogger, EnterpriseLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
-// 🎯 CRITICAL FIX: Import the AASDK as a Class from the newly updated module
 import { AASDK } from '../modules/aa-loaves-fishes.js';
 
 // =========================================================================
 // 👑 GLOBAL CONFIGURATION
 // =========================================================================
 
-// CRITICAL FIX: Set PORT to 10000 as requested (Fallback to 3000)
 const PORT = process.env.PORT || 10000;
 const BUNDLER_RPC_URL = process.env.BUNDLER_RPC_URL || 'http://localhost:4337/rpc'; 
 
 const CONFIG = {
-    // 🎯 CRITICAL FIX: Load multiple RPCs from a comma-separated ENV variable
     MAINNET_RPC_URLS: (process.env.MAINNET_RPC_URLS || process.env.MAINNET_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo')
         .split(',')
         .map(url => url.trim())
         .filter(url => url.length > 0),
 
-    ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789', // Example EntryPoint
+    ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    AA_PAYMASTER_ADDRESS: process.env.BWAEZI_PAYMASTER_ADDRESS || '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F', // Paymaster deployed
-    SIGNER_PRIVATE_KEY: process.env.PRIVATE_KEY, // EOA Private Key
-    SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS || '0xb27309fabaa67fe783674238e82a1674681fce88', // The deployed SCW
+    AA_PAYMASTER_ADDRESS: process.env.BWAEZI_PAYMASTER_ADDRESS || '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
+    SIGNER_PRIVATE_KEY: process.env.PRIVATE_KEY,
+    SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS || '0xb27309fabaa67fe783674238e82a1674681fce88',
     
-    // Quantum/Core Config
     QUANTUM_NETWORK_ENABLED: process.env.QUANTUM_NETWORK_ENABLED === 'true',
 };
 
@@ -42,16 +38,13 @@ const CONFIG = {
 // 🌐 FAILOVER & HEALTH CHECK SYSTEM
 // =========================================================================
 
-// Use the first RPC as the primary, the rest as failover
 const PRIMARY_RPC_URL = CONFIG.MAINNET_RPC_URLS[0];
 
 function startHealthCheckServer(logger) {
     const server = http.createServer((req, res) => {
         if (req.url === '/health' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            // 🎯 FIX: Return a status that includes core orchestration health
             const healthStatus = {
-                // The core will be undefined initially, resulting in a DEGRADED status until initialized.
                 status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRAGED (Core not ready)',
                 aaEngineStatus: global.BWAEZI_AASDK ? 'ACTIVE' : 'INACTIVE',
                 timestamp: new Date().toISOString(),
@@ -78,13 +71,11 @@ async function main() {
     // 1. Initial Logger Setup (Self-Healing)
     const logger = getGlobalLogger('OptimizedSovereignCore'); 
     
-    // 🎯 CRITICAL FIX for Port Binding Timeout: Start the health check server immediately
-    // This binds the port instantly, preventing deployment failure while heavy async tasks run.
+    // GUARANTEED FAST PORT BINDING (from previous fix)
     startHealthCheckServer(logger);
 
     if (!CONFIG.SIGNER_PRIVATE_KEY) {
         logger.error('💥 FATAL ERROR during initialization/deployment: Error: PRIVATE_KEY not set in environment.');
-        // This is a critical failure that should stop execution.
         return; 
     }
 
@@ -95,8 +86,8 @@ async function main() {
         const provider = new ethers.providers.JsonRpcProvider(PRIMARY_RPC_URL);
         const wallet = new ethers.Wallet(CONFIG.SIGNER_PRIVATE_KEY, provider);
 
-        // 2. Initialize Ariel DB and Logging (ASYNC - will run in background now)
-        const db = new ArielSQLiteEngine(); // Assuming this is defined and functional
+        // 2. Initialize Ariel DB and Logging
+        const db = new ArielSQLiteEngine();
         await db.connect();
         await db.initializeSchema();
         await enableDatabaseLoggingSafely(db); 
@@ -115,7 +106,7 @@ async function main() {
         }
 
         await core.initialize();
-        global.BWAEZI_PRODUCTION_CORE = core; // Set global instance for health check to report 'OK'
+        global.BWAEZI_PRODUCTION_CORE = core;
 
         // 4. EOA Capitalization Check and Funding
         await core.ensureEOACapitalization();
@@ -128,7 +119,7 @@ async function main() {
             wallet,
             CONFIG.AA_PAYMASTER_ADDRESS
         );
-        global.BWAEZI_AASDK = aaSdk; // Set global instance for use
+        global.BWAEZI_AASDK = aaSdk;
 
         // 6. Deploy/Verify ERC-4337 Contracts
         logger.info('🛠️ DEPLOYMENT MODE: Initiating permanent ERC-4337 Infrastructure Deployment...');
@@ -143,15 +134,12 @@ async function main() {
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
     } catch (error) {
-        // Handle any top-level fatal errors during setup
         logger.error(`💥 FATAL ERROR during main orchestration: ${error.message}`, { 
             stack: error.stack, 
             operation: 'main_bootstrap' 
         });
-        // The process should likely exit and restart here
         return;
     }
-    // The server is already running, so we just exit the async function
 }
 
 // Execute the main function
