@@ -7,7 +7,7 @@ import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 // 🎯 CRITICAL FIX: Import Enterprise Logger utilities
-import { getGlobalLogger, setupGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
+import { getGlobalLogger, EnterpriseLogger } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
 // 🎯 CRITICAL FIX: Import the AASDK as a Class from the newly updated module
 import { AASDK } from '../modules/aa-loaves-fishes.js';
