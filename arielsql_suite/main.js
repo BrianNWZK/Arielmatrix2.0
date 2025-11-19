@@ -7,6 +7,8 @@ import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 import { getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js';
+// 🎯 FINAL FIX: Import the structured quantum fallback system
+import { QuantumHardwareFallback } from '../modules/quantum-fallback.js'; 
 
 // =========================================================================
 // 👑 GLOBAL CONFIGURATION
@@ -46,7 +48,8 @@ const CONFIG = {
     USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     SIGNER_PRIVATE_KEY: process.env.PRIVATE_KEY,
     
-    QUANTUM_NETWORK_ENABLED: process.env.QUANTUM_NETWORK_ENABLED === 'true',
+    // Default to true, will be set to false by QuantumFallback in cloud environment
+    QUANTUM_NETWORK_ENABLED: process.env.QUANTUM_NETWORK_ENABLED === 'true', 
 };
 
 // =========================================================================
@@ -81,6 +84,7 @@ function startHealthCheckServer() {
     });
 }
 
+
 // =========================================================================
 // 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION - RESILIENCE INTEGRATED
 // =========================================================================
@@ -101,7 +105,7 @@ async function main() {
     let wallet = null;
     let connected = false;
 
-    // ... (RPC Failover Logic is retained here) ...
+    // 3. Setup Ethers Provider with RPC Failover Logic
     try {
         for (const rpcUrl of CONFIG.MAINNET_RPC_URLS) {
             try {
@@ -127,15 +131,28 @@ async function main() {
         }
         
         // 4. Initialize Ariel DB and Logging
-        // ... (Database initialization is retained here) ...
         const db = new ArielSQLiteEngine();
         await db.connect();
         await db.initializeSchema();
         await enableDatabaseLoggingSafely(db); 
         logger.info('✅ Database logging enabled successfully');
+        
+        // =========================================================================
+        // 5. QUANTUM HARDWARE SELF-HEALING CHECK (Using new Fallback Module)
+        // =========================================================================
+        const quantumFallback = new QuantumHardwareFallback();
+        await quantumFallback.initialize(); 
+        
+        // Update CONFIG based on the check result
+        if (quantumFallback.fallbackActive) {
+            CONFIG.QUANTUM_NETWORK_ENABLED = false;
+            CONFIG.QUANTUM_SIMULATION_MODE = true;
+            logger.warn('⚠️ CORE QUANTUM MODE: Switched to Simulation Mode (QuantumFallback) to prevent hardware crash.');
+        } else {
+             CONFIG.QUANTUM_SIMULATION_MODE = false;
+        }
 
-        // 5. Initialize Production Sovereign Core
-        // ... (Core initialization is retained here) ...
+        // 6. Initialize Production Sovereign Core
         const core = new ProductionSovereignCore({
             walletAddress: wallet.address,
             ethersProvider: provider,
@@ -146,11 +163,11 @@ async function main() {
         await core.initialize();
         global.BWAEZI_PRODUCTION_CORE = core;
 
-        // 6. EOA Capitalization Check and Funding
+        // 7. EOA Capitalization Check and Funding
         await core.ensureEOACapitalization();
 
         // =========================================================================
-        // 🎯 NOVEL FIX: DEPLOYMENT RUNNER CONTROL FLOW
+        // 🎯 DEPLOYMENT RUNNER CONTROL FLOW (Now protected from quantum crash)
         // =========================================================================
         if (DEPLOYMENT_RUNNER_MODE) {
             logger.info('🛠️ DEPLOYMENT MODE ACTIVATED: Running one-time Paymaster deployment.');
@@ -167,12 +184,12 @@ async function main() {
             process.exit(0); 
         } 
         
-        // NORMAL ORCHESTRATION FLOW (Runs after successful deployment)
+        // NORMAL ORCHESTRATION FLOW 
         if (!CONFIG.AA_PAYMASTER_ADDRESS || !CONFIG.SMART_ACCOUNT_ADDRESS) {
             throw new Error("CRITICAL: AA Paymaster/SCW addresses are missing. Run in DEPLOYMENT_RUNNER_MODE first.");
         }
 
-        // 7. Initialize Account Abstraction SDK with the deployed addresses
+        // 8. Initialize Account Abstraction SDK with the deployed addresses
         const aaSdk = new AASDK(
             BUNDLER_RPC_URL,
             CONFIG.ENTRY_POINT_ADDRESS,
@@ -182,20 +199,22 @@ async function main() {
         );
         global.BWAEZI_AASDK = aaSdk;
         
-        // 8. Inject the AASDK into the Sovereign Core for permanent use.
+        // 9. Inject the AASDK into the Sovereign Core for permanent use.
         core.setAASDK(aaSdk);
 
-        // 9. Final System Ready
+        // 10. Final System Ready
         logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
     } catch (error) {
-        logger.error(`💥 FATAL ERROR during main orchestration: ${error.message}`);
+        logger.error(`💥 FATAL ERROR during main orchestration: ${error.message}`, {
+             stack: error.stack
+        });
         logger.info('🔄 Core initialization failed. Health check server remains active in DEGRADED mode.');
     }
 }
 
-// ... (Error handling remains) ...
+// ✅ COMPREHENSIVE ERROR HANDLING
 process.on('uncaughtException', (error) => {
     console.error('💥 UNCAUGHT EXCEPTION:', error.message);
 });
