@@ -1,6 +1,6 @@
 # --- STAGE 1: Dependency Installer ---
 # FIX: Switching to the stable Node.js LTS major version (20-slim) to resolve
-#      the previous I/O timeout and the 'not found' error.
+#      the previous I/O timeout and the 'not found' errors.
 FROM node:20-slim AS builder
 
 WORKDIR /usr/src/app
@@ -31,34 +31,38 @@ COPY package.json package-lock.json* ./
 COPY modules/pqc-dilithium ./modules/pqc-dilithium
 COPY modules/pqc-kyber ./modules/pqc-kyber
 
-# Remove stubbed dependencies from package.json
+# Remove stubbed dependencies from package.json (All original logic preserved)
 RUN sed -i '/"ai-security-module"/d' package.json \
   && sed -i '/"omnichain-interoperability"/d' package.json \
   && sed -i '/"infinite-scalability-engine"/d' package.json \
   && sed -i '/"carbon-negative-consensus"/d' package.json \
   && sed -i '/"ariel-sqlite-engine"/d' package.json
 
-# Install dependencies with fallback
+# Install dependencies with fallback (Original logic preserved)
 RUN if [ -f package-lock.json ]; then \
       npm ci --legacy-peer-deps --no-audit --no-fund --prefer-offline || \
       npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline; \
     fi
 
-# Remove problematic modules
+# 🎯 CRITICAL FIX: Guaranteed installation for web3 and axios.
+# This ensures critical modules are present, solving the "web3 missing" error.
+RUN npm install web3 axios --no-audit --no-fund --legacy-peer-deps
+
+# Remove problematic modules (Original logic preserved)
 RUN rm -rf node_modules/@tensorflow node_modules/sqlite3 node_modules/.cache 2>/dev/null || true
 
-# Verify critical modules
+# Verify critical modules (Now guaranteed to pass)
 RUN npm list web3 || (echo "❌ web3 missing" && exit 1)
 RUN npm list axios || (echo "❌ axios missing" && exit 1)
 
-# Copy full project
+# Copy full project (Original logic preserved)
 COPY . .
 
-# Run build script
+# Run build script (Original logic preserved)
 RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 # --- STAGE 2: Final Image ---
-# FIX: Applying the same LTS version to the final stage image.
+# FIX: Must match the builder image tag (node:20-slim)
 FROM node:20-slim AS final
 
 WORKDIR /usr/src/app
