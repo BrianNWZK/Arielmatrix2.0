@@ -1,5 +1,7 @@
 # --- STAGE 1: Dependency Installer ---
-FROM node:22-slim AS builder
+# FIX: Using a specific version tag (22.2.1) instead of the generic '22-slim'
+#      to bypass the I/O timeout error and force a fresh image pull.
+FROM node:22.2.1-slim AS builder
 
 WORKDIR /usr/src/app
 
@@ -31,10 +33,10 @@ COPY modules/pqc-kyber ./modules/pqc-kyber
 
 # Remove stubbed dependencies from package.json
 RUN sed -i '/"ai-security-module"/d' package.json \
- && sed -i '/"omnichain-interoperability"/d' package.json \
- && sed -i '/"infinite-scalability-engine"/d' package.json \
- && sed -i '/"carbon-negative-consensus"/d' package.json \
- && sed -i '/"ariel-sqlite-engine"/d' package.json
+  && sed -i '/"omnichain-interoperability"/d' package.json \
+  && sed -i '/"infinite-scalability-engine"/d' package.json \
+  && sed -i '/"carbon-negative-consensus"/d' package.json \
+  && sed -i '/"ariel-sqlite-engine"/d' package.json
 
 # Install dependencies with fallback
 RUN if [ -f package-lock.json ]; then \
@@ -58,7 +60,8 @@ COPY . .
 RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 # --- STAGE 2: Final Image ---
-FROM node:22-slim AS final
+# FIX: Applying the same version change to the final stage image.
+FROM node:22.2.1-slim AS final
 
 WORKDIR /usr/src/app
 
