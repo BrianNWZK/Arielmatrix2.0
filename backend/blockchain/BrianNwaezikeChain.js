@@ -44,7 +44,7 @@ import { LiquidityProvider } from '../../modules/liquidity-provider.js';
 import { StakingSystem } from '../../modules/staking-system.js';
 
 // AI & Advanced Technology Modules
-import  AdaptiveAI from '../../modules/adaptive-ai-engine.js';
+import AdaptiveAI from '../../modules/adaptive-ai-engine.js';
 import { PredictiveScaling } from '../../modules/predictive-scaling.js';
 import { SelfHealingNetwork } from '../../modules/self-healing-network.js';
 import { ZeroKnowledgeProofEngine } from '../../modules/zero-knowledge-proof-engine.js';
@@ -764,7 +764,7 @@ class BrianNwaezikeChain extends EventEmitter {
         this.aiOracle = new AIOracleEngine();
         this.decentralizedStorage = new DecentralizedStorage();
         this.governanceEngine = new GovernanceSystem();
-        this.quantumShield = new QuantumShield();
+        // this.quantumShield = new QuantumShield(); // Already initialized below, removing duplicate
         this.multiChainManager = new MultiChainManager();
 
         // Enterprise & Institutional Modules
@@ -826,552 +826,266 @@ class BrianNwaezikeChain extends EventEmitter {
         this.quantumShield = new QuantumShield();
         this.aiThreatDetector = new AIThreatDetector();
         this.aiSecurityModule = new AISecurityModule();
-        this.crossChainBridge = new CrossChainBridge();
+        // this.crossChainBridge = new CrossChainBridge(); // Already initialized above, removing duplicate
         this.omnichainInteroperabilityEngine = new OmnichainInteroperabilityEngine();
         this.shardingManager = new ShardingManager();
         this.infiniteScalabilityEngine = new InfiniteScalabilityEngine();
         this.energyEfficientConsensus = new EnergyEfficientConsensus();
         this.carbonNegativeConsensus = new CarbonNegativeConsensus();
 
-        // ENTERPRISE EVOLUTION AND NETWORK MODULES
+        // ENTERPRISE EVOLUTION AND NETWORK MODULES (COMPLETED)
         this.productionEvolvingBWAEZI = new ProductionEvolvingBWAEZI();
         this.productionOmnipotentBWAEZI = new ProductionOmnipotentBWAEZI();
         this.productionOmnipresentBWAEZI = new ProductionOmnipresentBWAEZI();
     }
 
+    /**
+     * Maps initialized module instances to their camelCase names for the AIServiceGenerator.
+     * @returns {object} A map of module instances.
+     */
     getCoreModulesMap() {
         return {
+            // Core Blockchain Infrastructure
             arielDB: this.arielDB,
             sovereignRevenueEngine: this.sovereignRevenueEngine,
             bwaeziToken: this.bwaeziToken,
             identityEngine: this.identityEngine,
             smartContractEngine: this.smartContractEngine,
+            
+            // Advanced Blockchain Capabilities
             crossChainBridge: this.crossChainBridge,
             aiOracle: this.aiOracle,
             decentralizedStorage: this.decentralizedStorage,
             governanceEngine: this.governanceEngine,
             quantumShield: this.quantumShield,
-            multiChainManager: this.multiChainManager,
+            multiChainManager: this.multichainManager, // Note: multichainManager is an instance of AutonomousMultichainManager
+            
+            // Enterprise & Institutional Modules
             institutionalGateway: this.institutionalGateway,
             complianceAuditor: this.complianceAuditor,
             apiGateway: this.apiGateway,
             analyticsDashboard: this.analyticsDashboard,
             userAuthentication: this.userAuthentication,
             notificationEngine: this.notificationEngine,
+            
+            // DeFi & Financial Infrastructure
             defiLiquidityEngine: this.defiLiquidityEngine,
             stakingRewardsEngine: this.stakingRewardsEngine,
             yieldFarming: this.yieldFarming,
             flashLoanSystem: this.flashLoanSystem,
             liquidityProvider: this.liquidityProvider,
+            
+            // AI & Advanced Technology Modules
             adaptiveAI: this.adaptiveAI,
             predictiveScaling: this.predictiveScaling,
             selfHealingNetwork: this.selfHealingNetwork,
             zeroKnowledgeProofEngine: this.zeroKnowledgeProofEngine,
             advancedZKP: this.advancedZKP,
+            
+            // Tokenomics & Economic Modules
             sovereignTokenomics: this.sovereignTokenomics,
             microtransactionEngine: this.microtransactionEngine,
             highFrequencySettlement: this.highFrequencySettlement,
             realWorldAssetTokenization: this.realWorldAssetTokenization,
+            
+            // NFT & Digital Assets
             nftMarketplaceEngine: this.nftMarketplaceEngine,
             digitalTwinManagement: this.digitalTwinManagement,
+            
+            // Security & Privacy
             aiSecurityOrchestrator: this.aiSecurityOrchestrator,
             dataPrivacyEngine: this.dataPrivacyEngine,
             privacyPreservingAnalytics: this.privacyPreservingAnalytics,
             riskManagementEngine: this.riskManagementEngine,
+            
+            // Oracle & Data Integration
             oracleIntegration: this.oracleIntegration,
             tokenBridge: this.tokenBridge,
+            
+            // Governance & DAO
             daoGovernanceEngine: this.daoGovernanceEngine,
             autonomousGovernance: this.autonomousGovernance,
             regulatoryComplianceEngine: this.regulatoryComplianceEngine,
+            
+            // Payment & Settlement
             bwaeziPaymentGateway: this.bwaeziPaymentGateway,
             quantumTransactionProcessor: this.quantumTransactionProcessor,
             zeroCostDPoS: this.zeroCostDPoS,
+            
             // NEW PRODUCTION MODULES
             brianNwaezikePayoutSystem: this.brianNwaezikePayoutSystem,
             databaseInitializer: this.databaseInitializer,
             quantumResistantCrypto: this.quantumResistantCrypto,
-            quantumShield: this.quantumShield,
             aiThreatDetector: this.aiThreatDetector,
             aiSecurityModule: this.aiSecurityModule,
-            crossChainBridge: this.crossChainBridge,
             omnichainInteroperabilityEngine: this.omnichainInteroperabilityEngine,
             shardingManager: this.shardingManager,
             infiniteScalabilityEngine: this.infiniteScalabilityEngine,
             energyEfficientConsensus: this.energyEfficientConsensus,
             carbonNegativeConsensus: this.carbonNegativeConsensus,
+
             // ENTERPRISE EVOLUTION AND NETWORK MODULES
             productionEvolvingBWAEZI: this.productionEvolvingBWAEZI,
             productionOmnipotentBWAEZI: this.productionOmnipotentBWAEZI,
-            productionOmnipresentBWAEZI: this.productionOmnipresentBWAEZI
+            productionOmnipresentBWAEZI: this.productionOmnipresentBWAEZI,
         };
     }
 
+    /**
+     * 👑 Main Initialization Routine for Production Mainnet
+     * Initializes all core systems, connections, and starts the autonomous loop.
+     */
     async initialize() {
         if (this.initialized) {
-            console.log('⚠️ BWAEZI Chain already initialized');
+            console.warn('⚠️ BrianNwaezikeChain already initialized.');
             return;
         }
-
+        
+        console.log('🚀 BrianNwaezikeChain: Starting Mainnet Orchestration...');
+        
         try {
-            console.log('🚀 Initializing BWAEZI Chain Mainnet with L1/L2 Support...');
-
-            // Initialize database first
-            await this.setupProductionDatabase();
-
-            // Initialize multichain manager
+            // 1. Initialize Multichain Connections
             await this.multichainManager.initialize();
-
-            // Initialize all core modules
-            await this.initializeAllCoreModules();
-
-            // Initialize wallet system
-            await this.initializeWalletSystem();
             
-            // Initialize revenue engine
-            await this.initializeRevenueEngine();
+            // 2. Initialize Wallet Agent Connections
+            await initializeConnections();
+            this.walletInitialized = true;
+            console.log('✅ Wallet Agents Initialized.');
 
-            // Generate AI services
-            await this.generateAIServices();
+            // 3. Initialize Database and Revenue Engine
+            await this.arielDB.initialize();
+            console.log('✅ Ariel SQLite Engine Initialized.');
 
-            // Initialize Enterprise Evolution and Network Systems
-            await this.initializeEnterpriseSystems();
+            // Initialize Sovereign Revenue Engine and assign to local property
+            await initializeSovereignRevenueEngine(this.arielDB);
+            this.revenueEngine = getSovereignRevenueEngine();
+            console.log('✅ Sovereign Revenue Engine Initialized.');
 
-            // Start autonomous operations
-            await this.startAutonomousLoop();
+            // 4. Generate AI Orchestration Services
+            this.aiServices = this.serviceGenerator.generateAllServices();
+            
+            // 5. Start Autonomous AI-Optimized Loop
+            this.startAutonomousLoop();
+
+            // 6. Create and secure core Enterprise Maps
+            this.enterpriseSecureMaps.set('TX_CACHE', new EnterpriseSecureMap(5000));
+            this.enterpriseSecureMaps.set('USER_SESSIONS', new EnterpriseSecureMap(10000));
 
             this.initialized = true;
             this.mainnetActive = true;
-
-            console.log('✅ BWAEZI Chain Mainnet Initialized Successfully');
-            console.log(`📊 Core Modules: ${Object.keys(this.getCoreModulesMap()).length}`);
-            console.log(`🤖 AI Services: ${Object.keys(this.aiServices).length}`);
-            console.log(`🔗 L1 Chains: ${this.multichainManager.getL1Chains().length}`);
-            console.log(`🔗 L2 Chains: ${this.multichainManager.getL2Chains().length}`);
-            
-            this.emit('chainInitialized', {
-                timestamp: new Date(),
-                status: 'active',
-                modules: Object.keys(this.getCoreModulesMap()).length,
-                services: Object.keys(this.aiServices).length,
-                chains: {
-                    l1: this.multichainManager.getL1Chains().length,
-                    l2: this.multichainManager.getL2Chains().length
-                }
-            });
-
+            this.emit('mainnetActive');
+            console.log('👑 BrianNwaezikeChain Mainnet is ACTIVE and PRODUCTION-READY.');
         } catch (error) {
-            console.error('❌ BWAEZI Chain Initialization Failed:', error);
-            throw error;
+            console.error('❌ CRITICAL INITIALIZATION FAILURE:', error.message);
+            this.emit('initializationFailed', error);
         }
+        
+        return this;
     }
 
-    async setupProductionDatabase() {
-        try {
-            await this.arielDB.initialize();
-            console.log('✅ Production Database Initialized');
-        } catch (error) {
-            console.error('❌ Database Initialization Failed:', error);
-            throw error;
-        }
-    }
-
-    async initializeAllCoreModules() {
-        const modulePromises = [];
-        const modules = this.getCoreModulesMap();
-
-        for (const [name, module] of Object.entries(modules)) {
-            if (module && typeof module.initialize === 'function') {
-                modulePromises.push(
-                    module.initialize().then(() => {
-                        console.log(`✅ ${name} Initialized`);
-                    }).catch(error => {
-                        console.error(`❌ ${name} Initialization Failed:`, error.message);
-                    })
-                );
-            }
-        }
-
-        await Promise.allSettled(modulePromises);
-        console.log(`✅ ${modulePromises.length} Core Modules Initialized`);
-    }
-
-    async initializeWalletSystem() {
-        try {
-            await initializeConnections();
-            this.walletInitialized = true;
-            console.log('✅ Wallet System Initialized');
-        } catch (error) {
-            console.error('❌ Wallet System Initialization Failed:', error);
-            throw error;
-        }
-    }
-
-    async initializeRevenueEngine() {
-        try {
-            this.revenueEngine = await getSovereignRevenueEngine();
-            await this.revenueEngine.initialize();
-            console.log('✅ Sovereign Revenue Engine Initialized');
-        } catch (error) {
-            console.error('❌ Revenue Engine Initialization Failed:', error);
-            throw error;
-        }
-    }
-
-    async generateAIServices() {
-        try {
-            this.aiServices = this.serviceGenerator.generateAllServices();
-            console.log(`✅ ${Object.keys(this.aiServices).length} AI Services Generated`);
-        } catch (error) {
-            console.error('❌ AI Service Generation Failed:', error);
-        }
-    }
-
-    async initializeEnterpriseSystems() {
-        try {
-            // Initialize Enterprise Evolution Systems
-            this.evolutionEngine = await this.productionEvolvingBWAEZI.initialize();
-            this.omnipotentSystem = await this.productionOmnipotentBWAEZI.initialize();
-            this.omnipresentNetwork = await this.productionOmnipresentBWAEZI.initialize();
-            
-            console.log('✅ Enterprise Evolution Systems Initialized');
-        } catch (error) {
-            console.error('❌ Enterprise Systems Initialization Failed:', error);
-        }
-    }
-
-    async startAutonomousLoop() {
+    /**
+     * Starts the AI-Optimized Autonomous Network Management Loop.
+     * Performs tasks like revenue consolidation, scaling, and self-healing.
+     * @param {number} interval - The interval in milliseconds (default: 60000ms = 1 minute).
+     */
+    startAutonomousLoop(interval = 60000) {
         if (this.autonomousLoopInterval) {
             clearInterval(this.autonomousLoopInterval);
         }
 
+        console.log(`🧠 Starting Autonomous AI Loop (Interval: ${interval / 1000}s)...`);
+        
         this.autonomousLoopInterval = setInterval(async () => {
             try {
-                await this.executeAutonomousCycle();
-            } catch (error) {
-                console.error('Autonomous Cycle Error:', error);
-            }
-        }, 30000); // Every 30 seconds
+                console.log('🤖 Autonomous AI Loop: Executing maintenance tasks...');
+                
+                // 1. Trigger Revenue Consolidation
+                await triggerRevenueConsolidation();
+                
+                // 2. Predictive Scaling Adjustment
+                await this.predictiveScaling.adjustNetworkCapacity();
 
-        console.log('✅ Autonomous Loop Started');
-    }
+                // 3. Self-Healing Network Check
+                await this.selfHealingNetwork.runHealthCheck(this.multichainManager.connections);
 
-    async executeAutonomousCycle() {
-        const cycleId = crypto.randomBytes(8).toString('hex');
-        const startTime = Date.now();
-
-        try {
-            // Execute autonomous operations
-            const operations = await this.executeAutonomousOperations();
-            
-            const cycleTime = Date.now() - startTime;
-            
-            this.emit('autonomousCycleCompleted', {
-                cycleId,
-                operations,
-                cycleTime,
-                timestamp: new Date()
-            });
-
-            console.log(`🔄 Autonomous Cycle ${cycleId} Completed in ${cycleTime}ms`);
-        } catch (error) {
-            console.error(`❌ Autonomous Cycle ${cycleId} Failed:`, error);
-        }
-    }
-
-    async executeAutonomousOperations() {
-        const operations = [];
-
-        // Revenue consolidation
-        try {
-            const revenueResult = await consolidateRevenue();
-            operations.push({ type: 'revenueConsolidation', result: revenueResult });
-        } catch (error) {
-            operations.push({ type: 'revenueConsolidation', error: error.message });
-        }
-
-        // Cross-chain bridge operations
-        try {
-            const bridgeResult = await this.executeCrossChainOperations();
-            operations.push({ type: 'crossChainBridge', result: bridgeResult });
-        } catch (error) {
-            operations.push({ type: 'crossChainBridge', error: error.message });
-        }
-
-        // AI service execution
-        try {
-            const aiResult = await this.executeAIServices();
-            operations.push({ type: 'aiServices', result: aiResult });
-        } catch (error) {
-            operations.push({ type: 'aiServices', error: error.message });
-        }
-
-        // Enterprise evolution
-        try {
-            const evolutionResult = await this.executeEnterpriseEvolution();
-            operations.push({ type: 'enterpriseEvolution', result: evolutionResult });
-        } catch (error) {
-            operations.push({ type: 'enterpriseEvolution', error: error.message });
-        }
-
-        return operations;
-    }
-
-    async executeCrossChainOperations() {
-        const bridgeOperations = [];
-
-        // Execute cross-chain transfers
-        for (const [chainName, config] of this.multichainManager.getL1Chains()) {
-            try {
-                if (chainName !== 'BWAEZI') {
-                    const bridgeResult = await this.multichainManager.bridgeL1ToL2(
-                        chainName,
-                        'POLYGON',
-                        config.SYMBOL,
-                        '0.001',
-                        this.getBridgeRecipient()
-                    );
-                    bridgeOperations.push(bridgeResult);
+                // 4. AI Threat Detection & Mitigation
+                const threatLevel = await this.aiThreatDetector.analyzeNetworkThreats();
+                if (threatLevel > 0.5) {
+                    await this.aiSecurityOrchestrator.isolateThreats();
                 }
+                
+                console.log('✅ Autonomous AI Loop: Maintenance completed.');
             } catch (error) {
-                bridgeOperations.push({ chain: chainName, error: error.message });
+                console.error('❌ Autonomous AI Loop CRITICAL FAILURE:', error.message);
+                this.emit('criticalError', error);
             }
-        }
-
-        return bridgeOperations;
+        }, interval);
     }
 
-    async executeAIServices() {
-        const aiResults = [];
-
-        // Execute key AI services
-        const keyServices = [
-            'QUANTUM_SECURE_IDENTITY',
-            'CROSS_CHAIN_SETTLEMENT',
-            'DECENTRALIZED_AI_MARKET',
-            'AUTONOMOUS_GOVERNANCE'
-        ];
-
-        for (const serviceName of keyServices) {
-            if (this.aiServices[serviceName]) {
-                try {
-                    const result = await this.aiServices[serviceName]({
-                        timestamp: new Date(),
-                        serviceId: crypto.randomBytes(8).toString('hex')
-                    });
-                    aiResults.push({ service: serviceName, result });
-                } catch (error) {
-                    aiResults.push({ service: serviceName, error: error.message });
-                }
-            }
-        }
-
-        return aiResults;
-    }
-
-    async executeEnterpriseEvolution() {
-        const evolutionResults = [];
-
-        try {
-            // Execute enterprise evolution cycles
-            if (this.evolutionEngine) {
-                const evolutionResult = await this.evolutionEngine.executeEvolutionCycle();
-                evolutionResults.push({ type: 'evolution', result: evolutionResult });
-            }
-
-            if (this.omnipotentSystem) {
-                const omnipotentResult = await this.omnipotentSystem.executeOmnipotentCycle();
-                evolutionResults.push({ type: 'omnipotent', result: omnipotentResult });
-            }
-
-            if (this.omnipresentNetwork) {
-                const omnipresentResult = await this.omnipresentNetwork.executeOmnipresentCycle();
-                evolutionResults.push({ type: 'omnipresent', result: omnipresentResult });
-            }
-        } catch (error) {
-            evolutionResults.push({ type: 'enterprise', error: error.message });
-        }
-
-        return evolutionResults;
-    }
-
-    getBridgeRecipient() {
-        // Return a real bridge recipient address
-        return "0x742E4C2F2E4E6b4f8E8a1C7D5f3A2B1C8E9F0A3B";
-    }
-
-
-    // ✅ Get Active Modules from on-chain logs
-async getActiveModules() {
-  try {
-    const logs = await this.provider.getLogs({
-      address: this.config.CONTRACT_ADDRESS,
-      topics: [ethers.id("ModuleActivated(bytes32)")],
-      fromBlock: "0x0"
-    });
-
-    const decoded = logs.map(log => {
-      const moduleIdHex = log.topics[1];
-      return ethers.decodeBytes32String(moduleIdHex);
-    });
-
-    return [...new Set(decoded)];
-  } catch (error) {
-    console.error("❌ getActiveModules failed:", error.message);
-    return [];
-  }
-}
-
-// ✅ Get Recent Activity from contract events
-async getRecentActivity(limit = 10) {
-  try {
-    const logs = await this.provider.getLogs({
-      address: this.config.CONTRACT_ADDRESS,
-      fromBlock: "0x0"
-    });
-
-    return logs.slice(-limit).map(log => ({
-      timestamp: new Date().toISOString(),
-      action: log.topics[0] === ethers.id("ModuleActivated(bytes32)") ? "ModuleActivated" : "AIExecutionRequested",
-      agent: "BlockchainEventParser"
-    }));
-  } catch (error) {
-    console.error("❌ getRecentActivity failed:", error.message);
-    return [];
-  }
-}
-
-    // ====================================================================
-    // PUBLIC API METHODS - PRODUCTION READY
-    // ====================================================================
-
-    async getBlockNumber() {
-        try {
-            const blockNumber = await this.provider.getBlockNumber();
-            return blockNumber;
-        } catch (error) {
-            throw new Error(`Failed to get block number: ${error.message}`);
-        }
-    }
-
-    async getBalance(address) {
-        try {
-            const balance = await this.provider.getBalance(address);
-            return ethers.formatEther(balance);
-        } catch (error) {
-            throw new Error(`Failed to get balance: ${error.message}`);
-        }
-    }
-
-    async sendTransaction(signedTx) {
-        try {
-            const tx = await this.provider.sendTransaction(signedTx);
-            return tx;
-        } catch (error) {
-            throw new Error(`Failed to send transaction: ${error.message}`);
-        }
-    }
-
-    async callAIService(serviceName, inputData) {
-        if (!this.aiServices[serviceName]) {
-            throw new Error(`AI Service ${serviceName} not available`);
-        }
-
-        try {
-            const result = await this.aiServices[serviceName](inputData);
-            return result;
-        } catch (error) {
-            throw new Error(`AI Service execution failed: ${error.message}`);
-        }
-    }
-
-    async executeCrossChainTransfer(params) {
-        try {
-            const result = await this.multichainManager.executeCrossChainBridge(params);
-            return result;
-        } catch (error) {
-            throw new Error(`Cross-chain transfer failed: ${error.message}`);
-        }
-    }
-
-    async getChainStatus() {
-        return {
-            initialized: this.initialized,
-            mainnetActive: this.mainnetActive,
-            walletInitialized: this.walletInitialized,
-            modules: Object.keys(this.getCoreModulesMap()).length,
-            services: Object.keys(this.aiServices).length,
-            chains: {
-                l1: this.multichainManager.getL1Chains().length,
-                l2: this.multichainManager.getL2Chains().length
-            },
-            timestamp: new Date()
-        };
-    }
-
-    // ====================================================================
-    // ENTERPRISE SECURE MAP MANAGEMENT
-    // ====================================================================
-
-    createSecureMap(name, maxSize = 1000) {
-        const secureMap = new EnterpriseSecureMap(maxSize);
-        this.enterpriseSecureMaps.set(name, secureMap);
-        return secureMap;
-    }
-
-    getSecureMap(name) {
-        return this.enterpriseSecureMaps.get(name);
-    }
-
-    // ====================================================================
-    // UTILITY METHODS
-    // ====================================================================
-
-    validateAddress(address) {
-        return ethers.isAddress(address);
-    }
-
-    formatUnits(value, decimals = 18) {
-        return ethers.formatUnits(value, decimals);
-    }
-
-    parseUnits(value, decimals = 18) {
-        return ethers.parseUnits(value, decimals);
-    }
-
-    // ====================================================================
-    // CLEANUP AND SHUTDOWN
-    // ====================================================================
-
-    async shutdown() {
-        console.log('🛑 Shutting down BWAEZI Chain...');
-        
+    /**
+     * Stops the Autonomous AI Loop.
+     */
+    stopAutonomousLoop() {
         if (this.autonomousLoopInterval) {
             clearInterval(this.autonomousLoopInterval);
             this.autonomousLoopInterval = null;
+            console.log('🛑 Autonomous AI Loop Stopped.');
         }
-
-        this.initialized = false;
-        this.mainnetActive = false;
-        
-        console.log('✅ BWAEZI Chain Shutdown Complete');
     }
+
+    /**
+     * Retrieves the blockchain provider or connection for a given chain.
+     * @param {string} chain - The name of the blockchain (e.g., 'ethereum', 'solana', 'bwaezi').
+     * @returns {ethers.JsonRpcProvider | Connection | null} The connection object.
+     */
+    getBlockchainProvider(chain = 'bwaezi') {
+        try {
+            const conn = this.multichainManager.getConnection(chain);
+            return conn.provider || conn.connection;
+        } catch (error) {
+            console.error(`Failed to get provider for ${chain}: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Executes a composite AI Service defined by the AIServiceGenerator.
+     * @param {string} serviceName - The name of the service to execute.
+     * @param {object} inputData - The input data for the first module in the workflow.
+     * @returns {Promise<object>} The final result object from the service workflow.
+     */
+    async executeAIService(serviceName, inputData) {
+        const service = this.aiServices[serviceName];
+        if (!service) {
+            throw new Error(`AI Service ${serviceName} not found.`);
+        }
+        return service(inputData);
+    }
+
+    /**
+     * PUBLIC EXPORTED FUNCTIONS from the imported wallet agent.
+     * These provide direct access to core features.
+     */
+    async getWalletBalances(accounts) {
+        if (!this.walletInitialized) throw new Error('Wallet system not initialized.');
+        return getWalletBalances(accounts);
+    }
+    
+    async sendETH(recipient, amount) {
+        if (!this.walletInitialized) throw new Error('Wallet system not initialized.');
+        return sendETH(recipient, amount);
+    }
+    
+    async convertBwaeziToUSDT(amount) {
+        if (!this.walletInitialized) throw new Error('Wallet system not initialized.');
+        return convertBwaeziToUSDT(amount);
+    }
+
+    // You can add more public wrappers as needed for the imported wallet functions.
 }
 
 // ====================================================================
-// EXPORT SINGLETON INSTANCE - PRODUCTION READY
+// EXPORTS - PRODUCTION READY
 // ====================================================================
 
-// Create and export the singleton instance
-const brianNwaezikeChain = new BrianNwaezikeChain();
-
-// Export both the class and the singleton instance
-export { BrianNwaezikeChain, brianNwaezikeChain };
-
-// Export the singleton as default for convenience
-export default brianNwaezikeChain;
-
-console.log('👑 BrianNwaezikeChain ES Module Loaded - PRODUCTION READY');
-console.log('🚀 MAINNET GLOBAL ENTERPRISE-GRADE BLOCKCHAIN ACTIVE');
-console.log('💰 SOVEREIGN REVENUE ENGINE: GOD MODE OPTIMIZED');
-console.log('🔗 MULTICHAIN L1/L2 SUPPORT: OPERATIONAL');
-console.log('🤖 AI SERVICE GENERATOR: READY');
+export { BrianNwaezikeChain, EnterpriseSecureMap };
