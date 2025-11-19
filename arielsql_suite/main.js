@@ -7,7 +7,6 @@ import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 import { getGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js';
-// 🎯 FINAL FIX: Import the structured quantum fallback system
 import { QuantumHardwareFallback } from '../modules/quantum-fallback.js'; 
 
 // =========================================================================
@@ -16,13 +15,11 @@ import { QuantumHardwareFallback } from '../modules/quantum-fallback.js';
 
 const PORT = process.env.PORT || 10000;
 const BUNDLER_RPC_URL = process.env.BUNDLER_RPC_URL || 'http://localhost:4337/rpc'; 
-const RPC_TIMEOUT_MS = parseInt(process.env.RPC_TIMEOUT_MS) || 10000; // 10 seconds timeout
+const RPC_TIMEOUT_MS = parseInt(process.env.RPC_TIMEOUT_MS) || 10000; 
 
-// 🎯 NOVEL FIX: Use this environment variable to run the script once for deployment only
 const DEPLOYMENT_RUNNER_MODE = process.env.DEPLOYMENT_RUNNER_MODE === 'true';
 
 const CONFIG = {
-    // CRITICAL: Ensure this array has multiple RPC URLs for failover
     MAINNET_RPC_URLS: (process.env.MAINNET_RPC_URLS || process.env.MAINNET_RPC_URL || 'https://rpc.ankr.com/eth,https://eth-mainnet.g.alchemy.com/v2/demo,https://eth.public-rpc.com')
         .split(',')
         .map(url => url.trim())
@@ -31,36 +28,27 @@ const CONFIG = {
     // =========================================================================
     // 🎯 CRITICAL FINAL DEPLOYMENT ADDRESSES (FIXED)
     // =========================================================================
-    // CRITICAL FIX: The newly deployed, capitalized token contract.
-    BWAEZI_TOKEN_ADDRESS: process.env.BWAEZI_TOKEN_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
+    // CRITICAL FIX: Ensure BWAEZI_TOKEN_ADDRESS is never an empty string
+    BWAEZI_TOKEN_ADDRESS: (process.env.BWAEZI_TOKEN_ADDRESS && process.env.BWAEZI_TOKEN_ADDRESS.length > 0) 
+        ? process.env.BWAEZI_TOKEN_ADDRESS 
+        : '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
     
-    // Addresses required for the BWAEZIPaymaster constructor
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
     BWAEZI_WETH_FEE: parseInt(process.env.BWAEZI_WETH_FEE) || 3000, 
 
-    // Addresses to be read from ENV or set after deployment
     AA_PAYMASTER_ADDRESS: process.env.BWAEZI_PAYMASTER_ADDRESS, 
     SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS,
     // =========================================================================
 
     USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     SIGNER_PRIVATE_KEY: process.env.PRIVATE_KEY,
-    
-    // Default to true, will be set to false by QuantumFallback in cloud environment
     QUANTUM_NETWORK_ENABLED: process.env.QUANTUM_NETWORK_ENABLED === 'true', 
 };
 
-// =========================================================================
-// 🌐 IMMEDIATE FAILOVER & HEALTH CHECK SYSTEM (Decoupled from Logger)
-// =========================================================================
-
-/**
- * Starts the health check server immediately, using console for initial logging.
- */
+// ... (startHealthCheckServer is retained) ...
 function startHealthCheckServer() {
-    // Only start the HTTP server if we are NOT in deployment mode
     if (DEPLOYMENT_RUNNER_MODE) return; 
     
     const server = http.createServer((req, res) => {
@@ -86,7 +74,7 @@ function startHealthCheckServer() {
 
 
 // =========================================================================
-// 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION - RESILIENCE INTEGRATED
+// 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION - ISOLATED DEPLOYMENT
 // =========================================================================
 
 async function main() {
@@ -107,6 +95,7 @@ async function main() {
 
     // 3. Setup Ethers Provider with RPC Failover Logic
     try {
+        // ... (RPC Failover logic is retained and ensures 'provider' and 'wallet' are set) ...
         for (const rpcUrl of CONFIG.MAINNET_RPC_URLS) {
             try {
                 logger.info(`🔄 Attempting to connect to RPC: ${rpcUrl}`);
@@ -130,6 +119,32 @@ async function main() {
             throw new Error("CRITICAL SYSTEM FAILURE: All configured RPC endpoints failed to connect or timed out.");
         }
         
+        // =========================================================================
+        // 🎯 CRITICAL FIX: DEPLOYMENT RUNNER CONTROL FLOW IS NOW ISOLATED
+        // =========================================================================
+        if (DEPLOYMENT_RUNNER_MODE) {
+            logger.info('🛠️ ISOLATED DEPLOYMENT MODE ACTIVATED: Running Paymaster deployment only.');
+            
+            // ⚠️ NOTE: We skip Core and Quantum initialization to avoid crash,
+            // as they are not needed for deployment.
+
+            const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
+            
+            logger.info('🎉 DEPLOYMENT SUCCESS: Paymaster and SCW Addresses captured.');
+            logger.info(`✅ PAYMASTER DEPLOYED ADDRESS: ${deploymentResult.paymasterAddress}`);
+            logger.info(`✅ SCW COUNTERFACTUAL ADDRESS: ${deploymentResult.smartAccountAddress}`);
+            logger.info('========================================================================');
+            logger.info('⚠️ CRITICAL NEXT STEP: Manually update your environment variables and transfer 100,000,000 BWAEZI to the SCW ADDRESS printed above.');
+            logger.info('========================================================================');
+            
+            // Exit immediately after printing the addresses
+            process.exit(0); 
+        } 
+        
+        // =========================================================================
+        // NORMAL ORCHESTRATION FLOW (ONLY RUNS AFTER DEPLOYMENT)
+        // =========================================================================
+        
         // 4. Initialize Ariel DB and Logging
         const db = new ArielSQLiteEngine();
         await db.connect();
@@ -137,13 +152,10 @@ async function main() {
         await enableDatabaseLoggingSafely(db); 
         logger.info('✅ Database logging enabled successfully');
         
-        // =========================================================================
-        // 5. QUANTUM HARDWARE SELF-HEALING CHECK (Using new Fallback Module)
-        // =========================================================================
+        // 5. QUANTUM HARDWARE SELF-HEALING CHECK
         const quantumFallback = new QuantumHardwareFallback();
         await quantumFallback.initialize(); 
         
-        // Update CONFIG based on the check result
         if (quantumFallback.fallbackActive) {
             CONFIG.QUANTUM_NETWORK_ENABLED = false;
             CONFIG.QUANTUM_SIMULATION_MODE = true;
@@ -152,7 +164,11 @@ async function main() {
              CONFIG.QUANTUM_SIMULATION_MODE = false;
         }
 
-        // 6. Initialize Production Sovereign Core
+        // 6. Initialize Production Sovereign Core (This will now run safely)
+        if (!CONFIG.AA_PAYMASTER_ADDRESS || !CONFIG.SMART_ACCOUNT_ADDRESS) {
+            throw new Error("CRITICAL: AA Paymaster/SCW addresses are missing. Run in DEPLOYMENT_RUNNER_MODE first and update ENV.");
+        }
+
         const core = new ProductionSovereignCore({
             walletAddress: wallet.address,
             ethersProvider: provider,
@@ -166,29 +182,6 @@ async function main() {
         // 7. EOA Capitalization Check and Funding
         await core.ensureEOACapitalization();
 
-        // =========================================================================
-        // 🎯 DEPLOYMENT RUNNER CONTROL FLOW (Now protected from quantum crash)
-        // =========================================================================
-        if (DEPLOYMENT_RUNNER_MODE) {
-            logger.info('🛠️ DEPLOYMENT MODE ACTIVATED: Running one-time Paymaster deployment.');
-            const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
-            
-            logger.info('🎉 DEPLOYMENT SUCCESS: Paymaster and SCW Addresses captured.');
-            logger.info(`✅ PAYMASTER DEPLOYED ADDRESS: ${deploymentResult.paymasterAddress}`);
-            logger.info(`✅ SCW COUNTERFACTUAL ADDRESS: ${deploymentResult.smartAccountAddress}`);
-            logger.info('========================================================================');
-            logger.info('⚠️ CRITICAL NEXT STEP: Manually update your environment variables and transfer 100,000,000 BWAEZI to the SCW ADDRESS printed above.');
-            logger.info('========================================================================');
-            
-            // CRITICAL FIX: Exit immediately to ensure the log is captured before the host timeout.
-            process.exit(0); 
-        } 
-        
-        // NORMAL ORCHESTRATION FLOW 
-        if (!CONFIG.AA_PAYMASTER_ADDRESS || !CONFIG.SMART_ACCOUNT_ADDRESS) {
-            throw new Error("CRITICAL: AA Paymaster/SCW addresses are missing. Run in DEPLOYMENT_RUNNER_MODE first.");
-        }
-
         // 8. Initialize Account Abstraction SDK with the deployed addresses
         const aaSdk = new AASDK(
             BUNDLER_RPC_URL,
@@ -199,10 +192,9 @@ async function main() {
         );
         global.BWAEZI_AASDK = aaSdk;
         
-        // 9. Inject the AASDK into the Sovereign Core for permanent use.
         core.setAASDK(aaSdk);
 
-        // 10. Final System Ready
+        // 9. Final System Ready
         logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
@@ -214,7 +206,7 @@ async function main() {
     }
 }
 
-// ✅ COMPREHENSIVE ERROR HANDLING
+// ... (Error handling remains) ...
 process.on('uncaughtException', (error) => {
     console.error('💥 UNCAUGHT EXCEPTION:', error.message);
 });
