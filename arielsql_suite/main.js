@@ -101,7 +101,7 @@ async function main() {
                 
                 // 🎯 CRITICAL FIX: Test connection with a hard timeout (Fixes 'request timeout')
                 const connectionTest = currentProvider.getNetwork();
-                const timeoutPromise = new Promise((_, reject) => 
+                const timeoutPromise = new Promise((_, reject) => 
                     setTimeout(() => reject(new Error(`RPC timeout after ${RPC_TIMEOUT_MS}ms`)), RPC_TIMEOUT_MS)
                 );
                 
