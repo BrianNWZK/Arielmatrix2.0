@@ -25,12 +25,25 @@ const CONFIG = {
         .map(url => url.trim())
         .filter(url => url.length > 0),
 
+    // =========================================================================
+    // 🎯 CRITICAL FINAL DEPLOYMENT ADDRESSES (FIXED)
+    // =========================================================================
+    // This is the newly deployed, fixed BWAEZI Token Contract that holds the 100M capital.
+    BWAEZI_TOKEN_ADDRESS: process.env.BWAEZI_TOKEN_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
+    
+    // Addresses required for the BWAEZIPaymaster constructor
     ENTRY_POINT_ADDRESS: process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789',
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6', // Placeholder based on common Uniswap Mainnet Quoter
+    BWAEZI_WETH_FEE: parseInt(process.env.BWAEZI_WETH_FEE) || 3000, // 3000 = 0.3% fee tier for BWAEZI/WETH pool
+
+    // This address will be dynamically updated after successful deployment
+    AA_PAYMASTER_ADDRESS: process.env.BWAEZI_PAYMASTER_ADDRESS, 
+    SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS,
+    // =========================================================================
+
     USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    AA_PAYMASTER_ADDRESS: process.env.BWAEZI_PAYMASTER_ADDRESS || '0x4BC3C633a12F5BFFCaC9080c51B0CD44e17d0A8F',
     SIGNER_PRIVATE_KEY: process.env.PRIVATE_KEY,
-    SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS || '0xb27309fabaa67fe783674238e82a1674681fce88',
     
     QUANTUM_NETWORK_ENABLED: process.env.QUANTUM_NETWORK_ENABLED === 'true',
 };
@@ -147,26 +160,33 @@ async function main() {
         // 6. EOA Capitalization Check and Funding
         await core.ensureEOACapitalization();
 
-        // 7. Initialize Account Abstraction SDK
+        // 7. Deploy/Verify ERC-4337 Contracts
+        // This deployment run is the final step to get the correct Paymaster and SCW addresses
+        logger.info('🛠️ DEPLOYMENT MODE: Initiating permanent ERC-4337 Infrastructure Deployment...');
+        const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
+        
+        // 🎯 FIX: Update the CONFIG object and the core instance with the newly deployed addresses
+        CONFIG.AA_PAYMASTER_ADDRESS = deploymentResult.paymasterAddress;
+        CONFIG.SMART_ACCOUNT_ADDRESS = deploymentResult.smartAccountAddress;
+        
+        // 8. Initialize Account Abstraction SDK with the correct, newly deployed addresses
         const aaSdk = new AASDK(
             BUNDLER_RPC_URL,
             CONFIG.ENTRY_POINT_ADDRESS,
             provider,
             wallet,
-            CONFIG.AA_PAYMASTER_ADDRESS
+            CONFIG.AA_PAYMASTER_ADDRESS // Use the freshly deployed Paymaster
         );
         global.BWAEZI_AASDK = aaSdk;
-
-        // 8. Deploy/Verify ERC-4337 Contracts
-        logger.info('🛠️ DEPLOYMENT MODE: Initiating permanent ERC-4337 Infrastructure Deployment...');
-        const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
         
         // 9. Inject the AASDK into the Sovereign Core for permanent use.
         core.setAASDK(aaSdk);
 
         // 10. Final System Ready
         logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
-        logger.info('✅ ACCOUNT ABSTRACTION PERMANENTLY DEPLOYED & INTEGRATED.');
+        logger.info(`✅ PAYMASTER DEPLOYED & CONFIGURED: ${CONFIG.AA_PAYMASTER_ADDRESS}`);
+        logger.info(`✅ SMART CONTRACT WALLET ADDRESS: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
+        logger.info('⚠️ CRITICAL NEXT STEP: Manually transfer 100,000,000 BWAEZI to the SCW ADDRESS printed above.');
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
     } catch (error) {
