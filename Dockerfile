@@ -1,7 +1,7 @@
 # --- STAGE 1: Dependency Installer ---
-# FIX: Using a specific version tag (22.2.1) instead of the generic '22-slim'
-#      to bypass the I/O timeout error and force a fresh image pull.
-FROM node:22.2.1-slim AS builder
+# FIX: Switching to the stable Node.js LTS major version (20-slim) to resolve
+#      the previous I/O timeout and the 'not found' error.
+FROM node:20-slim AS builder
 
 WORKDIR /usr/src/app
 
@@ -42,8 +42,6 @@ RUN sed -i '/"ai-security-module"/d' package.json \
 RUN if [ -f package-lock.json ]; then \
       npm ci --legacy-peer-deps --no-audit --no-fund --prefer-offline || \
       npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline; \
-    else \
-      npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline; \
     fi
 
 # Remove problematic modules
@@ -60,8 +58,8 @@ COPY . .
 RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 # --- STAGE 2: Final Image ---
-# FIX: Applying the same version change to the final stage image.
-FROM node:22.2.1-slim AS final
+# FIX: Applying the same LTS version to the final stage image.
+FROM node:20-slim AS final
 
 WORKDIR /usr/src/app
 
