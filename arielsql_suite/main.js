@@ -2,8 +2,8 @@
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
 // NOVEL AI FIX: Robust AASDK integration and multi-RPC awareness.
 
-// 🎯 CRITICAL FIX: Changed import to get the full namespace object for Ethers.js
-import * as ethers from 'ethers'; 
+// 🎯 CRITICAL FIX: Ensure correct Ethers v6 import and usage
+import { ethers } from 'ethers'; 
 import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
@@ -45,7 +45,7 @@ function startHealthCheckServer(logger) {
         if (req.url === '/health' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             const healthStatus = {
-                status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRAGED (Core not ready)',
+                status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRADED (Core not ready)',
                 aaEngineStatus: global.BWAEZI_AASDK ? 'ACTIVE' : 'INACTIVE',
                 timestamp: new Date().toISOString(),
                 coreVersion: global.BWAEZI_PRODUCTION_CORE?.version || 'N/A'
@@ -61,6 +61,11 @@ function startHealthCheckServer(logger) {
         logger.info(`🌐 GUARANTEED PORT BINDING: Server listening on 0.0.0.0:${PORT}.`);
         logger.info(`✅ Health check available at http://0.0.0.0:${PORT}/health`);
     });
+    
+    // Graceful error handling for the server
+    server.on('error', (error) => {
+        logger.error(`💥 Server error: ${error.message}`, { operation: 'health_check_server', port: PORT });
+    });
 }
 
 // =========================================================================
@@ -71,20 +76,27 @@ async function main() {
     // 1. Initial Logger Setup (Self-Healing)
     const logger = getGlobalLogger('OptimizedSovereignCore'); 
     
-    // GUARANTEED FAST PORT BINDING (from previous fix)
+    // GUARANTEED FAST PORT BINDING (Retained from previous fix)
     startHealthCheckServer(logger);
 
     if (!CONFIG.SIGNER_PRIVATE_KEY) {
         logger.error('💥 FATAL ERROR during initialization/deployment: Error: PRIVATE_KEY not set in environment.');
-        return; 
+        // Critical error, exit the process
+        process.exit(1); 
     }
 
     try {
         logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.5.6 (FINAL SYNCH FIX)...');
         
         // Setup Ethers Provider and Signer
-        const provider = new ethers.providers.JsonRpcProvider(PRIMARY_RPC_URL);
+        // ✅ CRITICAL FIX: Use ethers.JsonRpcProvider and ethers.Wallet for v6 compatibility
+        const provider = new ethers.JsonRpcProvider(PRIMARY_RPC_URL);
         const wallet = new ethers.Wallet(CONFIG.SIGNER_PRIVATE_KEY, provider);
+        
+        // ADDED: Test connection before proceeding with heavy tasks
+        await provider.getNetwork();
+        logger.info('✅ Successfully connected to RPC endpoint.');
+
 
         // 2. Initialize Ariel DB and Logging
         const db = new ArielSQLiteEngine();
@@ -134,13 +146,21 @@ async function main() {
         logger.info('🚀 PRODUCTION ORCHESTRATION SUCCESS: Zero-capital revenue generation active.');
 
     } catch (error) {
+        // Handle any top-level fatal errors during setup
         logger.error(`💥 FATAL ERROR during main orchestration: ${error.message}`, { 
             stack: error.stack, 
             operation: 'main_bootstrap' 
         });
-        return;
+        // This is a critical failure that should stop execution.
+        process.exit(1);
     }
 }
+
+// ✅ COMPREHENSIVE ERROR HANDLING
+process.on('uncaughtException', (error) => {
+    console.error('💥 UNCAUGHT EXCEPTION:', error);
+    process.exit(1);
+});
 
 // Execute the main function
 main();
