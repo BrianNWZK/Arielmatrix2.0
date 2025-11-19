@@ -6,8 +6,8 @@ import { ethers } from 'ethers';
 import http from 'http';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
-// 🎯 CRITICAL FIX: Import Enterprise Logger utilities
-import { getGlobalLogger, EnterpriseLogger } from '../modules/enterprise-logger/index.js';
+// 🎯 CRITICAL FIX: Import all required logger utilities, including enableDatabaseLoggingSafely
+import { getGlobalLogger, EnterpriseLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js';
 // 🎯 CRITICAL FIX: Import the AASDK as a Class from the newly updated module
 import { AASDK } from '../modules/aa-loaves-fishes.js';
@@ -51,6 +51,7 @@ function startHealthCheckServer(logger) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             // 🎯 FIX: Return a status that includes core orchestration health
             const healthStatus = {
+                // The core will be undefined initially, resulting in a DEGRADED status until initialized.
                 status: global.BWAEZI_PRODUCTION_CORE?.isReady ? 'OK' : 'DEGRAGED (Core not ready)',
                 aaEngineStatus: global.BWAEZI_AASDK ? 'ACTIVE' : 'INACTIVE',
                 timestamp: new Date().toISOString(),
@@ -75,8 +76,12 @@ function startHealthCheckServer(logger) {
 
 async function main() {
     // 1. Initial Logger Setup (Self-Healing)
-    const logger = setupGlobalLogger('OptimizedSovereignCore');
+    const logger = getGlobalLogger('OptimizedSovereignCore'); 
     
+    // 🎯 CRITICAL FIX for Port Binding Timeout: Start the health check server immediately
+    // This binds the port instantly, preventing deployment failure while heavy async tasks run.
+    startHealthCheckServer(logger);
+
     if (!CONFIG.SIGNER_PRIVATE_KEY) {
         logger.error('💥 FATAL ERROR during initialization/deployment: Error: PRIVATE_KEY not set in environment.');
         // This is a critical failure that should stop execution.
@@ -90,11 +95,11 @@ async function main() {
         const provider = new ethers.providers.JsonRpcProvider(PRIMARY_RPC_URL);
         const wallet = new ethers.Wallet(CONFIG.SIGNER_PRIVATE_KEY, provider);
 
-        // 2. Initialize Ariel DB and Logging
+        // 2. Initialize Ariel DB and Logging (ASYNC - will run in background now)
         const db = new ArielSQLiteEngine(); // Assuming this is defined and functional
         await db.connect();
         await db.initializeSchema();
-        await enableDatabaseLoggingSafely(db);
+        await enableDatabaseLoggingSafely(db); 
         logger.info('✅ Database logging enabled successfully');
 
         // 3. Initialize Production Sovereign Core
@@ -105,20 +110,14 @@ async function main() {
             mainnetConfig: CONFIG
         });
         
-        // Check for and handle the 'Invalid engine instance' error gracefully.
-        // NOVEL AI FIX: Add a check after core init to ensure critical components are present.
         if (!core.isConsciousnessEngineValid()) {
-             logger.warn('⚠️ CRITICAL: Consciousness Engine may be invalid. Attempting self-repair...');
-             // In a real scenario, this would trigger a restart of the consciousness module.
-             // For now, we log and proceed to the AA deployment which is the main goal.
-             // The log indicates that the DB is ready *before* the invalid engine error,
-             // meaning the error is likely in a *subsequent* engine's constructor.
+            logger.warn('⚠️ CRITICAL: Consciousness Engine may be invalid. Attempting self-repair...');
         }
 
         await core.initialize();
-        global.BWAEZI_PRODUCTION_CORE = core; // Set global instance for health check
+        global.BWAEZI_PRODUCTION_CORE = core; // Set global instance for health check to report 'OK'
 
-        // 4. EOA Capitalization Check and Funding (from ORCHESTRATION9.txt logic)
+        // 4. EOA Capitalization Check and Funding
         await core.ensureEOACapitalization();
 
         // 5. Initialize Account Abstraction SDK
@@ -131,13 +130,11 @@ async function main() {
         );
         global.BWAEZI_AASDK = aaSdk; // Set global instance for use
 
-        // 6. Deploy/Verify ERC-4337 Contracts (BWAEZIPaymaster, SCW, etc.)
-        // This is the permanent AA deployment step.
+        // 6. Deploy/Verify ERC-4337 Contracts
         logger.info('🛠️ DEPLOYMENT MODE: Initiating permanent ERC-4337 Infrastructure Deployment...');
         const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
         
         // 7. Inject the AASDK into the Sovereign Core for permanent use.
-        // This is the final step for "permanent AA deployment."
         core.setAASDK(aaSdk);
 
         // 8. Final System Ready
@@ -154,9 +151,7 @@ async function main() {
         // The process should likely exit and restart here
         return;
     }
-
-    // 9. Start Health Check Server
-    startHealthCheckServer(logger);
+    // The server is already running, so we just exit the async function
 }
 
 // Execute the main function
