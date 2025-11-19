@@ -1,6 +1,5 @@
-// arielsql_suite/main.js — PRODUCTION ORCHESTRATOR FIXED
+// arielsql_suite/main.js — ULTIMATE ORCHESTRATOR v2.6.0-CONSCIOUSNESS-QUANTUM-SAFE (FINAL)
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
-// NOVEL AI FIX: Robust AASDK integration and multi-RPC awareness.
 
 // 🎯 CRITICAL FIX: Ensure correct Ethers v6 import and usage
 import { ethers } from 'ethers'; 
@@ -42,7 +41,6 @@ const CONFIG = {
 
 /**
  * Starts the health check server immediately, using console for initial logging.
- * The logger parameter is removed to allow immediate binding.
  */
 function startHealthCheckServer() {
     const server = http.createServer((req, res) => {
