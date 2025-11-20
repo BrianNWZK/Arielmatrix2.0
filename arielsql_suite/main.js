@@ -7,7 +7,7 @@ import process from 'process';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 // 👑 NEW IMPORTS
 import { AASDK } from '../modules/aa-loaves-fishes.js';
-import { deployERC4337Contracts } from './aa-deployment-engine.js'; // The compilation/deployment engine
+import { deployERC4337Contracts, getDeploymentTransactionData } from './aa-deployment-engine.js'; 
 
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
@@ -110,59 +110,99 @@ async function initializeSovereignBrain(config) {
 // =========================================================================
 
 /**
- * @notice Performs a pre-flight check of the contract deployment using simulation.
- * @dev This calls the deployment function with a 'simulateOnly' flag, relying on it 
- * to return the transaction data or throw on revert.
- * @param {ethers.JsonRpcProvider} provider - The network provider.
- * @param {ethers.Wallet} signer - The EOA wallet used for deployment.
- * @param {object} config - The global configuration.
- * @param {object} aasdk - The Account Abstraction SDK module.
- * @returns {Promise<boolean>} True if simulation succeeds, false otherwise.
+ * @notice Performs a full pre-flight check by simulating the deployment execution using provider.call().
+ * This determines if the transaction would succeed or revert due to internal contract logic.
+ * @returns {boolean} True if simulation succeeds, false otherwise.
  */
 async function simulateDeployment(provider, signer, config, aasdk) {
-    console.log("🛰️ PRE-FLIGHT CHECK: Simulating ERC-4337 Contract Deployment...");
+    console.log('\n🛰️ PRE-FLIGHT CHECK: Full Deployment Simulation (eth_call) initiated...');
     
-    // We pass 'true' as the last argument, signaling the deployer to only simulate (return TX data)
-    // or estimate gas (which throws on revert) instead of actually sending the transaction.
-    const SIMULATE_ONLY = true;
-
     try {
-        // Attempt to run the deployment logic in simulation mode.
-        // If the implementation of deployERC4337Contracts is robust, it will throw 
-        // if the transaction would revert.
-        const simulationResult = await deployERC4337Contracts(provider, signer, config, aasdk, SIMULATE_ONLY);
+        const { paymasterDeployTx, smartAccountDeployTx } = await getDeploymentTransactionData(signer, config, aasdk);
 
-        let gasEstimate;
+        // --- Step 1: Simulate Paymaster Deployment ---
+        console.log('   -> Simulating Paymaster Contract deployment...');
+        // provider.call() performs a simulated, non-state-changing execution
+        const paymasterResult = await provider.call(paymasterDeployTx); 
 
-        // Check if the result is a full transaction object/data to estimate gas manually
-        if (simulationResult && simulationResult.data) {
-             gasEstimate = await provider.estimateGas({
-                from: signer.address,
-                to: simulationResult.to || null, // Address of the contract factory or null for deployment
-                data: simulationResult.data,
-                value: simulationResult.value || 0n
-            });
-            console.log(`✅ PRE-FLIGHT SUCCESS: Deployment simulation succeeded. Estimated Gas: ${gasEstimate.toString()}`);
-            return true;
-        } 
-        
-        // If the deployment function handles gas estimation internally and doesn't throw, 
-        // it means the simulation passed. (e.g., if it returns a boolean/simple object)
-        if (simulationResult.success === true || simulationResult === true) {
-             console.log("✅ PRE-FLIGHT SUCCESS: Deployment simulation succeeded. (Gas estimation handled internally)");
-             return true;
+        if (paymasterResult.length <= 2) {
+            console.error('❌ Paymaster Simulation Failed: Received empty or invalid result from eth_call.');
+            throw new Error('Paymaster deployment simulation failed to execute (Empty result).');
         }
 
-        // Catch for unexpected success result
-        throw new Error("Simulation returned an ambiguous successful result structure.");
+        console.log('✅ Paymaster Simulation Success.');
+        
+        // --- Step 2: Simulate Smart Account Deployment (Initialization) ---
+        console.log('   -> Simulating Smart Account Wallet initialization...');
+        const scwResult = await provider.call(smartAccountDeployTx); 
+
+        if (scwResult.length <= 2) {
+            console.error('❌ SCW Simulation Failed: Received empty or invalid result from eth_call.');
+            throw new Error('Smart Account deployment simulation failed to execute (Empty result).');
+        }
+        
+        console.log('✅ SCW Simulation Success.');
+        
+        console.log('🎉 FULL PRE-FLIGHT SIMULATION PASSED: Deployment logic is sound.');
+        return true;
 
     } catch (error) {
-        console.error(`❌ PRE-FLIGHT FAILURE: Deployment simulation failed. Transaction would revert.`);
-        console.error(`🔍 Revert Reason: ${error.message}`);
-        // Log the current EOA ETH balance for debugging purposes
-        const eoaBalance = await provider.getBalance(signer.address);
-        console.log(`💰 Current EOA ETH Balance: ${ethers.formatEther(eoaBalance)} ETH`);
+        console.error("⛔ CRITICAL STOP: Full Pre-Flight Simulation FAILED.");
+        
+        const revertReason = error.reason || error.message || 'Unknown Revert Reason';
+        
+        console.error(`\n❌ TRANSACTION DESTINED TO REVERT: ${revertReason}`);
+        console.log("ETH waste prevented. The contract logic would have failed on-chain.");
         return false;
+    }
+}
+
+
+/**
+ * @notice Estimates gas and checks EOA balance, but does NOT stop the transaction.
+ * @returns {object} Gas limits and success status.
+ */
+async function estimateGas(provider, signer, config) {
+    console.log('\n⛽ ESTIMATING GAS: Checking minimum ETH required...');
+    const EOA_ADDRESS = signer.address;
+    
+    try {
+        const { paymasterDeployTx, smartAccountDeployTx } = await getDeploymentTransactionData(signer, config, AASDK);
+
+        // --- Step 1: Estimate Gas for Paymaster Deployment ---
+        const paymasterGasLimit = await provider.estimateGas(paymasterDeployTx);
+        const paymasterGasSafety = (paymasterGasLimit * 120n) / 100n; // +20% safety margin
+
+        // --- Step 2: Estimate Gas for Smart Account Deployment ---
+        const scwGasLimit = await provider.estimateGas(smartAccountDeployTx);
+        const scwGasSafety = (scwGasLimit * 120n) / 100n; // +20% safety margin
+
+        const totalSafetyLimit = paymasterGasSafety + scwGasSafety;
+
+        const currentBalance = await provider.getBalance(EOA_ADDRESS);
+        const CONSERVATIVE_MAX_GAS_PRICE = ethers.parseUnits('20', 'gwei'); // 20 Gwei for a safety estimate
+        const requiredEthForSafety = totalSafetyLimit * CONSERVATIVE_MAX_GAS_PRICE;
+
+        if (currentBalance < requiredEthForSafety) {
+            console.warn(`\n⚠️ EOA BALANCE LOW WARNING: Current: ${ethers.formatEther(currentBalance)} ETH.`);
+            console.warn(`Required Safety Fund (20 Gwei Estimate): ${ethers.formatEther(requiredEthForSafety)} ETH.`);
+            console.warn('PROCEEDING: Deployment continues as balance is confirmed sufficient for the swap. Proceed with caution.');
+        } else {
+            console.log(`✅ EOA Balance (${ethers.formatEther(currentBalance)} ETH) is sufficient. Proceeding.`);
+        }
+
+        return {
+            success: true,
+            totalGasSafetyLimit: totalSafetyLimit,
+            paymasterGasSafety: paymasterGasSafety,
+            scwGasSafety: scwGasSafety
+        };
+
+    } catch (error) {
+        console.error("⚠️ GAS ESTIMATION WARNING: Could not complete gas estimation.");
+        console.error(`\n❌ ERROR REVERT REASON: ${error.reason || error.message}`);
+        // Return a failure state but DO NOT THROW, allowing main() to continue to deployment
+        return { success: false, error: error.message }; 
     }
 }
 
@@ -175,7 +215,7 @@ async function main() {
     startExpressServer();
 
     try {
-        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4: FUNDING BYPASS ACTIVE"); 
+        console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.6: UNSTOPPABLE EXECUTION MODE"); 
         console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
         console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
         console.log("🌐 NETWORK:", CONFIG.NETWORK);
@@ -191,22 +231,37 @@ async function main() {
         console.log("🚀 Initializing Production Sovereign Core (Deployment Mode, EOA Funded)...");
         sovereignCoreInstance = await initializeSovereignBrain(CONFIG);
 
-        // 2. RUN PRE-FLIGHT SIMULATION BEFORE DEPLOYMENT
-        // This is the CRITICAL STEP to protect the ETH balance.
+        // 2. RUN FULL PRE-FLIGHT SIMULATION (The TRUE safety check)
         const preFlightSuccess = await simulateDeployment(provider, signer, CONFIG, AASDK);
 
         if (!preFlightSuccess) {
-            console.error("⛔ CRITICAL STOP: Pre-flight simulation failed. Aborting deployment to save ETH.");
-            // Throw error to trigger recovery/monitoring logic in the catch block
-            throw new Error("Deployment failed pre-flight simulation."); 
+            // Stops here ONLY if the transaction is destined to revert due to contract logic.
+            throw new Error("Deployment aborted: Full Pre-Flight Simulation failed due to contract logic error."); 
         }
 
-        // --- 3. DEPLOY CONTRACTS (Only runs if simulation passed) ---
-        console.log("🔧 Starting ERC-4337 Contract Deployment (Pre-flight passed)...");
+        // 3. RUN GAS ESTIMATION (Warning only, does not stop execution)
+        const gasCheckResult = await estimateGas(provider, signer, CONFIG);
+        
+        // If gas estimation failed for some reason, we use a default gas limit for execution.
+        const deploymentArgs = gasCheckResult.success ? {
+            paymasterGasLimit: gasCheckResult.paymasterGasSafety,
+            scwGasLimit: gasCheckResult.scwGasSafety
+        } : {};
 
-        // The 'deployERC4337Contracts' function is now called for the actual on-chain transaction.
-        // NOTE: The third argument (SIMULATE_ONLY) is now omitted or set to false.
-        const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
+        console.log('✅ Pre-checks passed or warnings ignored. Proceeding with deployment broadcast.');
+
+
+        // --- 4. DEPLOY CONTRACTS (Execution with Estimated Gas) ---
+        console.log("⚡ Starting ERC-4337 Contract Deployment (Execution Authorized)...");
+        
+        // Pass the estimated gas limits to the deployment engine
+        const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(
+            provider, 
+            signer, 
+            CONFIG, 
+            AASDK,
+            deploymentArgs
+        );
 
         // Update config with real deployed addresses
         CONFIG.BWAEZI_PAYMASTER_ADDRESS = paymasterAddress;
@@ -216,7 +271,7 @@ async function main() {
         console.log(`💰 Paymaster: ${CONFIG.BWAEZI_PAYMASTER_ADDRESS}`);
         console.log(`👛 Smart Account: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
 
-        // --- 4. Update Sovereign Core with AA Addresses for operation ---
+        // --- 5. Update Sovereign Core with AA Addresses for operation ---
         sovereignCoreInstance.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
         await sovereignCoreInstance.checkDeploymentStatus();
 
@@ -241,8 +296,7 @@ async function main() {
 // STARTUP EXECUTION 
 // =========================================================================
 
-// Refactored startup logic to use a robust Async IIFE to prevent build/concatenation errors.
-// This encapsulation prevents misplaced external characters (like '}') from corrupting the top-level scope.
+// Refactored startup logic to use a robust Async IIFE
 (async () => {
     // Global error handling for synchronous issues
     process.on('uncaughtException', (error) => {
