@@ -337,7 +337,21 @@ class ProductionSovereignCore extends EventEmitter {
         return { success: false, error: 'Flash Loan feature removed.' };
     }
     // === END Flash Loan Methods ===
+    
+    // Helper to update deployment addresses after successful transaction
+    updateDeploymentAddresses(paymasterAddress, smartAccountAddress) {
+        this.paymasterAddress = paymasterAddress;
+        this.smartAccountAddress = smartAccountAddress;
+        this.deploymentState.paymasterAddress = paymasterAddress;
+        this.deploymentState.smartAccountAddress = smartAccountAddress;
+    }
 
+    // Check deployment status from the network
+    async checkDeploymentStatus() {
+        this.deploymentState.paymasterDeployed = !!this.paymasterAddress && (await this.ethersProvider.getCode(this.paymasterAddress)).length > 2;
+        this.deploymentState.smartAccountDeployed = !!this.smartAccountAddress && (await this.ethersProvider.getCode(this.smartAccountAddress)).length > 2;
+        this.logger.info(`🌐 Deployment Status Check: Paymaster Deployed: ${this.deploymentState.paymasterDeployed}, SCW Deployed: ${this.deploymentState.smartAccountDeployed}`);
+    }
 
     async initialize() {
         this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE)...');
@@ -383,8 +397,9 @@ class ProductionSovereignCore extends EventEmitter {
                 this.logger.warn('⚠️ QuantumNeuroCortex is missing an initialize function. Bypassing.');
             }
         } catch (error) {
-            this.logger.error(`❌ QuantumNeuroCortex initialization failed: ${error.message}`);
+             this.logger.error(`❌ QuantumNeuroCortex initialization failed: ${error.message}`);
         }
+        
         try {
             if (typeof this.RealityProgrammingEngine.initialize === 'function') {
                 await this.RealityProgrammingEngine.initialize();
@@ -393,104 +408,63 @@ class ProductionSovereignCore extends EventEmitter {
                 this.logger.warn('⚠️ RealityProgrammingEngine is missing an initialize function. Bypassing.');
             }
         } catch (error) {
-            this.logger.error(`❌ RealityProgrammingEngine initialization failed: ${error.message}`);
+             this.logger.error(`❌ RealityProgrammingEngine initialization failed: ${error.message}`);
         }
-    }
 
-    /**
-     * @notice Updates the core instance with newly deployed AA addresses.
-     */
-    updateDeploymentAddresses(paymasterAddress, smartAccountAddress) {
-        this.paymasterAddress = paymasterAddress;
-        this.smartAccountAddress = smartAccountAddress;
-        this.deploymentState.paymasterAddress = paymasterAddress;
-        this.deploymentState.smartAccountAddress = smartAccountAddress;
-        this.deploymentState.paymasterDeployed = true;
-        this.deploymentState.smartAccountDeployed = true;
-        this.logger.info(`✅ Deployment Addresses Updated: Paymaster: ${paymasterAddress} | SCW: ${smartAccountAddress}`);
-    }
-
-    /**
-     * @notice Checks and updates deployment status of AA infrastructure
-     */
-    async checkDeploymentStatus() {
-        if (this.paymasterAddress) {
-            try {
-                const code = await this.ethersProvider.getCode(this.paymasterAddress);
-                this.deploymentState.paymasterDeployed = code !== '0x';
-            } catch (error) {
-                this.logger.warn(`⚠️ Paymaster status check failed: ${error.message}`);
+        try {
+            if (typeof this.QuantumProcessingUnit.initialize === 'function') {
+                await this.QuantumProcessingUnit.initialize();
+                this.logger.info('✅ QuantumProcessingUnit initialized successfully');
+            } else {
+                this.logger.warn('⚠️ QuantumProcessingUnit is missing an initialize function. Bypassing.');
             }
+        } catch (error) {
+             this.logger.error(`❌ QuantumProcessingUnit initialization failed: ${error.message}`);
         }
-        if (this.smartAccountAddress) {
-            try {
-                const code = await this.ethersProvider.getCode(this.smartAccountAddress);
-                this.deploymentState.smartAccountDeployed = code !== '0x';
-            } catch (error) {
-                this.logger.warn(`⚠️ Smart Account status check failed: ${error.message}`);
-            }
+
+        try {
+            await this.arielDB.initialize();
+            this.logger.info('✅ ArielSQLiteEngine initialized successfully');
+        } catch (error) {
+             this.logger.error(`❌ ArielSQLiteEngine initialization failed: ${error.message}`);
         }
-        return this.deploymentState;
+        
+        this.logger.info('✅ CONSCIOUSNESS REALITY ENGINE READY - PRODUCTION MODE ACTIVE');
     }
 
-    /**
-     * @notice Emergency funding method with single USDC swap fallback
-     */
+    // Health check function
+    async healthCheck() {
+        // Simple synchronous checks
+        let health = {
+            core: 'OK',
+            deployment: this.deploymentState.paymasterDeployed && this.deploymentState.smartAccountDeployed ? 'DEPLOYED' : 'INCOMPLETE',
+            paymaster: this.deploymentState.paymasterAddress,
+            smartAccount: this.deploymentState.smartAccountAddress
+        };
+
+        // Asynchronous checks
+        try {
+            const blockNumber = await this.ethersProvider.getBlockNumber();
+            health.network = `Connected to block ${blockNumber}`;
+        } catch (e) {
+            health.network = `ERROR: ${e.message}`;
+        }
+
+        return health;
+    }
+
+    // === EMERGENCY FUNDING STUB (Can be reactivated manually) ===
     async emergencyFund(amountUsdc = 5.17) {
         this.logger.warn('🆘 EMERGENCY FUNDING ACTIVATED - Attempting USDC swap');
-        
-        // Try USDC swap first
         const usdcResult = await this.fundWalletWithUsdcSwap(amountUsdc);
-        if (usdcResult.success) return usdcResult;
         
-        // Final fallback (no flash loan)
-        this.logger.error('💥 ALL FUNDING METHODS FAILED - Manual intervention required');
-        return { 
-            success: false, 
-            error: 'All funding methods failed (USDC swap failed)',
-            details: {
-                usdcError: usdcResult.error
-            }
-        };
-    }
-
-    /**
-     * @notice Enhanced health check with funding status
-     */
-    async healthCheck() {
-        const usdcBalance = this.usdcToken ? await this.usdcToken.balanceOf(this.walletAddress) : 0n;
-        const ethBalance = await this.ethersProvider.getBalance(this.walletAddress);
-        const usdcAllowance = this.usdcToken ? await this.usdcToken.allowance(this.walletAddress, UNISWAP_SWAP_ROUTER) : 0n;
-        
-        const health = {
-            version: '2.8.4', // Updated version
-            timestamp: new Date().toISOString(),
-            wallet: {
-                address: this.walletAddress,
-                ethBalance: ethers.formatEther(ethBalance) + ' ETH',
-                usdcBalance: ethers.formatUnits(usdcBalance, 6) + ' USDC',
-                usdcAllowance: ethers.formatUnits(usdcAllowance, 6) + ' USDC'
-            },
-            deployment: this.deploymentState,
-            funding: {
-                usdcSwapReady: true, // The function is available
-                flashLoanReady: this.arbitrageExecutor !== null, // Will report false
-                minimumEthRequired: "0.005 ETH (Deployment Threshold)"
-            },
-            modules: {
-                quantumNeuroCortex: (typeof this.QuantumNeuroCortex.initialize === 'boolean' ? this.QuantumNeuroCortex.initialized : 'UNKNOWN'),
-                realityProgramming: (typeof this.RealityProgrammingEngine.initialize === 'boolean' ? this.RealityProgrammingEngine.initialized : 'UNKNOWN'),
-                revenueEngine: true,
-                quantumCrypto: true
-            },
-            revenue: {
-                ready: this.deploymentState.paymasterDeployed && this.deploymentState.smartAccountDeployed,
-                lastArbitrage: null,
-                totalRevenue: 0
-            }
-        };
-        this.logger.info('🏥 ENHANCED SYSTEM HEALTH CHECK COMPLETE');
-        return health;
+        if (usdcResult.success) {
+             this.logger.info('✅ EMERGENCY FUNDING SUCCESS.');
+             return usdcResult;
+        } else {
+             this.logger.error(`💥 EMERGENCY FUNDING FAILED: ${usdcResult.error}`);
+             return usdcResult;
+        }
     }
 }
 
