@@ -80,7 +80,7 @@ class BootstrapRelayerService {
 // --- ⚙️ FLASH LOAN ARBITRAGE CONFIGURATION ---
 // Placeholder address representing the *actual deployed* Flash Loan Executor Contract (Target for Real Funds)
 // 🔥 CRITICAL FIX: Normalize the contract address HERE to satisfy Ethers.js v6 checksum requirements.
-const RAW_FLASH_LOAN_EXECUTOR_ADDRESS = '0x7b233f2601704603B6bE5B8748C6B166c30f4A08'; 
+const RAW_FLASH_LOAN_EXECUTOR_ADDRESS = '0x7b233F2601704603B6bE5B8748C6B166c30f4A08'; 
 const FLASH_LOAN_EXECUTOR_ADDRESS = ethers.getAddress(RAW_FLASH_LOAN_EXECUTOR_ADDRESS); // <--- FIXED
 const ARBITRAGE_EXECUTOR_ABI = [
     "function executeFlashLoanArbitrage(address tokenA, address tokenB, uint256 loanAmount) external returns (uint256 profit)",
