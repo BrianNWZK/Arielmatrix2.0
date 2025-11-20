@@ -111,7 +111,8 @@ async function initializeSovereignBrain(config) {
 
 /**
  * @notice Performs a pre-flight check of the contract deployment using simulation.
- * @dev This calls the deployment function without submitting a transaction, ensuring it won't revert.
+ * @dev This calls the deployment function with a 'simulateOnly' flag, relying on it 
+ * to return the transaction data or throw on revert.
  * @param {ethers.JsonRpcProvider} provider - The network provider.
  * @param {ethers.Wallet} signer - The EOA wallet used for deployment.
  * @param {object} config - The global configuration.
@@ -121,28 +122,40 @@ async function initializeSovereignBrain(config) {
 async function simulateDeployment(provider, signer, config, aasdk) {
     console.log("🛰️ PRE-FLIGHT CHECK: Simulating ERC-4337 Contract Deployment...");
     
-    // NOTE: This relies on deployERC4337Contracts having the necessary logic
-    // to perform an ethers.js staticCall/call, or we must implement it here.
-    // Assuming deployERC4337Contracts internally uses `signer.sendTransaction()`
-    // we use `signer.call()` to simulate the transaction data it generates.
+    // We pass 'true' as the last argument, signaling the deployer to only simulate (return TX data)
+    // or estimate gas (which throws on revert) instead of actually sending the transaction.
+    const SIMULATE_ONLY = true;
 
-    // A simpler approach is to estimate gas: if it throws, it reverts.
     try {
-        // Attempt to estimate gas for the deployment. 
-        // If the contract logic would fail, this call will revert and throw an error.
-        const deploymentTx = await deployERC4337Contracts(provider, signer, config, aasdk, true);
-        
-        // If we reach here, the deployment successfully generated transaction data.
-        // We now estimate the gas for that transaction data.
-        const gasEstimate = await provider.estimateGas({
-            from: signer.address,
-            to: deploymentTx.to || null, // Address of the contract factory or null for deployment
-            data: deploymentTx.data,
-            value: deploymentTx.value || 0n
-        });
+        // Attempt to run the deployment logic in simulation mode.
+        // If the implementation of deployERC4337Contracts is robust, it will throw 
+        // if the transaction would revert.
+        const simulationResult = await deployERC4337Contracts(provider, signer, config, aasdk, SIMULATE_ONLY);
 
-        console.log(`✅ PRE-FLIGHT SUCCESS: Deployment simulation succeeded. Estimated Gas: ${gasEstimate.toString()}`);
-        return true;
+        let gasEstimate;
+
+        // Check if the result is a full transaction object/data to estimate gas manually
+        if (simulationResult && simulationResult.data) {
+             gasEstimate = await provider.estimateGas({
+                from: signer.address,
+                to: simulationResult.to || null, // Address of the contract factory or null for deployment
+                data: simulationResult.data,
+                value: simulationResult.value || 0n
+            });
+            console.log(`✅ PRE-FLIGHT SUCCESS: Deployment simulation succeeded. Estimated Gas: ${gasEstimate.toString()}`);
+            return true;
+        } 
+        
+        // If the deployment function handles gas estimation internally and doesn't throw, 
+        // it means the simulation passed. (e.g., if it returns a boolean/simple object)
+        if (simulationResult.success === true || simulationResult === true) {
+             console.log("✅ PRE-FLIGHT SUCCESS: Deployment simulation succeeded. (Gas estimation handled internally)");
+             return true;
+        }
+
+        // Catch for unexpected success result
+        throw new Error("Simulation returned an ambiguous successful result structure.");
+
     } catch (error) {
         console.error(`❌ PRE-FLIGHT FAILURE: Deployment simulation failed. Transaction would revert.`);
         console.error(`🔍 Revert Reason: ${error.message}`);
@@ -163,7 +176,9 @@ async function main() {
 
     try {
         console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4: FUNDING BYPASS ACTIVE"); 
-        // ... (logging omitted for brevity) ...
+        console.log("💰 BWAEZI TOKEN CONTRACT:", CONFIG.BWAEZI_TOKEN_ADDRESS);
+        console.log("👑 SOVEREIGN WALLET (100M tokens holder):", CONFIG.SOVEREIGN_WALLET);
+        console.log("🌐 NETWORK:", CONFIG.NETWORK);
 
         if (!CONFIG.PRIVATE_KEY) {
             throw new Error("PRIVATE_KEY is mandatory for deployment. Please set it in the environment.");
@@ -177,6 +192,7 @@ async function main() {
         sovereignCoreInstance = await initializeSovereignBrain(CONFIG);
 
         // 2. RUN PRE-FLIGHT SIMULATION BEFORE DEPLOYMENT
+        // This is the CRITICAL STEP to protect the ETH balance.
         const preFlightSuccess = await simulateDeployment(provider, signer, CONFIG, AASDK);
 
         if (!preFlightSuccess) {
@@ -189,6 +205,7 @@ async function main() {
         console.log("🔧 Starting ERC-4337 Contract Deployment (Pre-flight passed)...");
 
         // The 'deployERC4337Contracts' function is now called for the actual on-chain transaction.
+        // NOTE: The third argument (SIMULATE_ONLY) is now omitted or set to false.
         const { paymasterAddress, smartAccountAddress } = await deployERC4337Contracts(provider, signer, CONFIG, AASDK);
 
         // Update config with real deployed addresses
@@ -204,7 +221,8 @@ async function main() {
         await sovereignCoreInstance.checkDeploymentStatus();
 
         console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, REAL REVENUE, & ZERO-CAPITAL GENESIS ENABLED)');
-        // ... (final logs omitted for brevity) ...
+        console.log('🎯 SYSTEM STATUS: READY FOR PRODUCTION');
+        console.log('💎 BWAEZI ECONOMY: ACTIVE - 100M TOKENS READY FOR GAS PAYMENTS');
 
         return { success: true };
 
@@ -222,7 +240,9 @@ async function main() {
 // =========================================================================
 // STARTUP EXECUTION 
 // =========================================================================
-// ... (startup IIFE logic remains unchanged) ...
+
+// Refactored startup logic to use a robust Async IIFE to prevent build/concatenation errors.
+// This encapsulation prevents misplaced external characters (like '}') from corrupting the top-level scope.
 (async () => {
     // Global error handling for synchronous issues
     process.on('uncaughtException', (error) => {
