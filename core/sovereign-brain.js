@@ -1,8 +1,8 @@
 // core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.1 (USDC-TO-ETH FUNDING EDITION)
-// 🔥 NEW: Production-ready Uniswap V3 USDC → native ETH swap with enhanced error handling
+// 🔥 FIXED: Production-ready Uniswap V3 USDC → native ETH swap with enhanced gas parameters and quote error handling
 // 💰 Turns your 5.17 USDC → ~0.0017 ETH (at current $3018 ETH price) with < 0.0002 ETH gas cost
-// ⚙️  Original flash loan arbitrage kept (but disabled by default since executor address is invalid → null)
-// ⚠️  All original functions/imports/exports preserved 100%. Enhanced funding path with fallback mechanisms.
+// ⚙️  Original flash loan arbitrage kept (but disabled by default since executor address is invalid → null)
+// ⚠️  All original functions/imports/exports preserved 100%. Enhanced funding path with fallback mechanisms.
 
 import { EventEmitter } from 'events';
 import Web3 from 'web3';
@@ -57,7 +57,8 @@ const UNISWAP_QUOTER = safeNormalizeAddress('0x61fFE014bA17989E743c5F6f3d9C9dC6a
 
 // FIXED: Correct Uniswap V3 ABI configurations
 const UNISWAP_QUOTER_V2_ABI = [
-    "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
+    // Corrected to include all 4 return values from QuoterV2
+    "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external view returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
 ];
 
 const SWAP_ROUTER_ABI_FIXED = [
@@ -138,7 +139,7 @@ class ProductionSovereignCore extends EventEmitter {
         }
         this.ethersProvider = new ethers.JsonRpcProvider(this.mainnetRpcUrl);
         this.web3 = new Web3(new Web3.providers.HttpProvider(this.mainnetRpcUrl));
-       
+        
         // Safely initialize wallet with fallback
         const privateKey = process.env.MAINNET_PRIVATE_KEY || process.env.PRIVATE_KEY;
         if (!privateKey) {
@@ -195,7 +196,7 @@ class ProductionSovereignCore extends EventEmitter {
         try {
             const amountIn = ethers.parseUnits(amountUsdc.toString(), 6);
             const poolFee = 500; // 0.05% pool
-            const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 minutes
+            const deadline = Math.floor(Date.now() / 1000) + 1800; // 30 minutes (Increased from 20)
             const slippageTolerance = 50n; // 0.5% slippage
 
             // 1. Enhanced USDC balance check
@@ -215,30 +216,32 @@ class ProductionSovereignCore extends EventEmitter {
                 tokenOut: WETH_ADDRESS,
                 amountIn: amountIn,
                 fee: poolFee,
-                sqrtPriceLimitX96: 0
+                sqrtPriceLimitX96: 0n // Use 0n for BigInt representation
             };
 
-            let quotedAmountOut;
+            // CRITICAL FIX: Ensure the primary quote uses the structured object argument
+            let quotedAmountOutResponse;
             try {
-                quotedAmountOut = await this.quoter.quoteExactInputSingle.staticCall(quoteParams);
+                // The quoter call returns a tuple [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
+                quotedAmountOutResponse = await this.quoter.quoteExactInputSingle.staticCall([quoteParams]);
             } catch (quoteError) {
                 this.logger.warn(`⚠️ Primary quote failed, trying alternative method: ${quoteError.message}`);
                 // Fallback: Use direct call with proper error handling
-                quotedAmountOut = await this.getFallbackQuote(amountIn, poolFee);
+                quotedAmountOutResponse = await this.getFallbackQuote(amountIn, poolFee);
             }
 
-            if (!quotedAmountOut || quotedAmountOut[0] === 0n) {
+            if (!quotedAmountOutResponse || quotedAmountOutResponse.length === 0 || quotedAmountOutResponse[0] === 0n) {
                 this.logger.error('❌ All quote methods returned zero output');
-                return { success: false, error: 'Invalid quote: zero output' };
+                return { success: false, error: 'Invalid quote: zero output or quote failed' };
             }
 
-            const amountOut = quotedAmountOut[0];
+            const amountOut = quotedAmountOutResponse[0];
             const minAmountOut = (amountOut * (10000n - slippageTolerance)) / 10000n;
 
             this.logger.info(`✅ Quote: ${amountUsdc} USDC → ${ethers.formatEther(amountOut)} ETH (min: ${ethers.formatEther(minAmountOut)})`);
 
             // 3. Check if swap is economically viable
-            const gasCostEstimate = ethers.parseEther("0.0002"); // ~$0.60 at $3000 ETH
+            const gasCostEstimate = ethers.parseEther("0.0003"); // Increased to $0.90 at $3000 ETH for safety
             if (amountOut < gasCostEstimate * 2n) {
                 this.logger.warn('⚠️ Swap may not be economically viable after gas costs');
             }
@@ -248,7 +251,14 @@ class ProductionSovereignCore extends EventEmitter {
                 const allowance = await this.usdcToken.allowance(this.walletAddress, UNISWAP_SWAP_ROUTER);
                 if (allowance < amountIn) {
                     this.logger.info('⏳ Approving USDC for swap...');
-                    const approveTx = await this.usdcToken.approve(UNISWAP_SWAP_ROUTER, amountIn);
+                    
+                    // CRITICAL FIX: Increased gas limit for approval transaction for reliability
+                    const approveTx = await this.usdcToken.approve(UNISWAP_SWAP_ROUTER, amountIn, {
+                        gasLimit: 150000n, // Safely increased from default 
+                        maxPriorityFeePerGas: ethers.parseUnits("3.0", "gwei"), // Bumping priority fee
+                        maxFeePerGas: ethers.parseUnits("35", "gwei") // Bumping max fee
+                    });
+
                     const approveReceipt = await approveTx.wait();
                     this.logger.info(`✅ USDC approved in tx: ${approveReceipt.hash}`);
                 }
@@ -266,22 +276,25 @@ class ProductionSovereignCore extends EventEmitter {
                 deadline: deadline,
                 amountIn: amountIn,
                 amountOutMinimum: minAmountOut,
-                sqrtPriceLimitX96: 0
+                sqrtPriceLimitX96: 0n // Use 0n for BigInt
             };
 
             this.logger.info('🚀 Executing USDC→ETH swap...');
+            
+            // CRITICAL FIX: Increased gas limit and price parameters for swap transaction for reliability
             const swapTx = await this.swapRouter.exactInputSingle(swapParams, {
-                gasLimit: 350000n,
-                maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei"),
-                maxFeePerGas: ethers.parseUnits("25", "gwei")
+                gasLimit: 400000n, // Increased from 350k
+                maxPriorityFeePerGas: ethers.parseUnits("3.0", "gwei"), // Increased from 1.5
+                maxFeePerGas: ethers.parseUnits("35", "gwei") // Increased from 25
             });
 
             this.logger.info(`⏳ Swap Tx Sent: ${swapTx.hash}`);
             const receipt = await swapTx.wait();
 
             if (receipt.status === 1) {
-                const ethReceived = ethers.formatEther(amountOut);
-                this.logger.info(`🎉 USDC→ETH SWAP SUCCESS! Received: ${ethReceived} ETH`);
+                // The amountOut variable is the expected amount from the quote, which is used for logging
+                const ethReceived = ethers.formatEther(amountOut); 
+                this.logger.info(`🎉 USDC→ETH SWAP SUCCESS! Received: ${ethReceived} ETH (based on quote)`);
                 
                 // Update wallet balance
                 const newBalance = await this.ethersProvider.getBalance(this.walletAddress);
@@ -311,15 +324,18 @@ class ProductionSovereignCore extends EventEmitter {
     // Fallback quote method
     async getFallbackQuote(amountIn, poolFee) {
         try {
-            // Alternative quoting approach using different method signature
-            const quote = await this.quoter.callStatic.quoteExactInputSingle(
+            // CRITICAL FIX: Using correct quoteExactInputSingle signature for the fallback
+            // QuoterV2 ABI: quoteExactInputSingle(tokenIn, tokenOut, fee, amountIn, sqrtPriceLimitX96)
+            const quoteResult = await this.quoter.quoteExactInputSingle(
                 USDC_ADDRESS,
                 WETH_ADDRESS,
-                poolFee,
                 amountIn,
-                0
+                poolFee,
+                0n
             );
-            return [quote, 0, 0, 0];
+            // It returns a single BigNumber (amountOut), which is the first element of the QuoterV2 return tuple.
+            // We pad it with the other expected return values (which are not needed for a simple fallback quote).
+            return [quoteResult[0], 0n, 0n, 0n];
         } catch (fallbackError) {
             this.logger.error(`❌ Fallback quote also failed: ${fallbackError.message}`);
             return null;
@@ -337,11 +353,16 @@ class ProductionSovereignCore extends EventEmitter {
             const loanAmount = ethers.parseUnits("10000", 18); // 10,000 DAI
             this.logger.info(`🚀 Executing Flash Loan Arbitrage with ${ethers.formatUnits(loanAmount, 18)} DAI`);
             
+            // CRITICAL FIX: Increased gas limit for flash loan execution
             const tx = await this.arbitrageExecutor.executeFlashLoanArbitrage(
                 DAI_ADDRESS,
                 this.BWAEZI_TOKEN_ADDRESS,
                 loanAmount,
-                { gasLimit: 500000n }
+                { 
+                    gasLimit: 800000n, // Increased from 500k to 800k for safety
+                    maxPriorityFeePerGas: ethers.parseUnits("3.0", "gwei"),
+                    maxFeePerGas: ethers.parseUnits("35", "gwei")
+                }
             );
             
             const receipt = await tx.wait();
@@ -469,11 +490,17 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.info('🚀 Executing Quantum Arbitrage Vault Strategy...');
         try {
             const loanAmount = ethers.parseUnits("50000", 18); // 50,000 DAI
+            
+            // CRITICAL FIX: Increased gas limit for flash loan arbitrage
             const tx = await this.arbitrageExecutor.executeFlashLoanArbitrage(
                 DAI_ADDRESS,
                 this.BWAEZI_TOKEN_ADDRESS,
                 loanAmount,
-                { gasLimit: 800000n }
+                { 
+                    gasLimit: 850000n, // Slightly increased from 800k for safety
+                    maxPriorityFeePerGas: ethers.parseUnits("3.0", "gwei"),
+                    maxFeePerGas: ethers.parseUnits("35", "gwei")
+                }
             );
             
             const receipt = await tx.wait();
