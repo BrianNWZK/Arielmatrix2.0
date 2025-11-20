@@ -1,4 +1,4 @@
-// arielsql_suite/main.js — ULTIMATE ORCHESTRATOR v2.6.2 (FINAL PRODUCTION ORCHESTRATION)
+// arielsql_suite/main.js — ULTIMATE ORCHESTRATOR v2.7.0 (SELF-HEALING DEPLOYMENT)
 // 🚀 BOOTSTRAP: GUARANTEED AA EXECUTION PATH & MULTI-RPC FAILOVER
 import { ethers } from 'ethers'; 
 import http from 'http';
@@ -32,7 +32,7 @@ const CONFIG = {
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
     BWAEZI_WETH_FEE: parseInt(process.env.BWAEZI_WETH_FEE) || 3000, 
 
-    // These variables MUST be set after the first deployment run.
+    // These variables will be updated dynamically if deployment mode is active.
     AA_PAYMASTER_ADDRESS: process.env.AA_PAYMASTER_ADDRESS || process.env.BWAEZI_PAYMASTER_ADDRESS, 
     SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS,
     
@@ -69,19 +69,19 @@ function startHealthCheckServer(logger) {
 
 
 // =========================================================================
-// 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION - ISOLATED DEPLOYMENT
+// 🧠 MAIN PRODUCTION BOOTSTRAP FUNCTION - SELF-HEALING DEPLOYMENT
 // =========================================================================
 
 async function main() {
     
     const logger = getGlobalLogger('OptimizedSovereignCore'); 
-    logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.6.2 (FINAL PRODUCTION ORCHESTRATION)...');
+    logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.7.0 (SELF-HEALING DEPLOYMENT)...');
 
     if (!CONFIG.SIGNER_PRIVATE_KEY) {
         logger.error('💥 CRITICAL WARNING: PRIVATE_KEY not set. Running in **DEGRADED (Health-Only) Mode**.');
         startHealthCheckServer(logger);
         await new Promise(() => {}); 
-        return; // Ensure it exits after the infinite promise loop
+        return; 
     }
 
     let provider = null;
@@ -89,9 +89,8 @@ async function main() {
     let connected = false;
 
     // 1. Start the HTTP server immediately for fast health-check response.
-    if (!DEPLOYMENT_RUNNER_MODE) {
-        startHealthCheckServer(logger);
-    }
+    // Start it regardless of deployment mode to handle the port scan timeout.
+    startHealthCheckServer(logger);
 
     // 2. Setup Ethers Provider with RPC Failover Logic
     try {
@@ -118,26 +117,36 @@ async function main() {
             throw new Error("CRITICAL SYSTEM FAILURE: All configured RPC endpoints failed to connect or timed out.");
         }
         
-        // 3. ISOLATED DEPLOYMENT MODE ACTIVATED
-        if (DEPLOYMENT_RUNNER_MODE) {
-            logger.info('🛠️ ISOLATED DEPLOYMENT MODE ACTIVATED: Running Paymaster deployment only.');
+        // =========================================================================
+        // 3. SELF-HEALING DEPLOYMENT/ORCHESTRATION CHECK
+        // =========================================================================
+        
+        // Only trigger deployment if addresses are missing AND deployment mode is enabled.
+        const addressesMissing = !CONFIG.AA_PAYMASTER_ADDRESS || !CONFIG.SMART_ACCOUNT_ADDRESS;
+        
+        if (addressesMissing && DEPLOYMENT_RUNNER_MODE) {
+            logger.info('🛠️ SELF-HEALING DEPLOYMENT ACTIVATED: Deploying Paymaster and Smart Account Wallet.');
             const deploymentResult = await deployERC4337Contracts(provider, wallet, CONFIG);
-            logger.info('🎉 DEPLOYMENT SUCCESS: Paymaster and SCW Addresses captured.');
-            logger.info(`✅ PAYMASTER DEPLOYED ADDRESS: ${deploymentResult.paymasterAddress}`);
-            logger.info(`✅ SCW COUNTERFACTUAL ADDRESS: ${deploymentResult.smartAccountAddress}`);
-            logger.info('========================================================================');
-            process.exit(0);
+            
+            // *** CRITICAL SELF-HEALING FIX: Overwrite CONFIG and CONTINUE execution ***
+            CONFIG.AA_PAYMASTER_ADDRESS = deploymentResult.paymasterAddress;
+            CONFIG.SMART_ACCOUNT_ADDRESS = deploymentResult.smartAccountAddress;
+            
+            logger.info('🎉 DEPLOYMENT SUCCESS: Contracts deployed. Transitioning to production orchestration.');
+            logger.info(`✅ PAYMASTER DEPLOYED ADDRESS (Capture for ENV): ${CONFIG.AA_PAYMASTER_ADDRESS}`);
+            logger.info(`✅ SCW COUNTERFACTUAL ADDRESS (Capture for ENV): ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
+            logger.warn('⚠️ WARNING: Set these two addresses as permanent ENV vars and disable DEPLOYMENT_RUNNER_MODE for stable operation.');
+
+        } else if (addressesMissing && !DEPLOYMENT_RUNNER_MODE) {
+            // If addresses are missing, but deployment mode is off, throw the original error.
+            throw new Error("CRITICAL: AA Paymaster/SCW addresses are missing. Set DEPLOYMENT_RUNNER_MODE=true for a one-time deployment run.");
         } 
         
+        // Execution continues here if addresses were present OR if deployment was successful.
         // =========================================================================
-        // 4. NORMAL ORCHESTRATION FLOW (Requires deployed addresses)
+        // 4. NORMAL ORCHESTRATION FLOW 
         // =========================================================================
         
-        // CRITICAL CHECK: Addresses MUST be present for normal flow.
-        if (!CONFIG.AA_PAYMASTER_ADDRESS || !CONFIG.SMART_ACCOUNT_ADDRESS) {
-            throw new Error("CRITICAL: AA Paymaster/SCW addresses are missing. Run in DEPLOYMENT_RUNNER_MODE first and update ENV.");
-        }
-
         // 5. Initialize Ariel DB and Logging
         const db = new ArielSQLiteEngine();
         await db.connect();
