@@ -98,6 +98,7 @@ class BootstrapRelayerService {
     async submitSponsoredTransaction(signedTransaction) {
         this.logger.info(`✨ GENESIS MODE: Submitting signed transaction to Relayer Endpoint ${this.RELAYER_ENDPOINT}...`);
         try {
+            // Using provider.send for raw transaction broadcast
             const txHash = await this.provider.send('eth_sendRawTransaction', [signedTransaction]);
             this.logger.info(`✅ Sponsored Transaction Broadcasted. Tx Hash: ${txHash}`);
             const receipt = await this.provider.waitForTransaction(txHash);
@@ -307,7 +308,7 @@ class ProductionSovereignCore extends EventEmitter {
     // Fallback quote method
     async getFallbackQuote(amountIn, poolFee) {
         try {
-            // The QuoterV2 ABI expects a struct, but this fallback uses a direct function call format.
+            // Fallback for QuoterV2 in case the struct argument fails.
             const quoteResult = await this.quoter.quoteExactInputSingle(
                 USDC_ADDRESS,
                 WETH_ADDRESS,
@@ -344,7 +345,24 @@ class ProductionSovereignCore extends EventEmitter {
         this.smartAccountAddress = smartAccountAddress;
         this.deploymentState.paymasterAddress = paymasterAddress;
         this.deploymentState.smartAccountAddress = smartAccountAddress;
+        this.logger.info('Deployment addresses updated via updateDeploymentAddresses.');
     }
+    
+    /**
+     * @notice UPDATED: Helper to update the full deployment state, used by main.js after successful deployment.
+     * @param {object} newState - Partial or full new deployment state.
+     */
+    setDeploymentState(newState) {
+        this.deploymentState = {
+            ...this.deploymentState,
+            ...newState
+        };
+        // Ensure direct properties are also synced
+        this.paymasterAddress = this.deploymentState.paymasterAddress;
+        this.smartAccountAddress = this.deploymentState.smartAccountAddress;
+        this.logger.info('Deployment state updated via setDeploymentState.');
+    }
+
 
     // Check deployment status from the network
     async checkDeploymentStatus() {
@@ -377,7 +395,7 @@ class ProductionSovereignCore extends EventEmitter {
                 this.logger.info('✅ EOA is sufficiently capitalized for deployment. Proceeding with standard execution.');
             }
             
-            // NOTE: The self-funding function call is removed from this block entirely.
+            // NOTE: The self-funding function call is removed from this block entirely. (MAINTAINED REMOVAL)
 
         } else {
             this.logger.info(`👑 ERC-4337 READY: SCW @ ${this.smartAccountAddress} | Paymaster @ ${this.paymasterAddress}`);
