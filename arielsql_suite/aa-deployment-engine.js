@@ -98,6 +98,7 @@ export async function getDeploymentTransactionData(signer, config, AASDK) {
 
     // 3. PREPARE SMART ACCOUNT DEPLOYMENT TRANSACTION (Initialization)
     let scwInitCode = "0x";
+    let smartAccountAddress = "0x0000000000000000000000000000000000000000"; // Placeholder for defensive coding
     try {
         // NOVELTY FIX: Robust, multi-method initCode retrieval (fixes AASDK.getInitCode is not a function error)
         // Check for multiple known method names in case of SDK version differences
@@ -107,6 +108,13 @@ export async function getDeploymentTransactionData(signer, config, AASDK) {
                 ? await AASDK.getAccountInitCode(signer.address)
                 : '0x';
             
+        // NOVELTY FIX: Defensively get the SCW counterfactual address
+        if (typeof AASDK.getSCWAddress === 'function') {
+            smartAccountAddress = await AASDK.getSCWAddress(signer.address); // Must be present on AASDK instance
+        } else {
+            console.warn("⚠️ AASDK.getSCWAddress is missing. Using placeholder address for simulation logging.");
+        }
+        
         // Final check and logging for deployment confidence
         if (scwInitCode && scwInitCode !== '0x') {
             console.log("✅ AASDK: Generated SCW deployment initCode via optimized path.");
@@ -118,11 +126,9 @@ export async function getDeploymentTransactionData(signer, config, AASDK) {
     } catch (err) {
         console.warn(`⚠️ AASDK initCode generation CRITICAL FALLBACK: Error: ${err.message}. Using '0x'.`);
         scwInitCode = "0x"; 
+        // Note: smartAccountAddress remains the placeholder if getSCWAddress failed
     }
     
-    // We need the SCW counterfactual address for logging in the simulation
-    const smartAccountAddress = await AASDK.getSCWAddress(signer.address); // Must be present on AASDK instance
-
     const smartAccountDeployTx = {
         from: signer.address,
         to: config.ENTRY_POINT_ADDRESS, // The transaction is a call to the EntryPoint
@@ -197,9 +203,17 @@ export async function deployERC4337Contracts(provider, signer, config, AASDK, de
         
         // 3. GET SCW ADDRESS (This is only the address, not the deployment transaction)
         console.log(`🔮 Calculating SCW Counterfactual Address...`);
-        const smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
-        console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
-        console.log(`\n⚠️ ACTION REQUIRED: Fund the Smart Contract Wallet with BWAEZI for gas payment: ${smartAccountAddress}`);
+        let smartAccountAddress;
+        
+        // NOVELTY FIX: Defensively calculate the address
+        if (typeof AASDK.getSCWAddress === 'function') {
+            smartAccountAddress = await AASDK.getSCWAddress(deployerAddress);
+            console.log(`🔮 SCW Counterfactual Address: ${smartAccountAddress}`);
+            console.log(`\n⚠️ ACTION REQUIRED: Fund the Smart Contract Wallet with BWAEZI for gas payment: ${smartAccountAddress}`);
+        } else {
+             smartAccountAddress = "0xPLACEHOLDER_ADDRESS_NOT_CALCULATED";
+             console.warn("⚠️ AASDK.getSCWAddress is missing. Cannot calculate counterfactual address. Deployment proceeded but requires manual lookup.");
+        }
 
         // NOTE: The SCW deployment transaction execution is often triggered later by the first UserOperation.
         // For simplicity, we assume deployment is complete once the Paymaster is live and the address is known.
