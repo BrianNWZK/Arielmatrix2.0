@@ -8,6 +8,39 @@
 import { randomBytes, createHash, createCipheriv, createDecipheriv } from 'crypto';
 
 // =========================================================================
+// QUANTUM UTILITY CLASSES (PLACEHOLDERS FOR HARDWARE INTERFACE)
+// =========================================================================
+
+/** @notice Stub for Quantum Channel connection to hardware. */
+class QuantumChannel {
+    async transmit(party, quantumStates) {
+        await new Promise(resolve => setTimeout(resolve, quantumStates.length / 10));
+        return true;
+    }
+}
+
+/** @notice Stub for Classical Channel connection for metadata. */
+class ClassicalChannel {
+    async send(data) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return data;
+    }
+}
+
+/** @notice Stub for Hybrid Classical/Quantum Optimization routine. */
+class HybridOptimizer {
+    constructor() {
+        this.learningRate = 0.01;
+        this.method = 'SPSA'; // Simultaneous Perturbation Stochastic Approximation
+    }
+    async step(gradients) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return { success: true, message: 'Parameters updated' };
+    }
+}
+
+
+// =========================================================================
 // QUANTUMHARDWARE-LAYER
 // =========================================================================
 
@@ -18,6 +51,7 @@ class QuantumProcessingUnit {
         this.coherenceTime = 150e-6; // 150 microseconds
         this.gateFidelity = 0.9999;
         this.initialized = false;
+        this.calibration = {};
     }
 
     async initialize() {
@@ -85,6 +119,39 @@ class QuantumProcessingUnit {
         return calibrationData;
     }
 
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+
+    async optimizeGateTimings() {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        // Placeholder for complex microwave pulse sequence optimization
+    }
+
+    measureRelaxationTime() { return 1500; } // T1 in microseconds
+    measureDephasingTime() { return 100; } // T2 in microseconds
+    measureReadoutFidelity() { return 0.9995; }
+    characterizeGateErrors() { return { xGate: 0.00001, cnotGate: 0.0005 }; }
+
+    async evolveQuantumState(circuit) {
+        // Simulates quantum state evolution on hardware
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return Buffer.from(circuit + '::StateVectorOutput::' + randomBytes(16).toString('hex')).toString('hex');
+    }
+
+    async quantumMeasurement(quantumState) {
+        // Simulates physical measurement collapse
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return randomBytes(32).toString('hex');
+    }
+
+    calculateExecutionFidelity(circuit, measurement) {
+        // Estimates fidelity based on hardware performance
+        return this.gateFidelity * (1 - (Math.random() * 0.0001));
+    }
+
+    hashQuantumState(quantumState) {
+        return createHash('sha256').update(quantumState).digest('hex');
+    }
+
     generateQPUId() {
         return `qpu_${randomBytes(8).toString('hex')}_${Date.now()}`;
     }
@@ -142,6 +209,22 @@ class SurfaceCodeErrorCorrection {
             type: 'SURFACE_CODE_D7'
         };
     }
+
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+
+    arrangeQubitsInLattice(qubits, size) { return qubits.slice(0, size * size); }
+    measureStabilizers(lattice) { return [1, 0, 1, 0, 1]; }
+    extractLogicalState(lattice) { return '0'; }
+    async measureSyndromes(logicalQubit) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return [0, 1, 0, 1];
+    }
+    calculateCorrections(syndromes) { return 'Z_1 X_4'; }
+    async applyCorrections(logicalQubit, corrections) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    verifyLogicalIntegrity(logicalQubit) { return true; }
+    generateCycleId() { return `err_cycle_${randomBytes(4).toString('hex')}`; }
 }
 
 // =========================================================================
@@ -167,7 +250,13 @@ class BB84QKDEngine {
         
         // Basis reconciliation
         const basisB = this.generateRandomBasis(this.keyLength * 2);
-        const measurementResults = await partyB.measureQuantumStates(quantumStates, basisB);
+        
+        // NOTE: partyB.measureQuantumStates is a simulated method assumed to exist on partyB
+        // For now, we simulate the results directly as if B has measured them.
+        const measurementResults = bitsA.map((bit, i) => ({
+            bit: basisA[i] === basisB[i] ? bit : (1 - bit), // Simulate matching bases giving correct bit
+            basis: basisB[i]
+        }));
         
         // Classical post-processing
         const siftedKey = this.siftKey(bitsA, basisA, measurementResults, basisB);
@@ -182,7 +271,7 @@ class BB84QKDEngine {
         
         return {
             key: finalKey,
-            length: finalKey.length,
+            length: finalKey.length * 8, // Length in bits
             errorRate,
             securityParameter: this.securityParameter,
             protocol: 'BB84'
@@ -196,6 +285,19 @@ class BB84QKDEngine {
             state: this.quantumStatePreparation(bit, basis[index]),
             timestamp: process.hrtime.bigint()
         }));
+    }
+
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+
+    generateRandomBasis(length) { return Array.from({ length }, () => Math.random() > 0.5 ? 'Z' : 'X'); }
+    generateRandomBits(length) { return Array.from({ length }, () => Math.random() > 0.5 ? 1 : 0); }
+    quantumStatePreparation(bit, basis) { return `${bit}-${basis}State`; }
+    siftKey(bitsA, basisA, measurementResults, basisB) {
+        return bitsA.filter((bit, i) => basisA[i] === basisB[i]).slice(0, this.keyLength / 8); // Key is bytes, not bits
+    }
+    estimateErrorRate(siftedKey) { return 0.000001; }
+    privacyAmplification(siftedKey, errorRate) {
+        return createHash('sha256').update(siftedKey.join('')).digest('hex').substring(0, this.keyLength / 4);
     }
 }
 
@@ -239,8 +341,31 @@ class HardwareQRNG {
 
     async generateCryptographicKey(length = 256) {
         // Generate cryptographically secure quantum random key
-        const randomBits = await this.generateRandomNumbers(Math.ceil(length / 8));
-        return createHash('sha3-512').update(randomBits).digest().slice(0, length / 8);
+        const byteLength = Math.ceil(length / 8);
+        const randomBits = await this.generateRandomNumbers(byteLength);
+        
+        // Hash for conditioning and uniformity
+        return createHash('sha3-512').update(Buffer.from(randomBits)).digest().slice(0, byteLength);
+    }
+
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+    
+    postProcessRandomness(quantumRandomness, distribution) { return quantumRandomness; } // Identity for stub
+    
+    scaleToRange(processed, min, max) {
+        const numbers = [];
+        for (let i = 0; i < processed.length; i++) {
+            numbers.push(min + (processed[i] / 255) * (max - min));
+        }
+        return numbers;
+    }
+    async prepareQuantumSuperposition() {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        return 'superposition_state';
+    }
+    async quantumMeasure(quantumState) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        return Math.floor(Math.random() * 256); // Return a random byte value
     }
 }
 
@@ -310,6 +435,34 @@ class QuantumNeuralNetwork {
         
         return this.getTrainingMetrics();
     }
+
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+
+    async initializeQuantumLayers(config) { return [{type: 'QuantumLayer', params: 8}]; }
+    initializeClassicalLayers(config) { return [{type: 'Dense', units: 2}]; }
+    calculateParameterCount() { return 4096; }
+    generateModelId() { return `qnn_model_${randomBytes(8).toString('hex')}`; }
+    async encodeClassicalData(inputData) { return inputData; }
+    async applyQuantumLayer(layer, state) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return state;
+    }
+    async measureQuantumOutput(state) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return [Math.random(), Math.random()];
+    }
+    applyClassicalLayers(quantumResult) { return quantumResult[0] > 0.5 ? 1 : 0; }
+    calculatePredictionConfidence(classicalResult) { return 0.95; }
+    createBatches(data, size) { return [data.slice(0, size)]; }
+    async computeQuantumGradients(batch) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return { 'theta_1': 0.01, 'phi_2': -0.005 };
+    }
+    async updateParameters(gradients, learningRate) {
+        await this.hybridOptimizer.step(gradients);
+    }
+    async computeLoss(trainingData) { return 0.001; }
+    getTrainingMetrics() { return { accuracy: 0.99, loss: 0.001 }; }
 }
 
 // =========================================================================
@@ -353,7 +506,7 @@ class QuantumMonteCarlo {
     }
 
     async portfolioOptimization(assets, constraints) {
-        // Quantum portfolio optimization using VQE
+        // Quantum portfolio optimization using VQE (Variational Quantum Eigensolver)
         const hamiltonian = this.constructPortfolioHamiltonian(assets, constraints);
         const groundState = await this.findGroundState(hamiltonian);
         const optimalWeights = this.extractOptimalWeights(groundState);
@@ -365,6 +518,31 @@ class QuantumMonteCarlo {
             sharpeRatio: this.calculateSharpeRatio(optimalWeights, assets)
         };
     }
+
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+
+    createQuantumPathGenerator(model) {
+        return {
+            generatePaths: async (count, data) => {
+                await new Promise(resolve => setTimeout(resolve, 10));
+                return Array.from({ length: count }, () => Math.random());
+            }
+        };
+    }
+    calculatePayoffs(paths, derivative) { return paths.map(p => p > 0.5 ? 100 : 0); }
+    computeExpectedValue(payoffs) { return payoffs.reduce((a, b) => a + b, 0) / payoffs.length; }
+    computeRiskMetrics(payoffs) { return { VaR: 50, ES: 60 }; }
+    computeConfidenceInterval(payoffs) { return [this.computeExpectedValue(payoffs) * 0.9, this.computeExpectedValue(payoffs) * 1.1]; }
+    calculateQuantumSpeedup() { return 1000; }
+    constructPortfolioHamiltonian(assets, constraints) { return 'Ising Hamiltonian'; }
+    async findGroundState(hamiltonian) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return [0.7, 0.3];
+    }
+    extractOptimalWeights(groundState) { return { assetA: groundState[0], assetB: groundState[1] }; }
+    calculateExpectedReturn(weights, assets) { return 0.15; }
+    calculatePortfolioRisk(weights, assets) { return 0.05; }
+    calculateSharpeRatio(weights, assets) { return 2.5; }
 }
 
 // =========================================================================
@@ -415,8 +593,9 @@ class QuantumChemistrySolver {
         const energies = [];
         
         for (const point of reactionCoordinate) {
-            const energy = await this.computeGroundState(point);
-            energies.push(energy);
+            // NOTE: Assumes the 'point' is a molecule object usable by computeGroundState
+            const energyResult = await this.computeGroundState(point);
+            energies.push(energyResult);
         }
         
         return {
@@ -426,6 +605,32 @@ class QuantumChemistrySolver {
             thermodynamics: this.computeReactionThermodynamics(energies)
         };
     }
+
+    // --- INTERNAL HELPER METHODS (STUBS for functionality) ---
+
+    async computeOneBodyIntegrals(molecule) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return [[1.0, 0.1], [0.1, 1.0]];
+    }
+    async computeTwoBodyIntegrals(molecule) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return [0.05, 0.02];
+    }
+    computeNuclearRepulsion(molecule) { return 7.85; }
+    jordanWignerMapping(oneBody, twoBody) { return 'QubitOperator'; }
+    async executeVQE(hamiltonian) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return -1.1374;
+    }
+    async computeWavefunction(hamiltonian) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return 'CISD Wavefunction State';
+    }
+    computeMolecularProperties(wavefunction) { return { dipoleMoment: 0.5, bondLength: 0.74 }; }
+    defineReactionCoordinate(reactants, products) { return ['State1', 'State2', 'TS']; }
+    findActivationEnergy(energies) { return 0.03; }
+    findTransitionState(energies) { return 'TS geometry'; }
+    computeReactionThermodynamics(energies) { return { deltaH: -0.01, deltaG: 0.0 }; }
 }
 
 // =========================================================================
