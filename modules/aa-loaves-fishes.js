@@ -2,7 +2,7 @@
 
 import { ethers } from 'ethers';
 
-// CRITICAL FIX: Convert object export to proper class constructor
+// CRITICAL FIX: Proper class-based AASDK implementation
 class AASDK {
     constructor(signer, entryPointAddress = '0x5FF137D4bEAA7036d654a88Ea898df565D304B88') {
         this.signer = signer;
@@ -155,3 +155,29 @@ class AASDK {
 // Export the class as both default and named export for maximum compatibility
 export { AASDK };
 export default AASDK;
+
+// Maintain original object export for backward compatibility
+export const AASDK_OBJECT = {
+    getSCWAddress: async (ownerAddress) => {
+        const tempSDK = new AASDK({ address: ownerAddress });
+        return tempSDK.getSCWAddress(ownerAddress);
+    },
+    getUserOp: (tx) => {
+        const tempSDK = new AASDK({ address: tx.sender });
+        return tempSDK.getUserOp(tx);
+    },
+    encodeCallData: (target, data) => target.toLowerCase() + data.slice(2).toLowerCase(),
+    encodePaymasterAndData: (pm, tokenData) => pm + (tokenData?.feeToken?.slice(2) || ''),
+    sendUserOperation: async (userOp) => {
+        const tempSDK = new AASDK({ address: userOp.sender });
+        return tempSDK.sendUserOperation(userOp);
+    },
+    signUserOp: async (wallet, userOp) => {
+        const tempSDK = new AASDK(wallet);
+        return tempSDK.signUserOp(userOp);
+    },
+    waitForTransaction: async (hash) => {
+        const tempSDK = new AASDK({});
+        return tempSDK.waitForTransaction(hash);
+    }
+};
