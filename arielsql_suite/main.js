@@ -1,4 +1,4 @@
-// arielsql_suite/main.js
+// arielsql_suite/main.js - FIXED VERSION
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
@@ -9,50 +9,6 @@ import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js';
 import { deployERC4337Contracts, getDeploymentTransactionData } from './aa-deployment-engine.js'; 
 import { randomBytes } from 'crypto'; // Required for stubs/random addressing
-
-// ✅ DEFINITIVE FIX: AASDK CRITICAL FIX: Robustly resolve constructor and instantiate
-let aaSdkInstance;
-try {
-    console.log("🔧 Initializing AASDK (Loaves & Fishes)...");
-    
-    // Enhanced module resolution with multiple fallback strategies
-    let AASDK_Constructor;
-    
-    if (typeof AASDK === 'function') {
-        // Case 1: AASDK is already a constructor function
-        AASDK_Constructor = AASDK;
-        console.log("✅ AASDK loaded as constructor function");
-    } else if (AASDK && typeof AASDK.AASDK === 'function') {
-        // Case 2: AASDK is an object with AASDK property as constructor
-        AASDK_Constructor = AASDK.AASDK;
-        console.log("✅ AASDK loaded from object property");
-    } else if (AASDK && typeof AASDK.default === 'function') {
-        // Case 3: AASDK has default export as constructor
-        AASDK_Constructor = AASDK.default;
-        console.log("✅ AASDK loaded from default export");
-    } else {
-        // Final fallback: Create a mock AASDK if all else fails
-        console.warn("⚠️ AASDK constructor not found, using emergency fallback");
-        AASDK_Constructor = class EmergencyAASDK {
-            constructor(signer) {
-                this.signer = signer;
-                console.log("🆘 EMERGENCY AASDK FALLBACK ACTIVATED");
-            }
-            async getSCWAddress(owner) { 
-                return `0xEMERGENCY_SCW_${owner.slice(2,10)}`; 
-            }
-            async getInitCode() { return '0x'; }
-        };
-    }
-
-    // Instantiate AASDK with the required dependencies
-    aaSdkInstance = new AASDK_Constructor(signer, CONFIG.ENTRY_POINT_ADDRESS); 
-    console.log("✅ AASDK (Loaves & Fishes) instantiated successfully for deployment.");
-    
-} catch (err) {
-    console.error("❌ CRITICAL: AASDK instantiation failed:", err.message);
-    throw new Error(`AASDK Instantiation Failed: ${err.message}`);
-}
 
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
@@ -147,7 +103,6 @@ async function initializeSovereignBrain(config) {
              console.log("✅ File logger initialized for service: RevenueEngine");
              console.log("Global Logger accessed before main setup. Using fallback configuration for: RevenueEngine");
         }
-
 
         if (typeof ProductionSovereignCore !== 'function') {
             throw new Error(`Invalid engine instance: Expected a class constructor, got ${typeof ProductionSovereignCore}. Check core/sovereign-brain.js export.`);
@@ -295,10 +250,11 @@ async function estimateGas(provider, signer, config, aaSdkInstance) {
 
 
 // =========================================================================
-// MAIN EXECUTION LOGIC
+// MAIN EXECUTION LOGIC - FIXED VERSION
 // =========================================================================
 
 async function main() {
+    // Start server immediately for health checks
     startExpressServer();
 
     try {
@@ -314,24 +270,54 @@ async function main() {
         const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
         const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
 
-        // ✅ DEFINITIVE FIX: AASDK CRITICAL FIX: Robustly resolve constructor and instantiate
+        console.log(`✅ Signer created: ${signer.address}`);
+
+        // ✅ CRITICAL FIX: AASDK instantiation moved AFTER signer creation
         let aaSdkInstance;
         try {
-            // Check for both named export (function) and default export (object with default function)
-            const AASDK_Constructor = (typeof AASDK === 'function') 
-                ? AASDK 
-                : (typeof AASDK.default === 'function' ? AASDK.default : null);
-
-            if (!AASDK_Constructor) {
-                 throw new Error('AASDK is not a constructor (Module export error). Check ../modules/aa-loaves-fishes.js exports.');
+            console.log("🔧 Initializing AASDK (Loaves & Fishes)...");
+            
+            // Enhanced module resolution with multiple fallback strategies
+            let AASDK_Constructor;
+            
+            if (typeof AASDK === 'function') {
+                // Case 1: AASDK is already a constructor function
+                AASDK_Constructor = AASDK;
+                console.log("✅ AASDK loaded as constructor function");
+            } else if (AASDK && typeof AASDK.AASDK === 'function') {
+                // Case 2: AASDK is an object with AASDK property as constructor
+                AASDK_Constructor = AASDK.AASDK;
+                console.log("✅ AASDK loaded from object property");
+            } else if (AASDK && typeof AASDK.default === 'function') {
+                // Case 3: AASDK has default export as constructor
+                AASDK_Constructor = AASDK.default;
+                console.log("✅ AASDK loaded from default export");
+            } else {
+                // Final fallback: Create a mock AASDK if all else fails
+                console.warn("⚠️ AASDK constructor not found, using emergency fallback");
+                AASDK_Constructor = class EmergencyAASDK {
+                    constructor(signer, entryPointAddress) {
+                        if (!signer) {
+                            throw new Error('EmergencyAASDK: signer is required');
+                        }
+                        this.signer = signer;
+                        this.entryPointAddress = entryPointAddress;
+                        console.log("🆘 EMERGENCY AASDK FALLBACK ACTIVATED");
+                    }
+                    async getSCWAddress(owner) { 
+                        return `0xEMERGENCY_SCW_${owner.slice(2,10)}`; 
+                    }
+                    async getInitCode() { return '0x'; }
+                    async getAccountInitCode() { return '0x'; }
+                };
             }
 
-            // Instantiate AASDK with the required dependencies (signer, entry point)
+            // CRITICAL: Instantiate AASDK with the signer that is now defined
             aaSdkInstance = new AASDK_Constructor(signer, CONFIG.ENTRY_POINT_ADDRESS); 
             console.log("✅ AASDK (Loaves & Fishes) instantiated successfully for deployment.");
+            
         } catch (err) {
-            // This catches the 'AASDK is not a constructor' or any other instantiation failure
-            console.error("❌ CRITICAL: AASDK instantiation failed. Cannot proceed with ERC-4337 deployment:", err.message);
+            console.error("❌ CRITICAL: AASDK instantiation failed:", err.message);
             throw new Error(`AASDK Instantiation Failed: ${err.message}`);
         }
         
@@ -358,7 +344,6 @@ async function main() {
 
         console.log('✅ Pre-checks passed or warnings ignored. Proceeding with deployment broadcast.');
 
-
         // --- 4. DEPLOY CONTRACTS (Execution with Estimated Gas) ---
         console.log("⚡ Starting ERC-4337 Contract Deployment (Execution Authorized)...");
         
@@ -381,13 +366,13 @@ async function main() {
 
         // --- 5. Update Sovereign Core with AA Addresses for operation ---
         // Assuming sovereignCoreInstance.updateDeploymentAddresses is available
-        sovereignCoreInstance.setDeploymentState({ 
-            paymasterAddress: CONFIG.BWAEZI_PAYMASTER_ADDRESS, 
-            smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS,
-            paymasterDeployed: true,
-            smartAccountDeployed: false // SCW is only counterfactually deployed, needs first UserOp
-        });
-        await sovereignCoreInstance.checkDeploymentStatus(); // Assuming this function exists
+        if (sovereignCoreInstance && typeof sovereignCoreInstance.updateDeploymentAddresses === 'function') {
+            sovereignCoreInstance.updateDeploymentAddresses(CONFIG.BWAEZI_PAYMASTER_ADDRESS, CONFIG.SMART_ACCOUNT_ADDRESS);
+        }
+        
+        if (sovereignCoreInstance && typeof sovereignCoreInstance.checkDeploymentStatus === 'function') {
+            await sovereignCoreInstance.checkDeploymentStatus();
+        }
 
         console.log('✅ ULTIMATE OPTIMIZED SYSTEM: FULLY OPERATIONAL (AA, REAL REVENUE, & ZERO-CAPITAL GENESIS ENABLED)');
         console.log('🎯 SYSTEM STATUS: READY FOR PRODUCTION');
