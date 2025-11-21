@@ -1,7 +1,5 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE - LOGIC RE-ENFORCED)
-// 🔥 CRITICAL FIX: Re-enabled mandatory conditional USDC → ETH self-funding check to resolve gas crisis.
-// 🔥 CRITICAL FIX: Updated Uniswap Quoter V2 ABI to include both overloads, fixing the 'no matching fragment' quote error.
-// ⚙️ All original functions, features, imports/exports are preserved 100%.
+// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE)
+// 🔥 CRITICAL FIX: Added automatic USDC → ETH funding when balance is insufficient for deployment
 
 import { EventEmitter } from 'events';
 import Web3 from 'web3';
@@ -54,12 +52,10 @@ const WETH_ADDRESS = safeNormalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C7
 const UNISWAP_SWAP_ROUTER = safeNormalizeAddress('0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'); // SwapRouter02
 const UNISWAP_QUOTER = safeNormalizeAddress('0x61fFE014bA17989E743c5F6f3d9C9dC6aC5D5d1f'); // QuoterV2 (latest)
 
-// FIXED: Correct Uniswap V3 ABI configurations to support all quote overloads
+// FIXED: Correct Uniswap V3 ABI configurations
 const UNISWAP_QUOTER_V2_ABI = [
-    // 1. Struct signature (Primary QuoterV2 method, returns 4 values)
-    "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external view returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
-    // 2. Direct argument signature (Fallback/Overload fix, only returns amountOut)
-    "function quoteExactInputSingle(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) external view returns (uint256 amountOut)"
+    // Corrected to include all 4 return values from QuoterV2
+    "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external view returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
 ];
 
 const SWAP_ROUTER_ABI_FIXED = [
@@ -177,10 +173,14 @@ class ProductionSovereignCore extends EventEmitter {
             paymasterAddress: this.paymasterAddress,
             smartAccountAddress: this.smartAccountAddress
         };
+
+        // CRITICAL FIX: Deployment funding thresholds
+        this.MIN_DEPLOYMENT_BALANCE = ethers.parseEther("0.002"); // 0.002 ETH minimum for deployment
+        this.USDC_SWAP_AMOUNT = 5.17; // $5.17 USDC for funding
     }
 
     // =========================================================================
-    // PRODUCTION-READY USDC → NATIVE ETH SWAP (L1 MAINNET) - RETAINED FOR EMERGENCY FUNDING
+    // PRODUCTION-READY USDC → NATIVE ETH SWAP (L1 MAINNET) - ENHANCED FOR DEPLOYMENT
     // =========================================================================
     async fundWalletWithUsdcSwap(amountUsdc = 5.17) {
         this.logger.info(`🚀 FUNDING VIA USDC SWAP: Converting ${amountUsdc} USDC → native ETH (PRODUCTION MODE)`);
@@ -202,7 +202,9 @@ class ProductionSovereignCore extends EventEmitter {
                 };
             }
 
-            // 2. FIXED: Proper quote with correct ABI and fallback logic
+            this.logger.info(`✅ USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} USDC available`);
+
+            // 2. FIXED: Proper quote with correct ABI
             const quoteParams = {
                 tokenIn: USDC_ADDRESS,
                 tokenOut: WETH_ADDRESS,
@@ -213,11 +215,12 @@ class ProductionSovereignCore extends EventEmitter {
 
             let quotedAmountOutResponse;
             try {
-                // Primary attempt: using the struct method
+                // The quoter call returns a tuple [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
                 quotedAmountOutResponse = await this.quoter.quoteExactInputSingle.staticCall([quoteParams]);
+                this.logger.info(`📊 Primary quote successful: ${ethers.formatEther(quotedAmountOutResponse[0])} ETH expected`);
             } catch (quoteError) {
                 this.logger.warn(`⚠️ Primary quote failed, trying alternative method: ${quoteError.message}`);
-                // Fallback: Use direct call with corrected ABI
+                // Fallback: Use direct call with proper error handling
                 quotedAmountOutResponse = await this.getFallbackQuote(amountIn, poolFee);
             }
 
@@ -251,6 +254,8 @@ class ProductionSovereignCore extends EventEmitter {
 
                     const approveReceipt = await approveTx.wait();
                     this.logger.info(`✅ USDC approved in tx: ${approveReceipt.hash}`);
+                } else {
+                    this.logger.info('✅ USDC already approved for swap');
                 }
             } catch (approveError) {
                 this.logger.error(`❌ USDC approval failed: ${approveError.message}`);
@@ -278,20 +283,26 @@ class ProductionSovereignCore extends EventEmitter {
             });
 
             this.logger.info(`⏳ Swap Tx Sent: ${swapTx.hash}`);
+            this.logger.info('⏳ Waiting for transaction confirmation...');
+
             const receipt = await swapTx.wait();
 
             if (receipt.status === 1) {
-                const ethReceived = ethers.formatEther(amountOut); 
-                this.logger.info(`🎉 USDC→ETH SWAP SUCCESS! Received: ${ethReceived} ETH (based on quote)`);
+                // Get actual ETH received from transaction events
+                const actualEthReceived = await this.getActualSwapOutput(receipt);
+                const ethReceivedFormatted = actualEthReceived ? ethers.formatEther(actualEthReceived) : ethers.formatEther(amountOut);
+                
+                this.logger.info(`🎉 USDC→ETH SWAP SUCCESS! Received: ${ethReceivedFormatted} ETH`);
                 
                 const newBalance = await this.ethersProvider.getBalance(this.walletAddress);
                 this.logger.info(`💰 New ETH Balance: ${ethers.formatEther(newBalance)} ETH`);
                 
                 return { 
                     success: true, 
-                    ethReceived: ethReceived,
+                    ethReceived: ethReceivedFormatted,
                     txHash: receipt.hash,
-                    finalBalance: ethers.formatEther(newBalance)
+                    finalBalance: ethers.formatEther(newBalance),
+                    actualOutput: actualEthReceived || amountOut
                 };
             } else {
                 this.logger.error('❌ Swap transaction reverted on-chain');
@@ -308,23 +319,114 @@ class ProductionSovereignCore extends EventEmitter {
         }
     }
 
-    // Fallback quote method - Now supported by the corrected UNISWAP_QUOTER_V2_ABI
+    /**
+     * Extract actual ETH received from swap transaction events
+     */
+    async getActualSwapOutput(receipt) {
+        try {
+            // Parse transfer events to find WETH transfers to the wallet
+            const iface = new ethers.Interface([
+                "event Transfer(address indexed from, address indexed to, uint256 value)"
+            ]);
+            
+            for (const log of receipt.logs) {
+                try {
+                    const parsedLog = iface.parseLog(log);
+                    if (parsedLog && parsedLog.name === "Transfer" && 
+                        parsedLog.args.to.toLowerCase() === this.walletAddress.toLowerCase() &&
+                        parsedLog.args.from.toLowerCase() !== this.walletAddress.toLowerCase()) {
+                        
+                        // This is a WETH transfer to our wallet (from the swap)
+                        return parsedLog.args.value;
+                    }
+                } catch (e) {
+                    // Skip logs that can't be parsed
+                    continue;
+                }
+            }
+        } catch (error) {
+            this.logger.warn(`⚠️ Could not parse swap output from events: ${error.message}`);
+        }
+        return null;
+    }
+
+    // Fallback quote method
     async getFallbackQuote(amountIn, poolFee) {
         try {
-            // This is calling the function signature that only returns amountOut
-            const amountOut = await this.quoter.quoteExactInputSingle(
+            // Fallback for QuoterV2 in case the struct argument fails.
+            const quoteResult = await this.quoter.quoteExactInputSingle(
                 USDC_ADDRESS,
                 WETH_ADDRESS,
                 amountIn,
                 poolFee,
                 0n
             );
-            // Must return the result wrapped in a 4-item array/tuple (BigNumber, 0, 0, 0) 
-            // to match the expected return format of the primary quote method.
-            return [amountOut, 0n, 0n, 0n]; 
+            // Return tuple expected by the main function (amountOut, 0, 0, 0)
+            return [quoteResult[0], 0n, 0n, 0n];
         } catch (fallbackError) {
-            this.logger.error(`❌ Fallback quote also failed (ABI verified but contract rejected): ${fallbackError.message}`);
+            this.logger.error(`❌ Fallback quote also failed: ${fallbackError.message}`);
             return null;
+        }
+    }
+
+    /**
+     * CRITICAL NEW FUNCTION: Auto-fund deployment when balance is insufficient
+     */
+    async ensureDeploymentFunding() {
+        const currentBalance = await this.ethersProvider.getBalance(this.walletAddress);
+        this.logger.info(`🔍 Checking deployment funding: ${ethers.formatEther(currentBalance)} ETH available`);
+        
+        if (currentBalance >= this.MIN_DEPLOYMENT_BALANCE) {
+            this.logger.info(`✅ Sufficient balance for deployment: ${ethers.formatEther(currentBalance)} ETH`);
+            return { success: true, currentBalance, funded: false };
+        }
+        
+        this.logger.warn(`⚠️ INSUFFICIENT BALANCE: ${ethers.formatEther(currentBalance)} ETH < ${ethers.formatEther(this.MIN_DEPLOYMENT_BALANCE)} ETH required`);
+        this.logger.info(`💸 Attempting automatic funding via $${this.USDC_SWAP_AMOUNT} USDC swap...`);
+        
+        try {
+            // Check USDC balance first
+            const usdcBalance = await this.usdcToken.balanceOf(this.walletAddress);
+            const usdcBalanceFormatted = ethers.formatUnits(usdcBalance, 6);
+            
+            if (usdcBalance < ethers.parseUnits(this.USDC_SWAP_AMOUNT.toString(), 6)) {
+                this.logger.error(`❌ Insufficient USDC for funding: ${usdcBalanceFormatted} USDC < ${this.USDC_SWAP_AMOUNT} USDC required`);
+                return { 
+                    success: false, 
+                    error: `Insufficient USDC: ${usdcBalanceFormatted} available, ${this.USDC_SWAP_AMOUNT} required` 
+                };
+            }
+            
+            this.logger.info(`✅ USDC Balance sufficient: ${usdcBalanceFormatted} USDC`);
+            
+            // Execute the funding swap
+            const swapResult = await this.fundWalletWithUsdcSwap(this.USDC_SWAP_AMOUNT);
+            
+            if (swapResult.success) {
+                const newBalance = await this.ethersProvider.getBalance(this.walletAddress);
+                this.logger.info(`🎉 AUTOMATIC FUNDING SUCCESS: New balance ${ethers.formatEther(newBalance)} ETH`);
+                return { 
+                    success: true, 
+                    currentBalance: newBalance, 
+                    funded: true,
+                    swapResult: swapResult
+                };
+            } else {
+                this.logger.error(`❌ Automatic funding failed: ${swapResult.error}`);
+                return { 
+                    success: false, 
+                    error: `Funding swap failed: ${swapResult.error}`,
+                    currentBalance: currentBalance
+                };
+            }
+            
+        } catch (error) {
+            this.logger.error(`💥 Automatic funding process failed: ${error.message}`);
+            return { 
+                success: false, 
+                error: `Funding process failed: ${error.message}`,
+                currentBalance: currentBalance
+            };
         }
     }
 
@@ -376,7 +478,7 @@ class ProductionSovereignCore extends EventEmitter {
     }
 
     async initialize() {
-        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE - LOGIC RE-ENFORCED)...');
+        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE)...');
         this.sovereignService.registerService('SovereignCore', this);
         
         // Initialize core services
@@ -384,33 +486,28 @@ class ProductionSovereignCore extends EventEmitter {
         
         // --- Enhanced Pre-Deployment Checks and Self-Funding Logic ---
         await this.checkDeploymentStatus();
-        let eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
+        const eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
         this.logger.info(`🔍 EOA ETH Balance (GAS WALLET): ${ethers.formatEther(eoaEthBalance)} ETH`);
         
-        // 🔥 CRITICAL FIX: Re-enabling the mandatory self-funding check to solve the deployment gas crisis.
-        const MINIMUM_ETH_FOR_DEPLOYMENT = ethers.parseEther("0.002"); // Safely low threshold
-
-        if (eoaEthBalance < MINIMUM_ETH_FOR_DEPLOYMENT) {
-            this.logger.warn('⚠️ INSUFFICIENT ETH FOR DEPLOYMENT GAS. ACTIVATING MANDATORY USDC SELF-FUNDING.');
-            
-            // Calling the core swap function with the standard amount
-            const fundingResult = await this.fundWalletWithUsdcSwap(5.17); 
-            
-            if (!fundingResult.success) {
-                this.logger.error("❌ CRITICAL: Mandatory self-funding failed. Cannot proceed with deployment.");
-                throw new Error(`Mandatory self-funding failed: ${fundingResult.error}`);
-            }
-            
-            // Re-fetch balance after successful funding
-            eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress); 
-            this.logger.info(`💰 POST-FUNDING EOA ETH Balance: ${ethers.formatEther(eoaEthBalance)} ETH`);
-        } else {
-            this.logger.info('✅ EOA ETH balance is sufficient for deployment gas.');
-        }
-
-
+        // 🔥 CRITICAL FIX: Check if we need to fund for deployment
         if (!this.deploymentState.paymasterDeployed || !this.deploymentState.smartAccountDeployed) {
-            this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Preparing for deployment. Proceeding with zero-capital genesis execution.');
+            this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Checking deployment funding...');
+            
+            // Check if we have sufficient balance for deployment
+            if (eoaEthBalance < this.MIN_DEPLOYMENT_BALANCE) {
+                this.logger.warn(`💰 INSUFFICIENT FUNDS: ${ethers.formatEther(eoaEthBalance)} ETH < ${ethers.formatEther(this.MIN_DEPLOYMENT_BALANCE)} ETH required`);
+                this.logger.info('🚀 Attempting automatic funding via USDC swap...');
+                
+                const fundingResult = await this.ensureDeploymentFunding();
+                if (!fundingResult.success) {
+                    this.logger.error(`❌ Automatic funding failed: ${fundingResult.error}`);
+                    this.logger.warn('⚠️ Deployment may fail due to insufficient gas');
+                } else if (fundingResult.funded) {
+                    this.logger.info('✅ Automatic funding completed successfully');
+                }
+            } else {
+                this.logger.info(`✅ Sufficient balance for deployment: ${ethers.formatEther(eoaEthBalance)} ETH`);
+            }
         } else {
             this.logger.info(`👑 ERC-4337 READY: SCW @ ${this.smartAccountAddress} | Paymaster @ ${this.paymasterAddress}`);
         }
