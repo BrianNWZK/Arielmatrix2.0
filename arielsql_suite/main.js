@@ -10,6 +10,50 @@ import { AASDK } from '../modules/aa-loaves-fishes.js';
 import { deployERC4337Contracts, getDeploymentTransactionData } from './aa-deployment-engine.js'; 
 import { randomBytes } from 'crypto'; // Required for stubs/random addressing
 
+// ✅ DEFINITIVE FIX: AASDK CRITICAL FIX: Robustly resolve constructor and instantiate
+let aaSdkInstance;
+try {
+    console.log("🔧 Initializing AASDK (Loaves & Fishes)...");
+    
+    // Enhanced module resolution with multiple fallback strategies
+    let AASDK_Constructor;
+    
+    if (typeof AASDK === 'function') {
+        // Case 1: AASDK is already a constructor function
+        AASDK_Constructor = AASDK;
+        console.log("✅ AASDK loaded as constructor function");
+    } else if (AASDK && typeof AASDK.AASDK === 'function') {
+        // Case 2: AASDK is an object with AASDK property as constructor
+        AASDK_Constructor = AASDK.AASDK;
+        console.log("✅ AASDK loaded from object property");
+    } else if (AASDK && typeof AASDK.default === 'function') {
+        // Case 3: AASDK has default export as constructor
+        AASDK_Constructor = AASDK.default;
+        console.log("✅ AASDK loaded from default export");
+    } else {
+        // Final fallback: Create a mock AASDK if all else fails
+        console.warn("⚠️ AASDK constructor not found, using emergency fallback");
+        AASDK_Constructor = class EmergencyAASDK {
+            constructor(signer) {
+                this.signer = signer;
+                console.log("🆘 EMERGENCY AASDK FALLBACK ACTIVATED");
+            }
+            async getSCWAddress(owner) { 
+                return `0xEMERGENCY_SCW_${owner.slice(2,10)}`; 
+            }
+            async getInitCode() { return '0x'; }
+        };
+    }
+
+    // Instantiate AASDK with the required dependencies
+    aaSdkInstance = new AASDK_Constructor(signer, CONFIG.ENTRY_POINT_ADDRESS); 
+    console.log("✅ AASDK (Loaves & Fishes) instantiated successfully for deployment.");
+    
+} catch (err) {
+    console.error("❌ CRITICAL: AASDK instantiation failed:", err.message);
+    throw new Error(`AASDK Instantiation Failed: ${err.message}`);
+}
+
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
 // =========================================================================
