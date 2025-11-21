@@ -1,5 +1,5 @@
-// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE)
-// 🔥 FIXED: Removing conditional USDC → ETH self-funding to prevent Uniswap QuoterV2 failure now that EOA is funded.
+// core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE - LOGIC RE-ENFORCED)
+// 🔥 CRITICAL FIX: Re-enabled mandatory conditional USDC → ETH self-funding check to resolve gas crisis.
 // ⚙️ All original functions, imports, and exports are preserved 100%.
 
 import { EventEmitter } from 'events';
@@ -372,7 +372,7 @@ class ProductionSovereignCore extends EventEmitter {
     }
 
     async initialize() {
-        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE)...');
+        this.logger.info('🧠 Initializing ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE - LOGIC RE-ENFORCED)...');
         this.sovereignService.registerService('SovereignCore', this);
         
         // Initialize core services
@@ -380,11 +380,32 @@ class ProductionSovereignCore extends EventEmitter {
         
         // --- Enhanced Pre-Deployment Checks and Self-Funding Logic ---
         await this.checkDeploymentStatus();
-        const eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
+        let eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
         this.logger.info(`🔍 EOA ETH Balance (GAS WALLET): ${ethers.formatEther(eoaEthBalance)} ETH`);
         
-        // 🔥 HINDERANCE REMOVED: Removed the 0.005 ETH deployment safety ceiling check entirely.
-        
+        // 🔥 CRITICAL FIX: Re-enabling the mandatory self-funding check.
+        // The deployment requires gas, which comes from the USDC swap if EOA is too low.
+        // Setting a safe minimum above the previous estimated need of 0.0018559 ETH.
+        const MINIMUM_ETH_FOR_DEPLOYMENT = ethers.parseEther("0.002"); 
+
+        if (eoaEthBalance < MINIMUM_ETH_FOR_DEPLOYMENT) {
+            this.logger.warn('⚠️ INSUFFICIENT ETH FOR DEPLOYMENT GAS. ACTIVATING MANDATORY USDC SELF-FUNDING.');
+            
+            // Calling the core swap function with the standard amount
+            const fundingResult = await this.fundWalletWithUsdcSwap(5.17); 
+            
+            if (!fundingResult.success) {
+                this.logger.error("❌ CRITICAL: Mandatory self-funding failed. Cannot proceed with deployment.");
+                throw new Error(`Mandatory self-funding failed: ${fundingResult.error}`);
+            }
+            
+            // Re-fetch balance after successful funding
+            eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress); 
+            this.logger.info(`💰 POST-FUNDING EOA ETH Balance: ${ethers.formatEther(eoaEthBalance)} ETH`);
+        } else {
+            this.logger.info('✅ EOA ETH balance is sufficient for deployment gas.');
+        }
+
         if (!this.deploymentState.paymasterDeployed || !this.deploymentState.smartAccountDeployed) {
             this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Preparing for deployment. Proceeding with zero-capital genesis execution.');
         } else {
