@@ -33,11 +33,11 @@ class ProductionSovereignCore extends EventEmitter {
         this.logger.warn("You have ~0.0003 ETH left — DO NOT DEPLOY AGAIN");
         this.logger.warn("MANUAL FUNDING REQUIRED:");
 
-        this.logger.info("SEND 0.01 ETH TO:");
+        this.logger.info("SEND 0.05 ETH TO:");
         this.logger.info(this.wallet.address);
         this.logger.info("https://etherscan.io/address/" + this.wallet.address);
 
-        this.logger.info("After you send 0.01 ETH, redeploy ONCE");
+        this.logger.info("After you send 0.05 ETH, redeploy ONCE");
         this.logger.info("v3.0.0 will detect the ETH and skip the swap entirely");
         this.logger.info("NO APPROVE. NO SWAP. NO GAS BURN.");
 
