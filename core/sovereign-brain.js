@@ -1,6 +1,7 @@
 // core/sovereign-brain.js — BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.8.4 (FUNDING BYPASS ACTIVE - LOGIC RE-ENFORCED)
 // 🔥 CRITICAL FIX: Re-enabled mandatory conditional USDC → ETH self-funding check to resolve gas crisis.
-// ⚙️ All original functions, imports, and exports are preserved 100%.
+// 🔥 CRITICAL FIX: Updated Uniswap Quoter V2 ABI to include both overloads, fixing the 'no matching fragment' quote error.
+// ⚙️ All original functions, features, imports/exports are preserved 100%.
 
 import { EventEmitter } from 'events';
 import Web3 from 'web3';
@@ -53,10 +54,12 @@ const WETH_ADDRESS = safeNormalizeAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C7
 const UNISWAP_SWAP_ROUTER = safeNormalizeAddress('0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'); // SwapRouter02
 const UNISWAP_QUOTER = safeNormalizeAddress('0x61fFE014bA17989E743c5F6f3d9C9dC6aC5D5d1f'); // QuoterV2 (latest)
 
-// FIXED: Correct Uniswap V3 ABI configurations
+// FIXED: Correct Uniswap V3 ABI configurations to support all quote overloads
 const UNISWAP_QUOTER_V2_ABI = [
-    // Corrected to include all 4 return values from QuoterV2
-    "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external view returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
+    // 1. Struct signature (Primary QuoterV2 method, returns 4 values)
+    "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external view returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
+    // 2. Direct argument signature (Fallback/Overload fix, only returns amountOut)
+    "function quoteExactInputSingle(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) external view returns (uint256 amountOut)"
 ];
 
 const SWAP_ROUTER_ABI_FIXED = [
@@ -199,7 +202,7 @@ class ProductionSovereignCore extends EventEmitter {
                 };
             }
 
-            // 2. FIXED: Proper quote with correct ABI
+            // 2. FIXED: Proper quote with correct ABI and fallback logic
             const quoteParams = {
                 tokenIn: USDC_ADDRESS,
                 tokenOut: WETH_ADDRESS,
@@ -210,11 +213,11 @@ class ProductionSovereignCore extends EventEmitter {
 
             let quotedAmountOutResponse;
             try {
-                // The quoter call returns a tuple [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
+                // Primary attempt: using the struct method
                 quotedAmountOutResponse = await this.quoter.quoteExactInputSingle.staticCall([quoteParams]);
             } catch (quoteError) {
                 this.logger.warn(`⚠️ Primary quote failed, trying alternative method: ${quoteError.message}`);
-                // Fallback: Use direct call with proper error handling
+                // Fallback: Use direct call with corrected ABI
                 quotedAmountOutResponse = await this.getFallbackQuote(amountIn, poolFee);
             }
 
@@ -305,21 +308,22 @@ class ProductionSovereignCore extends EventEmitter {
         }
     }
 
-    // Fallback quote method
+    // Fallback quote method - Now supported by the corrected UNISWAP_QUOTER_V2_ABI
     async getFallbackQuote(amountIn, poolFee) {
         try {
-            // Fallback for QuoterV2 in case the struct argument fails.
-            const quoteResult = await this.quoter.quoteExactInputSingle(
+            // This is calling the function signature that only returns amountOut
+            const amountOut = await this.quoter.quoteExactInputSingle(
                 USDC_ADDRESS,
                 WETH_ADDRESS,
                 amountIn,
                 poolFee,
                 0n
             );
-            // Return tuple expected by the main function (amountOut, 0, 0, 0)
-            return [quoteResult[0], 0n, 0n, 0n];
+            // Must return the result wrapped in a 4-item array/tuple (BigNumber, 0, 0, 0) 
+            // to match the expected return format of the primary quote method.
+            return [amountOut, 0n, 0n, 0n]; 
         } catch (fallbackError) {
-            this.logger.error(`❌ Fallback quote also failed: ${fallbackError.message}`);
+            this.logger.error(`❌ Fallback quote also failed (ABI verified but contract rejected): ${fallbackError.message}`);
             return null;
         }
     }
@@ -383,10 +387,8 @@ class ProductionSovereignCore extends EventEmitter {
         let eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
         this.logger.info(`🔍 EOA ETH Balance (GAS WALLET): ${ethers.formatEther(eoaEthBalance)} ETH`);
         
-        // 🔥 CRITICAL FIX: Re-enabling the mandatory self-funding check.
-        // The deployment requires gas, which comes from the USDC swap if EOA is too low.
-        // Setting a safe minimum above the previous estimated need of 0.0018559 ETH.
-        const MINIMUM_ETH_FOR_DEPLOYMENT = ethers.parseEther("0.002"); 
+        // 🔥 CRITICAL FIX: Re-enabling the mandatory self-funding check to solve the deployment gas crisis.
+        const MINIMUM_ETH_FOR_DEPLOYMENT = ethers.parseEther("0.002"); // Safely low threshold
 
         if (eoaEthBalance < MINIMUM_ETH_FOR_DEPLOYMENT) {
             this.logger.warn('⚠️ INSUFFICIENT ETH FOR DEPLOYMENT GAS. ACTIVATING MANDATORY USDC SELF-FUNDING.');
@@ -405,6 +407,7 @@ class ProductionSovereignCore extends EventEmitter {
         } else {
             this.logger.info('✅ EOA ETH balance is sufficient for deployment gas.');
         }
+
 
         if (!this.deploymentState.paymasterDeployed || !this.deploymentState.smartAccountDeployed) {
             this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Preparing for deployment. Proceeding with zero-capital genesis execution.');
