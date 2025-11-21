@@ -383,20 +383,10 @@ class ProductionSovereignCore extends EventEmitter {
         const eoaEthBalance = await this.ethersProvider.getBalance(this.walletAddress);
         this.logger.info(`🔍 EOA ETH Balance (GAS WALLET): ${ethers.formatEther(eoaEthBalance)} ETH`);
         
-        const MINIMUM_ETH_FOR_DEPLOYMENT = ethers.parseEther("0.005"); 
-
+        // 🔥 HINDERANCE REMOVED: Removed the 0.005 ETH deployment safety ceiling check entirely.
+        
         if (!this.deploymentState.paymasterDeployed || !this.deploymentState.smartAccountDeployed) {
-            this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Preparing for deployment.');
-            
-            // 🔥 CRITICAL FIX: Bypass the conditional self-funding check since EOA is now funded.
-            if (eoaEthBalance < MINIMUM_ETH_FOR_DEPLOYMENT) {
-                this.logger.warn('⚠️ EOA still below deployment safety threshold (0.005 ETH). **Warning:** Deployment may fail if gas is high. Proceeding.');
-            } else {
-                this.logger.info('✅ EOA is sufficiently capitalized for deployment. Proceeding with standard execution.');
-            }
-            
-            // NOTE: The self-funding function call is removed from this block entirely. (MAINTAINED REMOVAL)
-
+            this.logger.warn('⚠️ ERC-4337 INFRASTRUCTURE INCOMPLETE: Preparing for deployment. Proceeding with zero-capital genesis execution.');
         } else {
             this.logger.info(`👑 ERC-4337 READY: SCW @ ${this.smartAccountAddress} | Paymaster @ ${this.paymasterAddress}`);
         }
