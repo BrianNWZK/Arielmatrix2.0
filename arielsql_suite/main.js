@@ -1,4 +1,3 @@
-// arielsql_suite/main.js - SIMPLIFIED WORKING VERSION
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
@@ -264,7 +263,7 @@ async function main() {
                 console.log("⭐ Ready for production use!");
             } else {
                 console.log("\n❌ Deployment completed with errors");
-                console.log("⚠️  System is running in limited mode");
+                console.log("⚠️ System is running in limited mode");
             }
         }
     } catch (error) {
