@@ -1,4 +1,3 @@
-// arielsql_suite/aa-deployment-engine.js - FIXED BYTECODE VERSION
 import { ethers } from 'ethers';
 
 // =========================================================================
@@ -75,9 +74,11 @@ export async function deployERC4337Contracts(provider, signer, config, aaSdkInst
             throw new Error('Invalid bytecode format');
         }
         
-        // Convert to proper BytesLike format
-        const bytecode = ethers.getBytes(BWAEZI_PAYMASTER_BYTECODE);
-        console.log('✅ Bytecode validated, length:', bytecode.length, 'bytes');
+        // Convert to proper BytesLike format (Note: ContractFactory handles this automatically, but this check is good practice)
+        // const bytecode = ethers.getBytes(BWAEZI_PAYMASTER_BYTECODE);
+        // console.log('✅ Bytecode validated, length:', bytecode.length, 'bytes');
+        console.log('✅ Bytecode validated');
+
 
         // 2. DEPLOY PAYMASTER
         console.log('\n📦 Deploying BWAEZI Paymaster...');
@@ -134,12 +135,12 @@ export async function deployERC4337Contracts(provider, signer, config, aaSdkInst
             console.log('✅ Smart Account Address:', deployedAddresses.smartAccountAddress);
         } catch (error) {
             console.warn('⚠️ Smart account address generation failed:', error.message);
-            // Fallback address
+            // Fallback address - only for testing/simulation, not deterministic for 4337
             deployedAddresses.smartAccountAddress = ethers.getCreateAddress({
                 from: signer.address,
                 nonce: await provider.getTransactionCount(signer.address)
             });
-            console.log('✅ Smart Account Address (fallback):', deployedAddresses.smartAccountAddress);
+            console.log('✅ Smart Account Address (fallback - non-deterministic for AA):', deployedAddresses.smartAccountAddress);
         }
 
         console.log('\n🎉 ALL CONTRACTS DEPLOYED SUCCESSFULLY!');
@@ -183,17 +184,21 @@ async function generateSmartAccountAddress(ownerAddress, aaSdkInstance) {
             }
         }
         
-        // Method 2: Simple deterministic calculation
+        // Method 2: Simple deterministic calculation (Example using Create2 for 4337 standard)
+        // NOTE: This uses a simplified, non-standard approach for demonstration if SDK is missing.
         const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
-        const factoryAddress = '0x9406Cc6185a346906296840746125a0E44976454';
+        const factoryAddress = '0x9406Cc6185a346906296840746125a0E44976454'; // Example Factory Address
         
+        // Mock initCode construction (Highly dependent on the actual Account implementation)
         const initCode = ethers.AbiCoder.defaultAbiCoder().encode(
             ['address', 'uint256'],
             [ownerAddress, 0]
         );
         
+        // NOTE: This part is highly speculative and depends entirely on the specific
+        // Account Factory implementation. This is a generic EIP-4337 pattern estimate.
         const initCodeHash = ethers.keccak256(ethers.concat([factoryAddress, initCode]));
-        const creationCode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${factoryAddress.slice(2)}5af43d82803e903d91602b57fd5bf3`;
+        const creationCode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${factoryAddress.slice(2)}5af43d82803e903d91602b57fd5bf3`; // Simplified Init Code
         const bytecodeHash = ethers.keccak256(creationCode);
         
         return ethers.getCreate2Address(
