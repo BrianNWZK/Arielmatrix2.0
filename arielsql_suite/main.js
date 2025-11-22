@@ -137,6 +137,7 @@ const startExpressServer = (optimizedCore) => {
             const amountIn = ethers.parseUnits("50000", 18); 
             const tokenOutAddress = CONFIG.WETH_TOKEN_ADDRESS;
 
+            // This calls the AA-enabled swap function in the Sovereign Core
             const result = await optimizedCore.executeBWAEZISwapWithAA(amountIn, tokenOutAddress);
             
             if(result.success) {
@@ -160,18 +161,20 @@ const startExpressServer = (optimizedCore) => {
 (async () => {
     try {
         console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.1.0: AA UPGRADE INITIATED");
-        const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
-        const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
-
-        // NOTE: deployERC4337Contracts is removed as deployment is complete in your logs.
+        // We only need the provider/signer config here for the EOA wallet if needed for initial transfer, but the core now relies on the env var.
+        
         // --- Initialize Production Sovereign Core with AA Addresses ---
+        // Pass the necessary config to the new constructor
         const optimizedCore = new ProductionSovereignCore({ 
+            rpcUrl: CONFIG.RPC_URLS[0],
+            privateKey: CONFIG.PRIVATE_KEY,
             paymasterAddress: CONFIG.BWAEZI_PAYMASTER_ADDRESS, 
-            smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS 
-        });
+            smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS,
+            tokenAddress: CONFIG.TOKEN_CONTRACT_ADDRESS
+        }); 
 
         await optimizedCore.initialize();
-        optimizedCore.startTradingBot(); // Start the continuous trading loop
+        optimizedCore.startAutoTrading(); // Starts the continuous trading loop
 
         startExpressServer(optimizedCore);
 
