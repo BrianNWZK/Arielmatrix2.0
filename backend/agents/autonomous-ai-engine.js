@@ -2142,8 +2142,7 @@ const brain = new AutonomousAIEngine();
 const performanceMonitor = new PerformanceMonitor();
 
 // Enhanced export with proper error handling
-export { 
-    brain as default, 
+export {  
     AutonomousAIEngine, 
     SovereignAIGovernor,
     SovereignTreasury,
