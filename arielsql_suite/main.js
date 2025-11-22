@@ -34,6 +34,22 @@ const CONFIG = {
     // ✅ CONTRACTS ARE ALREADY DEPLOYED - HARDCODED ADDRESSES
     PAYMASTER_ADDRESS: "0xC336127cb4732d8A91807f54F9531C682F80E864",
     SMART_ACCOUNT_ADDRESS: "0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C",
+
+    // 💰 TRADING CONFIGURATION - ACTIVATING REVENUE GENERATION
+    TRADING_CONFIG: {
+        // High-frequency/High-impact strategies are prioritized for launch
+        ARBITRAGE_ACTIVE: true, // High Profit, Low Risk
+        MOMENTUM_ACTIVE: true,  // Medium Profit, Medium Risk
+        REBALANCING_ACTIVE: true, // Low Risk, Set to true to start on 6-hour cron
+        OPTIMIZED_SWAPS_ACTIVE: true, // Medium Profit, Low Risk
+        MIN_PROFIT_THRESHOLD_USD: 50, // Minimum $50 profit per trade to execute
+        TRADING_STRATEGIES: [
+            { name: 'Arbitrage', profit: 'High', risk: 'Low', frequency: 'Opportunistic' },
+            { name: 'Momentum', profit: 'Medium', risk: 'Medium', frequency: 'Continuous' },
+            { name: 'Rebalancing', profit: 'Low', risk: 'Low', frequency: 'Every 6 hours' },
+            { name: 'Optimized Swaps', profit: 'Medium', risk: 'Low', frequency: 'Continuous' },
+        ]
+    },
 };
 
 // BWAEZI Token ABI for transfer
@@ -53,12 +69,13 @@ const startExpressServer = () => {
     app.get('/health', (req, res) => {
         res.json({ 
             status: 'operational', 
-            version: '2.1.0-SOVEREIGN', // Updated version number
+            version: '2.1.1-SOVEREIGN_TRADING',
             contracts: {
                 token: CONFIG.TOKEN_CONTRACT_ADDRESS,
                 paymaster: CONFIG.PAYMASTER_ADDRESS,
                 smartAccount: CONFIG.SMART_ACCOUNT_ADDRESS
-            }
+            },
+            trading: CONFIG.TRADING_CONFIG
         });
     });
     
@@ -78,7 +95,7 @@ const startExpressServer = () => {
 
 /**
  * 🎯 CRITICAL FUNCTION: Transfer 100M BWAEZI to Smart Contract Wallet
- * This function is embedded here for fully automated deployment.
+ * CRITICAL FIX: Ensures transfer is skipped if SCW is funded, preventing crash on restart.
  */
 async function transferBWAEZIToSCW() {
     console.log("\n" + "=".repeat(60));
@@ -86,7 +103,6 @@ async function transferBWAEZIToSCW() {
     console.log("=".repeat(60));
     
     if (!CONFIG.SMART_ACCOUNT_ADDRESS) {
-        // This check is now redundant but kept for robustness.
         throw new Error("Smart Account not configured. Check CONFIG addresses.");
     }
     
@@ -109,23 +125,24 @@ async function transferBWAEZIToSCW() {
     console.log(`   EOA Balance: ${ethers.formatUnits(eoaBalance, decimals)} ${symbol}`);
     console.log(`   SCW Balance: ${ethers.formatUnits(scwBalance, decimals)} ${symbol}`);
     
+    const amountToFund = ethers.parseUnits("100000000", decimals); // 100,000,000 BWAEZI
+    const sufficientThreshold = ethers.parseUnits("50000000", decimals); // 50,000,000 BWAEZI
+
+    // --- CRITICAL FIX START: Check SCW balance first to allow skipping on restart ---
+    if (scwBalance >= sufficientThreshold) {
+        console.log(`⚠️  SCW already has ${ethers.formatUnits(scwBalance, decimals)} ${symbol}.`);
+        console.log(`✅ SCW is sufficiently funded. Skipping transfer.`);
+        return { success: true, message: "SCW already funded." };
+    }
+    
+    // If we reach here, the SCW needs funding. Now we check the EOA source.
     if (eoaBalance === 0n) {
-        throw new Error(`❌ EOA has 0 ${symbol} balance. Cannot transfer.`);
+        throw new Error(`❌ EOA has 0 ${symbol} balance and SCW is not sufficiently funded. Manual EOA funding required.`);
     }
-    
-    if (scwBalance > 0n) {
-        console.log(`⚠️  SCW already has ${ethers.formatUnits(scwBalance, decimals)} ${symbol}. Checking if transfer is needed...`);
-        // If SCW already has significant balance, skip transfer
-        if (scwBalance >= ethers.parseUnits("50000000", decimals)) { 
-            console.log(`✅ SCW is sufficiently funded. Skipping transfer.`);
-            return { success: true, message: "SCW already funded." };
-        }
-    }
-    
-    const amountToTransfer = ethers.parseUnits("100000000", decimals); // 100,000,000 BWAEZI
+    // --- CRITICAL FIX END ---
     
     // Use the full available balance if less than 100M is present
-    const actualTransferAmount = eoaBalance < amountToTransfer ? eoaBalance : amountToTransfer;
+    const actualTransferAmount = eoaBalance < amountToFund ? eoaBalance : amountToFund;
     
     console.log(`\nSending ${ethers.formatUnits(actualTransferAmount, decimals)} ${symbol} to SCW...`);
     
@@ -157,7 +174,6 @@ async function transferBWAEZIToSCW() {
  */
 async function deployAndInitialize() {
     console.log("=========================================================");
-    // Updated message to reflect skipping the deployment step
     console.log("🚀 BSFM SYSTEM INITIALIZING: USING DEPLOYED ERC-4337 CONTRACTS");
     console.log("=========================================================");
 
@@ -166,28 +182,30 @@ async function deployAndInitialize() {
     }
     
     // 1. USE EXISTING ERC-4337 INFRASTRUCTURE
-    // Deployment is skipped as per the user's request. Addresses are hardcoded.
     console.log(`\n🎉 USING EXISTING DEPLOYMENT:`);
     console.log(`   Paymaster Address: ${CONFIG.PAYMASTER_ADDRESS}`);
     console.log(`   SCW Address: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
     
     // 2. FUND THE SOVEREIGN CORE (100M BWAEZI Transfer)
-    // NOTE: This automatic execution can be skipped if you run 
-    // the dedicated script 'transfer-100m-to-scw.js' separately.
     await transferBWAEZIToSCW(); 
 
-    // 3. INITIALIZE SOVEREIGN CORE BRAIN
+    // 3. INITIALIZE SOVEREIGN CORE BRAIN AND TRADING ENGINE
+    console.log("\n🧠 INITIALIZING SOVEREIGN CORE WITH TRADING CONFIGURATION...");
     const sovereignCore = new ProductionSovereignCore({
         smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS,
         paymasterAddress: CONFIG.PAYMASTER_ADDRESS,
         tokenAddress: CONFIG.TOKEN_CONTRACT_ADDRESS,
         privateKey: CONFIG.PRIVATE_KEY,
-        rpcUrl: CONFIG.RPC_URLS[0]
+        rpcUrl: CONFIG.RPC_URLS[0],
+        // 💰 Injecting the new trading strategies and config
+        tradingConfig: CONFIG.TRADING_CONFIG
     });
     
+    // This call must now resolve the internal dependency issue
     await sovereignCore.initialize();
     
     // 4. ACTIVATE AUTO-TRADING BOT
+    console.log(`\n✅ Starting Auto-Trading Bot with ${CONFIG.TRADING_CONFIG.TRADING_STRATEGIES.length} active strategies...`);
     sovereignCore.startAutoTrading();
 
     // 5. START API SERVER
