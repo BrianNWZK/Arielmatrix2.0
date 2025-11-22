@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BSFM Sovereign Dashboard v2.0.0</title>
+    <style>
+        :root {
+            --quantum-blue: #00f0ff;
+            --neon-purple: #b967ff;
+            --dark-space: #0a0a1a;
+            --panel-bg: rgba(16, 16, 32, 0.9);
+            --font-mono: 'Courier New', monospace;
+        }
+        
+        body { 
+            background: var(--dark-space); 
+            color: white; 
+            font-family: var(--font-mono); 
+            margin: 0; 
+            padding: 20px; 
+            min-height: 100vh;
+        }
+        .dashboard { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; border-bottom: 2px solid var(--quantum-blue); padding-bottom: 20px; margin-bottom: 30px; }
+        h1 { color: var(--quantum-blue); }
+        .panel { 
+            background: var(--panel-bg); 
+            border: 1px solid var(--quantum-blue); 
+            border-radius: 10px; 
+            padding: 20px; 
+            margin: 10px 0; 
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+        }
+        .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .btn { 
+            background: linear-gradient(45deg, var(--quantum-blue), var(--neon-purple)); 
+            border: none; 
+            border-radius: 5px; 
+            color: var(--dark-space); 
+            padding: 10px 20px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            margin: 5px; 
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .btn:hover { 
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0, 240, 255, 0.4);
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .log { 
+            background: black; 
+            border: 1px solid #333; 
+            border-radius: 5px; 
+            padding: 15px; 
+            height: 250px; 
+            overflow-y: auto; 
+            font-size: 12px; 
+            white-space: pre-wrap;
+        }
+        .metric { 
+            display: inline-block; 
+            background: rgba(0, 240, 255, 0.1); 
+            padding: 8px 12px; 
+            border-radius: 5px; 
+            margin: 5px;
+            border-left: 3px solid var(--neon-purple);
+        }
+        .token-value { color: var(--quantum-blue); font-weight: bold; }
+        input[type="number"], select {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--quantum-blue);
+            color: white;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            width: calc(50% - 14px);
+        }
+        @media (max-width: 800px) {
+            .control-grid { grid-template-columns: 1fr; }
+            input[type="number"], select { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>🚀 BSFM SOVEREIGN DASHBOARD v2.0.0</h1>
+            <p>ERC-4337 Powered • Gas Paid in BWAEZI • Fixed Rate: <span class="token-value">1 BWAEZI = $100 USD</span></p>
+        </div>
+        
+        <div class="panel">
+            <h3>💰 PORTFOLIO VALUATION (SCW: <span id="walletAddress">0x5Ae67...2A3C</span>)</h3>
+            <div id="valuation">
+                <div class="metric">BWAEZI: <span id="balanceBWAEZI">0.00</span> (<span id="bwaeziValue">$0.00</span>)</div>
+                <div class="metric">WETH: <span id="balanceWETH">0.00</span></div>
+                <div class="metric">USDT: <span id="balanceUSDT">0.00</span></div>
+                <div class="metric">USDC: <span id="balanceUSDC">0.00</span></div>
+                <div class="metric">DAI: <span id="balanceDAI">0.00</span></div>
+                <div class="metric">Total Value: <span class="token-value" id="totalValue">$0.00</span></div>
+            </div>
+            <button class="btn" onclick="refreshBalances()">Refresh Portfolio</button>
+            <button class="btn" onclick="getGasEstimate()">Check Gas Cost</button>
+        </div>
+
+        <div class="control-grid">
+            <div class="panel">
+                <h3>🔄 TOKEN WITHDRAWAL (Gas Paid in BWAEZI)</h3>
+                <select id="withdrawToken">
+                    <option value="WETH">WETH</option>
+                    <option value="USDT">USDT</option>
+                    <option value="USDC">USDC</option>
+                    <option value="DAI">DAI</option>
+                </select>
+                <input type="number" id="withdrawAmount" placeholder="Amount" step="0.01">
+                <button class="btn" onclick="withdrawToken()">Execute Withdrawal</button>
+                <div id="gasCostDisplay" style="margin-top: 10px; font-size: 12px; color: var(--quantum-blue);"></div>
+            </div>
+
+            <div class="panel">
+                <h3>🤖 BWAEZI TRADING (Fixed Rate Swap)</h3>
+                <input type="number" id="tradeAmount" placeholder="BWAEZI Amount">
+                <select id="tradeTarget">
+                    <option value="USDT">USDT ($100 rate)</option>
+                    <option value="USDC">USDC ($100 rate)</option>
+                    <option value="DAI">DAI ($100 rate)</option>
+                </select>
+                <button class="btn" onclick="executeTrade()">Execute Trade</button>
+                <div style="margin-top: 10px;">
+                    <button class="btn" onclick="startAutoTrading()">Start Auto-Trading (60s)</button>
+                    <button class="btn" onclick="stopAutoTrading()">Stop Auto-Trading</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>📜 TRANSACTION LOGS</h3>
+            <div class="log" id="logs"></div>
+            <button class="btn" onclick="clearLogs()">Clear Logs</button>
+            <button class="btn" onclick="exportLogs()">Export Logs</button>
+        </div>
+    </div>
+
+    <script>
+        // Use environment variable or default to localhost
+        const API_BASE = 'http://localhost:3001/api'; 
+        const FIXED_RATE = 100;
+
+        // Initialize contract info display
+        document.getElementById('walletAddress').textContent = '0x5Ae67...2A3C'; // Partial address for display
+
+        function addLog(message) {
+            const logs = document.getElementById('logs');
+            const logEntry = `> ${new Date().toLocaleTimeString('en-US', { hour12: false })}: ${message}\n`;
+            logs.innerHTML += logEntry;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        async function refreshBalances() {
+            addLog('📡 Fetching real-time portfolio data...');
+            try {
+                const response = await fetch(`${API_BASE}/balances`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('balanceBWAEZI').textContent = parseFloat(data.balances.BWAEZI).toFixed(2);
+                    document.getElementById('bwaeziValue').textContent = data.valuation.bwaeziValue;
+                    document.getElementById('balanceWETH').textContent = parseFloat(data.balances.WETH).toFixed(4);
+                    document.getElementById('balanceUSDT').textContent = parseFloat(data.balances.USDT).toFixed(2);
+                    document.getElementById('balanceUSDC').textContent = parseFloat(data.balances.USDC).toFixed(2);
+                    document.getElementById('balanceDAI').textContent = parseFloat(data.balances.DAI).toFixed(2);
+                    document.getElementById('totalValue').textContent = data.valuation.totalValue;
+                    
+                    addLog(`✅ Portfolio updated - Total Value: ${data.valuation.totalValue}`);
+                } else {
+                    addLog('❌ Failed to fetch balances: ' + data.error);
+                }
+            } catch (error) {
+                addLog('❌ Failed to fetch balances: ' + error.message);
+            }
+        }
+
+        async function getGasEstimate() {
+            addLog('⛽ Requesting BWAEZI gas estimate for a standard transaction...');
+            try {
+                const response = await fetch(`${API_BASE}/gas-estimate`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('gasCostDisplay').innerHTML = 
+                        `⛽ Est. Gas Cost: <span class="token-value">${data.estimate.bwaeziCost} BWAEZI</span> ($${data.estimate.usdCost} USD)`;
+                    addLog(`⛽ ${data.message}`);
+                } else {
+                    addLog('❌ Gas estimate failed: ' + data.error);
+                }
+            } catch (error) {
+                addLog('❌ Gas estimate failed: ' + error.message);
+            }
+        }
+
+        async function withdrawToken() {
+            const token = document.getElementById('withdrawToken').value;
+            const amount = document.getElementById('withdrawAmount').value;
+            
+            if (!amount || parseFloat(amount) <= 0) {
+                addLog('❌ Please enter a valid amount');
+                return;
+            }
+
+            addLog(`📤 Initiating ${amount} ${token} withdrawal (Gas paid in BWAEZI)...`);
+
+            try {
+                const response = await fetch(`${API_BASE}/withdraw-token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        tokenAddress: getTokenAddress(token),
+                        amount: amount
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog(`✅ Withdrawal UserOp submitted! Tx Hash: ${data.userOpHash.substring(0, 10)}...`);
+                    addLog(`    Gas paid: ${data.gasCost.bwaeziCost} BWAEZI`);
+                    // Delay refresh to allow Bundler/Chain to process the transaction
+                    setTimeout(refreshBalances, 20000); 
+                } else {
+                    addLog(`❌ Withdrawal failed: ${data.error}`);
+                }
+            } catch (error) {
+                addLog('❌ Withdrawal network error: ' + error.message);
+            }
+        }
+
+        async function executeTrade() {
+            const amount = document.getElementById('tradeAmount').value;
+            const target = document.getElementById('tradeTarget').value;
+            
+            if (!amount || parseFloat(amount) <= 0) {
+                addLog('❌ Please enter a valid BWAEZI amount');
+                return;
+            }
+
+            const expectedOutput = (parseFloat(amount) * FIXED_RATE).toFixed(2);
+
+            addLog(`🔄 Initiating trade: ${amount} BWAEZI → ${expectedOutput} ${target} (Gas paid in BWAEZI)...`);
+
+            try {
+                const response = await fetch(`${API_BASE}/execute-trade`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        amountIn: amount,
+                        tokenOut: target
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog(`✅ Trade UserOp submitted! Tx Hash: ${data.userOpHash.substring(0, 10)}...`);
+                    addLog(`    Gas: ${data.gasCost.bwaeziCost} BWAEZI | Rate: 1 BWAEZI = $${data.tradeDetails.rate} ${target}`);
+                    setTimeout(refreshBalances, 20000);
+                } else {
+                    addLog('❌ Trade execution failed: ' + data.error);
+                }
+            } catch (error) {
+                addLog('❌ Trade execution network error: ' + error.message);
+            }
+        }
+
+        let autoTradingInterval;
+        function startAutoTrading() {
+            stopAutoTrading(); // Ensure only one interval is running
+            addLog('🤖 Auto-trading STARTED (trades every 60s at fixed $100 rate)');
+            
+            const tradeLogic = () => {
+                const amount = (Math.random() * 1000 + 100).toFixed(2); // Random amount 100-1100
+                const targets = ['USDT', 'USDC', 'DAI'];
+                const target = targets[Math.floor(Math.random() * targets.length)];
+                document.getElementById('tradeAmount').value = amount;
+                document.getElementById('tradeTarget').value = target;
+                executeTrade();
+            };
+
+            tradeLogic(); // Execute immediately
+            autoTradingInterval = setInterval(tradeLogic, 60000); // Repeat every 60 seconds
+        }
+
+        function stopAutoTrading() {
+            if (autoTradingInterval) {
+                clearInterval(autoTradingInterval);
+                addLog('🛑 Auto-trading STOPPED');
+            }
+        }
+
+        function getTokenAddress(symbol) {
+            // Hardcoded addresses from server config for client-side logic
+            const addresses = {
+                'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+                'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+                'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+                'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F'
+            };
+            return addresses[symbol];
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '> Logs cleared\n';
+        }
+
+        function exportLogs() {
+            const logs = document.getElementById('logs').innerText;
+            const blob = new Blob([logs], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'sovereign-dashboard-logs.txt';
+            a.click();
+            addLog('⬇️ Logs exported to sovereign-dashboard-logs.txt');
+        }
+
+        // Initialize dashboard state
+        refreshBalances();
+        getGasEstimate();
+        addLog('🚀 SOVEREIGN DASHBOARD READY - Fixed BWAEZI rate: $100 USD');
+        addLog('📍 Smart Wallet (SCW): 0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C');
+        addLog('📍 Paymaster: 0xC336127cb4732d8A91807f54F9531C682F80E864');
+        addLog('📍 BWAEZI Token: 0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da');
+    </script>
+</body>
+</html>
