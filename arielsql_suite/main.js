@@ -5,7 +5,8 @@ import { ethers } from 'ethers';
 import process from 'process';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { AASDK } from '../modules/aa-loaves-fishes.js'; 
-import { deployERC4337Contracts } from './aa-deployment-engine.js';
+// NOTE: deployERC4337Contracts is removed as deployment is complete.
+// import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
 
 // =========================================================================
 // PRODUCTION CONFIGURATION - OPTIMIZED
@@ -30,9 +31,9 @@ const CONFIG = {
     UNISWAP_V3_QUOTER_ADDRESS: "0xb27308f9F90D607463bb33aEB824A6c6D6D0Bd6d", // Corrected Quoter address
     BWAEZI_WETH_FEE: 3000,
     
-    // Will be set after deployment
-    PAYMASTER_ADDRESS: null,
-    SMART_ACCOUNT_ADDRESS: null,
+    // ✅ CONTRACTS ARE ALREADY DEPLOYED - HARDCODED ADDRESSES
+    PAYMASTER_ADDRESS: "0xC336127cb4732d8A91807f54F9531C682F80E864",
+    SMART_ACCOUNT_ADDRESS: "0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C",
 };
 
 // BWAEZI Token ABI for transfer
@@ -52,7 +53,7 @@ const startExpressServer = () => {
     app.get('/health', (req, res) => {
         res.json({ 
             status: 'operational', 
-            version: '2.0.0-SOVEREIGN',
+            version: '2.1.0-SOVEREIGN', // Updated version number
             contracts: {
                 token: CONFIG.TOKEN_CONTRACT_ADDRESS,
                 paymaster: CONFIG.PAYMASTER_ADDRESS,
@@ -85,7 +86,8 @@ async function transferBWAEZIToSCW() {
     console.log("=".repeat(60));
     
     if (!CONFIG.SMART_ACCOUNT_ADDRESS) {
-        throw new Error("Smart Account not deployed yet. Run deployment first.");
+        // This check is now redundant but kept for robustness.
+        throw new Error("Smart Account not configured. Check CONFIG addresses.");
     }
     
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
@@ -155,20 +157,17 @@ async function transferBWAEZIToSCW() {
  */
 async function deployAndInitialize() {
     console.log("=========================================================");
-    console.log("🚀 BSFM SYSTEM INITIALIZING: ERC-4337 DEPLOYMENT STARTED");
+    // Updated message to reflect skipping the deployment step
+    console.log("🚀 BSFM SYSTEM INITIALIZING: USING DEPLOYED ERC-4337 CONTRACTS");
     console.log("=========================================================");
 
     if (!CONFIG.PRIVATE_KEY) {
         throw new Error("CRITICAL: PRIVATE_KEY environment variable is not set.");
     }
     
-    // 1. DEPLOY ERC-4337 INFRASTRUCTURE
-    const deploymentResult = await deployERC4337Contracts(CONFIG);
-
-    CONFIG.PAYMASTER_ADDRESS = deploymentResult.paymasterAddress;
-    CONFIG.SMART_ACCOUNT_ADDRESS = deploymentResult.smartAccountAddress;
-    
-    console.log(`\n🎉 DEPLOYMENT COMPLETE:`);
+    // 1. USE EXISTING ERC-4337 INFRASTRUCTURE
+    // Deployment is skipped as per the user's request. Addresses are hardcoded.
+    console.log(`\n🎉 USING EXISTING DEPLOYMENT:`);
     console.log(`   Paymaster Address: ${CONFIG.PAYMASTER_ADDRESS}`);
     console.log(`   SCW Address: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
     
