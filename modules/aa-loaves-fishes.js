@@ -1,5 +1,53 @@
 import { ethers } from 'ethers';
 
+// FACTORY ADDRESS CONSTANT
+const FACTORY_ADDRESS = '0x9406Cc6185a346906296840746125a0E44976454'; // SimpleAccountFactory mainnet
+
+// =========================================================================
+// EXPORTED STANDALONE FUNCTION: getSCWAddress
+// Fixes: SyntaxError: ... does not provide an export named 'getSCWAddress'
+// =========================================================================
+
+/**
+ * Calculates the deterministic smart contract wallet (SCW) address using the default salt (0).
+ * This function is exported standalone to be used directly for address lookups.
+ * @param {string} ownerAddress The EOA owner address.
+ * @returns {Promise<string>} The deterministic smart account address.
+ */
+async function getSCWAddress(ownerAddress) {
+    console.log(`🔍 SCWUtil: Calculating deterministic SCW address for owner ${ownerAddress.slice(0, 10)}...`);
+    
+    try {
+        const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
+        
+        const initCodeData = ethers.AbiCoder.defaultAbiCoder().encode(
+            ['address', 'uint256'],
+            [ownerAddress, 0]
+        );
+
+        // Use the constant FACTORY_ADDRESS
+        const initCodeWithFactory = ethers.concat([FACTORY_ADDRESS, initCodeData]);
+        const initCodeHash = ethers.keccak256(initCodeWithFactory);
+        
+        // Creation Code (SimpleAccountFactory proxy/deployer bytecode)
+        const creationCode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${FACTORY_ADDRESS.slice(2)}5af43d82803e903d91602b57fd5bf3`;
+        const bytecodeHash = ethers.keccak256(creationCode);
+        
+        const deterministicAddress = ethers.getCreate2Address(
+            FACTORY_ADDRESS, // Use constant address here
+            salt,
+            ethers.keccak256(ethers.concat([bytecodeHash, initCodeHash]))
+        );
+        
+        console.log(`✅ SCW Address calculated: ${deterministicAddress}`);
+        return deterministicAddress;
+    } catch (error) {
+        console.warn(`⚠️ SCW address calculation failed, using fallback: ${error.message}`);
+        return `0xSCW_${ownerAddress.slice(2, 10).toUpperCase()}DETERMINISTIC`; // Fallback placeholder
+    }
+}
+
+
 // COMPLETE AASDK implementation with all required methods
 class AASDK {
     constructor(signer, entryPointAddress = '0x5FF137D4bEAA7036d654a88Ea898df565D304B88') {
@@ -15,7 +63,7 @@ class AASDK {
         
         this.signer = signer;
         this.entryPointAddress = entryPointAddress;
-        this.factoryAddress = '0x9406Cc6185a346906296840746125a0E44976454'; // SimpleAccountFactory mainnet
+        this.factoryAddress = FACTORY_ADDRESS; // Use the globally defined constant
         
         console.log(`🔧 AASDK initialized with signer: ${this.signer.address.slice(0, 10)}...`);
     }
@@ -83,34 +131,8 @@ class AASDK {
      * @returns {Promise<string>} The deterministic smart account address.
      */
     async getSCWAddress(ownerAddress) {
-        console.log(`🔍 AASDK: Calculating deterministic SCW address for owner ${ownerAddress.slice(0, 10)}...`);
-        
-        try {
-            const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
-            
-            const initCodeData = ethers.AbiCoder.defaultAbiCoder().encode(
-                ['address', 'uint256'],
-                [ownerAddress, 0]
-            );
-
-            const initCodeWithFactory = ethers.concat([this.factoryAddress, initCodeData]);
-            const initCodeHash = ethers.keccak256(initCodeWithFactory);
-            
-            const creationCode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${this.factoryAddress.slice(2)}5af43d82803e903d91602b57fd5bf3`;
-            const bytecodeHash = ethers.keccak256(creationCode);
-            
-            const deterministicAddress = ethers.getCreate2Address(
-                this.factoryAddress,
-                salt,
-                ethers.keccak256(ethers.concat([bytecodeHash, initCodeHash]))
-            );
-            
-            console.log(`✅ SCW Address calculated: ${deterministicAddress}`);
-            return deterministicAddress;
-        } catch (error) {
-            console.warn(`⚠️ SCW address calculation failed, using fallback: ${error.message}`);
-            return `0xSCW_${ownerAddress.slice(2, 10).toUpperCase()}DETERMINISTIC`; // Fallback placeholder
-        }
+        // Now calls the globally exported function for consistency
+        return getSCWAddress(ownerAddress); 
     }
 
     /**
@@ -298,6 +320,6 @@ class AASDK {
     }
 }
 
-// Export the class as both default and named export for maximum compatibility
-export { AASDK };
+// Export the class and the standalone function for maximum compatibility
+export { AASDK, getSCWAddress };
 export default AASDK;
