@@ -1,11 +1,15 @@
 # --- STAGE 1: Dependency Installer ---
-# FIX: Switching to the stable Node.js LTS major version (20-slim) to resolve
-#      the previous I/O timeout and the 'not found' errors.
-FROM node:20-slim AS builder
+# CRITICAL FIX: Base image is switched to Node.js 22-slim 
+# to satisfy the 'arielsql-alltimate' requirement (node: '22.x'), 
+# resolving the EBADENGINE warning and ensuring runtime stability.
+FROM node:22-slim AS builder
 
 WORKDIR /usr/src/app
 
 # System dependencies
+# FIX: The inclusion of 'build-essential' and 'python3' here is CRUCIAL.
+# This resolves the 'make failed' and C++ compilation errors 
+# (like the 'epoll' module failure) by providing the node-gyp build tools.
 RUN apt-get update && apt-get install -y \
   python3 \
   build-essential \
@@ -62,8 +66,8 @@ COPY . .
 RUN chmod +x build_and_deploy.sh && ./build_and_deploy.sh
 
 # --- STAGE 2: Final Image ---
-# FIX: Must match the builder image tag (node:20-slim)
-FROM node:20-slim AS final
+# FIX: Must match the builder image tag (node:22-slim)
+FROM node:22-slim AS final
 
 WORKDIR /usr/src/app
 
