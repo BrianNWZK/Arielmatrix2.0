@@ -24,8 +24,8 @@ import { getArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 
 // === 👑 CRITICAL MISSING DEPENDENCIES FIX 👑 ===
 // FIX: Added imports for the modules missing during initialization check
-import { BwaeziChain } from '../modules/bwaezi-chain.js';
-import { PayoutSystem } from '../modules/payout-system.js';
+import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js';
+import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js';
 
 // === 👑 NEW AA IMPORTS FOR LOAVES AND FISHES ENGINE 👑 ===
 import { AASDK } from '../modules/aa-loaves-fishes.js';
@@ -202,8 +202,8 @@ class ProductionSovereignCore extends EventEmitter {
 
         // 🔥 CRITICAL FIX: Aliasing and Initializing MISSING dependencies to pass inherited check.
         this.DatabaseEngine = this.arielDB; // FIX: Aliasing existing DB instance
-        this.BwaeziChain = new BwaeziChain(this.web3); // FIX: Instantiating missing chain module
-        this.PayoutSystem = new PayoutSystem(this.web3, this.arielDB); // FIX: Instantiating missing payout module
+        this.BrianNwaezikeChain = new BrianNwaezikeChain(this.web3); // FIX: Instantiating missing chain module
+        this.BrianNwaezikePayoutSystem = new BrianNwaezikePayoutSystem(this.web3, this.arielDB); // FIX: Instantiating missing payout module
         this.SovereignCore = this; // FIX: Aliasing the instance itself
 
         // === 👑 NEW GOD-MODE ENGINE INTEGRATION (Limitless Capabilities) 👑 ===
@@ -315,10 +315,10 @@ class ProductionSovereignCore extends EventEmitter {
             // 1. Core Module Initialization
             await this.DatabaseEngine.initialize();
             this.logger.info("✅ ArielSQLiteEngine (DatabaseEngine) Initialized.");
-            await this.BwaeziChain.initialize();
-            this.logger.info("✅ BwaeziChain Initialized.");
-            await this.PayoutSystem.initialize();
-            this.logger.info("✅ PayoutSystem Initialized.");
+            await this.BrianNwaezikeChain.initialize();
+            this.logger.info("✅ BrianNwaezikeChain Initialized.");
+            await this.BrianNwaezikePayoutSystem.initialize();
+            this.logger.info("✅ BrianNwaezikePayoutSystem Initialized.");
             
             // 2. Quantum God-Mode Engine Initialization
             await this.QuantumGravityConsciousness.initialize();
