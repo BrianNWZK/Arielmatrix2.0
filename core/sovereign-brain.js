@@ -430,7 +430,9 @@ class ProductionSovereignCore extends EventEmitter {
     adjustTradeSize(amountIn, priceImpact) {
         // FIX/REPLACE: Using AINetworkOptimizer for trade size adjustment
         // Logic to reduce trade size to mitigate impact, using the AI Optimizer
-        return amountIn * 0.9n; 
+        // 🔥 CRITICAL FIX: Convert decimal to BigInt properly
+        const adjustmentFactor = 900n; // 0.9 represented as 900/1000 = 90%
+        return (amountIn * adjustmentFactor) / 1000n;
     }
     
     async analyzeTradeProfitability(amountIn, optimalRoute) {
