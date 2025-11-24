@@ -1,3 +1,9 @@
+/**
+ * @file config/bwaezi-config.js
+ * @description CORE BWAEZI CHAIN CONFIGURATION - PRODUCTION READY.
+ * Defines blockchain parameters, deployed contract addresses, and the
+ * quantum-grade security and zero-knowledge compliance architecture.
+ */
 import { randomBytes, createHash } from 'crypto';
 import { EventEmitter } from 'events';
 
@@ -96,7 +102,7 @@ export const QUANTUM_SECURITY_FRAMEWORK = {
         SOVEREIGN_WALLETS_DEFENSE: 'PK is Ephemeral during transaction signing, never at rest in plain text.'
     },
     THREAT_MITIGATION: {
-        QUANTUM_ATTACKS: 'Shor\'s Algorithm Mitigated by PQC Signatures',
+        QUANTUM_ATTACKS: "Shor's Algorithm Mitigated by PQC Signatures",
         SIDECURRENT_ATTACKS: 'ArielSQLite State Channel Obfuscation',
         DDOS_ATTACKS: 'Sharding Manager Load Balancing'
     }
