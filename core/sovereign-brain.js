@@ -62,7 +62,7 @@ class QuantumGravityConsciousness {
             gravitationalConstant: this.gravitationalConstant,
             speedOfLight: this.speedOfLight,
             planckLength: this.planckLength,
-            planckMass: this.planlanckMass,
+            planckMass: this.planckMass, // FIX: Corrected typo from 'planlanckMass'
             planckConstant: this.planckConstant,
         });
         // Real hashing for system integrity check
@@ -322,7 +322,7 @@ class ProductionSovereignCore extends EventEmitter {
         this.QuantumProcessingUnit = new QuantumProcessingUnit();
         // === 👑 GOD-MODE ENGINE INTEGRATION (REPLACED PLACEHOLDERS) 👑 ===
         this.QuantumGravityConsciousness = new QuantumGravityConsciousness();
-        this.RealityProgrammingAdvanced = new new RealityProgrammingAdvanced();
+        this.RealityProgrammingAdvanced = new RealityProgrammingAdvanced(); // FIX: Removed redundant 'new' keyword
         this.OmnipotentCapabilityEngine = new OmnipotentCapabilityEngine();
         this.QuantumCircuitBreaker = new QuantumCircuitBreaker();
         this.EnterpriseQuantumRouter = new EnterpriseQuantumRouter();
