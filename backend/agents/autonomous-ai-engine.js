@@ -8,16 +8,23 @@
 // 1. IMPORTS - Enhanced with proper ESM imports and error handling
 // =========================================================================
 import {
-    initializeConnections,
+     initializeConnections,
     getWalletBalances,
     getWalletAddresses,
     sendSOL,
+    sendETH,
+    sendBwaezi,
     sendUSDT,
+    convertBwaeziToUSDT,
+    getBwaeziConversionRate,
+    getPendingConversions,
+    processRevenuePayment,
+    checkBlockchainHealth,
+    validateAddress,
+    formatBalance,
     testAllConnections,
-    getEthereumWeb3,
-    getSolanaConnection,
-    getEthereumAccount,
-    getSolanaKeypair
+    triggerRevenueConsolidation,
+    consolidateRevenue
 } from './wallet.js';
 import { Mutex } from 'async-mutex';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, watch } from 'fs';
