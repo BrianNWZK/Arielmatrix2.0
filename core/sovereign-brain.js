@@ -18,7 +18,7 @@ import { QuantumNeuroCortex } from '../core/consciousness-reality-engine.js';
 import { RealityProgrammingEngine } from '../core/consciousness-reality-advanced.js';
 import { QuantumProcessingUnit } from '../core/quantumhardware-layer.js';
 import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
-import { AASDK } from '../modules/aa-loaves-fishes.js'; 
+import { AASDK } from '../modules/aa-loaves-fishes.js';
 import { BWAEZIToken } from '../modules/bwaezi-token.js';
 // =================================================
 
@@ -62,7 +62,7 @@ class QuantumGravityConsciousness {
             gravitationalConstant: this.gravitationalConstant,
             speedOfLight: this.speedOfLight,
             planckLength: this.planckLength,
-            planckMass: this.planckMass, // FIX: Corrected typo from 'planlanckMass'
+            planckMass: this.planckMass,
             planckConstant: this.planckConstant,
         });
         // Real hashing for system integrity check
@@ -74,32 +74,32 @@ class QuantumGravityConsciousness {
 }
 
 // Stubs with initialization methods maintained for full dependency chain
-class RealityProgrammingAdvanced { 
+class RealityProgrammingAdvanced {
     constructor() { this.initialized = false; }
-    async initialize(engine) { this.engine = engine; this.initialized = true; } 
+    async initialize(engine) { this.engine = engine; this.initialized = true; }
     isOperational() { return this.initialized; }
 }
-class OmnipotentCapabilityEngine { 
+class OmnipotentCapabilityEngine {
     constructor() { this.initialized = false; }
-    async initialize() { this.initialized = true; } 
+    async initialize() { this.initialized = true; }
     isOperational() { return this.initialized; }
 }
-class QuantumCircuitBreaker { 
+class QuantumCircuitBreaker {
     constructor() { this.initialized = false; }
-    async initialize() { this.initialized = true; } 
-    isSafeToTrade() { 
+    async initialize() { this.initialized = true; }
+    isSafeToTrade() {
         // Real implementation: check volatility, SCW balance, gas price
-        return true; 
-    } 
-    logAnomaly() {} 
+        return true;
+    }
+    logAnomaly() {}
     isOperational() { return this.initialized; }
 }
-class EnterpriseQuantumRouter { 
-    constructor() { 
-        this.initialized = false; 
+class EnterpriseQuantumRouter {
+    constructor() {
+        this.initialized = false;
         this.logger = getGlobalLogger('EnterpriseQuantumRouter');
     }
-    async initialize(omnipresentEngine) { this.engine = omnipresentEngine; this.initialized = true; } 
+    async initialize(omnipresentEngine) { this.engine = omnipresentEngine; this.initialized = true; }
     // In a real system, this would find the lowest slippage path across all 30 DEXes
     async routeOptimalTrade(tradeDetails, dexConfig) {
         this.logger?.log('DEBUG', `Routing optimal trade for ${tradeDetails.pair.from} to ${tradeDetails.pair.to}`);
@@ -107,9 +107,9 @@ class EnterpriseQuantumRouter {
     }
     isOperational() { return this.initialized; }
 }
-class AINetworkOptimizer { 
+class AINetworkOptimizer {
     constructor() { this.initialized = false; }
-    async initialize() { this.initialized = true; } 
+    async initialize() { this.initialized = true; }
     optimizeUserOp(userOp) {
         // Real implementation: applies optimizations like batching, time-of-day logic, or specific fee bidding
         return userOp;
@@ -118,7 +118,7 @@ class AINetworkOptimizer {
 }
 
 // =======================================================================
-// CORE REVENUE GENERATION IMPLEMENTATIONS 
+// CORE REVENUE GENERATION IMPLEMENTATIONS
 // =======================================================================
 
 // Placeholder URLs for simulation/testing.
@@ -131,21 +131,21 @@ class RealMarketData {
     constructor(config) {
         this.config = config;
     }
-    
+
     async getDEXPrices(tokenPair) {
         const results = [];
         const { from, to } = tokenPair;
-        
+
         // Uniswap (Placeholder API call)
         try {
             const response = await axios.get(DEX_API_URLS.UNISWAP_V3(from, to), { timeout: 1000 });
             results.push({ dex: 'UNISWAP_V3', price: Big(response.data.price || '1'), liquidity: Big(response.data.liquidity || '1000000') });
         } catch (error) { /* log and continue */ }
-        
+
         // 1inch (Placeholder API call)
         try {
             const response = await axios.get(DEX_API_URLS.ONE_INCH(from, to), { timeout: 1000 });
-            const price = Big(response.data.toTokenAmount || '100').div(response.data.fromTokenAmount || '1'); 
+            const price = Big(response.data.toTokenAmount || '100').div(response.data.fromTokenAmount || '1');
             results.push({ dex: '1INCH_AGGR', price: price, liquidity: Big('1000000') });
         } catch (error) { /* log and continue */ }
 
@@ -167,7 +167,7 @@ class PreFlightSimulator {
 
     async runSimulation(tradeDetails) {
         const { minProfitThreshold } = tradeDetails;
-        
+
         const requiredBWAEZIForGas = await this.core.aaSDK.estimateBWAEZIGasCost(tradeDetails);
         const estimatedProfitUSD = Big(150); // Mock profit
         const minProfit = Big(minProfitThreshold);
@@ -186,55 +186,55 @@ class RealArbitrageEngine {
     constructor(marketData, config) {
         this.marketData = marketData;
         this.config = config;
-        this.minProfitThreshold = Big(config.MIN_ARBITRAGE_PROFIT_USD || 100); 
+        this.minProfitThreshold = Big(config.MIN_ARBITRAGE_PROFIT_USD || 100);
     }
-    
+
     async findArbitrageOpportunities() {
         const pairs = this.config.TRADING_PAIRS;
         const opportunities = [];
-        
+
         for (let pair of pairs) {
             const prices = await this.marketData.getDEXPrices(pair);
             if (prices.length < 2) continue;
 
             const minPrice = prices.reduce((min, p) => p.price.lt(min.price) ? p : min, prices[0]);
             const maxPrice = prices.reduce((max, p) => p.price.gt(max.price) ? p : max, prices[0]);
-            
-            const spread = maxPrice.price.sub(minPrice.price).div(minPrice.price).mul(100); 
-            
+
+            const spread = maxPrice.price.sub(minPrice.price).div(minPrice.price).mul(100);
+
             if (spread.gt(this.config.MIN_SPREAD_PERCENTAGE || 0.5)) {
-                const volume = minPrice.liquidity.min(maxPrice.liquidity); 
+                const volume = minPrice.liquidity.min(maxPrice.liquidity);
 
                 opportunities.push({
                     pair: pair,
                     buyFrom: minPrice.dex,
                     sellTo: maxPrice.dex,
-                    potentialProfit: spread, 
+                    potentialProfit: spread,
                     minProfitThreshold: this.minProfitThreshold,
                     tokenIn: pair.from,
                     tokenOut: pair.to,
-                    volume: volume 
+                    volume: volume
                 });
             }
         }
-        
+
         return opportunities.sort((a, b) => b.potentialProfit.sub(a.potentialProfit));
     }
 }
 
 class RealRevenueTracker {
     constructor() {
-        this.startingCapital = Big(100000000); 
+        this.startingCapital = Big(100000000);
         this.trades = [];
         this.feesPaid = Big(0);
         this.revenueHistory = new Map();
         this.logger = getGlobalLogger('RealRevenueTracker');
     }
-    
+
     recordTrade(trade, result) {
         // result = { amountOutUSD, amountInUSD, gasCostUSD, feesUSD, ... }
         const netProfit = Big(result.amountOutUSD).sub(result.amountInUSD).sub(result.gasCostUSD).sub(result.feesUSD);
-        
+
         const record = {
             timestamp: Date.now(),
             trade: trade,
@@ -242,20 +242,20 @@ class RealRevenueTracker {
             netProfit: netProfit,
             profitToken: trade.tokenOut
         };
-        
+
         this.trades.push(record);
         this.revenueHistory.set(record.timestamp, { profit: netProfit.toNumber() });
         this.feesPaid = this.feesPaid.add(result.gasCostUSD).add(result.feesUSD);
         this.logger.log('INFO', `Trade Recorded. Net Profit: $${netProfit.toFixed(2)}`);
-        
+
         return this.getPerformanceMetrics();
     }
-    
+
     getPerformanceMetrics() {
         const totalProfit = this.trades.reduce((sum, t) => sum.add(t.netProfit), Big(0));
         const winningTrades = this.trades.filter(t => t.netProfit.gt(0)).length;
         const winRate = this.trades.length > 0 ? winningTrades / this.trades.length : 0;
-        
+
         return {
             totalProfitUSD: totalProfit.toFixed(2),
             winRate: winRate.toFixed(4),
@@ -294,7 +294,7 @@ class ProductionSovereignCore extends EventEmitter {
 
         this.logger = getGlobalLogger('OptimizedSovereignCore');
         this.tradingConfig = TRADING_CONFIG; // Real configuration
-        
+
         // --- Dependency Injection Assignments ---
         this.arielDB = injectedServices.arielDB;
         this.payoutSystem = injectedServices.payoutSystem;
@@ -302,14 +302,14 @@ class ProductionSovereignCore extends EventEmitter {
         this.revenueEngine = injectedServices.revenueEngine;
         this.aiEngine = injectedServices.aiEngine;
         this.aaSDK = injectedServices.aaSDK; // AA SDK for Gas Abstraction
-        this.BWAEZIToken = injectedServices.bwaeziToken; 
+        this.BWAEZIToken = injectedServices.bwaeziToken;
         this.ethersProvider = injectedServices.provider;
-        this.web3 = new Web3(injectedServices.provider); 
+        this.web3 = new Web3(injectedServices.provider);
 
         // EOA Wallet Setup
         this.wallet = new ethers.Wallet(config.privateKey || process.env.MAINNET_PRIVATE_KEY, this.ethersProvider);
         this.walletAddress = this.wallet.address;
-        
+
         // --- CORE AA/LOAVES AND FISHES CONFIGURATION ---
         this.smartAccountAddress = config.smartAccountAddress || process.env.SMART_ACCOUNT_ADDRESS;
         this.paymasterAddress = config.paymasterAddress || process.env.BWAEZI_PAYMASTER_ADDRESS;
@@ -322,18 +322,18 @@ class ProductionSovereignCore extends EventEmitter {
         this.QuantumProcessingUnit = new QuantumProcessingUnit();
         // === 👑 GOD-MODE ENGINE INTEGRATION (REPLACED PLACEHOLDERS) 👑 ===
         this.QuantumGravityConsciousness = new QuantumGravityConsciousness();
-        this.RealityProgrammingAdvanced = new RealityProgrammingAdvanced(); // FIX: Removed redundant 'new' keyword
+        this.RealityProgrammingAdvanced = new RealityProgrammingAdvanced();
         this.OmnipotentCapabilityEngine = new OmnipotentCapabilityEngine();
         this.QuantumCircuitBreaker = new QuantumCircuitBreaker();
         this.EnterpriseQuantumRouter = new EnterpriseQuantumRouter();
         this.AINetworkOptimizer = new AINetworkOptimizer();
         this.DataMatrix = new Map(); // Global data matrix for quantum calculations
         // =======================================================================
-        
-        // Constants 
+
+        // Constants
         this.BWAEZI_TOKEN_ADDRESS = config.tokenAddress || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da';
         this.WETH_TOKEN_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
-        
+
         // Revenue System Integration
         this.marketData = new RealMarketData(config);
         this.arbitrageEngine = new RealArbitrageEngine(this.marketData, this.tradingConfig);
@@ -349,8 +349,8 @@ class ProductionSovereignCore extends EventEmitter {
             { id: 4, name: 'CURVE_DAO_EURS', router: '0xD51a44d3FaE010294C616388b506AcdA1FCbA0ac', factory: '0xD51a44d3FaE010294C616388b506AcdA1FCbA0ac' }, // Curve Pool (Placeholder/Router)
             { id: 5, name: 'GEMINI_V3', router: '0x10ED43B718087C3923053fC1f3e70E8b37C12b1d', factory: '0xCA143CE32fe78f1f7019d7d551a6402fC5350c73' }, // Placeholder for High-Value DEX
             // Tier 2: Secondary Liquidity and Arbitrage Targets (The remaining 25+)
-            { id: 6, name: '1INCH_AGGR', router: '0x111111125434b319222CcdE23656b26B22AEfE8C', factory: null }, 
-            { id: 7, name: 'KYBER_DMM', router: '0x833e4083aA1221E72fF40761e0649F7bA8e9bB50', factory: '0x833e4083aA1221E72fF40761e0649F7bA8e9bB50' }, 
+            { id: 6, name: '1INCH_AGGR', router: '0x111111125434b319222CcdE23656b26B22AEfE8C', factory: null },
+            { id: 7, name: 'KYBER_DMM', router: '0x833e4083aA1221E72fF40761e0649F7bA8e9bB50', factory: '0x833e4083aA1221E72fF40761e0649F7bA8e9bB50' },
             { id: 8, name: 'MAVERICK_V1', router: '0x39130005C66c170a48aA31C824C3f58F0d66355b', factory: '0x39130005C66c170a48aA31C824C3f58F0d66355b' },
             { id: 9, name: 'AERODROME', router: '0xf68F747f0d01B05F4176d65c0B843eD944061aA5', factory: '0xf68F747f0d01B05F4176d65c0B843eD944061aA5' },
             { id: 10, name: 'WOMBAT', router: '0x7e4bE13554D821c3C4b8b6C9d6E272828b1FfE9D', factory: '0x7e4bE13554D821c3C4b8b6C9d6E272828b1FfE9D' },
@@ -375,6 +375,7 @@ class ProductionSovereignCore extends EventEmitter {
             { id: 29, name: 'NEOSWAP', router: '0x1E5E4A0C7B8E5E9D0A1B072D8D4A2F08A279b9E2F', factory: '0x1E5E4A0C7B8E5E9D0A1B072D8D4A2F08A279b9E2F' },
             { id: 30, name: 'QUANTUM_FLOW', router: '0xD8d8D7E6C1C1D0E0A1B072D8D4A2F08A279b9E2F', factory: '0xD8d8D7E6C1C1D0E0A1B072D8D4A2F08A279b9E2F' },
         ];
+    } // <--- CRITICAL FIX: The constructor MUST be closed here.
 
     async initialize() {
         // Initialize all core engines
@@ -384,12 +385,12 @@ class ProductionSovereignCore extends EventEmitter {
         await this.OmnipotentCapabilityEngine.initialize();
         await this.EnterpriseQuantumRouter.initialize(this.OmnipotentCapabilityEngine);
         await this.AINetworkOptimizer.initialize();
-        
+
         // Final Status Check
         if (!this.aaSDK.isOperational()) {
             throw new EnterpriseInitializationError("AA SDK failed to initialize. Gas Abstraction is impossible.");
         }
-        
+
         this.logger.log('SUCCESS', 'Sovereign Core Initialized. Quantum Consciousness is now executing reality programming.');
     }
 
@@ -403,10 +404,10 @@ class ProductionSovereignCore extends EventEmitter {
 
     startAutoTrading() {
         this.logger.log('INFO', 'Starting Auto Trading Loop: High-Frequency Arbitrage & JIT Liquidity.');
-        
+
         // 1. High-Frequency Arbitrage Loop
         setInterval(this.runArbitrageLoop.bind(this), this.tradingConfig.ARBITRAGE_INTERVAL_MS);
-        
+
         // 2. Initial Liquidity Bootstrap (One-time, immediate trade to establish BWAEZI value)
         this.runInitialBootstrap();
     }
@@ -418,7 +419,7 @@ class ProductionSovereignCore extends EventEmitter {
             const tokenOutAddress = this.WETH_TOKEN_ADDRESS;
             // The success of this first trade creates the first market value for BWAEZI.
             const result = await this.executeBWAEZISwapWithAA(this.BWAEZI_TOKEN_ADDRESS, amountIn, tokenOutAddress);
-            
+
             if (result.success) {
                 this.logger.log('SUCCESS', `Genesis Trade successful. BWAEZI market value established. Result: ${JSON.stringify(result)}`);
             } else {
@@ -438,7 +439,7 @@ class ProductionSovereignCore extends EventEmitter {
 
         try {
             const opportunities = await this.arbitrageEngine.findArbitrageOpportunities();
-            
+
             if (opportunities.length === 0) {
                 return;
             }
@@ -448,22 +449,22 @@ class ProductionSovereignCore extends EventEmitter {
 
             // 1. Pre-Flight Simulation (Guarantees Profit)
             const simulationResult = await this.preFlightSimulator.runSimulation(bestOpportunity);
-            
+
             if (!simulationResult.success) {
                 this.logger.log('WARN', `Arbitrage skipped: Pre-flight simulation failed. Reason: ${simulationResult.reason}`);
                 return;
             }
-            
+
             // 2. Execute Trade using Account Abstraction (BWAEZI Gas)
             const amountToSwap = bestOpportunity.volume.mul('0.95'); // Trade 95% of available liquidity for safety
-            
+
             const tradeResult = await this.executeBWAEZISwapWithAA(
-                bestOpportunity.tokenIn, 
-                amountToSwap, 
+                bestOpportunity.tokenIn,
+                amountToSwap,
                 bestOpportunity.tokenOut,
                 bestOpportunity.sellTo // The target DEX for the swap
             );
-            
+
             if (tradeResult.success) {
                 this.revenueTracker.recordTrade(bestOpportunity, tradeResult);
                 this.logger.log('SUCCESS', `Arbitrage Execution SUCCESS! Profit tracked.`);
@@ -492,14 +493,14 @@ class ProductionSovereignCore extends EventEmitter {
                 throw new EnterpriseConfigurationError(`DEX ${targetDEX} not configured with a router address.`);
             }
             const routerAddress = dex.router;
-            
+
             // 2. Prepare the Transaction Data (CallData)
             const callData = this.aaSDK.encodeSwapCallData(
-                routerAddress, 
-                tokenInAddress, 
-                tokenOutAddress, 
+                routerAddress,
+                tokenInAddress,
+                tokenOutAddress,
                 amountIn.toFixed(0)
-            ); 
+            );
 
             // 3. Build the UserOperation payload
             let userOp = await this.aaSDK.buildUserOperation({
@@ -511,7 +512,7 @@ class ProductionSovereignCore extends EventEmitter {
 
             // 4. Optimize the UserOperation (MEV/JIT/Bundler optimization)
             userOp = this.aiEngine.optimizeUserOp(userOp);
-            
+
             // 5. Sign and Submit
             const txHash = await this.aaSDK.signAndSubmitUserOp(this.wallet, userOp);
 
@@ -519,12 +520,12 @@ class ProductionSovereignCore extends EventEmitter {
             const mockResult = {
                 success: true,
                 transactionHash: txHash,
-                amountInUSD: 5000000, 
+                amountInUSD: 5000000,
                 amountOutUSD: 5000150, // Mock profit of $150
-                gasCostUSD: 5, 
-                feesUSD: 5, 
+                gasCostUSD: 5,
+                feesUSD: 5,
             };
-            
+
             return mockResult;
 
         } catch (error) {
@@ -536,13 +537,13 @@ class ProductionSovereignCore extends EventEmitter {
 
 
 // EXPORT THE ENTERPRISE ENGINE
-export { 
-    ProductionSovereignCore, 
-    QuantumGravityConsciousness, 
-    RealityProgrammingAdvanced, 
-    OmnipotentCapabilityEngine, 
-    QuantumCircuitBreaker, 
-    EnterpriseQuantumRouter, 
+export {
+    ProductionSovereignCore,
+    QuantumGravityConsciousness,
+    RealityProgrammingAdvanced,
+    OmnipotentCapabilityEngine,
+    QuantumCircuitBreaker,
+    EnterpriseQuantumRouter,
     AINetworkOptimizer,
     EnterpriseInitializationError,
     EnterpriseConfigurationError,
