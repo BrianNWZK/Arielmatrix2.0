@@ -499,7 +499,7 @@ class ProductionSovereignCore extends EventEmitter {
                 routerAddress,
                 tokenInAddress,
                 tokenOutAddress,
-                amountIn.toFixed(0)
+                amountIn.toString()
             );
 
             // 3. Build the UserOperation payload
