@@ -4,6 +4,16 @@ import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
+
+// === 🎯 REQUIRED CORE SERVICE IMPORTS FOR DI ===
+// These must be explicitly imported and instantiated here, not inside sovereign-brain.js
+import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; // Assumed path for DB module
+import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; // Assumed dependency
+import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js'; // Assumed dependency
+import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; // Assumed dependency
+import { AutonomousAIEngine } from '../backend/agents/autonomous-ai-engine.js'; // Assumed dependency
+import { BWAEZIToken } from '../modules/bwaezi-token.js'; // Required for direct instantiation in DI setup
+
 // 👑 NEW IMPORT: The AA SDK integration layer
 import { AASDK, getSCWAddress } from '../modules/aa-loaves-fishes.js';
 import { deployERC4337Contracts } from './aa-deployment-engine.js'; 
@@ -31,7 +41,6 @@ const CONFIG = {
     WETH_TOKEN_ADDRESS: process.env.WETH_TOKEN_ADDRESS || "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
     UNISWAP_V3_QUOTER_ADDRESS: process.env.UNISWAP_V3_QUOTER_ADDRESS || "0xb27308f9F90D607463bb33aEB824A6c6D6D0Bd6d", // Corrected Quoter address
     BWAEZI_WETH_FEE: 3000,
-
     PAYMASTER_ADDRESS: process.env.PAYMASTER_ADDRESS || "0xC336127cb4732d8A91807f54F9531C682F80E864",
     SMART_ACCOUNT_ADDRESS: process.env.SMART_ACCOUNT_ADDRESS || "0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C",
     
@@ -47,14 +56,73 @@ const BWAEZI_ABI = [
     "function symbol() view returns (string)"
 ];
 
+// =========================================================================
+// 🎯 DEPENDENCY INJECTION ORCHESTRATION LAYER (NEW)
+// =========================================================================
+
+/**
+ * Initializes all core services in a strict, dependency-safe order.
+ */
+const initializeAllDependencies = async (config) => {
+    const provider = new ethers.JsonRpcProvider(config.RPC_URLS[0]);
+
+    // 1. DB and Payout System (Base Dependencies)
+    console.log('👷 Initializing ArielSQLiteEngine...');
+    const arielSQLiteEngine = new ArielSQLiteEngine(config);
+    // Assuming ArielSQLiteEngine has a synchronous constructor or an async init method
+    await arielSQLiteEngine.initialize?.(); 
+
+    console.log('👷 Initializing BrianNwaezikePayoutSystem...');
+    const brianNwaezikePayoutSystem = new BrianNwaezikePayoutSystem(config, provider);
+    await brianNwaezikePayoutSystem.initialize?.();
+
+    // 2. Chain and AA SDK (Higher Level Dependencies)
+    console.log('👷 Initializing BrianNwaezikeChain...');
+    const bwaeziChain = new BrianNwaezikeChain(config, brianNwaezikePayoutSystem);
+    await bwaeziChain.initialize?.();
+    
+    console.log('👷 Initializing AASDK...');
+    const aaSDK = new AASDK(provider, config); 
+    await aaSDK.initialize?.();
+    
+    // BWAEZIToken requires a web3/ethers provider/signer to be created, passing the provider for now.
+    const bwaeziToken = new BWAEZIToken(provider); 
+
+    // 3. Revenue Engine (Requires Chain/DB/Payout)
+    console.log('👷 Initializing SovereignRevenueEngine...');
+    const sovereignRevenueEngine = new SovereignRevenueEngine(config, arielSQLiteEngine, bwaeziChain, brianNwaezikePayoutSystem);
+    await sovereignRevenueEngine.initialize?.();
+    
+    // 4. AI Engine (Requires Revenue Engine)
+    console.log('👷 Initializing AutonomousAIEngine...');
+    const autonomousAIEngine = new AutonomousAIEngine(sovereignRevenueEngine);
+    await autonomousAIEngine.initialize?.();
+    
+    console.log('✅ All Core Services Initialized.');
+
+    return {
+        arielDB: arielSQLiteEngine,
+        payoutSystem: brianNwaezikePayoutSystem,
+        bwaeziChain: bwaeziChain,
+        revenueEngine: sovereignRevenueEngine,
+        aiEngine: autonomousAIEngine,
+        aaSDK: aaSDK,
+        bwaeziToken: bwaeziToken,
+        provider: provider,
+        // Any other dependencies sovereign-brain.js needs will be added here
+    };
+};
+
+// =========================================================================
+// ORIGINAL LOGIC - MAINTAINED
+// =========================================================================
+
 const transferBWAEZIToSCW = async () => {
     if (!CONFIG.PRIVATE_KEY) {
         return { success: false, error: "PRIVATE_KEY environment variable is not set." };
     }
-
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URLS[0]);
     const signer = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
-
     const bwaeziContract = new ethers.Contract(CONFIG.TOKEN_CONTRACT_ADDRESS, BWAEZI_ABI, signer);
     
     const [eoaBalance, scwBalance, decimals] = await Promise.all([
@@ -63,15 +131,12 @@ const transferBWAEZIToSCW = async () => {
         bwaeziContract.decimals()
     ]);
     const symbol = await bwaeziContract.symbol();
-
     console.log(`\n📊 BALANCES BEFORE TRANSFER:`);
     console.log(` EOA Balance: ${ethers.formatUnits(eoaBalance, decimals)} ${symbol}`);
     console.log(` SCW Balance: ${ethers.formatUnits(scwBalance, decimals)} ${symbol}`);
-
     if (eoaBalance === 0n) {
         throw new Error(`❌ EOA has 0 ${symbol} balance. Cannot transfer.`);
     }
-
     if (scwBalance > 0n) {
         console.log(`⚠️ SCW already has ${ethers.formatUnits(scwBalance, decimals)} ${symbol} balance. Skipping transfer.`);
         return { success: true, message: "SCW already funded." };
@@ -81,11 +146,9 @@ const transferBWAEZIToSCW = async () => {
     const amountToTransfer = eoaBalance; // The 100,000,000 BWAEZI amount
     
     console.log(`\n🔥 Initiating transfer of ${ethers.formatUnits(amountToTransfer, decimals)} ${symbol} to SCW...`);
-
     // This EOA transaction requires native ETH for gas
     const tx = await bwaeziContract.transfer(CONFIG.SMART_ACCOUNT_ADDRESS, amountToTransfer);
     console.log(`⏳ Transfer Transaction Hash: ${tx.hash}`);
-
     await tx.wait();
     
     const newSCWBalance = await bwaeziContract.balanceOf(CONFIG.SMART_ACCOUNT_ADDRESS);
@@ -106,7 +169,6 @@ const startExpressServer = (optimizedCore) => {
     const app = express();
     app.use(cors());
     app.use(express.json());
-
     app.get('/health', (req, res) => {
         res.json({ 
             status: 'operational', 
@@ -119,7 +181,6 @@ const startExpressServer = (optimizedCore) => {
             tradingStatus: optimizedCore.getTradingStats()
         });
     });
-
     // Endpoint to manually initiate the one-time token transfer
     app.post('/api/transfer-tokens', async (req, res) => {
         try {
@@ -129,14 +190,12 @@ const startExpressServer = (optimizedCore) => {
             res.status(500).json({ success: false, error: error.message });
         }
     });
-
     // Endpoint to trigger the first BWAEZI-funded swap to generate revenue
     app.post('/api/start-revenue-generation', async (req, res) => {
         try {
             // Hardcode initial test trade: Swap 50,000 BWAEZI for WETH
             const amountIn = ethers.parseUnits("50000", 18); 
             const tokenOutAddress = CONFIG.WETH_TOKEN_ADDRESS;
-
             // This calls the AA-enabled swap function in the Sovereign Core
             const result = await optimizedCore.executeBWAEZISwapWithAA(amountIn, tokenOutAddress);
             
@@ -149,33 +208,36 @@ const startExpressServer = (optimizedCore) => {
             res.status(500).json({ success: false, error: error.message });
         }
     });
-
     return app.listen(CONFIG.PORT, () => {
         console.log(`🚀 Server running on port ${CONFIG.PORT}`);
     });
 };
 
 // =========================================================================
-// STARTUP EXECUTION
+// STARTUP EXECUTION (MODIFIED FOR DI)
 // =========================================================================
 (async () => {
     try {
         console.log("🔥 BSFM ULTIMATE OPTIMIZED PRODUCTION BRAIN v2.1.0: AA UPGRADE INITIATED");
-        // We only need the provider/signer config here for the EOA wallet if needed for initial transfer, but the core now relies on the env var.
         
-        // --- Initialize Production Sovereign Core with AA Addresses ---
-        // Pass the necessary config to the new constructor
-        const optimizedCore = new ProductionSovereignCore({ 
+        // 1. Initialize all necessary dependencies/services
+        const injectedServices = await initializeAllDependencies(CONFIG); 
+        await deployERC4337Contracts(injectedServices.provider, CONFIG); // Original AA deployment step
+
+        // 2. Initialize Production Sovereign Core with Config AND the Injected Services
+        // The core configuration is merged with the injected services
+        const coreConfig = { 
             rpcUrl: CONFIG.RPC_URLS[0],
             privateKey: CONFIG.PRIVATE_KEY,
             paymasterAddress: CONFIG.BWAEZI_PAYMASTER_ADDRESS, 
             smartAccountAddress: CONFIG.SMART_ACCOUNT_ADDRESS,
-            tokenAddress: CONFIG.TOKEN_CONTRACT_ADDRESS
-        }); 
+            tokenAddress: CONFIG.TOKEN_CONTRACT_ADDRESS,
+            ...CONFIG
+        };
 
+        const optimizedCore = new ProductionSovereignCore(coreConfig, injectedServices); 
         await optimizedCore.initialize();
         optimizedCore.startAutoTrading(); // Starts the continuous trading loop
-
         startExpressServer(optimizedCore);
 
     } catch (error) {
@@ -183,3 +245,6 @@ const startExpressServer = (optimizedCore) => {
         process.exit(1);
     }
 })();
+
+// EXPORTS (Maintain original exports)
+export { initializeAllDependencies, startExpressServer, CONFIG };
