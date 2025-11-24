@@ -98,6 +98,7 @@
     "websocket": "^1.0.34",
     "solc": "^0.8.20",
     "cors": "^2.8.5",
+    "big.js": "^6.2.1",
     "pino": "^8.15.0"
   },
   "devDependencies": {
