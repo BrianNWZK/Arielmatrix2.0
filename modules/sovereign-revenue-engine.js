@@ -227,7 +227,7 @@ export default class SovereignRevenueEngine extends EventEmitter {
         
         validationResults.forEach(result => {
             if (result.status !== 'VALID') {
-                this.logger.warn(`  ⚠️ ${result.component}: ${result.status}${result.reason ? ` - ${result.reason}` : ''}`);
+                this.logger.warn(`  ⚠️ ${result.component}: ${result.status}${result.reason ? ` - ${result.reason}` : ''}`);
             }
         });
 
