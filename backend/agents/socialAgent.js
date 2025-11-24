@@ -9,7 +9,7 @@ import APIScoutAgent from './apiScoutAgent.js';
 import { QuantumBrowserManager } from './browserManager.js';
 import { retrieveAndStoreKey, API_RETRIEVAL_CATALOG } from './apiScoutAgent.js';
 // === Core Blockchain Systems ===
-import BrianNwaezikeChain from "../blockchain/BrianNwaezikeChain.js";
+import { BrianNwaezikeChain } from "../blockchain/BrianNwaezikeChain.js";
 import { BrianNwaezikePayoutSystem } from "../blockchain/BrianNwaezikePayoutSystem.js";
 
 // === Enhanced Database System ===
