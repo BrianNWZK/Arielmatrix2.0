@@ -89,30 +89,38 @@ if ! npm list sqlite3 >/dev/null 2>&1; then
   }
 fi
 
+# 👑 NEW FUNCTION: Compiles/Copies WASM files from external module location
+build_wasm() {
+  echo "Executing build-wasm: Copying PQC WASM modules..."
+  # 1. PQC-Dilithium WASM deployment
+  DILITHIUM_SOURCE_DIR="./node_modules/pqc-dilithium/dist"
+  DILITHIUM_DEST_DIR="./modules/pqc-dilithium"
+  
+  mkdir -p "$DILITHIUM_DEST_DIR"
+  if [ -f "$DILITHIUM_SOURCE_DIR/dilithium3.wasm" ]; then
+      cp "$DILITHIUM_SOURCE_DIR/dilithium3.wasm" "$DILITHIUM_DEST_DIR/dilithium3.wasm"
+      echo "✅ Copied dilithium3.wasm to $DILITHIUM_DEST_DIR/dilithium3.wasm"
+  else
+      echo "❌ CRITICAL WASM MISSING: dilithium3.wasm not found in node_modules."
+  fi
+
+  # 2. PQC-Kyber WASM deployment (CRITICAL FIX)
+  KYBER_SOURCE_DIR="./node_modules/pqc-kyber/dist"
+  KYBER_DEST_DIR="./modules/pqc-kyber"
+  
+  mkdir -p "$KYBER_DEST_DIR"
+  if [ -f "$KYBER_SOURCE_DIR/kyber768.wasm" ]; then
+      # 👑 FIX: Copy directly to the module root to satisfy the path.resolve(__dirname, wasmFile) logic in modules/pqc-kyber/index.js
+      cp "$KYBER_SOURCE_DIR/kyber768.wasm" "$KYBER_DEST_DIR/kyber768.wasm"
+      echo "✅ Copied kyber768.wasm to $KYBER_DEST_DIR/kyber768.wasm (CRITICAL BOOT FIX)."
+  else
+      echo "❌ CRITICAL WASM MISSING: kyber768.wasm not found in node_modules."
+  fi
+}
+
 # 🔥 GOD MODE WASM RESOLUTION (CRITICAL FIX FOR PQC MODULES)
 echo "👑 CRITICAL FIX: Ensuring WASM files are deployed for Quantum Security..."
-
-# 1. PQC-Dilithium WASM deployment
-DILITHIUM_SOURCE_DIR="./node_modules/pqc-dilithium/dist"
-DILITHIUM_DEST_DIR="./modules/pqc-dilithium/dist"
-
-mkdir -p "$DILITHIUM_DEST_DIR"
-if [ -f "$DILITHIUM_SOURCE_DIR/dilithium3.wasm" ]; then
-    cp "$DILITHIUM_SOURCE_DIR/dilithium3.wasm" "$DILITHIUM_DEST_DIR/"
-    echo "✅ Copied dilithium3.wasm to $DILITHIUM_DEST_DIR. WASM issue resolved."
-else
-    echo "❌ CRITICAL WASM MISSING: dilithium3.wasm not found in node_modules. Quantum defense may be impaired."
-fi
-
-# 2. PQC-Kyber WASM deployment (for completeness)
-KYBER_SOURCE_DIR="./node_modules/pqc-kyber/dist"
-KYBER_DEST_DIR="./modules/pqc-kyber/dist"
-
-mkdir -p "$KYBER_DEST_DIR"
-if [ -f "$KYBER_SOURCE_DIR/kyber768.wasm" ]; then
-    cp "$KYBER_SOURCE_DIR/kyber768.wasm" "$KYBER_DEST_DIR/"
-    echo "✅ Copied kyber768.wasm to $KYBER_DEST_DIR."
-fi
+build_wasm # Execute the new WASM build/copy function
 
 
 # 🔥 REBUILD WITH GOD MODE OPTIMIZATIONS
