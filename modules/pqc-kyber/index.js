@@ -642,7 +642,6 @@ export {
   kyberConstants,
   getKyberMetrics,
   kyberHealthCheck,
-  PQCKyberProvider,
   PQCKyberError,
   KyberSecurityError,
   KyberConfigurationError,
