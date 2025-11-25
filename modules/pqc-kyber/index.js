@@ -19,7 +19,7 @@ class PQCKyberError extends Error {
   }
 }
 
-class default KyberSecurityError extends PQCKyberError {
+class KyberSecurityError extends PQCKyberError {
   constructor(message) {
     super(message, 'SECURITY_VIOLATION');
   }
