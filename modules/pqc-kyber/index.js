@@ -92,16 +92,24 @@ const kyberLogger = {
 class KyberMemoryManager {
   constructor() {
     this.growthCount = 0;
-    this.maxSize = 128 * 65536; // 8MB maximum for Kyber
+    this.maxSize = 128 * 65536; // 8MB maximum for Kyber (128 pages * 64KB/page)
   }
   
-  growMemory(wasmInstance, requiredSize) {
+  growMemory(wasmInstance, requiredTotalSize) { // requiredTotalSize is the new size needed
     if (this.growthCount >= KYBER_SECURITY_CONFIG.MAX_MEMORY_GROWTH) {
       throw new KyberSecurityError('Maximum memory growth attempts exceeded');
     }
+
+    const currentSize = wasmInstance.memory.buffer.byteLength;
+    const sizeToGrow = requiredTotalSize - currentSize;
+
+    if (sizeToGrow <= 0) {
+        return; // No growth needed
+    }
     
-    const currentPages = wasmInstance.memory.buffer.byteLength / 65536;
-    const requiredPages = Math.ceil(requiredSize / 65536);
+    const currentPages = currentSize / 65536;
+    // Correctly calculate the number of new pages needed
+    const requiredPages = Math.ceil(sizeToGrow / 65536); 
     
     if ((currentPages + requiredPages) * 65536 > this.maxSize) {
       throw new KyberSecurityError('Memory allocation would exceed maximum allowed size');
@@ -176,7 +184,7 @@ async function initializeKyberWasm(level) {
 
       kyberMemory = new WebAssembly.Memory({ 
         initial: 128, 
-        maximum: 32768,
+        maximum: 32768, // 2GB maximum
         shared: false
       });
 
@@ -215,20 +223,27 @@ async function initializeKyberWasm(level) {
       const CIPHERTEXTBYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_CIPHERTEXTBYTES`];
       const BYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_BYTES`] || 32;
 
-      // Enhanced memory allocation with security checks
-      function secureAlloc(size, operation = 'unknown') {
+      // 👑 PERMANENT FIX 3: Correct WASM memory pointer management to avoid corruption.
+      // This utility handles linear allocation for a single operation by taking and returning the offset.
+      function secureAlloc(offset, size, operation = 'unknown') {
         if (size > 1024 * 1024) { // 1MB limit per allocation
           throw new KyberSecurityError(`Allocation size ${size} too large for ${operation}`);
         }
         
-        const currentOffset = kyberMemory.buffer.byteLength;
-        if (currentOffset + size > kyberMemoryManager.maxSize) {
-          kyberMemoryManager.growMemory({ memory: kyberMemory }, size);
+        const ptr = offset;
+        const nextOffset = ptr + size;
+        const currentMemorySize = kyberMemory.buffer.byteLength;
+
+        if (nextOffset > currentMemorySize) {
+          // Grow memory if the next allocation exceeds the current buffer size
+          kyberMemoryManager.growMemory({ memory: kyberMemory }, nextOffset);
         }
         
+        // The buffer view must be created *after* potential memory growth
         return {
-          ptr: currentOffset,
-          view: new Uint8Array(kyberMemory.buffer, currentOffset, size)
+          ptr: ptr,
+          view: new Uint8Array(kyberMemory.buffer, ptr, size),
+          nextOffset: nextOffset
         };
       }
 
@@ -238,9 +253,11 @@ async function initializeKyberWasm(level) {
         
         keypair: () => {
           const startTime = Date.now();
+          let offset = 0; // Start linear allocation for this operation from the beginning
           try {
-            const pk = secureAlloc(PUBLICKEYBYTES, 'keypair-public');
-            const sk = secureAlloc(SECRETKEYBYTES, 'keypair-secret');
+            const pk = secureAlloc(offset, PUBLICKEYBYTES, 'keypair-public');
+            offset = pk.nextOffset;
+            const sk = secureAlloc(offset, SECRETKEYBYTES, 'keypair-secret');
             
             // Additional entropy
             crypto.randomFillSync(pk.view);
@@ -269,12 +286,15 @@ async function initializeKyberWasm(level) {
         
         encapsulate: (publicKey) => {
           const startTime = Date.now();
+          let offset = 0; // Start linear allocation for this operation from the beginning
           try {
-            const pk = secureAlloc(publicKey.length, 'encapsulate-public');
+            const pk = secureAlloc(offset, publicKey.length, 'encapsulate-public');
             pk.view.set(publicKey);
+            offset = pk.nextOffset;
             
-            const ct = secureAlloc(CIPHERTEXTBYTES, 'encapsulate-ciphertext');
-            const ss = secureAlloc(BYTES, 'encapsulate-secret');
+            const ct = secureAlloc(offset, CIPHERTEXTBYTES, 'encapsulate-ciphertext');
+            offset = ct.nextOffset;
+            const ss = secureAlloc(offset, BYTES, 'encapsulate-secret');
             
             const rc = encapsulate(ct.ptr, ss.ptr, pk.ptr);
             if (rc !== 0) throw new KyberSecurityError(`Encapsulation failed: ${rc}`);
@@ -297,14 +317,17 @@ async function initializeKyberWasm(level) {
         
         decapsulate: (secretKey, ciphertext) => {
           const startTime = Date.now();
+          let offset = 0; // Start linear allocation for this operation from the beginning
           try {
-            const sk = secureAlloc(secretKey.length, 'decapsulate-secret');
+            const sk = secureAlloc(offset, secretKey.length, 'decapsulate-secret');
             sk.view.set(secretKey);
+            offset = sk.nextOffset;
             
-            const ct = secureAlloc(ciphertext.length, 'decapsulate-ciphertext');
+            const ct = secureAlloc(offset, ciphertext.length, 'decapsulate-ciphertext');
             ct.view.set(ciphertext);
+            offset = ct.nextOffset;
             
-            const ss = secureAlloc(BYTES, 'decapsulate-secret');
+            const ss = secureAlloc(offset, BYTES, 'decapsulate-secret');
             
             const rc = decapsulate(ss.ptr, ct.ptr, sk.ptr);
             if (rc !== 0) throw new KyberSecurityError(`Decapsulation failed: ${rc}`);
