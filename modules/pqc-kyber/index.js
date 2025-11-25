@@ -1,4 +1,3 @@
-// modules/pqc-kyber/index.js
 import fs from 'fs/promises'; // FIX 1: Changed from 'fs' to 'fs/promises' for non-blocking I/O
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -506,8 +505,9 @@ export async function kyberHealthCheck() {
 /**
  * Enterprise-grade Kyber provider with session management
  */
-// 🚀 FIX: Changed 'export default' to 'export' to provide a named export
-export class PQCKyberProvider { 
+// 🚀 FIX: Changed 'export default class' to 'export class' to provide a NAMED EXPORT
+// named 'PQCKyberProvider', fixing the SyntaxError in the importing file.
+export class PQCKyberProvider {
   constructor(level = 768, options = {}) {
     this.level = level;
     this.algorithm = `kyber${level}`;
