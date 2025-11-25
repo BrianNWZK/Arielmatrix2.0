@@ -25,7 +25,8 @@
     "payout-agent": "node backend/agents/payoutAgent.js",
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
     "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
-    "deploy-kernel": "node arielsql_suite/main.js"
+    "deploy-kernel": "node arielsql_suite/main.js",
+    "build-wasm": "./build_and_deploy.sh && echo 'WASM assets successfully resolved.'"
   },
   "dependencies": {
     "express": "^4.21.0",
