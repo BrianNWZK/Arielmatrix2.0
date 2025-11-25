@@ -19,7 +19,7 @@ class PQCKyberError extends Error {
   }
 }
 
-class KyberSecurityError extends PQCKyberError {
+class default KyberSecurityError extends PQCKyberError {
   constructor(message) {
     super(message, 'SECURITY_VIOLATION');
   }
@@ -90,7 +90,7 @@ const kyberLogger = {
 /**
  * Kyber memory manager
  */
-class KyberMemoryManager {
+class default KyberMemoryManager {
   constructor() {
     this.growthCount = 0;
     this.maxSize = 128 * 65536; // 8MB maximum for Kyber
@@ -502,7 +502,7 @@ export async function kyberHealthCheck() {
 /**
  * Enterprise-grade Kyber provider with session management
  */
-export class PQCKyberProvider {
+export default class PQCKyberProvider {
   constructor(level = 768, options = {}) {
     this.level = level;
     this.algorithm = `kyber${level}`;
@@ -641,7 +641,7 @@ export {
   kyberDecapsulate,
   kyberConstants,
   getKyberMetrics,
-  kyberHealthCheck,
+  PQCKyberProvider,
   PQCKyberError,
   KyberSecurityError,
   KyberConfigurationError,
