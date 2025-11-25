@@ -90,7 +90,7 @@ const kyberLogger = {
 /**
  * Kyber memory manager
  */
-class default KyberMemoryManager {
+class KyberMemoryManager {
   constructor() {
     this.growthCount = 0;
     this.maxSize = 128 * 65536; // 8MB maximum for Kyber
