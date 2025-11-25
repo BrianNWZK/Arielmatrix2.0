@@ -638,7 +638,6 @@ export default class PQCKyberProvider {
 export {
   kyberKeyPair,
   kyberEncapsulate,
-  kyberDecapsulate,
   PQCKyberProvider,
   PQCKyberError,
   KyberSecurityError,
