@@ -10,7 +10,9 @@ const __dirname = path.dirname(__filename);
 const randomBytes = promisify(crypto.randomBytes);
 
 // Enterprise-grade error classes
-class PQCKyberError extends Error {
+// 👑 PERMANENT FIX: Added 'export' to all error classes to ensure they are available
+// for named imports, resolving the SyntaxError in the importing file.
+export class PQCKyberError extends Error {
   constructor(message, code = 'KYBER_ERROR') {
     super(message);
     this.name = 'PQCKyberError';
@@ -18,13 +20,13 @@ class PQCKyberError extends Error {
   }
 }
 
-class KyberSecurityError extends PQCKyberError {
+export class KyberSecurityError extends PQCKyberError {
   constructor(message) {
     super(message, 'SECURITY_VIOLATION');
   }
 }
 
-class KyberConfigurationError extends PQCKyberError {
+export class KyberConfigurationError extends PQCKyberError {
   constructor(message) {
     super(message, 'CONFIGURATION_ERROR');
   }
@@ -528,8 +530,7 @@ export async function kyberHealthCheck() {
 /**
  * Enterprise-grade Kyber provider with session management
  */
-// 🚀 FIX: Changed 'export default class' to 'export class' to provide a NAMED EXPORT
-// named 'PQCKyberProvider', fixing the SyntaxError in the importing file.
+// The class is correctly exported as a named export.
 export class PQCKyberProvider {
   constructor(level = 768, options = {}) {
     this.level = level;
