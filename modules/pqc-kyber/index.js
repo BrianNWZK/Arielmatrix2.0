@@ -640,7 +640,6 @@ export {
   kyberEncapsulate,
   kyberDecapsulate,
   kyberConstants,
-  getKyberMetrics,
   PQCKyberProvider,
   PQCKyberError,
   KyberSecurityError,
