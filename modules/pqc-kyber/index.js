@@ -639,7 +639,6 @@ export {
   kyberKeyPair,
   kyberEncapsulate,
   kyberDecapsulate,
-  kyberConstants,
   PQCKyberProvider,
   PQCKyberError,
   KyberSecurityError,
