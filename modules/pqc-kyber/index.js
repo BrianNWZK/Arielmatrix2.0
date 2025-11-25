@@ -159,15 +159,15 @@ async function initializeKyberWasm(level) {
       const wasmPath = path.resolve(__dirname, 'dist', wasmFile);
 
       // FIX 2: Replace synchronous read with asynchronous read to avoid blocking the event loop.
-      let wasmBinary;
-      try {
-        wasmBinary = await fs.readFile(wasmPath);
-      } catch (e) {
-         if (e.code === 'ENOENT') {
-           throw new KyberConfigurationError(`WASM file not found: ${wasmFile}. Please build Kyber WASM modules.`);
-         }
-         throw e;
-      }
+      let wasmBinary;
+      try {
+        wasmBinary = await fs.readFile(wasmPath);
+      } catch (e) {
+         if (e.code === 'ENOENT') {
+           throw new KyberConfigurationError(`WASM file not found: ${wasmFile}. Please build Kyber WASM modules.`);
+         }
+         throw e;
+      }
      
       const wasmHash = crypto.createHash('sha256').update(wasmBinary).digest('hex');
       
@@ -635,10 +635,10 @@ export default class PQCKyberProvider {
   }
 }
 
+// FIX: Removed kyberKeyPair and kyberEncapsulate from this block as they
+// are already exported inline (to fix SyntaxError: Duplicate export).
 export {
-  kyberKeyPair,
-  kyberEncapsulate,
-  PQCKyberProvider,
+  PQCKyberProvider,
   PQCKyberError,
   KyberSecurityError,
   KyberConfigurationError,
