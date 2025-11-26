@@ -1115,3 +1115,6 @@ export class EnterpriseQuantumResistantCrypto {
         return newKey;
     }
 }
+
+// Export the main class and utilities
+export { EnterpriseQuantumResistantCrypto as QuantumResistantCrypto };
