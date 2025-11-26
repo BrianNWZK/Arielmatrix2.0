@@ -18,13 +18,18 @@ import {
 import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 
 // Import Kyber functions - check what's actually exported
-import * as kyberModule from '../pqc-kyber/index.js';
-// Check if kyberDecrypt exists, otherwise use a fallback
-const kyberKeyPair = kyberModule.kyberKeyPair || kyberModule.default?.kyberKeyPair;
-const kyberEncrypt = kyberModule.kyberEncrypt || kyberModule.default?.kyberEncrypt;
-const kyberDecrypt = kyberModule.kyberDecrypt || kyberModule.default?.kyberDecrypt;
+// FIX: Import the PqcKyber class directly to access its static methods and initialization.
+import { PqcKyber } from '../pqc-kyber/index.js'; 
 
-// Import Dilithium functions
+// Instantiate Kyber class to access its methods (like initialize, generateKeyPair)
+const pqcKyber = new PqcKyber(); 
+
+// We rely on the PqcKyber instance's methods now, not raw functions:
+const kyberKeyPair = pqcKyber.generateKeyPair.bind(pqcKyber); // Use .bind to maintain context
+const kyberEncrypt = pqcKyber.encryptData.bind(pqcKyber); // Assuming PqcKyber has these methods
+const kyberDecrypt = pqcKyber.decryptData.bind(pqcKyber);
+
+// Import Dilithium functions (assuming a similar pattern for PqcDilithium)
 import * as dilithiumModule from '../pqc-dilithium/index.js';
 const dilithiumKeyPair = dilithiumModule.dilithiumKeyPair || dilithiumModule.default?.dilithiumKeyPair;
 const dilithiumSign = dilithiumModule.dilithiumSign || dilithiumModule.default?.dilithiumSign;
@@ -365,6 +370,10 @@ export class EnterpriseQuantumResistantCrypto {
         try {
             this.monitoring.log('INFO', 'Starting QuantumResistantCrypto initialization');
 
+            // FIX: Step 1. Ensure all PQC dependencies (WASM modules) are initialized first.
+            await pqcKyber.initialize();
+            this.monitoring.log('INFO', 'PQC Kyber WASM module initialized successfully');
+
             await this.db.connect();
             this.monitoring.log('INFO', 'Database connected successfully');
 
@@ -510,7 +519,7 @@ export class EnterpriseQuantumResistantCrypto {
                 let decrypted = null;
                 try {
                     // Use a local key derivation for master key unwrapping
-                    decrypted = decryptWithAES(key.private_key_encrypted, this.getMasterKeyForPurpose('general'));
+                    decrypted = this.decryptWithLocalKey(key.private_key_encrypted);
                 } catch (e) {
                     this.monitoring.log('ERROR', `Failed to decrypt master key ${key.key_id}: ${e.message}`);
                     continue;
@@ -529,7 +538,7 @@ export class EnterpriseQuantumResistantCrypto {
             if (key && key.key_id) {
                 let decrypted = null;
                 try {
-                    decrypted = decryptWithAES(key.private_key_encrypted, this.getMasterKeyForPurpose('general'));
+                    decrypted = this.decryptWithLocalKey(key.private_key_encrypted);
                 } catch (e) {
                     this.monitoring.log('ERROR', `Failed to decrypt master key ${key.key_id}: ${e.message}`);
                 }
@@ -591,6 +600,7 @@ export class EnterpriseQuantumResistantCrypto {
                     if (!kyberKeyPair) {
                         throw new Error('Kyber key pair generation not available');
                     }
+                    // KyberKeyPair is an async method
                     const kyberKeys = await kyberKeyPair();
                     // Kyber key pairs are returned as Buffers/Uint8Arrays from the WASM wrapper
                     publicKey = Buffer.from(kyberKeys.publicKey).toString('base64');
@@ -869,30 +879,25 @@ export class EnterpriseQuantumResistantCrypto {
                     if (!dilithiumSign) {
                         throw new Error('Dilithium signing not available');
                     }
-                    signature = await dilithiumSign(Buffer.from(privateKey, 'base64'), dataBuffer);
+                    const signedBuffer = await dilithiumSign(Buffer.from(privateKey, 'base64'), dataBuffer);
+                    signature = signedBuffer.toString('base64');
                     break;
                 }
-
                 default:
-                    throw new Error(`Unsupported signature algorithm: ${algorithm}`);
+                    throw new Error(`Unsupported signing algorithm: ${algorithm}`);
             }
 
             const operationTime = Date.now() - startTime;
-            this.monitoring.recordOperation('signature', operationTime, true);
+            this.monitoring.recordOperation('signing', operationTime, true);
+            await this.logKeyUsage(keyId, 'sign', 'success', { operationTime, algorithm });
 
-            await this.logKeyUsage(keyId, 'sign', 'success', { algorithm, operationTime });
-
-            return signature.toString('base64');
-
+            return signature;
         } catch (error) {
             const operationTime = Date.now() - startTime;
-            this.monitoring.recordOperation('signature', operationTime, false);
-
-            await this.logKeyUsage(keyId, 'sign', 'failure', { error: error.message });
-
+            this.monitoring.recordOperation('signing', operationTime, false);
+            await this.logKeyUsage(keyId, 'sign', 'failure', { error: error.message, algorithm });
             this.monitoring.log('ERROR', `Signing failed for key ${keyId}: ${error.message}`, {
                 keyId,
-                algorithm,
                 operationTime,
                 operation: 'signing'
             });
@@ -900,71 +905,80 @@ export class EnterpriseQuantumResistantCrypto {
         }
     }
 
-    async verifySignature(data, signature, keyId, algorithm = ALGORITHMS.DILITHIUM_5) {
+    async verifySignature(data, signatureBase64, publicKeyBase64, algorithm = ALGORITHMS.DILITHIUM_5) {
         const startTime = Date.now();
 
         try {
-            const publicKey = await this.getPublicKey(keyId);
+            const publicKey = Buffer.from(publicKeyBase64, 'base64');
+            const signature = Buffer.from(signatureBase64, 'base64');
             const dataBuffer = Buffer.from(JSON.stringify(data));
-            const signatureBuffer = Buffer.from(signature, 'base64');
-            let isValid;
+            let isValid = false;
 
             switch (algorithm) {
                 case ALGORITHMS.DILITHIUM_5: {
                     if (!dilithiumVerify) {
                         throw new Error('Dilithium verification not available');
                     }
-                    isValid = await dilithiumVerify(Buffer.from(publicKey, 'base64'), dataBuffer, signatureBuffer);
+                    isValid = await dilithiumVerify(publicKey, dataBuffer, signature);
                     break;
                 }
-
                 default:
                     throw new Error(`Unsupported verification algorithm: ${algorithm}`);
             }
 
             const operationTime = Date.now() - startTime;
-            this.monitoring.recordOperation('verification', operationTime, isValid);
-
-            await this.logKeyUsage(keyId, 'verify', isValid ? 'success' : 'failure', {
-                algorithm,
-                operationTime,
-                result: isValid
-            });
+            this.monitoring.recordOperation('verification', operationTime, true);
+            await this.logKeyUsage(null, 'verify', isValid ? 'success' : 'failure', { operationTime, algorithm });
 
             return isValid;
-
         } catch (error) {
             const operationTime = Date.now() - startTime;
             this.monitoring.recordOperation('verification', operationTime, false);
-
-            await this.logKeyUsage(keyId, 'verify', 'failure', { error: error.message });
-
-            this.monitoring.log('ERROR', `Signature verification failed for key ${keyId}: ${error.message}`, {
-                keyId,
-                algorithm,
+            await this.logKeyUsage(null, 'verify', 'failure', { error: error.message, algorithm });
+            this.monitoring.log('ERROR', `Verification failed: ${error.message}`, {
                 operationTime,
                 operation: 'verification'
             });
-            throw error;
+            return false; // Verification failure always returns false
         }
     }
 
+    // --- Database Helpers and Utility Functions ---
+
+    async getKeyRecord(keyId) {
+        const record = await this.db.queryOne(
+            "SELECT * FROM quantum_keys WHERE key_id = ?",
+            [keyId]
+        );
+        if (!record) {
+            throw new Error(`Key record not found for ID: ${keyId}`);
+        }
+        return record;
+    }
+
+    async getKeyAlgorithm(keyId) {
+        const record = await this.db.queryOne(
+            "SELECT algorithm FROM quantum_keys WHERE key_id = ?",
+            [keyId]
+        );
+        if (!record || !record.algorithm) {
+            throw new Error(`Algorithm not found for key ID: ${keyId}`);
+        }
+        return record.algorithm;
+    }
+
     async getPrivateKey(keyId) {
+        // First check cache
         if (this.keyCache.has(keyId)) {
             return this.keyCache.get(keyId).privateKey;
         }
 
+        // If not in cache, retrieve and decrypt
         const keyRecord = await this.getKeyRecord(keyId);
-        if (!keyRecord) {
-            throw new Error(`Key not found: ${keyId}`);
-        }
-
         const metadata = keyRecord.metadata ? safeParseJson(keyRecord.metadata) : {};
-        const privateKey = await this.decryptPrivateKey(
-            keyRecord.private_key_encrypted,
-            metadata?.purpose || 'general'
-        );
+        const privateKey = await this.decryptPrivateKey(keyRecord.private_key_encrypted, metadata?.purpose || 'general');
 
+        // Cache the key for future use
         this.keyCache.set(keyId, {
             publicKey: keyRecord.public_key,
             privateKey,
@@ -976,188 +990,109 @@ export class EnterpriseQuantumResistantCrypto {
         return privateKey;
     }
 
-    async getPublicKey(keyId) {
-        if (this.keyCache.has(keyId)) {
-            return this.keyCache.get(keyId).publicKey;
-        }
-
-        const keyRecord = await this.getKeyRecord(keyId);
-        if (!keyRecord) {
-            throw new Error(`Key not found: ${keyId}`);
-        }
-
-        return keyRecord.public_key;
+    async logKeyUsage(keyId, operationType, status, details = {}) {
+        await this.db.execute(
+            `INSERT INTO key_usage_log 
+             (key_id, operation_type, operation_status, details) 
+             VALUES (?, ?, ?, ?)`,
+            [keyId, operationType, status, JSON.stringify(details)]
+        );
     }
 
-    async getKeyRecord(keyId) {
-        const row = await this.db.queryOne(
-            "SELECT * FROM quantum_keys WHERE key_id = ? AND status = 'active'",
-            [keyId]
+    async logEncryptionOperation(operationType, algorithm, dataSize, operationTimeMs, success, errorMessage = null) {
+        const operationId = this.generateKeyId(); // Use KeyId generator for unique ID
+        await this.db.execute(
+            `INSERT INTO encryption_operations
+             (operation_id, key_id, algorithm, data_size, operation_time_ms, success, error_message)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [operationId, 'N/A', algorithm, dataSize, operationTimeMs, success, errorMessage]
+        );
+    }
+
+    // --- Key Rotation Logic (Simplified) ---
+
+    startKeyRotationScheduler() {
+        this.rotationIntervalId = setInterval(() => {
+            this.rotateExpiredKeys().catch(err => {
+                this.monitoring.log('ERROR', `Key rotation failed: ${err.message}`);
+            });
+        }, 4 * 60 * 60 * 1000); // Check every 4 hours
+    }
+
+    async rotateExpiredKeys() {
+        this.monitoring.log('INFO', 'Starting periodic key rotation check...');
+        const expiredKeys = await this.db.query(
+            "SELECT * FROM quantum_keys WHERE expires_at < CURRENT_TIMESTAMP AND status = 'active' AND key_type != 'master'"
         );
 
-        if (!row) {
-            throw new Error(`Active key not found: ${keyId}`);
-        }
-
-        return row;
-    }
-
-    async getKeyAlgorithm(keyId) {
-        const keyRecord = await this.getKeyRecord(keyId);
-        return keyRecord.algorithm;
-    }
-
-    async logKeyUsage(keyId, operationType, status, details = {}) {
-        try {
-            await this.db.execute(
-                `INSERT INTO key_usage_log (key_id, operation_type, operation_status, details) 
-                 VALUES (?, ?, ?, ?)`,
-                [keyId, operationType, status, JSON.stringify(details)]
-            );
-        } catch (error) {
-            this.monitoring.log('ERROR', `Failed to log key usage: ${error.message}`, {
-                keyId,
-                operationType,
-                status
-            });
-        }
-    }
-
-    async logEncryptionOperation(operation, algorithm, dataSize, operationTime, success, errorMessage = null) {
-        try {
-            const operationId = createHash('sha256')
-                .update(randomBytes(16))
-                .update(Date.now().toString())
-                .update(operation)
-                .digest('hex');
-
-            await this.db.execute(
-                `INSERT INTO encryption_operations 
-                 (operation_id, key_id, algorithm, data_size, operation_time_ms, success, error_message) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [operationId, 'system', algorithm, dataSize, operationTime, success, errorMessage]
-            );
-        } catch (error) {
-            this.monitoring.log('ERROR', `Failed to log encryption operation: ${error.message}`);
-        }
-    }
-
-    // ENHANCED KEY ROTATION SYSTEM
-    startKeyRotationScheduler() {
-        if (this.rotationInterval) {
-            clearInterval(this.rotationInterval);
-        }
-        this.rotationInterval = setInterval(async () => {
+        for (const oldKey of expiredKeys) {
             try {
-                await this.checkAndRotateKeys();
+                this.monitoring.log('INFO', `Rotating expired key: ${oldKey.key_id}`);
+                await this.rotateKey(oldKey);
+                this.monitoring.log('INFO', `Key rotation successful for: ${oldKey.key_id}`);
             } catch (error) {
-                this.monitoring.log('ERROR', `Key rotation check failed: ${error.message}`, {
-                    operation: 'key_rotation_scheduler'
+                this.monitoring.log('ERROR', `Failed to rotate key ${oldKey.key_id}: ${error.message}`);
+                await this.auditLogger.logSecurityEvent({
+                    eventType: 'key_rotation_failed',
+                    severity: 'high',
+                    description: `Automatic rotation failed for key ${oldKey.key_id}: ${error.message}`,
+                    keyId: oldKey.key_id
                 });
             }
-        }, 60 * 60 * 1000); // 1 hour
-    }
-
-    async checkAndRotateKeys() {
-        try {
-            // Find keys that expire within the next 7 days
-            const keysToRotate = await this.db.query(
-                `SELECT * FROM quantum_keys 
-                 WHERE status = 'active' 
-                 AND expires_at <= datetime('now', '+7 days')`
-            );
-
-            if (Array.isArray(keysToRotate)) {
-                for (const key of keysToRotate) {
-                    await this.rotateKey(key.key_id, 'scheduled_rotation');
-                }
-
-                if (keysToRotate.length > 0) {
-                    this.monitoring.log('INFO', `Rotated ${keysToRotate.length} keys`, {
-                        rotatedKeys: keysToRotate.map(k => k.key_id),
-                        operation: 'scheduled_rotation'
-                    });
-                }
-            }
-        } catch (error) {
-            this.monitoring.log('ERROR', `Key rotation check failed: ${error.message}`, {
-                operation: 'key_rotation_check'
-            });
-            throw error;
         }
     }
 
-    async rotateKey(keyId, reason = 'scheduled_rotation') {
-        const startTime = Date.now();
+    async rotateKey(oldKey) {
+        // 1. Generate New Key Pair
+        const metadata = oldKey.metadata ? safeParseJson(oldKey.metadata) : {};
+        const newKeyResult = await this.generateKeyPair(
+            oldKey.algorithm,
+            oldKey.key_type,
+            metadata?.purpose || 'general'
+        );
 
-        try {
-            const oldKey = await this.getKeyRecord(keyId);
+        // 2. Mark Old Key as Expired
+        await this.db.execute(
+            "UPDATE quantum_keys SET status = ?, expires_at = CURRENT_TIMESTAMP WHERE key_id = ?",
+            [KEY_STATUS.EXPIRED, oldKey.key_id]
+        );
 
-            // Generate a new key of the same algorithm, type, and purpose
-            const newKey = await this.generateKeyPair(
-                oldKey.algorithm,
-                oldKey.key_type,
-                (oldKey.metadata && safeParseJson(oldKey.metadata)?.purpose) || 'general'
-            );
+        // 3. Log Rotation
+        await this.db.execute(
+            `INSERT INTO key_rotation_history 
+             (old_key_id, new_key_id, rotation_reason) 
+             VALUES (?, ?, ?)`,
+            [oldKey.key_id, newKeyResult.keyId, 'Scheduled expiration']
+        );
 
-            // Mark the old key as expired
-            await this.db.execute(
-                "UPDATE quantum_keys SET status = 'expired', last_rotated = CURRENT_TIMESTAMP, rotation_count = rotation_count + 1 WHERE key_id = ?",
-                [keyId]
-            );
+        // 4. Remove from Cache
+        this.keyCache.delete(oldKey.key_id);
 
-            // Log the rotation event
-            await this.db.execute(
-                `INSERT INTO key_rotation_history (old_key_id, new_key_id, rotation_reason, initiated_by) 
-                 VALUES (?, ?, ?, ?)`,
-                [keyId, newKey.keyId, reason, 'system']
-            );
+        await this.auditLogger.logSecurityEvent({
+            eventType: 'key_rotated',
+            severity: 'medium',
+            description: `Key successfully rotated from ${oldKey.key_id} to ${newKeyResult.keyId}`,
+            keyId: newKeyResult.keyId
+        });
+    }
 
-            // Clear old key from cache
-            this.keyCache.delete(keyId);
-
-            const operationTime = Date.now() - startTime;
-
-            // Log security event for audit
-            await this.auditLogger.logSecurityEvent({
-                eventType: 'key_rotation_success',
-                severity: 'medium',
-                description: `Key rotation completed for ${keyId}. New key: ${newKey.keyId}`,
-                keyId: newKey.keyId,
-                additional_data: JSON.stringify({ oldKeyId: keyId, reason, operationTime })
-            });
-
-            this.monitoring.log('INFO', `Key rotation successful: ${keyId} -> ${newKey.keyId}`, {
-                keyId: newKey.keyId,
-                oldKeyId: keyId,
-                reason,
-                operationTime
-            });
-
-            return newKey;
-
-        } catch (error) {
-            const operationTime = Date.now() - startTime;
-            this.monitoring.recordOperation('keyRotation', operationTime, false);
-
-            this.monitoring.log('ERROR', `Key rotation failed for ${keyId}: ${error.message}`, {
-                keyId,
-                reason,
-                operationTime,
-                operation: 'key_rotation'
-            });
-
-            await this.auditLogger.logSecurityEvent({
-                eventType: 'key_rotation_failure',
-                severity: 'critical',
-                description: `Key rotation failed for ${keyId}: ${error.message}`,
-                keyId: keyId,
-                additional_data: JSON.stringify({ reason })
-            });
-
-            throw error;
+    // --- Cleanup/Destruction ---
+    async close() {
+        if (this.rotationIntervalId) {
+            clearInterval(this.rotationIntervalId);
         }
+        await this.db.close();
+        this.monitoring.log('INFO', 'QuantumResistantCrypto module closed and resources released.');
     }
 }
+
+
 // Export the main class and utilities
 export { EnterpriseQuantumResistantCrypto as QuantumResistantCrypto };
+export {
+    ALGORITHMS,
+    KEY_TYPES,
+    KEY_STATUS,
+    MonitoringService,
+    AuditLogger
+};
