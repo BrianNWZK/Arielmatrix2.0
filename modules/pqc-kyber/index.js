@@ -1,6 +1,4 @@
-// modules/pqc-kyber/index.js
 import fs from 'fs/promises';
-// FIX 1: Changed from 'fs' to 'fs/promises' for non-blocking I/O
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
@@ -40,6 +38,7 @@ const KYBER_SECURITY_CONFIG = {
   MIN_ENTROPY_BYTES: 32,
   SESSION_KEY_LIFETIME: 60 * 1000 // 1 minute for session keys
 };
+
 // Performance monitoring
 const kyberMetrics = {
   keyGeneration: [],
@@ -53,6 +52,7 @@ let kyber = null;
 let kyberMemory = null;
 let kyberInitialized = false;
 let kyberInitPromise = null;
+
 /**
  * Kyber-specific security logger
  */
@@ -66,6 +66,7 @@ const kyberLogger = {
       message,
       ...metadata
     };
+    
     console.log(JSON.stringify(logEntry));
     
     if (level === 'ERROR' || level === 'SECURITY') {
@@ -150,10 +151,8 @@ async function initializeKyberWasm(level) {
       kyberLogger.log('INFO', `Initializing Kyber${level} WASM module`);
       
       const wasmFile = `kyber${level}.wasm`;
-      // 👑 FIX 3: Correct WASM file path resolution. Assume WASM files are placed directly in the module's root directory.
-      const wasmPath = path.resolve(__dirname, wasmFile); 
+      const wasmPath = path.resolve(__dirname, wasmFile);
 
-      // FIX 2: Replace synchronous read with asynchronous read to avoid blocking the event loop.
       let wasmBinary;
       try {
         wasmBinary = await fs.readFile(wasmPath);
@@ -206,8 +205,7 @@ async function initializeKyberWasm(level) {
       const PUBLICKEYBYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_PUBLICKEYBYTES`];
       const SECRETKEYBYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_SECRETKEYBYTES`];
       const CIPHERTEXTBYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_CIPHERTEXTBYTES`];
-      const BYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_BYTES`] ||
-        32;
+      const BYTES = exports[`PQCLEAN_${levelPrefix}_CLEAN_CRYPTO_BYTES`] || 32;
 
       // Enhanced memory allocation with security checks
       function secureAlloc(size, operation = 'unknown') {
@@ -223,7 +221,6 @@ async function initializeKyberWasm(level) {
         
         return {
           ptr: currentOffset,
-          // 👑 FIX 4: Complete the Uint8Array view creation (was truncated in original code)
           view: new Uint8Array(kyberMemory.buffer, currentOffset, size)
         };
       }
@@ -284,8 +281,7 @@ async function initializeKyberWasm(level) {
 
             return {
               ciphertext: Buffer.from(ct.view),
-              sharedSecret: Buffer.from(ss.view),
-              // Session expiry logic must be handled by a higher layer (e.g., PQCKyberProvider)
+              sharedSecret: Buffer.from(ss.view)
             };
           } catch (error) {
             kyberLogger.audit('ENCAPSULATION', null, false, { error: error.message, level });
@@ -350,13 +346,33 @@ async function initializeKyberWasm(level) {
 /**
  * Generates a Kyber key pair (public key and private key).
  */
-export async function kyberKeyPair(params = {}) {
+async function kyberKeyPair(params = {}) {
   const { level } = validateKyberInputs(params);
   try {
     const k = await initializeKyberWasm(level);
-    return k.keypair();
+    const keyPair = k.keypair();
+    
+    const keyId = crypto.createHash('sha256')
+      .update(keyPair.publicKey)
+      .update(await randomBytes(KYBER_SECURITY_CONFIG.MIN_ENTROPY_BYTES))
+      .digest('hex')
+      .substring(0, 16);
+    
+    kyberLogger.log('INFO', `Generated new Kyber key pair`, { 
+      keyId, 
+      level,
+      publicKeyLength: keyPair.publicKey.length,
+      secretKeyLength: keyPair.secretKey.length
+    });
+    
+    return {
+      ...keyPair,
+      keyId,
+      algorithm: `kyber${level}`,
+      createdAt: new Date().toISOString()
+    };
   } catch (error) {
-    kyberLogger.log('ERROR', `Failed to generate key pair: ${error.message}`, { error: error.message, level });
+    kyberLogger.log('ERROR', 'Kyber key pair generation failed', { error: error.message, level });
     throw error;
   }
 }
@@ -365,7 +381,7 @@ export async function kyberKeyPair(params = {}) {
  * Encapsulates a shared secret using a public key.
  * Returns { ciphertext: Buffer, sharedSecret: Buffer }
  */
-export async function kyberEncapsulate(publicKey, params = {}) {
+async function kyberEncapsulate(publicKey, params = {}) {
   const { level } = validateKyberInputs({ ...params, publicKey });
   if (!(publicKey instanceof Buffer)) {
     publicKey = Buffer.from(publicKey);
@@ -373,10 +389,12 @@ export async function kyberEncapsulate(publicKey, params = {}) {
   try {
     const k = await initializeKyberWasm(level);
     const result = k.encapsulate(publicKey);
+    
     kyberLogger.audit('ENCAPSULATION', null, true, { 
       ciphertextLength: result.ciphertext.length, 
       level 
     });
+    
     return {
       ...result,
       sessionExpiry: Date.now() + KYBER_SECURITY_CONFIG.SESSION_KEY_LIFETIME
@@ -394,7 +412,7 @@ export async function kyberEncapsulate(publicKey, params = {}) {
 /**
  * Robust decapsulation with validation
  */
-export async function kyberDecapsulate(privateKey, ciphertext, params = {}) {
+async function kyberDecapsulate(privateKey, ciphertext, params = {}) {
   const { level } = validateKyberInputs({ ...params, privateKey, ciphertext });
   if (!(privateKey instanceof Buffer)) {
     privateKey = Buffer.from(privateKey);
@@ -405,17 +423,36 @@ export async function kyberDecapsulate(privateKey, ciphertext, params = {}) {
   try {
     const k = await initializeKyberWasm(level);
     const sharedSecret = k.decapsulate(ciphertext, privateKey);
+    
+    kyberLogger.audit('DECAPSULATION', null, true, {
+      ciphertextLength: ciphertext.length,
+      level
+    });
+    
     return sharedSecret;
   } catch (error) {
-    kyberLogger.log('ERROR', `Failed to decapsulate: ${error.message}`, { error: error.message, level });
+    kyberLogger.audit('DECAPSULATION', null, false, {
+      error: error.message,
+      ciphertextLength: ciphertext?.length,
+      level
+    });
     throw error;
   }
 }
 
 /**
+ * Get Kyber constants
+ */
+async function kyberConstants(params = {}) {
+  const { level } = validateKyberInputs(params);
+  const k = await initializeKyberWasm(level);
+  return k.constants;
+}
+
+/**
  * Returns performance metrics for Kyber operations.
  */
-export function getKyberMetrics() {
+function getKyberMetrics() {
   const calculateStats = (values) => {
     if (values.length === 0) return { avg: 0, min: 0, max: 0, count: 0 };
     const sum = values.reduce((a, b) => a + b, 0);
@@ -437,7 +474,7 @@ export function getKyberMetrics() {
 /**
  * Kyber health check
  */
-export async function kyberHealthCheck() {
+async function kyberHealthCheck() {
   try {
     const { publicKey, secretKey } = await kyberKeyPair({ level: 768 });
     const encapsulated = await kyberEncapsulate(publicKey);
@@ -463,13 +500,12 @@ export async function kyberHealthCheck() {
 
 /**
  * Enterprise-grade provider for Kyber operations, managing key rotation and sessions.
- * This class uses the low-level kyber functions but adds security and operational layers.
  */
-export class PQCKyberProvider {
+class PQCKyberProvider {
   constructor(options = {}) {
-    this.level = options.level || 768; // Default to Kyber768
-    this.keyStore = new Map(); // Stores { keyId: { publicKey, secretKey, rotationTimer } }
-    this.sessionStore = new Map(); // Stores active session secrets
+    this.level = options.level || 768;
+    this.keyStore = new Map();
+    this.sessionStore = new Map();
     this.rotationTimers = new Map();
     this.options = {
       keyRotationInterval: KYBER_SECURITY_CONFIG.KEY_ROTATION_INTERVAL,
@@ -488,7 +524,7 @@ export class PQCKyberProvider {
       const { publicKey, secretKey } = await kyberKeyPair({ level: this.level });
       
       this.keyStore.set(keyId, { publicKey, secretKey, createdAt: Date.now(), purpose });
-      this.scheduleKeyRotation(keyId); // Schedule next rotation
+      this.scheduleKeyRotation(keyId);
       
       kyberLogger.audit('KEY_ROTATION', keyId, true, { purpose });
       return { publicKey };
@@ -510,10 +546,8 @@ export class PQCKyberProvider {
   async encapsulateAndEstablishSession(keyId, params = {}) {
     const publicKey = this.getPublicKey(keyId);
     
-    // We use the low-level encapsulate function which returns sharedSecret
     const result = await kyberEncapsulate(publicKey, { level: this.level });
 
-    // Store session with expiration
     const sessionId = crypto.randomBytes(16).toString('hex');
     this.sessionStore.set(sessionId, {
       ...result,
@@ -521,7 +555,7 @@ export class PQCKyberProvider {
       createdAt: Date.now(),
       expiresAt: Date.now() + this.options.sessionLifetime
     });
-    // Cleanup expired sessions
+    
     this.cleanupSessions();
     
     return {
@@ -591,19 +625,34 @@ export class PQCKyberProvider {
     this.keyStore.delete(keyId);
     kyberLogger.log('SECURITY', `Key revoked: ${keyId}`);
   }
-} 
+}
 
-// FIX: Removed kyberKeyPair and kyberEncapsulate from this block as they 
-// are already exported inline (to fix SyntaxError: Duplicate export).
-export { 
-  PQCKyberProvider, 
-  kyberKeyPair, 
+// FIXED EXPORTS - No duplicate exports
+export {
+  PQCKyberProvider,
+  kyberKeyPair,
   kyberEncapsulate, 
-  kyberDecapsulate, 
+  kyberDecapsulate,
+  kyberConstants,
   getKyberMetrics,
   kyberHealthCheck,
-  PQCKyberError, 
-  KyberSecurityError, 
-  KyberConfigurationError, 
-  KYBER_SECURITY_CONFIG 
+  PQCKyberError,
+  KyberSecurityError,
+  KyberConfigurationError,
+  KYBER_SECURITY_CONFIG
+};
+
+// Default export for backward compatibility
+export default {
+  PQCKyberProvider,
+  kyberKeyPair,
+  kyberEncapsulate,
+  kyberDecapsulate,
+  kyberConstants,
+  getKyberMetrics,
+  kyberHealthCheck,
+  PQCKyberError,
+  KyberSecurityError,
+  KyberConfigurationError,
+  KYBER_SECURITY_CONFIG
 };
