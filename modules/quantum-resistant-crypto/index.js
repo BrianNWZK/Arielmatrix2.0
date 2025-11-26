@@ -17,18 +17,13 @@ import {
 } from 'crypto';
 import { ArielSQLiteEngine } from '../ariel-sqlite-engine/index.js';
 
-// Import Kyber functions - check what's actually exported
-// FIX: Import the PQCKyberProvider class directly, resolving the SyntaxError.
-import { PQCKyberProvider } from '../pqc-kyber/index.js';
-
-// Instantiate Kyber class to access its methods (like initialize, generateKeyPair)
-// FIX: Use the correct imported class name.
-const pqcKyber = new PQCKyberProvider(); 
-
-// We rely on the PqcKyber instance's methods now, not raw functions:
-const kyberKeyPair = pqcKyber.generateKeyPair.bind(pqcKyber); // Use .bind to maintain context
-const kyberEncrypt = pqcKyber.encryptData.bind(pqcKyber); // Assuming PQCKyberProvider has these methods
-const kyberDecrypt = pqcKyber.decryptData.bind(pqcKyber);
+// Import Kyber functions - CORRECTED IMPORTS
+import { 
+    kyberKeyPair, 
+    kyberEncapsulate, 
+    kyberDecapsulate,
+    PQCKyberProvider 
+} from '../pqc-kyber/index.js';
 
 // Import Dilithium functions (assuming a similar pattern for PqcDilithium)
 import * as dilithiumModule from '../pqc-dilithium/index.js';
@@ -262,7 +257,6 @@ class DBAdapter {
     }
 }
 
-
 // --- UTILITY FUNCTIONS ---
 
 /**
@@ -329,6 +323,68 @@ function decryptWithAES(encryptedData, key) {
     return decrypted;
 }
 
+// Kyber/Dilithium Hybrid Encryption Functions
+/**
+ * @function hybridEncrypt
+ * @description Encrypts data using Kyber for key encapsulation and AES-GCM for data encryption
+ */
+async function hybridEncrypt(publicKey, data, algorithm = ALGORITHMS.KYBER_1024) {
+    try {
+        // Step 1: Use Kyber to encapsulate a shared secret
+        const encapsulationResult = await kyberEncapsulate(publicKey, { level: 1024 });
+        
+        // Step 2: Use the shared secret to encrypt the data with AES-GCM
+        const iv = randomBytes(12);
+        const cipher = createCipheriv('aes-256-gcm', encapsulationResult.sharedSecret.slice(0, 32), iv);
+        
+        let encrypted = cipher.update(data);
+        encrypted = Buffer.concat([encrypted, cipher.final()]);
+        const authTag = cipher.getAuthTag();
+
+        // Return: Kyber ciphertext + AES IV + Auth Tag + Encrypted Data
+        return Buffer.concat([
+            encapsulationResult.ciphertext,
+            iv,
+            authTag,
+            encrypted
+        ]);
+    } catch (error) {
+        throw new Error(`Hybrid encryption failed: ${error.message}`);
+    }
+}
+
+/**
+ * @function hybridDecrypt
+ * @description Decrypts data using Kyber for key decapsulation and AES-GCM for data decryption
+ */
+async function hybridDecrypt(privateKey, encryptedData, algorithm = ALGORITHMS.KYBER_1024) {
+    try {
+        // Extract components from encrypted data
+        const kyberCiphertextLength = 1568; // Standard Kyber-1024 ciphertext length
+        const ivLength = 12;
+        const authTagLength = 16;
+        
+        const kyberCiphertext = encryptedData.slice(0, kyberCiphertextLength);
+        const iv = encryptedData.slice(kyberCiphertextLength, kyberCiphertextLength + ivLength);
+        const authTag = encryptedData.slice(kyberCiphertextLength + ivLength, kyberCiphertextLength + ivLength + authTagLength);
+        const aesEncryptedData = encryptedData.slice(kyberCiphertextLength + ivLength + authTagLength);
+
+        // Step 1: Use Kyber to decapsulate the shared secret
+        const sharedSecret = await kyberDecapsulate(privateKey, kyberCiphertext, { level: 1024 });
+
+        // Step 2: Use the shared secret to decrypt the data with AES-GCM
+        const decipher = createDecipheriv('aes-256-gcm', sharedSecret.slice(0, 32), iv);
+        decipher.setAuthTag(authTag);
+        
+        let decrypted = decipher.update(aesEncryptedData);
+        decrypted = Buffer.concat([decrypted, decipher.final()]);
+        
+        return decrypted;
+    } catch (error) {
+        throw new Error(`Hybrid decryption failed: ${error.message}`);
+    }
+}
+
 export class EnterpriseQuantumResistantCrypto {
     constructor(config = {}) {
         this.config = {
@@ -357,6 +413,12 @@ export class EnterpriseQuantumResistantCrypto {
         this.keyCache = new Map();
         this.initialized = false;
         this.initializationPromise = null;
+
+        // Initialize Kyber provider for session management (optional)
+        this.kyberProvider = new PQCKyberProvider(768, {
+            keyRotationInterval: this.config.keyRotationInterval,
+            sessionLifetime: 60 * 1000 // 1 minute
+        });
     }
 
     async initialize() {
@@ -371,10 +433,7 @@ export class EnterpriseQuantumResistantCrypto {
         try {
             this.monitoring.log('INFO', 'Starting QuantumResistantCrypto initialization');
 
-            // FIX: Step 1. Ensure all PQC dependencies (WASM modules) are initialized first.
-            await pqcKyber.initialize();
-            this.monitoring.log('INFO', 'PQC Kyber WASM module initialized successfully');
-
+            // Initialize database first
             await this.db.connect();
             this.monitoring.log('INFO', 'Database connected successfully');
 
@@ -560,7 +619,8 @@ export class EnterpriseQuantumResistantCrypto {
         try {
             this.monitoring.log('INFO', 'Generating new master keys');
 
-            // NOTE: Master keys themselves are Kyber/Dilithium, but their *private keys* // are encrypted using a symmetric key derived from the QR_MASTER_KEY secret.
+            // NOTE: Master keys themselves are Kyber/Dilithium, but their *private keys* 
+            // are encrypted using a symmetric key derived from the QR_MASTER_KEY secret.
             const encryptionMasterKey = await this.generateKeyPair(
                 ALGORITHMS.KYBER_1024,
                 KEY_TYPES.MASTER,
@@ -602,10 +662,10 @@ export class EnterpriseQuantumResistantCrypto {
                         throw new Error('Kyber key pair generation not available');
                     }
                     // KyberKeyPair is an async method
-                    const kyberKeys = await kyberKeyPair();
+                    const kyberKeys = await kyberKeyPair({ level: 1024 });
                     // Kyber key pairs are returned as Buffers/Uint8Arrays from the WASM wrapper
                     publicKey = Buffer.from(kyberKeys.publicKey).toString('base64');
-                    privateKey = Buffer.from(kyberKeys.privateKey).toString('base64');
+                    privateKey = Buffer.from(kyberKeys.secretKey).toString('base64');
                     break;
                 }
 
@@ -625,7 +685,7 @@ export class EnterpriseQuantumResistantCrypto {
             }
 
             const keyId = this.generateKeyId();
-            const encryptedPrivateKey = encryptWithAES(privateKey, this.getMasterKeyForPurpose(purpose));
+            const encryptedPrivateKey = this.encryptWithLocalKey(privateKey);
             const expiresAt = new Date(Date.now() + this.config.keyRotationInterval).toISOString();
 
             await this.db.execute(
@@ -679,17 +739,12 @@ export class EnterpriseQuantumResistantCrypto {
         }
     }
 
-    async encryptPrivateKey(privateKey, purpose) {
-        const masterKey = this.getMasterKeyForPurpose(purpose);
-        return encryptWithAES(privateKey, masterKey);
+    encryptWithLocalKey(data) {
+        const masterKey = this.getMasterKeyForPurpose('general');
+        return encryptWithAES(data, masterKey);
     }
 
-    async decryptPrivateKey(encryptedPrivateKey, purpose) {
-        const masterKey = this.getMasterKeyForPurpose(purpose);
-        return decryptWithAES(encryptedPrivateKey, masterKey);
-    }
-
-    async decryptWithLocalKey(encryptedPrivateKey) {
+    decryptWithLocalKey(encryptedPrivateKey) {
         const masterKey = this.getMasterKeyForPurpose('general');
         return decryptWithAES(encryptedPrivateKey, masterKey);
     }
@@ -738,11 +793,8 @@ export class EnterpriseQuantumResistantCrypto {
 
             switch (algorithm) {
                 case ALGORITHMS.KYBER_1024: {
-                    if (!kyberEncrypt) {
-                        throw new Error('Kyber encryption not available');
-                    }
                     const dataBuffer = Buffer.from(JSON.stringify(data));
-                    const ciphertext = await kyberEncrypt(publicKey, dataBuffer);
+                    const ciphertext = await hybridEncrypt(publicKey, dataBuffer, algorithm);
                     encryptedData = ciphertext.toString('base64');
                     break;
                 }
@@ -797,7 +849,7 @@ export class EnterpriseQuantumResistantCrypto {
                 const keyRecord = await this.getKeyRecord(keyId);
                 const metadata = keyRecord.metadata ? safeParseJson(keyRecord.metadata) : {};
                 // Unwraps the private key from the DB using the master key derivation
-                privateKey = await this.decryptPrivateKey(keyRecord.private_key_encrypted, metadata?.purpose || 'general');
+                privateKey = this.decryptWithLocalKey(keyRecord.private_key_encrypted);
                 // Cache the key for future use
                 this.keyCache.set(keyId, {
                     publicKey: keyRecord.public_key,
@@ -815,19 +867,12 @@ export class EnterpriseQuantumResistantCrypto {
 
             switch (algorithm) {
                 case ALGORITHMS.KYBER_1024: {
-                    if (!kyberDecrypt) {
-                        throw new Error('Kyber decryption not available');
-                    }
-                    // Kyber decrypts the ciphertext using the *private* key
-                    decryptedData = await kyberDecrypt(encryptedBuffer, Buffer.from(privateKey, 'base64'));
+                    // Use hybrid decryption with the private key
+                    decryptedData = await hybridDecrypt(Buffer.from(privateKey, 'base64'), encryptedBuffer, algorithm);
                     decryptedData = decryptedData.toString('utf8');
                     break;
                 }
                 
-                // --- Missing Dilithium Decryption Case (Dilithium is signature only) ---
-                // Dilithium is typically used for digital signatures, not encryption/decryption.
-                // Assuming this function is primarily for Kyber-based data encryption.
-
                 default:
                     throw new Error(`Unsupported decryption algorithm: ${algorithm}`);
             }
@@ -865,7 +910,7 @@ export class EnterpriseQuantumResistantCrypto {
             } else {
                 const keyRecord = await this.getKeyRecord(keyId);
                 const metadata = keyRecord.metadata ? safeParseJson(keyRecord.metadata) : {};
-                privateKey = await this.decryptPrivateKey(keyRecord.private_key_encrypted, metadata?.purpose || 'general');
+                privateKey = this.decryptWithLocalKey(keyRecord.private_key_encrypted);
                 this.keyCache.set(keyId, {
                     publicKey: keyRecord.public_key,
                     privateKey,
@@ -1108,11 +1153,28 @@ export class EnterpriseQuantumResistantCrypto {
 
         this.monitoring.log('INFO', `Successfully rotated key: Old ID: ${oldKeyId}, New ID: ${newKey.keyId}`);
         
-        // TODO: For MASTER keys, a subsequent process is needed to re-encrypt all dependent keys.
-        // This is a complex step for a full production system but is beyond the scope of a
-        // typical class implementation unless specific re-encryption methods are defined.
-
         return newKey;
+    }
+
+    // Health check method
+    async healthCheck() {
+        try {
+            const metrics = this.monitoring.getMetrics();
+            const dbConnected = await this.db.queryOne("SELECT 1 as connected");
+            
+            return {
+                status: 'HEALTHY',
+                database: dbConnected ? 'CONNECTED' : 'DISCONNECTED',
+                metrics,
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            return {
+                status: 'UNHEALTHY',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            };
+        }
     }
 }
 
