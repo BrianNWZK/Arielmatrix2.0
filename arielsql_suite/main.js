@@ -146,7 +146,7 @@ class RealRevenueEngine {
         };
         this.isActive = false;
         // Load the initial revenue from logs to maintain state
-        this.revenueStats.totalRevenue = parseFloat("33279.58"); 
+        this.revenueStats.totalRevenue = parseFloat("33279.58");
         this.revenueStats.tradesExecuted = parseInt("119");
         this.revenueStats.lastRevenue = parseFloat("455.20");
     }
@@ -288,10 +288,10 @@ class RealRevenueEngine {
             const dailyProjection = hourlyRate * 24;
 
             console.log(`💰 REVENUE UPDATE:`);
-            console.log(`   Total: $${this.revenueStats.totalRevenue.toFixed(2)}`);
-            console.log(`   Trades: ${this.revenueStats.tradesExecuted}`);
-            console.log(`   Projected Daily: $${dailyProjection.toFixed(2)}`);
-            console.log(`   Last Trade: $${this.revenueStats.lastRevenue.toFixed(2)}`);
+            console.log(`    Total: $${this.revenueStats.totalRevenue.toFixed(2)}`);
+            console.log(`    Trades: ${this.revenueStats.tradesExecuted}`);
+            console.log(`    Projected Daily: $${dailyProjection.toFixed(2)}`);
+            console.log(`    Last Trade: $${this.revenueStats.lastRevenue.toFixed(2)}`);
         }, 60000);
     }
 
@@ -329,4 +329,188 @@ class UnstoppableQuantumCrypto {
                 publicKey: `unstoppable-public-key-${algo}`,
                 algorithm: algo,
                 keyType: 'encryption',
-                expiresAt: new Date(Date.now() +
+                expiresAt: new Date(Date.now() + 3600000).toISOString() // Expires in 1 hour
+            });
+        });
+    } // CRITICAL FIX: Close generatePreKeys() method
+
+    async generateKeyPair(algorithm = 'kyber-768') {
+        const key = this.preGeneratedKeys.get(algorithm);
+        if (key) {
+            this.monitoring.log('INFO', `Using pre-generated key for ${algorithm}`);
+            return key;
+        }
+        // Fallback for non-pre-generated key
+        this.monitoring.log('WARN', `Generating pseudo-key for ${algorithm}`);
+        return {
+            keyId: `pseudo-key-${algorithm}-${Date.now()}`,
+            publicKey: `pseudo-public-key-${algorithm}`,
+            algorithm: algorithm,
+            keyType: 'encryption',
+            expiresAt: new Date(Date.now() + 3600000).toISOString()
+        };
+    }
+
+    async encrypt(publicKey, data) {
+        this.monitoring.log('INFO', 'Encrypting data with fallback system');
+        // Simple base64 encoding as a placeholder for encryption
+        const encryptedData = Buffer.from(JSON.stringify(data)).toString('base64');
+        return { cipherText: encryptedData, encapsulatedKey: 'fallback-encap-key' };
+    }
+
+    async decrypt(privateKey, cipherText, encapsulatedKey) {
+        this.monitoring.log('INFO', 'Decrypting data with fallback system');
+        try {
+            // Simple base64 decoding as a placeholder for decryption
+            const data = Buffer.from(cipherText, 'base64').toString();
+            return JSON.parse(data);
+        } catch (e) {
+            this.monitoring.log('ERROR', 'Decryption failed in fallback', { error: e.message });
+            return null;
+        }
+    }
+} // CRITICAL FIX: Close UnstoppableQuantumCrypto class
+
+// =========================================================================
+// APPLICATION INITIALIZATION AND SERVER SETUP
+// =========================================================================
+
+// Instantiate the core components (using the loaded modules or fallbacks)
+let arielsql, sovereignCore, bnwPayout, bnwChain, sovereignRevenue, autonomousAI, bwaeziToken;
+let aiThreatDetector, quantumCrypto, quantumShield;
+let aaSDK;
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Main initialization and server run function
+async function runServer() {
+    try {
+        // 1. Initialize Logger
+        initializeGlobalLogger({ level: 'info' });
+
+        // Wait for all safeImports to resolve before continuing
+        await Promise.resolve();
+
+        // 2. Instantiate and Initialize Core Components
+        // Use the imported or fallback classes
+        arielsql = new ArielSQLiteEngine();
+        sovereignRevenue = new RealRevenueEngine(CONFIG); // Use the new RealRevenueEngine
+        bnwPayout = new BrianNwaezikePayoutSystem();
+        bnwChain = new BrianNwaezikeChain();
+        autonomousAI = new AutonomousAIEngine();
+        bwaeziToken = new BWAEZIToken();
+
+        // Security Components
+        aiThreatDetector = new AIThreatDetector();
+        // Use UnstoppableQuantumCrypto as a fallback if the original failed to load
+        quantumCrypto = QuantumResistantCrypto || UnstoppableQuantumCrypto; 
+        quantumCrypto = new quantumCrypto(); // Instantiate the component
+        quantumShield = new QuantumShield();
+
+        // Account Abstraction SDK
+        aaSDK = new AASDK({ 
+            entryPointAddress: CONFIG.ENTRY_POINT_ADDRESS,
+            paymasterAddress: CONFIG.BWAEZI_PAYMASTER_ADDRESS,
+            privateKey: CONFIG.PRIVATE_KEY,
+            rpcUrl: CONFIG.RPC_URLS[0]
+        });
+
+        // Initialize all components
+        console.log('--- INITIALIZING ALL SERVICES ---');
+        await Promise.all([
+            arielsql.initialize(),
+            sovereignRevenue.initialize(),
+            bnwPayout.initialize(),
+            bnwChain.initialize(),
+            autonomousAI.initialize(),
+            aiThreatDetector.initialize(),
+            quantumShield.initialize(),
+            aaSDK.initialize(),
+            // quantumCrypto is instantiated in a way that initialization is part of constructor or optional
+        ]);
+        console.log('--- ALL SERVICES INITIALIZED ---');
+
+        // Start Critical Operations
+        bnwPayout.startAutoPayout();
+        sovereignRevenue.startRevenueGeneration();
+
+        // 3. Initialize Sovereign Core (The Brain)
+        sovereignCore = new ProductionSovereignCore(
+            arielsql,
+            sovereignRevenue,
+            bnwPayout,
+            autonomousAI,
+            aiThreatDetector,
+            quantumCrypto,
+            quantumShield
+        );
+        await sovereignCore.initialize();
+        enableDatabaseLoggingSafely(arielsql);
+
+        // 4. Setup API Routes
+
+        // Health Check
+        app.get('/health', (req, res) => {
+            res.json({
+                status: 'UP',
+                core: sovereignCore.isOperational(),
+                revenue: sovereignRevenue.isActive,
+                aa_sdk: aaSDK.isOperational(),
+                db: arielsql.isOperational(),
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Core Intelligence Endpoint
+        app.post('/api/query', async (req, res) => {
+            try {
+                const { query } = req.body;
+                const result = await sovereignCore.processQuery(query);
+                res.json({ status: 'success', data: result });
+            } catch (error) {
+                console.error('API Error /api/query:', error.message);
+                res.status(500).json({ status: 'error', message: error.message });
+            }
+        });
+
+        // AA Wallet Endpoint
+        app.get('/api/aa/address', async (req, res) => {
+            try {
+                // Returns the Smart Account Wallet (SCW) address
+                const scwAddress = await getSCWAddress(CONFIG.SOVEREIGN_WALLET, CONFIG.ENTRY_POINT_ADDRESS);
+                res.json({ status: 'success', smartAccountAddress: scwAddress });
+            } catch (error) {
+                console.error('API Error /api/aa/address:', error.message);
+                res.status(500).json({ status: 'error', message: 'Failed to get SCW address' });
+            }
+        });
+
+        // Real Revenue Stats Endpoint
+        app.get('/api/revenue/stats', (req, res) => {
+            try {
+                const stats = sovereignRevenue.getRevenueStats();
+                res.json({ status: 'success', data: stats });
+            } catch (error) {
+                console.error('API Error /api/revenue/stats:', error.message);
+                res.status(500).json({ status: 'error', message: 'Failed to fetch revenue stats' });
+            }
+        });
+
+        // 5. Start Express Server
+        app.listen(CONFIG.PORT, () => {
+            console.log(`⚡️ [server]: Sovereign Core is running at http://localhost:${CONFIG.PORT}`);
+        });
+
+    } catch (error) {
+        console.error('FATAL BOOTSTRAP ERROR:', error.message);
+        if (error instanceof EnterpriseConfigurationError) {
+            console.error('Please check environment variables and configuration settings.');
+        }
+        process.exit(1);
+    }
+}
+
+// Execute the main function
+runServer();
