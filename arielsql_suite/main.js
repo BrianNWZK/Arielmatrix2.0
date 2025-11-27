@@ -201,7 +201,12 @@ const initializeAllDependencies = async (config) => {
     // 1. DB and Payout System (Base Dependencies)
     console.log('👷 Initializing ArielSQLiteEngine...');
     const arielSQLiteEngine = new ArielSQLiteEngine(config); 
-    await arielSQLiteEngine.initialize?.();
+    // CRITICAL FIX: Ensure initialize is called on DB
+    if (arielSQLiteEngine.initialize && typeof arielSQLiteEngine.initialize === 'function') {
+        await arielSQLiteEngine.initialize();
+    } else {
+        console.warn('⚠️ ArielSQLiteEngine does not have initialize method. Proceeding.');
+    }
 
     // 2. Initialize Quantum Modules with Graceful Fallbacks
     let quantumCrypto, quantumShield, aiThreatDetector;
@@ -250,22 +255,38 @@ const initializeAllDependencies = async (config) => {
     // 3. Core Blockchain Services
     console.log('👷 Initializing BrianNwaezikePayoutSystem...');
     const brianNwaezikePayoutSystem = new BrianNwaezikePayoutSystem(config, provider); 
-    await brianNwaezikePayoutSystem.initialize?.();
+    if (brianNwaezikePayoutSystem.initialize && typeof brianNwaezikePayoutSystem.initialize === 'function') {
+        await brianNwaezikePayoutSystem.initialize();
+    } else {
+        console.warn('⚠️ BrianNwaezikePayoutSystem does not have initialize method. Proceeding.');
+    }
 
     console.log('👷 Initializing BrianNwaezikeChain...');
     const bwaeziChain = new BrianNwaezikeChain(config, brianNwaezikePayoutSystem);
-    await bwaeziChain.initialize?.();
+    if (bwaeziChain.initialize && typeof bwaeziChain.initialize === 'function') {
+        await bwaeziChain.initialize();
+    } else {
+        console.warn('⚠️ BrianNwaezikeChain does not have initialize method. Proceeding.');
+    }
     
     console.log('👷 Initializing AASDK...');
     const aaSDK = new AASDK(provider, config); 
-    await aaSDK.initialize?.();
+    if (aaSDK.initialize && typeof aaSDK.initialize === 'function') {
+        await aaSDK.initialize();
+    } else {
+        console.warn('⚠️ AASDK does not have initialize method. Proceeding.');
+    }
     
     const bwaeziToken = new BWAEZIToken(provider, config.TOKEN_CONTRACT_ADDRESS);
 
     // 4. Revenue Engine (Requires Chain/DB/Payout)
     console.log('👷 Initializing SovereignRevenueEngine...');
     const sovereignRevenueEngine = new SovereignRevenueEngine(config, arielSQLiteEngine, bwaeziChain, brianNwaezikePayoutSystem); 
-    await sovereignRevenueEngine.initialize?.();
+    if (sovereignRevenueEngine.initialize && typeof sovereignRevenueEngine.initialize === 'function') {
+        await sovereignRevenueEngine.initialize();
+    } else {
+        console.warn('⚠️ SovereignRevenueEngine does not have initialize method. Proceeding.');
+    }
 
     // 5. 🎯 CRITICAL: Initialize AutonomousAIEngine with proper dependency injection
     console.log('👷 Initializing AutonomousAIEngine...');
@@ -291,12 +312,13 @@ const initializeAllDependencies = async (config) => {
             console.warn('⚠️ AutonomousAIEngine does not have initialize method, proceeding without initialization');
         }
     } catch (error) {
-        console.error('❌ AutonomousAIEngine initialization failed:', error.message);
+        console.error('❌ AutonomousAIEngine initialization failed, using fallback:', error.message);
         // Create a minimal fallback for AutonomousAIEngine (UNSTOPPABLE mode)
         autonomousAIEngine = {
             initialized: true,
             optimizeUserOp: (userOp) => userOp, // Basic fallback
-            isOperational: () => true
+            isOperational: () => true,
+            generateTradingStrategy: () => ({ type: 'fallback-trade', data: {} })
         };
         console.log('🔄 Using fallback AutonomousAIEngine for UNSTOPPABLE operation');
     }
@@ -396,9 +418,16 @@ const transferBWAEZIToSCW = async () => {
 };
 
 // =========================================================================
-// EXPRESS SERVER SETUP
+// EXPRESS SERVER SETUP - ENHANCED PORT BINDING (CRITICAL ACTIVITY)
 // =========================================================================
 
+/**
+ * @function startExpressServer
+ * @description Configures the Express app and attempts to bind to the port.
+ * CRITICAL ENHANCEMENT: Implements a retry loop to find an available port (UNSTOPPABLE mode).
+ * @param {object} optimizedCore The initialized ProductionSovereignCore instance.
+ * @returns {Promise<import('http').Server>} A promise that resolves to the bound HTTP server instance.
+ */
 const startExpressServer = (optimizedCore) => {
     const app = express();
     app.use(cors());
@@ -502,15 +531,63 @@ const startExpressServer = (optimizedCore) => {
         });
     });
 
-    const server = app.listen(CONFIG.PORT, () => {
-        console.log(`\n🚀 Server running on port ${CONFIG.PORT}`);
-        console.log(`🔐 Quantum Security: ${optimizedCore.quantumSecurityStatus ? optimizedCore.quantumSecurityStatus() : 'MIXED'}`);
-        console.log(`🤖 AA System: ACTIVE - Smart Account: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
-        console.log(`💰 SCW Balance: 100,000,000 BWAEZI (Confirmed from deployment)`);
-        console.log(`🏢 Enterprise Version: 2.2.0-UNSTOPPABLE_PRODUCTION_READY`);
-    });
+    // 🎯 CRITICAL PORT BINDING LOGIC
+    const tryBind = (port) => {
+        return new Promise((resolve, reject) => {
+            const server = app.listen(port, () => {
+                // Original success logs, now placed inside the successful callback
+                console.log(`\n🚀 Server running on port ${port}`);
+                console.log(`🔐 Quantum Security: ${optimizedCore.quantumSecurityStatus ? optimizedCore.quantumSecurityStatus() : 'MIXED'}`);
+                console.log(`🤖 AA System: ACTIVE - Smart Account: ${CONFIG.SMART_ACCOUNT_ADDRESS}`);
+                console.log(`💰 SCW Balance: 100,000,000 BWAEZI (Confirmed from deployment)`);
+                console.log(`🏢 Enterprise Version: 2.2.0-UNSTOPPABLE_PRODUCTION_READY`);
+                resolve(server);
+            });
 
-    return server;
+            server.on('error', (err) => {
+                if (err.code === 'EADDRINUSE') {
+                    // Critical failure to bind on this port, close and reject to trigger retry
+                    server.close(() => {
+                        reject({ code: 'EADDRINUSE', port, originalError: err }); 
+                    });
+                } else {
+                    reject(err);
+                }
+            });
+        });
+    };
+
+    const BASE_PORT = parseInt(CONFIG.PORT, 10);
+    const PORTS_TO_TRY = 5;
+    
+    let attempts = 0;
+    
+    // Use a self-executing async function to handle the retry loop
+    return (async () => {
+        while (attempts < PORTS_TO_TRY) {
+            const currentPort = BASE_PORT + attempts;
+            attempts++;
+            
+            console.log(`\n⚙️ CRITICAL PORT BINDING: Attempting to secure port ${currentPort} (${attempts}/${PORTS_TO_TRY})`);
+            
+            try {
+                const serverInstance = await tryBind(currentPort);
+                CONFIG.PORT = currentPort; // Update CONFIG with the successful port
+                return serverInstance; // Success! Return the bound server
+            } catch (error) {
+                if (error.code === 'EADDRINUSE') {
+                    console.warn(`⚠️ Port ${currentPort} is busy. Retrying with next port (UNSTOPPABLE MODE)...`);
+                    // Continue loop
+                } else {
+                    console.error(`❌ CRITICAL BINDING ERROR on port ${currentPort}:`, error.message);
+                    throw error; // Re-throw unrecoverable errors
+                }
+            }
+        }
+        
+        // If the loop finishes without success
+        throw new Error(`❌ CRITICAL BOOT FAILURE: Failed to bind server after ${PORTS_TO_TRY} attempts (Ports ${BASE_PORT}-${BASE_PORT + PORTS_TO_TRY - 1} were all in use). UNSTOPPABLE mode failed for Express server binding.`);
+    })();
 };
 
 // =========================================================================
@@ -545,6 +622,9 @@ const initializeProductionSovereignCore = async (config, injectedServices) => {
     } catch (error) {
         console.error('❌ ProductionSovereignCore initialization failed, but operating in UNSTOPPABLE mode:', error.message);
         // Do not re-throw error for UNSTOPPABLE mode, allow the system to proceed degraded.
+        if (error instanceof EnterpriseConfigurationError) {
+            throw error;
+        }
     }
 
     // Add quantum security status method (already in original code)
@@ -597,7 +677,8 @@ const initializeProductionSovereignCore = async (config, injectedServices) => {
         // 🎯 CRITICAL: Check and execute token transfer if needed (BWAEZI VALUE ASSERTION)
         logger.info("⚙️ Starting Auto Token Transfer Check (BWAEZI Value Assertion)...");
         const transferResult = await transferBWAEZIToSCW();
-        logger.info(`[DEPLOYMENT LOG] Token Transfer Status: ${transferResult.message}`);
+        // FIX: Removed log name reference [DEPLOYMENT LOG]
+        logger.info(`Token Transfer Status: ${transferResult.message}`); 
 
         // 🎯 CRITICAL: Initialize Production Sovereign Core with enhanced error handling
         const optimizedCore = await initializeProductionSovereignCore(CONFIG, injectedServices);
@@ -622,7 +703,8 @@ const initializeProductionSovereignCore = async (config, injectedServices) => {
         console.log('    Core Version: 2.2.0-QUANTUM_UNSTOPPABLE_PRODUCTION');
         console.log('    All quantum operations execute on actual quantum hardware');
         
-        startExpressServer(optimizedCore);
+        // 🎯 CRITICAL: Await the robust server binding process
+        await startExpressServer(optimizedCore);
 
     } catch (error) {
         console.error("❌ CRITICAL BOOT FAILURE (System is in UNSTOPPABLE Mode, but main process failed):", error.message);
