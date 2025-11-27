@@ -9,7 +9,7 @@ import { ethers } from 'ethers';
 import process from 'process';
 import {
     ProductionSovereignCore,
-    EnterpriseConfigurationError
+    EnterpriseConfigurationError // This is now correctly exported from sovereign-brain.js
 } from '../core/sovereign-brain.js';
 import { initializeGlobalLogger, enableDatabaseLoggingSafely } from '../modules/enterprise-logger/index.js';
 
@@ -332,7 +332,7 @@ class UnstoppableQuantumCrypto {
                 expiresAt: new Date(Date.now() + 3600000).toISOString() // Expires in 1 hour
             });
         });
-    } // CRITICAL FIX: Close generatePreKeys() method
+    }
 
     async generateKeyPair(algorithm = 'kyber-768') {
         const key = this.preGeneratedKeys.get(algorithm);
@@ -369,7 +369,7 @@ class UnstoppableQuantumCrypto {
             return null;
         }
     }
-} // CRITICAL FIX: Close UnstoppableQuantumCrypto class
+}
 
 // =========================================================================
 // APPLICATION INITIALIZATION AND SERVER SETUP
@@ -405,12 +405,12 @@ async function runServer() {
         // Security Components
         aiThreatDetector = new AIThreatDetector();
         // Use UnstoppableQuantumCrypto as a fallback if the original failed to load
-        quantumCrypto = QuantumResistantCrypto || UnstoppableQuantumCrypto; 
+        quantumCrypto = QuantumResistantCrypto || UnstoppableQuantumCrypto;
         quantumCrypto = new quantumCrypto(); // Instantiate the component
         quantumShield = new QuantumShield();
 
         // Account Abstraction SDK
-        aaSDK = new AASDK({ 
+        aaSDK = new AASDK({
             entryPointAddress: CONFIG.ENTRY_POINT_ADDRESS,
             paymasterAddress: CONFIG.BWAEZI_PAYMASTER_ADDRESS,
             privateKey: CONFIG.PRIVATE_KEY,
