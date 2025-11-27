@@ -11,7 +11,7 @@ import {
 // === 🎯 REQUIRED CORE SERVICE IMPORTS FOR DI ===
 import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js'; 
 import { BrianNwaezikePayoutSystem } from '../backend/blockchain/BrianNwaezikePayoutSystem.js'; 
-import BrianNwaezikeChain from '../backend/blockchain/BrianNwaezikeChain.js'; 
+import { BrianNwaezikeChain } from '../backend/blockchain/BrianNwaezikeChain.js'; 
 import { SovereignRevenueEngine } from '../modules/sovereign-revenue-engine.js'; 
 import { AutonomousAIEngine } from '../backend/agents/autonomous-ai-engine.js'; 
 import { BWAEZIToken } from '../modules/bwaezi-token.js'; 
