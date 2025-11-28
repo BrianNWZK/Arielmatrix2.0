@@ -2,10 +2,10 @@ import Database from 'better-sqlite3';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
 import { createHash, randomBytes } from 'crypto';
 import EventEmitter from 'events';
 
+// Utility to get __filename and __dirname in ES module scope
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -21,11 +21,13 @@ class ArielLogger {
       module: 'ArielSQLiteEngine'
     };
     
+    // Log to console with JSON format
     console.log(JSON.stringify(logEntry));
     
     // Write to file in production
     if (process.env.NODE_ENV === 'production') {
       const logFile = path.join(__dirname, '../../logs/ariel-engine.log');
+      // Non-blocking write, ignoring potential errors
       fs.appendFile(logFile, JSON.stringify(logEntry) + '\n').catch(() => {});
     }
   }
@@ -858,6 +860,7 @@ class ArielSQLiteEngine extends EventEmitter {
     
     let originalTx = null;
     if (status === 'failed' || status === 'cancelled') {
+        // Need to fetch original data to update statistics correctly
         originalTx = await this._execute('getById', [transactionId], 'get');
         if (!originalTx) {
             ArielLogger.warn('Transaction not found during status update stat check', { transactionId, status });
@@ -968,6 +971,31 @@ class ArielSQLiteEngine extends EventEmitter {
       throw new Error(`Failed to complete transaction: ${error.message}`);
     }
   }
+
+  // 🎯 CRITICAL FIX: Enhanced statistics update method
+  async updateStats(status, amount, gasUsed, network) {
+    const date = new Date().toISOString().substring(0, 10); // YYYY-MM-DD
+
+    try {
+      // Always increment total transactions on creation or status change that affects the total count
+      await this._execute('incrementTotalTxStat', [date, network], 'run');
+      
+      if (status === 'completed') {
+        // Update completed count, total gas, and total amount
+        await this._execute('updateCompletedStat', [date, network, gasUsed, amount], 'run');
+      } else if (status === 'failed') {
+        // Update failed count
+        await this._execute('updateFailedStat', [date, network], 'run');
+      }
+      // 'cancelled' is generally treated as 'failed' in terms of non-completion, but only 'failed' is tracked explicitly here.
+
+      ArielLogger.debug('Statistics updated successfully', { date, status, network });
+
+    } catch (error) {
+      // Log the stats update error but DO NOT throw, as core transaction logic should not fail because of stats.
+      ArielLogger.error('Failed to update Ariel statistics', { error: error.message, status, network });
+    }
+  }
   
   // 🎯 CRITICAL FIX: Enhanced pending transactions retrieval
   async getPendingTransactions(limit = 50) {
@@ -1042,7 +1070,7 @@ class ArielSQLiteEngine extends EventEmitter {
     }
   }
   
-  // 🎯 CRITICAL FIX: Enhanced increment retry count
+  // 🎯 CRITICAL FIX: Enhanced increment retry count (Completed from user's input)
   async incrementRetryCount(transactionId) {
     try {
       const result = await this._execute('incrementRetry', [transactionId], 'run');
@@ -1067,178 +1095,74 @@ class ArielSQLiteEngine extends EventEmitter {
       throw new Error(`Failed to increment retry count: ${error.message}`);
     }
   }
-  
-  // 🎯 CRITICAL FIX: Enhanced transaction search with filters
-  async searchTransactions(filters = {}, limit = 100, offset = 0) {
-    const {
-      status,
-      recipientAddress,
-      network,
-      dateFrom,
-      dateTo
-    } = filters;
-    
-    let whereConditions = [];
-    let params = [];
 
-    if (status) {
-      whereConditions.push('status = ?');
-      params.push(status);
-    }
-    if (recipientAddress) {
-      whereConditions.push('recipient_address = ?');
-      params.push(recipientAddress);
-    }
-    if (network) {
-      whereConditions.push('network = ?');
-      params.push(network);
-    }
-    if (dateFrom) {
-      whereConditions.push('created_at >= ?');
-      params.push(dateFrom);
-    }
-    if (dateTo) {
-      whereConditions.push('created_at <= ?');
-      params.push(dateTo);
-    }
+  // --- UTILITY METHODS ---
 
-    let whereClause = '';
-    if (whereConditions.length > 0) {
-      whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-    }
-
-    const query = `
-      SELECT * FROM ariel_transactions
-      ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    params.push(limit, offset);
-
-    try {
-      const transactions = await this.all(query, params);
-      
-      ArielLogger.debug('Transactions search completed', {
-        filters,
-        count: transactions.length
-      });
-      
-      return transactions.map(tx => ({
-        ...tx,
-        metadata: tx.metadata ? JSON.parse(tx.metadata) : null
-      }));
-      
-    } catch (error) {
-      ArielLogger.error('Failed to search transactions', {
-        error: error.message,
-        filters
-      });
-      
-      throw new Error(`Failed to search transactions: ${error.message}`);
-    }
+  generateTransactionId() {
+    // Generates a unique, short, traceable ID prefixed with 'tx_'
+    return `tx_${createHash('sha256').update(randomBytes(32).toString('hex') + Date.now()).digest('hex').substring(0, 32)}`;
   }
-
-  // 🎯 CRITICAL FIX: Enhanced statistics with date range
-  async getStatistics(dateFrom = null, dateTo = null) {
+  
+  isValidEthereumAddress(address) {
+    // Basic check for 40 hex chars prefixed with 0x. 
+    // This is a minimal format check, actual checksum/network validation would happen in a higher module.
+    return /^0x[a-fA-F0-9]{40}$/.test(address);
+  }
+  
+  isValidAmount(amount) {
+    // Check if it's a valid string representation of a positive number
     try {
-      let whereClause = '';
-      let params = [];
-      
-      if (dateFrom && dateTo) {
-        whereClause = 'WHERE date BETWEEN ? AND ?';
-        params = [dateFrom, dateTo];
-      } else if (dateFrom) {
-        whereClause = 'WHERE date >= ?';
-        params = [dateFrom];
-      } else if (dateTo) {
-        whereClause = 'WHERE date <= ?';
-        params = [dateTo];
-      }
-      
-      const stats = await this.all(`
-        SELECT 
-          network,
-          SUM(total_transactions) as total_transactions,
-          SUM(completed_transactions) as completed_transactions,
-          SUM(failed_transactions) as failed_transactions,
-          SUM(total_gas_used) as total_gas_used,
-          CAST(SUM(CAST(total_amount AS REAL)) AS TEXT) as total_amount_sum 
-        FROM ariel_stats 
-        ${whereClause}
-        GROUP BY network
-      `, params);
-      
-      const pendingCount = await this.get(`
-        SELECT COUNT(*) as count FROM ariel_transactions 
-        WHERE status = 'pending'
-      `);
-      
-      const result = {
-        networks: stats.map(s => ({
-            ...s,
-            total_amount: s.total_amount_sum,
-            total_amount_sum: undefined
-        })),
-        realTime: {
-          pendingTransactions: pendingCount.count
-        },
-        period: {
-          from: dateFrom,
-          to: dateTo
-        }
-      };
-      
-      ArielLogger.debug('Statistics retrieved', {
-        period: { dateFrom, dateTo },
-        networkCount: stats.length
-      });
-      
-      return result;
-      
-    } catch (error) {
-      ArielLogger.error('Failed to get statistics', {
-        error: error.message,
-        dateFrom,
-        dateTo
-      });
-      
-      throw new Error(`Failed to get statistics: ${error.message}`);
+      const num = parseFloat(amount);
+      return !isNaN(num) && isFinite(amount) && num >= 0;
+    } catch {
+      return false;
     }
   }
   
-  // 🎯 CRITICAL FIX: Enhanced backup with compression support
-  async backup(backupName = null) {
-    if (!this.isConnected || !this.db) {
-      throw new Error('Database not connected');
+  isValidStatus(status) {
+    const validStatuses = ['pending', 'processing', 'completed', 'failed', 'cancelled'];
+    return validStatuses.includes(status);
+  }
+
+  // --- BACKUP & MAINTENANCE ---
+
+  startAutoBackup() {
+    if (this.backupInterval) {
+      clearInterval(this.backupInterval);
     }
     
+    ArielLogger.info('Starting auto-backup process', { 
+      interval: this.options.backupInterval / 1000 / 60 + ' minutes' 
+    });
+
+    this.backupInterval = setInterval(() => {
+      this.backupDatabase()
+        .then(() => this.cleanupOldBackups())
+        .catch(error => ArielLogger.error('Auto-backup process failed', { error: error.message }));
+    }, this.options.backupInterval);
+  }
+  
+  async backupDatabase() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupFile = backupName || `ariel_backup_${timestamp}.db`;
-    const backupPath = path.join(this.options.backupPath, backupFile);
+    const backupFileName = `transactions-${timestamp}.db.backup`;
+    const backupFilePath = path.join(this.options.backupPath, backupFileName);
     
+    if (!this.isConnected || !this.db) {
+      ArielLogger.warn('Cannot perform backup, database is not connected.');
+      return;
+    }
+
     try {
-      await this.run(`VACUUM INTO ?`, [backupPath]);
+      ArielLogger.info('Starting database backup...', { target: backupFilePath });
+
+      // Use fs.copyFile for snapshot backup, relying on WAL mode for read consistency
+      await fs.copyFile(this.options.dbPath, backupFilePath);
       
-      ArielLogger.info('Database backup created successfully', {
-        backupPath,
-        size: (await fs.stat(backupPath)).size
-      });
-      
-      await this.cleanupOldBackups();
-      
-      return {
-        success: true,
-        backupPath,
-        timestamp: new Date().toISOString()
-      };
+      ArielLogger.info('Database backup completed successfully', { file: backupFileName });
       
     } catch (error) {
-      ArielLogger.error('Failed to create backup', {
-        error: error.message,
-        backupPath
-      });
-      
-      throw new Error(`Backup failed: ${error.message}`);
+      ArielLogger.error('Database backup failed', { error: error.message });
+      throw error;
     }
   }
   
@@ -1246,384 +1170,73 @@ class ArielSQLiteEngine extends EventEmitter {
     try {
       const files = await fs.readdir(this.options.backupPath);
       const backupFiles = files
-        .filter(f => f.startsWith('ariel_backup_') && f.endsWith('.db'))
-        .map(f => ({
-          name: f,
-          path: path.join(this.options.backupPath, f),
-          time: f.split('_').slice(2).join('_').replace('.db', '')
-        }))
-        .sort((a, b) => new Date(b.time) - new Date(a.time));
-      
-      if (backupFiles.length > this.options.maxBackups) {
-        const toRemove = backupFiles.slice(this.options.maxBackups);
+        .filter(f => f.startsWith('transactions-') && f.endsWith('.db.backup'))
+        .map(f => {
+          // Extract timestamp: transactions-YYYY-MM-DDTHH-MM-SS-MMM.db.backup
+          const timestampPart = f.substring(13).replace('.db.backup', '');
+          // Convert to a format Date can reliably parse (re-adding colons/Z)
+          const dateString = timestampPart.replace(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})/, '$1T$2:$3:$4.$5Z');
+          return {
+            name: f,
+            date: new Date(dateString)
+          };
+        })
+        .sort((a, b) => b.date.getTime() - a.date.getTime()); // Sort descending by date (newest first)
         
-        for (const file of toRemove) {
-          await fs.unlink(file.path);
-          ArielLogger.debug('Old backup removed', { file: file.name });
+      if (backupFiles.length > this.options.maxBackups) {
+        const filesToDelete = backupFiles.slice(this.options.maxBackups);
+        
+        ArielLogger.warn(`Cleaning up ${filesToDelete.length} old backups...`);
+        
+        for (const file of filesToDelete) {
+          await fs.unlink(path.join(this.options.backupPath, file.name));
+          ArielLogger.debug('Deleted old backup file', { file: file.name });
         }
       }
-      
     } catch (error) {
       ArielLogger.error('Failed to cleanup old backups', { error: error.message });
     }
   }
-  
-  startAutoBackup() {
-    if (this.backupInterval) {
-      clearInterval(this.backupInterval);
-    }
-    
-    this.backupInterval = setInterval(async () => {
+
+  // 🎯 CRITICAL FIX: Graceful shutdown and resource release
+  async close() {
+    this.stop(); // Stop interval first
+
+    if (this.db && this.isConnected) {
       try {
-        await this.backup();
+        // Close all prepared statements
+        this.preparedStatements.forEach(stmt => {
+          if (stmt && typeof stmt.finalize === 'function') {
+            stmt.finalize();
+          }
+        });
+        this.preparedStatements.clear();
+        this.queryCache.clear();
+        
+        // Final database close
+        this.db.close();
+        this.isConnected = false;
+        ArielLogger.info('Database connection closed gracefully.');
+        this.emit('closed');
       } catch (error) {
-        ArielLogger.error('Auto-backup failed', { error: error.message });
+        ArielLogger.error('Error during database close', { error: error.message });
+        // Set state to disconnected even if close fails
+        this.isConnected = false; 
+        throw error;
       }
-    }, this.options.backupInterval);
-    
-    ArielLogger.info('Auto-backup started', {
-      interval: this.options.backupInterval
-    });
+    } else {
+      ArielLogger.warn('Attempted to close connection, but it was already closed or not initialized.');
+    }
   }
-  
-  stopAutoBackup() {
+
+  stop() {
     if (this.backupInterval) {
       clearInterval(this.backupInterval);
       this.backupInterval = null;
-      ArielLogger.info('Auto-backup stopped');
-    }
-  }
-  
-  // Utility methods
-  generateTransactionId() {
-    return `tx_${randomBytes(16).toString('hex')}`;
-  }
-  
-  isValidEthereumAddress(address) {
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  }
-  
-  isValidAmount(amount) {
-    return /^[0-9]+(\.[0-9]+)?$/.test(amount) && parseFloat(amount) > 0;
-  }
-  
-  isValidStatus(status) {
-    const validStatuses = ['pending', 'processing', 'completed', 'failed', 'cancelled'];
-    return validStatuses.includes(status);
-  }
-  
-  // 🎯 CRITICAL FIX: Fully implemented updateStats for accurate daily tracking
-  async updateStats(status, amount = '0', gasUsed = 0, network = 'mainnet') {
-    const today = new Date().toISOString().split('T')[0];
-    
-    try {
-        if (status === 'pending') {
-            await this._execute('incrementTotalTxStat', [today, network], 'run');
-        }
-
-        if (status === 'completed') {
-            await this._execute(
-                'updateCompletedStat', 
-                [today, network, gasUsed, amount], 
-                'run'
-            );
-        }
-
-        if (status === 'failed' || status === 'cancelled') {
-            await this._execute('updateFailedStat', [today, network], 'run');
-        }
-      ArielLogger.debug('Stats updated successfully', { status, today, network });
-    } catch (error) {
-      ArielLogger.error('Failed to update stats', { error: error.message, status, today, network });
-    }
-  }
-  
-  // 🎯 CRITICAL FIX: Enhanced database health check
-  async healthCheck() {
-    try {
-      if (!this.isConnected || !this.db) {
-        await this._reconnect();
-        if (!this.isConnected) {
-          return {
-            status: this.isDegraded ? 'degraded' : 'disconnected',
-            message: this.isDegraded ? 'Database in degraded mode' : 'Database not connected after attempt'
-          };
-        }
-      }
-      
-      const result = await this.get('SELECT 1 as test');
-      
-      const pendingCount = await this.get(`
-        SELECT COUNT(*) as count FROM ariel_transactions WHERE status = 'pending'
-      `);
-      
-      return {
-        status: 'healthy',
-        message: 'Database is responding correctly',
-        details: {
-          pendingTransactions: pendingCount.count,
-          connection: 'active',
-          timestamp: new Date().toISOString(),
-          preparedStatements: this.preparedStatements.size,
-          isInitialized: this.isInitialized
-        }
-      };
-      
-    } catch (error) {
-      ArielLogger.error('Health check failed', { error: error.message });
-      
-      return {
-        status: 'unhealthy',
-        message: `Health check failed: ${error.message}`,
-        error: error.message
-      };
-    }
-  }
-  
-  // 🎯 CRITICAL FIX: Enhanced close method with proper cleanup
-  async close() {
-    try {
-      this.stopAutoBackup();
-      
-      this.preparedStatements.clear();
-      this.queryCache.clear();
-      
-      if (this.db) {
-        this.db.close();
-        this.db = null;
-      }
-      
-      this.isConnected = false;
-      this.isDegraded = false;
-      this.isInitialized = false;
-      this.reconnectAttempts = 0;
-      
-      ArielLogger.info('Database connection closed');
-      this.emit('closed');
-      
-    } catch (error) {
-      ArielLogger.error('Error closing database', { error: error.message });
-      throw error;
-    }
-  }
-
-  // 🔥 ENTERPRISE FEATURE: Advanced transaction analytics
-  async getTransactionAnalytics(timeRange = '7d') {
-    try {
-      let dateFilter = '';
-      const params = [];
-      
-      switch (timeRange) {
-        case '24h':
-          dateFilter = 'WHERE created_at >= datetime("now", "-1 day")';
-          break;
-        case '7d':
-          dateFilter = 'WHERE created_at >= datetime("now", "-7 days")';
-          break;
-        case '30d':
-          dateFilter = 'WHERE created_at >= datetime("now", "-30 days")';
-          break;
-        case '90d':
-          dateFilter = 'WHERE created_at >= datetime("now", "-90 days")';
-          break;
-        default:
-          dateFilter = 'WHERE created_at >= datetime("now", "-7 days")';
-      }
-
-      const analytics = await this.all(`
-        SELECT 
-          network,
-          status,
-          COUNT(*) as count,
-          SUM(CAST(amount AS REAL)) as total_amount,
-          AVG(CAST(amount AS REAL)) as avg_amount,
-          SUM(gas_used) as total_gas_used,
-          AVG(gas_used) as avg_gas_used
-        FROM ariel_transactions
-        ${dateFilter}
-        GROUP BY network, status
-        ORDER BY network, status
-      `, params);
-
-      const hourlyStats = await this.all(`
-        SELECT 
-          strftime('%Y-%m-%d %H:00:00', created_at) as hour,
-          network,
-          COUNT(*) as transaction_count,
-          SUM(CAST(amount AS REAL)) as hourly_volume
-        FROM ariel_transactions
-        ${dateFilter}
-        GROUP BY hour, network
-        ORDER BY hour DESC
-        LIMIT 24
-      `, params);
-
-      return {
-        summary: analytics,
-        hourlyTrends: hourlyStats,
-        timeRange,
-        generatedAt: new Date().toISOString()
-      };
-
-    } catch (error) {
-      ArielLogger.error('Failed to get transaction analytics', {
-        error: error.message,
-        timeRange
-      });
-      throw new Error(`Failed to get transaction analytics: ${error.message}`);
-    }
-  }
-
-  // 🔥 ENTERPRISE FEATURE: Database maintenance and optimization
-  async performMaintenance() {
-    try {
-      if (!this.isConnected || !this.db) {
-        throw new Error('Database not connected');
-      }
-
-      ArielLogger.info('Starting database maintenance');
-      
-      await this.run('VACUUM');
-      await this.run('ANALYZE');
-      await this.run('PRAGMA optimize');
-      
-      const integrityCheck = await this.get('PRAGMA integrity_check');
-      
-      ArielLogger.info('Database maintenance completed', {
-        integrity: integrityCheck
-      });
-      
-      return {
-        success: true,
-        integrityCheck,
-        maintenancePerformed: true,
-        timestamp: new Date().toISOString()
-      };
-      
-    } catch (error) {
-      ArielLogger.error('Database maintenance failed', { error: error.message });
-      throw new Error(`Database maintenance failed: ${error.message}`);
-    }
-  }
-
-  // 🔥 ENTERPRISE FEATURE: Bulk transaction operations
-  async bulkCreateTransactions(transactions) {
-    if (!Array.isArray(transactions) || transactions.length === 0) {
-      throw new Error('Transactions array is required and cannot be empty');
-    }
-
-    try {
-      const results = [];
-      
-      const transaction = this.db.transaction((txList) => {
-        for (const txData of txList) {
-          const {
-            recipientAddress,
-            amount,
-            network = 'mainnet',
-            gasPrice,
-            nonce,
-            metadata = null
-          } = txData;
-
-          if (!recipientAddress || !amount) {
-            throw new Error('Recipient address and amount are required for all transactions');
-          }
-
-          const transactionId = this.generateTransactionId();
-          const metadataStr = metadata ? JSON.stringify(metadata) : null;
-
-          const result = this.preparedStatements.get('insertTransaction').run(
-            transactionId,
-            recipientAddress,
-            amount,
-            'pending',
-            gasPrice,
-            nonce,
-            network,
-            metadataStr
-          );
-
-          this.updateStats('pending', amount, 0, network);
-
-          results.push({
-            id: transactionId,
-            success: true,
-            changes: result.changes
-          });
-        }
-      });
-
-      transaction(transactions);
-
-      ArielLogger.info('Bulk transactions created successfully', {
-        count: transactions.length
-      });
-
-      return results;
-
-    } catch (error) {
-      ArielLogger.error('Failed to create bulk transactions', {
-        error: error.message,
-        transactionCount: transactions.length
-      });
-      
-      throw new Error(`Bulk transaction creation failed: ${error.message}`);
-    }
-  }
-
-  // 🔥 ENTERPRISE FEATURE: System-wide diagnostics
-  async getSystemDiagnostics() {
-    try {
-      const dbSize = await this.get(`
-        SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()
-      `);
-
-      const tableStats = await this.all(`
-        SELECT 
-          name as table_name,
-          (SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = m.name) as index_count
-        FROM sqlite_master m
-        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-      `);
-
-      const connectionStats = {
-        isConnected: this.isConnected,
-        isInitialized: this.isInitialized,
-        isDegraded: this.isDegraded,
-        reconnectAttempts: this.reconnectAttempts,
-        preparedStatements: this.preparedStatements.size,
-        queryCacheSize: this.queryCache.size
-      };
-
-      return {
-        database: {
-          size: dbSize.size,
-          tableCount: tableStats.length,
-          tables: tableStats
-        },
-        connection: connectionStats,
-        performance: {
-          uptime: process.uptime(),
-          timestamp: new Date().toISOString()
-        }
-      };
-
-    } catch (error) {
-      ArielLogger.error('Failed to get system diagnostics', { error: error.message });
-      throw new Error(`Failed to get system diagnostics: ${error.message}`);
+      ArielLogger.info('Auto-backup stopped.');
     }
   }
 }
 
-// Export singleton instance
-let arielInstance = null;
-
-export function getArielSQLiteEngine(options = {}) {
-  if (!arielInstance) {
-    arielInstance = new ArielSQLiteEngine(options);
-  }
-  return arielInstance;
-}
-
-export { ArielSQLiteEngine };
+// Export both the engine and the logger for external use
+export { ArielSQLiteEngine, ArielLogger };
