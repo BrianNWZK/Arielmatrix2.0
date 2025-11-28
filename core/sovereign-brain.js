@@ -13,7 +13,7 @@ import { QuantumNeuroCortex } from '../core/consciousness-reality-engine.js';
 import { RealityProgrammingEngine } from '../core/consciousness-reality-advanced.js';
 import { QuantumProcessingUnit } from '../core/quantumhardware-layer.js';
 import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
-import { getArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
+import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 
 // =========================================================================
 // ENTERPRISE LOGGER FALLBACK - MAINTAINS ORIGINAL INTERFACE
