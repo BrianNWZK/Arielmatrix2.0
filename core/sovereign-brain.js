@@ -4,14 +4,38 @@ import axios from 'axios';
 // =========================================================================
 // 🎯 MEV/AA STRATEGY CONSTANTS (Derived from best-in-class research)
 // =========================================================================
-const DEX_ROUTERS = {
-    // Top 30 DEXes represented by a few key routers for multi-hop pathing
-    UNISWAP_V3: '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Mainnet Router
-    SUSHISWAP_V2: '0xd9e1cE17f2641f24aE83637ab66a2da0C5143fAe', // RouterV2
-    CURVE_ROUTER: '0x81839e93bA0a340bA4565780C261a868D879e602', // Curve DAO Router
-    BALANCER_VAULT: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
-    ONE_INCH_ROUTER: '0x1111111254fb6c44bac0bed2854e76f90643097d' // 1inch Fusion Resolver
-};
+const DEXES = [
+  { name: 'UniswapV3', router: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45', abiType: 'UniswapV3', quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e' },
+  { name: 'UniswapV2', router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', abiType: 'UniswapV2' },
+  { name: 'SushiSwap', router: '0xd9e1cE17f119b9cb39Efd6cc0b52749B41481d1c', abiType: 'UniswapV2' },
+  { name: 'BalancerV2', vault: '0xBA12222222228d8Ba445958a75a0704d566BF2C8', abiType: 'Balancer' },
+  { name: 'Curve', router: '0x99a58482BEF46bc86c09C5fbac3aEeACFD449502', abiType: 'Curve' },
+  { name: '0xProtocol', router: '0xDef1C0ded9bec7F1a1670819833240f027b25EfF', abiType: '0x' },
+  { name: '1inchV5', router: '0x1111111254EEB25477B68fb85Ed929f73A960582', abiType: '1inch' },
+  { name: 'KyberSwap', router: '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5', abiType: 'Kyber' },
+  { name: 'BancorV3', router: '0xE3D2b315eDbBCB4F428b8C2B867F40E2044bfAE2', abiType: 'Bancor' },
+  { name: 'Loopring', router: '0x0BABA1Ad5bE3a5f0f5e83e05EccA982131f8Ca18', abiType: 'Loopring' },
+  { name: 'dYdXV3', router: '0xC8cD6D293d06614564B66553D452bA9b67eCdA37', abiType: 'dYdX' },
+  { name: 'Maverick', router: '0x3c11F6266D744eB5fCDE3faF2383e6d463084133', abiType: 'Maverick' },
+  { name: 'DODOV2', router: '0xa356867FDCEa8e71AEaF8780c0D3872Ca0B32412', abiType: 'DODO' },
+  { name: 'SmarDex', router: '0xAAA87963EFeB6f8Be692Dc6B6CeBBc0A0d193676', abiType: 'UniswapV2' },
+  { name: 'Verse', router: '0xB4e16d0168e52d35CaCD2c6185b44281ec28C9Dc', abiType: 'UniswapV2' },
+  { name: 'IntegralSIZE', router: '0x3f558F8eDec2d0965a69332c219b87a93c5D4ca4', abiType: 'Integral' },
+  { name: 'ShibaSwap', router: '0x03f7724180AA6b939894B5Ca4314783B0b36b329', abiType: 'UniswapV2' },
+  { name: 'Fraxswap', router: '0xB8eD06ef19BD0d6b9815f4860678B7F39Fd3cB2F', abiType: 'UniswapV2' },
+  { name: 'Clipper', router: '0xE7E2c68d3b0D2cAA3695cB0c0a0b4864DcBE7887', abiType: 'Clipper' },
+  { name: 'WOOFi', router: '0x812B0cf1aEeD04bf2366D96E670F4a42CcE125Bb', abiType: 'WOOFi' },
+  { name: 'Hashflow', router: '0xb3999F658C0391d94A37f7FF328F3feC942BcADC', abiType: 'Hashflow' },
+  { name: 'Airswap', router: '0x562E6a9aF9eF662DaBc85fF8690Bfd63bD7e9E5a', abiType: 'Airswap' },
+  { name: 'GMX', router: '0xaBBc5F99639c9B6bC44ecd95bd7De68F12e5Cb34', abiType: 'GMX' },
+  { name: 'Synthetix', router: '0x45c55BF488D3cb8640def8F5E15a067E100eaeE8', abiType: 'Synthetix' },
+  { name: 'PerpetualProtocol', router: '0xBd8BdB4c28Ef9f35cF75e61496c4D4cb6e1D7Fed', abiType: 'Perp' },
+  { name: 'LevelFinance', router: '0xB4e16d0168e52d35CaCD2c6185b44281ec28C9Dc', abiType: 'UniswapV2' },
+  { name: 'RBX', router: '0x3f558F8eDec2d0965a69332c219b87a93c5D4ca4', abiType: 'UniswapV2' },
+  { name: 'ApeSwapETH', router: '0xCf0feBd3f17CEf5b47b0cD257aCf6025c5bBf3b7', abiType: 'UniswapV2' },
+  { name: 'Pendle', router: '0x1d6FFc76DAe9926eE20a53DCD33ADe99EeEBD3d0', abiType: 'Pendle' },
+  { name: 'Aerodrome', router: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1BebCd7e05', abiType: 'UniswapV2' },
+];
 
 const BUNDLER_ENDPOINT = 'https://api.pimlico.io/v1/mainnet/rpc?apiKey=YOUR_PIMLICO_API_KEY';
 const ENTRY_POINT_ADDRESS = '0x5FF137D4B0FDCDB0E5C4F27EAD9083C756Cc2';
