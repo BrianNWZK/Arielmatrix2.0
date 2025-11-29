@@ -68,23 +68,7 @@ const CIRCUIT_BREAKER_THRESHOLD = 3; // Max consecutive net losses before shutdo
 // 1. ENTERPRISE BSFM UTILITY CLASSES (Consolidated from REAL CODES1.txt)
 // =========================================================================
 
-export class ArielSQLiteEngine {
-    constructor(config) {
-        this.dbPath = config.dbPath;
-        console.log(`[ArielSQLiteEngine] Initializing with config: ${this.dbPath}`);
-        this.isReady = true;
-    }
 
-    isInitialized() {
-        return this.isReady;
-    }
-
-    logTransaction(txData) {
-        // Logs the trade to the database for audit/reporting
-        console.log(`[ArielSQLiteEngine] LOGGING TRADE: $${txData.profitUSD.toFixed(2)} (${txData.type}) | Status: ${txData.txStatus || 'CONFIRMED'}`);
-        return Promise.resolve(true);
-    }
-}
 
 class EnterpriseSecurityMonitor {
     constructor() {
