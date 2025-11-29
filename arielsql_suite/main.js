@@ -116,8 +116,13 @@ app.use(express.json({ limit: '10mb' }));
 // 🎯 SOVEREIGN CORE INSTANCE INITIALIZATION
 let sovereignCore;
 try {
+    // FIX: Extract the actual constructor. If ArielSQLiteEngine is a module object (due to named export), 
+    // the constructor will be a property named 'ArielSQLiteEngine'. Otherwise, it's the constructor itself 
+    // (e.g., the FallbackDB class).
+    const ArielDBClass = ArielSQLiteEngine.ArielSQLiteEngine || ArielSQLiteEngine;
+    
     // Pass the fallback-proof database instance to the core
-    const dbInstance = new ArielSQLiteEngine({ dbPath: './data/ariel/transactions.db' });
+    const dbInstance = new ArielDBClass({ dbPath: './data/ariel/transactions.db' });
     sovereignCore = new ProductionSovereignCore(dbInstance);
 
     // Override core configuration with main.js production config
