@@ -56,7 +56,7 @@ class ArielLogger {
 }
 
 // Enhanced Ariel SQLite Engine - ENTERPRISE GRADE
-class default ArielSQLiteEngine extends EventEmitter {
+class ArielSQLiteEngine extends EventEmitter {
 	constructor(options = {}) {
 		super();
 		
@@ -1253,4 +1253,4 @@ class default ArielSQLiteEngine extends EventEmitter {
 }
 
 // Export the Enterprise Engine
-export ArielSQLiteEngine;
+export { ArielSQLiteEngine };
