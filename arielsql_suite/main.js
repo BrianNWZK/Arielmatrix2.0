@@ -125,8 +125,8 @@ try {
     console.log('✅ Sovereign Core Initialized with Production Configuration.');
 
 } catch (error) {
-    // Use the Enterprise Configuration Error for clear reporting
-    throw new EnterpriseConfigurationError(`Sovereign Core Init Failed: ${error.message}`);
+    // Use standard Error for clear reporting
+    throw new Error(`Sovereign Core Init Failed: ${error.message}`);
 }
 
 // 🚀 CORE EXECUTION STARTER
