@@ -67,22 +67,9 @@ export const CIRCUIT_BREAKER_THRESHOLD = 3; // Max consecutive net losses before
 // 1. ENTERPRISE BSFM UTILITY CLASSES (Consolidated)
 // =========================================================================
 
-// Exporting ArielSQLiteEngine as it's a utility class used for instantiation in main.js
-export class ArielSQLiteEngine {
-    constructor(config) {
-        this.dbPath = config.dbPath;
-        this.isReady = true;
-    }
-
-    isInitialized() {
-        return this.isReady;
-    }
-
-    logTransaction(txData) {
-        console.log(`[ArielSQLiteEngine] LOGGING TRADE: $${txData.profitUSD.toFixed(2)} (${txData.type}) | Status: ${txData.txStatus || 'CONFIRMED'}`);
-        return Promise.resolve(true);
-    }
-}
+// NOTE: The re-declaration of 'export class ArielSQLiteEngine' was removed here
+// to fix the 'SyntaxError: Identifier 'ArielSQLiteEngine' has already been declared'
+// and ensure the imported class from '../modules/ariel-sqlite-engine/index.js' is used.
 
 class EnterpriseSecurityMonitor {
     constructor() {
@@ -150,7 +137,9 @@ export class ProductionSovereignCore extends EventEmitter {
     constructor(dbInstance) {
         super();
         try {
-            this.db = dbInstance || getArielSQLiteEngine();
+            // FIX: Replaced call to non-existent 'getArielSQLiteEngine()' with instantiation of the imported class.
+            // This maintains the use of ArielSQLiteEngine as imported, not a getter function.
+            this.db = dbInstance || new ArielSQLiteEngine({});
             if (!this.db || !this.db.isInitialized()) throw new Error("Ariel Engine protocol check failed.");
         } catch (e) {
             throw new EnterpriseConfigurationError(`ArielSQLiteEngine not ready. ${e.message}`);
