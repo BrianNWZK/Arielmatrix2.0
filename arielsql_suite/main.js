@@ -12,7 +12,7 @@ import { ethers } from 'ethers';
 import process from 'process';
 
 // Sovereign Core Imports (Must be exported from core/sovereign-brain.js)
-import { ProductionSovereignCore, EnterpriseConfigurationError } from '../core/sovereign-brain.js';
+import { ProductionSovereignCore} from '../core/sovereign-brain.js';
 // NOTE: initializeGlobalLogger is not used in this main file, but imported for structure
 import { initializeGlobalLogger } from '../modules/enterprise-logger/index.js'; 
 
