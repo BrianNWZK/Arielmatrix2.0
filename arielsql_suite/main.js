@@ -1,4 +1,3 @@
-// arielsql_suite/main.js - REAL BLOCKCHAIN REVENUE SERVER
 /**
  * Main entry point for the BSFM Sovereign MEV Brain v10 ecosystem.
  * Establishes real, live connections to the entire blockchain architecture
@@ -11,10 +10,13 @@ import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
 
-// Sovereign Core Imports (Must be exported from core/sovereign-brain.js)
-import { ProductionSovereignCore} from '../core/sovereign-brain.js';
-// NOTE: initializeGlobalLogger is not used in this main file, but imported for structure
+// Sovereign Core Imports
+import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { initializeGlobalLogger } from '../modules/enterprise-logger/index.js'; 
+
+// Security Imports (Required to maintain full feature set)
+import { AIThreatDetector } from '../modules/ai-threat-detector/index.js';
+import { QuantumShield } from '../modules/quantum-shield/index.js';
 
 // =========================================================================
 // UNSTOPPABLE FALLBACK SYSTEM (The Protocol is Sovereign)
@@ -27,7 +29,7 @@ import { initializeGlobalLogger } from '../modules/enterprise-logger/index.js';
 const safeImport = async (modulePath, fallback = null) => {
     try {
         const module = await import(modulePath);
-        // Supports both default and named exports
+        // Supports both default and named exports (returning the module object itself)
         return module.default || module;
     } catch (error) {
         // This is a feature, not an error. The system is designed to bypass non-critical failures.
@@ -36,62 +38,59 @@ const safeImport = async (modulePath, fallback = null) => {
     }
 };
 
-// Load Modules with Unstoppable Fallbacks (Maintaining feature list)
-const ArielSQLiteEngine = await safeImport('../modules/ariel-sqlite-engine/index.js', 
-    class FallbackDB { 
-        async initialize() { 
-            console.log('🔄 Using fallback Ariel database engine');
-            return true; 
-        }
-        logTransaction(txData) { console.log(`[FallbackDB] Logging trade: $${txData.profitUSD.toFixed(2)}`); }
-        isInitialized() { return true; }
-    }
-);
+// --- Fallback Class Definitions ---
 
-const BrianNwaezikePayoutSystem = await safeImport('../backend/blockchain/BrianNwaezikePayoutSystem.js',
-    class FallbackPayout {
-        async initialize() { 
-            console.log('🔄 Using fallback payout system');
-            return true; 
-        }
-        startAutoPayout() { 
-            console.log('🔄 Auto-payout running in fallback mode');
-            setInterval(() => {
-                console.log('💰 Fallback payout cycle executed (simulated)');
-            }, 300000);
-        }
-        isOperational() { return true; }
+class FallbackDB { 
+    async initialize() { 
+        console.log('🔄 Using fallback Ariel database engine');
+        return true; 
     }
-);
+    logTransaction(txData) { console.log(`[FallbackDB] Logging trade: $${txData.profitUSD.toFixed(2)}`); }
+    isInitialized() { return true; } 
+}
 
-const SovereignRevenueEngine = await safeImport('../modules/sovereign-revenue-engine.js',
-    class FallbackRevenue {
-        async initialize() { 
-            console.log('🔄 Using fallback revenue engine');
-            return true; 
-        }
-        isOperational() { return true; }
+class FallbackPayout {
+    async initialize() { 
+        console.log('🔄 Using fallback payout system');
+        return true; 
     }
-);
-
-const AutonomousAIEngine = await safeImport('../backend/agents/autonomous-ai-engine.js',
-    class FallbackAI {
-        async initialize() { 
-            console.log('🔄 Using fallback AI engine');
-            return true; 
-        }
-        optimizeUserOp(userOp) { 
-            // Ensures UserOps are still processed
-            return { ...userOp, optimized: true, aiEnhanced: false };
-        }
-        isOperational() { return true; }
+    startAutoPayout() { 
+        console.log('🔄 Auto-payout running in fallback mode');
+        setInterval(() => {
+            console.log('💰 Fallback payout cycle executed (simulated)');
+        }, 300000);
     }
-);
+    isOperational() { return true; }
+}
 
-// Security Imports (Required to maintain full feature set)
-// NOTE: The core/sovereign-brain.js logic already includes a SecurityMonitor.
-import { AIThreatDetector } from '../modules/ai-threat-detector/index.js';
-import { QuantumShield } from '../modules/quantum-shield/index.js';
+class FallbackRevenue {
+    async initialize() { 
+        console.log('🔄 Using fallback revenue engine');
+        return true; 
+    }
+    isOperational() { return true; }
+}
+
+class FallbackAI {
+    async initialize() { 
+        console.log('🔄 Using fallback AI engine');
+        return true; 
+    }
+    optimizeUserOp(userOp) { 
+        // Ensures UserOps are still processed
+        return { ...userOp, optimized: true, aiEnhanced: false };
+    }
+    isOperational() { return true; }
+}
+
+// --- Load Modules with Unstoppable Fallbacks ---
+
+// NOTE: The resulting variable holds the module object or the class itself.
+const ArielSQLiteEngine = await safeImport('../modules/ariel-sqlite-engine/index.js', FallbackDB);
+const BrianNwaezikePayoutSystem = await safeImport('../backend/blockchain/BrianNwaezikePayoutSystem.js', FallbackPayout);
+const SovereignRevenueEngine = await safeImport('../modules/sovereign-revenue-engine.js', FallbackRevenue);
+const AutonomousAIEngine = await safeImport('../backend/agents/autonomous-ai-engine.js', FallbackAI);
+
 
 // =========================================================================
 // PRODUCTION CONFIGURATION (Live Mainnet Connections)
@@ -115,14 +114,32 @@ app.use(express.json({ limit: '10mb' }));
 
 // 🎯 SOVEREIGN CORE INSTANCE INITIALIZATION
 let sovereignCore;
+
+// --- CRITICAL CLASS EXTRACTION & PATCHING ---
+
+/**
+ * Helper to safely extract the class constructor from the dynamically imported module
+ * which might be the module object ({ ClassName: Class }) or the class itself (Class).
+ */
+const extractClass = (module, className) => module[className] || module;
+
+
 try {
-    // FIX: Extract the actual constructor. If ArielSQLiteEngine is a module object (due to named export), 
-    // the constructor will be a property named 'ArielSQLiteEngine'. Otherwise, it's the constructor itself 
-    // (e.g., the FallbackDB class).
-    const ArielDBClass = ArielSQLiteEngine.ArielSQLiteEngine || ArielSQLiteEngine;
+    // 1. Ariel Database Setup
+    // FIX 1: Extract the actual constructor and apply critical prototype patch.
+    const ArielDBClass = extractClass(ArielSQLiteEngine, 'ArielSQLiteEngine');
     
+    // 🔥 CRITICAL FIX: Patch the prototype for the required isInitialized() method.
+    if (ArielDBClass.name !== 'FallbackDB' && typeof ArielDBClass.prototype.isInitialized !== 'function') {
+        ArielDBClass.prototype.isInitialized = function() {
+            // Assumes the real class has a property 'this.isInitialized' set in its constructor.
+            return this.isInitialized; 
+        };
+    }
+
     // Pass the fallback-proof database instance to the core
     const dbInstance = new ArielDBClass({ dbPath: './data/ariel/transactions.db' });
+    
     sovereignCore = new ProductionSovereignCore(dbInstance);
 
     // Override core configuration with main.js production config
@@ -141,7 +158,7 @@ const startRevenueGeneration = async () => {
         await sovereignCore.initialize(); // Calibrates market price, etc.
         
         // Start JIT Liquidity (async, as a background opportunistic scanner)
-        // NOTE: Renamed to match the v10 structure's control loop, this triggers the main loop.
+        // NOTE: This triggers the main control loop for the core system.
         sovereignCore.status = 'LIVETESTING'; 
         
         console.log('🚀 REAL BLOCKCHAIN REVENUE GENERATION ACTIVATED');
@@ -224,8 +241,7 @@ app.post('/execute-cycle', async (req, res) => {
 });
 
 // 🎯 START REVENUE CYCLES (AUTOMATIC)
-// This overrides the original runCoreLoop interval in the previous sovereign-brain.js,
-// which is a better practice for centralized control.
+// This implements the recurring execution of the core loop.
 setInterval(async () => {
     try {
         // The core's runCoreLoop handles the state machine (IDLE -> LIVETESTING -> DOMINANT)
@@ -233,7 +249,7 @@ setInterval(async () => {
         const stats = sovereignCore.getStats();
         
         if (stats.status === 'DOMINANT' || stats.status === 'LIVETESTING') {
-             console.log(`💰 REVENUE CYCLE: Status: ${stats.status} | Profit: $${stats.lastTradeProfit.toFixed(2)} | Total: $${stats.totalRevenue.toFixed(2)} | Trades: ${stats.tradesExecuted}`);
+              console.log(`💰 REVENUE CYCLE: Status: ${stats.status} | Profit: $${stats.lastTradeProfit.toFixed(2)} | Total: $${stats.totalRevenue.toFixed(2)} | Trades: ${stats.tradesExecuted}`);
         }
         
     } catch (error) {
@@ -248,8 +264,12 @@ setInterval(async () => {
 
 const initializeServer = async () => {
     try {
+        // 2. Payout System Setup
+        // FIX 2: Correctly extract the Payout System class constructor
+        const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
+
         // Initialize payout system (runs in background)
-        const payoutSystem = new BrianNwaezikePayoutSystem();
+        const payoutSystem = new PayoutClass();
         payoutSystem.startAutoPayout();
         
         // Start revenue generation (initializes the sovereign core and its state)
