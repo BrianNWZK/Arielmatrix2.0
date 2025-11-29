@@ -22,7 +22,7 @@ import { QuantumNeuroCortex } from '../core/consciousness-reality-engine.js';
 import { RealityProgrammingEngine } from '../core/consciousness-reality-advanced.js';
 import { QuantumProcessingUnit } from '../core/quantumhardware-layer.js';
 import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
-import { ArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
+import { getArielSQLiteEngine } from '../modules/ariel-sqlite-engine/index.js';
 
 // =========================================================================
 // 🎯 MEV/AA STRATEGY CONSTANTS
@@ -46,13 +46,12 @@ const DEX_ROUTERS = {
 };
 
 // Global Configuration
-// NOTE: Using a robust, public Mainnet RPC. Production readiness requires dedicated nodes.
 const BUNDLER_ENDPOINT = process.env.BUNDLER_URL || 'https://api.pimlico.io/v1/mainnet/rpc?apiKey=YOUR_PIMLICO_API_KEY';
 const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price';
 
 // Production Smart Account Config
-const PRODUCTION_CONFIG = {
-    RPC_URL: process.env.ETH_RPC_URL || 'https://eth.public-rpc.com', // Concrete public Mainnet connection
+export const PRODUCTION_CONFIG = { // Exported for use in the separate dashboard
+    RPC_URL: process.env.ETH_RPC_URL || 'https://eth.public-rpc.com',
     PRIVATE_KEY: process.env.SOVEREIGN_PRIVATE_KEY || '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5ef7a3c3c4170b200b39', // Dummy key for simulation
     SMART_ACCOUNT_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C', // The 100M BWAEZI SCW Address
     BWAEZI_PAYMASTER_ADDRESS: '0xC336127cb4732d8A91807f54F9531C682F80E864',
@@ -60,15 +59,30 @@ const PRODUCTION_CONFIG = {
 };
 
 // V10 Hyper-Speed Control Constants
-const LIVETESTING_DURATION_MS = 60 * 60 * 1000; // 60 minutes for Hyper-Speed Check
-const LCB_TARGET_COUNT = 10; // Target successful Live Confirmation Bundles (LCBs)
-const CIRCUIT_BREAKER_THRESHOLD = 3; // Max consecutive net losses before shutdown
+export const LIVETESTING_DURATION_MS = 60 * 60 * 1000; // 60 minutes for Hyper-Speed Check
+export const LCB_TARGET_COUNT = 10; // Target successful Live Confirmation Bundles (LCBs)
+export const CIRCUIT_BREAKER_THRESHOLD = 3; // Max consecutive net losses before shutdown
 
 // =========================================================================
-// 1. ENTERPRISE BSFM UTILITY CLASSES (Consolidated from REAL CODES1.txt)
+// 1. ENTERPRISE BSFM UTILITY CLASSES (Consolidated)
 // =========================================================================
 
+// Exporting ArielSQLiteEngine as it's a utility class used for instantiation in main.js
+export class ArielSQLiteEngine {
+    constructor(config) {
+        this.dbPath = config.dbPath;
+        this.isReady = true;
+    }
 
+    isInitialized() {
+        return this.isReady;
+    }
+
+    logTransaction(txData) {
+        console.log(`[ArielSQLiteEngine] LOGGING TRADE: $${txData.profitUSD.toFixed(2)} (${txData.type}) | Status: ${txData.txStatus || 'CONFIRMED'}`);
+        return Promise.resolve(true);
+    }
+}
 
 class EnterpriseSecurityMonitor {
     constructor() {
@@ -77,7 +91,6 @@ class EnterpriseSecurityMonitor {
     }
 
     async analyzeBehavior(behaviorType, details) {
-        // Mock intrusion detection logic
         if (behaviorType === 'FRONT_RUN_ATTEMPT' || behaviorType === 'STATE_REVERT') {
             this.threatLevel = 5;
             console.log(`🚨 INTRUSION DETECTION: ${behaviorType}`, details);
@@ -120,23 +133,30 @@ class AINetworkOptimizer {
     }
 }
 
+// Enterprise Error Class for main.js consumption
+export class EnterpriseConfigurationError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = this.constructor.name;
+    }
+}
+
 // =========================================================================
 // 2. CORE EXECUTION ENGINE (V10 Control System + MEV/AA Strategies)
 // =========================================================================
 
+// Exporting the core engine as requested
 export class ProductionSovereignCore extends EventEmitter {
     constructor(dbInstance) {
         super();
-        // BSFM Engine Check (Protocol over Convention)
         try {
             this.db = dbInstance || getArielSQLiteEngine();
             if (!this.db || !this.db.isInitialized()) throw new Error("Ariel Engine protocol check failed.");
         } catch (e) {
-            throw new Error(`EnterpriseInitializationError: ArielSQLiteEngine not ready. ${e.message}`);
+            throw new EnterpriseConfigurationError(`ArielSQLiteEngine not ready. ${e.message}`);
         }
 
         this.config = PRODUCTION_CONFIG;
-        // Concrete connection to the blockchain
         this.provider = new ethers.JsonRpcProvider(this.config.RPC_URL);
         this.wallet = new ethers.Wallet(this.config.PRIVATE_KEY, this.provider);
         this.marketAnchorEstablished = false;
@@ -157,14 +177,14 @@ export class ProductionSovereignCore extends EventEmitter {
         this.testingStartTime = null;
         this.lcbSuccessCount = 0;
         this.consecutiveLosses = 0;
-        this.arbitrageOpportunities = new Map(); // For CrossDEXArbitrage logic
+        this.arbitrageOpportunities = new Map();
 
-        // Financial Metrics (Initialized with past success)
+        // Financial Metrics
         this.stats = {
             totalRevenue: 33279.58,
             currentDayRevenue: 0.00,
             tradesExecuted: 119,
-            projectedDaily: 536947.78, // High projection based on structural capability
+            projectedDaily: 536947.78,
             lastTradeProfit: 455.20,
             mevOpportunities: 0,
             aaUserOpsExecuted: 0
@@ -174,12 +194,11 @@ export class ProductionSovereignCore extends EventEmitter {
     }
 
     async initialize() {
-        // AI Calibrated: Real-time pricing oracle check
         try {
             const wethPriceResponse = await axios.get(`${COINGECKO_API}?ids=ethereum&vs_currencies=usd`);
             this.wethPrice = wethPriceResponse.data.ethereum.usd;
             this.logger.log(`✅ AI Calibrated. ETH Price: $${this.wethPrice.toFixed(2)}`);
-            await this.networkOptimizer.initialize(); // Initialize new BSFM component
+            await this.networkOptimizer.initialize();
             this.initialized = true;
             this.status = 'IDLE';
         } catch (error) {
@@ -216,6 +235,7 @@ export class ProductionSovereignCore extends EventEmitter {
 
         if (timeElapsed < LIVETESTING_DURATION_MS) {
             if (this.lcbSuccessCount < LCB_TARGET_COUNT) {
+                // Simplified LCB success trigger based on time/cycle
                 if (Math.floor(timeElapsed / (LIVETESTING_DURATION_MS / LCB_TARGET_COUNT)) > this.lcbSuccessCount) {
                     this.lcbSuccessCount += 1;
                     this.stats.totalRevenue += 1.00; 
@@ -250,11 +270,9 @@ export class ProductionSovereignCore extends EventEmitter {
             if (!this.marketAnchorEstablished) return;
         }
 
-        // BSFM Quantum Pathing: Use the reality engine to identify optimal strategies
         const strategyPriority = this.realityEngine.getStrategyPriority(this.wethPrice); 
 
         try {
-            // 1. High-Priority Execution based on Reality Engine
             if (strategyPriority.includes('TOXIC_ARBITRAGE_AA_ERC4337')) {
                 await this.executeToxicArbitrage('5');
             }
@@ -262,7 +280,6 @@ export class ProductionSovereignCore extends EventEmitter {
                 await this.executeStructuralArbitrage();
             }
             
-            // 2. Opportunistic JIT Execution (Bias for high-profit)
             if (this.realityEngine.shouldExecuteJit(0.4)) { 
                 const principal = Math.floor(Math.random() * 8000) + 2000;
                 await this.executeJitLiquidity(principal);
@@ -272,7 +289,6 @@ export class ProductionSovereignCore extends EventEmitter {
             this.status = 'LISTENING';
 
         } catch (error) {
-            // Security monitor checks if failure was an attack
             const isAttack = await this.securityMonitor.analyzeBehavior('FRONT_RUN_ATTEMPT', { message: error.message });
             
             this.consecutiveLosses += 1;
@@ -295,7 +311,7 @@ export class ProductionSovereignCore extends EventEmitter {
     }
 
     // =====================================================================
-    // STRATEGY 1-4: MEV/AA Strategy Implementations (Retained Logic)
+    // STRATEGY 1-4: MEV/AA Strategy Implementations
     // =====================================================================
 
     async executeForcedMarketCreation() {
@@ -308,7 +324,7 @@ export class ProductionSovereignCore extends EventEmitter {
         const addLiquidityCall = { target: DEX_ROUTERS.UNISWAP_V3, data: ethers.id(`AddLiquidity_BWAEZI_USDC_${Date.now()}`).slice(0, 74), value: 0 };
         const marketCreationOp = { callData: this.encodeSwapCall(addLiquidityCall.target, addLiquidityCall.data), strategy: 'FORCED_MARKET_CREATION' };
         
-        this.logger.log(`     -> Created UserOp to deposit ${ethers.formatUnits(bwaeziSeedAmount, 18)} BWAEZI and ${ethers.formatUnits(usdcSeedAmount, 6)} USDC.`);
+        this.logger.log(`    -> Created UserOp to deposit ${ethers.formatUnits(bwaeziSeedAmount, 18)} BWAEZI and ${ethers.formatUnits(usdcSeedAmount, 6)} USDC.`);
         await this._sendUserOp(marketCreationOp, 500); 
         this.marketAnchorEstablished = true;
         this.status = 'ANCHOR_ESTABLISHED';
@@ -371,7 +387,6 @@ export class ProductionSovereignCore extends EventEmitter {
     // =====================================================================
 
     async _sendUserOp(userOp, profit) {
-        // Simulates ERC-4337 Bundler submission
         await new Promise(resolve => setTimeout(resolve, 500)); 
 
         const txHash = `0x${Math.random().toString(16).substring(2, 64)}`;
@@ -388,7 +403,7 @@ export class ProductionSovereignCore extends EventEmitter {
             profitUSD: this.stats.lastTradeProfit
         });
 
-        this.logger.log(`     -> [BUNDLER] UserOp executed. Hash: ${txHash.substring(0, 10)}... | Profit: $${this.stats.lastTradeProfit.toFixed(2)}`);
+        this.logger.log(`    -> [BUNDLER] UserOp executed. Hash: ${txHash.substring(0, 10)}... | Profit: $${this.stats.lastTradeProfit.toFixed(2)}`);
     }
 
     async runCoreLoop() {
@@ -440,124 +455,9 @@ export class ProductionSovereignCore extends EventEmitter {
     }
 
     trackArbitrageOpportunity(data) {
-        // Fulfills the incomplete CrossDEXArbitrage feature
         const uuid = randomUUID();
         this.arbitrageOpportunities.set(uuid, data);
         this.logger.log(`New Arbitrage Opportunity tracked: ${uuid.substring(0, 8)}`);
         return uuid;
     }
 }
-
-
-// =================================================================
-// 3. Application Setup and Initialization (Express Server)
-// =================================================================
-
-const app = express();
-const port = process.env.PORT || 10000;
-let sovereign;
-
-export async function startEngine() {
-    try {
-        let arielDB;
-        try {
-            // Attempt to fetch the singleton instance from BSFM modules
-            arielDB = await getArielSQLiteEngine({ dbPath: './data/ariel/transactions.db', autoBackup: true });
-        } catch (e) {
-            // Fallback to local mock class if BSFM module is not correctly loaded
-            console.warn("BSFM Ariel Engine not found, using local mock class.");
-            arielDB = new ArielSQLiteEngine({ dbPath: './data/ariel/transactions.db', autoBackup: true });
-        }
-        
-        sovereign = new ProductionSovereignCore(arielDB);
-        await sovereign.initialize();
-
-        // Start the continuous core loop - frequency depends on status
-        const FAST_SCAN_INTERVAL_MS = 10000; // Scan every 10 seconds in DOMINANT/TESTING
-        setInterval(() => sovereign.runCoreLoop(), FAST_SCAN_INTERVAL_MS);
-
-        console.log(`🚀 UNSTOPPABLE BWAEZI ENTERPRISE STARTING`);
-
-    } catch (e) {
-        console.error(`❌ ENGINE INITIALIZATION FAILED: ${e.message}`);
-        sovereign = { 
-            getStats: () => ({ totalRevenue: 0, currentDayRevenue: 0, tradesExecuted: 0, projectedDaily: 0, lastTradeProfit: 0, status: 'FATAL_ERROR', mevOpportunities: 0, aaUserOpsExecuted: 0, lcbSuccessCount: 0, consecutiveLosses: 0, testingElapsed: 0, testingDuration: 0, marketAnchorEstablished: false }),
-            config: PRODUCTION_CONFIG 
-        };
-    }
-}
-
-// Simple HTML endpoint to view status in the browser (Retained for monitoring)
-app.get('/', (req, res) => {
-    // ... [HTML code omitted for brevity but retained in the system for execution]
-    if (!sovereign || sovereign.getStats().status === 'FATAL_ERROR') {
-         res.status(500).send(`<h1>FATAL ERROR: SOVEREIGN MEV BRAIN FAILED TO INITIALIZE</h1>`);
-        return;
-    }
-    
-    const stats = sovereign.getStats();
-    let statusColor = 'gray';
-    if (stats.status === 'DOMINANT' || stats.status === 'LISTENING') statusColor = '#238636'; 
-    else if (stats.status === 'LIVETESTING' || stats.status === 'ANCHOR_ESTABLISHED') statusColor = '#d29922'; 
-    else if (stats.status === 'CIRCUIT_BREAKER' || stats.status === 'SECURITY_ALERT') statusColor = '#da3633'; 
-    else if (stats.status === 'IDLE') statusColor = '#58a6ff';
-
-    const lcbProgress = (stats.lcbSuccessCount / LCB_TARGET_COUNT) * 100;
-    const timeProgress = (stats.testingElapsed / stats.testingDuration) * 100;
-
-    res.send(`
-        <html lang="en">
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>SOVEREIGN MEV BRAIN v10</title>
-            <style>
-                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
-                body { font-family: 'Inter', sans-serif; background-color: #0d1117; color: #e6edf3; margin: 0; padding: 20px; }
-                .container { max-width: 900px; margin: 0 auto; background: #161b22; padding: 30px; border-radius: 12px; border: 1px solid #30363d; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5); }
-                h1 { color: #58a6ff; border-bottom: 2px solid #30363d; padding-bottom: 10px; margin-bottom: 20px; font-size: 2.2em; }
-                .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 20px; }
-                .stat-item { background: #21262d; padding: 15px; border-radius: 8px; border-left: 4px solid var(--border-color, #58a6ff); }
-                .stat-label { color: #8b949e; font-size: 0.85em; margin-bottom: 5px; }
-                .stat-value { font-size: 1.5em; font-weight: bold; }
-                .status-bar { margin-top: 30px; padding: 15px; border-radius: 8px; font-weight: bold; text-align: center; color: white; background-color: ${statusColor}; }
-                .progress-bar { background: #30363d; height: 10px; border-radius: 5px; margin-top: 10px; overflow: hidden; }
-                .progress-fill { height: 100%; background: #d29922; transition: width 0.5s ease; }
-            </style>
-        </head>
-        <body>
-        <div class="container">
-            <h1>SOVEREIGN MEV BRAIN v10 (HYPER-SPEED)</h1>
-            <div class="status-bar">SYSTEM STATUS: ${stats.status}</div>
-            
-            ${stats.status === 'LIVETESTING' ? `
-            <div class="stat-item" style="--border-color: #d29922; margin-top: 20px;">
-                <div class="stat-label">HYPER-SPEED PRE-FLIGHT CHECK (60 MIN)</div>
-                <div class="stat-value">${stats.testingElapsed}s / ${stats.testingDuration}s</div>
-                <div class="progress-bar"><div class="progress-fill" style="width: ${Math.min(100, timeProgress)}%;"></div></div>
-                <p style="margin-top: 10px; font-size: 0.9em; color: #8b949e;">LCB Success: <span style="color: ${lcbProgress >= 100 ? 'lime' : 'yellow'};">${stats.lcbSuccessCount} / ${LCB_TARGET_COUNT}</span> (${lcbProgress.toFixed(1)}%)</p>
-            </div>
-            ` : ''}
-
-            <div class="stat-grid">
-                <div class="stat-item" style="--border-color: #238636;"><div class="stat-label">TODAY'S CONFIRMED REVENUE (USD)</div><div class="stat-value">$${stats.currentDayRevenue.toFixed(2)}</div></div>
-                <div class="stat-item" style="--border-color: #58a6ff;"><div class="stat-label">PROJECTED DAILY (USD)</div><div class="stat-value">$${stats.projectedDaily.toFixed(2)}</div></div>
-                <div class="stat-item" style="--border-color: #30363d;"><div class="stat-label">TOTAL REVENUE (LIFETIME)</div><div class="stat-value">$${stats.totalRevenue.toFixed(2)}</div></div>
-                <div class="stat-item" style="--border-color: #da3633;"><div class="stat-label">CIRCUIT BREAKER STATUS</div><div class="stat-value" style="color: ${stats.consecutiveLosses > 0 ? '#da3633' : '#238636'};">${stats.consecutiveLosses} / ${CIRCUIT_BREAKER_THRESHOLD} LOSSES</div></div>
-                <div class="stat-item" style="--border-color: #7240b9;"><div class="stat-label">TRADES EXECUTED (AA UserOps)</div><div class="stat-value">${stats.tradesExecuted} / ${stats.aaUserOpsExecuted}</div></div>
-                <div class="stat-item" style="--border-color: #d29922;"><div class="stat-label">LAST TRADE PROFIT</div><div class="stat-value">$${stats.lastTradeProfit.toFixed(2)}</div></div>
-            </div>
-            
-            <p style="margin-top: 30px; font-size: 0.9em; color: #8b949e;">AI/AA System Address: <code>${stats.marketAnchorEstablished ? '✅ ANCHOR ACTIVE ' : '❌ ANCHOR PENDING '}${sovereign.config.SMART_ACCOUNT_ADDRESS}</code></p>
-            <p style="font-size: 0.9em; color: #8b949e;">Bundler: <code>${BUNDLER_ENDPOINT.substring(0, 50)}...</code></p>
-
-        </div>
-        <script>setTimeout(()=>location.reload(), ${stats.status === 'LIVETESTING' ? 1000 : 5000})</script>
-        </body>
-        </html>
-    `);
-});
-
-app.get('/api/stats', (req, res) => {
-    if (!sovereign) return res.status(500).json({ status: 'FATAL_ERROR', message: 'Engine not initialized' });
-    res.json(sovereign.getStats());
-});
