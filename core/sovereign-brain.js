@@ -8,7 +8,7 @@
 
 import express from 'express';
 import axios from 'axios';
-import { ethers, Interface, Contract, Wallet } from 'ethers';
+import { ethers, Interface, Contract } from 'ethers';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 // Local dependencies (assuming they exist in the project structure)
@@ -16,8 +16,10 @@ import { QuantumNeuroCortex } from '../core/consciousness-reality-engine.js';
 import { RealityProgrammingEngine } from '../core/consciousness-reality-advanced.js';
 import { QuantumProcessingUnit } from '../core/quantumhardware-layer.js';
 import { getGlobalLogger } from '../modules/enterprise-logger/index.js';
-// CRITICAL FIX: Import real AA implementation
-import { AASDK, getSCWAddress } from '../modules/aa-loaves-fishes.js';
+// ------------------ UPDATED IMPORT --------------------
+// REAL AASDK, getSCWAddress, and blockchainManager are now imported
+import { AASDK, getSCWAddress, blockchainManager } from '../modules/aa-loaves-fishes.js';
+// ------------------------------------------------------
 import WebSocket from 'ws'; 
 
 // =========================================================================
@@ -41,7 +43,7 @@ const SECURITY_CONFIG = {
 
 const LIVE_CONFIG = {
     EOA_OWNER_ADDRESS: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
-    SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
+    SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C', // Placeholder, calculated in init()
     BWAEZI_TOKEN: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
     BWAEZI_PAYMASTER: '0xC336127cb4732d8A91807f54F9531C682F80E864',
     ENTRY_POINT: '0x5FF137D4bEAA7036d654a88Ea898df565D304B88',
@@ -55,12 +57,19 @@ const LIVE_CONFIG = {
         'https://api.pimlico.io/v2/mainnet/rpc?apikey=YOUR_PIMLICO_KEY' 
 };
 
+// ------------------ LIVE SIGNER SETUP (New) --------------------
+// Initializes the signer using the resilient provider from blockchainManager
+const DUMMY_PROVIDER = new ethers.JsonRpcProvider(LIVE_CONFIG.RPC_URL);
+const SOVEREIGN_SIGNER = process.env.SOVEREIGN_PRIVATE_KEY
+    ? new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, blockchainManager.getProvider())
+    : new ethers.VoidSigner(LIVE_CONFIG.EOA_OWNER_ADDRESS, DUMMY_PROVIDER);
+// -----------------------------------------------------------------
+
 const LIVE_API_CONFIG = {
     PRICE_FEEDS: {
         COINGECKO_BASE_URL: 'https://api.coingecko.com/api/v3',
         COINGECKO_ASSET_IDS: {
             [LIVE_CONFIG.BWAEZI_TOKEN.toLowerCase()]: 'BWAEZI_TOKEN_ID', 
-            // FIX: Use all-lowercase address to bypass checksum error
             [ethers.getAddress('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2').toLowerCase()]: 'ethereum', 
             [ethers.getAddress('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48').toLowerCase()]: 'usd-coin' 
         },
@@ -68,7 +77,6 @@ const LIVE_API_CONFIG = {
 };
 
 const TRADING_PAIRS = {
-    // FIX: Use all-lowercase addresses
     WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
     USDC: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
     USDT: '0xdac17f958d2ee523a2206206994597c13d831ec7',
@@ -134,39 +142,11 @@ export class ProductionSovereignCore extends EventEmitter {
         this.provider = new ethers.JsonRpcProvider(LIVE_CONFIG.RPC_URL);
         this.dbInstance = dbInstance; // Ariel DB instance
         
-        // 1. Create a mock Signer for AASDK initialization (uses the EOA address)
-        const mockSigner = new Wallet(ethers.hexlify(ethers.randomBytes(32)), this.provider);
-        mockSigner._address = LIVE_CONFIG.EOA_OWNER_ADDRESS;
-
-        // 2. Initialize AASDK with the new class
-        this.aaSDK = new AASDK(mockSigner, LIVE_CONFIG.ENTRY_POINT);
-
-        // 3. Mix in required execution/bundler methods to match the original mock interface
-        const accountInterface = new Interface(["function execute(address dest, uint256 value, bytes calldata func) external"]);
-        
-        this.aaSDK.buildUserOperation = async (scw, dest, val, calldata, paymaster) => {
-            // Encode the call to SimpleAccount's execute function
-            const calldataWithExecute = accountInterface.encodeFunctionData('execute', [dest, val, calldata]);
-            
-            let userOp = await this.aaSDK.createUserOperation(calldataWithExecute, {
-                // Mock Paymaster Data (address + mock data)
-                paymasterAndData: paymaster + ethers.hexlify(ethers.randomBytes(32)).slice(2), 
-            });
-            
-            // Mock gas estimation for simplicity in this implementation
-            userOp.callGasLimit = 200000n;
-            userOp.verificationGasLimit = 300000n;
-            userOp.preVerificationGas = 30000n;
-
-            return userOp;
-        };
-        
-        this.aaSDK.submitToBundler = async (signedOp) => ('0x' + randomUUID().replace(/-/g, ''));
-        this.aaSDK.waitForTransaction = async (txHash) => true;
-        this.aaSDK.monitorMempool = async (type) => (Math.random() > 0.9 ? { pool: 'V3', amountToSwap: 1n, currentTick: 10000 } : null);
-        
-        // 4. Use the real imported getSCWAddress function
-        this.getSCWAddress = getSCWAddress; 
+        // ------------------ AASDK REAL INITIALIZATION --------------------
+        this.signer = SOVEREIGN_SIGNER;
+        this.aaSDK = new AASDK(this.signer);
+        this.blockchainManager = blockchainManager;
+        // -----------------------------------------------------------------
         
         this.routerInterface = new Interface(UNISWAP_V3_ROUTER_ABI);
         
@@ -180,7 +160,8 @@ export class ProductionSovereignCore extends EventEmitter {
             projectedDaily: 0, 
             consecutiveLosses: 0,
             lastTradeProfit: 0.00,
-            totalRevenue: 0 
+            totalRevenue: 0,
+            aasdkHealth: {} // New field for detailed AA SDK health
         };
         this.status = 'INITIALIZED';
         this.bwaeziToken = TRADING_PAIRS.BWAEZI;
@@ -190,9 +171,11 @@ export class ProductionSovereignCore extends EventEmitter {
 
     async init() {
         this.logger.log('🧠 Sovereign MEV Brain v10 — OMEGA Initializing...');
-        // CRITICAL: Calculate the SCW address deterministically using the imported function
-        const scwAddress = await this.getSCWAddress(LIVE_CONFIG.EOA_OWNER_ADDRESS);
+        
+        // FIX: Use the imported getSCWAddress with the signer's address
+        const scwAddress = await getSCWAddress(this.signer.address); 
         LIVE_CONFIG.SCW_ADDRESS = scwAddress;
+        this.logger.log(`✅ Calculated SCW Address: ${scwAddress}`);
         
         if (this.dbInstance && typeof this.dbInstance.init === 'function') {
             await this.dbInstance.init();
@@ -272,7 +255,7 @@ export class ProductionSovereignCore extends EventEmitter {
             }
         }
         
-        this.performHealthCheck();
+        await this.performHealthCheck(); // Now async
     }
     
     // =========================================================================
@@ -293,6 +276,7 @@ export class ProductionSovereignCore extends EventEmitter {
     }
 
     async findGuaranteedJit() {
+        // Now using the real AASDK's monitorMempool
         const inFlightSwap = await this.aaSDK.monitorMempool('UNISWAP_V3_SWAP'); 
 
         if (inFlightSwap) {
@@ -340,7 +324,7 @@ export class ProductionSovereignCore extends EventEmitter {
         const dest = opportunity.targetContract;
         const value = opportunity.ethValue || 0n;
 
-        // Use the AASDK wrapper
+        // Uses the REAL AASDK methods
         const userOp = await this.aaSDK.buildUserOperation(LIVE_CONFIG.SCW_ADDRESS, dest, value, callData, LIVE_CONFIG.BWAEZI_PAYMASTER);
         const signedUserOp = await this.aaSDK.signUserOperation(userOp);
         const txHash = await this.aaSDK.submitToBundler(signedUserOp);
@@ -362,14 +346,10 @@ export class ProductionSovereignCore extends EventEmitter {
 
     async executeBatchTransaction(dest, value, func, type) {
         const preExecutionBalance = await this.getCurrentPortfolioValue();
-        
-        // This execution method is complex as it calls a specific executeBatch function
-        // on the SCW, which means the callData will be for executeBatch itself.
         const scwInterface = new Interface(["function executeBatch(address[] calldata dest, uint256[] calldata value, bytes[] calldata func) external"]);
         const batchCallData = scwInterface.encodeFunctionData('executeBatch', [dest, value, func]);
 
-        // Use the AASDK wrapper
-        // The SCW is the destination for the batch call
+        // Uses the REAL AASDK methods
         const userOp = await this.aaSDK.buildUserOperation(LIVE_CONFIG.SCW_ADDRESS, LIVE_CONFIG.SCW_ADDRESS, 0n, batchCallData, LIVE_CONFIG.BWAEZI_PAYMASTER);
         const signedUserOp = await this.aaSDK.signUserOperation(userOp);
         const txHash = await this.aaSDK.submitToBundler(signedUserOp);
@@ -452,15 +432,40 @@ export class ProductionSovereignCore extends EventEmitter {
             liveOpportunities: this.liveOpportunities.size,
             bwaeziGasAbstraction: true,
             scwAddress: LIVE_CONFIG.SCW_ADDRESS,
+            aasdkHealth: this.stats.aasdkHealth, // EXPORT DETAILED AA HEALTH
             timestamp: Date.now()
         };
     }
 
+    // 🛡️ SYSTEM HEALTH MONITORING (Updated)
     async performHealthCheck() {
-        const health = this.resilienceEngine.getSystemHealth();
-        this.stats.systemHealth = health.overall;
-        if (health.overall === 'CRITICAL' && SECURITY_CONFIG.AUTO_SHUTDOWN_ON_ANOMALY) {
-            await this.emergencyShutdown();
+        this.logger.debug('--- PERFORMING SYSTEM HEALTH CHECK ---');
+        const coreHealth = this.resilienceEngine.getSystemHealth();
+
+        // New: AASDK Health Check
+        let aaHealth = { status: 'DEGRADED', error: 'Not run' };
+        try {
+            aaHealth = await this.aaSDK.healthCheck(); 
+            this.stats.aasdkHealth = aaHealth; // Store detailed AA health stats
+        } catch (error) {
+            this.logger.error('❌ AASDK Health Check Failed:', error.message);
+            aaHealth.status = 'CRITICAL';
+            aaHealth.error = error.message;
+        }
+
+        const overallStatus = 
+            coreHealth.overall === 'CRITICAL' || aaHealth.status !== 'HEALTHY' 
+            ? 'CRITICAL'
+            : (coreHealth.overall === 'DEGRADED' ? 'DEGRADED' : coreHealth.overall);
+
+        this.stats.systemHealth = overallStatus;
+
+        if (overallStatus === 'CRITICAL' || overallStatus === 'DEGRADED') {
+            this.logger.warn(`⚠️ System health ${overallStatus}. Core Status: ${coreHealth.overall}. AA Status: ${aaHealth.status}`);
+            
+            if (overallStatus === 'CRITICAL' && SECURITY_CONFIG.AUTO_SHUTDOWN_ON_ANOMALY) {
+                await this.emergencyShutdown();
+            }
         }
     }
 
