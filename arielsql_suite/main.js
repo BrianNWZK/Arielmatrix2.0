@@ -59,6 +59,10 @@ class FallbackDB {
 }
 
 class FallbackPayout {
+    // CRITICAL FIX: Fallback class now accepts the mandatory dependency to match the real class signature
+    constructor(dbInstance) { 
+        this.db = dbInstance;
+    }
     async initialize() { 
         console.log('🔄 Using fallback payout system');
         return true; 
@@ -136,6 +140,7 @@ if (typeof initializeGlobalLogger === 'function') {
 
 // 🎯 SOVEREIGN CORE INSTANCE INITIALIZATION
 let sovereignCore;
+let payoutSystem; // <-- Declare Payout System instance globally
 
 // --- CRITICAL CLASS EXTRACTION & PATCHING ---
 
@@ -163,6 +168,14 @@ try {
         };
     }
     
+    // 2. Initialize Payout System (THE PERMANENT FIX)
+    const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
+    // Inject the fully initialized dbInstance (arielDB) into the constructor
+    payoutSystem = new PayoutClass(dbInstance); 
+    console.log('✅ BrianNwaezikePayoutSystem Initialized with Ariel DB dependency.');
+    
+    // 3. Initialize Sovereign Core
+    // Inject the fully initialized dbInstance
     sovereignCore = new ProductionSovereignCore(dbInstance);
 
     // Override core configuration with main.js production config
@@ -289,11 +302,10 @@ setInterval(async () => {
 const initializeServer = async () => {
     try {
         // 2. Payout System Setup
-        const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
-
-        // Initialize payout system (runs in background)
-        const payoutSystem = new PayoutClass();
-        if (typeof payoutSystem.startAutoPayout === 'function') {
+        // The payoutSystem is now globally instantiated and injected with 'dbInstance' above.
+        
+        // Start auto-payout (runs in background)
+        if (typeof payoutSystem.startAutoPayout === 'function') { 
             payoutSystem.startAutoPayout();
         }
         
