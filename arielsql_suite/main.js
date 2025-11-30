@@ -60,7 +60,8 @@ class FallbackDB {
 
 class FallbackPayout {
     // CRITICAL FIX: Fallback class now accepts the mandatory dependency to match the real class signature
-    constructor(dbInstance) { 
+    // The FallbackPayout constructor does not use the config, but must accept it to match the signature
+    constructor(config, dbInstance) { 
         this.db = dbInstance;
     }
     async initialize() { 
@@ -117,7 +118,10 @@ const CONFIG = {
     // Real BSFM Contract Addresses (Confirmed for Mainnet deployment)
     PAYMASTER_ADDRESS: '0xC336127cb4732d8A91807f54F9531C682F80E864',
     SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
-    BWAEZI_TOKEN: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'
+    BWAEZI_TOKEN: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
+    
+    // NOTE: Adding a placeholder for the Payout System Wallet, as required by its constructor
+    SOVEREIGN_WALLET: process.env.SOVEREIGN_WALLET_ADDRESS || '0xDefaultSovereignWalletAddressForTesting'
 };
 
 // Initialize Express Server
@@ -168,13 +172,14 @@ try {
         };
     }
     
-    // 2. Initialize Payout System (PERMANENT FIX V2: Awaited Initialization)
+    // 2. Initialize Payout System (PERMANENT FIX V3: Corrected Argument Mismatch)
     const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
-    // Inject the fully initialized dbInstance (arielDB) into the constructor
-    payoutSystem = new PayoutClass(dbInstance); 
-
+    
+    // 🔥 CRITICAL FIX V3: Correctly passing CONFIG (arg 1) and dbInstance (arg 2) 
+    // to match the constructor signature: constructor(config, arielDB)
+    payoutSystem = new PayoutClass(CONFIG, dbInstance); 
+    
     // ** CRITICAL FIX V2: Explicitly initialize the Payout System and AWAIT it. **
-    // This ensures its internal checks (which caused the 'Invalid engine instance' error) succeed.
     if (typeof payoutSystem.initialize === 'function') {
         await payoutSystem.initialize();
     } else if (typeof payoutSystem.init === 'function') {
@@ -187,7 +192,6 @@ try {
     sovereignCore = new ProductionSovereignCore(dbInstance);
 
     // Override core configuration with main.js production config
-    // NOTE: This config is applied to sovereignCore.config if it exists, but the core uses its own internal LIVE_CONFIG.
     // Overriding the instance property for consistency.
     sovereignCore.config = { ...sovereignCore.config, ...CONFIG }; 
     console.log('✅ Sovereign Core Initialized with Production Configuration.');
