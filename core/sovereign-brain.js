@@ -149,9 +149,8 @@ export class ProductionSovereignCore extends EventEmitter {
             const calldataWithExecute = accountInterface.encodeFunctionData('execute', [dest, val, calldata]);
             
             let userOp = await this.aaSDK.createUserOperation(calldataWithExecute, {
-                // For simplicity, we assume the account is already deployed.
-                // If not, initCode would be needed: initCode: await this.aaSDK.getInitCode(this.aaSDK.signer.address),
-                paymasterAndData: paymaster + ethers.hexlify(ethers.randomBytes(32)).slice(2), // Mock Paymaster Data (address + mock data)
+                // Mock Paymaster Data (address + mock data)
+                paymasterAndData: paymaster + ethers.hexlify(ethers.randomBytes(32)).slice(2), 
             });
             
             // Mock gas estimation for simplicity in this implementation
