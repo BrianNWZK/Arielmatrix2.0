@@ -5,7 +5,6 @@ const FACTORY_ADDRESS = '0x9406Cc6185a346906296840746125a0E44976454'; // SimpleA
 
 // =========================================================================
 // EXPORTED STANDALONE FUNCTION: getSCWAddress
-// Fixes: SyntaxError: ... does not provide an export named 'getSCWAddress'
 // =========================================================================
 
 /**
