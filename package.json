@@ -26,7 +26,13 @@
     "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
     "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
     "deploy-kernel": "node arielsql_suite/main.js",
-    "build-wasm": "./build_and_deploy.sh && echo 'WASM assets successfully resolved.'"
+    "build-wasm": "node scripts/build-wasm.js",
+    "prebuild": "npm run build-wasm || echo 'WASM build optional - system will use fallbacks'",
+    "postinstall": "npm run build-wasm || echo 'WASM build optional - system will use fallbacks'",
+    "build:full": "npm run build-wasm && npm run build",
+    "deploy:full": "./build_and_deploy.sh && echo '🚀 Full deployment completed with WASM resolution'",
+    "quantum:health": "node scripts/quantum-health-check.js",
+    "wasm:verify": "node scripts/verify-wasm.js"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -100,7 +106,9 @@
     "solc": "^0.8.20",
     "cors": "^2.8.5",
     "big.js": "^6.2.1",
-    "pino": "^8.15.0"
+    "pino": "^8.15.0",
+    "@openquantumsafe/kyber": "^0.6.0",
+    "@openquantumsafe/dilithium": "^0.6.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
@@ -117,7 +125,8 @@
     "webpack": "^5.88.0",
     "webpack-cli": "^5.1.4",
     "@types/validator": "^13.11.0",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "child-process-promise": "^2.2.1"
   },
   "optionalDependencies": {
     "litestream": "^0.3.9"
@@ -131,7 +140,12 @@
     "solana",
     "machine-learning",
     "bwaezi",
-    "sovereign-kernel"
+    "sovereign-kernel",
+    "quantum-resistant-crypto",
+    "post-quantum-cryptography",
+    "wasm",
+    "kyber",
+    "dilithium"
   ],
   "contributors": [
     "Brian Nwaezike <brian@bwaezi.com>"
@@ -147,5 +161,16 @@
   "funding": {
     "type": "patreon",
     "url": "https://patreon.com/yourusername"
+  },
+  "wasm": {
+    "modules": {
+      "kyber": [512, 768, 1024],
+      "dilithium": [2, 3, 5]
+    },
+    "build": {
+      "source": "https://github.com/PQClean/PQClean",
+      "compiler": "emscripten",
+      "optimization": "-Os"
+    }
   }
 }
