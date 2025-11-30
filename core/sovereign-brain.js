@@ -61,15 +61,23 @@ export const PRODUCTION_CONFIG = { // Exported for use in the separate dashboard
 // V10 Hyper-Speed Control Constants
 export const LIVETESTING_DURATION_MS = 60 * 60 * 1000; // 60 minutes for Hyper-Speed Check
 export const LCB_TARGET_COUNT = 10; // Target successful Live Confirmation Bundles (LCBs)
-export const CIRCUIT_BREAKER_THRESHOLD = 3; // Max consecutive net losses before shutdown
+export const CIRCUIT_BREAKER_THRESHOLD = 3; // Max weighted losses before shutdown
 
 // =========================================================================
 // 1. ENTERPRISE BSFM UTILITY CLASSES (Consolidated)
 // =========================================================================
 
-// NOTE: The re-declaration of 'export class ArielSQLiteEngine' was removed here
-// to fix the 'SyntaxError: Identifier 'ArielSQLiteEngine' has already been declared'
-// and ensure the imported class from '../modules/ariel-sqlite-engine/index.js' is used.
+/**
+ * Enterprise Error Class for core/main.js consumption
+ * NOTE: Additional specific errors (Transaction, Security) are assumed to exist
+ * and are used in the runDominantStrategy logic below.
+ */
+export class EnterpriseConfigurationError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = this.constructor.name;
+    }
+}
 
 class EnterpriseSecurityMonitor {
     constructor() {
@@ -77,6 +85,11 @@ class EnterpriseSecurityMonitor {
         this.threatLevel = 0;
     }
 
+    /**
+     * @param {string} behaviorType - e.g., 'FRONT_RUN_ATTEMPT', 'STATE_REVERT'
+     * @param {object} details 
+     * @returns {boolean} True if a critical threat is detected.
+     */
     async analyzeBehavior(behaviorType, details) {
         if (behaviorType === 'FRONT_RUN_ATTEMPT' || behaviorType === 'STATE_REVERT') {
             this.threatLevel = 5;
@@ -120,29 +133,35 @@ class AINetworkOptimizer {
     }
 }
 
-// Enterprise Error Class for main.js consumption
-export class EnterpriseConfigurationError extends Error {
-    constructor(message) {
-        super(message);
-        this.name = this.constructor.name;
-    }
-}
-
 // =========================================================================
 // 2. CORE EXECUTION ENGINE (V10 Control System + MEV/AA Strategies)
 // =========================================================================
 
 // Exporting the core engine as requested
 export class ProductionSovereignCore extends EventEmitter {
+    /**
+     * @param {ArielSQLiteEngine} dbInstance - MUST be an already initialized and connected instance.
+     */
     constructor(dbInstance) {
         super();
+        this.logger = getGlobalLogger();
+        
         try {
-            // FIX: Replaced call to non-existent 'getArielSQLiteEngine()' with instantiation of the imported class.
-            // This maintains the use of ArielSQLiteEngine as imported, not a getter function.
-            this.db = dbInstance || new ArielSQLiteEngine({});
-            if (!this.db || !this.db.isInitialized()) throw new Error("Ariel Engine protocol check failed.");
+            // 🎯 ROOT CAUSE FIX: Strict Singleton Enforcement. 
+            // The DB must be initialized by the main bootstrapper and passed here.
+            this.db = dbInstance;
+            if (!this.db) {
+                throw new EnterpriseConfigurationError("ArielSQLiteEngine instance MUST be passed to SovereignCore constructor.");
+            }
+            // Check if the passed instance has successfully completed its async initialization
+            if (!this.db.isInitialized || !this.db.isInitialized()) {
+                throw new EnterpriseConfigurationError("ArielSQLiteEngine must be fully initialized (async) before passing to SovereignCore.");
+            }
+            this.logger.log("✅ Sovereign Core verified pre-initialized Ariel Engine protocol.");
+
         } catch (e) {
-            throw new EnterpriseConfigurationError(`ArielSQLiteEngine not ready. ${e.message}`);
+            this.logger.error(`❌ CRITICAL: SovereignCore initialization failed due to Ariel Engine dependency check.`, { error: e.message });
+            throw e; // Re-throw the structured error for upper layers to handle
         }
 
         this.config = PRODUCTION_CONFIG;
@@ -151,7 +170,6 @@ export class ProductionSovereignCore extends EventEmitter {
         this.marketAnchorEstablished = false;
 
         // BSFM Advanced Components Initialization
-        this.logger = getGlobalLogger();
         this.quantumCortex = new QuantumNeuroCortex({});
         this.realityEngine = new RealityProgrammingEngine({});
         this.qpu = new QuantumProcessingUnit({});
@@ -165,8 +183,12 @@ export class ProductionSovereignCore extends EventEmitter {
         this.initialized = false;
         this.testingStartTime = null;
         this.lcbSuccessCount = 0;
-        this.consecutiveLosses = 0;
+        this.consecutiveLosses = 0; // Tracks consecutive transactional failures (loss of capital)
         this.arbitrageOpportunities = new Map();
+        
+        // Quantum-Weighted Circuit Breaker Variables
+        this.weightedLosses = 0;
+        this.circuitBreakerActive = false;
 
         // Financial Metrics
         this.stats = {
@@ -183,6 +205,8 @@ export class ProductionSovereignCore extends EventEmitter {
     }
 
     async initialize() {
+        if (this.initialized) return;
+        
         try {
             const wethPriceResponse = await axios.get(`${COINGECKO_API}?ids=ethereum&vs_currencies=usd`);
             this.wethPrice = wethPriceResponse.data.ethereum.usd;
@@ -204,6 +228,7 @@ export class ProductionSovereignCore extends EventEmitter {
             status: this.status,
             lcbSuccessCount: this.lcbSuccessCount,
             consecutiveLosses: this.consecutiveLosses,
+            weightedLosses: this.weightedLosses, // Added new metric
             testingElapsed: this.testingStartTime ? Math.round((Date.now() - this.testingStartTime) / 1000) : 0,
             testingDuration: LIVETESTING_DURATION_MS / 1000,
             marketAnchorEstablished: this.marketAnchorEstablished,
@@ -227,13 +252,18 @@ export class ProductionSovereignCore extends EventEmitter {
                 // Simplified LCB success trigger based on time/cycle
                 if (Math.floor(timeElapsed / (LIVETESTING_DURATION_MS / LCB_TARGET_COUNT)) > this.lcbSuccessCount) {
                     this.lcbSuccessCount += 1;
-                    this.stats.totalRevenue += 1.00; 
+                    this.stats.totalRevenue += 1.00;
                     this.stats.currentDayRevenue += 1.00;
                     this.logger.log(`[LIVETESTING] LCB Success #${this.lcbSuccessCount}/${LCB_TARGET_COUNT}. First confirmed revenue achieved.`);
+                    
+                    // Log LCB confirmation to DB (Corrected structure)
                     await this.db.logTransaction({
+                        protocol: 'BSFM_LCB',
+                        strategy: 'LCB_CONFIRMATION',
                         profitUSD: 1.00,
-                        type: 'LCB_CONFIRMATION',
-                        txStatus: 'SUCCESS'
+                        profitETH: 0.0003, // Approximate
+                        txHash: `LCB-${randomUUID().substring(0, 8)}`,
+                        blockNumber: 0
                     });
                 }
             }
@@ -243,7 +273,7 @@ export class ProductionSovereignCore extends EventEmitter {
                 this.logger.log("✅ HYPER-SPEED CHECK COMPLETE. AI validated. Entering DOMINANT state for full capital deployment.");
                 this.testingStartTime = null;
             } else {
-                this.status = 'IDLE'; 
+                this.status = 'IDLE';
                 this.testingStartTime = null;
                 this.logger.log("❌ HYPER-SPEED CHECK FAILED. Reverting to IDLE. Manual Review Required.");
             }
@@ -259,7 +289,13 @@ export class ProductionSovereignCore extends EventEmitter {
             if (!this.marketAnchorEstablished) return;
         }
 
-        const strategyPriority = this.realityEngine.getStrategyPriority(this.wethPrice); 
+        // Global Circuit Breaker Check
+        if (this.circuitBreakerActive) {
+             this.logger.log("🛑 Global Circuit Breaker Active. Strategy execution paused.");
+             return;
+        }
+
+        const strategyPriority = this.realityEngine.getStrategyPriority(this.wethPrice);
 
         try {
             if (strategyPriority.includes('TOXIC_ARBITRAGE_AA_ERC4337')) {
@@ -269,32 +305,62 @@ export class ProductionSovereignCore extends EventEmitter {
                 await this.executeStructuralArbitrage();
             }
             
-            if (this.realityEngine.shouldExecuteJit(0.4)) { 
+            if (this.realityEngine.shouldExecuteJit(0.4)) {
                 const principal = Math.floor(Math.random() * 8000) + 2000;
                 await this.executeJitLiquidity(principal);
             }
             
+            // If success, reset loss counters
             this.consecutiveLosses = 0;
+            this.weightedLosses = Math.max(0, this.weightedLosses - 0.5); // Decay weighted loss slightly on success
             this.status = 'LISTENING';
 
         } catch (error) {
+            // 🎯 NOVEL SOLUTION: Quantum-Weighted Circuit Breaker Logic
             const isAttack = await this.securityMonitor.analyzeBehavior('FRONT_RUN_ATTEMPT', { message: error.message });
             
+            // Assign weight based on error type
+            let lossWeight = 1; // Default for an unknown/generic transaction failure (assumed loss)
+            let alertLevel = 'WARNING';
+            
+            if (isAttack) {
+                lossWeight = 3; // Critical weight for direct attack
+                alertLevel = 'CRITICAL';
+            } else if (error.name === 'EnterpriseTransactionError') { // Hypothetical specific error
+                lossWeight = 1.5; // Confirmed loss of capital
+                alertLevel = 'ERROR';
+            } else if (error.name === 'EnterpriseNetworkError') {
+                lossWeight = 0.5; // Minor weight for RPC issues, etc.
+                alertLevel = 'INFO';
+            }
+
             this.consecutiveLosses += 1;
-            this.status = isAttack ? 'SECURITY_ALERT' : 'SCANNING_BLOCKS_ERROR'; 
-            this.logger.error(`🚨 Execution failed (Loss Count: ${this.consecutiveLosses}): ${error.message}`);
+            this.weightedLosses += lossWeight;
+            this.status = isAttack ? 'SECURITY_ALERT' : 'SCANNING_BLOCKS_ERROR';
+            
+            // Log the alert to the Ariel Database
+            this.db.logAlert({
+                level: alertLevel,
+                behaviorType: isAttack ? 'ATTACK_VECTOR_DETECTED' : 'STRATEGY_EXECUTION_FAILURE',
+                details: { message: error.message, weight: lossWeight, status: this.status }
+            });
+
+            this.logger.error(`🚨 Execution failed (Weighted Loss: ${this.weightedLosses.toFixed(1)}/${CIRCUIT_BREAKER_THRESHOLD}): ${error.message}`);
             
             // Dynamic Circuit Breaker Activation
-            if (this.consecutiveLosses >= CIRCUIT_BREAKER_THRESHOLD || isAttack) {
+            if (this.weightedLosses >= CIRCUIT_BREAKER_THRESHOLD || isAttack) {
                 this.status = 'CIRCUIT_BREAKER';
-                this.logger.error(`🛑 CRITICAL: Initiating Safety Shutdown.`);
+                this.circuitBreakerActive = true;
+                this.logger.error(`🛑 CRITICAL: Quantum-Weighted Safety Shutdown Initiated. Weighted Losses surpassed threshold.`);
                 
                 setTimeout(() => {
                     this.status = 'IDLE';
+                    this.weightedLosses = 0;
                     this.consecutiveLosses = 0;
+                    this.circuitBreakerActive = false;
                     this.stats.currentDayRevenue = 0;
                     this.logger.log("Safety protocol complete. System is IDLE for AI recalibration.");
-                }, 30000); 
+                }, 30000);
             }
         }
     }
@@ -314,7 +380,7 @@ export class ProductionSovereignCore extends EventEmitter {
         const marketCreationOp = { callData: this.encodeSwapCall(addLiquidityCall.target, addLiquidityCall.data), strategy: 'FORCED_MARKET_CREATION' };
         
         this.logger.log(`    -> Created UserOp to deposit ${ethers.formatUnits(bwaeziSeedAmount, 18)} BWAEZI and ${ethers.formatUnits(usdcSeedAmount, 6)} USDC.`);
-        await this._sendUserOp(marketCreationOp, 500); 
+        await this._sendUserOp(marketCreationOp, 500, 'BSFM_INIT');
         this.marketAnchorEstablished = true;
         this.status = 'ANCHOR_ESTABLISHED';
     }
@@ -334,7 +400,7 @@ export class ProductionSovereignCore extends EventEmitter {
         const arbitrageOp = { callData: multicallData, strategy: 'STRUCTURAL_ARBITRAGE', targetProfit: totalProfitUsd.toFixed(2) };
 
         this.logger.log(`\n⚡ Executing structural arbitrage batch (${numLoops} loops). Est Profit: $${totalProfitUsd.toFixed(2)}`);
-        await this._sendUserOp(arbitrageOp, totalProfitUsd);
+        await this._sendUserOp(arbitrageOp, totalProfitUsd, 'BSFM_ARBITRAGE');
     }
 
     async executeJitLiquidity(principalAmountUsd) {
@@ -350,35 +416,43 @@ export class ProductionSovereignCore extends EventEmitter {
         const userOp = { callData: multicallData, strategy: 'JIT_LIQUIDITY_AA', targetProfit: profit.toFixed(2) };
 
         this.logger.log(`\n👑 Executing JIT Liquidity UserOp (Principal: $${principalAmountUsd.toFixed(0)}). Est Fee Capture: $${profit.toFixed(2)}`);
-        await this._sendUserOp(userOp, profit);
+        await this._sendUserOp(userOp, profit, 'BSFM_AA');
     }
 
     async executeToxicArbitrage(amountInEth = '10') {
         const amountInBigInt = ethers.parseEther(amountInEth);
-        const simulatedAmountOut = (amountInBigInt * 10005n) / 10000n; 
+        const simulatedAmountOut = (amountInBigInt * 10005n) / 10000n;
         const profitUsd = (Number(ethers.formatEther(simulatedAmountOut - amountInBigInt)) * this.wethPrice) * 1.5;
 
         const bestPath = { to: DEX_ROUTERS.ONE_INCH_ROUTER, data: ethers.id(`MevSwapCalldata_${Date.now()}`).slice(0, 74) };
-        const userOp = { 
-            callData: this.encodeSwapCall(bestPath.to, bestPath.data), 
+        const userOp = {
+            callData: this.encodeSwapCall(bestPath.to, bestPath.data),
             paymasterAndData: this.config.BWAEZI_PAYMASTER_ADDRESS + ethers.id('TOXIC_ARB_FUSION').substring(2),
-            strategy: 'TOXIC_ARBITRAGE_AA_ERC4337', 
-            targetProfit: profitUsd.toFixed(2) 
+            strategy: 'TOXIC_ARBITRAGE_AA_ERC4337',
+            targetProfit: profitUsd.toFixed(2)
         };
 
         this.stats.mevOpportunities++;
         this.logger.log(`\n🤖 Executing Toxic Arbitrage (1INCH Fusion). Est Profit: $${profitUsd.toFixed(2)}`);
-        await this._sendUserOp(userOp, profitUsd);
+        await this._sendUserOp(userOp, profitUsd, 'BSFM_MEV');
     }
 
     // =====================================================================
     // CORE EXECUTION & HELPERS
     // =====================================================================
 
-    async _sendUserOp(userOp, profit) {
-        await new Promise(resolve => setTimeout(resolve, 500)); 
+    /**
+     * Simulates sending a UserOp and logging the result.
+     * @param {object} userOp 
+     * @param {number} profit 
+     * @param {string} protocol
+     */
+    async _sendUserOp(userOp, profit, protocol) {
+        // Simulate network latency/bundler time
+        await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 200));
 
         const txHash = `0x${Math.random().toString(16).substring(2, 64)}`;
+        const profitEth = parseFloat(profit / this.wethPrice) || 0;
         
         this.stats.aaUserOpsExecuted++;
         this.stats.lastTradeProfit = parseFloat(profit || 0);
@@ -386,10 +460,15 @@ export class ProductionSovereignCore extends EventEmitter {
         this.stats.currentDayRevenue += this.stats.lastTradeProfit;
         this.stats.tradesExecuted += 1;
         
+        // 🎯 DATA INTEGRITY FIX: Log with the correct required schema keys
         await this.db.logTransaction({
             txHash,
-            type: userOp.strategy,
-            profitUSD: this.stats.lastTradeProfit
+            protocol: protocol, // e.g., 'BSFM_MEV'
+            strategy: userOp.strategy, // e.g., 'TOXIC_ARBITRAGE_AA_ERC4337'
+            profitUSD: this.stats.lastTradeProfit,
+            profitETH: profitEth,
+            blockNumber: 19870000 + Math.floor(Math.random() * 1000), // Simulated block
+            rawTxData: JSON.stringify({ callData: userOp.callData.substring(0, 10) + '...' })
         });
 
         this.logger.log(`    -> [BUNDLER] UserOp executed. Hash: ${txHash.substring(0, 10)}... | Profit: $${this.stats.lastTradeProfit.toFixed(2)}`);
@@ -401,8 +480,8 @@ export class ProductionSovereignCore extends EventEmitter {
             return;
         }
 
-        this.logger.log(`\n--- CYCLE START: ${new Date().toISOString()} | STATUS: ${this.status} ---`);
-        this.logger.log(`ETH Price: $${this.wethPrice.toFixed(2)} | Losses: ${this.consecutiveLosses}/${CIRCUIT_BREAKER_THRESHOLD}`);
+        this.logger.log(`\n--- CYCLE START: ${new Date().toISOString()} | STATUS: ${this.status} | WEIGHTED LOSS: ${this.weightedLosses.toFixed(1)} ---`);
+        this.logger.log(`ETH Price: $${this.wethPrice.toFixed(2)} | Losses: ${this.consecutiveLosses}`);
 
         switch (this.status) {
             case 'IDLE':
@@ -417,11 +496,16 @@ export class ProductionSovereignCore extends EventEmitter {
 
             case 'DOMINANT':
             case 'LISTENING':
+            case 'SCANNING_BLOCKS_ERROR': // Allow scanning errors to fall through to retry strategy
                 await this.runDominantStrategy();
                 break;
 
             case 'CIRCUIT_BREAKER':
                 this.logger.log("SYSTEM LOCKED DOWN. Awaiting 30s manual review window...");
+                break;
+                
+            case 'SECURITY_ALERT':
+                this.logger.log("SECURITY ALERT. Awaiting mitigation/cooldown...");
                 break;
                 
             default:
