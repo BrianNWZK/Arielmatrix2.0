@@ -106,9 +106,7 @@
     "solc": "^0.8.20",
     "cors": "^2.8.5",
     "big.js": "^6.2.1",
-    "pino": "^8.15.0",
-    "@openquantumsafe/kyber": "^0.6.0",
-    "@openquantumsafe/dilithium": "^0.6.0"
+    "pino": "^8.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
@@ -125,8 +123,7 @@
     "webpack": "^5.88.0",
     "webpack-cli": "^5.1.4",
     "@types/validator": "^13.11.0",
-    "ts-node": "^10.9.2",
-    "child-process-promise": "^2.2.1"
+    "ts-node": "^10.9.2"
   },
   "optionalDependencies": {
     "litestream": "^0.3.9"
