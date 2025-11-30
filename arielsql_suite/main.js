@@ -168,11 +168,19 @@ try {
         };
     }
     
-    // 2. Initialize Payout System (THE PERMANENT FIX)
+    // 2. Initialize Payout System (PERMANENT FIX V2: Awaited Initialization)
     const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
     // Inject the fully initialized dbInstance (arielDB) into the constructor
     payoutSystem = new PayoutClass(dbInstance); 
-    console.log('✅ BrianNwaezikePayoutSystem Initialized with Ariel DB dependency.');
+
+    // ** CRITICAL FIX V2: Explicitly initialize the Payout System and AWAIT it. **
+    // This ensures its internal checks (which caused the 'Invalid engine instance' error) succeed.
+    if (typeof payoutSystem.initialize === 'function') {
+        await payoutSystem.initialize();
+    } else if (typeof payoutSystem.init === 'function') {
+        await payoutSystem.init();
+    }
+    console.log('✅ BrianNwaezikePayoutSystem Initialized and Connected to Ariel DB.');
     
     // 3. Initialize Sovereign Core
     // Inject the fully initialized dbInstance
@@ -302,7 +310,7 @@ setInterval(async () => {
 const initializeServer = async () => {
     try {
         // 2. Payout System Setup
-        // The payoutSystem is now globally instantiated and injected with 'dbInstance' above.
+        // The payoutSystem is now globally instantiated, injected, and INITIALIZED in the main try block.
         
         // Start auto-payout (runs in background)
         if (typeof payoutSystem.startAutoPayout === 'function') { 
