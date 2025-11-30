@@ -1,4 +1,5 @@
 /**
+ * arielsql_suite/main.js
  * Main entry point for the BSFM Sovereign MEV Brain v10 ecosystem.
  * Establishes real, live connections to the entire blockchain architecture
  * via the ProductionSovereignCore and provides a robust, fail-safe API layer.
@@ -12,7 +13,8 @@ import process from 'process';
 
 // Sovereign Core Imports
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
-import { initializeGlobalLogger } from '../modules/enterprise-logger/index.js'; 
+// NOTE: initializeGlobalLogger is not exported/used directly here, using the module as imported in the core
+import { initializeGlobalLogger, getGlobalLogger } from '../modules/enterprise-logger/index.js'; 
 
 // Security Imports (Required to maintain full feature set)
 import { AIThreatDetector } from '../modules/ai-threat-detector/index.js';
@@ -119,6 +121,19 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Initialize the global logger (critical prerequisite for core)
+if (typeof initializeGlobalLogger === 'function') {
+    initializeGlobalLogger();
+} else {
+    // Fallback logger implementation for resilience
+    global.getGlobalLogger = () => ({
+        log: console.log,
+        error: console.error,
+        warn: console.warn
+    });
+}
+
+
 // 🎯 SOVEREIGN CORE INSTANCE INITIALIZATION
 let sovereignCore;
 
@@ -133,7 +148,6 @@ const extractClass = (module, className) => module[className] || module;
 
 try {
     // 1. Ariel Database Setup
-    // FIX 1: Extract the actual constructor and apply critical prototype patch.
     const ArielDBClass = extractClass(ArielSQLiteEngine, 'ArielSQLiteEngine');
     
     // 🔥 CRITICAL FIX: Create database instance and ensure proper initialization
@@ -145,14 +159,16 @@ try {
     // 🔥 CRITICAL FIX: Add isInitialized method if it doesn't exist
     if (ArielDBClass.name !== 'FallbackDB' && typeof dbInstance.isInitialized !== 'function') {
         dbInstance.isInitialized = function() {
-            return this.isInitialized || false;
+            return this.isConnected();
         };
     }
     
     sovereignCore = new ProductionSovereignCore(dbInstance);
 
     // Override core configuration with main.js production config
-    sovereignCore.config = { ...sovereignCore.config, ...CONFIG };
+    // NOTE: This config is applied to sovereignCore.config if it exists, but the core uses its own internal LIVE_CONFIG.
+    // Overriding the instance property for consistency.
+    sovereignCore.config = { ...sovereignCore.config, ...CONFIG }; 
     console.log('✅ Sovereign Core Initialized with Production Configuration.');
 
 } catch (error) {
@@ -164,10 +180,9 @@ try {
 const startRevenueGeneration = async () => {
     try {
         // Initialize AI/MEV components
-        await sovereignCore.initialize(); // Calibrates market price, etc.
+        await sovereignCore.init(); // Calibrates market price, SCW address, DB, etc.
         
         // Start JIT Liquidity (async, as a background opportunistic scanner)
-        // NOTE: This triggers the main control loop for the core system.
         sovereignCore.status = 'LIVETESTING'; 
         
         console.log('🚀 REAL BLOCKCHAIN REVENUE GENERATION ACTIVATED');
@@ -253,7 +268,7 @@ app.post('/execute-cycle', async (req, res) => {
 // This implements the recurring execution of the core loop.
 setInterval(async () => {
     try {
-        // The core's runCoreLoop handles the state machine (IDLE -> LIVETESTING -> DOMINANT)
+        // The core's runCoreLoop handles the state machine
         await sovereignCore.runCoreLoop(); 
         const stats = sovereignCore.getStats();
         
@@ -274,7 +289,6 @@ setInterval(async () => {
 const initializeServer = async () => {
     try {
         // 2. Payout System Setup
-        // FIX 2: Correctly extract the Payout System class constructor
         const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
 
         // Initialize payout system (runs in background)
