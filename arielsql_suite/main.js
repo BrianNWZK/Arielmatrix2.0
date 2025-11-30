@@ -45,8 +45,15 @@ class FallbackDB {
         console.log('🔄 Using fallback Ariel database engine');
         return true; 
     }
+    async init() {
+        return this.initialize();
+    }
+    async connect() {
+        return this.initialize();
+    }
     logTransaction(txData) { console.log(`[FallbackDB] Logging trade: $${txData.profitUSD.toFixed(2)}`); }
-    isInitialized() { return true; } 
+    isInitialized() { return true; }
+    isConnected() { return true; }
 }
 
 class FallbackPayout {
@@ -129,16 +136,18 @@ try {
     // FIX 1: Extract the actual constructor and apply critical prototype patch.
     const ArielDBClass = extractClass(ArielSQLiteEngine, 'ArielSQLiteEngine');
     
-    // 🔥 CRITICAL FIX: Patch the prototype for the required isInitialized() method.
-    if (ArielDBClass.name !== 'FallbackDB' && typeof ArielDBClass.prototype.isInitialized !== 'function') {
-        ArielDBClass.prototype.isInitialized = function() {
-            // Assumes the real class has a property 'this.isInitialized' set in its constructor.
-            return this.isInitialized; 
+    // 🔥 CRITICAL FIX: Create database instance and ensure proper initialization
+    const dbInstance = new ArielDBClass({ dbPath: './data/ariel/transactions.db' });
+    
+    // 🔥 CRITICAL FIX: Initialize the database connection before passing to core
+    await dbInstance.connect();
+    
+    // 🔥 CRITICAL FIX: Add isInitialized method if it doesn't exist
+    if (ArielDBClass.name !== 'FallbackDB' && typeof dbInstance.isInitialized !== 'function') {
+        dbInstance.isInitialized = function() {
+            return this.isInitialized || false;
         };
     }
-
-    // Pass the fallback-proof database instance to the core
-    const dbInstance = new ArielDBClass({ dbPath: './data/ariel/transactions.db' });
     
     sovereignCore = new ProductionSovereignCore(dbInstance);
 
@@ -249,7 +258,7 @@ setInterval(async () => {
         const stats = sovereignCore.getStats();
         
         if (stats.status === 'DOMINANT' || stats.status === 'LIVETESTING') {
-              console.log(`💰 REVENUE CYCLE: Status: ${stats.status} | Profit: $${stats.lastTradeProfit.toFixed(2)} | Total: $${stats.totalRevenue.toFixed(2)} | Trades: ${stats.tradesExecuted}`);
+              console.log(`💰 REVENUE CYCLE: Status: ${stats.status} | Profit: $${stats.lastTradeProfit?.toFixed(2) || '0.00'} | Total: $${stats.totalRevenue?.toFixed(2) || '0.00'} | Trades: ${stats.tradesExecuted || 0}`);
         }
         
     } catch (error) {
@@ -270,7 +279,9 @@ const initializeServer = async () => {
 
         // Initialize payout system (runs in background)
         const payoutSystem = new PayoutClass();
-        payoutSystem.startAutoPayout();
+        if (typeof payoutSystem.startAutoPayout === 'function') {
+            payoutSystem.startAutoPayout();
+        }
         
         // Start revenue generation (initializes the sovereign core and its state)
         await startRevenueGeneration();
