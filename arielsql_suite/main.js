@@ -1,8 +1,7 @@
 /**
  * arielsql_suite/main.js
  * Main entry point for the BSFM Sovereign MEV Brain v10 ecosystem.
- * Establishes real, live connections to the entire blockchain architecture
- * via the ProductionSovereignCore and provides a robust, fail-safe API layer.
+ * Enhanced with guaranteed port binding and graceful degradation for partial failures.
  *
  * Environment: ES Module (ESM), Production Mainnet Ready
  */
@@ -189,51 +188,94 @@ let payoutSystem; // <-- Declare Payout System instance globally
  */
 const extractClass = (module, className) => module[className] || module;
 
-try {
-    // 1. Ariel Database Setup
-    const ArielDBClass = extractClass(ArielSQLiteEngine, 'ArielSQLiteEngine');
-    
-    // 🔥 CRITICAL FIX: Create database instance and ensure proper initialization
-    const dbInstance = new ArielDBClass({ dbPath: './data/ariel/transactions.db' });
-    
-    // 🔥 CRITICAL FIX: Initialize the database connection before passing to core
-    await dbInstance.connect();
-    
-    // 🔥 CRITICAL FIX: Add isInitialized method if it doesn't exist
-    if (ArielDBClass.name !== 'FallbackDB' && typeof dbInstance.isInitialized !== 'function') {
-        dbInstance.isInitialized = function() {
-            return this.isConnected();
+// 🔥 CRITICAL FIX: Enhanced initialization with graceful degradation
+const initializeCoreComponents = async () => {
+    try {
+        // 1. Ariel Database Setup
+        const ArielDBClass = extractClass(ArielSQLiteEngine, 'ArielSQLiteEngine');
+        
+        // 🔥 CRITICAL FIX: Create database instance and ensure proper initialization
+        const dbInstance = new ArielDBClass({ dbPath: './data/ariel/transactions.db' });
+        
+        // 🔥 CRITICAL FIX: Initialize the database connection before passing to core
+        await dbInstance.connect();
+        
+        // 🔥 CRITICAL FIX: Add isInitialized method if it doesn't exist
+        if (ArielDBClass.name !== 'FallbackDB' && typeof dbInstance.isInitialized !== 'function') {
+            dbInstance.isInitialized = function() {
+                return this.isConnected();
+            };
+        }
+        
+        // 2. Initialize Payout System (PERMANENT FIX V3: Corrected Argument Mismatch)
+        const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
+        
+        // 🔥 CRITICAL FIX V3: Correctly passing CONFIG (arg 1) and dbInstance (arg 2) 
+        // to match the constructor signature: constructor(config, arielDB)
+        payoutSystem = new PayoutClass(CONFIG, dbInstance); 
+        
+        // ** CRITICAL FIX V2: Explicitly initialize the Payout System and AWAIT it. **
+        if (typeof payoutSystem.initialize === 'function') {
+            await payoutSystem.initialize();
+        } else if (typeof payoutSystem.init === 'function') {
+            await payoutSystem.init();
+        }
+        console.log('✅ BrianNwaezikePayoutSystem Initialized and Connected to Ariel DB.');
+        
+        // 3. Initialize Sovereign Core
+        // Inject the fully initialized dbInstance
+        sovereignCore = new ProductionSovereignCore(dbInstance);
+
+        // Override core configuration with main.js production config
+        // Overriding the instance property for consistency.
+        sovereignCore.config = { ...sovereignCore.config, ...CONFIG }; 
+        console.log('✅ Sovereign Core Initialized with Production Configuration.');
+        
+        return { success: true, dbInstance, payoutSystem, sovereignCore };
+
+    } catch (error) {
+        console.error(`❌ Core component initialization failed: ${error.message}`);
+        
+        // 🔥 CRITICAL FIX: Graceful degradation - create minimal fallback components
+        const FallbackSovereignCore = class {
+            constructor() {
+                this.config = CONFIG;
+                this.status = 'FALLBACK_MODE';
+                this.provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
+            }
+            
+            async init() { 
+                console.log('🔄 Using fallback sovereign core');
+                return true; 
+            }
+            
+            getStats() {
+                return {
+                    status: 'FALLBACK',
+                    totalRevenue: 0,
+                    tradesExecuted: 0,
+                    projectedDaily: 0,
+                    lastTradeProfit: 0
+                };
+            }
+            
+            async runCoreLoop() {
+                console.log('🔄 Fallback core loop executed');
+                return { success: true, mode: 'FALLBACK' };
+            }
+        };
+        
+        sovereignCore = new FallbackSovereignCore();
+        console.log('🛡️ System running in fallback mode with limited functionality');
+        
+        return { 
+            success: false, 
+            error: error.message,
+            sovereignCore,
+            mode: 'FALLBACK'
         };
     }
-    
-    // 2. Initialize Payout System (PERMANENT FIX V3: Corrected Argument Mismatch)
-    const PayoutClass = extractClass(BrianNwaezikePayoutSystem, 'BrianNwaezikePayoutSystem');
-    
-    // 🔥 CRITICAL FIX V3: Correctly passing CONFIG (arg 1) and dbInstance (arg 2) 
-    // to match the constructor signature: constructor(config, arielDB)
-    payoutSystem = new PayoutClass(CONFIG, dbInstance); 
-    
-    // ** CRITICAL FIX V2: Explicitly initialize the Payout System and AWAIT it. **
-    if (typeof payoutSystem.initialize === 'function') {
-        await payoutSystem.initialize();
-    } else if (typeof payoutSystem.init === 'function') {
-        await payoutSystem.init();
-    }
-    console.log('✅ BrianNwaezikePayoutSystem Initialized and Connected to Ariel DB.');
-    
-    // 3. Initialize Sovereign Core
-    // Inject the fully initialized dbInstance
-    sovereignCore = new ProductionSovereignCore(dbInstance);
-
-    // Override core configuration with main.js production config
-    // Overriding the instance property for consistency.
-    sovereignCore.config = { ...sovereignCore.config, ...CONFIG }; 
-    console.log('✅ Sovereign Core Initialized with Production Configuration.');
-
-} catch (error) {
-    // Use standard Error for clear reporting
-    throw new Error(`Sovereign Core Init Failed: ${error.message}`);
-}
+};
 
 // 🚀 CORE EXECUTION STARTER
 const startRevenueGeneration = async () => {
@@ -252,6 +294,8 @@ const startRevenueGeneration = async () => {
         
     } catch (error) {
         console.error('Revenue generation startup failed:', error.message);
+        // 🔥 CRITICAL FIX: Continue execution even if revenue generation fails
+        console.log('🛡️ Revenue generation failed, but server continues to run');
     }
 };
 
@@ -268,12 +312,14 @@ app.get('/revenue-stats', (req, res) => {
             success: true,
             data: stats,
             timestamp: new Date().toISOString(),
-            status: stats.projectedDaily >= 5000 ? 'TARGET_ACHIEVED' : 'HUNTING'
+            status: stats.projectedDaily >= 5000 ? 'TARGET_ACHIEVED' : 'HUNTING',
+            mode: stats.status === 'FALLBACK' ? 'FALLBACK' : 'FULL'
         });
     } catch (error) {
         res.status(500).json({
             success: false,
-            error: error.message
+            error: error.message,
+            mode: 'ERROR'
         });
     }
 });
@@ -285,13 +331,13 @@ app.get('/health', async (req, res) => {
         const stats = sovereignCore.getStats();
         
         res.json({
-            status: 'SOVEREIGN_ACTIVE',
+            status: stats.status === 'FALLBACK' ? 'FALLBACK_ACTIVE' : 'SOVEREIGN_ACTIVE',
             block: block,
             coreStatus: stats.status,
             revenue: stats.totalRevenue,
             trades: stats.tradesExecuted,
             projection: stats.projectedDaily,
-            integrity: 'PERFECT' // BSFM integrity always perfect
+            integrity: stats.status === 'FALLBACK' ? 'LIMITED' : 'PERFECT'
         });
     } catch (error) {
         res.status(500).json({
@@ -323,23 +369,74 @@ app.post('/execute-cycle', async (req, res) => {
     }
 });
 
+// System status endpoint
+app.get('/system-status', (req, res) => {
+    try {
+        const stats = sovereignCore.getStats();
+        const status = {
+            server: 'RUNNING',
+            core: stats.status,
+            port: CONFIG.PORT,
+            rpc: CONFIG.RPC_URL ? 'CONNECTED' : 'MISSING',
+            timestamp: new Date().toISOString(),
+            mode: stats.status === 'FALLBACK' ? 'DEGRADED' : 'FULL'
+        };
+        
+        res.json(status);
+    } catch (error) {
+        res.json({
+            server: 'RUNNING',
+            core: 'ERROR',
+            error: error.message,
+            timestamp: new Date().toISOString(),
+            mode: 'DEGRADED'
+        });
+    }
+});
+
+// 🔥 CRITICAL FIX: Enhanced error handling middleware
+app.use((error, req, res, next) => {
+    console.error('🚨 Unhandled API Error:', error.message);
+    res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// 404 handler for unknown routes
+app.use('*', (req, res) => {
+    res.status(404).json({
+        success: false,
+        error: 'Route not found',
+        availableEndpoints: [
+            '/revenue-stats',
+            '/health', 
+            '/execute-cycle',
+            '/system-status'
+        ]
+    });
+});
+
 // 🎯 START REVENUE CYCLES (AUTOMATIC)
 // This implements the recurring execution of the core loop.
-setInterval(async () => {
-    try {
-        // The core's runCoreLoop handles the state machine
-        await sovereignCore.runCoreLoop(); 
-        const stats = sovereignCore.getStats();
-        
-        if (stats.status === 'DOMINANT' || stats.status === 'LIVETESTING') {
-              console.log(`💰 REVENUE CYCLE: Status: ${stats.status} | Profit: $${stats.lastTradeProfit?.toFixed(2) || '0.00'} | Total: $${stats.totalRevenue?.toFixed(2) || '0.00'} | Trades: ${stats.tradesExecuted || 0}`);
+const startRevenueCycles = () => {
+    setInterval(async () => {
+        try {
+            // The core's runCoreLoop handles the state machine
+            await sovereignCore.runCoreLoop(); 
+            const stats = sovereignCore.getStats();
+            
+            if (stats.status === 'DOMINANT' || stats.status === 'LIVETESTING' || stats.status === 'FALLBACK') {
+                console.log(`💰 REVENUE CYCLE: Status: ${stats.status} | Profit: $${stats.lastTradeProfit?.toFixed(2) || '0.00'} | Total: $${stats.totalRevenue?.toFixed(2) || '0.00'} | Trades: ${stats.tradesExecuted || 0}`);
+            }
+            
+        } catch (error) {
+            // Unstoppable: log the error and continue the cycle
+            console.error('Auto revenue cycle failed (Non-Fatal):', error.message);
         }
-        
-    } catch (error) {
-        // Unstoppable: log the error and continue the cycle
-        console.error('Auto revenue cycle failed (Non-Fatal):', error.message);
-    }
-}, 45000); // Set to 45 seconds for a robust mainnet scanning interval
+    }, 45000); // Set to 45 seconds for a robust mainnet scanning interval
+};
 
 // =========================================================================
 // 🚀 INITIALIZE AND START SERVER WITH GUARANTEED PORT BINDING
@@ -350,34 +447,63 @@ const initializeServer = async () => {
         // 🔥 CRITICAL FIX: Guarantee port binding
         const availablePort = await guaranteePortBinding(CONFIG.PORT);
         
-        // 2. Payout System Setup
-        // The payoutSystem is now globally instantiated, injected, and INITIALIZED in the main try block.
+        // 🔥 CRITICAL FIX: Initialize core components with graceful degradation
+        const initResult = await initializeCoreComponents();
         
-        // Start auto-payout (runs in background)
-        if (typeof payoutSystem.startAutoPayout === 'function') { 
+        if (!initResult.success) {
+            console.warn('⚠️ System starting in fallback mode due to initialization errors');
+        }
+        
+        // Start auto-payout (runs in background) if available
+        if (payoutSystem && typeof payoutSystem.startAutoPayout === 'function') { 
             payoutSystem.startAutoPayout();
         }
         
         // Start revenue generation (initializes the sovereign core and its state)
         await startRevenueGeneration();
         
+        // Start revenue cycles
+        startRevenueCycles();
+        
         // Start server on guaranteed available port
-        app.listen(availablePort, () => {
+        const server = app.listen(availablePort, () => {
             console.log('\n' + '='.repeat(60));
             console.log('🚀 SOVEREIGN MEV BRAIN v10 - PRODUCTION LIVE');
             console.log('💰 REAL BLOCKCHAIN REVENUE GENERATION: ACTIVE');
             console.log(`🌐 Server running on port ${availablePort}`);
             console.log(`📊 Revenue Dashboard API: http://localhost:${availablePort}/revenue-stats`);
             console.log(`❤️ Health Check: http://localhost:${availablePort}/health`);
+            console.log(`🛡️ System Status: http://localhost:${availablePort}/system-status`);
+            console.log(`🔧 Mode: ${initResult.mode || 'FULL'}`);
             console.log('='.repeat(60) + '\n');
         });
         
-        return availablePort;
+        // 🔥 CRITICAL FIX: Enhanced server error handling
+        server.on('error', (error) => {
+            console.error('🚨 Server error:', error.message);
+            // Attempt to restart on different port
+            if (error.code === 'EADDRINUSE') {
+                console.log('🔄 Port in use, attempting to find alternative...');
+                initializeServer().catch(e => {
+                    console.error('💥 Failed to restart server:', e.message);
+                });
+            }
+        });
+        
+        return { port: availablePort, mode: initResult.mode || 'FULL' };
         
     } catch (error) {
         console.error('Server initialization failed:', error.message);
-        // CRITICAL FAILURE: System must exit if initialization fails
-        process.exit(1);
+        // 🔥 CRITICAL FIX: Don't exit process, attempt recovery
+        console.log('🔄 Attempting server recovery in 10 seconds...');
+        setTimeout(() => {
+            initializeServer().catch(e => {
+                console.error('💥 Recovery failed, system cannot start:', e.message);
+                process.exit(1);
+            });
+        }, 10000);
+        
+        throw error;
     }
 };
 
@@ -402,9 +528,15 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // 🚀 START THE SOVEREIGN MEV BRAIN
-initializeServer().then(port => {
-    console.log(`✅ Server successfully started on port ${port}`);
+initializeServer().then(({ port, mode }) => {
+    console.log(`✅ Server successfully started on port ${port} in ${mode} mode`);
 }).catch(error => {
     console.error('💥 Failed to start server:', error.message);
-    process.exit(1);
+    // 🔥 CRITICAL FIX: Final attempt with basic HTTP server
+    console.log('🔄 Starting basic HTTP server as last resort...');
+    const basicServer = app.listen(0, () => {
+        const basicPort = basicServer.address().port;
+        console.log(`🛡️ Basic server running on port ${basicPort} - Limited functionality`);
+        console.log(`❤️ Health check available at: http://localhost:${basicPort}/health`);
+    });
 });
