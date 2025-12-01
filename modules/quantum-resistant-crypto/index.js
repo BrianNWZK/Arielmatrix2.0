@@ -107,7 +107,10 @@ class MonitoringService {
     }
 
     recordOperation(operation, duration, success = true) {
-        this.metrics[`${operation}Operations`]++;
+        const operationKey = `${operation}Operations`;
+        if (this.metrics[operationKey] !== undefined) {
+            this.metrics[operationKey]++;
+        }
         if (!success) {
             this.metrics.errors++;
         }
@@ -155,7 +158,7 @@ class AuditLogger {
             id: createHash('sha256')
                 .update(randomBytes(16))
                 .update(Date.now().toString())
-                .update(event.eventType)
+                .update(event.eventType || 'unknown')
                 .digest('hex'),
             timestamp: event.timestamp || new Date().toISOString(),
             service: 'quantum-crypto',
@@ -171,7 +174,7 @@ class AuditLogger {
     _cleanupOldEntries() {
         const cutoffTime = Date.now() - (this.retentionDays * 24 * 60 * 60 * 1000);
         this.auditTrail = this.auditTrail.filter(entry =>
-            new Date(entry.timestamp) >= new Date(cutoffTime)
+            new Date(entry.timestamp).getTime() >= cutoffTime
         );
     }
 
@@ -183,7 +186,7 @@ class AuditLogger {
         return this.auditTrail.filter(event => {
             return Object.keys(criteria).every(key => {
                 if (key === 'timestamp') {
-                    return new Date(event[key]) >= new Date(criteria[key]);
+                    return new Date(event[key]).getTime() >= new Date(criteria[key]).getTime();
                 }
                 return event[key] === criteria[key];
             });
@@ -234,7 +237,7 @@ class DBAdapter {
         if (typeof this.engine.query === 'function') {
             const res = await this.engine.query(sql, params);
             // Some engines return array, others return object for SELECT COUNT(*)
-            return res;
+            return Array.isArray(res) ? res : [res];
         }
         if (typeof this.engine.all === 'function') {
             const rows = await this.engine.all(sql, params);
@@ -285,7 +288,8 @@ function safeParseJson(str) {
 function encryptWithAES(data, key) {
     const iv = randomBytes(12);
     // Use 256 bits (32 bytes) of the key for AES-256
-    const cipher = createCipheriv(ALGORITHMS.AES_256_GCM, key.slice(0, 32), iv); 
+    const cipherKey = key.length >= 32 ? key.slice(0, 32) : scryptSync(key.toString('hex'), 'salt', 32);
+    const cipher = createCipheriv(ALGORITHMS.AES_256_GCM, cipherKey, iv); 
     
     let encrypted = cipher.update(data, 'utf8', 'base64');
     encrypted += cipher.final('base64');
@@ -314,10 +318,11 @@ function decryptWithAES(encryptedData, key) {
     const cipherText = Buffer.from(cipherTextBase64, 'base64');
 
     // Use 256 bits (32 bytes) of the key for AES-256
-    const decipher = createDecipheriv(ALGORITHMS.AES_256_GCM, key.slice(0, 32), iv); 
+    const cipherKey = key.length >= 32 ? key.slice(0, 32) : scryptSync(key.toString('hex'), 'salt', 32);
+    const decipher = createDecipheriv(ALGORITHMS.AES_256_GCM, cipherKey, iv); 
     decipher.setAuthTag(tag);
 
-    let decrypted = decipher.update(cipherText);
+    let decrypted = decipher.update(cipherText, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
     
     return decrypted;
@@ -335,7 +340,11 @@ async function hybridEncrypt(publicKey, data, algorithm = ALGORITHMS.KYBER_1024)
         
         // Step 2: Use the shared secret to encrypt the data with AES-GCM
         const iv = randomBytes(12);
-        const cipher = createCipheriv('aes-256-gcm', encapsulationResult.sharedSecret.slice(0, 32), iv);
+        const cipherKey = encapsulationResult.sharedSecret.length >= 32 ? 
+            encapsulationResult.sharedSecret.slice(0, 32) : 
+            Buffer.concat([encapsulationResult.sharedSecret, randomBytes(32 - encapsulationResult.sharedSecret.length)]);
+        
+        const cipher = createCipheriv('aes-256-gcm', cipherKey, iv);
         
         let encrypted = cipher.update(data);
         encrypted = Buffer.concat([encrypted, cipher.final()]);
@@ -373,7 +382,11 @@ async function hybridDecrypt(privateKey, encryptedData, algorithm = ALGORITHMS.K
         const sharedSecret = await kyberDecapsulate(privateKey, kyberCiphertext, { level: 1024 });
 
         // Step 2: Use the shared secret to decrypt the data with AES-GCM
-        const decipher = createDecipheriv('aes-256-gcm', sharedSecret.slice(0, 32), iv);
+        const cipherKey = sharedSecret.length >= 32 ? 
+            sharedSecret.slice(0, 32) : 
+            Buffer.concat([sharedSecret, randomBytes(32 - sharedSecret.length)]);
+        
+        const decipher = createDecipheriv('aes-256-gcm', cipherKey, iv);
         decipher.setAuthTag(authTag);
         
         let decrypted = decipher.update(aesEncryptedData);
@@ -413,12 +426,12 @@ export class EnterpriseQuantumResistantCrypto {
         this.keyCache = new Map();
         this.initialized = false;
         this.initializationPromise = null;
+        this.rotationInterval = null;
 
         // Initialize Kyber provider for session management (optional)
-        this.kyberProvider = new PQCKyberProvider(768, {
-            keyRotationInterval: this.config.keyRotationInterval,
-            sessionLifetime: 60 * 1000 // 1 minute
-        });
+        this.kyberProvider = new PQCKyberProvider({ level: 768 });
+
+        this.monitoring.log('INFO', 'QuantumResistantCrypto instance created');
     }
 
     async initialize() {
@@ -544,7 +557,14 @@ export class EnterpriseQuantumResistantCrypto {
         ];
 
         for (const tableSql of tables) {
-            await this.db.execute(tableSql);
+            try {
+                await this.db.execute(tableSql);
+            } catch (error) {
+                this.monitoring.log('ERROR', `Failed to create table: ${error.message}`, {
+                    sql: tableSql.substring(0, 100) + '...'
+                });
+                throw error;
+            }
         }
 
         const indexes = [
@@ -558,7 +578,12 @@ export class EnterpriseQuantumResistantCrypto {
         ];
 
         for (const indexSql of indexes) {
-            await this.db.execute(indexSql);
+            try {
+                await this.db.execute(indexSql);
+            } catch (error) {
+                this.monitoring.log('WARN', `Failed to create index (may already exist): ${error.message}`);
+                // Continue if index creation fails (they might already exist)
+            }
         }
 
         this.monitoring.log('INFO', 'Database schema and indexes created successfully');
@@ -570,7 +595,7 @@ export class EnterpriseQuantumResistantCrypto {
             "SELECT * FROM quantum_keys WHERE key_type = 'master' AND status = 'active'"
         );
 
-        if (Array.isArray(existingMasterKeys) && existingMasterKeys.length === 0) {
+        if (!existingMasterKeys || (Array.isArray(existingMasterKeys) && existingMasterKeys.length === 0)) {
             this.monitoring.log('INFO', 'No existing master keys found, generating new ones');
             await this.generateMasterKeys();
         } else if (Array.isArray(existingMasterKeys)) {
@@ -768,7 +793,7 @@ export class EnterpriseQuantumResistantCrypto {
         return createHash('sha256')
             .update(randomBytes(32))
             .update(Date.now().toString())
-            .update(process.pid.toString())
+            .update(process.pid?.toString() || '0')
             .digest('hex')
             .slice(0, 32);
     }
@@ -1175,6 +1200,23 @@ export class EnterpriseQuantumResistantCrypto {
                 timestamp: new Date().toISOString()
             };
         }
+    }
+
+    // Cleanup method
+    async close() {
+        if (this.rotationInterval) {
+            clearInterval(this.rotationInterval);
+            this.rotationInterval = null;
+        }
+        
+        if (this.db) {
+            await this.db.close();
+        }
+        
+        this.keyCache.clear();
+        this.initialized = false;
+        
+        this.monitoring.log('INFO', 'QuantumResistantCrypto closed successfully');
     }
 }
 
