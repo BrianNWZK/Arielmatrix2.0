@@ -10,6 +10,7 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
+import net from 'net';
 
 // Sovereign Core Imports
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
@@ -56,6 +57,9 @@ class FallbackDB {
     logTransaction(txData) { console.log(`[FallbackDB] Logging trade: $${txData.profitUSD.toFixed(2)}`); }
     isInitialized() { return true; }
     isConnected() { return true; }
+    run() { return { changes: 0 }; }
+    get() { return null; }
+    all() { return []; }
 }
 
 class FallbackPayout {
@@ -105,6 +109,38 @@ const BrianNwaezikePayoutSystem = await safeImport('../backend/blockchain/BrianN
 const SovereignRevenueEngine = await safeImport('../modules/sovereign-revenue-engine.js', FallbackRevenue);
 const AutonomousAIEngine = await safeImport('../backend/agents/autonomous-ai-engine.js', FallbackAI);
 
+// =========================================================================
+// PORT BINDING GUARANTEE SYSTEM
+// =========================================================================
+
+/**
+ * Guarantees port binding by checking availability and finding alternatives
+ */
+async function guaranteePortBinding(port, maxAttempts = 5) {
+    return new Promise((resolve, reject) => {
+        const tryBind = (currentPort = port, attempt = 1) => {
+            const server = net.createServer();
+            
+            server.listen(currentPort, '0.0.0.0', () => {
+                server.close(() => {
+                    console.log(`✅ Port ${currentPort} available for binding`);
+                    resolve(currentPort);
+                });
+            });
+            
+            server.on('error', (err) => {
+                if (err.code === 'EADDRINUSE' && attempt < maxAttempts) {
+                    console.log(`⚠️ Port ${currentPort} busy, trying ${currentPort + 1}`);
+                    tryBind(currentPort + 1, attempt + 1);
+                } else {
+                    reject(new Error(`Failed to bind to port after ${maxAttempts} attempts: ${err.message}`));
+                }
+            });
+        };
+        
+        tryBind();
+    });
+}
 
 // =========================================================================
 // PRODUCTION CONFIGURATION (Live Mainnet Connections)
@@ -141,7 +177,6 @@ if (typeof initializeGlobalLogger === 'function') {
     });
 }
 
-
 // 🎯 SOVEREIGN CORE INSTANCE INITIALIZATION
 let sovereignCore;
 let payoutSystem; // <-- Declare Payout System instance globally
@@ -153,7 +188,6 @@ let payoutSystem; // <-- Declare Payout System instance globally
  * which might be the module object ({ ClassName: Class }) or the class itself (Class).
  */
 const extractClass = (module, className) => module[className] || module;
-
 
 try {
     // 1. Ariel Database Setup
@@ -308,11 +342,14 @@ setInterval(async () => {
 }, 45000); // Set to 45 seconds for a robust mainnet scanning interval
 
 // =========================================================================
-// 🚀 INITIALIZE AND START SERVER
+// 🚀 INITIALIZE AND START SERVER WITH GUARANTEED PORT BINDING
 // =========================================================================
 
 const initializeServer = async () => {
     try {
+        // 🔥 CRITICAL FIX: Guarantee port binding
+        const availablePort = await guaranteePortBinding(CONFIG.PORT);
+        
         // 2. Payout System Setup
         // The payoutSystem is now globally instantiated, injected, and INITIALIZED in the main try block.
         
@@ -324,16 +361,18 @@ const initializeServer = async () => {
         // Start revenue generation (initializes the sovereign core and its state)
         await startRevenueGeneration();
         
-        // Start server
-        app.listen(CONFIG.PORT, () => {
+        // Start server on guaranteed available port
+        app.listen(availablePort, () => {
             console.log('\n' + '='.repeat(60));
             console.log('🚀 SOVEREIGN MEV BRAIN v10 - PRODUCTION LIVE');
             console.log('💰 REAL BLOCKCHAIN REVENUE GENERATION: ACTIVE');
-            console.log(`🌐 Server running on port ${CONFIG.PORT}`);
-            console.log(`📊 Revenue Dashboard API: http://localhost:${CONFIG.PORT}/revenue-stats`);
-            console.log(`❤️ Health Check: http://localhost:${CONFIG.PORT}/health`);
+            console.log(`🌐 Server running on port ${availablePort}`);
+            console.log(`📊 Revenue Dashboard API: http://localhost:${availablePort}/revenue-stats`);
+            console.log(`❤️ Health Check: http://localhost:${availablePort}/health`);
             console.log('='.repeat(60) + '\n');
         });
+        
+        return availablePort;
         
     } catch (error) {
         console.error('Server initialization failed:', error.message);
@@ -363,4 +402,9 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // 🚀 START THE SOVEREIGN MEV BRAIN
-initializeServer();
+initializeServer().then(port => {
+    console.log(`✅ Server successfully started on port ${port}`);
+}).catch(error => {
+    console.error('💥 Failed to start server:', error.message);
+    process.exit(1);
+});
