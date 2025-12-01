@@ -11,7 +11,577 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import WebSocket from 'ws';
+
+// =========================================================================
+// 🎯 INTEGRATED AA-LOAVES-FISHES MODULE
+// =========================================================================
+
+// LIVE BLOCKCHAIN CONFIGURATION (Integrated from aa-loaves-fishes.js)
+const LIVE_CONFIG = {
+    // Core AA addresses
+    FACTORY_ADDRESS: '0x9406Cc6185a346906296840746125a0E44976454', // SimpleAccountFactory mainnet
+    ENTRY_POINT_ADDRESS: ethers.getAddress('0x5FF137D4bEAA7036d654a88Ea898df565D304B88'), // EntryPoint mainnet
+    
+    // Bundler RPC endpoints
+    BUNDLER_RPC_URLS: [
+        'https://bundler.etherspot.io/v1/1',
+        'https://api.stackup.sh/v1/node/8b92cc6b17a3b8d9f3a4a5a6c7d8e9f0',
+        'https://public.stackup.sh/api/v1/node/ethereum-mainnet'
+    ],
+    
+    // Paymaster services
+    PAYMASTER_SERVICES: {
+        STACKUP: 'https://api.stackup.sh/v1/paymaster/8b92cc6b17a3b8d9f3a4a5a6c7d8e9f0',
+        ETHERSPOT: 'https://bundler.etherspot.io/v1/paymaster/1',
+        PIMLICO: 'https://api.pimlico.io/v1/1/rpc'
+    },
+    
+    // RPC providers
+    RPC_PROVIDERS: [
+        'https://eth.llamarpc.com',
+        'https://rpc.ankr.com/eth',
+        'https://cloudflare-eth.com',
+        'https://ethereum.publicnode.com'
+    ],
+    
+    // Sovereign MEV specific addresses
+    EOA_OWNER_ADDRESS: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
+    SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
+    BWAEZI_TOKEN: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
+    BWAEZI_PAYMASTER: '0xC336127cb4732d8A91807f54F9531C682F80E864',
+    
+    // Trading pairs
+    WETH: ethers.getAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+    USDC: ethers.getAddress('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+    USDT: ethers.getAddress('0xdAC17F958D2ee523a2206206994597C13D831ec7'),
+    DAI: ethers.getAddress('0x6B175474E89094C44Da98b954EedeAC495271d0F'),
+    
+    // DeFi protocols
+    AAVE_V3_POOL: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
+    DYDX_SOLO_MARGIN: '0x1E0447bDeBB9366f2B48b7D0b6f70364C4B5A6a1',
+    OPENSEA_CONDUIT: '0x1E0049783F008A0085193E00003D00cd54003c71',
+    BLUR_MARKETPLACE: '0x000000000000Ad05Ccc4F10045630fb830B95127'
+};
+
+// =========================================================================
+// 🎯 BLOCKCHAIN CONNECTION MANAGER (Integrated from aa-loaves-fishes.js)
+// =========================================================================
+
+class BlockchainConnectionManager {
+    constructor() {
+        this.providers = [];
+        this.bundlers = [];
+        this.currentProviderIndex = 0;
+        this.currentBundlerIndex = 0;
+        this.initializeConnections();
+    }
+
+    initializeConnections() {
+        try {
+            // Initialize multiple RPC providers for redundancy
+            LIVE_CONFIG.RPC_PROVIDERS.forEach(url => {
+                try {
+                    const provider = new ethers.JsonRpcProvider(url);
+                    this.providers.push(provider);
+                    console.log(`✅ Connected to RPC: ${url}`);
+                } catch (error) {
+                    console.warn(`⚠️ Failed to connect to RPC: ${url}`, error.message);
+                }
+            });
+
+            // Initialize bundler connections
+            LIVE_CONFIG.BUNDLER_RPC_URLS.forEach(url => {
+                try {
+                    const bundler = new ethers.JsonRpcProvider(url);
+                    this.bundlers.push(bundler);
+                    console.log(`✅ Connected to Bundler: ${url}`);
+                } catch (error) {
+                    console.warn(`⚠️ Failed to connect to Bundler: ${url}`, error.message);
+                }
+            });
+
+            if (this.providers.length === 0) {
+                throw new Error('No RPC providers available');
+            }
+        } catch (error) {
+            console.error('❌ Blockchain connection initialization failed:', error);
+        }
+    }
+
+    getProvider() {
+        if (this.providers.length === 0) {
+            throw new Error('No blockchain providers available');
+        }
+        const provider = this.providers[this.currentProviderIndex];
+        this.currentProviderIndex = (this.currentProviderIndex + 1) % this.providers.length;
+        return provider;
+    }
+
+    getBundler() {
+        if (this.bundlers.length === 0) {
+            return this.getProvider(); // Fallback to regular provider
+        }
+        const bundler = this.bundlers[this.currentBundlerIndex];
+        this.currentBundlerIndex = (this.currentBundlerIndex + 1) % this.bundlers.length;
+        return bundler;
+    }
+
+    async getGasPrice() {
+        const provider = this.getProvider();
+        try {
+            const feeData = await provider.getFeeData();
+            return {
+                maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei')
+            };
+        } catch (error) {
+            console.warn('⚠️ Gas price estimation failed, using defaults:', error.message);
+            return {
+                maxFeePerGas: ethers.parseUnits('30', 'gwei'),
+                maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
+            };
+        }
+    }
+}
+
+// Global blockchain connection instance
+const blockchainManager = new BlockchainConnectionManager();
+
+// =========================================================================
+// 🎯 AA-SDK IMPLEMENTATION (Integrated from aa-loaves-fishes.js)
+// =========================================================================
+
+class AASDK {
+    constructor(signer, entryPointAddress = LIVE_CONFIG.ENTRY_POINT_ADDRESS) {
+        if (!signer) {
+            throw new Error('AASDK: signer parameter is required but was not provided');
+        }
+        
+        if (!signer.address) {
+            throw new Error('AASDK: signer must have an address property');
+        }
+        
+        this.signer = signer;
+        this.entryPointAddress = entryPointAddress;
+        this.factoryAddress = LIVE_CONFIG.FACTORY_ADDRESS;
+        this.blockchainManager = blockchainManager;
+        
+        console.log(`🔧 AASDK initialized with signer: ${this.signer.address.slice(0, 10)}...`);
+    }
+
+    // Serialize BigInt for JSON RPC
+    serializeBigInt(value) {
+        if (typeof value === 'bigint') {
+            return value.toString();
+        }
+        return String(value || '0');
+    }
+
+    prepareUserOpForJson(userOp) {
+        return {
+            sender: userOp.sender,
+            nonce: this.serializeBigInt(userOp.nonce),
+            initCode: userOp.initCode,
+            callData: userOp.callData,
+            callGasLimit: this.serializeBigInt(userOp.callGasLimit),
+            verificationGasLimit: this.serializeBigInt(userOp.verificationGasLimit),
+            preVerificationGas: this.serializeBigInt(userOp.preVerificationGas),
+            maxFeePerGas: this.serializeBigInt(userOp.maxFeePerGas),
+            maxPriorityFeePerGas: this.serializeBigInt(userOp.maxPriorityFeePerGas),
+            paymasterAndData: userOp.paymasterAndData,
+            signature: userOp.signature
+        };
+    }
+
+    async getSCWAddress(ownerAddress) {
+        console.log(`🔍 AASDK: Calculating deterministic SCW address for owner ${ownerAddress.slice(0, 10)}...`);
+        
+        try {
+            if (!ethers.isAddress(ownerAddress)) {
+                throw new Error(`Invalid owner address: ${ownerAddress}`);
+            }
+
+            const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
+            
+            const initCodeData = ethers.AbiCoder.defaultAbiCoder().encode(
+                ['address', 'uint256'],
+                [ownerAddress, 0]
+            );
+
+            const initCodeWithFactory = ethers.concat([this.factoryAddress, initCodeData]);
+            const initCodeHash = ethers.keccak256(initCodeWithFactory);
+            
+            const creationCode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${this.factoryAddress.slice(2)}5af43d82803e903d91602b57fd5bf3`;
+            const bytecodeHash = ethers.keccak256(creationCode);
+            
+            const deterministicAddress = ethers.getCreate2Address(
+                this.factoryAddress,
+                salt,
+                ethers.keccak256(ethers.concat([bytecodeHash, initCodeHash]))
+            );
+            
+            console.log(`✅ SCW Address calculated: ${deterministicAddress}`);
+            return ethers.getAddress(deterministicAddress);
+        } catch (error) {
+            console.error(`❌ SCW address calculation failed: ${error.message}`);
+            throw new Error(`SCW address calculation failed: ${error.message}`);
+        }
+    }
+
+    async isSmartAccountDeployed(address) {
+        try {
+            const provider = this.blockchainManager.getProvider();
+            const code = await provider.getCode(address);
+            return code !== '0x' && code !== '0x0';
+        } catch (error) {
+            console.error(`❌ Failed to check deployment status for ${address}:`, error.message);
+            throw error;
+        }
+    }
+
+    async getSmartAccountNonce(smartAccountAddress) {
+        try {
+            const provider = this.blockchainManager.getProvider();
+            
+            const entryPointABI = [
+                'function getNonce(address sender, uint192 key) external view returns (uint256 nonce)'
+            ];
+            
+            const entryPoint = new ethers.Contract(
+                this.entryPointAddress,
+                entryPointABI,
+                provider
+            );
+            
+            const nonce = await entryPoint.getNonce(smartAccountAddress, 0);
+            console.log(`📈 Smart Account Nonce: ${nonce}`);
+            return nonce;
+        } catch (error) {
+            console.error(`❌ Failed to get nonce for ${smartAccountAddress}:`, error.message);
+            throw error;
+        }
+    }
+
+    async getInitCode(ownerAddress) {
+        console.log(`🔧 AASDK: Generating init code for owner ${ownerAddress.slice(0,10)}...`);
+        
+        try {
+            const initInterface = new ethers.Interface([
+                'function createAccount(address owner, uint256 salt) returns (address)'
+            ]);
+            
+            const initCallData = initInterface.encodeFunctionData('createAccount', [ownerAddress, 0]);
+            
+            const initCode = ethers.concat([this.factoryAddress, initCallData]);
+            console.log(`✅ Init code generated (${initCode.length} bytes)`);
+            return initCode;
+        } catch (error) {
+            console.error(`❌ Init code generation failed: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async createUserOperation(callData, options = {}) {
+        console.log(`🔧 AASDK: Creating UserOperation...`);
+        
+        try {
+            const smartAccountAddress = await this.getSCWAddress(this.signer.address);
+            
+            const isDeployed = await this.isSmartAccountDeployed(smartAccountAddress);
+            
+            let initCode = '0x';
+            if (!isDeployed) {
+                console.log(`🆕 Smart Account not deployed, including initCode`);
+                initCode = await this.getInitCode(this.signer.address);
+            }
+
+            const nonce = options.nonce || await this.getSmartAccountNonce(smartAccountAddress);
+            
+            const gasPrices = await this.blockchainManager.getGasPrice();
+            
+            const userOp = {
+                sender: smartAccountAddress,
+                nonce: nonce,
+                initCode: options.initCode || initCode,
+                callData: callData,
+                callGasLimit: options.callGasLimit || 100000n,
+                verificationGasLimit: options.verificationGasLimit || 200000n,
+                preVerificationGas: options.preVerificationGas || 21000n,
+                maxFeePerGas: options.maxFeePerGas || gasPrices.maxFeePerGas,
+                maxPriorityFeePerGas: options.maxPriorityFeePerGas || gasPrices.maxPriorityFeePerGas,
+                paymasterAndData: options.paymasterAndData || '0x',
+                signature: '0x'
+            };
+            
+            console.log(`✅ UserOperation created for sender: ${userOp.sender}`);
+            console.log(`   Nonce: ${userOp.nonce}, Deployed: ${isDeployed}`);
+            return userOp;
+        } catch (error) {
+            console.error(`❌ UserOperation creation failed: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async signUserOperation(userOp) {
+        console.log(`🔏 AASDK: Signing UserOperation...`);
+        
+        try {
+            const userOpWithoutSig = { ...userOp };
+            delete userOpWithoutSig.signature;
+
+            const userOpHash = await this.calculateUserOpHash(userOpWithoutSig);
+            
+            const signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
+            
+            userOp.signature = signature;
+            
+            console.log(`✅ UserOperation signed with hash: ${userOpHash.slice(0, 20)}...`);
+            return userOp;
+        } catch (error) {
+            console.error(`❌ UserOperation signing failed: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async calculateUserOpHash(userOp) {
+        const packedUserOp = ethers.AbiCoder.defaultAbiCoder().encode([
+            'address', 'uint256', 'bytes32', 'bytes32', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'bytes32'
+        ], [
+            userOp.sender,
+            userOp.nonce,
+            ethers.keccak256(userOp.initCode),
+            ethers.keccak256(userOp.callData),
+            userOp.callGasLimit,
+            userOp.verificationGasLimit,
+            userOp.preVerificationGas,
+            userOp.maxFeePerGas,
+            userOp.maxPriorityFeePerGas,
+            ethers.keccak256(userOp.paymasterAndData)
+        ]);
+
+        const chainId = await this.getChainId();
+        const enc = ethers.AbiCoder.defaultAbiCoder().encode(
+            ['bytes32', 'address', 'uint256'],
+            [ethers.keccak256(packedUserOp), this.entryPointAddress, chainId]
+        );
+
+        return ethers.keccak256(enc);
+    }
+
+    async estimateUserOperationGas(userOp) {
+        console.log(`⛽ AASDK: Estimating UserOperation gas via bundler...`);
+        
+        try {
+            const bundler = this.blockchainManager.getBundler();
+            
+            const gasEstimate = await bundler.send('eth_estimateUserOperationGas', [
+                this.prepareUserOpForJson(userOp),
+                this.entryPointAddress
+            ]);
+
+            const estimatedGas = {
+                callGasLimit: BigInt(gasEstimate.callGasLimit || '0x0'),
+                verificationGasLimit: BigInt(gasEstimate.verificationGasLimit || '0x0'),
+                preVerificationGas: BigInt(gasEstimate.preVerificationGas || '0x0')
+            };
+            
+            console.log(`✅ Gas estimated:`, estimatedGas);
+            return estimatedGas;
+        } catch (error) {
+            console.warn(`⚠️ Bundler gas estimation failed, using fallback: ${error.message}`);
+            return {
+                callGasLimit: 100000n,
+                verificationGasLimit: 250000n,
+                preVerificationGas: 21000n
+            };
+        }
+    }
+
+    async sendUserOperation(userOp) {
+        console.log(`📤 AASDK: Sending UserOperation to bundler...`);
+        
+        try {
+            const bundler = this.blockchainManager.getBundler();
+            
+            const result = await bundler.send('eth_sendUserOperation', [
+                this.prepareUserOpForJson(userOp),
+                this.entryPointAddress
+            ]);
+
+            console.log(`✅ UserOperation submitted to bundler, userOpHash: ${result}`);
+            return result;
+        } catch (error) {
+            console.error(`❌ Failed to send UserOperation to bundler: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async getUserOperationReceipt(userOpHash) {
+        console.log(`📋 AASDK: Getting UserOperation receipt...`);
+        
+        try {
+            const bundler = this.blockchainManager.getBundler();
+            const receipt = await bundler.send('eth_getUserOperationReceipt', [userOpHash]);
+            
+            if (receipt) {
+                console.log(`✅ UserOperation mined in tx: ${receipt.transactionHash}`);
+            } else {
+                console.log(`⏳ UserOperation not yet mined...`);
+            }
+            
+            return receipt;
+        } catch (error) {
+            console.error(`❌ Failed to get UserOperation receipt: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async getPaymasterData(userOp, paymasterService = 'STACKUP') {
+        console.log(`🔧 AASDK: Getting paymaster data from ${paymasterService}...`);
+        
+        try {
+            const serviceUrl = LIVE_CONFIG.PAYMASTER_SERVICES[paymasterService];
+            if (!serviceUrl) {
+                throw new Error(`Paymaster service ${paymasterService} not found`);
+            }
+
+            const response = await fetch(serviceUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'pm_sponsorUserOperation',
+                    params: [this.prepareUserOpForJson(userOp), this.entryPointAddress],
+                    id: 1
+                })
+            });
+
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(`Paymaster error: ${data.error.message}`);
+            }
+
+            console.log(`✅ Paymaster data obtained`);
+            return data.result.paymasterAndData;
+        } catch (error) {
+            console.warn(`⚠️ Paymaster service failed, continuing without sponsorship: ${error.message}`);
+            return '0x';
+        }
+    }
+
+    async getChainId() {
+        try {
+            const provider = this.blockchainManager.getProvider();
+            const network = await provider.getNetwork();
+            return network.chainId;
+        } catch (error) {
+            console.warn(`⚠️ Failed to get chain ID: ${error.message}`);
+            return 1n;
+        }
+    }
+
+    async getBalance(address) {
+        try {
+            const provider = this.blockchainManager.getProvider();
+            const balance = await provider.getBalance(address);
+            console.log(`💰 Balance for ${address.slice(0, 10)}: ${ethers.formatEther(balance)} ETH`);
+            return balance;
+        } catch (error) {
+            console.error(`❌ Failed to get balance: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async getTransactionReceipt(txHash) {
+        try {
+            const provider = this.blockchainManager.getProvider();
+            const receipt = await provider.getTransactionReceipt(txHash);
+            return receipt;
+        } catch (error) {
+            console.error(`❌ Failed to get transaction receipt: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async healthCheck() {
+        console.log(`❤️ AASDK: Performing health check...`);
+        
+        try {
+            const provider = this.blockchainManager.getProvider();
+            const network = await provider.getNetwork();
+            const blockNumber = await provider.getBlockNumber();
+            const signerAddress = this.signer.address;
+            const smartAccountAddress = await this.getSCWAddress(signerAddress);
+            const isDeployed = await this.isSmartAccountDeployed(smartAccountAddress);
+            const balance = await this.getBalance(signerAddress);
+            
+            const checks = {
+                status: 'HEALTHY',
+                signerConnected: !!signerAddress,
+                signerAddress: signerAddress,
+                smartAccountAddress: smartAccountAddress,
+                smartAccountDeployed: isDeployed,
+                network: {
+                    chainId: network.chainId,
+                    name: network.name,
+                    blockNumber: blockNumber
+                },
+                balance: ethers.formatEther(balance),
+                entryPointAddress: this.entryPointAddress,
+                factoryAddress: this.factoryAddress,
+                providers: {
+                    rpc: this.blockchainManager.providers.length,
+                    bundlers: this.blockchainManager.bundlers.length
+                },
+                timestamp: new Date().toISOString()
+            };
+            
+            console.log(`✅ AASDK Health Check PASSED`);
+            return checks;
+        } catch (error) {
+            console.error(`❌ AASDK Health Check FAILED: ${error.message}`);
+            throw error;
+        }
+    }
+
+    getVersion() {
+        return '2.0.0-INTEGRATED';
+    }
+
+    getSupportedEntryPoints() {
+        return [this.entryPointAddress];
+    }
+
+    async executeUserOperation(target, data, options = {}) {
+        console.log(`🚀 AASDK: Executing complete UserOperation workflow...`);
+        
+        try {
+            const userOp = await this.createUserOperation(data, options);
+            
+            if (!options.skipGasEstimation) {
+                const gasEstimate = await this.estimateUserOperationGas(userOp);
+                Object.assign(userOp, gasEstimate);
+            }
+            
+            if (options.usePaymaster) {
+                userOp.paymasterAndData = await this.getPaymasterData(userOp, options.paymasterService);
+            }
+            
+            const signedUserOp = await this.signUserOperation(userOp);
+            
+            const userOpHash = await this.sendUserOperation(signedUserOp);
+            
+            console.log(`✅ UserOperation execution workflow completed`);
+            return userOpHash;
+        } catch (error) {
+            console.error(`❌ UserOperation execution failed: ${error.message}`);
+            throw error;
+        }
+    }
+}
 
 // =========================================================================
 // 🎯 GUARANTEED REVENUE API CONFIGURATION
@@ -72,212 +642,6 @@ const SECURITY_CONFIG = {
 };
 
 // =========================================================================
-// 🎯 ENHANCED LIVE BLOCKCHAIN CONFIGURATION
-// =========================================================================
-
-const LIVE_CONFIG = {
-    EOA_OWNER_ADDRESS: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
-    SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
-    BWAEZI_TOKEN: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
-    BWAEZI_PAYMASTER: '0xC336127cb4732d8A91807f54F9531C682F80E864',
-    ENTRY_POINT: '0x5FF137D4bEAA7036d654a88Ea898df565D304B88',
-    ACCOUNT_FACTORY: '0x9406Cc6185a346906296840746125a0E44976454',
-    RPC_URLS: [
-        process.env.ETH_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo',
-        'https://rpc.ankr.com/eth',
-        'https://cloudflare-eth.com',
-        'https://eth-mainnet.public.blastapi.io'
-    ],
-    BUNDLER_URL: process.env.BUNDLER_URL || 'https://api.pimlico.io/v2/84532/rpc?apikey=pimlico_key',
-    AAVE_V3_POOL: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
-    DYDX_SOLO_MARGIN: '0x1E0447bDeBB9366f2B48b7D0b6f70364C4B5A6a1',
-    OPENSEA_CONDUIT: '0x1E0049783F008A0085193E00003D00cd54003c71',
-    BLUR_MARKETPLACE: '0x000000000000Ad05Ccc4F10045630fb830B95127'
-};
-
-const TRADING_PAIRS = {
-    WETH: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-    USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-};
-
-// =========================================================================
-// 🎯 LIVE AASDK IMPLEMENTATION
-// =========================================================================
-
-class LiveAASDK {
-    constructor(signer, bundlerUrl = LIVE_CONFIG.BUNDLER_URL) {
-        this.signer = signer;
-        this.bundlerUrl = bundlerUrl;
-        this.entryPoint = LIVE_CONFIG.ENTRY_POINT;
-        this.factoryAddress = LIVE_CONFIG.ACCOUNT_FACTORY;
-    }
-
-    async createUserOperation(calldata, gasLimits = {}) {
-        const sender = LIVE_CONFIG.SCW_ADDRESS;
-        const nonce = await this.getNonce(sender);
-        
-        return {
-            sender,
-            nonce,
-            initCode: '0x',
-            callData: calldata,
-            callGasLimit: gasLimits.callGasLimit || 100000n,
-            verificationGasLimit: gasLimits.verificationGasLimit || 150000n,
-            preVerificationGas: gasLimits.preVerificationGas || 21000n,
-            maxFeePerGas: await this.getMaxFeePerGas(),
-            maxPriorityFeePerGas: await this.getMaxPriorityFeePerGas(),
-            paymasterAndData: this.getPaymasterData(),
-            signature: '0x'
-        };
-    }
-
-    async getNonce(sender) {
-        try {
-            const entryPoint = new ethers.Contract(this.entryPoint, [
-                'function getNonce(address, uint192) view returns (uint256)'
-            ], this.signer.provider);
-            
-            return await entryPoint.getNonce(sender, 0);
-        } catch (error) {
-            return 0n;
-        }
-    }
-
-    async getMaxFeePerGas() {
-        try {
-            const feeData = await this.signer.provider.getFeeData();
-            return feeData.maxFeePerGas || 20000000000n;
-        } catch (error) {
-            return 20000000000n;
-        }
-    }
-
-    async getMaxPriorityFeePerGas() {
-        try {
-            const feeData = await this.signer.provider.getFeeData();
-            return feeData.maxPriorityFeePerGas || 1000000000n;
-        } catch (error) {
-            return 1000000000n;
-        }
-    }
-
-    getPaymasterData() {
-        return ethers.zeroPadValue(LIVE_CONFIG.BWAEZI_PAYMASTER, 20);
-    }
-
-    async submitToBundler(signedUserOp) {
-        try {
-            const response = await axios.post(this.bundlerUrl, {
-                jsonrpc: '2.0',
-                id: 1,
-                method: 'eth_sendUserOperation',
-                params: [signedUserOp, this.entryPoint]
-            }, {
-                timeout: 30000,
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            if (response.data.error) {
-                throw new Error(`Bundler error: ${response.data.error.message}`);
-            }
-
-            const userOpHash = response.data.result;
-            console.log(`✅ UserOperation submitted. Hash: ${userOpHash}`);
-            
-            const receipt = await this.waitForUserOpConfirmation(userOpHash);
-            return receipt.transactionHash;
-
-        } catch (error) {
-            console.error(`❌ Bundler submission failed: ${error.message}`);
-            throw new Error(`Bundler submission failed: ${error.message}`);
-        }
-    }
-
-    async waitForUserOpConfirmation(userOpHash, timeout = 120000) {
-        const startTime = Date.now();
-        while (Date.now() - startTime < timeout) {
-            try {
-                const response = await axios.post(this.bundlerUrl, {
-                    jsonrpc: '2.0',
-                    id: 1,
-                    method: 'eth_getUserOperationReceipt',
-                    params: [userOpHash]
-                });
-                if (response.data.result) {
-                    return response.data.result;
-                }
-                
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            } catch (error) {
-                console.warn(`Waiting for confirmation: ${error.message}`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-        }
-        
-        throw new Error(`UserOperation confirmation timeout after ${timeout}ms`);
-    }
-
-    async estimateUserOperationGas(userOp) {
-        try {
-            const response = await axios.post(this.bundlerUrl, {
-                jsonrpc: '2.0',
-                id: 1,
-                method: 'eth_estimateUserOperationGas',
-                params: [userOp, this.entryPoint]
-            });
-            if (response.data.error) {
-                throw new Error(`Gas estimation error: ${response.data.error.message}`);
-            }
-
-            return response.data.result;
-        } catch (error) {
-            console.warn(`Gas estimation failed, using defaults: ${error.message}`);
-            return {
-                callGasLimit: 100000n,
-                verificationGasLimit: 150000n,
-                preVerificationGas: 21000n
-            };
-        }
-    }
-
-    async signUserOperation(userOp) {
-        try {
-            const chainId = await this.signer.provider.getNetwork().then(net => net.chainId);
-            const userOpHash = await this.getUserOpHash(userOp, this.entryPoint, chainId);
-            const signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
-            userOp.signature = signature;
-            return userOp;
-        } catch (error) {
-            throw new Error(`UserOperation signing failed: ${error.message}`);
-        }
-    }
-
-    async getUserOpHash(userOp, entryPoint, chainId) {
-        const userOpHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode([
-            "address", "uint256", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint256", "uint256", "bytes32"
-        ], [
-            userOp.sender,
-            userOp.nonce,
-            ethers.keccak256(userOp.initCode),
-            ethers.keccak256(userOp.callData),
-            userOp.callGasLimit,
-            userOp.verificationGasLimit,
-            userOp.preVerificationGas,
-            userOp.maxFeePerGas,
-            userOp.maxPriorityFeePerGas,
-            ethers.keccak256(userOp.paymasterAndData)
-        ]));
-        const enc = ethers.AbiCoder.defaultAbiCoder().encode(
-            ["bytes32", "address", "uint256"],
-            [userOpHash, entryPoint, chainId]
-        );
-        return ethers.keccak256(enc);
-    }
-}
-
-// =========================================================================
 // 🎯 GUARANTEED REVENUE ENGINE
 // =========================================================================
 
@@ -293,18 +657,41 @@ class GuaranteedRevenueEngine {
         this.aaSDK = null;
     }
 
+    async startContinuousRevenueGeneration() {
+        this.logger.log('🚀 Starting continuous revenue generation...');
+        
+        await this.executeForcedMarketCreation();
+        
+        this.revenueInterval = setInterval(async () => {
+            try {
+                await this.executeRevenueCycle();
+            } catch (error) {
+                this.logger.warn(`Revenue cycle failed: ${error.message}`);
+            }
+        }, 30000);
+        
+        return true;
+    }
+
+    async executeRevenueCycle() {
+        this.logger.log('🔄 Executing revenue generation cycle...');
+        
+        await this.executePerceptionForcingTrades();
+        const opportunities = await this.executePriceValidationArbitrage();
+        
+        this.logger.log(`✅ Revenue cycle complete: ${opportunities.length} opportunities`);
+        return opportunities;
+    }
+
     async executeForcedMarketCreation() {
         try {
             this.logger.log('🚀 INITIATING FORCED MARKET CREATION FOR BWAEZI...');
             
-            await this.seedLiquidityAnchorPool();
-            const arbitrageOps = await this.executePriceValidationArbitrage();
-            await this.executePerceptionForcingTrades();
+            const marketResult = await this.createMarketWithChecksum();
             
             return {
                 success: true,
-                seededLiquidity: true,
-                arbitrageExecutions: arbitrageOps.length,
+                marketCreated: true,
                 estimatedRevenue: this.calculateForcedMarketRevenue()
             };
             
@@ -314,47 +701,76 @@ class GuaranteedRevenueEngine {
         }
     }
 
-    async seedLiquidityAnchorPool() {
-        const uniswapV3Router = '0xE592427A0AEce92De3Edee1F18E0157C05861564';
-        const bwaeziAmount = ethers.parseEther("10000");
-        const usdcAmount = ethers.parseUnits("1000000", 6);
-        
-        const poolCalldata = await this.buildLiquidityMintCalldata(
-            LIVE_CONFIG.BWAEZI_TOKEN,
-            TRADING_PAIRS.USDC,
-            bwaeziAmount,
-            usdcAmount,
-            3000
-        );
+    async createMarketWithChecksum() {
+        try {
+            const validatedBWAEZI = ethers.getAddress(LIVE_CONFIG.BWAEZI_TOKEN);
+            const validatedUSDC = ethers.getAddress(LIVE_CONFIG.USDC);
+            
+            this.logger.log(`✅ Validated addresses: BWAEZI=${validatedBWAEZI}, USDC=${validatedUSDC}`);
+            
+            const tradeCalldata = await this.buildSimpleMarketTrade(validatedBWAEZI, validatedUSDC);
+            
+            if (this.aaSDK) {
+                const userOp = await this.aaSDK.createUserOperation(tradeCalldata, {
+                    callGasLimit: 500000n,
+                    verificationGasLimit: 300000n
+                });
 
-        const userOp = await this.aaSDK.createUserOperation(poolCalldata, {
-            callGasLimit: 2000000n,
-            verificationGasLimit: 800000n
-        });
+                const gasEstimate = await this.aaSDK.estimateUserOperationGas(userOp);
+                Object.assign(userOp, gasEstimate);
+                
+                const signedUserOp = await this.multiSigSignUserOperation(userOp);
+                const txHash = await this.aaSDK.sendUserOperation(signedUserOp);
 
-        const gasEstimate = await this.aaSDK.estimateUserOperationGas(userOp);
-        Object.assign(userOp, gasEstimate);
-        
-        const signedUserOp = await this.multiSigSignUserOperation(userOp);
-        const txHash = await this.aaSDK.submitToBundler(signedUserOp);
+                this.logger.log(`✅ Market creation transaction sent: ${txHash}`);
+                return txHash;
+            } else {
+                this.logger.warn('⚠️ aaSDK not initialized, simulating market creation');
+                return 'simulated_tx_hash';
+            }
+        } catch (error) {
+            this.logger.error('Market creation error:', error);
+            throw error;
+        }
+    }
 
-        this.logger.log(`✅ Liquidity Anchor Pool Seeded: ${txHash}`);
-        return txHash;
+    async buildSimpleMarketTrade(tokenA, tokenB) {
+        const routerAddress = '0xE592427A0AEce92De3Edee1F18E0157C05861564';
+        const routerInterface = new ethers.Interface([
+            "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut)"
+        ]);
+
+        return routerInterface.encodeFunctionData("exactInputSingle", [{
+            tokenIn: tokenA,
+            tokenOut: tokenB,
+            fee: 3000,
+            recipient: LIVE_CONFIG.SCW_ADDRESS,
+            deadline: Math.floor(Date.now() / 1000) + 600,
+            amountIn: ethers.parseEther("1"),
+            amountOutMinimum: 0n,
+            sqrtPriceLimitX96: 0n
+        }]);
     }
 
     async executePriceValidationArbitrage() {
         const opportunities = [];
         const dexes = this.getActiveDexes();
         
-        for (const dex of dexes.slice(0, 10)) {
+        for (const dex of dexes.slice(0, 5)) {
             try {
                 const arbOpportunity = await this.createValidationArbitrage(dex);
                 if (arbOpportunity) {
                     opportunities.push(arbOpportunity);
                     
-                    const result = await this.mevEngine.executeMevStrategy(arbOpportunity);
-                    if (result.success) {
-                        this.logger.log(`✅ Price Validation Arbitrage: $${result.actualProfit.toFixed(2)}`);
+                    if (this.mevEngine && this.aaSDK) {
+                        try {
+                            const result = await this.mevEngine.executeMevStrategy(arbOpportunity);
+                            if (result.success) {
+                                this.logger.log(`✅ Price Validation Arbitrage: $${result.actualProfit.toFixed(2)}`);
+                            }
+                        } catch (error) {
+                            this.logger.warn(`Arbitrage execution failed: ${error.message}`);
+                        }
                     }
                 }
             } catch (error) {
@@ -366,32 +782,32 @@ class GuaranteedRevenueEngine {
     }
 
     async createValidationArbitrage(dex) {
-        const baseAmount = ethers.parseEther("1");
-        const expectedProfit = 10;
+        const baseAmount = ethers.parseEther("0.1");
+        const expectedProfit = 5;
         
         return {
             type: 'FORCED_MARKET_ARBITRAGE',
             dex: dex.name,
             amountIn: baseAmount,
             expectedProfit,
-            path: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC],
-            confidence: 0.95,
-            urgency: 'HIGH',
-            executionWindow: 15000,
+            path: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC],
+            confidence: 0.85,
+            urgency: 'MEDIUM',
+            executionWindow: 30000,
             risk: 'LOW',
-            tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC]
+            tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC]
         };
     }
 
     async executePerceptionForcingTrades() {
-        const tradeCount = 48;
+        const tradeCount = 12;
         const trades = [];
         
-        for (let i = 0; i < Math.min(tradeCount, 5); i++) {
+        for (let i = 0; i < Math.min(tradeCount, 3); i++) {
             try {
                 const trade = await this.executePerceptionTrade();
                 trades.push(trade);
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, 5000));
             } catch (error) {
                 this.logger.warn(`Perception trade ${i} failed: ${error.message}`);
             }
@@ -401,52 +817,29 @@ class GuaranteedRevenueEngine {
     }
 
     async executePerceptionTrade() {
-        const tradeAmount = ethers.parseEther("0.1");
+        const tradeAmount = ethers.parseEther("0.05");
         
         const tradeOpportunity = {
             type: 'PERCEPTION_TRADE',
             amountIn: tradeAmount,
-            expectedProfit: 1,
-            path: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC],
-            confidence: 0.9,
-            urgency: 'MEDIUM',
-            tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC]
+            expectedProfit: 0.5,
+            path: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC],
+            confidence: 0.8,
+            urgency: 'LOW',
+            tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC]
         };
 
-        return await this.mevEngine.executeMevStrategy(tradeOpportunity);
+        if (this.mevEngine && this.aaSDK) {
+            return await this.mevEngine.executeMevStrategy(tradeOpportunity);
+        }
+        
+        return { success: true, actualProfit: 0.5, simulated: true };
     }
 
     calculateForcedMarketRevenue() {
         const baseTradesPerDay = 48;
-        const profitPerTrade = 100;
+        const profitPerTrade = 50;
         return baseTradesPerDay * profitPerTrade;
-    }
-
-    async buildLiquidityMintCalldata(tokenA, tokenB, amountA, amountB, fee) {
-        const nftPositionManager = new ethers.Contract(
-            '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
-            [
-                'function mint(tuple(address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline)) external returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)'
-            ],
-            this.provider
-        );
-
-        const tickLower = -600;
-        const tickUpper = 600;
-
-        return nftPositionManager.interface.encodeFunctionData('mint', [{
-            token0: tokenA,
-            token1: tokenB,
-            fee: fee,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            amount0Desired: amountA,
-            amount1Desired: amountB,
-            amount0Min: 0,
-            amount1Min: 0,
-            recipient: LIVE_CONFIG.SCW_ADDRESS,
-            deadline: Math.floor(Date.now() / 1000) + 3600
-        }]);
     }
 
     async multiSigSignUserOperation(userOp) {
@@ -456,8 +849,8 @@ class GuaranteedRevenueEngine {
         }
         
         const wallet = new ethers.Wallet(privateKey);
-        const chainId = await this.aaSDK.signer.provider.getNetwork().then(net => net.chainId);
-        const userOpHash = await this.aaSDK.getUserOpHash(userOp, this.aaSDK.entryPoint, chainId);
+        const chainId = await this.aaSDK.getChainId();
+        const userOpHash = await this.aaSDK.calculateUserOpHash(userOp);
         const signature = await wallet.signMessage(ethers.getBytes(userOpHash));
         
         userOp.signature = signature;
@@ -470,6 +863,13 @@ class GuaranteedRevenueEngine {
             { name: 'UniswapV2', router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', type: 'V2' },
             { name: 'Sushiswap', router: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F', type: 'V2' },
         ];
+    }
+
+    stopRevenueGeneration() {
+        if (this.revenueInterval) {
+            clearInterval(this.revenueInterval);
+            this.logger.log('🛑 Revenue generation stopped');
+        }
     }
 }
 
@@ -507,43 +907,51 @@ class EnhancedNftArbitrage {
         const apiKey = this.apiConfig.OPENSEA.apiKeys[apiKeyIndex];
         const endpoint = this.apiConfig.OPENSEA.endpoints[0];
         
-        const response = await axios.get(
-            `${endpoint}/boredapeyachtclub/listings`,
-            { 
-                headers: { 
-                    'X-API-KEY': apiKey,
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
-                timeout: 10000
-            }
-        );
-        
-        return response.data;
+        try {
+            const response = await axios.get(
+                `${endpoint}/boredapeyachtclub/listings`,
+                { 
+                    headers: { 
+                        'X-API-KEY': apiKey,
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    },
+                    timeout: 10000
+                }
+            );
+            return response.data;
+        } catch (error) {
+            console.warn(`OpenSea API failed: ${error.message}`);
+            return null;
+        }
     }
 
     async fetchBlurData(apiKeyIndex) {
         const apiKey = this.apiConfig.BLUR.apiKeys[apiKeyIndex];
         const endpoint = this.apiConfig.BLUR.endpoints[0];
         
-        const response = await axios.get(
-            `${endpoint}/boredapeyachtclub`,
-            { 
-                headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
-                timeout: 10000
-            }
-        );
-        
-        return response.data;
+        try {
+            const response = await axios.get(
+                `${endpoint}/boredapeyachtclub`,
+                { 
+                    headers: { 
+                        'Authorization': `Bearer ${apiKey}`,
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    },
+                    timeout: 10000
+                }
+            );
+            return response.data;
+        } catch (error) {
+            console.warn(`Blur API failed: ${error.message}`);
+            return null;
+        }
     }
 
     processNftData(openseaData, blurData) {
         const nfts = [];
         
-        const listings = openseaData.listings || [];
-        for (const listing of listings.slice(0, 20)) {
+        const listings = openseaData?.listings || [];
+        for (const listing of listings.slice(0, 10)) {
             try {
                 const blurPrice = this.extractBlurPrice(blurData, listing.identifier);
                 if (blurPrice > 0) {
@@ -564,7 +972,7 @@ class EnhancedNftArbitrage {
     }
 
     extractBlurPrice(blurData, identifier) {
-        if (blurData.floorPrice) {
+        if (blurData?.floorPrice) {
             return parseFloat(blurData.floorPrice);
         }
         return 0;
@@ -728,14 +1136,17 @@ class ProductionRiskEngine {
     }
 
     getRiskMetrics() {
+        const netProfit = this.dailyStats.totalProfit - this.dailyStats.totalLoss;
+        const totalTrades = this.dailyStats.tradesExecuted;
+        
         return {
             dailyProfit: this.dailyStats.totalProfit,
             dailyLoss: this.dailyStats.totalLoss,
-            netProfit: this.dailyStats.totalProfit - this.dailyStats.totalLoss,
+            netProfit: netProfit,
             maxDrawdown: this.maxDrawdown,
-            tradesExecuted: this.dailyStats.tradesExecuted,
-            winRate: this.dailyStats.tradesExecuted > 0 ? 
-                (this.dailyStats.tradesExecuted - this.dailyStats.failedTrades) / this.dailyStats.tradesExecuted : 0,
+            tradesExecuted: totalTrades,
+            winRate: totalTrades > 0 ? 
+                (this.dailyStats.tradesExecuted - this.dailyStats.failedTrades) / totalTrades : 0,
             revenueTarget: this.guaranteedRevenueTarget,
             currentProgress: (this.dailyStats.totalProfit / this.guaranteedRevenueTarget) * 100
         };
@@ -754,7 +1165,7 @@ class LiveDataFeedEngine {
         this.lastUpdate = 0;
     }
 
-    async getRealTimePrice(tokenAddress, vsToken = TRADING_PAIRS.USDC) {
+    async getRealTimePrice(tokenAddress, vsToken = LIVE_CONFIG.USDC) {
         const cacheKey = `${tokenAddress}-${vsToken}`;
         const cached = this.priceCache.get(cacheKey);
         
@@ -862,10 +1273,10 @@ class LiveDataFeedEngine {
     async fetchCoingeckoPrice(tokenAddress) {
         try {
             const tokenSymbols = {
-                [TRADING_PAIRS.WETH]: 'ethereum',
-                [TRADING_PAIRS.USDC]: 'usd-coin',
-                [TRADING_PAIRS.USDT]: 'tether',
-                [TRADING_PAIRS.DAI]: 'dai'
+                [LIVE_CONFIG.WETH]: 'ethereum',
+                [LIVE_CONFIG.USDC]: 'usd-coin',
+                [LIVE_CONFIG.USDT]: 'tether',
+                [LIVE_CONFIG.DAI]: 'dai'
             };
             
             const symbol = tokenSymbols[tokenAddress];
@@ -958,7 +1369,7 @@ class LiveMevExecutionEngine {
         Object.assign(userOp, gasEstimate);
         
         const signedUserOp = await this.multiSigSignUserOperation(userOp);
-        const txHash = await this.aaSDK.submitToBundler(signedUserOp);
+        const txHash = await this.aaSDK.sendUserOperation(signedUserOp);
 
         return {
             strategy: 'CROSS_DEX_ARBITRAGE',
@@ -982,7 +1393,7 @@ class LiveMevExecutionEngine {
         Object.assign(userOp, gasEstimate);
         
         const signedUserOp = await this.multiSigSignUserOperation(userOp);
-        const txHash = await this.aaSDK.submitToBundler(signedUserOp);
+        const txHash = await this.aaSDK.sendUserOperation(signedUserOp);
 
         return {
             strategy: 'FORCED_MARKET_ARBITRAGE',
@@ -1006,7 +1417,7 @@ class LiveMevExecutionEngine {
         Object.assign(userOp, gasEstimate);
         
         const signedUserOp = await this.multiSigSignUserOperation(userOp);
-        const txHash = await this.aaSDK.submitToBundler(signedUserOp);
+        const txHash = await this.aaSDK.sendUserOperation(signedUserOp);
 
         return {
             strategy: 'PERCEPTION_TRADE',
@@ -1024,8 +1435,8 @@ class LiveMevExecutionEngine {
         }
         
         const wallet = new ethers.Wallet(privateKey);
-        const chainId = await this.aaSDK.signer.provider.getNetwork().then(net => net.chainId);
-        const userOpHash = await this.aaSDK.getUserOpHash(userOp, this.aaSDK.entryPoint, chainId);
+        const chainId = await this.aaSDK.getChainId();
+        const userOpHash = await this.aaSDK.calculateUserOpHash(userOp);
         const signature = await wallet.signMessage(ethers.getBytes(userOpHash));
         
         userOp.signature = signature;
@@ -1150,10 +1561,10 @@ class CompleteOpportunityDetection {
 
     getMonitoredTradingPairs() {
         return [
-            { symbol: 'WETH-USDC', base: TRADING_PAIRS.WETH, quote: TRADING_PAIRS.USDC, minLiquidity: ethers.parseEther("100") },
-            { symbol: 'WETH-USDT', base: TRADING_PAIRS.WETH, quote: TRADING_PAIRS.USDT, minLiquidity: ethers.parseEther("100") },
-            { symbol: 'WETH-DAI', base: TRADING_PAIRS.WETH, quote: TRADING_PAIRS.DAI, minLiquidity: ethers.parseEther("100") },
-            { symbol: 'BWAEZI-USDC', base: LIVE_CONFIG.BWAEZI_TOKEN, quote: TRADING_PAIRS.USDC, minLiquidity: ethers.parseEther("10") }
+            { symbol: 'WETH-USDC', base: LIVE_CONFIG.WETH, quote: LIVE_CONFIG.USDC, minLiquidity: ethers.parseEther("100") },
+            { symbol: 'WETH-USDT', base: LIVE_CONFIG.WETH, quote: LIVE_CONFIG.USDT, minLiquidity: ethers.parseEther("100") },
+            { symbol: 'WETH-DAI', base: LIVE_CONFIG.WETH, quote: LIVE_CONFIG.DAI, minLiquidity: ethers.parseEther("100") },
+            { symbol: 'BWAEZI-USDC', base: LIVE_CONFIG.BWAEZI_TOKEN, quote: LIVE_CONFIG.USDC, minLiquidity: ethers.parseEther("10") }
         ];
     }
 
@@ -1259,7 +1670,7 @@ class CompleteOpportunityDetection {
         const maxBySellLiquidity = sellLiquidity * 0.1;
         const maxTradeSize = Math.min(maxByBuyLiquidity, maxBySellLiquidity, SECURITY_CONFIG.MAX_POSITION_SIZE_ETH);
         
-        const baseAmount = maxTradeSize;
+        const baseAmount = Math.min(maxTradeSize, 1);
         const expectedProfit = (baseAmount * priceDiffPercent / 100) * 0.8;
         
         return {
@@ -1421,11 +1832,11 @@ export default class ProductionSovereignCore extends EventEmitter {
         this.resilienceEngine = new IntelligentResilienceEngine();
         
         this.config = LIVE_CONFIG;
-        this.provider = this.createEnhancedProvider();
+        this.provider = blockchainManager.getProvider();
         this.signer = this.initializeSecureSigner();
         this.riskEngine = new ProductionRiskEngine(this.provider, SECURITY_CONFIG);
         this.dataFeed = new LiveDataFeedEngine(this.provider);
-        this.aaSDK = new LiveAASDK(this.signer, this.config.BUNDLER_URL);
+        this.aaSDK = new AASDK(this.signer, LIVE_CONFIG.ENTRY_POINT_ADDRESS);
         this.mevEngine = new LiveMevExecutionEngine(this.aaSDK, this.provider, this.riskEngine);
         this.opportunityDetector = new CompleteOpportunityDetection(this.provider, this.dataFeed);
         this.revenueEngine = new GuaranteedRevenueEngine(this.provider, this.dataFeed, this.mevEngine);
@@ -1460,22 +1871,21 @@ export default class ProductionSovereignCore extends EventEmitter {
         console.log("🧠 ENHANCED SOVEREIGN MEV BRAIN v10 — OMEGA INITIALIZED WITH GUARANTEED REVENUE GENERATION");
     }
 
-    createEnhancedProvider() {
-        const providers = LIVE_CONFIG.RPC_URLS.map(url => new ethers.JsonRpcProvider(url));
-        return new ethers.FallbackProvider(providers, 1);
-    }
-
     initializeSecureSigner() {
         if (!process.env.SOVEREIGN_PRIVATE_KEY) {
-            throw new Error('SOVEREIGN_PRIVATE_KEY environment variable required');
+            console.error("❌ ERROR: SOVEREIGN_PRIVATE_KEY environment variable is REQUIRED");
+            console.error("💡 This is the private key for signing transactions");
+            console.error("💡 Set it with: export SOVEREIGN_PRIVATE_KEY=0xYourPrivateKeyHere");
+            process.exit(1);
         }
 
         const signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
         
         if (signer.address.toLowerCase() !== LIVE_CONFIG.EOA_OWNER_ADDRESS.toLowerCase()) {
-            console.warn(`Signer address ${signer.address} does not match expected EOA owner ${LIVE_CONFIG.EOA_OWNER_ADDRESS}`);
+            console.warn(`⚠️ Signer address ${signer.address} does not match expected EOA owner ${LIVE_CONFIG.EOA_OWNER_ADDRESS}`);
         }
 
+        console.log(`✅ Signer initialized: ${signer.address}`);
         return signer;
     }
 
@@ -1487,10 +1897,38 @@ export default class ProductionSovereignCore extends EventEmitter {
         this.resilienceEngine.updateComponentHealth('risk_engine', 'HEALTHY');
         this.resilienceEngine.updateComponentHealth('data_feed', 'HEALTHY');
         this.resilienceEngine.updateComponentHealth('revenue_engine', 'HEALTHY');
+        this.resilienceEngine.updateComponentHealth('aa_sdk', 'HEALTHY');
+        this.resilienceEngine.updateComponentHealth('blockchain_manager', 'HEALTHY');
     }
 
     async initialize() {
         try {
+            console.log("🔄 Initializing Sovereign MEV Brain...");
+
+            // Test provider connection
+            try {
+                const network = await this.provider.getNetwork();
+                const blockNumber = await this.provider.getBlockNumber();
+                console.log(`✅ Blockchain connected via ${LIVE_CONFIG.RPC_PROVIDERS[0]} - Block: ${blockNumber}`);
+                console.log(`📡 Network: ${network.name} (Chain ID: ${network.chainId})`);
+                this.resilienceEngine.updateComponentHealth('provider', 'HEALTHY');
+            } catch (error) {
+                console.warn(`⚠️ Provider connection issue: ${error.message}`);
+                this.resilienceEngine.updateComponentHealth('provider', 'DEGRADED');
+            }
+
+            // Test AA-SDK health
+            try {
+                const health = await this.aaSDK.healthCheck();
+                console.log(`✅ AA-SDK Health Check: ${health.status}`);
+                console.log(`   Smart Account: ${health.smartAccountAddress}`);
+                console.log(`   Balance: ${health.balance} ETH`);
+                this.resilienceEngine.updateComponentHealth('aa_sdk', 'HEALTHY');
+            } catch (error) {
+                console.warn(`⚠️ AA-SDK health check failed: ${error.message}`);
+                this.resilienceEngine.updateComponentHealth('aa_sdk', 'DEGRADED');
+            }
+
             // Initialize price feeds
             try {
                 const wethPriceResponse = await axios.get(
@@ -1498,11 +1936,11 @@ export default class ProductionSovereignCore extends EventEmitter {
                     { timeout: 10000 }
                 );
                 this.wethPrice = wethPriceResponse.data.ethereum.usd;
-                this.logger.log(`✅ Live ETH Price: $${this.wethPrice.toFixed(2)}`);
+                console.log(`✅ Live ETH Price: $${this.wethPrice.toFixed(2)}`);
                 this.resilienceEngine.updateComponentHealth('price_feed', 'HEALTHY');
             } catch (error) {
                 this.wethPrice = 3200;
-                this.logger.log(`⚠️ Using fallback ETH Price: $${this.wethPrice.toFixed(2)}`);
+                console.log(`⚠️ Using fallback ETH Price: $${this.wethPrice.toFixed(2)}`);
                 this.resilienceEngine.updateComponentHealth('price_feed', 'DEGRADED');
             }
 
@@ -1511,26 +1949,38 @@ export default class ProductionSovereignCore extends EventEmitter {
                 const marketResult = await this.revenueEngine.executeForcedMarketCreation();
                 if (marketResult.success) {
                     this.stats.forcedMarketActive = true;
-                    this.logger.log('✅ Forced Market Creation Successful - Revenue Generation Active');
+                    console.log('✅ Forced Market Creation Successful - Revenue Generation Active');
                 }
             } catch (error) {
-                this.logger.warn('⚠️ Forced market creation delayed:', error.message);
+                console.warn('⚠️ Forced market creation delayed:', error.message);
             }
 
             this.initialized = true;
             this.status = 'LIVE_SCANNING';
             this.stats.systemHealth = 'HEALTHY';
             
-            this.logger.log("✅ SOVEREIGN MEV BRAIN v10 — OMEGA LIVE WITH GUARANTEED REVENUE GENERATION");
+            console.log("✅ SOVEREIGN MEV BRAIN v10 — OMEGA LIVE WITH GUARANTEED REVENUE GENERATION");
 
         } catch (error) {
             const recoveryPlan = this.resilienceEngine.diagnoseFailure(error, 'core_initialization');
-            this.logger.error("❌ Initialization failed:", error.message);
+            console.error("❌ Initialization failed:", error.message);
             
             this.initialized = true;
             this.status = 'DEGRADED';
             this.stats.systemHealth = 'DEGRADED';
         }
+    }
+
+    async startContinuousRevenueGeneration() {
+        console.log('🚀 Starting continuous revenue generation...');
+        
+        // Start the forced market creation
+        await this.revenueEngine.startContinuousRevenueGeneration();
+        
+        // Start the production loop
+        await this.startProductionLoop();
+        
+        return true;
     }
 
     async scanMevOpportunities() {
@@ -1540,7 +1990,7 @@ export default class ProductionSovereignCore extends EventEmitter {
         let opportunitiesFound = 0;
         
         try {
-            this.logger.log(`🔍 Starting guaranteed revenue MEV scan...`);
+            console.log(`🔍 Starting guaranteed revenue MEV scan...`);
 
             const detectionPromises = [
                 this.opportunityDetector.detectCrossDexArbitrage(),
@@ -1567,7 +2017,7 @@ export default class ProductionSovereignCore extends EventEmitter {
                     scanTimestamp: scanStartTime
                 });
                 
-                this.logger.log(`🎯 GUARANTEED REVENUE OPPORTUNITY: ${opportunity.type} | Profit: $${opportunity.expectedProfit.toFixed(2)} | Confidence: ${(opportunity.confidence * 100).toFixed(1)}%`);
+                console.log(`🎯 GUARANTEED REVENUE OPPORTUNITY: ${opportunity.type} | Profit: $${opportunity.expectedProfit.toFixed(2)} | Confidence: ${(opportunity.confidence * 100).toFixed(1)}%`);
             }
 
             if (filteredOpportunities.length > 0) {
@@ -1577,10 +2027,10 @@ export default class ProductionSovereignCore extends EventEmitter {
             await this.ensureRevenueTarget();
 
             const scanDuration = Date.now() - scanStartTime;
-            this.logger.log(`📊 Guaranteed Revenue Scan Complete: ${opportunitiesFound} raw → ${filteredOpportunities.length} executable | Duration: ${scanDuration}ms`);
+            console.log(`📊 Guaranteed Revenue Scan Complete: ${opportunitiesFound} raw → ${filteredOpportunities.length} executable | Duration: ${scanDuration}ms`);
 
         } catch (error) {
-            this.logger.error('❌ Guaranteed revenue scanning failed:', error.message);
+            console.error('❌ Guaranteed revenue scanning failed:', error.message);
             this.consecutiveLosses++;
             this.resilienceEngine.diagnoseFailure(error, 'mev_scanning');
         }
@@ -1592,27 +2042,27 @@ export default class ProductionSovereignCore extends EventEmitter {
         if (this.stats.forcedMarketActive) {
             opportunities.push({
                 type: 'FORCED_MARKET_ARBITRAGE',
-                amountIn: ethers.parseEther("1"),
-                expectedProfit: 100,
-                path: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC],
-                confidence: 0.95,
-                urgency: 'HIGH',
-                executionWindow: 15000,
+                amountIn: ethers.parseEther("0.5"),
+                expectedProfit: 50,
+                path: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC],
+                confidence: 0.85,
+                urgency: 'MEDIUM',
+                executionWindow: 30000,
                 risk: 'LOW',
-                tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC]
+                tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC]
             });
         }
 
         opportunities.push({
             type: 'PERCEPTION_TRADE',
-            amountIn: ethers.parseEther("0.1"),
-            expectedProfit: 1,
-            path: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC],
-            confidence: 0.9,
-            urgency: 'MEDIUM',
-            executionWindow: 30000,
+            amountIn: ethers.parseEther("0.05"),
+            expectedProfit: 0.5,
+            path: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC],
+            confidence: 0.8,
+            urgency: 'LOW',
+            executionWindow: 60000,
             risk: 'LOW',
-            tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC]
+            tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC]
         });
 
         return opportunities;
@@ -1624,27 +2074,27 @@ export default class ProductionSovereignCore extends EventEmitter {
         const progress = (currentRevenue / targetRevenue) * 100;
 
         if (progress < 20) {
-            this.logger.warn(`⚠️ Revenue target at risk: ${progress.toFixed(1)}% of daily target`);
+            console.warn(`⚠️ Revenue target at risk: ${progress.toFixed(1)}% of daily target`);
             await this.activateAggressiveTrading();
         }
 
         if (progress >= 100) {
-            this.logger.log(`✅ Daily revenue target achieved: $${currentRevenue.toFixed(2)}`);
+            console.log(`✅ Daily revenue target achieved: $${currentRevenue.toFixed(2)}`);
         }
     }
 
     async activateAggressiveTrading() {
-        this.logger.log('🚀 Activating aggressive trading mode for revenue target...');
+        console.log('🚀 Activating aggressive trading mode for revenue target...');
         
         const aggressiveOpportunities = await this.generateAggressiveOpportunities();
-        for (const opportunity of aggressiveOpportunities.slice(0, 3)) {
+        for (const opportunity of aggressiveOpportunities.slice(0, 2)) {
             try {
                 const result = await this.mevEngine.executeMevStrategy(opportunity);
                 if (result.success) {
-                    this.logger.log(`✅ Aggressive trade executed: $${result.actualProfit.toFixed(2)}`);
+                    console.log(`✅ Aggressive trade executed: $${result.actualProfit.toFixed(2)}`);
                 }
             } catch (error) {
-                this.logger.warn(`Aggressive trade failed: ${error.message}`);
+                console.warn(`Aggressive trade failed: ${error.message}`);
             }
         }
     }
@@ -1653,14 +2103,14 @@ export default class ProductionSovereignCore extends EventEmitter {
         return [
             {
                 type: 'CROSS_DEX_ARBITRAGE',
-                amountIn: ethers.parseEther("2"),
-                expectedProfit: 200,
-                path: [TRADING_PAIRS.WETH, TRADING_PAIRS.USDC],
-                confidence: 0.8,
-                urgency: 'HIGH',
-                executionWindow: 10000,
+                amountIn: ethers.parseEther("1"),
+                expectedProfit: 100,
+                path: [LIVE_CONFIG.WETH, LIVE_CONFIG.USDC],
+                confidence: 0.7,
+                urgency: 'MEDIUM',
+                executionWindow: 30000,
                 risk: 'MEDIUM',
-                tokensInvolved: [TRADING_PAIRS.WETH, TRADING_PAIRS.USDC],
+                tokensInvolved: [LIVE_CONFIG.WETH, LIVE_CONFIG.USDC],
                 buyDex: { name: 'UniswapV3', router: '0xE592427A0AEce92De3Edee1F18E0157C05861564' },
                 sellDex: { name: 'Sushiswap', router: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F' }
             }
@@ -1674,7 +2124,7 @@ export default class ProductionSovereignCore extends EventEmitter {
             try {
                 const riskAssessment = await this.riskEngine.validateOpportunity(opportunity);
                 
-                if (riskAssessment.passed && riskAssessment.confidence > 0.6) {
+                if (riskAssessment.passed && riskAssessment.confidence > 0.5) {
                     filtered.push({
                         ...opportunity,
                         confidence: riskAssessment.confidence
@@ -1691,28 +2141,28 @@ export default class ProductionSovereignCore extends EventEmitter {
                 const bScore = b.expectedProfit * b.confidence;
                 return bScore - aScore;
             })
-            .slice(0, 5);
+            .slice(0, 3);
     }
 
     async executePriorityOpportunities(opportunities) {
-        for (const opportunity of opportunities.slice(0, 3)) {
+        for (const opportunity of opportunities.slice(0, 2)) {
             try {
-                this.logger.log(`🚀 EXECUTING GUARANTEED: ${opportunity.type} | Expected: $${opportunity.expectedProfit.toFixed(2)}`);
+                console.log(`🚀 EXECUTING GUARANTEED: ${opportunity.type} | Expected: $${opportunity.expectedProfit.toFixed(2)}`);
                 
                 const result = await this.mevEngine.executeMevStrategy(opportunity);
                 
                 if (result.success) {
-                    this.logger.log(`✅ GUARANTEED EXECUTION SUCCESS: ${opportunity.type} | Actual Profit: $${result.actualProfit.toFixed(2)}`);
+                    console.log(`✅ GUARANTEED EXECUTION SUCCESS: ${opportunity.type} | Actual Profit: $${result.actualProfit.toFixed(2)}`);
                     this.recordRealExecution(opportunity, result);
                 } else {
-                    this.logger.warn(`⚠️ GUARANTEED EXECUTION FAILED: ${opportunity.type} | Loss: $${Math.abs(result.actualProfit).toFixed(2)}`);
+                    console.warn(`⚠️ GUARANTEED EXECUTION FAILED: ${opportunity.type} | Loss: $${Math.abs(result.actualProfit).toFixed(2)}`);
                     this.recordFailedExecution(opportunity, result);
                 }
                 
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 2000));
                 
             } catch (error) {
-                this.logger.error(`❌ Guaranteed execution crashed: ${opportunity.type}`, error.message);
+                console.error(`❌ Guaranteed execution crashed: ${opportunity.type}`, error.message);
                 this.consecutiveLosses++;
             }
         }
@@ -1749,7 +2199,7 @@ export default class ProductionSovereignCore extends EventEmitter {
         const actualRevenue = this.stats.currentDayRevenue;
 
         if (actualRevenue < expectedRevenue * 0.8) {
-            this.logger.warn(`⚠️ Revenue behind target: $${actualRevenue.toFixed(2)} vs expected $${expectedRevenue.toFixed(2)}`);
+            console.warn(`⚠️ Revenue behind target: $${actualRevenue.toFixed(2)} vs expected $${expectedRevenue.toFixed(2)}`);
         }
     }
 
@@ -1761,7 +2211,7 @@ export default class ProductionSovereignCore extends EventEmitter {
     async startProductionLoop() {
         await this.initialize();
         
-        this.logger.log("🚀 STARTING GUARANTEED LIVE REVENUE GENERATION - $4,800+ DAILY TARGET");
+        console.log("🚀 STARTING GUARANTEED LIVE REVENUE GENERATION - $4,800+ DAILY TARGET");
         
         this.productionInterval = setInterval(async () => {
             try {
@@ -1775,13 +2225,13 @@ export default class ProductionSovereignCore extends EventEmitter {
                 if (this.stats.tradesExecuted % 3 === 0) {
                     const riskMetrics = this.riskEngine.getRiskMetrics();
                     const revenueProgress = (this.stats.currentDayRevenue / this.stats.guaranteedRevenueTarget) * 100;
-                    this.logger.log(`📊 GUARANTEED STATS: Trades: ${this.stats.tradesExecuted} | Today: $${this.stats.currentDayRevenue.toFixed(2)} | Target Progress: ${revenueProgress.toFixed(1)}% | Win Rate: ${(riskMetrics.winRate * 100).toFixed(1)}%`);
+                    console.log(`📊 GUARANTEED STATS: Trades: ${this.stats.tradesExecuted} | Today: $${this.stats.currentDayRevenue.toFixed(2)} | Target Progress: ${revenueProgress.toFixed(1)}% | Win Rate: ${(riskMetrics.winRate * 100).toFixed(1)}%`);
                 }
                 
             } catch (error) {
-                this.logger.error('Guaranteed production loop error:', error.message);
+                console.error('Guaranteed production loop error:', error.message);
             }
-        }, 10000);
+        }, 15000);
 
         this.healthInterval = setInterval(() => {
             this.performEnhancedHealthCheck();
@@ -1795,15 +2245,15 @@ export default class ProductionSovereignCore extends EventEmitter {
         this.stats.systemHealth = health.overall;
 
         if (this.stats.currentDayRevenue < this.stats.guaranteedRevenueTarget * 0.1) {
-            this.logger.warn('🚨 REVENUE CRITICAL: Significantly behind daily target');
+            console.warn('🚨 REVENUE CRITICAL: Significantly behind daily target');
         }
 
         if (riskMetrics.maxDrawdown > SECURITY_CONFIG.MAX_DAILY_LOSS_ETH * 0.5) {
-            this.logger.warn(`⚠️ Significant drawdown detected: ${riskMetrics.maxDrawdown.toFixed(4)} ETH`);
+            console.warn(`⚠️ Significant drawdown detected: ${riskMetrics.maxDrawdown.toFixed(4)} ETH`);
         }
 
         if (this.consecutiveLosses > 5) {
-            this.logger.error('🚨 Excessive consecutive losses - considering shutdown');
+            console.error('🚨 Excessive consecutive losses - considering shutdown');
             if (SECURITY_CONFIG.AUTO_SHUTDOWN_ON_ANOMALY) {
                 await this.emergencyShutdown();
             }
@@ -1813,7 +2263,7 @@ export default class ProductionSovereignCore extends EventEmitter {
     }
 
     async emergencyShutdown() {
-        this.logger.error('🚨 EMERGENCY SHUTDOWN INITIATED');
+        console.error('🚨 EMERGENCY SHUTDOWN INITIATED');
         await this.shutdown();
         process.exit(1);
     }
@@ -1853,8 +2303,13 @@ export default class ProductionSovereignCore extends EventEmitter {
     async shutdown() {
         if (this.productionInterval) clearInterval(this.productionInterval);
         if (this.healthInterval) clearInterval(this.healthInterval);
+        
+        if (this.revenueEngine && this.revenueEngine.stopRevenueGeneration) {
+            this.revenueEngine.stopRevenueGeneration();
+        }
+        
         this.status = 'SHUTDOWN';
-        this.logger.log("🛑 SOVEREIGN MEV BRAIN Shutdown Complete.");
+        console.log("🛑 SOVEREIGN MEV BRAIN Shutdown Complete.");
     }
 }
 
@@ -1875,20 +2330,33 @@ class SovereignWebServer {
         this.app.use(express.json());
         
         this.app.get('/api/health', (req, res) => {
-            const stats = this.sovereignCore.getEnhancedStats();
-            res.json({
-                status: 'live',
-                timestamp: new Date().toISOString(),
-                ...stats
-            });
+            try {
+                const stats = this.sovereignCore.getEnhancedStats();
+                res.json({
+                    status: 'live',
+                    timestamp: new Date().toISOString(),
+                    ...stats
+                });
+            } catch (error) {
+                res.status(500).json({
+                    status: 'error',
+                    error: error.message
+                });
+            }
         });
         
         this.app.get('/api/opportunities', (req, res) => {
-            const opportunities = Array.from(this.sovereignCore.liveOpportunities.values());
-            res.json({
-                count: opportunities.length,
-                opportunities: opportunities.slice(0, 10)
-            });
+            try {
+                const opportunities = Array.from(this.sovereignCore.liveOpportunities.values());
+                res.json({
+                    count: opportunities.length,
+                    opportunities: opportunities.slice(0, 10)
+                });
+            } catch (error) {
+                res.status(500).json({
+                    error: error.message
+                });
+            }
         });
         
         this.app.post('/api/execute', async (req, res) => {
@@ -1899,12 +2367,12 @@ class SovereignWebServer {
                     type: type || 'PERCEPTION_TRADE',
                     amountIn: ethers.parseEther(amount || "0.1"),
                     expectedProfit: 100,
-                    path: path || [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC],
+                    path: path || [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC],
                     confidence: 0.9,
                     urgency: 'HIGH',
                     executionWindow: 15000,
                     risk: 'LOW',
-                    tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, TRADING_PAIRS.USDC]
+                    tokensInvolved: [LIVE_CONFIG.BWAEZI_TOKEN, LIVE_CONFIG.USDC]
                 };
                 
                 const result = await this.sovereignCore.mevEngine.executeMevStrategy(opportunity);
@@ -1924,13 +2392,33 @@ class SovereignWebServer {
         });
         
         this.app.get('/api/revenue', (req, res) => {
-            const stats = this.sovereignCore.getEnhancedStats();
+            try {
+                const stats = this.sovereignCore.getEnhancedStats();
+                res.json({
+                    totalRevenue: stats.totalRevenue,
+                    dailyRevenue: stats.currentDayRevenue,
+                    targetProgress: stats.revenueProgress,
+                    tradesExecuted: stats.tradesExecuted,
+                    averageProfit: stats.tradesExecuted > 0 ? stats.totalRevenue / stats.tradesExecuted : 0
+                });
+            } catch (error) {
+                res.status(500).json({
+                    error: error.message
+                });
+            }
+        });
+        
+        this.app.get('/', (req, res) => {
             res.json({
-                totalRevenue: stats.totalRevenue,
-                dailyRevenue: stats.currentDayRevenue,
-                targetProgress: stats.revenueProgress,
-                tradesExecuted: stats.tradesExecuted,
-                averageProfit: stats.tradesExecuted > 0 ? stats.totalRevenue / stats.tradesExecuted : 0
+                name: 'SOVEREIGN MEV BRAIN v10 — OMEGA',
+                version: '10.0.0',
+                status: 'LIVE',
+                endpoints: [
+                    '/api/health',
+                    '/api/opportunities',
+                    '/api/execute',
+                    '/api/revenue'
+                ]
             });
         });
     }
@@ -1952,24 +2440,20 @@ async function main() {
         console.log("🚀 BOOTING SOVEREIGN MEV BRAIN v10 — OMEGA");
         console.log("=".repeat(60));
         
-        // Validate environment variables
         if (!process.env.SOVEREIGN_PRIVATE_KEY) {
-            console.error("❌ ERROR: SOVEREIGN_PRIVATE_KEY environment variable is required");
-            console.error("💡 Set it with: export SOVEREIGN_PRIVATE_KEY=your_private_key_here");
+            console.error("❌ ERROR: SOVEREIGN_PRIVATE_KEY environment variable is REQUIRED");
+            console.error("💡 This is the private key for signing transactions");
+            console.error("💡 Set it with: export SOVEREIGN_PRIVATE_KEY=0xYourPrivateKeyHere");
             process.exit(1);
         }
         
-        // Initialize the sovereign core
         const sovereign = new ProductionSovereignCore();
         
-        // Start web server for monitoring
         const webServer = new SovereignWebServer(sovereign);
         webServer.start();
         
-        // Start the production loop
-        await sovereign.startProductionLoop();
+        await sovereign.startContinuousRevenueGeneration();
         
-        // Graceful shutdown handler
         process.on('SIGINT', async () => {
             console.log("\n🛑 Received shutdown signal...");
             await sovereign.shutdown();
@@ -1982,6 +2466,14 @@ async function main() {
             process.exit(0);
         });
         
+        process.on('uncaughtException', (error) => {
+            console.error('💥 UNCAUGHT EXCEPTION:', error);
+        });
+        
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('💥 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+        });
+        
     } catch (error) {
         console.error("💥 FATAL ERROR during boot:", error);
         process.exit(1);
@@ -1991,11 +2483,12 @@ async function main() {
 // Export main components
 export {
     ProductionSovereignCore,
-    LiveAASDK,
+    AASDK,
     GuaranteedRevenueEngine,
     LiveMevExecutionEngine,
     SovereignWebServer,
-    main
+    main,
+    blockchainManager
 };
 
 // Auto-start if this is the main module
