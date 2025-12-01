@@ -1042,6 +1042,6 @@ export {
     SelfFundingEcosystemOrchestrator,
     AutonomousRevenueEngine,
     RevenueVerificationOracle,
-    EcosystemDashboard,
-    launchRevenueEcosystem
+    EcosystemDashboard
+
 };
