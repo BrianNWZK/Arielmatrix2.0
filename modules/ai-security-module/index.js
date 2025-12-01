@@ -121,63 +121,143 @@ export class AISecurityModule {
   }
 
   /**
-   * Create enhanced incident tracking tables
+   * Create enhanced incident tracking tables with SQL syntax fixes
    */
   async createIncidentTables() {
-    // Enhanced security incidents table
-    await this.db.run(`
-      CREATE TABLE IF NOT EXISTS security_incidents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        incident_id TEXT UNIQUE NOT NULL,
-        incident_type TEXT NOT NULL,
-        severity TEXT NOT NULL CHECK(severity IN ('critical', 'high', 'medium', 'low', 'info')),
-        description TEXT NOT NULL,
-        affected_systems TEXT NOT NULL,
-        root_cause TEXT,
-        impact_assessment TEXT,
-        response_taken TEXT NOT NULL,
-        resolved BOOLEAN DEFAULT FALSE,
-        resolution_notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        resolved_at DATETIME,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_severity (severity),
-        INDEX idx_incident_type (incident_type),
-        INDEX idx_created_at (created_at),
-        INDEX idx_resolved (resolved)
-      )
-    `);
+    try {
+      // Enhanced security incidents table - FIXED SQL SYNTAX
+      await this.db.run(`
+        CREATE TABLE IF NOT EXISTS security_incidents (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          incident_id TEXT UNIQUE NOT NULL,
+          incident_type TEXT NOT NULL,
+          severity TEXT NOT NULL CHECK(severity IN ('critical', 'high', 'medium', 'low', 'info')),
+          description TEXT NOT NULL,
+          affected_systems TEXT NOT NULL,
+          root_cause TEXT,
+          impact_assessment TEXT,
+          response_taken TEXT NOT NULL,
+          resolved BOOLEAN DEFAULT FALSE,
+          resolution_notes TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          resolved_at DATETIME,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
 
-    // Incident response log table
-    await this.db.run(`
-      CREATE TABLE IF NOT EXISTS incident_response_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        incident_id TEXT NOT NULL,
-        action_type TEXT NOT NULL,
-        action_details TEXT NOT NULL,
-        executed_by TEXT DEFAULT 'system',
-        execution_time INTEGER NOT NULL,
-        success BOOLEAN DEFAULT TRUE,
-        error_message TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (incident_id) REFERENCES security_incidents (incident_id),
-        INDEX idx_incident_id (incident_id),
-        INDEX idx_action_type (action_type)
-      )
-    `);
+      // Create indexes separately to avoid syntax errors
+      await this.createTableIndexes();
 
-    // System state history table
-    await this.db.run(`
-      CREATE TABLE IF NOT EXISTS system_state_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        state TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        duration INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_state (state),
-        INDEX idx_created_at (created_at)
-      )
-    `);
+      // Incident response log table - FIXED SQL SYNTAX
+      await this.db.run(`
+        CREATE TABLE IF NOT EXISTS incident_response_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          incident_id TEXT NOT NULL,
+          action_type TEXT NOT NULL,
+          action_details TEXT NOT NULL,
+          executed_by TEXT DEFAULT 'system',
+          execution_time INTEGER NOT NULL,
+          success BOOLEAN DEFAULT TRUE,
+          error_message TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Create indexes for response log
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_response_incident_id ON incident_response_log(incident_id)`);
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_response_action_type ON incident_response_log(action_type)`);
+
+      // System state history table
+      await this.db.run(`
+        CREATE TABLE IF NOT EXISTS system_state_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          state TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          duration INTEGER,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Create indexes for system state
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_state_history_state ON system_state_history(state)`);
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_state_history_created_at ON system_state_history(created_at)`);
+
+    } catch (error) {
+      console.error('❌ Failed to create security tables:', error);
+      // Fallback to simplified table creation
+      await this.createFallbackTables();
+    }
+  }
+
+  /**
+   * Create table indexes separately to avoid SQL syntax errors
+   */
+  async createTableIndexes() {
+    try {
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_incidents_severity ON security_incidents(severity)`);
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_incidents_type ON security_incidents(incident_type)`);
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON security_incidents(created_at)`);
+      await this.db.run(`CREATE INDEX IF NOT EXISTS idx_incidents_resolved ON security_incidents(resolved)`);
+    } catch (error) {
+      console.warn('⚠️ Could not create some indexes, continuing with limited functionality:', error.message);
+    }
+  }
+
+  /**
+   * Fallback table creation for SQL compatibility
+   */
+  async createFallbackTables() {
+    try {
+      // Simplified security incidents table without complex constraints
+      await this.db.run(`
+        CREATE TABLE IF NOT EXISTS security_incidents (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          incident_id TEXT UNIQUE NOT NULL,
+          incident_type TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          description TEXT NOT NULL,
+          affected_systems TEXT NOT NULL,
+          root_cause TEXT,
+          impact_assessment TEXT,
+          response_taken TEXT NOT NULL,
+          resolved BOOLEAN DEFAULT FALSE,
+          resolution_notes TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          resolved_at DATETIME,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Simplified incident response log
+      await this.db.run(`
+        CREATE TABLE IF NOT EXISTS incident_response_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          incident_id TEXT NOT NULL,
+          action_type TEXT NOT NULL,
+          action_details TEXT NOT NULL,
+          executed_by TEXT DEFAULT 'system',
+          execution_time INTEGER NOT NULL,
+          success BOOLEAN DEFAULT TRUE,
+          error_message TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Simplified system state history
+      await this.db.run(`
+        CREATE TABLE IF NOT EXISTS system_state_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          state TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          duration INTEGER,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      console.log('✅ Created fallback tables successfully');
+    } catch (error) {
+      throw new AISecurityModuleError(`Failed to create fallback tables: ${error.message}`);
+    }
   }
 
   /**
