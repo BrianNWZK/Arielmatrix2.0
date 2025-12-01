@@ -1414,7 +1414,7 @@ class IntelligentResilienceEngine {
 // 🎯 ENHANCED SOVEREIGN MEV BRAIN v10 — OMEGA (GUARANTEED REVENUE)
 // =========================================================================
 
-export class ProductionSovereignCore extends EventEmitter {
+export default class ProductionSovereignCore extends EventEmitter {
     constructor() {
         super();
         
