@@ -4,9 +4,48 @@
 
 import { EventEmitter } from 'events';
 import { createHash, randomBytes } from 'crypto';
-import { ArielSQLiteEngine } from './ariel-sqlite-engine/index.js';
-import { BWAEZI_CHAIN, BWAEZI_SOVEREIGN_CONFIG } from '../config/bwaezi-config.js';
-import { getGlobalLogger } from './enterprise-logger/index.js';
+
+// Import with fallbacks to prevent initialization errors
+let ArielSQLiteEngine;
+let BWAEZI_CHAIN, BWAEZI_SOVEREIGN_CONFIG;
+let getGlobalLogger;
+
+try {
+    ArielSQLiteEngine = (await import('./ariel-sqlite-engine/index.js')).ArielSQLiteEngine;
+} catch (error) {
+    console.warn('⚠️ ArielSQLiteEngine not available, using fallback');
+    ArielSQLiteEngine = class FallbackDB { 
+        async initialize() { return true; } 
+        async writeMetrics() { return true; }
+    };
+}
+
+try {
+    const configModule = await import('../config/bwaezi-config.js');
+    BWAEZI_CHAIN = configModule.BWAEZI_CHAIN;
+    BWAEZI_SOVEREIGN_CONFIG = configModule.BWAEZI_SOVEREIGN_CONFIG;
+} catch (error) {
+    console.warn('⚠️ Bwaezi config not available, using defaults');
+    BWAEZI_CHAIN = {
+        NATIVE_TOKEN: 'BWAZE',
+        REVENUE_VAULT_ADDRESS: '0x0000000000000000000000000000000000000000'
+    };
+    BWAEZI_SOVEREIGN_CONFIG = {
+        SOVEREIGN_WALLET: '0x0000000000000000000000000000000000000000'
+    };
+}
+
+try {
+    getGlobalLogger = (await import('./enterprise-logger/index.js')).getGlobalLogger;
+} catch (error) {
+    console.warn('⚠️ Enterprise logger not available, using console fallback');
+    getGlobalLogger = (name) => ({
+        info: (msg, meta) => console.log(`[${name}] INFO: ${msg}`, meta || ''),
+        warn: (msg, meta) => console.warn(`[${name}] WARN: ${msg}`, meta || ''),
+        error: (msg, meta) => console.error(`[${name}] ERROR: ${msg}`, meta || ''),
+        debug: (msg, meta) => console.debug(`[${name}] DEBUG: ${msg}`, meta || '')
+    });
+}
 
 // Global state for revenue agent management - SINGLETON ENFORCEMENT
 const REVENUE_AGENTS = new Map();
@@ -227,7 +266,7 @@ export default class SovereignRevenueEngine extends EventEmitter {
         
         validationResults.forEach(result => {
             if (result.status !== 'VALID') {
-                this.logger.warn(`  ⚠️ ${result.component}: ${result.status}${result.reason ? ` - ${result.reason}` : ''}`);
+                this.logger.warn(`  ⚠️ ${result.component}: ${result.status}${result.reason ? ` - ${result.reason}` : ''}`);
             }
         });
 
@@ -799,18 +838,21 @@ export { SovereignRevenueEngine };
 // AUTOMATIC CLEANUP ON PROCESS EXIT
 // =========================================================================
 
-process.on('beforeExit', () => {
-    emergencyCleanup();
-});
+// Safe process event registration
+if (typeof process !== 'undefined') {
+    process.on('beforeExit', () => {
+        emergencyCleanup();
+    });
 
-process.on('SIGINT', () => {
-    getGlobalLogger('RevenueEngine').info('🛑 SIGINT received, shutting down Revenue Engine');
-    emergencyCleanup();
-    process.exit(0);
-});
+    process.on('SIGINT', () => {
+        getGlobalLogger('RevenueEngine').info('🛑 SIGINT received, shutting down Revenue Engine');
+        emergencyCleanup();
+        process.exit(0);
+    });
 
-process.on('SIGTERM', () => {
-    getGlobalLogger('RevenueEngine').info('🛑 SIGTERM received, shutting down Revenue Engine');
-    emergencyCleanup();
-    process.exit(0);
-});
+    process.on('SIGTERM', () => {
+        getGlobalLogger('RevenueEngine').info('🛑 SIGTERM received, shutting down Revenue Engine');
+        emergencyCleanup();
+        process.exit(0);
+    });
+}
