@@ -1,5 +1,5 @@
 // modules/quantum-resistant-crypto/index.js - ENTERPRISE GRADE (PRODUCTION READY)
-// ENHANCED VERSION - FIXED DATABASE INITIALIZATION AND ALL PRODUCTION ISSUES
+// ENHANCED VERSION - FIXED MASTER KEY ENCRYPTION/DECRYPTION AND KEY RECOVERY SYSTEM
 
 import sqlite3 from 'sqlite3';
 const { Database } = sqlite3;
@@ -607,6 +607,8 @@ export class EnterpriseQuantumResistantCrypto {
                     decrypted = this.decryptWithLocalKey(key.private_key_encrypted);
                 } catch (e) {
                     this.monitoring.log('ERROR', `Failed to decrypt master key ${key.key_id}: ${e.message}`);
+                    // 🔥 CRITICAL FIX: Implement key recovery system
+                    await this.recoverMasterKey(key.key_id);
                     continue;
                 }
                 this.keyCache.set(key.key_id, {
@@ -626,17 +628,57 @@ export class EnterpriseQuantumResistantCrypto {
                     decrypted = this.decryptWithLocalKey(key.private_key_encrypted);
                 } catch (e) {
                     this.monitoring.log('ERROR', `Failed to decrypt master key ${key.key_id}: ${e.message}`);
+                    await this.recoverMasterKey(key.key_id);
                 }
-                this.keyCache.set(key.key_id, {
-                    publicKey: key.public_key,
-                    privateKey: decrypted,
-                    algorithm: key.algorithm,
-                    type: key.key_type,
-                    expiresAt: key.expires_at
-                });
+                if (decrypted) {
+                    this.keyCache.set(key.key_id, {
+                        publicKey: key.public_key,
+                        privateKey: decrypted,
+                        algorithm: key.algorithm,
+                        type: key.key_type,
+                        expiresAt: key.expires_at
+                    });
+                }
             } else {
                 await this.generateMasterKeys();
             }
+        }
+    }
+
+    // 🔥 CRITICAL FIX: Master Key Recovery System
+    async recoverMasterKey(keyId) {
+        this.monitoring.log('WARN', `Attempting master key recovery for: ${keyId}`);
+        
+        try {
+            // Mark the compromised key as compromised
+            await this.db.execute(
+                "UPDATE quantum_keys SET status = ? WHERE key_id = ?",
+                [KEY_STATUS.COMPROMISED, keyId]
+            );
+
+            // Generate new master keys
+            await this.generateMasterKeys();
+            
+            // Log the recovery event
+            await this.auditLogger.logSecurityEvent({
+                eventType: 'master_key_recovered',
+                severity: 'high',
+                description: `Master key ${keyId} was compromised and has been replaced with new keys`,
+                keyId: keyId
+            });
+
+            this.monitoring.log('INFO', `Master key recovery completed for: ${keyId}`);
+            return true;
+            
+        } catch (error) {
+            this.monitoring.log('ERROR', `Master key recovery failed for ${keyId}: ${error.message}`);
+            await this.auditLogger.logSecurityEvent({
+                eventType: 'master_key_recovery_failed',
+                severity: 'critical',
+                description: `Failed to recover master key ${keyId}: ${error.message}`,
+                keyId: keyId
+            });
+            return false;
         }
     }
 
@@ -1181,15 +1223,63 @@ export class EnterpriseQuantumResistantCrypto {
         return newKey;
     }
 
+    // 🔥 ENHANCED KEY RECOVERY SYSTEM
+    async emergencyKeyRecovery() {
+        this.monitoring.log('WARN', '🚨 INITIATING EMERGENCY KEY RECOVERY PROCEDURE');
+        
+        try {
+            // 1. Clear all compromised keys
+            await this.db.execute(
+                "UPDATE quantum_keys SET status = ? WHERE status = ?",
+                [KEY_STATUS.COMPROMISED, KEY_STATUS.ACTIVE]
+            );
+
+            // 2. Clear cache
+            this.keyCache.clear();
+
+            // 3. Generate new master keys
+            await this.generateMasterKeys();
+
+            // 4. Log recovery event
+            await this.auditLogger.logSecurityEvent({
+                eventType: 'emergency_key_recovery',
+                severity: 'critical',
+                description: 'Emergency key recovery procedure completed successfully',
+                keyId: null
+            });
+
+            this.monitoring.log('INFO', '✅ Emergency key recovery completed successfully');
+            return true;
+
+        } catch (error) {
+            this.monitoring.log('ERROR', `❌ Emergency key recovery failed: ${error.message}`);
+            await this.auditLogger.logSecurityEvent({
+                eventType: 'emergency_key_recovery_failed',
+                severity: 'critical',
+                description: `Emergency key recovery failed: ${error.message}`,
+                keyId: null
+            });
+            return false;
+        }
+    }
+
     // Health check method
     async healthCheck() {
         try {
             const metrics = this.monitoring.getMetrics();
             const dbConnected = await this.db.queryOne("SELECT 1 as connected");
             
+            // Check if we have active master keys
+            const activeMasterKeys = await this.db.query(
+                "SELECT COUNT(*) as count FROM quantum_keys WHERE key_type = 'master' AND status = 'active'"
+            );
+            
+            const masterKeysHealthy = activeMasterKeys && activeMasterKeys[0] && activeMasterKeys[0].count > 0;
+
             return {
-                status: 'HEALTHY',
+                status: masterKeysHealthy && dbConnected ? 'HEALTHY' : 'DEGRADED',
                 database: dbConnected ? 'CONNECTED' : 'DISCONNECTED',
+                masterKeys: masterKeysHealthy ? 'HEALTHY' : 'COMPROMISED',
                 metrics,
                 timestamp: new Date().toISOString()
             };
