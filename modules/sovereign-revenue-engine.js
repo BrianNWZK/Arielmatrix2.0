@@ -28,7 +28,7 @@ try {
     console.warn('⚠️ Bwaezi config not available, using defaults');
     BWAEZI_CHAIN = {
         NATIVE_TOKEN: 'BWAEZI',
-        REVENUE_VAULT_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'
+        TOKEN_CONTRACT_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'
     };
     BWAEZI_SOVEREIGN_CONFIG = {
         SOVEREIGN_WALLET: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'
