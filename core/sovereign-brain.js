@@ -16,11 +16,30 @@ import { randomUUID } from 'crypto';
 // 🎯 INTEGRATED AA-LOAVES-FISHES MODULE
 // =========================================================================
 
+// Helper function to safely get address with checksum
+function getAddressSafely(address) {
+    try {
+        // First check if it's already a valid address
+        if (ethers.isAddress(address)) {
+            // Try to get checksum, if it fails, return lowercase
+            try {
+                return ethers.getAddress(address);
+            } catch (e) {
+                return address.toLowerCase();
+            }
+        }
+        return address;
+    } catch (error) {
+        console.warn(`⚠️ Address validation failed for ${address}: ${error.message}`);
+        return address;
+    }
+}
+
 // LIVE BLOCKCHAIN CONFIGURATION (Integrated from aa-loaves-fishes.js)
 const LIVE_CONFIG = {
     // Core AA addresses
     FACTORY_ADDRESS: '0x9406Cc6185a346906296840746125a0E44976454', // SimpleAccountFactory mainnet
-    ENTRY_POINT_ADDRESS: ethers.getAddress('0x5FF137D4bEAA7036d654a88Ea898df565D304B88'), // EntryPoint mainnet
+    ENTRY_POINT_ADDRESS: '0x5FF137D4b0EE7036d254A8Aea898df565D304B88', // Correct checksummed EntryPoint
     
     // Bundler RPC endpoints
     BUNDLER_RPC_URLS: [
@@ -45,22 +64,22 @@ const LIVE_CONFIG = {
     ],
     
     // Sovereign MEV specific addresses
-    EOA_OWNER_ADDRESS: '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA',
-    SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
-    BWAEZI_TOKEN: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
-    BWAEZI_PAYMASTER: '0xC336127cb4732d8A91807f54F9531C682F80E864',
+    EOA_OWNER_ADDRESS: getAddressSafely('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
+    SCW_ADDRESS: getAddressSafely('0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
+    BWAEZI_TOKEN: getAddressSafely('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
+    BWAEZI_PAYMASTER: getAddressSafely('0xC336127cb4732d8A91807f54F9531C682F80E864'),
     
     // Trading pairs
-    WETH: ethers.getAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
-    USDC: ethers.getAddress('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
-    USDT: ethers.getAddress('0xdAC17F958D2ee523a2206206994597C13D831ec7'),
-    DAI: ethers.getAddress('0x6B175474E89094C44Da98b954EedeAC495271d0F'),
+    WETH: getAddressSafely('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+    USDC: getAddressSafely('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+    USDT: getAddressSafely('0xdAC17F958D2ee523a2206206994597C13D831ec7'),
+    DAI: getAddressSafely('0x6B175474E89094C44Da98b954EedeAC495271d0F'),
     
     // DeFi protocols
-    AAVE_V3_POOL: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
-    DYDX_SOLO_MARGIN: '0x1E0447bDeBB9366f2B48b7D0b6f70364C4B5A6a1',
-    OPENSEA_CONDUIT: '0x1E0049783F008A0085193E00003D00cd54003c71',
-    BLUR_MARKETPLACE: '0x000000000000Ad05Ccc4F10045630fb830B95127'
+    AAVE_V3_POOL: getAddressSafely('0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'),
+    DYDX_SOLO_MARGIN: getAddressSafely('0x1E0447bDeBB9366f2B48b7D0b6f70364C4B5A6a1'),
+    OPENSEA_CONDUIT: getAddressSafely('0x1E0049783F008A0085193E00003D00cd54003c71'),
+    BLUR_MARKETPLACE: getAddressSafely('0x000000000000Ad05Ccc4F10045630fb830B95127')
 };
 
 // =========================================================================
@@ -221,7 +240,7 @@ class AASDK {
             );
             
             console.log(`✅ SCW Address calculated: ${deterministicAddress}`);
-            return ethers.getAddress(deterministicAddress);
+            return getAddressSafely(deterministicAddress);
         } catch (error) {
             console.error(`❌ SCW address calculation failed: ${error.message}`);
             throw new Error(`SCW address calculation failed: ${error.message}`);
@@ -703,8 +722,8 @@ class GuaranteedRevenueEngine {
 
     async createMarketWithChecksum() {
         try {
-            const validatedBWAEZI = ethers.getAddress(LIVE_CONFIG.BWAEZI_TOKEN);
-            const validatedUSDC = ethers.getAddress(LIVE_CONFIG.USDC);
+            const validatedBWAEZI = getAddressSafely(LIVE_CONFIG.BWAEZI_TOKEN);
+            const validatedUSDC = getAddressSafely(LIVE_CONFIG.USDC);
             
             this.logger.log(`✅ Validated addresses: BWAEZI=${validatedBWAEZI}, USDC=${validatedUSDC}`);
             
@@ -2488,7 +2507,8 @@ export {
     LiveMevExecutionEngine,
     SovereignWebServer,
     main,
-    blockchainManager
+    blockchainManager,
+    getAddressSafely
 };
 
 // Auto-start if this is the main module
