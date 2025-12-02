@@ -7,7 +7,7 @@
 
 import express from 'express';
 import axios from 'axios';
-import { ethers, BigNumber } from 'ethers';
+import { ethers } from 'ethers';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
