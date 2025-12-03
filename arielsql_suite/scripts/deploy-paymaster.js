@@ -1,31 +1,23 @@
 // arielsql_suite/scripts/deploy-paymaster.js
 import { ethers } from "ethers";
-// IMPORTANT: Use your actual artifact path and name.
-// This assumes your contract is BWAEZIPaymaster in BWAEZIPaymaster.sol.
-import PaymasterArtifact from "../artifacts/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json" assert { type: "json" };
+import fs from "fs";
+import path from "path";
 
-/**
- * Deploy BWAEZIPaymaster with explicit constructor arguments.
- *
- * @param {ethers.Signer} signer - Ethers v6 signer (Wallet connected to provider).
- * @returns {Promise<string>} - Deployed paymaster address.
- */
 export async function deployPaymaster(signer) {
-  // Validate signer
-  if (!signer || typeof signer.getAddress !== "function") {
-    throw new Error("deployPaymaster: signer is required and must be an ethers v6 Signer");
-  }
+  // Load artifact JSON manually
+  const artifactPath = path.resolve(
+    "./arielsql_suite/artifacts/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json"
+  );
+  const PaymasterArtifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
 
-  // Ensure artifact has abi and bytecode
   const { abi, bytecode } = PaymasterArtifact;
   if (!abi || !bytecode) {
-    throw new Error("deployPaymaster: invalid artifact — ABI or bytecode missing");
+    throw new Error("ABI or bytecode missing in artifact");
   }
 
-  // Create ContractFactory (ethers v6)
   const factory = new ethers.ContractFactory(abi, bytecode, signer);
 
-  // Constructor args (replace if needed)
+  // Constructor args (replace with your actual values)
   const entryPoint = "0x5FF137D4bEAA7036d654a88Ea898df565D304B88";
   const sponsorToken = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
   const weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -41,10 +33,9 @@ export async function deployPaymaster(signer) {
     baseFeeBps
   );
 
-  // Wait for deployment (ethers v6)
   await paymaster.waitForDeployment();
   const address = await paymaster.getAddress();
 
-  console.log("✅ REAL BWAEZI PAYMASTER DEPLOYED:", address);
+  console.log("✅ Paymaster deployed at:", address);
   return address;
 }
