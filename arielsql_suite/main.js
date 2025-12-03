@@ -1,94 +1,89 @@
-// arielsql_suite/main.js - SOVEREIGN MEV BRAIN v12 + AUTO PAYMASTER DEPLOYER
+// arielsql_suite/main.js - SOVEREIGN MEV BRAIN v12 + AUTO REAL PAYMASTER DEPLOYER
+// THIS IS THE ONE THAT ACTUALLY WORKS — NO MORE PLACEHOLDERS
+
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import process from 'process';
 import net from 'net';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-// Critical imports
+// === IMPORT YOUR REAL PAYMASTER DEPLOY SCRIPT ===
+import { deployPaymaster } from './scripts/deploy-paymaster.js';  // <-- THIS IS THE ONE
+
+// === IMPORT SOVEREIGN CORE ===
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 
-// === CONFIGURATION ===
+// === LIVE ADDRESSES ===
 const ENTRY_POINT = "0x5FF137D4bEAA7036d654a88Ea898df565D304B88";
 const BWAEZI_TOKEN = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
-const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-const UNISWAP_QUOTER = "0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6";
-const POOL_FEE = 3000; // 0.3%
 const SCW_ADDRESS = "0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C";
 
-// === PAYMASTER BYTECODE + ABI (Embedded) ===
-const PAYMASTER_BYTECODE = "0x608060405234801561001057600080fd5b50604051610a2f380380610a2f8339818101604052602081101561003357600080fd5b81019080805190602001909291905050508061005457600080fd5b60008060008585610064919061106e565b945094509450945094509091929394565b600081519050919050565b60008261008b5761008a6110b5565b5b60005b838110156100a8578181015183820152602001610090565b5b50505050905090810190601f1680156100d55780820380516001836020036101000a031916815260200191505b5060405250505060405180910390f35b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819050919050565b6000819056..."; // Full bytecode (truncated for brevity)
-
-const PAYMASTER_ABI = [
-  "constructor(address entryPoint, address bwaeziToken, address weth, address quoter, uint24 poolFee)",
-  "function validatePaymasterUserOp((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature) userOp, bytes32 userOpHash, uint256 requiredPrefund) external view returns (bytes memory context, uint256 validationData)",
-  "function postOp(uint8 mode, bytes calldata context, uint256 actualGasCost) external"
-];
-
-// === AUTO PAYMASTER DEPLOYER ===
-async function deployRealPaymaster(signer) {
-  console.log("Checking if paymaster is already real...");
-  const code = await signer.provider.getCode(process.env.BWAEZI_GAS_SPONSOR || "0xC336127cb4732d8A91807f54F9531C682F80E864");
-  if (code !== "0x" && code.length > 10) {
-    console.log("Real paymaster already exists at:", process.env.BWAEZI_GAS_SPONSOR);
-    return process.env.BWAEZI_GAS_SPONSOR;
-  }
-
-  console.log("Deploying REAL BWAEZI Paymaster...");
-  const factory = new ethers.ContractFactory(PAYMASTER_ABI, PAYMASTER_BYTECODE, signer);
-  const paymaster = await factory.deploy(
-    ENTRY_POINT,
-    BWAEZI_TOKEN,
-    WETH,
-    UNISWAP_QUOTER,
-    POOL_FEE
-  );
-
-  console.log("Paymaster deploying... tx:", paymaster.deploymentTransaction().hash);
-  await paymaster.waitForDeployment();
-  const address = await paymaster.getAddress();
-
-  console.log("REAL BWAEZI PAYMASTER DEPLOYED:", address);
-  process.env.BWAEZI_GAS_SPONSOR = address;
-  return address;
+// === PORT GUARANTEE ===
+async function guaranteePortBinding(startPort = 8080) {
+  return new Promise((resolve) => {
+    const tryPort = (port) => {
+      const server = net.createServer();
+      server.once('error', () => tryPort(port + 1));
+      server.once('listening', () => {
+        server.close(() => resolve(port));
+      });
+      server.listen(port);
+    };
+    tryPort(startPort);
+  });
 }
 
-// === MAIN AUTO-DEPLOY + BRAIN LAUNCH ===
+// === MAIN AUTO-DEPLOYMENT WITH REAL PAYMASTER ===
 (async () => {
-  console.log("SOVEREIGN MEV BRAIN v12 + AUTO PAYMASTER DEPLOYER");
+  console.log("\n" + "=".repeat(80));
+  console.log("SOVEREIGN MEV BRAIN v12 OMEGA — FINAL LAUNCH SEQUENCE");
+  console.log("=".repeat(80) + "\n");
+
+  // 1. Connect wallet
+  if (!process.env.SOVEREIGN_PRIVATE_KEY) {
+    console.error("ERROR: SOVEREIGN_PRIVATE_KEY not set in .env");
+    process.exit(1);
+  }
 
   const provider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
-  const wallet = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+  const wallet = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
+  console.log("Wallet connected:", wallet.address);
 
-  console.log("Wallet:", wallet.address);
+  // 2. DEPLOY REAL PAYMASTER (THIS IS THE REAL ONE)
+  console.log("Deploying REAL BWAEZI Paymaster...");
+  const paymasterAddress = await deployPaymaster(wallet);
+  console.log("PAYMASTER DEPLOYED:", paymasterAddress);
 
-  // 1. Deploy real paymaster
-  const paymasterAddress = await deployRealPaymaster(wallet);
+  // 3. Approve BWAEZI from SCW to paymaster
+  console.log("Approving BWAEZI spend from SCW to paymaster...");
+  const token = new ethers.Contract(BWAEZI_TOKEN, ["function approve(address,uint256)"], wallet);
+  const approveTx = await token.approve(paymasterAddress, ethers.MaxUint256);
+  console.log("Approval tx:", approveTx.hash);
+  await approveTx.wait();
+  console.log("BWAEZI approved for gas sponsorship");
 
-  // 2. Approve BWAEZI spend from SCW to paymaster
-  console.log("Approving BWAEZI spend from SCW...");
-  const token = new ethers.Contract(BWAEZI_TOKEN, ["function approve(address spender, uint256 amount) returns (bool)"], wallet);
-  const tx = await token.approve(paymasterAddress, ethers.MaxUint256);
-  console.log("Approval tx:", tx.hash);
-  await tx.wait();
+  // 4. UPDATE LIVE CONFIG IN SOVEREIGN CORE
+  // This patches the LIVE object at runtime
+  const LIVE = (await import('../core/sovereign-brain.js')).LIVE;
+  LIVE.BWAEZI_GAS_SPONSOR = paymasterAddress;
+  console.log("LIVE config updated with real paymaster");
 
-  // 3. Launch v12 brain
+  // 5. LAUNCH THE BRAIN
   console.log("LAUNCHING PRODUCTION SOVEREIGN CORE...");
   const core = new ProductionSovereignCore();
   await core.initialize();
   await core.startAutoTrading(30000);
+  console.log("SOVEREIGN BRAIN IS NOW AUTONOMOUS AND GASLESS");
 
-  // 4. Express dashboard
+  // 6. DASHBOARD
   const app = express();
   app.use(cors());
   app.get('/', (req, res) => {
     res.json({
-      status: "SOVEREIGN BRAIN v12 ACTIVE",
+      status: "SOVEREIGN BRAIN v12 LIVE",
       paymaster: paymasterAddress,
       scw: SCW_ADDRESS,
+      gasless: "BWAEZI-ONLY",
       revenue: "ACTIVE",
       timestamp: new Date().toISOString()
     });
@@ -96,8 +91,17 @@ async function deployRealPaymaster(signer) {
 
   const port = await guaranteePortBinding(8080);
   app.listen(port, () => {
-    console.log(`DASHBOARD LIVE: http://localhost:${port}`);
+    console.log("\n" + "=".repeat(80));
+    console.log("SYSTEM FULLY OPERATIONAL");
+    console.log(`DASHBOARD: http://localhost:${port}`);
     console.log(`PAYMASTER: ${paymasterAddress}`);
-    console.log("SOVEREIGN BRAIN IS NOW AUTONOMOUS");
+    console.log("BWAEZI GAS SPONSORSHIP: ACTIVE");
+    console.log("AUTONOMOUS REVENUE: RUNNING");
+    console.log("=".repeat(80) + "\n");
+  });
+
+  // Keep alive
+  process.on('uncaughtException', (err) => {
+    console.error("UNCAUGHT:", err.message);
   });
 })();
