@@ -1,6 +1,7 @@
 import { deployPaymaster } from './scripts/deploy-paymaster.js';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ethers } from 'ethers';
+import http from 'http';
 
 (async () => {
   console.log("SOVEREIGN MEV BRAIN v12 — FINAL LAUNCH");
@@ -30,4 +31,13 @@ import { ethers } from 'ethers';
 
   console.log("FULLY GASLESS • FULLY AUTONOMOUS • BWAEZI PAYMASTER LIVE");
   console.log("PAYMASTER:", paymasterAddr);
+
+  // ✅ PORT BINDING TO KEEP PROCESS ALIVE
+  const PORT = 10000; // fixed port as requested
+  http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(`Sovereign MEV Brain is running\nPaymaster: ${paymasterAddr}\n`);
+  }).listen(PORT, () => {
+    console.log(`🚀 Server listening on port ${PORT}`);
+  });
 })();
