@@ -3814,142 +3814,75 @@ class EnterpriseMonitoringDashboard {
   setupDashboard() {
     this.app.use(express.static('public'));
     
-    this.app.get('/dashboard', (req, res) => {
-      res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Sovereign MEV Brain v12 - Dashboard</title>
-            <style>
-                body { font-family: monospace; background: #0a0a0a; color: #00ff00; margin: 0; padding: 20px; }
-                .container { max-width: 1200px; margin: 0 auto; }
-                .status { background: #1a1a1a; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-                .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-                .metric-card { background: #1a1a1a; padding: 15px; border-radius: 8px; }
-                .connected { color: #00ff00; }
-                .disconnected { color: #ff0000; }
-                .warning { color: #ffff00; }
-                #logs { background: #000; padding: 10px; border-radius: 5px; height: 300px; overflow-y: auto; }
-                .log-entry { margin: 5px 0; padding: 5px; border-bottom: 1px solid #333; }
-                .strategy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-                .strategy-card { background: #1a1a1a; padding: 10px; border-radius: 5px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🚀 Sovereign MEV Brain v12 - Omega Production Ultimate</h1>
-                <h3>Part of ArielSQL Suite - Main: arielsql_suite/main.js</h3>
-                <div id="status" class="status"></div>
-                <div id="metrics" class="metrics"></div>
-                <h3>Strategy Performance</h3>
-                <div id="strategies" class="strategy-grid"></div>
-                <h3>Real-time Logs</h3>
-                <div id="logs"></div>
-            </div>
-            <script>
-                const ws = new WebSocket('ws://' + window.location.host + '/ws');
-                ws.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    updateDashboard(data);
-                };
-                
-                function updateDashboard(data) {
-                    // Update status
-                    document.getElementById('status').innerHTML = \`
-                        <h2>Status: <span class="\${data.system.status === 'LIVE' ? 'connected' : 'warning'}">\${data.system.status}</span></h2>
-                        <p>Uptime: \${formatTime(data.system.uptime)} | Trades: \${data.trading.tradesExecuted}</p>
-                        <p>Today's Profit: $\${data.trading.currentDayUSD.toFixed(2)} | Total: $\${data.trading.totalRevenueUSD.toFixed(2)}</p>
-                        <p>Projected Daily: $\${data.trading.projectedDailyUSD.toFixed(2)} | Risk Level: \${data.risk.riskLevel || 'N/A'}</p>
-                    \`;
-                    
-                    // Update metrics
-                    document.getElementById('metrics').innerHTML = \`
-                        \${createMetricCard('Risk Score', data.risk.riskScore, 'risk')}
-                        \${createMetricCard('Win Rate', data.performance.allTime.winRate.toFixed(1) + '%', 'winrate')}
-                        \${createMetricCard('Daily Target', \${data.trading.currentDayUSD.toFixed(2)}/\${data.targets.DAILY_TARGET_USD}, 'target')}
-                        \${createMetricCard('Active DEXes', data.health.components?.find(c => c.component === 'dex_registry')?.activeDexes || 0, 'dex')}
-                        \${createMetricCard('BWAEZI Sponsorships', data.trading.bwaeziSponsorships, 'sponsorship')}
-                        \${createMetricCard('JIT Positions', data.jit.activePositions, 'jit')}
-                    \`;
-                    
-                    // Update strategies
-                    if (data.performance.strategies) {
-                        let strategiesHTML = '';
-                        for (const [name, stats] of Object.entries(data.performance.strategies)) {
-                            strategiesHTML += \`
-                                <div class="strategy-card">
-                                    <strong>\${name}</strong><br>
-                                    Success: \${(stats.successRate * 100).toFixed(1)}%<br>
-                                    Trades: \${stats.totalExecutions}<br>
-                                    Profit: $\${stats.totalProfit.toFixed(2)}
-                                </div>
-                            \`;
-                        }
-                        document.getElementById('strategies').innerHTML = strategiesHTML;
-                    }
-                    
-                    // Add log entry
-                    if (data.log) {
-                        const logs = document.getElementById('logs');
-                        const logEntry = document.createElement('div');
-                        logEntry.className = 'log-entry';
-                        logEntry.innerHTML = \`[\${new Date(data.timestamp).toLocaleTimeString()}] \${data.log}\`;
-                        logs.appendChild(logEntry);
-                        logs.scrollTop = logs.scrollHeight;
-                    }
-                }
-                
-                function createMetricCard(title, value, type) {
-                    let color = '#00ff00';
-                    if (type === 'risk') {
-                        color = value >= 80 ? '#00ff00' : value >= 50 ? '#ffff00' : '#ff0000';
-                    } else if (type === 'target') {
-                        const [current, target] = value.split('/');
-                        const percent = (parseFloat(current) / parseFloat(target)) * 100;
-                        color = percent >= 100 ? '#00ff00' : percent >= 50 ? '#ffff00' : '#ff0000';
-                    }
-                    
-                    return \`
-                        <div class="metric-card">
-                            <h3>\${title}</h3>
-                            <p style="color: \${color}">\${value}</p>
-                        </div>
-                    \`;
-                }
-                
-                function formatTime(ms) {
-                    const seconds = Math.floor(ms / 1000);
-                    const minutes = Math.floor(seconds / 60);
-                    const hours = Math.floor(minutes / 60);
-                    return \`\${hours}h \${minutes % 60}m \${seconds % 60}s\`;
-                }
-                
-                // Initial load
-                fetch('/api/status').then(r => r.json()).then(updateDashboard);
-                setInterval(() => fetch('/api/status').then(r => r.json()).then(updateDashboard), 5000);
-            </script>
-        </body>
-        </html>
-      `);
-    });
-  }
+    // KEEP your imports and app/server setup as-is.
+// Replace your existing /dashboard route with this single clean route:
 
-  setupWebSocket() {
-    this.wss = new WebSocket.Server({ port: this.port + 1 });
-    
-    this.wss.on('connection', (ws) => {
-      this.clients.add(ws);
-      console.log('📡 Dashboard client connected');
-      
-      ws.on('close', () => {
-        this.clients.delete(ws);
-        console.log('📡 Dashboard client disconnected');
-      });
-      
-      ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
-      });
-    });
+app.get('/dashboard', (req, res) => {
+  res.send([
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '<title>Sovereign MEV Brain v12 - Dashboard (CODE13)</title>',
+    '<style>',
+    'body { font-family: monospace; background: #0a0a0a; color: #00ff00; margin: 0; padding: 20px; }',
+    '.container { max-width: 1200px; margin: 0 auto; }',
+    '.status { background: #1a1a1a; padding: 20px; border-radius: 10px; margin-bottom: 20px; }',
+    '.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }',
+    '.metric-card { background: #1a1a1a; padding: 15px; border-radius: 8px; }',
+    '#logs { background: #000; padding: 10px; border-radius: 5px; height: 300px; overflow-y: auto; }',
+    '.log-entry { margin: 5px 0; padding: 5px; border-bottom: 1px solid #333; }',
+    '</style>',
+    '</head>',
+    '<body>',
+    '<div class="container">',
+    '<h1>🚀 Sovereign MEV Brain v12 Dashboard</h1>',
+    '<div id="status" class="status"></div>',
+    '<div id="metrics" class="metrics"></div>',
+    '<h3>Logs</h3>',
+    '<div id="logs"></div>',
+    '</div>',
+    '<script>',
+    '(function(){',
+    "  const ws = new WebSocket('ws://' + window.location.host + '/ws');",
+    '  ws.onmessage = function(event) {',
+    '    const data = JSON.parse(event.data);',
+    "    document.getElementById('status').innerHTML =",
+    "      '<h2>Status: ' + data.system.status + ' (v ' + data.system.version + ')</h2>' +",
+    "      '<p>Trades: ' + data.trading.tradesExecuted + '</p>' +",
+    "      '<p>Profit Today: $' + (data.trading.currentDayUSD || 0).toFixed(2) + '</p>';",
+    "    document.getElementById('metrics').innerHTML =",
+    "      '<div class=\"metric-card\"><h3>Total Revenue</h3><p>$' + (data.trading.totalRevenueUSD || 0).toFixed(2) + '</p></div>' +",
+    "      '<div class=\"metric-card\"><h3>Risk Score</h3><p>' + (data.risk?.riskScore ?? 'N/A') + '</p></div>' +",
+    "      '<div class=\"metric-card\"><h3>Projected Daily</h3><p>$' + (data.trading.projectedDailyUSD || 0).toFixed(2) + '</p></div>';",
+    "    const logs = document.getElementById('logs');",
+    "    const logEntry = document.createElement('div');",
+    "    logEntry.className = 'log-entry';",
+    "    logEntry.textContent = '[' + new Date(data.timestamp).toLocaleTimeString() + '] ' + (data.log || 'update');",
+    '    logs.appendChild(logEntry);',
+    '    logs.scrollTop = logs.scrollHeight;',
+    '  };',
+    '})();',
+    '</script>',
+    '</body>',
+    '</html>'
+  ].join(''));
+});
+
+// Replace any WebSocket broadcast loop that builds strings with backticks
+// with a pure JSON stringify payload:
+
+setInterval(() => {
+  if (clients.size > 0) {
+    const stats = core.getStats(); // keep your function call
+    const payload = {
+      ...stats,
+      timestamp: Date.now(),
+      log: 'Active clients: ' + clients.size + ' | ' + new Date().toLocaleTimeString()
+    };
+    const message = JSON.stringify(payload);
+    clients.forEach(ws => { try { ws.send(message); } catch {} });
+  }
+}, 2000);
     
     // Broadcast updates
     setInterval(() => {
