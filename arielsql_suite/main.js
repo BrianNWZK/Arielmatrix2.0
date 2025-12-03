@@ -1,4 +1,3 @@
-// arielsql_suite/main.js
 import { deployPaymaster } from './scripts/deploy-paymaster.js';
 import { ProductionSovereignCore } from '../core/sovereign-brain.js';
 import { ethers } from 'ethers';
@@ -10,11 +9,14 @@ import { ethers } from 'ethers';
   const wallet = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
 
   // DEPLOY REAL PAYMASTER
-  const paymasterAddr = await deployPaymaster();
-  
+  const paymasterAddr = await deployPaymaster(wallet);
+
   // APPROVE FROM SCW
-  const token = new ethers.Contract("0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da", 
-    ["function approve(address,uint256)"], wallet);
+  const token = new ethers.Contract(
+    "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da",
+    ["function approve(address,uint256)"],
+    wallet
+  );
   await (await token.approve(paymasterAddr, ethers.MaxUint256)).wait();
 
   // UPDATE LIVE CONFIG
