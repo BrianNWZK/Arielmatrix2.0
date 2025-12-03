@@ -3884,37 +3884,24 @@ setInterval(() => {
   }
 }, 2000);
     
-    // Broadcast updates
-    setInterval(() => {
-      if (this.clients.size > 0) {
-        const stats = this.apiServer.core.getStats();
-        const message = JSON.stringify({
-          ...stats,
-          timestamp: Date.now(),
-          log: \`Active: \${this.clients.size} clients | \${new Date().toLocaleTimeString()}\`
-        });
-        
-        this.clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
-          }
-        });
-      }
-    }, 2000);
-  }
+   // Broadcast updates
+setInterval(() => {
+  if (this.clients.size > 0) {
+    const stats = this.apiServer.core.getStats();
+    const message = JSON.stringify({
+      ...stats,
+      timestamp: Date.now(),
+      // FIXED: use string concatenation instead of backtick template
+      log: 'Active: ' + this.clients.size + ' clients | ' + new Date().toLocaleTimeString()
+    });
 
-  start() {
-    return new Promise((resolve, reject) => {
-      this.server = this.app.listen(this.port, () => {
-        console.log(\`📊 Monitoring dashboard on port \${this.port}\`);
-        console.log(\`📡 WebSocket server on port \${this.port + 1}\`);
-        resolve();
-      });
-      
-      this.server.on('error', reject);
+    this.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
     });
   }
-}
+}, 2000);
 
 /* =========================================================================
    MAIN EXPORT - PRODUCTION SOVEREIGN CORE
