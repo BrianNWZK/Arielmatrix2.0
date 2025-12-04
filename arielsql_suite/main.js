@@ -1,175 +1,99 @@
-{
-  "name": "arielsql-alltimate",
-  "version": "1.0.0",
-  "type": "module",
-  "engines": {
-    "node": "22.x"
-  },
-  "performanceMetrics": {
-    "transactionsProcessed": 0,
-    "blocksValidated": 0,
-    "threatsDetected": 0,
-    "carbonOffset": 0,
-    "averageGasUsed": 0
-  },
-  "scripts": {
-    "compile-contracts": "node arielsql_suite/scripts/compile-paymaster.js",
-    "start": "node arielsql_suite/main.js", 
-    "dev": "nodemon arielsql_suite/main.js",
-    "backend": "node backend/server.js",
-    "precommit": "node scripts/precommit.js",
-    "test": "jest",
-    "refresh-lock": "rm -f package-lock.json && npm install",
-    "build": "vite build",
-    "train-ai": "node scripts/train-models.js",
-    "monitor": "node scripts/system-monitor.js",
-    "payout-agent": "node backend/agents/payoutAgent.js",
-    "wallet-health": "node backend/agents/wallet.js checkBlockchainHealth",
-    "consolidate-funds": "node backend/agents/Automated Multi-Chain Fund Consolidation/consolidate.js",
-    "deploy-kernel": "node arielsql_suite/main.js",
-    "build-wasm": "node scripts/build-wasm.js",
-    "prebuild": "npm run build-wasm || echo 'WASM build optional - system will use fallbacks'",
-    "postinstall": "npm run build-wasm || echo 'WASM build optional - system will use fallbacks'",
-    "build:full": "npm run build-wasm && npm run build",
-    "deploy:full": "./build_and_deploy.sh && echo '🚀 Full deployment completed with WASM resolution'",
-    "quantum:health": "node scripts/quantum-health-check.js",
-    "wasm:verify": "node scripts/verify-wasm.js"
-  },
-  "dependencies": {
-    "express": "^4.21.0",
-    "bottleneck": "^2.19.5",
-    "axios": "^1.7.7",
-    "retry-axios": "^3.0.0",
-    "@solana/spl-token": "^0.3.5",
-    "twitter-api-v2": "^1.14.0",
-    "web3": "^4.11.1",
-    "@tensorflow/tfjs-node": "^4.22.0",
-    "puppeteer": "^24.16.0",
-    "puppeteer-extra": "^3.3.4",
-    "puppeteer-extra-plugin-recaptcha": "^3.3.4",
-    "puppeteer-extra-plugin-stealth": "^2.11.1",
-    "ioredis": "^5.3.2",
-    "better-sqlite3-multiple-ciphers": "^12.2.0",
-    "ethers": "^6.14.0", 
-    "node-cron": "^3.0.3",
-    "dotenv": "^16.4.5",
-    "dotenv-expand": "^10.0.0",
-    "winston": "^3.8.2",
-    "better-sqlite3": "^9.2.0",
-    "sqlite3": "^5.1.6",
-    "sqlite": "^4.0.0",
-    "uuid": "^9.0.1",
-    "bcryptjs": "^2.4.3",
-    "compression": "^1.7.4",
-    "helmet": "^7.1.0",
-    "express-rate-limit": "^7.1.5",
-    "redis": "^4.7.0",
-    "node-cache": "^5.1.2",
-    "graphql": "^16.8.1",
-    "@apollo/server": "^5.0.0",
-    "@solana/web3.js": "^1.95.3",
-    "@solana/spl-token": "^0.4.6",
-    "@account-abstraction/contracts": "^0.7.0",
-    "@openzeppelin/contracts": "^5.0.2",
-    "async-mutex": "^0.1.0",
-    "natural": "^6.8.0",
-    "limiter": "^2.1.0",
-    "cron": "^3.1.7",
-    "cheerio": "^1.0.0-rc.12",
-    "pqclean": "^0.8.1",
-    "pqc-kyber": "file:./modules/pqc-kyber",
-    "pqc-dilithium": "file:./modules/pqc-dilithium",
-    "@huggingface/inference": "^2.6.0",
-    "ccxt": "^4.1.89",
-    "tesseract.js": "^4.1.1",
-    "sharp": "^0.32.0",
-    "are-we-there-yet": "^3.0.1",
-    "rimraf": "^5.0.5",
-    "snarkjs": "^0.7.0",
-    "circomlibjs": "^0.1.7",
-    "validator": "^13.11.0",
-    "gauge": "^4.0.4",
-    "@npmcli/fs": "^3.1.0",
-    "@npmcli/move-file": "^3.0.0",
-    "bignumber.js": "^9.0.2",
-    "serialport": "^12.0.0",
-    "onoff": "^6.0.3",
-    "@web3-storage/w3up-client": "^14.0.0",
-    "glob": "^10.3.10",
-    "lru-cache": "^10.0.0",
-    "@multiformats/multiaddr": "^12.1.0",
-    "@multiformats/multiaddr-to-uri": "^12.0.0",
-    "web3.storage": "^4.4.0",
-    "crypto": "^1.0.1",
-    "nft.storage": "^7.1.1",
-    "arweave": "^1.15.7",
-    "websocket": "^1.0.34",
-    "solc": "^0.8.20",
-    "cors": "^2.8.5",
-    "big.js": "^6.2.1",
-    "pino": "^8.15.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4",
-    "patch-package": "^8.0.0",
-    "eslint": "^9.12.0",
-    "jest": "^29.7.0",
-    "@types/jest": "^29.5.12",
-    "ts-jest": "^29.2.5",
-    "supertest": "^7.0.0",
-    "@types/node": "^20.11.24",
-    "@types/express": "^4.17.21",
-    "@types/cors": "^2.8.17",
-    "vite": "^5.0.0",
-    "hardhat": "^2.22.0",
-    "webpack": "^5.88.0",
-    "webpack-cli": "^5.1.4",
-    "@types/validator": "^13.11.0",
-    "ts-node": "^10.9.2"
-  },
-  "optionalDependencies": {
-    "litestream": "^0.3.9"
-  },
-  "license": "MIT",
-  "private": true,
-  "keywords": [
-    "autonomous-ai",
-    "blockchain",
-    "ethereum",
-    "solana",
-    "machine-learning",
-    "bwaezi",
-    "sovereign-kernel",
-    "quantum-resistant-crypto",
-    "post-quantum-cryptography",
-    "wasm",
-    "kyber",
-    "dilithium"
-  ],
-  "contributors": [
-    "Brian Nwaezike <brian@bwaezi.com>"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-username/arielsql-alltimate.git"
-  },
-  "bugs": {
-    "url": "https://github.com/your-username/arielsql-alltimate/issues"
-  },
-  "homepage": "https://github.com/your-username/arielsql-alltimate#readme",
-  "funding": {
-    "type": "patreon",
-    "url": "https://patreon.com/yourusername"
-  },
-  "wasm": {
-    "modules": {
-      "kyber": [512, 768, 1024],
-      "dilithium": [2, 3, 5]
-    },
-    "build": {
-      "source": "https://github.com/PQClean/PQClean",
-      "compiler": "emscripten",
-      "optimization": "-Os"
-    }
-  }
-}
+// arielsql_suite/main.js
+import { deployPaymaster } from "./scripts/deploy-paymaster.js";
+import { compilePaymasterContract } from "./scripts/compile-paymaster.js";
+import { ethers } from "ethers";
+import http from "http";
+import * as dotenv from 'dotenv';
+import * as dotenvExpand from 'dotenv-expand';
+
+// Load environment variables (assuming you have dotenv installed)
+const env = dotenv.config();
+dotenvExpand.expand(env);
+
+(async () => {
+    console.log("SOVEREIGN MEV BRAIN v12 — FINAL LAUNCH");
+
+    try {
+        // STEP 1: COMPILE CONTRACT IN THE SAME PROCESS
+        const artifactPath = await compilePaymasterContract();
+        
+        // --- Wallet Setup ---
+        const provider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
+        const privateKey = process.env.SOVEREIGN_PRIVATE_KEY; 
+        
+        if (!privateKey || privateKey.length < 32) {
+            throw new Error("Missing or invalid SOVEREIGN_PRIVATE_KEY env var");
+        }
+        const wallet = new ethers.Wallet(privateKey, provider);
+        // ----------------------
+
+        // STEP 2: Deploy Paymaster, passing the guaranteed artifact path
+        const paymasterAddr = await deployPaymaster(wallet, artifactPath); 
+
+        // STEP 3: Approve Paymaster from sponsor token SCW (using your original logic)
+        const tokenAddress = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
+        const tokenAbi = ["function approve(address spender, uint256 amount) returns (bool)"];
+        const token = new ethers.Contract(tokenAddress, tokenAbi, wallet);
+        console.log("⛽ Approving Paymaster to spend sponsor token...");
+        
+        const approveTx = await token.approve(paymasterAddr, ethers.MaxUint256); 
+        await approveTx.wait();
+        console.log("✅ Paymaster approved successfully.");
+
+        // STEP 4: Launch Core (retaining your original logic for the brain)
+        // **FIX: Import everything at once to avoid circular issues**
+        [cite_start]// This import is retained from your provided mainjs.txt [cite: 40]
+        const { ProductionSovereignCore, LIVE } = await import("../core/sovereign-brain.js");
+        
+        [cite_start]// Update live config [cite: 41]
+        LIVE.BWAEZI_GAS_SPONSOR = paymasterAddr;
+
+        [cite_start]// Launch brain [cite: 41, 42]
+        const core = new ProductionSovereignCore();
+        await core.initialize();
+        await core.startAutoTrading();
+
+        console.log(`\n🎉 DEPLOYMENT AND SETUP COMPLETE!`);
+        console.log(`FULLY GASLESS • FULLY AUTONOMOUS • BWAEZI PAYMASTER LIVE`);
+        console.log("PAYMASTER:", paymasterAddr);
+
+        [cite_start]// STEP 5: Start HTTP server to keep process alive [cite: 43]
+        const PORT = 10000;
+        const server = http.createServer((req, res) => {
+            if (req.url === "/health") {
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ 
+                    status: "ok", 
+                    paymaster: paymasterAddr,
+                    brain: "v12",
+                    gasless: true 
+                }));
+                return;
+            }
+            [cite_start]// Add more endpoints for monitoring [cite: 45]
+            if (req.url === "/status") {
+                try {
+                    const stats = core.getStats();
+                    res.writeHead(200, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify(stats));
+                    return;
+                } catch (err) {
+                    res.writeHead(500, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify({ error: err.message }));
+                    return;
+                }
+            }
+            
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            res.end(`Sovereign MEV Brain v12 is running\nPaymaster: ${paymasterAddr}\nGasless: true\n`); [cite_start]// [cite: 46]
+        });
+        
+        server.listen(PORT, () => {
+            [cite_start]console.log(`🚀 Server listening on port ${PORT}`); // [cite: 47]
+        });
+
+    } catch (error) {
+        console.error("❌ Fatal error during launch:", error.message); [cite_start]// [cite: 48]
+        process.exit(1);
+    }
+})();
