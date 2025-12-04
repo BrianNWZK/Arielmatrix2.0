@@ -1,44 +1,34 @@
 // arielsql_suite/scripts/deploy-paymaster.js
 import { ethers } from "ethers";
-import * as path from 'path';
 import * as fs from 'fs';
-
-// === ABSOLUTE PATH TO STANDARD ARTIFACT LOCATION ===
-const ARTIFACT_PATH_ABSOLUTE = path.resolve(
-    process.cwd(), 
-    'artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json'
-);
-
-console.log(`\n--- DEPLOYMENT START ---`);
-console.log(`📂 Checking for artifact at absolute path: ${ARTIFACT_PATH_ABSOLUTE}`);
-
-let PaymasterArtifact;
-try {
-    // 1. Explicitly check if the file exists on the filesystem
-    if (!fs.existsSync(ARTIFACT_PATH_ABSOLUTE)) {
-        throw new Error(`ARTIFACT FILE IS MISSING. Compilation (npm run compile-contracts) failed or the artifact folder was cleared by the build system. Path: ${ARTIFACT_PATH_ABSOLUTE}`);
-    }
-    
-    // 2. Load the JSON file content directly using fs.readFileSync, bypassing the Node.js module loader
-    const artifactContent = fs.readFileSync(ARTIFACT_PATH_ABSOLUTE, 'utf8');
-    PaymasterArtifact = JSON.parse(artifactContent);
-    
-    console.log('✅ Artifact loaded successfully using fs/JSON.parse.');
-} catch (e) {
-    console.error(`\n❌ FATAL DEPLOYMENT ERROR: Artifact could not be loaded.`);
-    console.error('Error Details:', e.message);
-    throw e;
-}
 
 /**
  * Deploys the BWAEZIPaymaster contract
  * @param {ethers.Wallet} wallet - Ethers Wallet with provider already attached
+ * @param {string} artifactPath - Absolute path to the artifact file created in the same process.
  * @returns {Promise<string>} The deployed contract address
  */
-export async function deployPaymaster(wallet) {
+export async function deployPaymaster(wallet, artifactPath) {
+    console.log(`\n--- DEPLOYMENT START (In-Process) ---`);
+    console.log(`📂 Loading artifact from: ${artifactPath}`);
+
+    let PaymasterArtifact;
+    try {
+        // Load the JSON file content directly using fs.readFileSync, guaranteed to exist in this process
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        PaymasterArtifact = JSON.parse(artifactContent);
+        
+        console.log('✅ Artifact loaded successfully.');
+    } catch (e) {
+        console.error(`\n❌ FATAL DEPLOYMENT ERROR: Artifact could not be loaded.`);
+        console.error('Error Details:', e.message);
+        throw e;
+    }
+
     const deployerAddress = await wallet.getAddress();
     console.log(`🚀 Deploying Paymaster with deployer: ${deployerAddress}`);
     
+    // Check balance and deploy logic (omitted for brevity, assume correct)
     const balance = await wallet.provider.getBalance(deployerAddress);
     console.log(`💰 Deployer balance: ${ethers.formatEther(balance)} ETH`);
     
@@ -66,7 +56,6 @@ export async function deployPaymaster(wallet) {
     
     console.log('⌛ Waiting for confirmation...');
     
-    // Wait for deployment
     const deployedContract = await paymaster.waitForDeployment();
     const addr = await deployedContract.getAddress();
     
