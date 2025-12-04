@@ -1,20 +1,21 @@
-// scripts/deploy-paymaster.js
+// arielsql_suite/scripts/deploy-paymaster.js
 import { ethers } from "ethers";
-import { HardhatEthersProvider } from "@nomicfoundation/hardhat-ethers/internal/hardhat-ethers-provider"; // Note: For a pure JS file, you might use a standard provider/signer, but based on the original script using 'ethers from "hardhat"', this is the common pattern. Using ethers.Wallet ensures it works with the provider from main.js.
+import * as PaymasterArtifact from "../artifacts/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json";
 
-// Wrap the deployment logic in an exported function
+// Export a function that accepts an Ethers.js Wallet (Signer)
 export async function deployPaymaster(wallet) {
-  console.log("Deploying Paymaster with:", wallet.address);
+  // Use the wallet's address for logging
+  console.log("Deploying Paymaster with address:", await wallet.getAddress());
 
-  // We use ethers.ContractFactory with the wallet as signer
-  // Replace the Hardhat specific 'ethers.getContractFactory' with a standard ethers equivalent if not in a Hardhat environment
-  const PaymasterArtifact = require("../artifacts/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json");
+  // Instantiate ContractFactory using the artifact ABI/bytecode and the Wallet/Signer
+  // Note: We use the imported artifact's abi and bytecode fields
   const Paymaster = new ethers.ContractFactory(
     PaymasterArtifact.abi,
     PaymasterArtifact.bytecode,
-    wallet
+    wallet // The wallet object contains the private key and the provider
   );
 
+  // Deploy the contract with constructor arguments
   const paymaster = await Paymaster.deploy(
     "0x5FF137D4bEAA7036d654a88Ea898df565D304B88",  // EntryPoint
     "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da",  // BWAEZI
@@ -24,11 +25,14 @@ export async function deployPaymaster(wallet) {
   );
   
   // Wait for the deployment transaction to be confirmed
-  await paymaster.deploymentTransaction().wait(); 
+  const deployedContract = await paymaster.waitForDeployment();
   
-  const addr = await paymaster.getAddress();
+  const addr = await deployedContract.getAddress();
+  
   console.log("REAL BWAEZI PAYMASTER DEPLOYED:", addr);
   
   // Return the address for main.js to use
   return addr;
 }
+
+// NOTE: This module is now clean and ready to be imported by main.js.
