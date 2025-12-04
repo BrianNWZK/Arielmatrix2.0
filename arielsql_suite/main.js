@@ -1,6 +1,5 @@
 // arielsql_suite/main.js
 import { deployPaymaster } from "./scripts/deploy-paymaster.js";
-import { ProductionSovereignCore } from "../core/sovereign-brain.js";
 import { ethers } from "ethers";
 import http from "http";
 
@@ -30,8 +29,10 @@ import http from "http";
   await approveTx.wait();
   console.log("✅ Approval confirmed:", approveTx.hash);
 
+  // **FIX: Import everything at once to avoid circular issues**
+  const { ProductionSovereignCore, LIVE } = await import("../core/sovereign-brain.js");
+  
   // Update live config
-  const { LIVE } = await import("../core/sovereign-brain.js");
   LIVE.BWAEZI_GAS_SPONSOR = paymasterAddr;
 
   // Launch brain
@@ -48,15 +49,37 @@ import http from "http";
     // Minimal status endpoints
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", paymaster: paymasterAddr }));
+      res.end(JSON.stringify({ 
+        status: "ok", 
+        paymaster: paymasterAddr,
+        brain: "v12",
+        gasless: true 
+      }));
       return;
     }
+    
+    // Add more endpoints for monitoring
+    if (req.url === "/status") {
+      try {
+        const stats = core.getStats();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(stats));
+        return;
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
+    }
+    
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end(`Sovereign MEV Brain is running\nPaymaster: ${paymasterAddr}\n`);
+    res.end(`Sovereign MEV Brain v12 is running\nPaymaster: ${paymasterAddr}\nGasless: true\n`);
   });
 
   server.listen(PORT, () => {
     console.log(`🚀 Server listening on port ${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/health`);
+    console.log(`📈 Status: http://localhost:${PORT}/status`);
   });
 })().catch((err) => {
   console.error("❌ Fatal error during launch:", err);
