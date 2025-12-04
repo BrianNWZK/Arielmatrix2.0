@@ -3907,8 +3907,23 @@ setInterval(() => {
    MAIN EXPORT - PRODUCTION SOVEREIGN CORE
    ========================================================================= */
 
+// Core engine exports for ArielSQL Suite integration
+export {
+  ProductionSovereignCore,
+  EnterpriseAPIServer,
+  EnterpriseMonitoringDashboard,
+  EnterpriseAASDK,
+  DexAdapterRegistry,
+  EnterpriseMevExecution,
+  EnterpriseRiskEngine,
+  AdvancedStrategyEngine,
+  EnterpriseProfitVerification,
+  JitLiquidityEngine,
+  LIVE,
+  chain
+};
 
-// export for easy integration
+// Default export for easy integration
 export default {
   ProductionSovereignCore,
   EnterpriseAPIServer,
