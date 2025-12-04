@@ -5,8 +5,12 @@ import solc from 'solc';
 
 // --- File Paths ---
 const contractSourcePath = path.resolve(process.cwd(), 'arielsql_suite/contracts/BWAEZIPaymaster.sol');
-// ARTIFACT LOCATION: Forced into the same folder as the deploy script.
-const artifactDir = path.resolve(process.cwd(), 'arielsql_suite/scripts');
+
+// === ABSOLUTE PATH TO STANDARD ARTIFACT LOCATION ===
+// This path: [PROJECT_ROOT]/artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/
+const ARTIFACT_ROOT_DIR = path.resolve(process.cwd(), 'artifacts');
+const ARTIFACT_SUB_DIR = 'arielsql_suite/contracts/BWAEZIPaymaster.sol'; 
+const artifactDir = path.join(ARTIFACT_ROOT_DIR, ARTIFACT_SUB_DIR);
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
 const contractName = 'BWAEZIPaymaster';
@@ -14,39 +18,23 @@ const contractName = 'BWAEZIPaymaster';
 // --- Compilation Logic ---
 try {
     console.log('--- COMPILATION START ---');
-    console.log('🔍 Checking contract source at:', contractSourcePath);
-    
-    // Explicit check for contract source file
+    console.log('📝 Contract source:', contractSourcePath);
+    console.log('📦 Artifact target:', artifactFile);
+
     if (!fs.existsSync(contractSourcePath)) {
         throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`);
     }
 
     const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
-    console.log('📝 Contract source loaded successfully. (File size:', contractSource.length, 'bytes)');
 
     const input = {
         language: 'Solidity',
-        sources: {
-            [contractFileName]: {
-                content: contractSource,
-            },
-        },
+        sources: { [contractFileName]: { content: contractSource } },
         settings: {
-            // Ensure optimization is aggressive
             viaIR: true,
-            optimizer: {
-                enabled: true,
-                runs: 200,
-                details: {
-                    yul: true
-                }
-            },
-            outputSelection: {
-                '*': {
-                    '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'],
-                },
-            },
-            // CRITICAL: Remappings must be correct to find imports like @openzeppelin
+            optimizer: { enabled: true, runs: 200, details: { yul: true } },
+            outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
+            // CRITICAL: Remappings must be correct
             remappings: [
                 '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                 '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
@@ -63,12 +51,8 @@ try {
         if (compilationErrors.length > 0) {
             console.error('\n❌ FATAL: SOLC Compilation Errors Found:');
             compilationErrors.forEach(err => console.error(err.formattedMessage));
-            process.exit(1); // Exit with failure code if compilation failed
+            process.exit(1); 
         }
-    }
-
-    if (!output.contracts || !output.contracts[contractFileName] || !output.contracts[contractFileName][contractName]) {
-        throw new Error('CONTRACT NOT IN OUTPUT: Compilation succeeded but artifact for BWAEZIPaymaster was not generated.');
     }
 
     const contract = output.contracts[contractFileName][contractName];
@@ -81,7 +65,7 @@ try {
         sourceName: contractFileName
     };
 
-    // Create directory (scripts/ exists, but defensive check)
+    // Ensure the full artifacts path exists
     fs.mkdirSync(artifactDir, { recursive: true });
 
     // Write artifact
@@ -91,6 +75,5 @@ try {
 
 } catch (e) {
     console.error(`\n❌ FATAL: Error in compile-paymaster.js:`, e.message);
-    console.error(`Check dependencies (solc) and remappings in the script.`);
     process.exit(1);
 }
