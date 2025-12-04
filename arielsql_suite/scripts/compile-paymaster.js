@@ -9,10 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- File Paths ---
-// Source contract path relative to the script
 const contractSourcePath = path.resolve(__dirname, '..', 'contracts', 'BWAEZIPaymaster.sol');
-
-// Artifact Target: [PROJECT_ROOT]/artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json
 const ARTIFACT_ROOT_DIR = path.resolve(process.cwd(), 'artifacts');
 const ARTIFACT_SUB_DIR = 'arielsql_suite/contracts/BWAEZIPaymaster.sol'; 
 const artifactDir = path.join(ARTIFACT_ROOT_DIR, ARTIFACT_SUB_DIR);
@@ -27,7 +24,8 @@ export async function compilePaymasterContract() {
         console.log(`📦 Artifact target: ${artifactFile}`);
 
         if (!fs.existsSync(contractSourcePath)) {
-            throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`);
+            // This is the source code for the contract (BWAEZIPaymaster.sol)
+            throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`); 
         }
 
         const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
@@ -39,7 +37,7 @@ export async function compilePaymasterContract() {
                 viaIR: true,
                 optimizer: { enabled: true, runs: 200, details: { yul: true } },
                 outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
-                // Critical remappings for ERC-4337 and OpenZeppelin imports
+                // CRITICAL: Remappings must be correct for dependency resolution
                 remappings: [
                     '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                     '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
@@ -75,7 +73,6 @@ export async function compilePaymasterContract() {
         console.log(`✅ Artifact successfully written to: ${artifactFile}`);
         console.log(`--- COMPILATION END (SUCCESS) ---`);
         
-        // Return the absolute path for the deployer script to use immediately
         return artifactFile; 
 
     } catch (e) {
