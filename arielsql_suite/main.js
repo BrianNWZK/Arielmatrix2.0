@@ -14,7 +14,8 @@ dotenvExpand.expand(env);
     console.log("SOVEREIGN MEV BRAIN v12 — FINAL LAUNCH");
 
     try {
-        // STEP 1: COMPILE CONTRACT IN THE SAME PROCESS
+        // STEP 1: COMPILE CONTRACT IN THE SAME PROCESS (Fixes ARTIFACT FILE IS MISSING)
+        console.log("--- Starting Paymaster contract compilation ---");
         const artifactPath = await compilePaymasterContract();
         
         // --- Wallet Setup ---
@@ -30,7 +31,7 @@ dotenvExpand.expand(env);
         // STEP 2: Deploy Paymaster, passing the guaranteed artifact path
         const paymasterAddr = await deployPaymaster(wallet, artifactPath); 
 
-        // STEP 3: Approve Paymaster from sponsor token SCW (using your original logic)
+        // STEP 3: Approve Paymaster from sponsor token SCW
         const tokenAddress = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
         const tokenAbi = ["function approve(address spender, uint256 amount) returns (bool)"];
         const token = new ethers.Contract(tokenAddress, tokenAbi, wallet);
@@ -41,14 +42,13 @@ dotenvExpand.expand(env);
         console.log("✅ Paymaster approved successfully.");
 
         // STEP 4: Launch Core (retaining your original logic for the brain)
-        // **FIX: Import everything at once to avoid circular issues**
-        [cite_start]// This import is retained from your provided mainjs.txt [cite: 40]
+        // Note: Assumes core/sovereign-brain.js exists relative to the project root or a sibling folder
         const { ProductionSovereignCore, LIVE } = await import("../core/sovereign-brain.js");
         
-        [cite_start]// Update live config [cite: 41]
+        // Update live config
         LIVE.BWAEZI_GAS_SPONSOR = paymasterAddr;
 
-        [cite_start]// Launch brain [cite: 41, 42]
+        // Launch brain
         const core = new ProductionSovereignCore();
         await core.initialize();
         await core.startAutoTrading();
@@ -57,7 +57,7 @@ dotenvExpand.expand(env);
         console.log(`FULLY GASLESS • FULLY AUTONOMOUS • BWAEZI PAYMASTER LIVE`);
         console.log("PAYMASTER:", paymasterAddr);
 
-        [cite_start]// STEP 5: Start HTTP server to keep process alive [cite: 43]
+        // STEP 5: Start HTTP server to keep process alive
         const PORT = 10000;
         const server = http.createServer((req, res) => {
             if (req.url === "/health") {
@@ -70,7 +70,7 @@ dotenvExpand.expand(env);
                 }));
                 return;
             }
-            [cite_start]// Add more endpoints for monitoring [cite: 45]
+            // Status endpoint with core stats
             if (req.url === "/status") {
                 try {
                     const stats = core.getStats();
@@ -85,15 +85,15 @@ dotenvExpand.expand(env);
             }
             
             res.writeHead(200, { "Content-Type": "text/plain" });
-            res.end(`Sovereign MEV Brain v12 is running\nPaymaster: ${paymasterAddr}\nGasless: true\n`); [cite_start]// [cite: 46]
+            res.end(`Sovereign MEV Brain v12 is running\nPaymaster: ${paymasterAddr}\nGasless: true\n`);
         });
         
         server.listen(PORT, () => {
-            [cite_start]console.log(`🚀 Server listening on port ${PORT}`); // [cite: 47]
+            console.log(`🚀 Server listening on port ${PORT}`);
         });
 
     } catch (error) {
-        console.error("❌ Fatal error during launch:", error.message); [cite_start]// [cite: 48]
+        console.error("❌ Fatal error during launch:", error.message);
         process.exit(1);
     }
 })();
