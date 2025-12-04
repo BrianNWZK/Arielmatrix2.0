@@ -7,8 +7,8 @@ import solc from 'solc';
 // Path to your source contract (relative to project root)
 const contractSourcePath = path.resolve(process.cwd(), 'arielsql_suite/contracts/BWAEZIPaymaster.sol');
 
-// Target directory and file name for the artifact (guaranteed path for deploy-paymaster.js)
-// Path: [ROOT]/artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json
+// Target directory and file name for the artifact (guaranteed path)
+// This must match the path in deploy-paymaster.js: artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json
 const artifactDir = path.resolve(process.cwd(), 'artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol');
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
@@ -31,7 +31,7 @@ try {
                     '*': ['abi', 'evm.bytecode.object'],
                 },
             },
-            // CRUCIAL: Remappings allow solc to find the imported files (@openzeppelin, @account-abstraction)
+            // CRUCIAL: Remappings tell solc where to find the imported libraries (e.g., OpenZeppelin)
             remappings: [
                 '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                 '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
@@ -64,7 +64,7 @@ try {
         contractName: contractName
     };
 
-    // 1. Ensure the directory exists
+    // 1. Ensure the artifacts directory structure exists
     fs.mkdirSync(artifactDir, { recursive: true });
 
     // 2. Write the artifact file to the guaranteed location
