@@ -1,99 +1,112 @@
-// contracts/BWAEZIPaymaster.sol: The 'Loaves and Fishes' Contract
-pragma solidity ^0.8.0;
+// contracts/BWAEZIPaymaster.sol
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
 
-// FIX: Ensuring canonical import paths for standard node_module resolution.
-import {IPaymaster} from "@account-abstraction/contracts/interfaces/IPaymaster.sol";
-import {UserOperation} from "@account-abstraction/contracts/interfaces/UserOperation.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-// Using the most common resilient path for SafeERC20.
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol"; 
+// ERC-4337 core interfaces
+import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
+import "@account-abstraction/contracts/interfaces/UserOperation.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-// Interface for the Uniswap V3 Quoter to get BWAEZI price
-interface IQuoter {
-    function quoteExactOutputSingle(
-        address tokenIn,
-        address tokenOut,
-        uint24 fee,
-        uint256 amountOut,
-        uint160 sqrtPriceLimitX96
-    ) external returns (uint256 amountIn);
+// Uniswap V3 Quoter (for BWAEZI → WETH price)
+interface IQuoterV2 {
+    struct QuoteExactOutputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint256 amount;
+        uint24 fee;
+        uint160 sqrtPriceLimitX96;
+    }
+    function quoteExactOutputSingle(QuoteExactOutputSingleParams calldata params)
+        external
+        returns (uint256 amountIn, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate);
 }
 
 contract BWAEZIPaymaster is IPaymaster {
     using SafeERC20 for IERC20;
 
-    address immutable private entryPoint;
-    address immutable private bwaeziToken;
-    address immutable private wethToken;
-    address immutable private quoterAddress;
-    uint24 immutable private BWAEZI_WETH_FEE;
+    address public immutable entryPoint;
+    IERC20 public immutable bwaeziToken;
+    address public immutable weth;
+    IQuoterV2 public immutable quoter;
+    uint24 public immutable poolFee; // e.g., 3000 = 0.3%
+
+    uint256 public constant BUFFER_PERCENT = 120; // 20% buffer
 
     constructor(
         address _entryPoint,
         address _bwaeziToken,
-        address _wethToken,
-        address _quoterAddress,
-        uint24 _bwaeziWethFee
+        address _weth,
+        address _quoter,
+        uint24 _poolFee
     ) {
         entryPoint = _entryPoint;
-        bwaeziToken = _bwaeziToken;
-        wethToken = _wethToken;
-        quoterAddress = _quoterAddress;
-        BWAEZI_WETH_FEE = _bwaeziWethFee;
+        bwaeziToken = IERC20(_bwaeziToken);
+        weth = _weth;
+        quoter = IQuoterV2(_quoter);
+        poolFee = _poolFee;
     }
 
-    // --- PAYMASTER LOGIC ---
-
+    // Called by EntryPoint after UserOp success
     function postOp(
-        UserOperation calldata userOp,
-        uint256 actualGasCost,
-        uint256 actualGasPrice
-    ) external payable {
-        require(msg.sender == entryPoint, "BP01: only EntryPoint");
+        PostOpMode,
+        bytes calldata,
+        uint256 actualGasCost
+    ) external override {
+        require(msg.sender == entryPoint, "Only EntryPoint");
 
-        uint256 wethPaymentRequired = actualGasCost * actualGasPrice;
-        
-        uint256 bwaeziRequired = IQuoter(quoterAddress).quoteExactOutputSingle(
-            bwaeziToken,
-            wethToken,
-            BWAEZI_WETH_FEE,
-            wethPaymentRequired,
-            0 
+        // How much WETH do we owe the bundler?
+        uint256 wethRequired = actualGasCost;
+
+        // How much BWAEZI do we need to swap to get that WETH?
+        (uint256 bwaeziRequired, , , ) = quoter.quoteExactOutputSingle(
+            IQuoterV2.QuoteExactOutputSingleParams({
+                tokenIn: address(bwaeziToken),
+                tokenOut: weth,
+                amount: wethRequired,
+                fee: poolFee,
+                sqrtPriceLimitX96: 0
+            })
         );
+
+        uint256 bwaeziWithBuffer = (bwaeziRequired * BUFFER_PERCENT) / 100;
+
+        // Pull BWAEZI from the SCW and send to bundler (or keep as treasury)
+        bwaeziToken.safeTransferFrom(msg.sender, address(this), bwaeziWithBuffer);
     }
 
-
+    // Called by EntryPoint during validation
     function validatePaymasterUserOp(
         UserOperation calldata userOp,
-        bytes32 userOpHash,
-        uint256 requiredPreFund
-    )
-        external
-        view
-        returns (bytes memory context, uint256 validationData)
-    {
-        uint256 maxCost = userOp.preVerificationGas * userOp.maxFeePerGas + userOp.callGasLimit * userOp.maxFeePerGas;
+        bytes32,
+        uint256 requiredPrefund
+    ) external view override returns (bytes memory context, uint256 validationData) {
+        // Calculate max possible gas cost
+        uint256 maxPossibleCost = requiredPrefund +
+            userOp.verificationGasLimit * userOp.maxFeePerGas +
+            userOp.callGasLimit * userOp.maxFeePerGas;
 
-        uint256 bwaeziRequiredForMaxPreFund = IQuoter(quoterAddress).quoteExactOutputSingle(
-            bwaeziToken,
-            wethToken,
-            BWAEZI_WETH_FEE,
-            requiredPreFund,
-            0 
+        // Quote how much BWAEZI needed for that cost
+        (uint256 bwaeziNeeded, , , ) = quoter.quoteExactOutputSingle(
+            IQuoterV2.QuoteExactOutputSingleParams({
+                tokenIn: address(bwaeziToken),
+                tokenOut: weth,
+                amount: maxPossibleCost,
+                fee: poolFee,
+                sqrtPriceLimitX96: 0
+            })
         );
 
-        uint256 allowance = IERC20(bwaeziToken).allowance(address(userOp.sender), address(this));
-        
-        uint256 requiredAllowanceWithBuffer = bwaeziRequiredForMaxPreFund * 110 / 100;
+        uint256 requiredWithBuffer = (bwaeziNeeded * BUFFER_PERCENT) / 100;
 
-        require(allowance >= requiredAllowanceWithBuffer, "BP03: BWAEZI allowance too low");
+        // Check allowance from SCW to this paymaster
+        uint256 allowance = bwaeziToken.allowance(userOp.sender, address(this));
+        require(allowance >= requiredWithBuffer, "BWAEZI: insufficient allowance");
 
-        return (hex"00", 0); 
+        // Success
+        return ("", 0);
     }
 
-    function getHash() external pure returns (bytes32) {
-        return keccak256("BWAEZIPaymaster");
-    }
-
+    // Allow ETH deposits (for withdrawals later)
     receive() external payable {}
 }
