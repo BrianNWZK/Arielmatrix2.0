@@ -3909,7 +3909,7 @@ setInterval(() => {
 
 
 // export for easy integration
-export {
+export default {
   ProductionSovereignCore,
   EnterpriseAPIServer,
   EnterpriseMonitoringDashboard,
