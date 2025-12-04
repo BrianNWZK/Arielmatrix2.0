@@ -13,7 +13,8 @@
     "averageGasUsed": 0
   },
   "scripts": {
-    "start": "node arielsql_suite/main.js",
+    "compile-contracts": "npx hardhat compile",
+    "start": "npm run compile-contracts && node arielsql_suite/main.js",
     "dev": "nodemon arielsql_suite/main.js",
     "backend": "node backend/server.js",
     "precommit": "node scripts/precommit.js",
