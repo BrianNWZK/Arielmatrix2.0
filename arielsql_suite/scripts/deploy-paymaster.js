@@ -3,20 +3,24 @@ import { ethers } from "ethers";
 // Import createRequire to safely load the JSON artifact using CommonJS mechanism
 import { createRequire } from 'node:module';
 
-// Create a local require function
+// Create a local require function to load the JSON file
 const require = createRequire(import.meta.url);
 
-// Path Correction: Use require() with the corrected relative path
-// The path must go up two levels to the root 'artifacts' folder.
-const PaymasterArtifact = require("../../artifacts/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json");
+// === CORRECTED ARTIFACT PATH ===
+// Path assumes: [ROOT]/artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json
+// It goes up two levels (../../) from the scripts folder, then down into the artifacts.
+const PaymasterArtifact = require("../../artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json");
 
-// Export a function that accepts an Ethers.js Wallet (Signer)
+/**
+ * Deploys the BWAEZIPaymaster contract using a standard Ethers v6 Wallet/Signer.
+ * @param {ethers.Wallet} wallet - The Ethers Wallet object used for signing the deployment transaction.
+ * @returns {Promise<string>} The address of the deployed Paymaster contract.
+ */
 export async function deployPaymaster(wallet) {
   // Use the wallet's address for logging
   console.log("Deploying Paymaster with address:", await wallet.getAddress());
 
   // Instantiate ContractFactory using the artifact ABI/bytecode and the Wallet/Signer
-  // Note: We use the loaded artifact's abi and bytecode fields
   const Paymaster = new ethers.ContractFactory(
     PaymasterArtifact.abi,
     PaymasterArtifact.bytecode,
@@ -42,3 +46,4 @@ export async function deployPaymaster(wallet) {
   // Return the address for main.js to use
   return addr;
 }
+// NOTE: The main().catch(console.error) block is removed to make this script callable from main.js.
