@@ -5,9 +5,7 @@ import solc from 'solc';
 
 // --- File Paths ---
 const contractSourcePath = path.resolve(process.cwd(), 'arielsql_suite/contracts/BWAEZIPaymaster.sol');
-
-// === NEW SIMPLE ARTIFACT PATH ===
-// We are forcing the artifact to be created right next to the deploy script.
+// ARTIFACT LOCATION: Forced into the same folder as the deploy script.
 const artifactDir = path.resolve(process.cwd(), 'arielsql_suite/scripts');
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
@@ -15,14 +13,16 @@ const contractName = 'BWAEZIPaymaster';
 
 // --- Compilation Logic ---
 try {
+    console.log('--- COMPILATION START ---');
     console.log('🔍 Checking contract source at:', contractSourcePath);
     
+    // Explicit check for contract source file
     if (!fs.existsSync(contractSourcePath)) {
-        throw new Error(`Contract source not found at: ${contractSourcePath}`);
+        throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`);
     }
 
     const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
-    console.log('📝 Contract source loaded successfully');
+    console.log('📝 Contract source loaded successfully. (File size:', contractSource.length, 'bytes)');
 
     const input = {
         language: 'Solidity',
@@ -32,6 +32,7 @@ try {
             },
         },
         settings: {
+            // Ensure optimization is aggressive
             viaIR: true,
             optimizer: {
                 enabled: true,
@@ -45,6 +46,7 @@ try {
                     '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'],
                 },
             },
+            // CRITICAL: Remappings must be correct to find imports like @openzeppelin
             remappings: [
                 '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                 '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
@@ -55,25 +57,18 @@ try {
     console.log('🛠️ Compiling contract with solc...');
     const output = JSON.parse(solc.compile(JSON.stringify(input)));
     
-    // Check for compilation errors
+    // Detailed error/warning check
     if (output.errors) {
         const compilationErrors = output.errors.filter(e => e.severity === 'error');
-        const warnings = output.errors.filter(e => e.severity === 'warning');
-        
         if (compilationErrors.length > 0) {
-            console.error('❌ Solidity Compilation Failed:');
+            console.error('\n❌ FATAL: SOLC Compilation Errors Found:');
             compilationErrors.forEach(err => console.error(err.formattedMessage));
-            process.exit(1);
-        }
-        
-        if (warnings.length > 0) {
-            console.warn('⚠️ Compilation Warnings:');
-            warnings.forEach(warn => console.warn(warn.formattedMessage));
+            process.exit(1); // Exit with failure code if compilation failed
         }
     }
 
     if (!output.contracts || !output.contracts[contractFileName] || !output.contracts[contractFileName][contractName]) {
-        throw new Error('Contract not found in compilation output. Check contract name matches file.');
+        throw new Error('CONTRACT NOT IN OUTPUT: Compilation succeeded but artifact for BWAEZIPaymaster was not generated.');
     }
 
     const contract = output.contracts[contractFileName][contractName];
@@ -86,16 +81,16 @@ try {
         sourceName: contractFileName
     };
 
-    // Create directory if it doesn't exist
+    // Create directory (scripts/ exists, but defensive check)
     fs.mkdirSync(artifactDir, { recursive: true });
 
     // Write artifact
     fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
     console.log(`✅ Artifact successfully written to: ${artifactFile}`);
-    console.log(`📦 Bytecode size: ${Math.floor(artifact.bytecode.length / 2)} bytes`);
+    console.log(`--- COMPILATION END (SUCCESS) ---\n`);
 
 } catch (e) {
-    console.error(`❌ Fatal error during compilation:`, e.message);
-    console.error(e.stack);
+    console.error(`\n❌ FATAL: Error in compile-paymaster.js:`, e.message);
+    console.error(`Check dependencies (solc) and remappings in the script.`);
     process.exit(1);
 }
