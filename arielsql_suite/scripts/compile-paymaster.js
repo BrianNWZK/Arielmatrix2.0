@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- File Paths ---
-// Path to source contract: [PROJECT_ROOT]/arielsql_suite/contracts/BWAEZIPaymaster.sol
+// Source contract path relative to the script
 const contractSourcePath = path.resolve(__dirname, '..', 'contracts', 'BWAEZIPaymaster.sol');
 
 // Artifact Target: [PROJECT_ROOT]/artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json
@@ -20,66 +20,66 @@ const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
 const contractName = 'BWAEZIPaymaster';
 
-// --- Compilation Logic ---
-try {
-    console.log('--- COMPILATION START ---');
-    console.log(`📝 Contract source: ${contractSourcePath}`);
-    console.log(`📦 Artifact target: ${artifactFile}`);
+export async function compilePaymasterContract() {
+    try {
+        console.log('--- COMPILATION START (In-Process) ---');
+        console.log(`📝 Contract source: ${contractSourcePath}`);
+        console.log(`📦 Artifact target: ${artifactFile}`);
 
-    // Check 1: Ensure contract source exists
-    if (!fs.existsSync(contractSourcePath)) {
-        throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`);
-    }
-
-    const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
-
-    const input = {
-        language: 'Solidity',
-        sources: { [contractFileName]: { content: contractSource } },
-        settings: {
-            viaIR: true,
-            optimizer: { enabled: true, runs: 200, details: { yul: true } },
-            outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
-            // CRITICAL: Remappings must be correct for dependency resolution
-            remappings: [
-                '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
-                '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
-            ]
-        },
-    };
-
-    console.log('🛠️ Compiling contract with solc...');
-    const output = JSON.parse(solc.compile(JSON.stringify(input)));
-    
-    // Check 2: Detailed error/warning check from Solc
-    if (output.errors) {
-        const compilationErrors = output.errors.filter(e => e.severity === 'error');
-        if (compilationErrors.length > 0) {
-            console.error('\n❌ FATAL: SOLC Compilation Errors Found:');
-            compilationErrors.forEach(err => console.error(err.formattedMessage));
-            process.exit(1); 
+        if (!fs.existsSync(contractSourcePath)) {
+            throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`);
         }
+
+        const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
+
+        const input = {
+            language: 'Solidity',
+            sources: { [contractFileName]: { content: contractSource } },
+            settings: {
+                viaIR: true,
+                optimizer: { enabled: true, runs: 200, details: { yul: true } },
+                outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
+                // Critical remappings for ERC-4337 and OpenZeppelin imports
+                remappings: [
+                    '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
+                    '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
+                ]
+            },
+        };
+
+        console.log('🛠️ Compiling contract with solc...');
+        const output = JSON.parse(solc.compile(JSON.stringify(input)));
+        
+        if (output.errors) {
+            const compilationErrors = output.errors.filter(e => e.severity === 'error');
+            if (compilationErrors.length > 0) {
+                console.error('\n❌ FATAL: SOLC Compilation Errors Found:');
+                compilationErrors.forEach(err => console.error(err.formattedMessage));
+                process.exit(1); 
+            }
+        }
+
+        const contract = output.contracts[contractFileName][contractName];
+
+        const artifact = {
+            abi: contract.abi,
+            bytecode: '0x' + contract.evm.bytecode.object,
+            deployedBytecode: '0x' + (contract.evm.deployedBytecode?.object || ''),
+            contractName: contractName,
+            sourceName: contractFileName
+        };
+
+        // Create directory and write file
+        fs.mkdirSync(artifactDir, { recursive: true });
+        fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
+        console.log(`✅ Artifact successfully written to: ${artifactFile}`);
+        console.log(`--- COMPILATION END (SUCCESS) ---`);
+        
+        // Return the absolute path for the deployer script to use immediately
+        return artifactFile; 
+
+    } catch (e) {
+        console.error(`\n❌ FATAL: Error in compilePaymasterContract:`, e.message);
+        throw e;
     }
-
-    const contract = output.contracts[contractFileName][contractName];
-
-    const artifact = {
-        abi: contract.abi,
-        bytecode: '0x' + contract.evm.bytecode.object,
-        deployedBytecode: '0x' + (contract.evm.deployedBytecode?.object || ''),
-        contractName: contractName,
-        sourceName: contractFileName
-    };
-
-    // Ensure the full artifacts path exists
-    fs.mkdirSync(artifactDir, { recursive: true });
-
-    // Write artifact
-    fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
-    console.log(`✅ Artifact successfully written to: ${artifactFile}`);
-    console.log(`--- COMPILATION END (SUCCESS) ---`);
-
-} catch (e) {
-    console.error(`\n❌ FATAL: Error in compile-paymaster.js:`, e.message);
-    process.exit(1);
 }
