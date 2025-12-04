@@ -1,13 +1,14 @@
-// scripts/compile-paymaster.js
+// arielsql_suite/scripts/compile-paymaster.js
 import * as fs from 'fs';
 import * as path from 'path';
 import solc from 'solc';
 
 // --- File Paths ---
-// Path to your source contract
+// Path to your source contract (relative to project root)
 const contractSourcePath = path.resolve(process.cwd(), 'arielsql_suite/contracts/BWAEZIPaymaster.sol');
 
-// Target directory and file name for the artifact (guaranteed path)
+// Target directory and file name for the artifact (guaranteed path for deploy-paymaster.js)
+// Path: [ROOT]/artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol/BWAEZIPaymaster.json
 const artifactDir = path.resolve(process.cwd(), 'artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol');
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
@@ -30,7 +31,7 @@ try {
                     '*': ['abi', 'evm.bytecode.object'],
                 },
             },
-            // Crucial: Remappings allow solc to find the imported files in node_modules
+            // CRUCIAL: Remappings allow solc to find the imported files (@openzeppelin, @account-abstraction)
             remappings: [
                 '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                 '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
