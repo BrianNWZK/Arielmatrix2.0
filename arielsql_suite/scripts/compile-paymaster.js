@@ -4,11 +4,9 @@ import * as path from 'path';
 import solc from 'solc';
 import { fileURLToPath } from 'url';
 
-// Resolve directory name for robust pathing in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- File Paths ---
 const contractSourcePath = path.resolve(__dirname, '..', 'contracts', 'BWAEZIPaymaster.sol');
 const ARTIFACT_ROOT_DIR = path.resolve(process.cwd(), 'artifacts');
 const ARTIFACT_SUB_DIR = 'arielsql_suite/contracts/BWAEZIPaymaster.sol'; 
@@ -20,11 +18,8 @@ const contractName = 'BWAEZIPaymaster';
 export async function compilePaymasterContract() {
     try {
         console.log('--- COMPILATION START (In-Process) ---');
-        console.log(`📝 Contract source: ${contractSourcePath}`);
-        console.log(`📦 Artifact target: ${artifactFile}`);
-
+        
         if (!fs.existsSync(contractSourcePath)) {
-            // This is the source code for the contract (BWAEZIPaymaster.sol)
             throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`); 
         }
 
@@ -37,7 +32,6 @@ export async function compilePaymasterContract() {
                 viaIR: true,
                 optimizer: { enabled: true, runs: 200, details: { yul: true } },
                 outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
-                // CRITICAL: Remappings must be correct for dependency resolution
                 remappings: [
                     '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                     '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
@@ -67,7 +61,6 @@ export async function compilePaymasterContract() {
             sourceName: contractFileName
         };
 
-        // Create directory and write file
         fs.mkdirSync(artifactDir, { recursive: true });
         fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
         console.log(`✅ Artifact successfully written to: ${artifactFile}`);
