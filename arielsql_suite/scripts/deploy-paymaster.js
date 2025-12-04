@@ -14,7 +14,7 @@ export async function deployPaymaster(wallet, artifactPath) {
 
     let PaymasterArtifact;
     try {
-        // Load the JSON file content directly using fs.readFileSync, guaranteed to exist in this process
+        // Load the JSON file content directly using fs.readFileSync
         const artifactContent = fs.readFileSync(artifactPath, 'utf8');
         PaymasterArtifact = JSON.parse(artifactContent);
         
@@ -28,7 +28,6 @@ export async function deployPaymaster(wallet, artifactPath) {
     const deployerAddress = await wallet.getAddress();
     console.log(`🚀 Deploying Paymaster with deployer: ${deployerAddress}`);
     
-    // Check balance and deploy logic (omitted for brevity, assume correct)
     const balance = await wallet.provider.getBalance(deployerAddress);
     console.log(`💰 Deployer balance: ${ethers.formatEther(balance)} ETH`);
     
@@ -45,10 +44,10 @@ export async function deployPaymaster(wallet, artifactPath) {
 
     console.log('📝 Deploying contract with constructor arguments...');
     
-    // Deploy with constructor arguments
+    // Deploy with constructor arguments (using the hardcoded values from your prior attempts)
     const paymaster = await Paymaster.deploy(
         "0x5FF137D4bEAA7036d654a88Ea898df565D304B88",  // EntryPoint
-        "0x9bE921e5eFacd53bc4EEbCfdc4494D296cFab5da",  // BWAEZI
+        "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da",  // BWAEZI (Updated to use the address in your old main.js)
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  // WETH
         "0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6",  // Quoter
         3000                                           // 0.3% pool
