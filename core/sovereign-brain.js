@@ -3908,7 +3908,7 @@ setInterval(() => {
    ========================================================================= */
 
 
-// Default export for easy integration
+// export for easy integration
 export {
   ProductionSovereignCore,
   EnterpriseAPIServer,
