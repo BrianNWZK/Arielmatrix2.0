@@ -1,5 +1,5 @@
 // arielsql_suite/main.js
-import { deployPaymaster } from "./scripts/deploy-paymaster.js";
+import { deployPaymaster } from "./scripts/deploy-paymaster.js"; // Corrected import assuming the script now exports deployPaymaster
 import { ethers } from "ethers";
 import http from "http";
 
@@ -16,7 +16,7 @@ import http from "http";
   const wallet = new ethers.Wallet(privateKey, provider);
 
   // Deploy Paymaster
-  const paymasterAddr = await deployPaymaster(wallet);
+  const paymasterAddr = await deployPaymaster(wallet); // Pass the wallet to the deployment function
 
   // Approve Paymaster from sponsor token SCW
   const tokenAddress = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
@@ -31,7 +31,7 @@ import http from "http";
 
   // **FIX: Import everything at once to avoid circular issues**
   const { ProductionSovereignCore, LIVE } = await import("../core/sovereign-brain.js");
-  
+
   // Update live config
   LIVE.BWAEZI_GAS_SPONSOR = paymasterAddr;
 
@@ -75,7 +75,6 @@ import http from "http";
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end(`Sovereign MEV Brain v12 is running\nPaymaster: ${paymasterAddr}\nGasless: true\n`);
   });
-
   server.listen(PORT, () => {
     console.log(`🚀 Server listening on port ${PORT}`);
     console.log(`📊 Health check: http://localhost:${PORT}/health`);
