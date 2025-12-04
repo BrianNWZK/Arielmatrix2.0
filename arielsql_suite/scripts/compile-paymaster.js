@@ -4,18 +4,25 @@ import * as path from 'path';
 import solc from 'solc';
 
 // --- File Paths ---
-// Path to your source contract (relative to project root)
 const contractSourcePath = path.resolve(process.cwd(), 'arielsql_suite/contracts/BWAEZIPaymaster.sol');
 
-// Target directory and file name for the artifact (guaranteed path)
-const artifactDir = path.resolve(process.cwd(), 'artifacts/arielsql_suite/contracts/BWAEZIPaymaster.sol');
+// === NEW SIMPLE ARTIFACT PATH ===
+// We are forcing the artifact to be created right next to the deploy script.
+const artifactDir = path.resolve(process.cwd(), 'arielsql_suite/scripts');
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
 const contractName = 'BWAEZIPaymaster';
 
 // --- Compilation Logic ---
 try {
+    console.log('🔍 Checking contract source at:', contractSourcePath);
+    
+    if (!fs.existsSync(contractSourcePath)) {
+        throw new Error(`Contract source not found at: ${contractSourcePath}`);
+    }
+
     const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
+    console.log('📝 Contract source loaded successfully');
 
     const input = {
         language: 'Solidity',
@@ -25,34 +32,48 @@ try {
             },
         },
         settings: {
+            viaIR: true,
+            optimizer: {
+                enabled: true,
+                runs: 200,
+                details: {
+                    yul: true
+                }
+            },
             outputSelection: {
                 '*': {
-                    '*': ['abi', 'evm.bytecode.object'],
+                    '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'],
                 },
             },
-            // CRUCIAL: Remappings tell solc where to find the imported libraries
             remappings: [
                 '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
                 '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
-            ],
-            optimizer: {
-                enabled: true,
-                runs: 200
-            }
+            ]
         },
     };
 
-    console.log('Starting direct Solidity compilation with solc...');
+    console.log('🛠️ Compiling contract with solc...');
     const output = JSON.parse(solc.compile(JSON.stringify(input)));
     
     // Check for compilation errors
     if (output.errors) {
-        const compilationErrors = output.errors.filter(e => e.type === 'Error');
+        const compilationErrors = output.errors.filter(e => e.severity === 'error');
+        const warnings = output.errors.filter(e => e.severity === 'warning');
+        
         if (compilationErrors.length > 0) {
             console.error('❌ Solidity Compilation Failed:');
             compilationErrors.forEach(err => console.error(err.formattedMessage));
             process.exit(1);
         }
+        
+        if (warnings.length > 0) {
+            console.warn('⚠️ Compilation Warnings:');
+            warnings.forEach(warn => console.warn(warn.formattedMessage));
+        }
+    }
+
+    if (!output.contracts || !output.contracts[contractFileName] || !output.contracts[contractFileName][contractName]) {
+        throw new Error('Contract not found in compilation output. Check contract name matches file.');
     }
 
     const contract = output.contracts[contractFileName][contractName];
@@ -60,18 +81,21 @@ try {
     const artifact = {
         abi: contract.abi,
         bytecode: '0x' + contract.evm.bytecode.object,
-        contractName: contractName
+        deployedBytecode: '0x' + (contract.evm.deployedBytecode?.object || ''),
+        contractName: contractName,
+        sourceName: contractFileName
     };
 
-    // 1. Ensure the artifacts directory structure exists, creating it if necessary
+    // Create directory if it doesn't exist
     fs.mkdirSync(artifactDir, { recursive: true });
 
-    // 2. Write the artifact file to the guaranteed location
+    // Write artifact
     fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
-
     console.log(`✅ Artifact successfully written to: ${artifactFile}`);
+    console.log(`📦 Bytecode size: ${Math.floor(artifact.bytecode.length / 2)} bytes`);
 
 } catch (e) {
-    console.error(`❌ Fatal error during compilation: ${e.message}`);
+    console.error(`❌ Fatal error during compilation:`, e.message);
+    console.error(e.stack);
     process.exit(1);
 }
