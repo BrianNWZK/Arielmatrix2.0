@@ -29,13 +29,10 @@ function findImports(relativePath) {
     } 
     // 2. Fallback check for dependency paths that solc itself might try to resolve
     else if (relativePath.startsWith('node_modules/')) {
-        // Correct the path if it already includes 'node_modules/'
-        // Example: node_modules/@openzeppelin/... should be searched directly from the root
         resolvedPath = path.resolve(process.cwd(), relativePath);
     } 
-    // 3. Fallback for relative local imports (not common for this type of dependency)
+    // 3. Fallback for relative local imports 
     else {
-        // Attempt to find it relative to the contract source file
         resolvedPath = path.resolve(path.dirname(contractSourcePath), relativePath);
     }
 
@@ -71,8 +68,7 @@ export async function compilePaymasterContract() {
 
         console.log('🛠️ Compiling contract with solc...');
         
-        // CRITICAL FIX: The second argument is a dictionary containing the callback,
-        // not just the function itself.
+        // Pass the findImports callback correctly in the second argument
         const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports })); 
         
         if (output.errors) {
