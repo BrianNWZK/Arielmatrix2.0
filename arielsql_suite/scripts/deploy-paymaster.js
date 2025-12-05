@@ -35,13 +35,13 @@ export async function deployPaymaster(wallet) {
     console.log('Deploying BWAEZIPaymaster (gas-optimized, v0.8.28)...\n');
 
     // OFFICIAL MAINNET ADDRESSES — Dec 2025
-    const paymaster = await factory.deploy(
-        "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",  // EntryPoint v0.7
-        "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da",  // BWAEZI Token
-        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  // WETH
-        "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",  // Uniswap V3 QuoterV2
-        3000                                             // 0.3% fee
-    );
+   const paymaster = await factory.deploy(
+    "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",  // EntryPoint v0.7
+    "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da",  // BWAEZI
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  // WETH
+    "0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6",  // QUOTER V2 MAINNET ← FIXED
+    3000
+);
 
     console.log(`Transaction submitted: ${paymaster.deploymentTransaction().hash}`);
     console.log('Waiting for confirmation... (usually 12–30 seconds)\n');
