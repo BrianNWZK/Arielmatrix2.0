@@ -40,7 +40,6 @@ export async function deployPaymaster(wallet) {
     "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da",  // BWAEZI
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  // WETH
     "0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6",  // QUOTER V2 MAINNET ← FIXED
-    3000
 );
 
     console.log(`Transaction submitted: ${paymaster.deploymentTransaction().hash}`);
