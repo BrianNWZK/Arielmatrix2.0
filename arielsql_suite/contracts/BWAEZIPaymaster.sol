@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-// ERC-4337 v0.8.0 interfaces only (self-contained, no Helpers lib)
+// ERC-4337 v0.8.0 interfaces only (self-contained)
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 
@@ -88,8 +88,8 @@ contract BWAEZIPaymaster is IPaymaster {
         ));
     }
 
-    // Safe quote via try-catch (full tuple, no parser errors)
-    function _safeQuoteBWAEZINeeded(uint256 wethAmount) internal view returns (uint256 bwaeziNeeded) {
+    // Safe quote: REMOVED 'view' to avoid conflict (called from external)
+    function _safeQuoteBWAEZINeeded(uint256 wethAmount) internal returns (uint256 bwaeziNeeded) {
         try quoter.quoteExactOutputSingle(
             address(bwaeziToken),
             weth,
@@ -118,7 +118,7 @@ contract BWAEZIPaymaster is IPaymaster {
         maxFeePerGas = uint256(uint128(uint256(packed)));
     }
 
-    // validatePaymasterUserOp: EXACT v0.8 match (no view, maxCost)
+    // validatePaymasterUserOp: EXACT v0.8 match (external, no view)
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32 /* userOpHash */,
@@ -126,7 +126,7 @@ contract BWAEZIPaymaster is IPaymaster {
     ) external override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint, "Only EntryPoint");
 
-        // Manual unpack (safe casting fixes errors)
+        // Manual unpack (safe casting)
         (uint256 verificationGas, uint256 callGas) = _unpackAccountGasLimits(userOp.accountGasLimits);
         (, uint256 maxFeePerGas) = _unpackGasFees(userOp.gasFees);  // Use maxFee for upper bound
 
