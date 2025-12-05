@@ -13,7 +13,9 @@ export async function deployPaymaster(wallet) {
     console.log('DEPLOYING BWAEZI PAYMASTER (Ethereum Mainnet 2025)\n');
 
     const artifactPath = path.join(__dirname, '..', '..', 'artifacts', 'contracts', 'BWAEZIPaymaster.json');
-    if (!fs.existsSync(artifactPath)) throw new Error("Run compile first!");
+    if (!fs.existsSync(artifactPath)) {
+        throw new Error("Run compile first!");
+    }
 
     const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
     const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
@@ -25,32 +27,30 @@ export async function deployPaymaster(wallet) {
     console.log(`Balance  : ${ethers.formatEther(balance)} ETH\n`);
 
     if (balance < ethers.parseEther("0.0015")) {
-        throw new Error("Not enough ETH — need at least 0.0015");
+        throw new Error("Need at least 0.0015 ETH");
     }
 
     console.log('Deploying...\n');
 
     const paymaster = await factory.deploy(
         "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789", // EntryPoint v0.7
-        "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da", // BWAEZI
-        ← checksummed
-        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH             ← checksummed
-        "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6"  // QuoterV2         ← THIS ONE IS NOW 100% CORRECT
+        "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da", // BWAEZI Token
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH
+        "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6"  // QuoterV2 — CORRECT CHECKSUM
     );
 
-    console.log(`TX HASH: ${paymaster.deploymentTransaction().hash}`);
-    console.log('Confirming... (10-30 seconds)\n');
+    console.log(`TX: ${paymaster.deploymentTransaction().hash}`);
+    console.log('Confirming...\n');
 
     await paymaster.waitForDeployment();
     const address = await paymaster.getAddress();
 
-    console.log(`BWAEZI PAYMASTER IS NOW LIVE`);
-    console.log(`ADDRESS : ${address}`);
+    console.log(`BWAEZI PAYMASTER LIVE`);
+    console.log(`ADDRESS: ${address}`);
     console.log(`https://etherscan.io/address/${address}\n`);
 
-    console.log(`SOVEREIGN MEV BRAIN v12 — FULLY ACTIVATED`);
-    console.log(`You now own the gas layer.`);
-    console.log(`BWAEZI = gas. Forever.\n`);
+    console.log(`SOVEREIGN MEV BRAIN v12 — ONLINE`);
+    console.log(`You now own the gas layer.\n`);
 
     return address;
 }
