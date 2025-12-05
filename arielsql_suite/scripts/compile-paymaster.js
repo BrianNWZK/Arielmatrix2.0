@@ -17,6 +17,7 @@ const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
 const contractName = 'BWAEZIPaymaster';
 
+
 // CRITICAL FIX: The findImports callback function required by solc for resolving external dependencies
 function findImports(relativePath) {
     const nodeModulesPath = path.resolve(process.cwd(), 'node_modules');
@@ -28,17 +29,22 @@ function findImports(relativePath) {
     } 
     // 2. Fallback check for dependency paths that solc itself might try to resolve
     else if (relativePath.startsWith('node_modules/')) {
+        // Correct the path if it already includes 'node_modules/'
+        // Example: node_modules/@openzeppelin/... should be searched directly from the root
         resolvedPath = path.resolve(process.cwd(), relativePath);
     } 
-    // 3. Fallback for relative local imports (shouldn't be an issue here, but for completeness)
+    // 3. Fallback for relative local imports (not common for this type of dependency)
     else {
+        // Attempt to find it relative to the contract source file
         resolvedPath = path.resolve(path.dirname(contractSourcePath), relativePath);
     }
 
     if (fs.existsSync(resolvedPath)) {
+        console.log(`\t✅ Resolved import: ${relativePath} to ${resolvedPath}`);
         return { contents: fs.readFileSync(resolvedPath, 'utf8') };
     }
     
+    console.log(`\t❌ Failed to resolve import: ${relativePath}`);
     return { error: `File not found: ${relativePath}` };
 }
 
@@ -60,14 +66,14 @@ export async function compilePaymasterContract() {
                 viaIR: true,
                 optimizer: { enabled: true, runs: 200, details: { yul: true } },
                 outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
-                // NOTE: Remappings are now unnecessary as findImports handles resolution
-                // remappings: [ ... ]
             },
         };
 
         console.log('🛠️ Compiling contract with solc...');
-        // Pass findImports here to correctly resolve the imports from node_modules
-        const output = JSON.parse(solc.compile(JSON.stringify(input), findImports)); 
+        
+        // CRITICAL FIX: The second argument is a dictionary containing the callback,
+        // not just the function itself.
+        const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports })); 
         
         if (output.errors) {
             const compilationErrors = output.errors.filter(e => e.severity === 'error');
