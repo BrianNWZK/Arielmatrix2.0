@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-// ERC-4337 v0.8.0 interfaces only (no Helpers needed)
+// ERC-4337 v0.8.0 interfaces only (self-contained, no Helpers lib)
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 
@@ -75,7 +75,6 @@ contract BWAEZIPaymaster is IPaymaster {
 
     // Optional: getHash for bundler compatibility (manual keccak over fields excl. sig)
     function getHash(PackedUserOperation calldata userOp) external view returns (bytes32) {
-        // Exclude signature; use EntryPoint's domain for full hash if needed
         return keccak256(abi.encode(
             userOp.sender,
             userOp.nonce,
@@ -84,9 +83,9 @@ contract BWAEZIPaymaster is IPaymaster {
             userOp.accountGasLimits,
             userOp.preVerificationGas,
             userOp.gasFees,
-            userOp.paymasterAndData,
-            keccak256(userOp.signature)  // Wait, no – exclude sig for paymaster hash; adjust if needed
-        ));  // Simplified; use full spec if ERC-712 needed
+            userOp.paymasterAndData
+            // Exclude signature per spec 
+        ));
     }
 
     // Safe quote via try-catch (full tuple, no parser errors)
@@ -105,16 +104,18 @@ contract BWAEZIPaymaster is IPaymaster {
         }
     }
 
-    // Manual unpack: accountGasLimits (per v0.8 spec )
+    // Manual unpack: accountGasLimits (high 128 bits: verificationGas, low: callGas) 
     function _unpackAccountGasLimits(bytes32 packed) internal pure returns (uint256 verificationGas, uint256 callGas) {
-        verificationGas = uint256(uint128(packed >> 128));
-        callGas = uint256(uint128(packed));
+        // Safe casting: bytes32 → uint256 intermediate → uint128 → uint256 (fixes type error )
+        verificationGas = uint256(uint128(uint256(packed >> 128)));
+        callGas = uint256(uint128(uint256(packed)));
     }
 
-    // Manual unpack: gasFees (high 128: maxPriorityFee, low: maxFeePerGas)
+    // Manual unpack: gasFees (high 128: maxPriorityFee, low: maxFeePerGas) 
     function _unpackGasFees(bytes32 packed) internal pure returns (uint256 maxPriorityFee, uint256 maxFeePerGas) {
-        maxPriorityFee = uint256(uint128(packed >> 128));
-        maxFeePerGas = uint256(uint128(packed));
+        // Safe casting: same pattern (avoids direct bytes32 → uint128 )
+        maxPriorityFee = uint256(uint128(uint256(packed >> 128)));
+        maxFeePerGas = uint256(uint128(uint256(packed)));
     }
 
     // validatePaymasterUserOp: EXACT v0.8 match (no view, maxCost)
@@ -125,7 +126,7 @@ contract BWAEZIPaymaster is IPaymaster {
     ) external override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint, "Only EntryPoint");
 
-        // Manual unpack (fixes undeclared identifier)
+        // Manual unpack (safe casting fixes errors)
         (uint256 verificationGas, uint256 callGas) = _unpackAccountGasLimits(userOp.accountGasLimits);
         (, uint256 maxFeePerGas) = _unpackGasFees(userOp.gasFees);  // Use maxFee for upper bound
 
