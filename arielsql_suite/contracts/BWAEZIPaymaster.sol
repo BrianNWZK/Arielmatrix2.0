@@ -24,7 +24,7 @@ contract BWAEZIPaymaster is IPaymaster {
     address public immutable weth;
     IQuoterV2 public immutable quoter;
 
-    uint256 public constant BUFFER = 103; // 103%
+    uint256 public constant BUFFER_PERCENT = 103;
     address public immutable owner;
 
     event Charged(address indexed user, uint256 amount);
@@ -43,31 +43,26 @@ contract BWAEZIPaymaster is IPaymaster {
         entryPoint = _entryPoint;
         bwaeziToken = _bwaeziToken;
         weth = _weth;
-        qu = _quoter;
+        quoter = _quoter;        // ← FIXED: was "qu ="
         owner = msg.sender;
     }
 
     function deposit() external payable {}
 
-    // THIS IS THE ONLY LINE THAT WORKS ON RENDER TODAY
     function _quote(uint256 wethAmount) internal returns (uint256) {
-        try qu.quoteExactOutputSingle(
-            address(bwaeziToken),
-            weth,
-            wethAmount,
-            3000,
-            0
-        ) returns (uint256 amountIn, uint160, uint32, uint256) {
-            return amountIn * BUFFER / 100;
+        try quoter.quoteExactOutputSingle(address(bwaeziToken), weth, wethAmount, 3000, 0)
+            returns (uint256 amountIn, uint160, uint32, uint256)
+        {
+            return amountIn * BUFFER_PERCENT / 100;
         } catch {
-            return wethAmount * 120 / 100; // safe fallback
+            return wethAmount * 120 / 100; // 20% safe fallback
         }
     }
 
-    // Manual unpack — 100% safe casting
-    function _vg(bytes32 d) internal pure returns (uint256) { return uint256(uint128(bytes16(d))); }
-    function _cg(bytes32 d) internal pure returns (uint256) { return uint256(uint128(uint256(d))); }
-    function _mf(bytes32 d) internal pure returns (uint256) { return uint256(uint128(uint256(d))); }
+    // Super simple manual unpack (no libraries, no errors)
+    function _vg(bytes32 data) internal pure returns (uint256) { return uint256(uint128(bytes16(data))); }
+    function _cg(bytes32 data) internal pure returns (uint256) { return uint256(uint128(uint256(data))); }
+    function _mf(bytes32 data) internal pure returns (uint256) { return uint256(uint128(uint256(data))); }
 
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
@@ -103,7 +98,6 @@ contract BWAEZIPaymaster is IPaymaster {
         emit Charged(user, charge);
     }
 
-    // Owner withdraw
     function withdraw(uint256 amount) external {
         require(msg.sender == owner);
         bwaeziToken.safeTransfer(owner, amount);
