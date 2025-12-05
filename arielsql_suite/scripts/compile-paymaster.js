@@ -4,9 +4,11 @@ import * as path from 'path';
 import solc from 'solc';
 import { fileURLToPath } from 'url';
 
+// Resolve directory name for robust pathing in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// --- File Paths ---
 const contractSourcePath = path.resolve(__dirname, '..', 'contracts', 'BWAEZIPaymaster.sol');
 const ARTIFACT_ROOT_DIR = path.resolve(process.cwd(), 'artifacts');
 const ARTIFACT_SUB_DIR = 'arielsql_suite/contracts/BWAEZIPaymaster.sol'; 
@@ -14,6 +16,32 @@ const artifactDir = path.join(ARTIFACT_ROOT_DIR, ARTIFACT_SUB_DIR);
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
 const contractFileName = 'BWAEZIPaymaster.sol';
 const contractName = 'BWAEZIPaymaster';
+
+// CRITICAL FIX: The findImports callback function required by solc for resolving external dependencies
+function findImports(relativePath) {
+    const nodeModulesPath = path.resolve(process.cwd(), 'node_modules');
+    let resolvedPath;
+
+    // 1. Check for standard @dependency imports (OpenZeppelin, Account-Abstraction)
+    if (relativePath.startsWith('@')) {
+        resolvedPath = path.join(nodeModulesPath, relativePath);
+    } 
+    // 2. Fallback check for dependency paths that solc itself might try to resolve
+    else if (relativePath.startsWith('node_modules/')) {
+        resolvedPath = path.resolve(process.cwd(), relativePath);
+    } 
+    // 3. Fallback for relative local imports (shouldn't be an issue here, but for completeness)
+    else {
+        resolvedPath = path.resolve(path.dirname(contractSourcePath), relativePath);
+    }
+
+    if (fs.existsSync(resolvedPath)) {
+        return { contents: fs.readFileSync(resolvedPath, 'utf8') };
+    }
+    
+    return { error: `File not found: ${relativePath}` };
+}
+
 
 export async function compilePaymasterContract() {
     try {
@@ -32,15 +60,14 @@ export async function compilePaymasterContract() {
                 viaIR: true,
                 optimizer: { enabled: true, runs: 200, details: { yul: true } },
                 outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
-                remappings: [
-                    '@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/',
-                    '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/'
-                ]
+                // NOTE: Remappings are now unnecessary as findImports handles resolution
+                // remappings: [ ... ]
             },
         };
 
         console.log('🛠️ Compiling contract with solc...');
-        const output = JSON.parse(solc.compile(JSON.stringify(input)));
+        // Pass findImports here to correctly resolve the imports from node_modules
+        const output = JSON.parse(solc.compile(JSON.stringify(input), findImports)); 
         
         if (output.errors) {
             const compilationErrors = output.errors.filter(e => e.severity === 'error');
@@ -61,6 +88,7 @@ export async function compilePaymasterContract() {
             sourceName: contractFileName
         };
 
+        // Create directory and write file
         fs.mkdirSync(artifactDir, { recursive: true });
         fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
         console.log(`✅ Artifact successfully written to: ${artifactFile}`);
