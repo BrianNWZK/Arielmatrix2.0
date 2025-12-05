@@ -7,9 +7,9 @@ import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-// CRITICAL FIX: Explicitly define the UserOperation struct, which the IPaymaster 
-// interface from the installed dependency version expects, to fix DeclarationError
-// and "Member not found" errors.
+// CRITICAL FIX: Explicitly define the UserOperation struct. This resolves the 
+// DeclarationError and ensures that the fields accessed (e.g., verificationGasLimit) 
+// are correctly mapped, allowing the compiler to validate the validatePaymasterUserOp signature.
 struct UserOperation {
     address sender;
     uint256 nonce;
@@ -23,6 +23,14 @@ struct UserOperation {
     bytes paymasterAndData;
     bytes signature;
 }
+
+// CRITICAL FIX: Explicitly define the PostOpMode enum. This is required by the 
+// IPaymaster interface and its absence caused a mismatch in the postOp function signature.
+enum PostOpMode {
+    opSucceeded,
+    opFailed
+}
+
 
 // Uniswap V3 Quoter (for BWAEZI → WETH price)
 interface IQuoterV2 {
@@ -38,7 +46,6 @@ interface IQuoterV2 {
         returns (uint256 amountIn, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate);
 }
 
-// NOTE: Now we explicitly override the functions using the UserOperation struct we defined.
 contract BWAEZIPaymaster is IPaymaster {
     using SafeERC20 for IERC20;
 
@@ -78,24 +85,22 @@ contract BWAEZIPaymaster is IPaymaster {
         address sponsorSCW,
         uint256 bwaeziAmount
     ) external {
-        // ... (existing logic) ...
         uint256 bwaeziWithBuffer = (bwaeziAmount * BUFFER_PERCENT) / 100;
         bwaeziToken.safeTransferFrom(sponsorSCW, address(this), bwaeziWithBuffer);
     }
 
-    // CRITICAL FIX 2: Implement the missing function required by IPaymaster
+    // CRITICAL FIX: Implementation of getHash required by IPaymaster
     function getHash(UserOperation calldata userOp) public view returns (bytes32) {
-        // This is a minimal implementation, usually it's keccak256(packed userOp + chainId + EP address)
-        return keccak256(abi.encodePacked(userOp.sender, userOp.nonce, userOp.callGasLimit));
+        // Simple keccak256 hash for implementation requirement
+        return keccak256(abi.encodePacked(userOp.sender, userOp.nonce));
     }
 
-    // Called by EntryPoint during validation
+    // Called by EntryPoint during validation (Signature now fully matches interface)
     function validatePaymasterUserOp(
-        UserOperation calldata userOp, // Use the correct, explicit struct
+        UserOperation calldata userOp, 
         bytes32 userOpHash,
         uint256 requiredPrefund
     ) external view override returns (bytes memory context, uint256 validationData) {
-        // Calculate max possible gas cost
         uint256 maxPossibleCost = requiredPrefund +
             userOp.verificationGasLimit * userOp.maxFeePerGas +
             userOp.callGasLimit * userOp.maxFeePerGas;
@@ -121,16 +126,12 @@ contract BWAEZIPaymaster is IPaymaster {
         return ("", 0); 
     }
 
-    // Called by EntryPoint during execution (or failure)
+    // Called by EntryPoint during execution (or failure) (Signature now fully matches interface)
     function postOp(
-        PostOpMode mode,
+        PostOpMode mode, 
         bytes calldata context,
-        uint256 actualGasCost
+        uint256 actualGasCost 
     ) external override {
-        // CRITICAL FIX 3: Removed the 'actualGasCost' parameter from postOp signature
-        // to match the IPaymaster definition for the installed version, 
-        // which resolves the "Function has override specified but does not override anything" error.
-        // NOTE: The signature for postOp depends heavily on the specific IPaymaster version.
-        // This current code relies on the signature for postOp NOT having actualGasCost.
+        // Implementation logic
     }
 }
