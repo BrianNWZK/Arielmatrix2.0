@@ -1,105 +1,104 @@
 // arielsql_suite/scripts/compile-paymaster.js
 import * as fs from 'fs';
 import * as path from 'path';
-import solc from 'solc';
 import { fileURLToPath } from 'url';
+import solc from 'solc';
 
-// Resolve directory name for robust pathing in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- File Paths ---
 const contractSourcePath = path.resolve(__dirname, '..', 'contracts', 'BWAEZIPaymaster.sol');
 const ARTIFACT_ROOT_DIR = path.resolve(process.cwd(), 'artifacts');
-const ARTIFACT_SUB_DIR = 'arielsql_suite/contracts/BWAEZIPaymaster.sol'; 
-const artifactDir = path.join(ARTIFACT_ROOT_DIR, ARTIFACT_SUB_DIR);
+const artifactDir = path.join(ARTIFACT_ROOT_DIR, 'contracts');
 const artifactFile = path.join(artifactDir, 'BWAEZIPaymaster.json');
-const contractFileName = 'BWAEZIPaymaster.sol';
-const contractName = 'BWAEZIPaymaster';
 
-
-// CRITICAL FIX: The findImports callback function required by solc for resolving external dependencies
-function findImports(relativePath) {
-    const nodeModulesPath = path.resolve(process.cwd(), 'node_modules');
-    let resolvedPath;
-
-    // 1. Check for standard @dependency imports (OpenZeppelin, Account-Abstraction)
-    if (relativePath.startsWith('@')) {
-        resolvedPath = path.join(nodeModulesPath, relativePath);
-    } 
-    // 2. Fallback check for dependency paths that solc itself might try to resolve
-    else if (relativePath.startsWith('node_modules/')) {
-        resolvedPath = path.resolve(process.cwd(), relativePath);
-    } 
-    // 3. Fallback for relative local imports 
-    else {
-        resolvedPath = path.resolve(path.dirname(contractSourcePath), relativePath);
+function findImports(importPath) {
+    // Support: @openzeppelin, @account-abstraction, etc.
+    if (importPath.startsWith('@')) {
+        const resolved = path.join(process.cwd(), 'node_modules', importPath);
+        if (fs.existsSync(resolved)) {
+            console.log(`Resolved import: ${importPath} → ${resolved}`);
+            return { contents: fs.readFileSync(resolved, 'utf8') };
+        }
     }
 
-    if (fs.existsSync(resolvedPath)) {
-        console.log(`\t✅ Resolved import: ${relativePath} to ${resolvedPath}`);
-        return { contents: fs.readFileSync(resolvedPath, 'utf8') };
+    // Fallback: local relative paths
+    const localPath = path.resolve(path.dirname(contractSourcePath), importPath);
+    if (fs.existsSync(localPath)) {
+        console.log(`Resolved local import: ${importPath} → ${localPath}`);
+        return { contents: fs.readFileSync(localPath, 'utf8') };
     }
-    
-    console.log(`\t❌ Failed to resolve import: ${relativePath}`);
-    return { error: `File not found: ${relativePath}` };
+
+    console.error(`Import failed: ${importPath}`);
+    return { error: 'File not found: ' + importPath };
 }
 
-
 export async function compilePaymasterContract() {
-    try {
-        console.log('--- COMPILATION START (In-Process) ---');
-        
-        if (!fs.existsSync(contractSourcePath)) {
-            throw new Error(`CONTRACT SOURCE MISSING! Expected: ${contractSourcePath}`); 
-        }
+    console.log('--- Starting Paymaster contract compilation ---');
 
-        const contractSource = fs.readFileSync(contractSourcePath, 'utf8');
-
-        const input = {
-            language: 'Solidity',
-            sources: { [contractFileName]: { content: contractSource } },
-            settings: {
-                viaIR: true,
-                optimizer: { enabled: true, runs: 200, details: { yul: true } },
-                outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'] } },
-            },
-        };
-
-        console.log('🛠️ Compiling contract with solc...');
-        
-        // Pass the findImports callback correctly in the second argument
-        const output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports })); 
-        
-        if (output.errors) {
-            const compilationErrors = output.errors.filter(e => e.severity === 'error');
-            if (compilationErrors.length > 0) {
-                console.error('\n❌ FATAL: SOLC Compilation Errors Found:');
-                compilationErrors.forEach(err => console.error(err.formattedMessage));
-                process.exit(1); 
-            }
-        }
-
-        const contract = output.contracts[contractFileName][contractName];
-
-        const artifact = {
-            abi: contract.abi,
-            bytecode: '0x' + contract.evm.bytecode.object,
-            deployedBytecode: '0x' + (contract.evm.deployedBytecode?.object || ''),
-            contractName: contractName,
-            sourceName: contractFileName
-        };
-
-        // Create directory and write file
-        fs.mkdirSync(artifactDir, { recursive: true });
-        fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
-        console.log(`✅ Artifact successfully written to: ${artifactFile}`);
-        console.log(`--- COMPILATION END (SUCCESS) ---`);
-        
-        return artifactFile; 
-
-    } catch (e) {
-        console.error(`\n❌ FATAL: Error in compilePaymasterContract:`, e.message);
-        throw e;
+    if (!fs.existsSync(contractSourcePath)) {
+        throw new Error(`BWAEZIPaymaster.sol not found at: ${contractSourcePath}`);
     }
+
+    const source = fs.readFileSync(contractSourcePath, 'utf8');
+
+    const input = {
+        language: 'Solidity',
+        sources: {
+            'BWAEZIPaymaster.sol': { content: source }
+        },
+        settings: {
+            viaIR: true, // Required for complex contracts in 0.8.24+
+            optimizer: {
+                enabled: true,
+                runs: 1000000,
+                details: { yul: true }
+            },
+            outputSelection: {
+                '*': {
+                    '*': ['abi', 'evm.bytecode', 'evm.deployedBytecode', 'metadata']
+                }
+            },
+            evmVersion: 'paris'
+        }
+    };
+
+    console.log('Compiling with solc...');
+    const output = JSON.parse(
+        solc.compile(JSON.stringify(input), { import: findImports })
+    );
+
+    // Print warnings but don't fail
+    if (output.errors) {
+        output.errors.forEach(err => {
+            if (err.severity === 'error') {
+                console.error('SOLC ERROR:', err.formattedMessage);
+            } else {
+                console.warn('SOLC WARNING:', err.formattedMessage);
+            }
+        });
+        if (output.errors.some(e => e.severity === 'error')) {
+            process.exit(1);
+        }
+    }
+
+    const contract = output.contracts['BWAEZIPaymaster.sol'].BWAEZIPaymaster;
+
+    const artifact = {
+        _format: 'hh-sol-artifact-1',
+        contractName: 'BWAEZIPaymaster',
+        sourceName: 'contracts/BWAEZIPaymaster.sol',
+        abi: contract.abi,
+        bytecode: contract.evm.bytecode.object,
+        deployedBytecode: contract.evm.deployedBytecode.object,
+        linkReferences: {},
+        deployedLinkReferences: {}
+    };
+
+    fs.mkdirSync(artifactDir, { recursive: true });
+    fs.writeFileSync(artifactFile, JSON.stringify(artifact, null, 2));
+
+    console.log(`Artifact saved to: ${artifactFile`);
+    console.log(`--- COMPILATION SUCCESSFUL ---`);
+    return artifactFile;
 }
