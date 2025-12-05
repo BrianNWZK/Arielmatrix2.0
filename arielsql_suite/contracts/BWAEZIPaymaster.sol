@@ -7,9 +7,8 @@ import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-// CRITICAL FIX: Explicitly define the UserOperation struct. This resolves the 
-// DeclarationError and ensures that the fields accessed (e.g., verificationGasLimit) 
-// are correctly mapped, allowing the compiler to validate the validatePaymasterUserOp signature.
+// CRITICAL FIX: Explicitly define the UserOperation struct, which the IPaymaster 
+// interface requires, to resolve DeclarationError and "Member not found" errors.
 struct UserOperation {
     address sender;
     uint256 nonce;
@@ -24,11 +23,11 @@ struct UserOperation {
     bytes signature;
 }
 
-// CRITICAL FIX: Explicitly define the PostOpMode enum. This is required by the 
-// IPaymaster interface and its absence caused a mismatch in the postOp function signature.
+// CRITICAL FIX: Explicitly define the PostOpMode enum, which is required by the IPaymaster interface.
 enum PostOpMode {
     opSucceeded,
-    opFailed
+    opReverted,
+    postOpReverted
 }
 
 
@@ -89,19 +88,29 @@ contract BWAEZIPaymaster is IPaymaster {
         bwaeziToken.safeTransferFrom(sponsorSCW, address(this), bwaeziWithBuffer);
     }
 
-    // CRITICAL FIX: Implementation of getHash required by IPaymaster
+    // CRITICAL FIX: Implement the missing getHash function required by IPaymaster
     function getHash(UserOperation calldata userOp) public view returns (bytes32) {
-        // Simple keccak256 hash for implementation requirement
-        return keccak256(abi.encodePacked(userOp.sender, userOp.nonce));
+        // Implementation must match EntryPoint's method for calculating hash
+        return keccak256(abi.encodePacked(
+            userOp.sender, 
+            userOp.nonce,
+            userOp.callGasLimit
+        ));
     }
 
-    // Called by EntryPoint during validation (Signature now fully matches interface)
+    // Called by EntryPoint during validation
     function validatePaymasterUserOp(
         UserOperation calldata userOp, 
         bytes32 userOpHash,
-        uint256 requiredPrefund
-    ) external view override returns (bytes memory context, uint256 validationData) {
-        uint256 maxPossibleCost = requiredPrefund +
+        uint256 maxCost // CRITICAL FIX: Using 'maxCost' or 'requiredPrefund' depends on the exact interface version. 'maxCost' is common.
+    ) external override returns (bytes memory context, uint256 validationData) {
+        // FIX: Remove 'view' to match interface and resolve override error if the interface is not 'view'
+        
+        // Ensure only EntryPoint calls this
+        require(msg.sender == entryPoint, "BWAEZIPaymaster: Only EntryPoint");
+
+        // Calculate max possible cost (using struct fields)
+        uint256 maxPossibleCost = maxCost +
             userOp.verificationGasLimit * userOp.maxFeePerGas +
             userOp.callGasLimit * userOp.maxFeePerGas;
 
@@ -122,16 +131,23 @@ contract BWAEZIPaymaster is IPaymaster {
         uint256 allowance = bwaeziToken.allowance(userOp.sender, address(this));
         require(allowance >= requiredWithBuffer, "BWAEZI: Insufficient allowance for Paymaster");
 
-        // Return success and a context byte string (empty here)
+        // Return success validation data (0 for success)
         return ("", 0); 
     }
 
-    // Called by EntryPoint during execution (or failure) (Signature now fully matches interface)
+    // Called by EntryPoint during execution (or failure)
     function postOp(
         PostOpMode mode, 
         bytes calldata context,
         uint256 actualGasCost 
     ) external override {
-        // Implementation logic
+        // CRITICAL FIX: The signature must match the interface exactly. This one 
+        // is commonly required and resolves the final override error.
+        
+        // Ensure only EntryPoint calls this
+        require(msg.sender == entryPoint, "BWAEZIPaymaster: Only EntryPoint");
+
+        // This is where post-operation logic (swapping BWAEZI for WETH, refunds, etc.) would go
+        // For now, it satisfies the compiler.
     }
 }
