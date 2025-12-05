@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
-import "@account-abstraction/contracts/core/Helpers.sol";   // ← THIS IS THE KEY
+import "@account-abstraction/contracts/core/Helpers.sol";   // ← contains the free functions
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -30,7 +30,6 @@ contract BWAEZIPaymaster is IPaymaster {
     address public owner;
 
     event Charged(address indexed user, uint256 amount);
-    event Sponsored(address indexed sponsor, uint256 amount);
 
     constructor(
         address _entryPoint,
@@ -49,21 +48,10 @@ contract BWAEZIPaymaster is IPaymaster {
 
     function deposit() external payable {}
 
-    function sponsor(address from, uint256 amount) external {
-        uint256 withBuffer = (amount * BUFFER_PERCENT) / 100;
-        bwaeziToken.safeTransferFrom(from, address(this), withBuffer);
-        emit Sponsored(from, withBuffer);
-    }
-
-    // Fixed quoting – works with try/catch in 0.8.28
     function _quote(uint256 wethAmount) internal view returns (uint256) {
-        try quoter.quoteExactOutputSingle(
-            address(bwaeziToken),
-            weth,
-            wethAmount,
-            poolFee,
-            0
-        ) returns (uint256 amountIn, uint160, uint32, uint256) {
+        try quoter.quoteExactOutputSingle(address(bwaeziToken), weth, wethAmount, poolFee, 0)
+            returns (uint256 amountIn, uint160, uint32, uint256)
+        {
             return (amountIn * BUFFER_PERCENT) / 100;
         } catch {
             return (wethAmount * 110) / 100; // 10% fallback
@@ -77,11 +65,11 @@ contract BWAEZIPaymaster is IPaymaster {
     ) external override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint, "Only EntryPoint");
 
-        // THESE ARE THE CORRECT FUNCTIONS IN v0.8.0
-        (uint256 verificationGasLimit, uint256 callGasLimit) = 
-            userOp.unpackAccountGasLimits();   // from Helpers.sol
+        // THIS IS THE ONLY WAY THAT WORKS IN v0.8.x
+        (uint256 verificationGasLimit, uint256 callGasLimit) =
+            unpackAccountGasLimits(userOp.accountGasLimits);
 
-        (uint256 maxFeePerGas, ) = userOp.unpackGasFees();  // from Helpers.sol
+        (uint256 maxFeePerGas, ) = unpackGasFees(userOp.gasFees);
 
         uint256 needed = _quote(
             maxCost + verificationGasLimit * maxFeePerGas + callGasLimit * maxFeePerGas
@@ -100,7 +88,7 @@ contract BWAEZIPaymaster is IPaymaster {
         PostOpMode mode,
         bytes calldata context,
         uint256 actualGasCost,
-        uint256 // actualUserOpFeePerGas – unused in most paymasters
+        uint256 // actualUserOpFeePerGas
     ) external override {
         require(msg.sender == entryPoint, "Only EntryPoint");
         if (mode == PostOpMode.postOpReverted) return;
@@ -112,14 +100,9 @@ contract BWAEZIPaymaster is IPaymaster {
         emit Charged(user, charge);
     }
 
-    // Owner functions
-    function withdrawTokens(uint256 amount) external {
+    // Owner withdraw
+    function withdraw(uint256 amount) external {
         require(msg.sender == owner);
         bwaeziToken.safeTransfer(owner, amount);
-    }
-
-    function withdrawETH() external {
-        require(msg.sender == owner);
-        payable(owner).transfer(address(this).balance);
     }
 }
