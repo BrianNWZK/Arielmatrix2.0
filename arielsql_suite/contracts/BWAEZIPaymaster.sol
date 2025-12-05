@@ -2,34 +2,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// ERC-4337 core interfaces
+// ERC-4337 interfaces
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
+import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-// CRITICAL FIX: Explicitly define the UserOperation struct, which the IPaymaster 
-// interface requires, to resolve all type and "Member not found" errors.
-struct UserOperation {
-    address sender;
-    uint256 nonce;
-    bytes initCode;
-    bytes callData;
-    uint256 callGasLimit;
-    uint256 verificationGasLimit;
-    uint256 preVerificationGas;
-    uint256 maxFeePerGas;
-    uint256 maxPriorityFeePerGas;
-    bytes paymasterAndData;
-    bytes signature;
-}
-
-// CRITICAL FIX: Explicitly define the PostOpMode enum, required by the IPaymaster interface.
-enum PostOpMode {
-    opSucceeded,
-    opReverted,
-    postOpReverted
-}
-
 
 // Uniswap V3 Quoter (for BWAEZI → WETH price)
 interface IQuoterV2 {
@@ -48,7 +26,10 @@ interface IQuoterV2 {
 contract BWAEZIPaymaster is IPaymaster {
     using SafeERC20 for IERC20;
 
+    // EntryPoint contract address
     address public immutable entryPoint;
+
+    // Tokens and pricing infra
     IERC20 public immutable bwaeziToken;
     address public immutable weth;
     IQuoterV2 public immutable quoter;
@@ -71,50 +52,45 @@ contract BWAEZIPaymaster is IPaymaster {
         poolFee = _poolFee;
     }
 
-    // Called by EntryPoint to receive funds (WETH in this case, for gas)
+    // Called by external accounts to deposit funds (no-op for WETH here; kept for symmetry)
     function deposit() public payable {}
-    
+
     // Fallback in case of wrong call
     receive() external payable {
         revert("BWAEZIPaymaster: Deposit WETH via deposit()");
     }
 
-    // The function called by the wallet to sponsor the transaction
-    function sponsorUserOperation(
-        address sponsorSCW,
-        uint256 bwaeziAmount
-    ) external {
-        uint256 bwaeziWithBuffer = (bwaeziAmount * BUFFER_PERCENT) / 100;
-        // Assuming sponsorSCW is approved this contract to pull BWAEZI
-        bwaeziToken.safeTransferFrom(sponsorSCW, address(this), bwaeziWithBuffer);
-    }
-
-    // Implementation of getHash (required by IPaymaster)
-    function getHash(UserOperation calldata userOp) public view returns (bytes32) {
-        // Simple hash calculation for compilation success
+    // Utility: simple hash helper (not part of IPaymaster)
+    function getHash(PackedUserOperation calldata userOp) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(
-            userOp.sender, 
+            userOp.sender,
             userOp.nonce,
             userOp.callGasLimit
         ));
     }
 
-    // Called by EntryPoint during validation
-    function validatePaymasterUserOp(
-        UserOperation calldata userOp, 
-        bytes32 userOpHash,
-        uint256 requiredPrefund // CRITICAL FIX: Revert to 'requiredPrefund'
-    ) external view override returns (bytes memory context, uint256 validationData) {
-        // CRITICAL FIX: Added 'view' modifier back to match the most common IPaymaster signature
+    // External helper: pre-pull BWAEZI with buffer from an SCW sponsor
+    function sponsorUserOperation(
+        address sponsorSCW,
+        uint256 bwaeziAmount
+    ) external {
+        uint256 bwaeziWithBuffer = (bwaeziAmount * BUFFER_PERCENT) / 100;
+        bwaeziToken.safeTransferFrom(sponsorSCW, address(this), bwaeziWithBuffer);
+    }
 
+    // IPaymaster override: validate funding for the userOp.
+    // IMPORTANT: signature must EXACTLY match the installed IPaymaster interface.
+    function validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 /* userOpHash */,
+        uint256 maxCost
+    ) external override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint, "BWAEZIPaymaster: Only EntryPoint");
 
-        // Calculate max possible cost
-        uint256 maxPossibleCost = requiredPrefund +
-            userOp.verificationGasLimit * userOp.maxFeePerGas +
-            userOp.callGasLimit * userOp.maxFeePerGas;
+        // Use EntryPoint-provided worst-case cost
+        uint256 maxPossibleCost = maxCost;
 
-        // Quote how much BWAEZI needed for that cost
+        // Quote BWAEZI needed to cover WETH-denominated gas
         (uint256 bwaeziNeeded, , , ) = quoter.quoteExactOutputSingle(
             IQuoterV2.QuoteExactOutputSingleParams({
                 tokenIn: address(bwaeziToken),
@@ -127,23 +103,24 @@ contract BWAEZIPaymaster is IPaymaster {
 
         uint256 requiredWithBuffer = (bwaeziNeeded * BUFFER_PERCENT) / 100;
 
-        // Check allowance from SCW to this paymaster
+        // Ensure the user (SCW) has granted allowance to this paymaster
         uint256 allowance = bwaeziToken.allowance(userOp.sender, address(this));
         require(allowance >= requiredWithBuffer, "BWAEZI: Insufficient allowance for Paymaster");
 
-        // Return success validation data (0 for success)
-        return ("", 0); 
+        // Return empty context (can encode paymaster-specific data if you need in postOp)
+        // validationData = 0 signals "valid"
+        return ("", 0);
     }
 
-    // Called by EntryPoint during execution (or failure)
+    // IPaymaster override: settle after execution.
     function postOp(
-        PostOpMode mode, 
-        bytes calldata context,
-        uint256 actualGasCost 
+        IPaymaster.PostOpMode /* mode */,
+        bytes calldata /* context */,
+        uint256 /* actualGasCost */
     ) external override {
-        // The signature now matches the IPaymaster interface for your version
         require(msg.sender == entryPoint, "BWAEZIPaymaster: Only EntryPoint");
 
-        // Add real post-operation logic here (e.g., swapping BWAEZI for WETH)
+        // TODO: implement settlement logic (e.g., swap BWAEZI->WETH to reimburse gas, or burn/lock BWAEZI).
+        // This is left blank to focus on fixing the interface mismatch.
     }
 }
