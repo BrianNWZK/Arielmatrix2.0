@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
@@ -27,8 +27,7 @@ contract BWAEZIPaymaster is IPaymaster {
     IQuoterV2 public immutable quoter;
     uint24 public immutable poolFee;
 
-    uint256 public constant BUFFER = 103; // 103%
-
+    uint256 public constant BUFFER_PERCENT = 103;
     address public owner;
 
     event Charged(address indexed user, uint256 amount);
@@ -49,23 +48,27 @@ contract BWAEZIPaymaster is IPaymaster {
         owner = msg.sender;
     }
 
+    function deposit() external payable {}
+
+    function sponsor(address from, uint256 amount) external {
+        uint256 withBuffer = (amount * BUFFER_PERCENT) / 100;
+        bwaeziToken.safeTransferFrom(from, address(this), withBuffer);
+        emit Sponsored(from, withBuffer);
+    }
+
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32,
-        uint256 requiredPreFund
-    ) external view override returns (bytes memory context, uint256 validationData) {
-        require(msg.sender == entryPoint, "Only EP");
+        uint256 maxCost
+    ) external override returns (bytes memory context, uint256 validationData) {
+        require(msg.sender == entryPoint);
 
         (uint256 vg, uint256 cg) = userOp.unpackAccountGasLimits();
         (uint256 mfg,) = userOp.unpackGasFees();
 
-        uint256 maxCost = requiredPreFund + vg * mfg + cg * mfg;
-        uint256 needed = _quoteBWAEZI(maxCost);
+        uint256 needed = _quote(maxCost + vg * mfg + cg * mfg);
 
-        require(
-            bwaeziToken.allowance(userOp.sender, address(this)) >= needed,
-            "Low BWAEZI allowance"
-        );
+        require(bwaeziToken.allowance(userOp.sender, address(this)) >= needed, "Low allowance");
 
         return (abi.encode(userOp.sender), 0);
     }
@@ -76,31 +79,24 @@ contract BWAEZIPaymaster is IPaymaster {
         uint256 actualGasCost,
         uint256
     ) external override {
-        require(msg.sender == entryPoint, "Only EP");
+        require(msg.sender == entryPoint);
         if (mode == PostOpMode.postOpReverted) return;
 
         address user = abi.decode(context, (address));
-        uint256 charge = _quoteBWAEZI(actualGasCost);
+        uint256 charge = _quote(actualGasCost);
 
         bwaeziToken.safeTransferFrom(user, address(this), charge);
         emit Charged(user, charge);
     }
 
-    function _quoteBWAEZI(uint256 wethAmount) internal view returns (uint256) {
+    function _quote(uint256 wethAmount) internal view returns (uint256) {
         try quoter.quoteExactOutputSingle(
             address(bwaeziToken), weth, wethAmount, poolFee, 0
         ) returns (uint256 amountIn, , , ) {
-            return (amountIn * BUFFER_PERCENT) / 100;
+            return amountIn * BUFFER_PERCENT / 100;
         } catch {
-            return (wethAmount * 110) / 100; // fallback 10% buffer
+            return wethAmount * 110 / 100; // 10% fallback buffer
         }
-    }
-
-    // Optional helpers
-    function sponsor(address from, uint256 amount) external {
-        uint256 withBuffer = (amount * BUFFER_PERCENT) / 100;
-        bwaeziToken.safeTransferFrom(from, address(this), withBuffer);
-        emit Sponsored(from, withBuffer);
     }
 
     function withdraw(uint256 amount) external {
