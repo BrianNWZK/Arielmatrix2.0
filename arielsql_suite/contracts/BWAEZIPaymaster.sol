@@ -27,7 +27,7 @@ contract BWAEZIPaymaster is IPaymaster {
     IQuoterV2 public immutable quoter;
     uint24 public immutable poolFee;
 
-    uint256 public constant BUFFER_PERCENT = 103;
+    uint256 public constant BUFFER_PERCENT = 103; // 103%
     address public owner;
 
     event Charged(address indexed user, uint256 amount);
@@ -56,30 +56,50 @@ contract BWAEZIPaymaster is IPaymaster {
         emit Sponsored(from, withBuffer);
     }
 
+    // Fixed: no unnamed tuple elements → decode full return and ignore the rest
+    function _quote(uint256 wethAmount) internal view returns (uint256) {
+        try quoter.quoteExactOutputSingle(
+            address(bwaeziToken),
+            weth,
+            wethAmount,
+            poolFee,
+            0
+        ) returns (uint256 amountIn, uint160, uint32, uint256) {
+            return (amountIn * BUFFER_PERCENT) / 100;
+        } catch {
+            // Fallback 10% buffer if quoter fails (pool dry, etc.)
+            return (wethAmount * 110) / 100;
+        }
+    }
+
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32,
         uint256 maxCost
     ) external override returns (bytes memory context, uint256 validationData) {
-        require(msg.sender == entryPoint);
+        require(msg.sender == entryPoint, "Only EntryPoint");
 
         (uint256 vg, uint256 cg) = userOp.unpackAccountGasLimits();
         (uint256 mfg,) = userOp.unpackGasFees();
 
         uint256 needed = _quote(maxCost + vg * mfg + cg * mfg);
 
-        require(bwaeziToken.allowance(userOp.sender, address(this)) >= needed, "Low allowance");
+        require(
+            bwaeziToken.allowance(userOp.sender, address(this)) >= needed,
+            "BWAEZI allowance too low"
+        );
 
-        return (abi.encode(userOp.sender), 0);
+        context = abi.encode(userOp.sender);
+        validationData = 0;
     }
 
     function postOp(
         PostOpMode mode,
         bytes calldata context,
         uint256 actualGasCost,
-        uint256
+        uint256 // actualUserOpFeePerGas (unused in most paymasters)
     ) external override {
-        require(msg.sender == entryPoint);
+        require(msg.sender == entryPoint, "Only EntryPoint");
         if (mode == PostOpMode.postOpReverted) return;
 
         address user = abi.decode(context, (address));
@@ -89,18 +109,14 @@ contract BWAEZIPaymaster is IPaymaster {
         emit Charged(user, charge);
     }
 
-    function _quote(uint256 wethAmount) internal view returns (uint256) {
-        try quoter.quoteExactOutputSingle(
-            address(bwaeziToken), weth, wethAmount, poolFee, 0
-        ) returns (uint256 amountIn, , , ) {
-            return amountIn * BUFFER_PERCENT / 100;
-        } catch {
-            return wethAmount * 110 / 100; // 10% fallback buffer
-        }
-    }
-
-    function withdraw(uint256 amount) external {
+    // Owner utilities
+    function withdrawTokens(uint256 amount) external {
         require(msg.sender == owner);
         bwaeziToken.safeTransfer(owner, amount);
+    }
+
+    function withdrawETH() external {
+        require(msg.sender == owner);
+        payable(owner).transfer(address(this).balance);
     }
 }
