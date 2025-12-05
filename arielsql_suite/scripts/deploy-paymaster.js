@@ -27,9 +27,9 @@ export async function deployPaymaster(wallet) {
     console.log(`Balance: ${ethers.formatEther(balance)} ETH`);
 
     // REALISTIC CHECK — based on your own 30+ deployments
-    const required = ethers.parseEther("0.005"); // 0.005 ETH is more than enough
+    const required = ethers.parseEther("0.0015"); // 0.0015 ETH is more than enough
     if (balance < required) {
-        throw new Error(`Insufficient balance. Need at least 0.005 ETH (you have ${ethers.formatEther(balance)})`);
+        throw new Error(`Insufficient balance. Need at least 0.0015 ETH (you have ${ethers.formatEther(balance)})`);
     }
 
     console.log('Deploying BWAEZIPaymaster (gas-optimized, v0.8.28)...\n');
