@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
-import "@account-abstraction/contracts/core/UserOperationLib.sol";
+import "@account-abstraction/contracts/core/Helpers.sol";   // ← THIS IS THE KEY
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -19,7 +19,6 @@ interface IQuoterV2 {
 
 contract BWAEZIPaymaster is IPaymaster {
     using SafeERC20 for IERC20;
-    using UserOperationLib for PackedUserOperation;
 
     address public immutable entryPoint;
     IERC20 public immutable bwaeziToken;
@@ -27,7 +26,7 @@ contract BWAEZIPaymaster is IPaymaster {
     IQuoterV2 public immutable quoter;
     uint24 public immutable poolFee;
 
-    uint256 public constant BUFFER_PERCENT = 103; // 103%
+    uint256 public constant BUFFER_PERCENT = 103;
     address public owner;
 
     event Charged(address indexed user, uint256 amount);
@@ -56,7 +55,7 @@ contract BWAEZIPaymaster is IPaymaster {
         emit Sponsored(from, withBuffer);
     }
 
-    // Fixed: no unnamed tuple elements → decode full return and ignore the rest
+    // Fixed quoting – works with try/catch in 0.8.28
     function _quote(uint256 wethAmount) internal view returns (uint256) {
         try quoter.quoteExactOutputSingle(
             address(bwaeziToken),
@@ -67,8 +66,7 @@ contract BWAEZIPaymaster is IPaymaster {
         ) returns (uint256 amountIn, uint160, uint32, uint256) {
             return (amountIn * BUFFER_PERCENT) / 100;
         } catch {
-            // Fallback 10% buffer if quoter fails (pool dry, etc.)
-            return (wethAmount * 110) / 100;
+            return (wethAmount * 110) / 100; // 10% fallback
         }
     }
 
@@ -79,10 +77,15 @@ contract BWAEZIPaymaster is IPaymaster {
     ) external override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint, "Only EntryPoint");
 
-        (uint256 vg, uint256 cg) = userOp.unpackAccountGasLimits();
-        (uint256 mfg,) = userOp.unpackGasFees();
+        // THESE ARE THE CORRECT FUNCTIONS IN v0.8.0
+        (uint256 verificationGasLimit, uint256 callGasLimit) = 
+            userOp.unpackAccountGasLimits();   // from Helpers.sol
 
-        uint256 needed = _quote(maxCost + vg * mfg + cg * mfg);
+        (uint256 maxFeePerGas, ) = userOp.unpackGasFees();  // from Helpers.sol
+
+        uint256 needed = _quote(
+            maxCost + verificationGasLimit * maxFeePerGas + callGasLimit * maxFeePerGas
+        );
 
         require(
             bwaeziToken.allowance(userOp.sender, address(this)) >= needed,
@@ -97,7 +100,7 @@ contract BWAEZIPaymaster is IPaymaster {
         PostOpMode mode,
         bytes calldata context,
         uint256 actualGasCost,
-        uint256 // actualUserOpFeePerGas (unused in most paymasters)
+        uint256 // actualUserOpFeePerGas – unused in most paymasters
     ) external override {
         require(msg.sender == entryPoint, "Only EntryPoint");
         if (mode == PostOpMode.postOpReverted) return;
@@ -109,7 +112,7 @@ contract BWAEZIPaymaster is IPaymaster {
         emit Charged(user, charge);
     }
 
-    // Owner utilities
+    // Owner functions
     function withdrawTokens(uint256 amount) external {
         require(msg.sender == owner);
         bwaeziToken.safeTransfer(owner, amount);
