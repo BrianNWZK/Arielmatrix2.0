@@ -1,36 +1,14 @@
-// contracts/BWAEZIPaymaster.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// OFFICIAL ERC-4337 v0.7/v0.8 interfaces
+// ERC-4337 v0.8.0 interfaces
 import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
+import "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-// Note: We avoid importing PackedUserOperation.sol to fix the "Member not found" error.
 
-// CRITICAL FIX: Define the required structs/enums locally to guarantee compatibility
-// and access to all fields (like verificationGasLimit) without relying on Packed structs.
-struct UserOperation {
-    address sender;
-    uint256 nonce;
-    bytes initCode;
-    bytes callData;
-    uint256 callGasLimit;
-    uint256 verificationGasLimit;
-    uint256 preVerificationGas;
-    uint256 maxFeePerGas;
-    uint256 maxPriorityFeePerGas;
-    bytes paymasterAndData;
-    bytes signature;
-}
-
-enum PostOpMode {
-    opSucceeded,
-    opReverted,
-    postOpReverted
-}
-
-// Uniswap V3 QuoterV2 (from previous code)
+// Uniswap V3 QuoterV2 interface
 interface IQuoterV2 {
     struct QuoteExactOutputSingleParams {
         address tokenIn;
@@ -57,106 +35,158 @@ contract BWAEZIPaymaster is IPaymaster {
     address public immutable weth;
     IQuoterV2 public immutable quoter;
     uint24 public immutable poolFee;
-    uint256 public constant BUFFER_PERCENT = 120; // 20% buffer
+
+    // 103% buffer for volatility + gas reserve
+    uint256 public constant BUFFER_PERCENT = 103;
+    // Fallback min charge if quoter fails (e.g., 1e18 BWAEZI per 1 ETH cost)
+    uint256 public constant FALLBACK_BWAEZI_PER_ETH = 1e18;
+
+    // Owner for withdrawals (add AccessControl if needed)
+    address public owner;
+
+    event ChargedBWAEZI(address indexed user, uint256 bwaeziAmount, uint256 gasCost);
+    event Sponsored(address indexed sponsor, uint256 amount);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
 
     constructor(
         address _entryPoint,
-        address _bwaeziToken, // Note: Constructor arg is address, internal is IERC20
+        IERC20 _bwaeziToken,
         address _weth,
-        address _quoter,
+        IQuoterV2 _quoter,
         uint24 _poolFee
     ) {
+        require(_entryPoint != address(0) && _weth != address(0), "Invalid addresses");
         entryPoint = _entryPoint;
-        bwaeziToken = IERC20(_bwaeziToken);
+        bwaeziToken = _bwaeziToken;
         weth = _weth;
-        quoter = IQuoterV2(_quoter);
+        quoter = _quoter;
         poolFee = _poolFee;
+        owner = msg.sender;
     }
 
-    // EntryPoint deposits WETH here to cover gas
-    function deposit() external payable {}
+    // EntryPoint deposits native token (WETH/ETH) here
+    function deposit() external payable {
+        // Funds received; EntryPoint handles balance
+    }
+
     receive() external payable {
         revert("Use deposit()");
     }
 
-    // Implement getHash (required to not be abstract)
-    function getHash(UserOperation calldata userOp)
-        external
-        view
-        returns (bytes32)
-    {
-        // Simple hash calculation to satisfy the interface requirement
-        return keccak256(abi.encode(
-            userOp.sender,
-            userOp.nonce,
-            keccak256(userOp.callData)
-        ));
+    // Sponsor pre-funds with buffered BWAEZI
+    function sponsorUserOperation(address sponsor, uint256 bwaeziAmount) external {
+        uint256 withBuffer = (bwaeziAmount * BUFFER_PERCENT) / 100;
+        bwaeziToken.safeTransferFrom(sponsor, address(this), withBuffer);
+        emit Sponsored(sponsor, withBuffer);
     }
 
-    // MAIN VALIDATION: Uses UserOperation struct and canonical signature
+    // Required: getHash for bundler compatibility
+    function getHash(PackedUserOperation calldata userOp) external view returns (bytes32) {
+        return keccak256(abi.encode(userOp.hash()));
+    }
+
+    // Novel: Safe quote via assembly staticcall (fixes try-catch parser error)
+    function _safeQuoteBWAEZINeeded(uint256 wethAmount) internal view returns (uint256 bwaeziNeeded) {
+        IQuoterV2.QuoteExactOutputSingleParams memory params = IQuoterV2.QuoteExactOutputSingleParams({
+            tokenIn: address(bwaeziToken),
+            tokenOut: weth,
+            amount: wethAmount,
+            fee: poolFee,
+            sqrtPriceLimitX96: 0
+        });
+
+        // Encode call data
+        bytes memory callData = abi.encodeWithSelector(
+            IQuoterV2.quoteExactOutputSingle.selector,
+            params
+        );
+
+        // Assembly staticcall (external-safe, no try-catch needed)
+        (bool success, bytes memory returnData) = address(quoter).staticcall(callData);
+        if (success && returnData.length >= 32) {
+            bwaeziNeeded = abi.decode(returnData, (uint256));  // amountIn
+            bwaeziNeeded = (bwaeziNeeded * BUFFER_PERCENT) / 100;
+        } else {
+            // Fallback: Conservative estimate (1:1 ratio, adjustable)
+            bwaeziNeeded = (wethAmount * FALLBACK_BWAEZI_PER_ETH / 1e18) * BUFFER_PERCENT / 100;
+        }
+    }
+
+    // Unpack utilities (per v0.8 spec)
+    function _unpackAccountGasLimits(bytes32 packed) internal pure returns (uint128 verificationGas, uint128 callGas) {
+        verificationGas = uint128(packed >> 128);
+        callGas = uint128(packed);
+    }
+
+    function _unpackGasFees(bytes32 packed) internal pure returns (uint128 maxPriorityFee, uint128 maxFee) {
+        maxPriorityFee = uint128(packed >> 128);
+        maxFee = uint128(packed);
+    }
+
+    // validatePaymasterUserOp: Exact v0.8 match
     function validatePaymasterUserOp(
-        UserOperation calldata userOp,
+        PackedUserOperation calldata userOp,
         bytes32 /* userOpHash */,
-        uint256 requiredPrefund
+        uint256 maxCost
     ) external view override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint, "Only EntryPoint");
 
-        // Max possible cost in native token (WETH)
-        uint256 maxPossibleCost = requiredPrefund +
-            userOp.verificationGasLimit * userOp.maxFeePerGas + // FIX: Fields are now accessible
-            userOp.callGasLimit * userOp.maxFeePerGas;
+        // Unpack gas limits & fees
+        (uint128 verificationGas, uint128 callGas) = _unpackAccountGasLimits(userOp.accountGasLimits);
+        (uint128 maxPriorityFee, uint128 maxFeePerGas) = _unpackGasFees(userOp.gasFees);
 
-        // How much BWAEZI do we need to cover that cost?
-        (uint256 bwaeziNeeded, , , ) = quoter.quoteExactOutputSingle(
-            IQuoterV2.QuoteExactOutputSingleParams({
-                tokenIn: address(bwaeziToken),
-                tokenOut: weth,
-                amount: maxPossibleCost,
-                fee: poolFee,
-                sqrtPriceLimitX96: 0
-            })
-        );
-        uint256 requiredWithBuffer = (bwaeziNeeded * BUFFER_PERCENT) / 100;
+        // Precise max cost calc
+        uint256 preciseMaxCost = maxCost +
+            uint256(verificationGas) * uint256(maxFeePerGas) +
+            uint256(callGas) * uint256(maxFeePerGas);
 
-        // Check user's allowance to this paymaster
+        uint256 bwaeziRequired = _safeQuoteBWAEZINeeded(preciseMaxCost);
+
+        // Check allowance
         require(
-            bwaeziToken.allowance(userOp.sender, address(this)) >= requiredWithBuffer,
-            "BWAEZI allowance too low"
+            bwaeziToken.allowance(userOp.sender, address(this)) >= bwaeziRequired,
+            "BWAEZI: Insufficient allowance"
         );
 
-        // Return empty context + success (0)
-        return ("", 0);
+        // Success (encode user in context for postOp if multi-op)
+        context = abi.encode(userOp.sender);
+        validationData = 0;
     }
 
-    // POST-OP: Uses the official 4-argument signature from EIP-4337 v0.7+
+    // postOp: Exact v0.8 match (4 params)
     function postOp(
         PostOpMode mode,
-        bytes calldata context, // Unused in this version, kept for signature
+        bytes calldata context,
         uint256 actualGasCost,
-        UserOperation calldata userOp // CRITICAL FIX: Added UserOp struct as the 4th argument
+        uint256 /* actualUserOpFeePerGas */
     ) external override {
-        // FIX: The override error is resolved by matching the 4-argument signature.
         require(msg.sender == entryPoint, "Only EntryPoint");
 
-        // If postOp itself reverted, or the userOp failed, do nothing
-        if (mode != PostOpMode.opSucceeded) {
-            return;
+        if (mode == PostOpMode.postOpReverted) {
+            return;  // No charge on revert
         }
 
-        // Recalculate exact cost in WETH
-        uint256 costInWeth = actualGasCost;
-        (uint256 bwaeziCharge, , , ) = quoter.quoteExactOutputSingle(
-            IQuoterV2.QuoteExactOutputSingleParams({
-                tokenIn: address(bwaeziToken),
-                tokenOut: weth,
-                amount: costInWeth,
-                fee: poolFee,
-                sqrtPriceLimitX96: 0
-            })
-        );
-        uint256 finalCharge = (bwaeziCharge * BUFFER_PERCENT) / 100;
+        address user = abi.decode(context, (address));  // From validate context
 
-        // CRITICAL FIX: Pull tokens from userOp.sender, not msg.sender (which is EntryPoint)
-        bwaeziToken.safeTransferFrom(userOp.sender, address(this), finalCharge);
+        uint256 bwaeziToCharge = _safeQuoteBWAEZINeeded(actualGasCost);
+
+        bwaeziToken.safeTransferFrom(user, address(this), bwaeziToCharge);
+        emit ChargedBWAEZI(user, bwaeziToCharge, actualGasCost);
+
+        // Optional: Auto-swap to WETH (add ISwapRouter import & call here)
+    }
+
+    // Withdraw BWAEZI (owner only)
+    function withdrawBWAEZI(uint256 amount) external onlyOwner {
+        bwaeziToken.safeTransfer(owner, amount);
+    }
+
+    // Emergency withdraw native funds
+    function withdrawNative(uint256 amount) external onlyOwner {
+        payable(owner).transfer(amount);
     }
 }
