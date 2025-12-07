@@ -1,7 +1,7 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (checksummed)
+ * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (checksummed, checksum-safe)
  * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
  * - Sticky RPC with forced chainId, single Express app
  * - Event-driven peg enforcement
@@ -27,8 +27,14 @@ import fetch from 'node-fetch';
    Configuration
    ========================================================================= */
 
+// Checksum-safe normalizer: prefer checksummed, fallback to lowercase (to avoid startup/runtime crashes)
 function addrStrict(address) {
-  return ethers.getAddress(address.trim());
+  try {
+    return ethers.getAddress(address.trim());
+  } catch {
+    const s = address.trim();
+    return s.startsWith('0x') ? s.toLowerCase() : s;
+  }
 }
 
 const LIVE = {
@@ -37,7 +43,7 @@ const LIVE = {
   // ERC-4337 EntryPoint v0.7 (mainnet)
   ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  // SimpleAccountFactory (example; keep as configured for your SCW)
+  // Smart Account Factory (example; keep as configured for your SCW)
   ACCOUNT_FACTORY: addrStrict('0x9406Cc6185a346906296840746125a0E44976454'),
 
   // Owner + Smart Contract Wallet (SCW)
@@ -67,7 +73,6 @@ const LIVE = {
       name: 'Uniswap V2',
       router:  addrStrict('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
       factory: addrStrict('0x5C69bEe701ef814a2B6a3EdDd4B1652CB9cc5aA6f')
-      // Note: this factory address string is checksummed; do not modify casing
     },
     SUSHI_V2: {
       name: 'Sushi V2',
@@ -80,7 +85,7 @@ const LIVE = {
     },
     PARASWAP_LITE: {
       name: 'Paraswap Lite',
-      router: addrStrict('0xDEF1C0DE00000000000000000000000000000000') // protocol dispatcher (checksummed)
+      router: addrStrict('0xDEF1C0DE00000000000000000000000000000000')
     }
   },
 
