@@ -1,17 +1,21 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.1 — Maker–Taker Hybrid + Composite Oracle + AA
- * Sticky provider + hardened deployment fixes
+ * SOVEREIGN MEV BRAIN v13.5.5 — Mainnet Production
+ * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
+ * - Sticky RPC, single Express app
+ * - Event-driven peg enforcement
+ * - Adaptive concentrated liquidity (Uniswap V3)
+ * - Composite multi-anchor oracle
+ * - Profit verification and ledger
+ * - Expanded DEX registry with reliability scoring
+ * - Multi-chain wiring (mainnet primary; optional Arbitrum/Polygon for read-only quotes)
  *
  * REQUIREMENTS:
  * - Node.js 20+ (ESM). package.json: { "type":"module" }
  * - ENV:
  *   SOVEREIGN_PRIVATE_KEY=0x...
- *   ALCHEMY_API_KEY=... (optional; when set we include Alchemy RPC)
- *   INFURA_API_KEY=... (optional; not required)
- *   PIMLICO_API_KEY=... (optional AA sponsorship)
- *   STACKUP_API_KEY=... (optional AA sponsorship)
+ *   ALCHEMY_API_KEY=... (optional; included only if set)
  */
 
 import express from 'express';
@@ -34,10 +38,16 @@ function getAddressSafely(address) {
 }
 
 const LIVE = {
+  VERSION: 'v13.5.5',
   ENTRY_POINT: getAddressSafely('0x5FF137D4bEAA7036d654a88Ea898df565D304B88'),
   ACCOUNT_FACTORY: getAddressSafely('0x9406Cc6185a346906296840746125a0E44976454'),
+
+  // Owner + Smart Contract Wallet (SCW)
   EOA_OWNER_ADDRESS: getAddressSafely('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
   SCW_ADDRESS: getAddressSafely('0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
+
+  // BWAEZI Paymaster (mainnet)
+  PAYMASTER_ADDRESS: getAddressSafely('0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
 
   TOKENS: {
     BWAEZI: getAddressSafely('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
@@ -60,9 +70,18 @@ const LIVE = {
       router:  getAddressSafely('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
       factory: getAddressSafely('0x5C69bEe701ef814a2B6a3Edd4B1652CB9cc5aA6f')
     },
+    SUSHI_V2: {
+      name: 'Sushi V2',
+      router:  getAddressSafely('0xd9e1CE17f2641f24AE83637ab66a2cca9C378B9F'),
+      factory: getAddressSafely('0xC0aEE478e3658e2610c5F7A4A2E1777cE9e4f2Ac')
+    },
     ONE_INCH_V5: {
       name: '1inch V5',
       router: getAddressSafely('0x1111111254EEB25477B68fb85Ed929f73A960582')
+    },
+    PARASWAP_LITE: {
+      name: 'Paraswap Lite',
+      router: getAddressSafely('0xDEF1C0DE00000000000000000000000000000000') // placeholder router for simulation; real calls via HTTP
     }
   },
 
@@ -75,9 +94,37 @@ const LIVE = {
   ],
 
   BUNDLERS: [
-    ...(process.env.PIMLICO_API_KEY ? [`https://api.pimlico.io/v1/eth/rpc?apikey=${process.env.PIMLICO_API_KEY}`] : []),
-    'https://bundler.candide.dev/rpc/mainnet',
-    ...(process.env.STACKUP_API_KEY ? [`https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}`] : [])
+    'https://bundler.candide.dev/rpc/mainnet'
+  ],
+
+  CHAINS: [
+    {
+      key: 'mainnet',
+      chainId: 1,
+      name: 'Ethereum Mainnet',
+      primary: true,
+      rpcs: [
+        ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
+        'https://eth.llamarpc.com',
+        'https://rpc.ankr.com/eth',
+        'https://cloudflare-eth.com',
+        'https://ethereum.publicnode.com'
+      ]
+    },
+    {
+      key: 'arbitrum',
+      chainId: 42161,
+      name: 'Arbitrum One',
+      primary: false,
+      rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.llamarpc.com']
+    },
+    {
+      key: 'polygon',
+      chainId: 137,
+      name: 'Polygon',
+      primary: false,
+      rpcs: ['https://polygon-rpc.com', 'https://polygon.llamarpc.com']
+    }
   ],
 
   PEG: {
@@ -85,7 +132,8 @@ const LIVE = {
     FEE_TIER_DEFAULT: 500,
     GENESIS_MIN_USDC: ethers.parseUnits('100', 6),
     GENESIS_BWAEZI_INIT: ethers.parseEther('1000'),
-    SEED_BWAEZI_EXPAND: ethers.parseEther('50000')
+    SEED_BWAEZI_EXPAND: ethers.parseEther('50000'),
+    DEVIATION_THRESHOLD_PCT: 0.5
   },
 
   MAKER: {
@@ -104,150 +152,70 @@ const LIVE = {
 };
 
 /* =========================================================================
-   Connections (sticky provider)
+   Connections (sticky provider + multi-chain registry)
    ========================================================================= */
 
-class BlockchainConnections {
-  constructor() {
-    this.providers = LIVE.RPC_PROVIDERS.map(url => new ethers.JsonRpcProvider(url));
-    this.bundlers = LIVE.BUNDLERS.map(url => new ethers.JsonRpcProvider(url));
-    this._pi = 0; this._bi = 0;
-    this.sticky = null;
+class ChainRegistry {
+  constructor(chains) {
+    this.chains = chains;
+    this.providers = new Map(); // key -> { sticky: provider, list: [providers] }
   }
-  async initSticky() {
-    for (const p of this.providers) {
-      try {
-        await p.getBlockNumber();
-        this.sticky = p;
-        const url = p._network ? p._network.name : (p.connection?.url || 'unknown');
-        console.log(`Sticky provider set`);
-        break;
-      } catch { /* try next */ }
+
+  async init() {
+    for (const c of this.chains) {
+      const list = c.rpcs.map(url => new ethers.JsonRpcProvider(url, c.chainId));
+      let sticky = null;
+      for (const p of list) {
+        try { await p.getBlockNumber(); sticky = p; break; } catch {}
+      }
+      if (!sticky) throw new Error(`No healthy RPC for chain ${c.key}`);
+      this.providers.set(c.key, { sticky, list, chainId: c.chainId, name: c.name, primary: c.primary });
+      if (c.primary) console.log(`Sticky provider set for ${c.name}`);
     }
-    if (!this.sticky) throw new Error('No healthy RPC provider');
   }
-  getProvider() {
-    return this.sticky || this.providers[this._pi++ % this.providers.length];
+
+  getPrimary() {
+    for (const c of this.chains) if (c.primary) return this.providers.get(c.key).sticky;
+    throw new Error('No primary chain configured');
   }
-  getBundler() {
-    if (this.bundlers.length === 0) return this.getProvider();
-    const b = this.bundlers[this._bi++ % this.bundlers.length];
-    return b;
+
+  getProvider(chainKey = 'mainnet') {
+    const entry = this.providers.get(chainKey);
+    if (!entry) throw new Error(`Chain ${chainKey} not initialized`);
+    return entry.sticky;
   }
-  async getFeeData() {
-    const p = this.getProvider();
-    try {
-      const fd = await p.getFeeData();
-      return {
-        maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('30','gwei'),
-        maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('2','gwei'),
-        gasPrice: fd.gasPrice || ethers.parseUnits('25','gwei')
-      };
-    } catch {
-      return {
-        maxFeePerGas: ethers.parseUnits('30','gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('2','gwei'),
-        gasPrice: ethers.parseUnits('25','gwei')
-      };
-    }
+
+  info() {
+    return Array.from(this.providers.entries()).map(([key, entry]) => ({
+      key, chainId: entry.chainId, name: entry.name, primary: entry.primary
+    }));
   }
 }
-const chain = new BlockchainConnections();
+const chainRegistry = new ChainRegistry(LIVE.CHAINS);
 
 /* =========================================================================
    Utilities
    ========================================================================= */
 
-class LRUMap {
-  constructor(maxSize = 10000) { this.data = new Map(); this.maxSize = maxSize; }
-  set(k,v){ if(this.data.size>=this.maxSize){ const fk=this.data.keys().next().value; this.data.delete(fk);} this.data.set(k,v); }
-  get(k){ return this.data.get(k); }
-  entries(){ return this.data.entries(); }
-}
-
-class EnterpriseRateLimiter {
-  constructor(config = {}) {
-    this.config = { requestsPerSecond: 1000, blockDuration: 60000, ...config };
-    this.requests = new LRUMap(10000);
-    this.blocks = new LRUMap(1000);
-    this.adaptive = new Map();
-  }
-  async setAdaptiveLimit(operation, limits) {
-    this.adaptive.set(operation, {
-      base: Math.max(1, limits.base),
-      burst: Math.max(0, limits.burst),
-      recovery: Math.max(0.01, Math.min(1, limits.recovery))
-    });
-  }
-  async checkLimit(identifier, operation='default') {
-    const now = Date.now();
-    if (this.blocks.get(identifier)) throw new Error(`Rate limit blocked: ${identifier}`);
-    const windowStart = now - 1000;
-    const arr = this.requests.get(identifier) || [];
-    const recent = arr.filter(t => t > windowStart);
-    const eff = this.adaptive.get(operation)?.base || this.config.requestsPerSecond;
-    if (recent.length >= eff) {
-      this.blocks.set(identifier, now + this.config.blockDuration);
-      throw new Error(`Rate limit exceeded: ${identifier}`);
-    }
-    recent.push(now);
-    this.requests.set(identifier, recent);
-    return true;
-  }
-}
-
-class EnterpriseCircuitBreaker {
-  constructor(config = {}) {
-    this.config = { failureThreshold: 5, successThreshold: 3, timeout: 30000, ...config };
-    this.states = new LRUMap(1000);
-  }
-  async execute(operation, fn, options = {}) {
-    const state = this.states.get(operation) || { status: 'CLOSED', failures: 0, successes: 0, nextAttempt: 0 };
-    if (state.status === 'OPEN' && Date.now() < state.nextAttempt) {
-      if (options.fallback) return options.fallback();
-      throw new Error(`Circuit breaker open: ${operation}`);
-    }
-    if (state.status === 'OPEN') state.status = 'HALF_OPEN';
-    try {
-      const result = await Promise.race([
-        fn(),
-        new Promise((_, rej)=>setTimeout(()=>rej(new Error('Timeout')), options.timeout || this.config.timeout))
-      ]);
-      state.successes++; state.failures = 0;
-      if (state.status === 'HALF_OPEN' && state.successes >= this.config.successThreshold) state.status = 'CLOSED';
-      this.states.set(operation, state);
-      return result;
-    } catch (error) {
-      state.failures++;
-      if (state.failures >= this.config.failureThreshold) {
-        state.status = 'OPEN'; state.nextAttempt = Date.now() + (options.timeout || this.config.timeout);
-      }
-      this.states.set(operation, state);
-      if (options.fallback) return options.fallback();
-      throw new Error(`Operation ${operation} failed: ${error.message}`);
-    }
-  }
-}
+class LRUMap { constructor(maxSize=10000){ this.data=new Map(); this.maxSize=maxSize; } set(k,v){ if(this.data.size>=this.maxSize){ const fk=this.data.keys().next().value; this.data.delete(fk);} this.data.set(k,v);} get(k){return this.data.get(k);} entries(){return this.data.entries();} }
 
 /* =========================================================================
-   ERC-4337 AA
+   ERC-4337 AA — BWAEZI Paymaster integration (AA-primary)
    ========================================================================= */
 
 class EnterpriseAASDK {
   constructor(signer, entryPoint = LIVE.ENTRY_POINT) {
     if (!signer?.address) throw new Error('EnterpriseAASDK: signer required');
-    this.signer = signer;
-    this.entryPoint = entryPoint;
-    this.factory = LIVE.ACCOUNT_FACTORY;
+    this.signer = signer; this.entryPoint = entryPoint; this.factory = LIVE.ACCOUNT_FACTORY;
   }
   async isDeployed(address) {
-    const code = await chain.getProvider().getCode(address);
+    const code = await chainRegistry.getPrimary().getCode(address);
     return code && code !== '0x';
   }
   async getSCWAddress(owner) {
     const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
-    const initAbi = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
-    const initCall = initAbi.encodeFunctionData('createAccount', [owner, 0]);
+    const i = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
+    const initCall = i.encodeFunctionData('createAccount', [owner, 0]);
     const initCode = ethers.concat([this.factory, initCall]);
     const bytecode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${this.factory.slice(2)}5af43d82803e903d91602b57fd5bf3`;
     const addr = ethers.getCreate2Address(this.factory, salt,
@@ -255,15 +223,20 @@ class EnterpriseAASDK {
     return getAddressSafely(addr);
   }
   async getNonce(smartAccount) {
-    const ep = new ethers.Contract(this.entryPoint, ['function getNonce(address sender, uint192 key) view returns (uint256)'], chain.getProvider());
+    const ep = new ethers.Contract(this.entryPoint, ['function getNonce(address sender, uint192 key) view returns (uint256)'], chainRegistry.getPrimary());
     try { return await ep.getNonce(smartAccount, 0); } catch { return 0n; }
+  }
+  buildPaymasterAndData(userOpSender) {
+    const paymaster = LIVE.PAYMASTER_ADDRESS;
+    const context = ethers.AbiCoder.defaultAbiCoder().encode(['address'], [userOpSender]);
+    return ethers.concat([paymaster, context]);
   }
   async createUserOp(callData, opts = {}) {
     const sender = await this.getSCWAddress(this.signer.address);
     const deployed = await this.isDeployed(sender);
     const nonce = await this.getNonce(sender);
-    const gas = await chain.getFeeData();
-    return {
+    const gas = await chainRegistry.getPrimary().getFeeData();
+    const userOp = {
       sender, nonce,
       initCode: deployed ? '0x' : (() => {
         const i = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
@@ -273,20 +246,14 @@ class EnterpriseAASDK {
       callGasLimit: opts.callGasLimit || 1_400_000n,
       verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
       preVerificationGas: opts.preVerificationGas || 80_000n,
-      maxFeePerGas: opts.maxFeePerGas || gas.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas || gas.maxPriorityFeePerGas,
-      paymasterAndData: opts.paymasterAndData || '0x',
+      maxFeePerGas: opts.maxFeePerGas || gas.maxFeePerGas || ethers.parseUnits('30','gwei'),
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas || gas.maxPriorityFeePerGas || ethers.parseUnits('2','gwei'),
+      paymasterAndData: this.buildPaymasterAndData(sender),
       signature: '0x'
     };
+    return userOp;
   }
-  _toHex(v) {
-    try {
-      if (typeof v === 'bigint') return ethers.toBeHex(v);
-      if (typeof v === 'number') return ethers.toBeHex(BigInt(v));
-      if (typeof v === 'string') { if (v.startsWith('0x')) return v; return ethers.toBeHex(BigInt(v)); }
-    } catch {}
-    return '0x0';
-  }
+  _toHex(v) { try { if (typeof v === 'bigint') return ethers.toBeHex(v); if (typeof v === 'number') return ethers.toBeHex(BigInt(v)); if (typeof v === 'string') { if (v.startsWith('0x')) return v; return ethers.toBeHex(BigInt(v)); } } catch {} return '0x0'; }
   _formatBundlerUserOp(userOp) {
     return {
       sender: userOp.sender,
@@ -302,21 +269,6 @@ class EnterpriseAASDK {
       signature: userOp.signature
     };
   }
-  async sponsorUserOpViaHttp(userOp) {
-    const pimlico = process.env.PIMLICO_API_KEY ? `https://api.pimlico.io/v2/eth/sponsorUserOperation?apikey=${process.env.PIMLICO_API_KEY}` : null;
-    const stackup = process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/sponsor/${process.env.STACKUP_API_KEY}` : null;
-    const payload = { userOperation: this._formatBundlerUserOp(userOp), entryPoint: this.entryPoint };
-    const tryEndpoint = async (url) => {
-      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(`Sponsor HTTP failed: ${res.status}`);
-      const data = await res.json();
-      if (!data?.paymasterAndData) throw new Error('Sponsor returned no paymasterAndData');
-      return data.paymasterAndData;
-    };
-    if (pimlico) { try { return await tryEndpoint(pimlico); } catch {} }
-    if (stackup) { try { return await tryEndpoint(stackup); } catch {} }
-    return '0x';
-  }
   async signUserOp(userOp) {
     const packed = ethers.AbiCoder.defaultAbiCoder().encode(
       ['address','uint256','bytes32','bytes32','uint256','uint256','uint256','uint256','uint256','bytes32'],
@@ -329,14 +281,14 @@ class EnterpriseAASDK {
         ethers.keccak256(userOp.paymasterAndData)
       ]
     );
-    const chainId = (await chain.getProvider().getNetwork()).chainId;
-    const enc = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32','address','uint256'], [ethers.keccak256(packed), this.entryPoint, chainId]);
+    const net = await chainRegistry.getPrimary().getNetwork();
+    const enc = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32','address','uint256'], [ethers.keccak256(packed), this.entryPoint, net.chainId]);
     const userOpHash = ethers.keccak256(enc);
     userOp.signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
     return userOp;
   }
   async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    const bundlers = chain.bundlers.length ? chain.bundlers : [chain.getProvider()];
+    const bundlers = LIVE.BUNDLERS.map(url => new ethers.JsonRpcProvider(url));
     const op = this._formatBundlerUserOp(userOp);
     const entryPoint = this.entryPoint;
     let attempt = 0; let lastErr;
@@ -365,46 +317,51 @@ class EnterpriseAASDK {
 }
 
 /* =========================================================================
-   Adapters (Uniswap V3/V2 + 1inch)
+   DEX adapters (Uniswap V3/V2 + Sushi V2 + 1inch + Paraswap-lite)
    ========================================================================= */
 
 class UniversalDexAdapter {
-  constructor(provider, config) { this.provider = provider; this.config = config; this.type = this._type(config.name); }
-  _type(name) {
-    if (name?.includes('V3')) return 'V3';
-    if (name?.includes('V2')) return 'V2';
-    if (name?.includes('1inch')) return 'Aggregator';
-    return 'Custom';
-  }
+  constructor(provider, config, key='mainnet') { this.provider=provider; this.config=config; this.type=this._type(config.name); this.chainKey=key; }
+  _type(name){ if(name?.includes('V3')) return 'V3'; if(name?.includes('V2')) return 'V2'; if(name?.includes('Sushi')) return 'V2'; if(name?.includes('1inch')) return 'Aggregator'; if(name?.includes('Paraswap')) return 'Aggregator2'; return 'Custom'; }
+
   async getQuote(tokenIn, tokenOut, amountIn) {
+    const t0 = Date.now();
     try {
+      let q;
       switch (this.type) {
-        case 'V3': return await this._v3Quote(tokenIn, tokenOut, amountIn);
-        case 'V2': return await this._v2Quote(tokenIn, tokenOut, amountIn);
-        case 'Aggregator': return await this._aggQuote(tokenIn, tokenOut, amountIn);
-        default: return await this._v3Quote(tokenIn, tokenOut, amountIn);
+        case 'V3': q = await this._v3Quote(tokenIn, tokenOut, amountIn); break;
+        case 'V2': q = await this._v2Quote(tokenIn, tokenOut, amountIn); break;
+        case 'Aggregator': q = await this._agg1inchQuote(tokenIn, tokenOut, amountIn); break;
+        case 'Aggregator2': q = await this._paraswapLiteQuote(tokenIn, tokenOut, amountIn); break;
+        default: q = await this._v3Quote(tokenIn, tokenOut, amountIn);
       }
+      if (!q) return null;
+      q.latencyMs = Date.now() - t0;
+      return q;
     } catch { return null; }
   }
+
   async _v3Quote(tokenIn, tokenOut, amountIn) {
     const quoter = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.quoter, [
       'function quoteExactInputSingle(address,address,uint24,uint256,uint160) external returns (uint256)'
-    ], this.provider);
+    ], chainRegistry.getProvider(this.chainKey));
     const fee = LIVE.PEG.FEE_TIER_DEFAULT;
     const amountOut = await quoter.quoteExactInputSingle(tokenIn, tokenOut, fee, amountIn, 0);
-    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
+    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], chainRegistry.getProvider(this.chainKey));
     const pool = await factory.getPool(tokenIn, tokenOut, fee);
     let liquidity = '0';
     if (pool && pool !== ethers.ZeroAddress) {
-      const poolC = new ethers.Contract(pool, ['function liquidity() view returns (uint128)'], this.provider);
+      const poolC = new ethers.Contract(pool, ['function liquidity() view returns (uint128)'], chainRegistry.getProvider(this.chainKey));
       liquidity = (await poolC.liquidity()).toString();
     }
-    return { amountOut, priceImpact: 0.0, fee, liquidity };
+    return { amountOut, priceImpact: 0.0, fee, liquidity, dex: 'UNISWAP_V3', adapter: this };
   }
+
   async _v2Quote(tokenIn, tokenOut, amountIn) {
-    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V2.factory, ['function getPair(address,address) view returns (address)'], this.provider);
+    const factoryAddr = this.config.factory;
+    const factory = new ethers.Contract(factoryAddr, ['function getPair(address,address) view returns (address)'], chainRegistry.getProvider(this.chainKey));
     const pair = await factory.getPair(tokenIn, tokenOut); if (!pair || pair === ethers.ZeroAddress) return null;
-    const pairC = new ethers.Contract(pair, ['function getReserves() view returns (uint112,uint112,uint32)','function token0() view returns (address)'], this.provider);
+    const pairC = new ethers.Contract(pair, ['function getReserves() view returns (uint112,uint112,uint32)','function token0() view returns (address)'], chainRegistry.getProvider(this.chainKey));
     const [r0, r1] = await pairC.getReserves();
     const token0 = await pairC.token0();
     const inIs0 = tokenIn.toLowerCase() === token0.toLowerCase();
@@ -412,17 +369,31 @@ class UniversalDexAdapter {
     if (rin === 0n || rout === 0n) return null;
     const amountInWithFee = amountIn * 997n / 1000n;
     const amountOut = (amountInWithFee * rout) / (rin + amountInWithFee);
-    return { amountOut, priceImpact: Number(amountIn) / Math.max(1, Number(rin)) * 100, fee: 30, liquidity: rin.toString() };
+    return { amountOut, priceImpact: Number(amountIn) / Math.max(1, Number(rin)) * 100, fee: 30, liquidity: rin.toString(), dex: this.config.name, adapter: this };
   }
-  async _aggQuote(tokenIn, tokenOut, amountIn) {
+
+  async _agg1inchQuote(tokenIn, tokenOut, amountIn) {
     try {
       const url = `https://api.1inch.io/v5.0/1/quote?fromTokenAddress=${tokenIn}&toTokenAddress=${tokenOut}&amount=${amountIn.toString()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`1inch ${res.status}`);
       const data = await res.json();
-      return { amountOut: BigInt(data.toTokenAmount), priceImpact: 0.0, fee: 50, liquidity: '0' };
+      return { amountOut: BigInt(data.toTokenAmount), priceImpact: 0.0, fee: 50, liquidity: '0', dex: 'ONE_INCH_V5', adapter: this };
     } catch { return null; }
   }
+
+  async _paraswapLiteQuote(tokenIn, tokenOut, amountIn) {
+    try {
+      const url = `https://apiv5.paraswap.io/prices/?srcToken=${tokenIn}&destToken=${tokenOut}&amount=${amountIn.toString()}&srcDecimals=18&destDecimals=18&network=1`;
+      const res = await fetch(url, { headers: { 'accept': 'application/json' } });
+      if (!res.ok) throw new Error(`Paraswap ${res.status}`);
+      const data = await res.json();
+      const bestRoute = data?.priceRoute?.destAmount ? BigInt(data.priceRoute.destAmount) : 0n;
+      if (bestRoute === 0n) return null;
+      return { amountOut: bestRoute, priceImpact: 0.0, fee: 50, liquidity: '0', dex: 'PARASWAP_LITE', adapter: this };
+    } catch { return null; }
+  }
+
   async buildSwapCalldata(params) {
     const { tokenIn, tokenOut, amountIn, amountOutMin, recipient, fee = LIVE.PEG.FEE_TIER_DEFAULT } = params;
     if (this.type === 'V3') {
@@ -439,420 +410,382 @@ class UniversalDexAdapter {
         amountIn, amountOutMin || 0n, [tokenIn, tokenOut], recipient, Math.floor(Date.now()/1000)+600
       ]);
     }
-    const iface = new ethers.Interface([
-      'function swap(address,(address,address,address,address,uint256,uint256,uint256,bytes),bytes) external payable returns (uint256,uint256)'
-    ]);
-    return iface.encodeFunctionData('swap', [
-      recipient,
-      {
-        srcToken: tokenIn, dstToken: tokenOut,
-        srcReceiver: recipient, dstReceiver: recipient,
-        amount: amountIn, minReturnAmount: amountOutMin || 0n, flags: 0, permit: '0x'
-      },
-      '0x'
-    ]);
+    // For aggregators, we fallback to Uniswap V3 router calldata to ensure on-chain path consistency.
+    const fallback = new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)']);
+    return fallback.encodeFunctionData('exactInputSingle', [{
+      tokenIn, tokenOut, fee: LIVE.PEG.FEE_TIER_DEFAULT, recipient,
+      deadline: Math.floor(Date.now()/1000)+600,
+      amountIn, amountOutMinimum: amountOutMin || 0n, sqrtPriceLimitX96: 0n
+    }]);
   }
 }
 
 class DexAdapterRegistry {
-  constructor(provider) {
+  constructor(provider, chainKey='mainnet') {
     this.provider = provider;
+    this.chainKey = chainKey;
     this.adapters = {
-      UNISWAP_V3: new UniversalDexAdapter(this.provider, LIVE.DEXES.UNISWAP_V3),
-      UNISWAP_V2: new UniversalDexAdapter(this.provider, LIVE.DEXES.UNISWAP_V2),
-      ONE_INCH_V5: new UniversalDexAdapter(this.provider, LIVE.DEXES.ONE_INCH_V5)
+      UNISWAP_V3: new UniversalDexAdapter(provider, LIVE.DEXES.UNISWAP_V3, chainKey),
+      UNISWAP_V2: new UniversalDexAdapter(provider, LIVE.DEXES.UNISWAP_V2, chainKey),
+      SUSHI_V2:   new UniversalDexAdapter(provider, LIVE.DEXES.SUSHI_V2, chainKey),
+      ONE_INCH_V5: new UniversalDexAdapter(provider, LIVE.DEXES.ONE_INCH_V5, chainKey),
+      PARASWAP_LITE: new UniversalDexAdapter(provider, LIVE.DEXES.PARASWAP_LITE, chainKey)
     };
     this.cache = new LRUMap(10000);
+    this.scores = new Map(); // name -> score object
   }
+
   getAdapter(name) { const a = this.adapters[name]; if (!a) throw new Error(`Adapter ${name} not found`); return a; }
   getAllAdapters() { return Object.entries(this.adapters).map(([name, adapter]) => ({ name, config: adapter.config, type: adapter.type })); }
+
+  _updateScore(name, ok, latencyMs, liquidity) {
+    const prev = this.scores.get(name) || { okCount: 0, failCount: 0, avgLatency: null, avgLiquidity: 0 };
+    if (ok) prev.okCount++; else prev.failCount++;
+    if (latencyMs != null) {
+      prev.avgLatency = prev.avgLatency == null ? latencyMs : Math.round((prev.avgLatency * 0.7) + (latencyMs * 0.3));
+    }
+    if (liquidity != null) {
+      const lnum = Number(liquidity || '0');
+      prev.avgLiquidity = Math.round((prev.avgLiquidity * 0.7) + (lnum * 0.3));
+    }
+    const successRate = (prev.okCount) / Math.max(1, (prev.okCount + prev.failCount));
+    const score = Math.round(100 * (0.5 * successRate + 0.3 * (prev.avgLatency ? Math.max(0, 1 - prev.avgLatency / 1000) : 0.5) + 0.2 * Math.min(1, prev.avgLiquidity / 1e9)));
+    prev.score = score;
+    this.scores.set(name, prev);
+  }
+
   async getBestQuote(tokenIn, tokenOut, amountIn) {
-    const key = `q_${tokenIn}_${tokenOut}_${amountIn}`;
-    const cached = this.cache.get(key); if (cached && Date.now() - cached.ts < 1500) return cached.result;
+    const key = `q_${this.chainKey}_${tokenIn}_${tokenOut}_${amountIn}`;
+    const cached = this.cache.get(key); if (cached && Date.now() - cached.ts < 1000) return cached.result;
     const quotes = [];
     await Promise.allSettled(Object.entries(this.adapters).map(async ([name, adapter]) => {
       try {
         const q = await adapter.getQuote(tokenIn, tokenOut, amountIn);
-        if (q && q.amountOut > 0n) quotes.push({ dex: name, ...q, adapter });
-      } catch {}
+        if (q && q.amountOut > 0n) { quotes.push({ dex: name, ...q, adapter }); this._updateScore(name, true, q.latencyMs, q.liquidity); }
+        else this._updateScore(name, false, null, null);
+      } catch { this._updateScore(name, false, null, null); }
     }));
-    quotes.sort((a,b)=> Number(b.amountOut - a.amountOut));
-    const result = { best: quotes[0] || null, secondBest: quotes[1] || quotes[0] || null, all: quotes };
+    quotes.sort((a,b)=> {
+      // Prefer higher score, then higher amountOut
+      const sa = (this.scores.get(a.dex)?.score || 50);
+      const sb = (this.scores.get(b.dex)?.score || 50);
+      if (sa !== sb) return sb - sa;
+      return Number(b.amountOut - a.amountOut);
+    });
+    const result = { best: quotes[0] || null, secondBest: quotes[1] || quotes[0] || null, all: quotes, scores: Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })) };
     this.cache.set(key, { result, ts: Date.now() });
     return result;
   }
-}
 
-/* =========================================================================
-   Approvals
-   ========================================================================= */
+  getScores() {
+    return Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s }));
+  }
 
-async function ensureApprovals(signer) {
-  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)','function allowance(address,address) view returns (uint256)']);
-  const tokens = [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.TOKENS.WETH];
-  const spenders = [LIVE.DEXES.UNISWAP_V3.router, LIVE.DEXES.UNISWAP_V3.positionManager];
-  for (const token of tokens) {
-    const c = new ethers.Contract(token, erc20Iface, signer);
-    for (const sp of spenders) {
+  async healthCheck(tokenA = LIVE.TOKENS.WETH, tokenB = LIVE.TOKENS.USDC, amount = ethers.parseEther('0.01')) {
+    const checks = [];
+    for (const [name, adapter] of Object.entries(this.adapters)) {
       try {
-        const allowance = await c.allowance(signer.address, sp);
-        if (allowance < ethers.MaxUint256 / 2n) {
-          const tx = await c.approve(sp, ethers.MaxUint256);
-          await tx.wait();
-          console.log(`Approved ${token} -> ${sp}`);
-        }
-      } catch (e) { console.warn(`Approval failed: ${token} -> ${sp}: ${e.message}`); }
+        const q = await adapter.getQuote(tokenA, tokenB, amount);
+        checks.push({ name, ok: !!q, latencyMs: q?.latencyMs || null, liquidity: q?.liquidity || '0', score: (this.scores.get(name)?.score || null) });
+      } catch { checks.push({ name, ok: false, latencyMs: null, liquidity: '0', score: (this.scores.get(name)?.score || null) }); }
     }
+    return { count: checks.length, checks, timestamp: Date.now() };
   }
 }
 
 /* =========================================================================
-   Entropy shock detector
+   SCW bootstrap: EntryPoint deposit + BWAEZI allowance to paymaster
    ========================================================================= */
 
-class EntropyShockDetector {
-  constructor() { this.lastEntropy = null; }
-  sample(entropyValue, coherence) {
-    const now = Date.now();
-    const shock = this.lastEntropy ? Math.abs(entropyValue - this.lastEntropy.value) : 0;
-    this.lastEntropy = { value: entropyValue, coherence, ts: now };
-    return { shock, coherence, ts: now };
+async function bootstrapSCWForPaymaster(aa) {
+  const provider = chainRegistry.getPrimary();
+  const scw = LIVE.SCW_ADDRESS;
+  const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
+    'function getDeposit(address) view returns (uint256)',
+    'function depositTo(address) payable'
+  ], provider);
+
+  try {
+    const dep = await ep.getDeposit(scw);
+    if (dep < ethers.parseEther('0.01')) {
+      const tx = await ep.depositTo(scw, { value: ethers.parseEther('0.02') });
+      await tx.wait();
+      console.log('EntryPoint deposit topped up for SCW');
+    }
+  } catch (e) {
+    console.warn('EntryPoint deposit check failed:', e.message);
   }
-  slippageGuard(baseSlip, coherence, shock) {
-    const slip = Math.min(0.02, Math.max(baseSlip, baseSlip + (1 - coherence) * 0.01 + Math.min(shock, 0.05) * 0.5));
-    return slip;
-  }
+
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const calldata = erc20Iface.encodeFunctionData('approve', [LIVE.PAYMASTER_ADDRESS, ethers.MaxUint256]);
+
+  const scwExec = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
+
+  const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n });
+  userOp.paymasterAndData = '0x';
+
+  const signed = await aa.signUserOp(userOp);
+  const txHash = await aa.sendUserOpWithBackoff(signed, 4);
+  console.log('SCW approved BWAEZI allowance to Paymaster; userOp tx:', txHash);
 }
 
 /* =========================================================================
-   Composite anchor oracle (liquidity-weighted)
+   Entropy, Oracle, Maker, MEV, Profit verification
    ========================================================================= */
+
+class EntropyShockDetector { constructor(){ this.lastEntropy=null; } sample(v,c){ const now=Date.now(); const shock=this.lastEntropy?Math.abs(v-this.lastEntropy.value):0; this.lastEntropy={value:v,coherence:c,ts:now}; return {shock,coherence:c,ts:now}; } slippageGuard(b,c,s){ return Math.min(0.02, Math.max(b, b+(1-c)*0.01 + Math.min(s,0.05)*0.5)); } }
 
 class MultiAnchorOracle {
-  constructor(provider, dexRegistry) {
-    this.provider = provider;
-    this.dexRegistry = dexRegistry;
-    this.anchors = LIVE.ANCHORS;
-  }
-  async getCompositePriceUSD(bwaeziAddr) {
-    const components = [];
-    for (const a of this.anchors) {
-      const amountProbe = a.decimals === 6 ? ethers.parseUnits('1000', 6) : ethers.parseEther('1');
+  constructor(provider,dexRegistry){ this.provider=provider; this.dexRegistry=dexRegistry; this.anchors=LIVE.ANCHORS; }
+  async getCompositePriceUSD(bwaeziAddr){
+    const comps=[]; for(const a of this.anchors){
+      const amountProbe = a.decimals===6 ? ethers.parseUnits('1000',6) : ethers.parseEther('1');
       const q = await this.dexRegistry.getBestQuote(bwaeziAddr, a.address, amountProbe);
-      if (!q?.best) continue;
-      const quoteOut = q.best.amountOut;
-      const liquidityScore = Number(q.best.liquidity || '0');
-      const usd = await this.anchorUSD(a);
-      const perUnit = (Number(quoteOut) / Number(amountProbe)) * usd;
-      components.push({ symbol: a.symbol, perUnitUSD: perUnit, weight: liquidityScore });
+      if(!q?.best) continue;
+      const out=q.best.amountOut; const liq=Number(q.best.liquidity||'0');
+      const usd = a.symbol==='WETH'?2000.0:1.0;
+      const perUnit = (Number(out)/Number(amountProbe))*usd;
+      comps.push({symbol:a.symbol, perUnitUSD:perUnit, weight:liq});
     }
-    if (components.length === 0) return { price: LIVE.PEG.TARGET_USD, confidence: 0.2, components: [] };
-    const totalWeight = components.reduce((s, c) => s + (c.weight || 1), 0);
-    const price = components.reduce((s, c) => s + c.perUnitUSD * ((c.weight || 1) / totalWeight), 0);
-    const confidence = Math.min(1, Math.max(0.2, totalWeight / (1e9)));
-    return { price, confidence, components };
-  }
-  async anchorUSD(a) {
-    if (a.symbol === 'USDC' || a.symbol === 'DAI' || a.symbol === 'USDT') return 1.0;
-    if (a.symbol === 'WETH') return 2000.0;
-    return 1.0;
+    if(comps.length===0) return {price: LIVE.PEG.TARGET_USD, confidence: 0.2, components: []};
+    const tw = comps.reduce((s,c)=> s+(c.weight||1),0);
+    const price = comps.reduce((s,c)=> s + c.perUnitUSD * ((c.weight||1)/tw),0);
+    const confidence = Math.min(1, Math.max(0.2, tw/(1e9)));
+    return {price, confidence, components: comps};
   }
 }
-
-/* =========================================================================
-   Fee farming
-   ========================================================================= */
 
 class FeeFarmer {
-  constructor(provider, signer) {
-    this.provider = provider;
-    this.signer = signer;
-    this.npm = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, [
-      'function collect((uint256,address,uint128,uint128)) returns (uint256 amount0, uint256 amount1)'
-    ], signer);
-    this.positions = new Map();
-    this.recentCollections = [];
-  }
-  trackPosition(positionId, note = '') {
-    if (!this.positions.has(positionId)) this.positions.set(positionId, { lastCollectedAt: 0, note });
-  }
-  async collectFees(positionId) {
-    try {
-      const tx = await this.npm.collect({ tokenId: positionId, recipient: LIVE.SCW_ADDRESS, amount0Max: ethers.MaxUint128, amount1Max: ethers.MaxUint128 });
-      const rec = await tx.wait();
-      const r = { positionId, txHash: rec.transactionHash, timestamp: Date.now() };
-      this.recentCollections.push(r);
-      const p = this.positions.get(positionId); if (p) { p.lastCollectedAt = Date.now(); this.positions.set(positionId, p); }
-      return r;
-    } catch (e) { console.warn(`Fee collect failed pos ${positionId}: ${e.message}`); return null; }
-  }
-  getRecent() { return this.recentCollections.slice(-50); }
+  constructor(provider, signer){ this.provider=provider; this.signer=signer; this.npm=new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, ['function collect((uint256,address,uint128,uint128)) returns (uint256,uint256)'], signer); this.positions=new Map(); this.recent=[]; }
+  trackPosition(id,note=''){ if(!this.positions.has(id)) this.positions.set(id,{lastCollectedAt:0,note}); }
+  async collectFees(id){ try{ const tx=await this.npm.collect({tokenId:id,recipient:LIVE.SCW_ADDRESS,amount0Max:ethers.MaxUint128,amount1Max:ethers.MaxUint128}); const rec=await tx.wait(); const r={positionId:id, txHash:rec.transactionHash, timestamp:Date.now()}; this.recent.push(r); const p=this.positions.get(id); if(p){ p.lastCollectedAt=Date.now(); this.positions.set(id,p);} return r; } catch(e){ console.warn('Fee collect failed', e.message); return null; } }
+  getRecent(){ return this.recent.slice(-50); }
 }
-
-/* =========================================================================
-   Adaptive range-maker (streaming mints)
-   ========================================================================= */
 
 class AdaptiveRangeMaker {
-  constructor(provider, signer, dexRegistry, entropy) {
-    this.provider = provider; this.signer = signer; this.dexRegistry = dexRegistry; this.entropy = entropy;
-    this.npm = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, [
-      'function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)'
-    ], signer);
-    this.runningStreams = new Map();
-    this.lastAdjust = 0;
-  }
-  async startStreamingMint({ token0, token1, tickLower, tickUpper, total0, total1, steps = LIVE.MAKER.MAX_STREAM_STEPS, label = 'maker_stream' }) {
-    const streamId = `stream_${Date.now()}_${randomUUID().slice(0,8)}`;
-    const chunk0 = total0 > 0n ? total0 / BigInt(steps) : 0n;
-    const chunk1 = total1 > 0n ? total1 / BigInt(steps) : 0n;
-    this.runningStreams.set(streamId, { token0, token1, tickLower, tickUpper, chunk0, chunk1, steps, done: 0, label, positions: [] });
-    (async () => {
-      while (true) {
-        const st = this.runningStreams.get(streamId);
-        if (!st) break;
-        if (st.done >= st.steps) { this.runningStreams.delete(streamId); break; }
-        const coherence = Math.max(0.2, (this.entropy.lastEntropy?.coherence ?? 0.6));
-        const delayMs = Math.floor(8000 * (1.2 - coherence));
-        try {
-          const mintTx = await this.npm.mint({
-            token0: st.token0, token1: st.token1, fee: LIVE.PEG.FEE_TIER_DEFAULT,
-            tickLower: st.tickLower, tickUpper: st.tickUpper,
-            amount0Desired: st.chunk0, amount1Desired: st.chunk1,
-            amount0Min: 0, amount1Min: 0, recipient: LIVE.SCW_ADDRESS,
-            deadline: Math.floor(Date.now()/1000)+1200
-          });
-          const rec = await mintTx.wait();
-          st.positions.push({ txHash: rec.transactionHash, at: Date.now() });
-        } catch (e) { console.warn(`Streaming mint error: ${e.message}`); }
-        st.done++; this.runningStreams.set(streamId, st);
-        await new Promise(r=>setTimeout(r, delayMs));
-      }
+  constructor(provider, signer, dexRegistry, entropy){ this.provider=provider; this.signer=signer; this.dexRegistry=dexRegistry; this.entropy=entropy; this.npm=new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager,['function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)'], signer); this.running=new Map(); this.lastAdjust=0; }
+  async startStreamingMint({ token0, token1, tickLower, tickUpper, total0, total1, steps=LIVE.MAKER.MAX_STREAM_STEPS, label='maker_stream' }){
+    const id=`stream_${Date.now()}_${randomUUID().slice(0,8)}`; const c0= total0>0n? total0/BigInt(steps):0n; const c1= total1>0n? total1/BigInt(steps):0n;
+    this.running.set(id,{ token0, token1, tickLower, tickUpper, chunk0:c0, chunk1:c1, steps, done:0, label, positions:[] });
+    (async()=>{ while(true){ const st=this.running.get(id); if(!st) break; if(st.done>=st.steps){ this.running.delete(id); break; }
+      const coh=Math.max(0.2, (this.entropy.lastEntropy?.coherence ?? 0.6)); const delayMs=Math.floor(8000*(1.2-coh));
+      try{
+        const tx=await this.npm.mint({ token0:st.token0, token1:st.token1, fee:LIVE.PEG.FEE_TIER_DEFAULT, tickLower:st.tickLower, tickUpper:st.tickUpper, amount0Desired:st.chunk0, amount1Desired:st.chunk1, amount0Min:0, amount1Min:0, recipient:LIVE.SCW_ADDRESS, deadline:Math.floor(Date.now()/1000)+1200 });
+        const rec=await tx.wait(); st.positions.push({ txHash:rec.transactionHash, at:Date.now() });
+      } catch(e){ console.warn('Streaming mint error:', e.message); }
+      st.done++; this.running.set(id, st); await new Promise(r=>setTimeout(r, delayMs)); }
     })();
-    return { streamId };
+    return { streamId:id };
   }
-  async periodicAdjustRange(bwaeziAddr) {
-    const now = Date.now();
-    if (now - this.lastAdjust < LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS) return null;
-    this.lastAdjust = now;
-    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
-    const pool = await factory.getPool(bwaeziAddr, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
-    if (!pool || pool === ethers.ZeroAddress) return { adjusted: false, reason: 'no_pool' };
-    const poolC = new ethers.Contract(pool, ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'], this.provider);
-    const slot0 = await poolC.slot0();
-    const tick = Number(slot0[1]);
-    const coherence = Math.max(0.2, this.entropy.lastEntropy?.coherence ?? 0.6);
-    const width = Math.floor(600 * (coherence < LIVE.MAKER.ENTROPY_COHERENCE_MIN ? 1.5 : 0.8));
-    const tickLower = tick - width, tickUpper = tick + width;
-    const total0 = LIVE.MAKER.STREAM_CHUNK_BWAEZI * 4n;
-    const total1 = LIVE.MAKER.STREAM_CHUNK_USDC * 4n;
-    const stream = await this.startStreamingMint({ token0: LIVE.TOKENS.BWAEZI, token1: LIVE.TOKENS.USDC, tickLower, tickUpper, total0, total1, steps: 4, label: 'periodic_adjust' });
-    return { adjusted: true, tick, tickLower, tickUpper, coherence, streamId: stream.streamId };
+  async periodicAdjustRange(bwaeziAddr){ const now=Date.now(); if(now-this.lastAdjust<LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS) return null; this.lastAdjust=now;
+    const factory=new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory,['function getPool(address,address,uint24) view returns (address)'],this.provider);
+    const pool=await factory.getPool(bwaeziAddr, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
+    if(!pool || pool===ethers.ZeroAddress) return { adjusted:false, reason:'no_pool' };
+    const slot0 = await (new ethers.Contract(pool,['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'],this.provider)).slot0();
+    const tick=Number(slot0[1]); const coh=Math.max(0.2, this.entropy.lastEntropy?.coherence ?? 0.6); const width=Math.floor(600*(coh<LIVE.MAKER.ENTROPY_COHERENCE_MIN?1.5:0.8));
+    const tl=tick-width, tu=tick+width; const total0=LIVE.MAKER.STREAM_CHUNK_BWAEZI*4n; const total1=LIVE.MAKER.STREAM_CHUNK_USDC*4n;
+    const stream=await this.startStreamingMint({ token0:LIVE.TOKENS.BWAEZI, token1:LIVE.TOKENS.USDC, tickLower:tl, tickUpper:tu, total0, total1, steps:4, label:'periodic_adjust' });
+    return { adjusted:true, tick, tickLower:tl, tickUpper:tu, coherence:coh, streamId:stream.streamId };
   }
-  listStreams() { return Array.from(this.runningStreams.entries()).map(([id, st]) => ({ id, ...st })); }
+  listStreams(){ return Array.from(this.running.entries()).map(([id,st])=> ({ id, ...st })); }
 }
 
-/* =========================================================================
-   MEV executor
-   ========================================================================= */
-
 class MevExecutor {
-  constructor(aa, provider) { this.aa = aa; this.provider = provider; this.scw = LIVE.SCW_ADDRESS; }
-  buildSCWExecute(target, calldata, value = 0n) {
-    const i = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-    return i.encodeFunctionData('execute', [target, value, calldata]);
-  }
-  async sendCall(calldata, opts = {}) {
+  constructor(aa){ this.aa=aa; this.scw=LIVE.SCW_ADDRESS; }
+  buildSCWExecute(target, calldata, value=0n){ const i=new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']); return i.encodeFunctionData('execute',[target,value,calldata]); }
+  async sendCall(calldata, opts={}){
     const userOp = await this.aa.createUserOp(calldata, {
       callGasLimit: opts.gasLimit || 1_600_000n,
       verificationGasLimit: 1_000_000n,
       preVerificationGas: 90_000n
     });
-    userOp.paymasterAndData = await this.aa.sponsorUserOpViaHttp(userOp).catch(()=> '0x');
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
     return { txHash, timestamp: Date.now(), description: opts.description || 'scw_execute' };
   }
 }
 
-/* =========================================================================
-   Profit verification + decision packets
-   ========================================================================= */
-
 class ProfitVerifier {
-  constructor(provider) {
-    this.provider = provider;
-    this.tradeRecords = new LRUMap(10000);
-    this.profitLedger = new Map();
-    this.recentPackets = [];
+  constructor(provider){ this.provider=provider; this.tradeRecords=new LRUMap(10000); this.profitLedger=new Map(); this.recent=[]; }
+  async recordTrade(trade, txHash, packet){ const id=`trade_${Date.now()}_${randomUUID().slice(0,8)}`; const initial=await this.captureState(trade);
+    const rec={id, trade, txHash, initial, status:'pending', packet}; this.tradeRecords.set(id, rec); this.recent.push({ id, ...packet, at:Date.now() }); if(this.recent.length>200) this.recent.shift(); return id; }
+  async verifyTrade(id){ const rec=this.tradeRecords.get(id); if(!rec) throw new Error('Record not found');
+    const final=await this.captureState(rec.trade); const profit=await this.calculateProfit(rec.initial, final, rec.trade);
+    rec.final=final; rec.profit=profit; rec.status='verified'; rec.verifiedAt=Date.now(); this.updateLedger(id, profit); this.tradeRecords.set(id, rec); return { recordId:id, profit, timestamp:Date.now() };
   }
-  async recordTrade(trade, txHash, decisionPacket) {
-    const id = `trade_${Date.now()}_${randomUUID().slice(0,8)}`;
-    const initial = await this.captureState(trade);
-    const rec = { id, trade, txHash, initial, status: 'pending', packet: decisionPacket };
-    this.tradeRecords.set(id, rec);
-    this.recentPackets.push({ id, ...decisionPacket, at: Date.now() });
-    if (this.recentPackets.length > 200) this.recentPackets.shift();
-    return id;
-  }
-  async verifyTrade(id) {
-    const rec = this.tradeRecords.get(id);
-    if (!rec) throw new Error('Record not found');
-    const final = await this.captureState(rec.trade);
-    const profit = await this.calculateProfit(rec.initial, final, rec.trade);
-    rec.final = final; rec.profit = profit; rec.status = 'verified'; rec.verifiedAt = Date.now();
-    this.updateLedger(id, profit);
-    this.tradeRecords.set(id, rec);
-    return { recordId: id, profit, timestamp: Date.now() };
-  }
-  async captureState(trade) {
-    const balances = {};
-    for (const token of [trade.tokenA, trade.tokenB]) {
-      if (!token) continue;
-      const contract = new ethers.Contract(token, ['function balanceOf(address) view returns (uint256)'], this.provider);
-      balances[token] = await contract.balanceOf(LIVE.SCW_ADDRESS);
-    }
-    const ethBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-    return { balances, ethBalance, blockNumber: await this.provider.getBlockNumber(), timestamp: Date.now() };
-  }
-  async calculateProfit(initial, final, trade) {
-    const tokenProfits = {};
-    for (const token of [trade.tokenA, trade.tokenB]) {
-      if (!token) continue;
-      tokenProfits[token] = (final.balances[token] || 0n) - (initial.balances[token] || 0n);
-    }
-    let totalUsdProfit = 0;
-    for (const [token, amount] of Object.entries(tokenProfits)) {
-      if (amount === 0n) continue;
-      totalUsdProfit += await this.convertToUSD(token, amount);
-    }
-    const gasCostUsd = await this.estimateGasCostUSD(800_000n);
-    totalUsdProfit -= gasCostUsd;
-    return { tokenProfits, totalUsdProfit, gasCostUsd, netProfitUsd: totalUsdProfit };
-  }
-  async convertToUSD(token, amount) {
-    const dec = token === LIVE.TOKENS.USDC || token === LIVE.TOKENS.USDT ? 6 : 18;
-    const amt = Number(ethers.formatUnits(amount, dec));
-    if (token === LIVE.TOKENS.USDC || token === LIVE.TOKENS.USDT || token === LIVE.TOKENS.DAI) return amt * 1.0;
-    if (token === LIVE.TOKENS.WETH) return amt * 2000.0;
-    return amt * LIVE.PEG.TARGET_USD;
-  }
-  async estimateGasCostUSD(gasUsed) {
-    try {
-      const gasPrice = await chain.getFeeData();
-      const gasEth = Number(ethers.formatEther(gasUsed * gasPrice.maxFeePerGas));
-      const ethUsd = 2000.0;
-      return gasEth * ethUsd;
-    } catch { return 0; }
-  }
-  updateLedger(id, profit) {
-    const date = new Date().toISOString().split('T')[0];
-    const d = this.profitLedger.get(date) || { totalProfit: 0, trades: 0, gasCosts: 0, netProfit: 0 };
-    d.trades++; d.totalProfit += profit.totalUsdProfit || 0; d.gasCosts += profit.gasCostUsd || 0; d.netProfit = d.totalProfit - d.gasCosts;
-    this.profitLedger.set(date, d);
-  }
-  getDailyReport(date = null) {
-    const target = date || new Date().toISOString().split('T')[0];
-    return this.profitLedger.get(target) || { totalProfit: 0, trades: 0, gasCosts: 0, netProfit: 0 };
-  }
-  getAllTimeStats() {
-    const s = { totalProfit: 0, trades: 0, gasCosts: 0, netProfit: 0 };
-    for (const d of this.profitLedger.values()) { s.totalProfit += d.totalProfit; s.trades += d.trades; s.gasCosts += d.gasCosts; s.netProfit += d.netProfit; }
-    return s;
-  }
-  getRecentDecisionPackets(limit = 50) { return this.recentPackets.slice(-limit); }
+  async captureState(trade){ const balances={}; for(const token of [trade.tokenA, trade.tokenB]){ if(!token) continue; const c=new ethers.Contract(token,['function balanceOf(address) view returns (uint256)'],this.provider); balances[token]=await c.balanceOf(LIVE.SCW_ADDRESS); }
+    const ethBalance=await this.provider.getBalance(LIVE.SCW_ADDRESS); return { balances, ethBalance, blockNumber:await this.provider.getBlockNumber(), timestamp:Date.now() }; }
+  async calculateProfit(initial, final, trade){ const tokenProfits={}; for(const token of [trade.tokenA, trade.tokenB]){ if(!token) continue; tokenProfits[token]=(final.balances[token]||0n)-(initial.balances[token]||0n); }
+    let totalUsdProfit=0; for(const [token, amt] of Object.entries(tokenProfits)){ if(amt===0n) continue; totalUsdProfit += await this.convertToUSD(token, amt); }
+    const gasCostUsd= await this.estimateGasCostUSD(800_000n); totalUsdProfit -= gasCostUsd; return { tokenProfits, totalUsdProfit, gasCostUsd, netProfitUsd: totalUsdProfit }; }
+  async convertToUSD(token, amount){ const dec = token===LIVE.TOKENS.USDC || token===LIVE.TOKENS.USDT ? 6 : 18; const amt=Number(ethers.formatUnits(amount, dec)); if(token===LIVE.TOKENS.USDC || token===LIVE.TOKENS.USDT || token===LIVE.TOKENS.DAI) return amt*1.0; if(token===LIVE.TOKENS.WETH) return amt*2000.0; return amt*LIVE.PEG.TARGET_USD; }
+  async estimateGasCostUSD(gasUsed){ try{ const gasPrice=await chainRegistry.getPrimary().getFeeData(); const maxFee=gasPrice.maxFeePerGas || ethers.parseUnits('30','gwei'); const gasEth=Number(ethers.formatEther(gasUsed*maxFee)); const ethUsd=2000.0; return gasEth*ethUsd; } catch{ return 0; } }
+  updateLedger(id, profit){ const date=new Date().toISOString().split('T')[0]; const d=this.profitLedger.get(date)||{ totalProfit:0, trades:0, gasCosts:0, netProfit:0 }; d.trades++; d.totalProfit+=(profit.totalUsdProfit||0); d.gasCosts+=(profit.gasCostUsd||0); d.netProfit=d.totalProfit-d.gasCosts; this.profitLedger.set(date,d); }
+  getDailyReport(date=null){ const target=date||new Date().toISOString().split('T')[0]; return this.profitLedger.get(target)||{ totalProfit:0, trades:0, gasCosts:0, netProfit:0 }; }
+  getAllTimeStats(){ const s={ totalProfit:0, trades:0, gasCosts:0, netProfit:0 }; for(const d of this.profitLedger.values()){ s.totalProfit+=d.totalProfit; s.trades+=d.trades; s.gasCosts+=d.gasCosts; s.netProfit+=d.netProfit; } return s; }
+  getRecentDecisionPackets(limit=50){ return this.recent.slice(-limit); }
 }
 
 /* =========================================================================
-   Strategy engine
+   Strategy engine — event-driven peg, governors preserved
    ========================================================================= */
 
-function entropySeed(e) {
-  try {
-    const h = createHash('sha256').update(`${e.value}:${e.coherence}:${e.timestamp}`).digest();
-    return h.readUInt32BE(0) / 0xFFFFFFFF;
-  } catch { return Math.random(); }
-}
+function entropySeed(e){ try{ const h=createHash('sha256').update(`${e.value}:${e.coherence}:${e.timestamp}`).digest(); return h.readUInt32BE(0)/0xFFFFFFFF; } catch{ return Math.random(); } }
+function mapElementToFeeTier(elemental) { if (elemental === 'WATER') return 500; if (elemental === 'FIRE') return 10000; return 3000; }
+function chooseRoute(elemental) { if (elemental === 'FIRE') return 'ONE_INCH_V5'; return 'UNISWAP_V3'; }
 
 class StrategyEngine {
-  constructor(mev, verifier, provider, dexRegistry, entropy, maker, oracle) {
-    this.mev = mev; this.verifier = verifier; this.provider = provider; this.dexRegistry = dexRegistry;
-    this.entropy = entropy; this.maker = maker; this.oracle = oracle;
-    this.lastPegEnforcement = 0;
+  constructor(mev, verifier, provider, dexRegistry, entropy, maker, oracle){
+    this.mev=mev; this.verifier=verifier; this.provider=provider; this.dexRegistry=dexRegistry; this.entropy=entropy; this.maker=maker; this.oracle=oracle;
+    this.lastPegEnforcement=0; this.lastGovernancePacket=null;
   }
 
-  async neuroState() { return { activation: 0.7, plasticity: 0.8, attentionFocus: 0.6 }; }
-  async verifierEntropy() { return { coherence: 0.85, gradient: 0.3, value: 0.42, timestamp: Date.now() }; }
-  async gravityField() { return { curvature: 0.15 }; }
-  async elementRegime() {
-    const regimes = ['WATER','FIRE','VACUUM','EARTH'];
-    return regimes[Math.floor(Math.random()*regimes.length)];
+  async neuroState(){ return { activation:0.7, plasticity:0.8, attentionFocus:0.6 }; }
+  async verifierEntropy(){ return { coherence:0.85, gradient:0.3, value:0.42, timestamp:Date.now() }; }
+  async gravityField(){ return { curvature:0.15 }; }
+  async elementRegime(){ const regimes=['WATER','FIRE','VACUUM','EARTH']; return regimes[Math.floor(Math.random()*regimes.length)]; }
+
+  async watchPeg() {
+    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
+    const pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
+    if (!pool || pool === ethers.ZeroAddress) return false;
+
+    const poolC = new ethers.Contract(pool, [
+      'event Swap(address,address,int256,int256,uint160,uint128,int24)',
+      'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
+    ], this.provider);
+
+    this.provider.on(poolC.filters.Swap(), async () => {
+      try {
+        const slot0 = await poolC.slot0();
+        const tick = Number(slot0[1]);
+        const priceUSDC = Math.pow(1.0001, tick);
+        const deviationPct = ((priceUSDC - LIVE.PEG.TARGET_USD)/LIVE.PEG.TARGET_USD)*100;
+        if (Math.abs(deviationPct) >= LIVE.PEG.DEVIATION_THRESHOLD_PCT) {
+          await this.enforcePegIfNeeded();
+        }
+      } catch {}
+    });
+
+    return true;
+  }
+
+  buildGovernancePacket(params) {
+    const packet = {
+      ts: Date.now(),
+      mode: params.mode,
+      entropy: params.entropy,
+      neuro: params.neuro,
+      gravity: params.gravity,
+      elemental: params.elemental,
+      feeTier: params.feeTier,
+      tickWidth: params.tickWidth,
+      route: params.route,
+      usdNotional: params.usdNotional,
+      slip: params.slip,
+      compositePriceUSD: params.compositePriceUSD,
+      confidence: params.confidence
+    };
+    this.lastGovernancePacket = packet;
+    return packet;
   }
 
   async arbitrage(tokenIn, tokenOut, notional) {
-    const best = await this.dexRegistry.getBestQuote(tokenIn, tokenOut, notional);
-    if (!best?.best) return null;
-    const slip = this.entropy.slippageGuard(0.0025, this.entropy.lastEntropy?.coherence ?? 0.6, 0.0);
-    const minOut = BigInt(Math.floor(Number(best.best.amountOut) * (1 - slip)));
-    const calldata = await best.best.adapter.buildSwapCalldata({
-      tokenIn, tokenOut, amountIn: notional, amountOutMin: minOut, recipient: LIVE.SCW_ADDRESS, fee: best.best.fee || LIVE.PEG.FEE_TIER_DEFAULT
+    const best=await this.dexRegistry.getBestQuote(tokenIn, tokenOut, notional); if(!best?.best) return null;
+    const slip=this.entropy.slippageGuard(0.0025, this.entropy.lastEntropy?.coherence ?? 0.6, 0.0);
+    const minOut= BigInt(Math.floor(Number(best.best.amountOut)*(1-slip)));
+    const calldata = await best.best.adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn:notional, amountOutMin:minOut, recipient:LIVE.SCW_ADDRESS, fee:best.best.fee||LIVE.PEG.FEE_TIER_DEFAULT });
+    const targetRouter = LIVE.DEXES[best.best.dex]?.router || LIVE.DEXES.UNISWAP_V3.router;
+    const execCalldata = this.mev.buildSCWExecute(targetRouter, calldata);
+
+    const composite = await this.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI);
+    const packet = this.buildGovernancePacket({
+      mode:'arbitrage',
+      entropy:this.entropy.lastEntropy,
+      neuro: await this.neuroState(),
+      gravity: await this.gravityField(),
+      elemental: await this.elementRegime(),
+      feeTier: best.best.fee || LIVE.PEG.FEE_TIER_DEFAULT,
+      tickWidth: 0,
+      route: best.best.dex,
+      usdNotional: Number(ethers.formatUnits(notional, 6)),
+      slip,
+      compositePriceUSD: composite.price,
+      confidence: composite.confidence
     });
-    const execCalldata = this.mev.buildSCWExecute(LIVE.DEXES[best.best.dex]?.router || LIVE.DEXES.UNISWAP_V3.router, calldata);
-    const decisionPacket = { mode: 'arbitrage', dex: best.best.dex, slip, minOut: minOut.toString(), entropy: this.entropy.lastEntropy };
-    const op = await this.mev.sendCall(execCalldata, { description: 'arbitrage' });
-    const tradeId = await this.verifier.recordTrade({ tokenA: tokenIn, tokenB: tokenOut, amountIn: notional }, op.txHash, decisionPacket);
-    await this.verifier.verifyTrade(tradeId);
-    return { txHash: op.txHash, decisionPacket };
+
+    const op = await this.mev.sendCall(execCalldata, { description:'arbitrage' });
+    const id = await this.verifier.recordTrade({ tokenA:tokenIn, tokenB:tokenOut, amountIn:notional }, op.txHash, packet);
+    await this.verifier.verifyTrade(id);
+    return { txHash:op.txHash, decisionPacket:packet };
   }
 
-  async opportunisticRebalance(buyBWAEZI = true, usdNotional = 25000) {
-    const adapter = this.dexRegistry.getAdapter('UNISWAP_V3');
-    const amountInUSDC = ethers.parseUnits(String(usdNotional), 6);
-    const q = await adapter.getQuote(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, amountInUSDC);
-    const slip = this.entropy.slippageGuard(0.003, this.entropy.lastEntropy?.coherence ?? 0.6, 0.0);
-    const amountOutMin = q?.amountOut ? BigInt(Math.floor(Number(q.amountOut) * (1 - slip))) : 0n;
+  async opportunisticRebalance(buyBWAEZI=true, usdNotional=25000){
+    const entropyState = this.entropy.lastEntropy || { coherence:0.6, value:0.5, timestamp:Date.now() };
+    const neuro = await this.neuroState();
+    const gravity = await this.gravityField();
+    const elemental = await this.elementRegime();
+    const feeTier = mapElementToFeeTier(elemental);
+    const route = chooseRoute(elemental);
+    const tickWidth = Math.floor(600 * Math.max(0.2, entropyState.coherence));
+    const adapter=this.dexRegistry.getAdapter(route);
+
+    const amountInUSDC=ethers.parseUnits(String(usdNotional),6);
+    const q=await adapter.getQuote(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, amountInUSDC);
+    const slip=this.entropy.slippageGuard(0.003, entropyState.coherence, 0.0);
+    const amountOutMin = q?.amountOut ? BigInt(Math.floor(Number(q.amountOut)*(1-slip))) : 0n;
 
     const calldata = await adapter.buildSwapCalldata({
-      tokenIn: buyBWAEZI ? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI,
-      tokenOut: buyBWAEZI ? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC,
-      amountIn: amountInUSDC, amountOutMin, recipient: LIVE.SCW_ADDRESS, fee: LIVE.PEG.FEE_TIER_DEFAULT
+      tokenIn: buyBWAEZI? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI,
+      tokenOut: buyBWAEZI? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC,
+      amountIn: amountInUSDC, amountOutMin, recipient:LIVE.SCW_ADDRESS, fee:feeTier
     });
-    const exec = this.mev.buildSCWExecute(LIVE.DEXES.UNISWAP_V3.router, calldata);
-    const composite = await this.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI);
-    const decisionPacket = { mode: 'rebalance', buyBWAEZI, usdNotional, compositePriceUSD: composite.price, confidence: composite.confidence, slip, entropy: this.entropy.lastEntropy };
-    const result = await this.mev.sendCall(exec, { description: 'rebalance_bwaezi' });
-    const recId = await this.verifier.recordTrade({ tokenA: buyBWAEZI ? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI, tokenB: buyBWAEZI ? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC, amountIn: amountInUSDC }, result.txHash, decisionPacket);
+    const exec=this.mev.buildSCWExecute(LIVE.DEXES[route].router, calldata);
+    const composite=await this.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI);
+
+    const packet = this.buildGovernancePacket({
+      mode:'rebalance',
+      entropy: entropyState,
+      neuro, gravity, elemental,
+      feeTier, tickWidth, route,
+      usdNotional, slip,
+      compositePriceUSD: composite.price,
+      confidence: composite.confidence
+    });
+
+    const result=await this.mev.sendCall(exec, { description:'rebalance_bwaezi' });
+    const recId=await this.verifier.recordTrade({ tokenA: buyBWAEZI? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI, tokenB: buyBWAEZI? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC, amountIn: amountInUSDC }, result.txHash, packet);
     await this.verifier.verifyTrade(recId);
-    return { txHash: result.txHash, decisionPacket };
+    return { txHash:result.txHash, decisionPacket:packet };
   }
 
-  async enforcePegIfNeeded() {
-    const now = Date.now();
-    if (now - this.lastPegEnforcement < 8000) return null;
-    this.lastPegEnforcement = now;
+  async enforcePegIfNeeded(){
+    const now=Date.now(); if(now-this.lastPegEnforcement<8000) return null; this.lastPegEnforcement=now;
 
-    const entropyValue = Number(createHash('sha256').update(String(now)).digest().readUInt32BE(0)) / 0xFFFFFFFF;
-    const coherence = 0.6 + 0.3 * Math.sin(now / 60_000);
-    const sample = this.entropy.sample(entropyValue, coherence);
+    const entropyValue= Number(createHash('sha256').update(String(now)).digest().readUInt32BE(0))/0xFFFFFFFF;
+    const coherence= 0.6 + 0.3*Math.sin(now/60_000);
+    const sample=this.entropy.sample(entropyValue, coherence);
+    const neuro= await this.neuroState();
+    const gravity= await this.gravityField();
+    const elemental= await this.elementRegime();
+    const feeTier = mapElementToFeeTier(elemental);
+    const route = chooseRoute(elemental);
+    const tickWidth = Math.floor(600 * Math.max(0.2, sample.coherence));
 
-    const composite = await this.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI);
-    const deviationPct = ((composite.price - LIVE.PEG.TARGET_USD) / LIVE.PEG.TARGET_USD) * 100;
-    const decisionPacket = {
-      mode: 'peg_enforcement',
-      observedPriceUSD: composite.price,
-      confidence: composite.confidence,
-      targetUSD: LIVE.PEG.TARGET_USD,
-      deviationPct,
-      entropy: sample
-    };
+    const composite=await this.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI);
+    const deviationPct=((composite.price - LIVE.PEG.TARGET_USD)/LIVE.PEG.TARGET_USD)*100;
+    const threshold = composite.confidence<0.5 ? 0.6 : 0.35;
+    const packetBase = { entropy:sample, neuro, gravity, elemental, feeTier, tickWidth, route, compositePriceUSD: composite.price, confidence: composite.confidence };
 
-    const threshold = composite.confidence < 0.5 ? 0.6 : 0.35;
-    if (Math.abs(deviationPct) < threshold) return { action: 'NOOP', decisionPacket };
+    if(Math.abs(deviationPct) < threshold) {
+      return { action:'NOOP', decisionPacket: this.buildGovernancePacket({ mode:'peg_enforcement', usdNotional:0, slip:0, ...packetBase }) };
+    }
 
     const buy = composite.price < LIVE.PEG.TARGET_USD;
-    const usdNotional = Math.round(20000 * (1 + Math.min(0.8, Math.abs(deviationPct) / 10)));
-    const res = await this.opportunisticRebalance(buy, usdNotional);
-    return { action: buy ? 'BUY_BWAEZI' : 'SELL_BWAEZI', txHash: res.txHash, decisionPacket: { ...decisionPacket, ...res.decisionPacket } };
+    const usdNotional = Math.round(20000*(1+ Math.min(0.8, Math.abs(deviationPct)/10)));
+    const res=await this.opportunisticRebalance(buy, usdNotional);
+    return { action: buy? 'BUY_BWAEZI':'SELL_BWAEZI', txHash:res.txHash, decisionPacket: res.decisionPacket };
   }
 }
 
@@ -861,40 +794,19 @@ class StrategyEngine {
    ========================================================================= */
 
 class GenesisSelfLiquiditySingularity {
-  constructor(provider, signer, strategy) { this.provider = provider; this.signer = signer; this.strategy = strategy; this.active = false; }
-  async executeIrreversibleSingularity() {
-    if (this.active) return { alreadyActive: true };
-    const npm = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, [
-      'function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) payable returns (uint256,uint128,uint256,uint256)'
-    ], this.signer);
-    const bw = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function approve(address,uint256)'], this.signer);
-    const usdc = new ethers.Contract(LIVE.TOKENS.USDC, ['function approve(address,uint256)'], this.signer);
+  constructor(provider, signer, strategy){ this.provider=provider; this.signer=signer; this.strategy=strategy; this.active=false; }
+  async executeIrreversibleSingularity(){
+    if(this.active) return { alreadyActive:true };
+    const npm=new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, ['function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) payable returns (uint256,uint128,uint256,uint256)'], this.signer);
+    const bw=new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function approve(address,uint256)'], this.signer);
+    const usdc=new ethers.Contract(LIVE.TOKENS.USDC, ['function approve(address,uint256)'], this.signer);
     await (await bw.approve(LIVE.DEXES.UNISWAP_V3.positionManager, ethers.MaxUint256)).wait();
     await (await usdc.approve(LIVE.DEXES.UNISWAP_V3.positionManager, ethers.MaxUint256)).wait();
-    const tickLower = -120, tickUpper = 120;
-    const initTx = await npm.mint({
-      token0: LIVE.TOKENS.BWAEZI, token1: LIVE.TOKENS.USDC, fee: LIVE.PEG.FEE_TIER_DEFAULT,
-      tickLower, tickUpper,
-      amount0Desired: LIVE.PEG.GENESIS_BWAEZI_INIT, amount1Desired: LIVE.PEG.GENESIS_MIN_USDC,
-      amount0Min: 0, amount1Min: 0, recipient: this.signer.address, deadline: Math.floor(Date.now()/1000)+1800
-    });
-    const initReceipt = await initTx.wait();
-    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
-    const pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
-    const poolC = new ethers.Contract(pool, ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'], this.provider);
-    const slot0 = await poolC.slot0();
-    const expand = await this.strategy.maker.startStreamingMint({
-      token0: LIVE.TOKENS.BWAEZI,
-      token1: LIVE.TOKENS.USDC,
-      tickLower: Number(slot0[1]) - 600,
-      tickUpper: Number(slot0[1]) + 600,
-      total0: LIVE.PEG.SEED_BWAEZI_EXPAND,
-      total1: 0n,
-      steps: 6,
-      label: 'genesis_expand'
-    });
-    this.active = true;
-    return { genesisTx: initReceipt.transactionHash, expansionStream: expand.streamId };
+    const tickLower=-120, tickUpper=120;
+    const initTx=await npm.mint({ token0:LIVE.TOKENS.BWAEZI, token1:LIVE.TOKENS.USDC, fee:LIVE.PEG.FEE_TIER_DEFAULT, tickLower, tickUpper, amount0Desired:LIVE.PEG.GENESIS_BWAEZI_INIT, amount1Desired:LIVE.PEG.GENESIS_MIN_USDC, amount0Min:0, amount1Min:0, recipient:this.signer.address, deadline:Math.floor(Date.now()/1000)+1800 });
+    const initReceipt=await initTx.wait();
+    this.active=true;
+    return { genesisTx:initReceipt.transactionHash };
   }
 }
 
@@ -903,47 +815,38 @@ class GenesisSelfLiquiditySingularity {
    ========================================================================= */
 
 class ProductionSovereignCore extends EventEmitter {
-  constructor() {
+  constructor(){
     super();
-    this.provider = null;
-    this.signer = null;
-    this.aa = null;
-    this.dexRegistry = null;
-    this.entropy = null;
-    this.maker = null;
-    this.oracle = null;
-    this.mev = null;
-    this.verifier = null;
-    this.strategy = null;
-    this.feeFarmer = null;
+    this.provider=null; this.signer=null; this.aa=null;
+    this.dexRegistry=null; this.entropy=null; this.maker=null; this.oracle=null; this.mev=null; this.verifier=null; this.strategy=null; this.feeFarmer=null;
 
-    this.stats = { startTs: Date.now(), tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, lastProfitUSD: 0, pegActions: 0, streamsActive: 0 };
-    this.status = 'INIT';
-    this.loops = [];
+    this.stats={ startTs:Date.now(), tradesExecuted:0, totalRevenueUSD:0, currentDayUSD:0, lastProfitUSD:0, pegActions:0, streamsActive:0 };
+    this.status='INIT'; this.loops=[];
   }
 
   async initialize() {
-    console.log('SOVEREIGN MEV BRAIN v13.5.1 — Booting');
-    await chain.initSticky();
+    console.log('SOVEREIGN MEV BRAIN v13.5.5 — Booting');
 
-    this.provider = chain.getProvider();
+    await chainRegistry.init();
+    this.provider = chainRegistry.getPrimary();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
     this.aa = new EnterpriseAASDK(this.signer);
-    this.dexRegistry = new DexAdapterRegistry(this.provider);
+    this.dexRegistry = new DexAdapterRegistry(this.provider, 'mainnet');
     this.entropy = new EntropyShockDetector();
     this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dexRegistry, this.entropy);
     this.oracle = new MultiAnchorOracle(this.provider, this.dexRegistry);
-    this.mev = new MevExecutor(this.aa, this.provider);
+    this.mev = new MevExecutor(this.aa);
     this.verifier = new ProfitVerifier(this.provider);
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, this.maker, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    await ensureApprovals(this.signer);
+    await bootstrapSCWForPaymaster(this.aa);
 
     const genesis = new GenesisSelfLiquiditySingularity(this.provider, this.signer, this.strategy);
-    const anchor = await genesis.executeIrreversibleSingularity();
-    if (!anchor.alreadyActive) console.log('Genesis anchored:', anchor);
+    try { await genesis.executeIrreversibleSingularity(); } catch(e){ console.warn('Genesis skipped:', e.message); }
+
+    await this.strategy.watchPeg();
 
     this.loops.push(setInterval(async () => {
       try {
@@ -955,34 +858,17 @@ class ProductionSovereignCore extends EventEmitter {
       } catch (e) { console.warn('maker adjust error:', e.message); }
     }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
 
-    this.loops.push(setInterval(async () => {
-      try {
-        const res = await this.strategy.enforcePegIfNeeded();
-        if (!res || res.action === 'NOOP') return;
-        this.stats.pegActions++;
-        const daily = this.verifier.getDailyReport();
-        this.stats.currentDayUSD = daily.netProfit || 0;
-        this.stats.totalRevenueUSD += daily.netProfit || 0;
-        console.log(`Peg ${res.action} tx=${res.txHash}`);
-      } catch (e) { console.warn('peg loop error:', e.message); }
-    }, 10_000));
-
-    this.status = 'SOVEREIGN_LIVE';
+    this.status='SOVEREIGN_LIVE';
   }
 
-  getStats() {
-    const hours = Math.max(0.01, (Date.now() - this.stats.startTs) / 3600000);
-    const projectedDaily = (this.stats.currentDayUSD / hours) * 24;
+  getStats(){
+    const hours=Math.max(0.01, (Date.now()-this.stats.startTs)/3600000);
+    const projectedDaily=(this.stats.currentDayUSD/hours)*24;
     return {
-      system: { status: this.status, version: 'v13.5.1 — Maker+Composite+AA+Sticky' },
-      trading: {
-        tradesExecuted: this.stats.tradesExecuted,
-        totalRevenueUSD: this.stats.totalRevenueUSD,
-        currentDayUSD: this.stats.currentDayUSD,
-        projectedDaily
-      },
-      peg: { actions: this.stats.pegActions, targetUSD: LIVE.PEG.TARGET_USD },
-      maker: { streamsActive: this.stats.streamsActive }
+      system:{ status:this.status, version:LIVE.VERSION },
+      trading:{ tradesExecuted:this.stats.tradesExecuted, totalRevenueUSD:this.stats.totalRevenueUSD, currentDayUSD:this.stats.currentDayUSD, projectedDaily },
+      peg:{ actions:this.stats.pegActions, targetUSD:LIVE.PEG.TARGET_USD },
+      maker:{ streamsActive:this.stats.streamsActive }
     };
   }
 }
@@ -992,14 +878,13 @@ class ProductionSovereignCore extends EventEmitter {
    ========================================================================= */
 
 class APIServer {
-  constructor(core, port = 8081) { this.core = core; this.port = port; this.app = express(); this.server = null; this.setupRoutes(); }
-  setupRoutes() {
-    this.app.get('/', (req,res) => {
-      const s = this.core.getStats();
+  constructor(core, port=8081){ this.core=core; this.port=port; this.app=express(); this.server=null; this.setupRoutes(); }
+  setupRoutes(){
+    this.app.get('/', (req,res)=> {
+      const s=this.core.getStats();
       res.send(`
-        <h1>SOVEREIGN MEV BRAIN v13.5.1 — LIVE</h1>
+        <h1>SOVEREIGN MEV BRAIN ${LIVE.VERSION} — LIVE</h1>
         <p>Status: ${s.system.status}</p>
-        <p>Trades Executed: ${s.trading.tradesExecuted}</p>
         <p>Revenue Today: $${(s.trading.currentDayUSD||0).toFixed(2)}</p>
         <p>Projected Daily: $${(s.trading.projectedDaily||0).toFixed(2)}</p>
         <p>Peg actions: ${s.peg.actions} | Target $${s.peg.targetUSD}</p>
@@ -1007,26 +892,33 @@ class APIServer {
         <meta http-equiv="refresh" content="10">
       `);
     });
+
     this.app.get('/status', (req,res)=> res.json(this.core.getStats()));
+
     this.app.get('/anchors/composite', async (req,res)=> {
+      try { const r=await this.core.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI); res.json({ priceUSD:r.price, confidence:r.confidence, components:r.components, ts:Date.now() }); }
+      catch(e){ res.status(500).json({ error:e.message }); }
+    });
+
+    this.app.get('/maker/streams', (req,res)=> res.json({ streams:this.core.maker.listStreams(), ts:Date.now() }));
+
+    this.app.get('/fees/recent', (req,res)=> res.json({ collections:this.core.feeFarmer.getRecent(), ts:Date.now() }));
+
+    this.app.get('/trades/recent', (req,res)=> res.json({ decisions:this.core.verifier.getRecentDecisionPackets(100), ts:Date.now() }));
+
+    this.app.get('/dex/list', (req,res)=> res.json({ adapters:this.core.dexRegistry.getAllAdapters(), ts:Date.now() }));
+
+    this.app.get('/dex/health', async (req,res)=> {
       try {
-        const r = await this.core.oracle.getCompositePriceUSD(LIVE.TOKENS.BWAEZI);
-        res.json({ priceUSD: r.price, confidence: r.confidence, components: r.components, ts: Date.now() });
+        const health = await this.core.dexRegistry.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01'));
+        res.json({ ...health, ts: Date.now() });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
-    this.app.get('/maker/streams', (req,res)=> res.json({ streams: this.core.maker.listStreams(), ts: Date.now() }));
-    this.app.get('/fees/recent', (req,res)=> res.json({ collections: this.core.feeFarmer.getRecent(), ts: Date.now() }));
-    this.app.get('/trades/recent', (req,res)=> res.json({ decisions: this.core.verifier.getRecentDecisionPackets(100), ts: Date.now() }));
-    this.app.get('/dex/list', (req,res)=> res.json({ adapters: this.core.dexRegistry.getAllAdapters(), ts: Date.now() }));
-    this.app.get('/dex/health', async (req,res)=> {
-      const adapters = this.core.dexRegistry.getAllAdapters();
-      const probeA = LIVE.TOKENS.WETH, probeB = LIVE.TOKENS.USDC, amount = ethers.parseEther('0.01');
-      const checks = await Promise.all(adapters.map(async (a) => {
-        try { const q = await this.core.dexRegistry.getAdapter(a.name).getQuote(probeA, probeB, amount); return { name: a.name, ok: !!q, liquidity: q?.liquidity ?? '0' }; }
-        catch { return { name: a.name, ok: false, liquidity: '0' }; }
-      }));
-      res.json({ count: checks.length, checks, timestamp: Date.now() });
-    });
+
+    this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dexRegistry.getScores(), ts: Date.now() }));
+
+    this.app.get('/chains', (req,res)=> res.json({ chains: chainRegistry.info(), ts: Date.now() }));
+
     this.app.post('/routes/preview', express.json(), async (req,res)=> {
       try {
         const { tokenIn, tokenOut, amount } = req.body || {};
@@ -1035,8 +927,22 @@ class APIServer {
         res.json({ quotes, ts: Date.now() });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
+
+    this.app.post('/routes/best', express.json(), async (req,res)=> {
+      try {
+        const { tokenIn, tokenOut, amount } = req.body || {};
+        const ain = BigInt(amount || '0');
+        const quotes = await this.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
+        const best = quotes?.best;
+        if (!best) { res.status(404).json({ error: 'No route found' }); return; }
+        const calldata = await best.adapter.buildSwapCalldata({
+          tokenIn, tokenOut, amountIn: ain, amountOutMin: 0n, recipient: LIVE.SCW_ADDRESS, fee: best.fee || LIVE.PEG.FEE_TIER_DEFAULT
+        });
+        res.json({ dex: best.dex, router: LIVE.DEXES[best.dex]?.router || LIVE.DEXES.UNISWAP_V3.router, calldata, ts: Date.now() });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
   }
-  async start() { this.server = this.app.listen(this.port, ()=> console.log(`🌐 API server on :${this.port}`)); }
+  async start(){ this.server=this.app.listen(this.port, ()=> console.log(`🌐 API server on :${this.port}`)); }
 }
 
 /* =========================================================================
@@ -1046,12 +952,12 @@ class APIServer {
 if (import.meta.url === `file://${process.argv[1]}`) {
   (async ()=>{
     try {
-      await chain.initSticky();
+      await chainRegistry.init();
       const core = new ProductionSovereignCore();
       await core.initialize();
       const api = new APIServer(core, process.env.PORT ? Number(process.env.PORT) : 8081);
       await api.start();
-      console.log('🚀 Sovereign MEV Brain v13.5.1 — ONLINE');
+      console.log(`🚀 Sovereign MEV Brain ${LIVE.VERSION} — ONLINE`);
     } catch (err) {
       console.error('Fatal boot error:', err?.stack || err);
       process.exit(1);
@@ -1077,7 +983,7 @@ export {
   FeeFarmer,
   MultiAnchorOracle,
   LIVE,
-  chain
+  chainRegistry
 };
 
 export default ProductionSovereignCore;
