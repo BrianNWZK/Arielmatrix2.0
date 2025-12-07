@@ -1,15 +1,14 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.5 — Mainnet Production
+ * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (cleaned logs)
  * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
- * - Sticky RPC, single Express app
+ * - Sticky RPC with forced chainId, single Express app
  * - Event-driven peg enforcement
  * - Adaptive concentrated liquidity (Uniswap V3)
  * - Composite multi-anchor oracle
  * - Profit verification and ledger
  * - Expanded DEX registry with reliability scoring
- * - Multi-chain wiring (mainnet primary; optional Arbitrum/Polygon for read-only quotes)
  *
  * REQUIREMENTS:
  * - Node.js 20+ (ESM). package.json: { "type":"module" }
@@ -28,60 +27,56 @@ import fetch from 'node-fetch';
    Configuration
    ========================================================================= */
 
-function getAddressSafely(address) {
-  try {
-    if (ethers.isAddress(address)) {
-      try { return ethers.getAddress(address); } catch { return address.toLowerCase(); }
-    }
-    return address;
-  } catch { return address; }
+function addrStrict(address) {
+  return ethers.getAddress(address);
 }
 
 const LIVE = {
-  VERSION: 'v13.5.5',
-  ENTRY_POINT: getAddressSafely('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
-  ACCOUNT_FACTORY: getAddressSafely('0x9406Cc6185a346906296840746125a0E44976454'),
+  VERSION: 'v13.5.6',
+  ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'), // ERC-4337 v0.7
+
+  ACCOUNT_FACTORY: addrStrict('0x9406Cc6185a346906296840746125a0E44976454'),
 
   // Owner + Smart Contract Wallet (SCW)
-  EOA_OWNER_ADDRESS: getAddressSafely('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
-  SCW_ADDRESS: getAddressSafely('0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
+  EOA_OWNER_ADDRESS: addrStrict('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
+  SCW_ADDRESS: addrStrict('0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
 
   // BWAEZI Paymaster (mainnet)
-  PAYMASTER_ADDRESS: getAddressSafely('0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
+  PAYMASTER_ADDRESS: addrStrict('0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
 
   TOKENS: {
-    BWAEZI: getAddressSafely('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
-    WETH:   getAddressSafely('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
-    USDC:   getAddressSafely('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
-    DAI:    getAddressSafely('0x6B175474E89094C44Da98b954EedeAC495271d0F'),
-    USDT:   getAddressSafely('0xdAC17F958D2ee523a2206206994597C13D831ec7')
+    BWAEZI: addrStrict('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
+    WETH:   addrStrict('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+    USDC:   addrStrict('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+    DAI:    addrStrict('0x6B175474E89094C44Da98b954EedeAC495271d0F'),
+    USDT:   addrStrict('0xdAC17F958D2ee523a2206206994597C13D831ec7')
   },
 
   DEXES: {
     UNISWAP_V3: {
       name: 'Uniswap V3',
-      router:          getAddressSafely('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
-      quoter:          getAddressSafely('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
-      factory:         getAddressSafely('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
-      positionManager: getAddressSafely('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
+      router:          addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
+      quoter:          addrStrict('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
+      factory:         addrStrict('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
+      positionManager: addrStrict('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
     },
     UNISWAP_V2: {
       name: 'Uniswap V2',
-      router:  getAddressSafely('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
-      factory: getAddressSafely('0x5C69bEe701ef814a2B6a3Edd4B1652CB9cc5aA6f')
+      router:  addrStrict('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
+      factory: addrStrict('0x5C69bEe701ef814a2B6a3Edd4B1652CB9cc5aA6f')
     },
     SUSHI_V2: {
       name: 'Sushi V2',
-      router:  getAddressSafely('0xd9e1CE17f2641f24AE83637ab66a2cca9C378B9F'),
-      factory: getAddressSafely('0xC0aEE478e3658e2610c5F7A4A2E1777cE9e4f2Ac')
+      router:  addrStrict('0xd9e1CE17f2641f24AE83637ab66a2cca9C378B9F'),
+      factory: addrStrict('0xC0aEE478e3658e2610c5F7A4A2E1777cE9e4f2Ac')
     },
     ONE_INCH_V5: {
       name: '1inch V5',
-      router: getAddressSafely('0x1111111254EEB25477B68fb85Ed929f73A960582')
+      router: addrStrict('0x1111111254EEB25477B68fb85Ed929f73A960582')
     },
     PARASWAP_LITE: {
       name: 'Paraswap Lite',
-      router: getAddressSafely('0xDEF1C0DE00000000000000000000000000000000') // placeholder router for simulation; real calls via HTTP
+      router: addrStrict('0xDEF1C0DE00000000000000000000000000000000') // placeholder router (HTTP aggregator used for quotes)
     }
   },
 
@@ -95,36 +90,6 @@ const LIVE = {
 
   BUNDLERS: [
     'https://bundler.candide.dev/rpc/mainnet'
-  ],
-
-  CHAINS: [
-    {
-      key: 'mainnet',
-      chainId: 1,
-      name: 'Ethereum Mainnet',
-      primary: true,
-      rpcs: [
-        ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
-        'https://eth.llamarpc.com',
-        'https://rpc.ankr.com/eth',
-        'https://cloudflare-eth.com',
-        'https://ethereum.publicnode.com'
-      ]
-    },
-    {
-      key: 'arbitrum',
-      chainId: 42161,
-      name: 'Arbitrum One',
-      primary: false,
-      rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.llamarpc.com']
-    },
-    {
-      key: 'polygon',
-      chainId: 137,
-      name: 'Polygon',
-      primary: false,
-      rpcs: ['https://polygon-rpc.com', 'https://polygon.llamarpc.com']
-    }
   ],
 
   PEG: {
@@ -145,59 +110,80 @@ const LIVE = {
   },
 
   ANCHORS: [
-    { symbol: 'USDC', address: getAddressSafely('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'), decimals: 6 },
-    { symbol: 'WETH', address: getAddressSafely('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'), decimals: 18 },
-    { symbol: 'DAI',  address: getAddressSafely('0x6B175474E89094C44Da98b954EedeAC495271d0F'), decimals: 18 }
+    { symbol: 'USDC', address: addrStrict('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'), decimals: 6 },
+    { symbol: 'WETH', address: addrStrict('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'), decimals: 18 },
+    { symbol: 'DAI',  address: addrStrict('0x6B175474E89094C44Da98b954EedeAC495271d0F'), decimals: 18 }
   ]
 };
 
 /* =========================================================================
-   Connections (sticky provider + multi-chain registry)
+   Connections (sticky provider; force chainId)
    ========================================================================= */
 
 class ChainRegistry {
-  constructor(chains) {
-    this.chains = chains;
-    this.providers = new Map(); // key -> { sticky: provider, list: [providers] }
+  constructor(rpcUrls, chainId = 1) {
+    this.rpcUrls = rpcUrls;
+    this.chainId = chainId;
+    this.providers = [];
+    this.sticky = null;
   }
 
   async init() {
-    for (const c of this.chains) {
-      const list = c.rpcs.map(url => new ethers.JsonRpcProvider(url, c.chainId));
-      let sticky = null;
-      for (const p of list) {
-        try { await p.getBlockNumber(); sticky = p; break; } catch {}
+    for (const url of this.rpcUrls) {
+      try {
+        const provider = new ethers.JsonRpcProvider(url, this.chainId); // force mainnet chainId
+        await provider.getBlockNumber();
+        this.providers.push(provider);
+        if (!this.sticky) {
+          this.sticky = provider;
+          console.log('Sticky provider set for Ethereum Mainnet');
+        }
+      } catch (e) {
+        // silently continue to next RPC
       }
-      if (!sticky) throw new Error(`No healthy RPC for chain ${c.key}`);
-      this.providers.set(c.key, { sticky, list, chainId: c.chainId, name: c.name, primary: c.primary });
-      if (c.primary) console.log(`Sticky provider set for ${c.name}`);
+    }
+    if (!this.sticky) throw new Error('No healthy RPC provider');
+  }
+
+  getProvider() {
+    return this.sticky || this.providers[0];
+  }
+
+  getBundler() {
+    // Use mainnet bundlers
+    return LIVE.BUNDLERS.length ? new ethers.JsonRpcProvider(LIVE.BUNDLERS[0], 1) : this.getProvider();
+  }
+
+  async getFeeData() {
+    const p = this.getProvider();
+    try {
+      const fd = await p.getFeeData();
+      return {
+        maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+        maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei'),
+        gasPrice: fd.gasPrice || ethers.parseUnits('25', 'gwei')
+      };
+    } catch {
+      return {
+        maxFeePerGas: ethers.parseUnits('30', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
+        gasPrice: ethers.parseUnits('25', 'gwei')
+      };
     }
   }
-
-  getPrimary() {
-    for (const c of this.chains) if (c.primary) return this.providers.get(c.key).sticky;
-    throw new Error('No primary chain configured');
-  }
-
-  getProvider(chainKey = 'mainnet') {
-    const entry = this.providers.get(chainKey);
-    if (!entry) throw new Error(`Chain ${chainKey} not initialized`);
-    return entry.sticky;
-  }
-
-  info() {
-    return Array.from(this.providers.entries()).map(([key, entry]) => ({
-      key, chainId: entry.chainId, name: entry.name, primary: entry.primary
-    }));
-  }
 }
-const chainRegistry = new ChainRegistry(LIVE.CHAINS);
+
+const chainRegistry = new ChainRegistry(LIVE.RPC_PROVIDERS, 1);
 
 /* =========================================================================
    Utilities
    ========================================================================= */
 
-class LRUMap { constructor(maxSize=10000){ this.data=new Map(); this.maxSize=maxSize; } set(k,v){ if(this.data.size>=this.maxSize){ const fk=this.data.keys().next().value; this.data.delete(fk);} this.data.set(k,v);} get(k){return this.data.get(k);} entries(){return this.data.entries();} }
+class LRUMap {
+  constructor(maxSize = 10000) { this.data = new Map(); this.maxSize = maxSize; }
+  set(k, v) { if (this.data.size >= this.maxSize) { const fk = this.data.keys().next().value; this.data.delete(fk); } this.data.set(k, v); }
+  get(k) { return this.data.get(k); }
+}
 
 /* =========================================================================
    ERC-4337 AA — BWAEZI Paymaster integration (AA-primary)
@@ -209,21 +195,21 @@ class EnterpriseAASDK {
     this.signer = signer; this.entryPoint = entryPoint; this.factory = LIVE.ACCOUNT_FACTORY;
   }
   async isDeployed(address) {
-    const code = await chainRegistry.getPrimary().getCode(address);
+    const code = await chainRegistry.getProvider().getCode(address);
     return code && code !== '0x';
   }
   async getSCWAddress(owner) {
     const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
     const i = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
     const initCall = i.encodeFunctionData('createAccount', [owner, 0]);
-    const initCode = ethers.concat([this.factory, initCall]);
-    const bytecode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${this.factory.slice(2)}5af43d82803e903d91602b57fd5bf3`;
-    const addr = ethers.getCreate2Address(this.factory, salt,
+    const initCode = ethers.concat([LIVE.ACCOUNT_FACTORY, initCall]);
+    const bytecode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${LIVE.ACCOUNT_FACTORY.slice(2)}5af43d82803e903d91602b57fd5bf3`;
+    const addr = ethers.getCreate2Address(LIVE.ACCOUNT_FACTORY, salt,
       ethers.keccak256(ethers.concat([ethers.keccak256(bytecode), ethers.keccak256(initCode)])));
-    return getAddressSafely(addr);
+    return addrStrict(addr);
   }
   async getNonce(smartAccount) {
-    const ep = new ethers.Contract(this.entryPoint, ['function getNonce(address sender, uint192 key) view returns (uint256)'], chainRegistry.getPrimary());
+    const ep = new ethers.Contract(LIVE.ENTRY_POINT, ['function getNonce(address sender, uint192 key) view returns (uint256)'], chainRegistry.getProvider());
     try { return await ep.getNonce(smartAccount, 0); } catch { return 0n; }
   }
   buildPaymasterAndData(userOpSender) {
@@ -235,19 +221,19 @@ class EnterpriseAASDK {
     const sender = await this.getSCWAddress(this.signer.address);
     const deployed = await this.isDeployed(sender);
     const nonce = await this.getNonce(sender);
-    const gas = await chainRegistry.getPrimary().getFeeData();
+    const gas = await chainRegistry.getFeeData();
     const userOp = {
       sender, nonce,
       initCode: deployed ? '0x' : (() => {
         const i = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
-        return ethers.concat([this.factory, i.encodeFunctionData('createAccount', [this.signer.address, 0])]);
+        return ethers.concat([LIVE.ACCOUNT_FACTORY, i.encodeFunctionData('createAccount', [this.signer.address, 0])]);
       })(),
       callData,
       callGasLimit: opts.callGasLimit || 1_400_000n,
       verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
       preVerificationGas: opts.preVerificationGas || 80_000n,
-      maxFeePerGas: opts.maxFeePerGas || gas.maxFeePerGas || ethers.parseUnits('30','gwei'),
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas || gas.maxPriorityFeePerGas || ethers.parseUnits('2','gwei'),
+      maxFeePerGas: opts.maxFeePerGas || gas.maxFeePerGas,
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas || gas.maxPriorityFeePerGas,
       paymasterAndData: this.buildPaymasterAndData(sender),
       signature: '0x'
     };
@@ -281,16 +267,16 @@ class EnterpriseAASDK {
         ethers.keccak256(userOp.paymasterAndData)
       ]
     );
-    const net = await chainRegistry.getPrimary().getNetwork();
-    const enc = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32','address','uint256'], [ethers.keccak256(packed), this.entryPoint, net.chainId]);
+    const net = await chainRegistry.getProvider().getNetwork();
+    const enc = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32','address','uint256'], [ethers.keccak256(packed), LIVE.ENTRY_POINT, net.chainId]);
     const userOpHash = ethers.keccak256(enc);
     userOp.signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
     return userOp;
   }
   async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    const bundlers = LIVE.BUNDLERS.map(url => new ethers.JsonRpcProvider(url));
+    const bundlers = LIVE.BUNDLERS.map(url => new ethers.JsonRpcProvider(url, 1));
     const op = this._formatBundlerUserOp(userOp);
-    const entryPoint = this.entryPoint;
+    const entryPoint = LIVE.ENTRY_POINT;
     let attempt = 0; let lastErr;
     while (attempt < maxAttempts) {
       const b = bundlers[attempt % bundlers.length];
@@ -321,8 +307,8 @@ class EnterpriseAASDK {
    ========================================================================= */
 
 class UniversalDexAdapter {
-  constructor(provider, config, key='mainnet') { this.provider=provider; this.config=config; this.type=this._type(config.name); this.chainKey=key; }
-  _type(name){ if(name?.includes('V3')) return 'V3'; if(name?.includes('V2')) return 'V2'; if(name?.includes('Sushi')) return 'V2'; if(name?.includes('1inch')) return 'Aggregator'; if(name?.includes('Paraswap')) return 'Aggregator2'; return 'Custom'; }
+  constructor(provider, config) { this.provider = provider; this.config = config; this.type = this._type(config.name); }
+  _type(name) { if (name?.includes('V3')) return 'V3'; if (name?.includes('V2')) return 'V2'; if (name?.includes('Sushi')) return 'V2'; if (name?.includes('1inch')) return 'Aggregator'; if (name?.includes('Paraswap')) return 'Aggregator2'; return 'Custom'; }
 
   async getQuote(tokenIn, tokenOut, amountIn) {
     const t0 = Date.now();
@@ -344,24 +330,24 @@ class UniversalDexAdapter {
   async _v3Quote(tokenIn, tokenOut, amountIn) {
     const quoter = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.quoter, [
       'function quoteExactInputSingle(address,address,uint24,uint256,uint160) external returns (uint256)'
-    ], chainRegistry.getProvider(this.chainKey));
+    ], chainRegistry.getProvider());
     const fee = LIVE.PEG.FEE_TIER_DEFAULT;
     const amountOut = await quoter.quoteExactInputSingle(tokenIn, tokenOut, fee, amountIn, 0);
-    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], chainRegistry.getProvider(this.chainKey));
+    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], chainRegistry.getProvider());
     const pool = await factory.getPool(tokenIn, tokenOut, fee);
     let liquidity = '0';
     if (pool && pool !== ethers.ZeroAddress) {
-      const poolC = new ethers.Contract(pool, ['function liquidity() view returns (uint128)'], chainRegistry.getProvider(this.chainKey));
+      const poolC = new ethers.Contract(pool, ['function liquidity() view returns (uint128)'], chainRegistry.getProvider());
       liquidity = (await poolC.liquidity()).toString();
     }
     return { amountOut, priceImpact: 0.0, fee, liquidity, dex: 'UNISWAP_V3', adapter: this };
   }
 
   async _v2Quote(tokenIn, tokenOut, amountIn) {
-    const factoryAddr = this.config.factory;
-    const factory = new ethers.Contract(factoryAddr, ['function getPair(address,address) view returns (address)'], chainRegistry.getProvider(this.chainKey));
+    const factoryAddr = LIVE.DEXES[this.config.name.replace(' ', '_')]?.factory || this.config.factory;
+    const factory = new ethers.Contract(factoryAddr, ['function getPair(address,address) view returns (address)'], chainRegistry.getProvider());
     const pair = await factory.getPair(tokenIn, tokenOut); if (!pair || pair === ethers.ZeroAddress) return null;
-    const pairC = new ethers.Contract(pair, ['function getReserves() view returns (uint112,uint112,uint32)','function token0() view returns (address)'], chainRegistry.getProvider(this.chainKey));
+    const pairC = new ethers.Contract(pair, ['function getReserves() view returns (uint112,uint112,uint32)','function token0() view returns (address)'], chainRegistry.getProvider());
     const [r0, r1] = await pairC.getReserves();
     const token0 = await pairC.token0();
     const inIs0 = tokenIn.toLowerCase() === token0.toLowerCase();
@@ -410,7 +396,7 @@ class UniversalDexAdapter {
         amountIn, amountOutMin || 0n, [tokenIn, tokenOut], recipient, Math.floor(Date.now()/1000)+600
       ]);
     }
-    // For aggregators, we fallback to Uniswap V3 router calldata to ensure on-chain path consistency.
+    // Aggregator fallback to V3 exactInputSingle for a consistent on-chain path
     const fallback = new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)']);
     return fallback.encodeFunctionData('exactInputSingle', [{
       tokenIn, tokenOut, fee: LIVE.PEG.FEE_TIER_DEFAULT, recipient,
@@ -421,41 +407,38 @@ class UniversalDexAdapter {
 }
 
 class DexAdapterRegistry {
-  constructor(provider, chainKey='mainnet') {
+  constructor(provider) {
     this.provider = provider;
-    this.chainKey = chainKey;
     this.adapters = {
-      UNISWAP_V3: new UniversalDexAdapter(provider, LIVE.DEXES.UNISWAP_V3, chainKey),
-      UNISWAP_V2: new UniversalDexAdapter(provider, LIVE.DEXES.UNISWAP_V2, chainKey),
-      SUSHI_V2:   new UniversalDexAdapter(provider, LIVE.DEXES.SUSHI_V2, chainKey),
-      ONE_INCH_V5: new UniversalDexAdapter(provider, LIVE.DEXES.ONE_INCH_V5, chainKey),
-      PARASWAP_LITE: new UniversalDexAdapter(provider, LIVE.DEXES.PARASWAP_LITE, chainKey)
+      UNISWAP_V3: new UniversalDexAdapter(provider, LIVE.DEXES.UNISWAP_V3),
+      UNISWAP_V2: new UniversalDexAdapter(provider, LIVE.DEXES.UNISWAP_V2),
+      SUSHI_V2:   new UniversalDexAdapter(provider, LIVE.DEXES.SUSHI_V2),
+      ONE_INCH_V5: new UniversalDexAdapter(provider, LIVE.DEXES.ONE_INCH_V5),
+      PARASWAP_LITE: new UniversalDexAdapter(provider, LIVE.DEXES.PARASWAP_LITE)
     };
     this.cache = new LRUMap(10000);
-    this.scores = new Map(); // name -> score object
+    this.scores = new Map(); // name -> score
   }
 
   getAdapter(name) { const a = this.adapters[name]; if (!a) throw new Error(`Adapter ${name} not found`); return a; }
   getAllAdapters() { return Object.entries(this.adapters).map(([name, adapter]) => ({ name, config: adapter.config, type: adapter.type })); }
 
   _updateScore(name, ok, latencyMs, liquidity) {
-    const prev = this.scores.get(name) || { okCount: 0, failCount: 0, avgLatency: null, avgLiquidity: 0 };
+    const prev = this.scores.get(name) || { okCount: 0, failCount: 0, avgLatency: null, avgLiquidity: 0, score: 50 };
     if (ok) prev.okCount++; else prev.failCount++;
-    if (latencyMs != null) {
-      prev.avgLatency = prev.avgLatency == null ? latencyMs : Math.round((prev.avgLatency * 0.7) + (latencyMs * 0.3));
-    }
+    if (latencyMs != null) prev.avgLatency = prev.avgLatency == null ? latencyMs : Math.round(prev.avgLatency * 0.7 + latencyMs * 0.3);
     if (liquidity != null) {
       const lnum = Number(liquidity || '0');
-      prev.avgLiquidity = Math.round((prev.avgLiquidity * 0.7) + (lnum * 0.3));
+      prev.avgLiquidity = Math.round(prev.avgLiquidity * 0.7 + lnum * 0.3);
     }
-    const successRate = (prev.okCount) / Math.max(1, (prev.okCount + prev.failCount));
+    const successRate = prev.okCount / Math.max(1, prev.okCount + prev.failCount);
     const score = Math.round(100 * (0.5 * successRate + 0.3 * (prev.avgLatency ? Math.max(0, 1 - prev.avgLatency / 1000) : 0.5) + 0.2 * Math.min(1, prev.avgLiquidity / 1e9)));
     prev.score = score;
     this.scores.set(name, prev);
   }
 
   async getBestQuote(tokenIn, tokenOut, amountIn) {
-    const key = `q_${this.chainKey}_${tokenIn}_${tokenOut}_${amountIn}`;
+    const key = `q_${tokenIn}_${tokenOut}_${amountIn}`;
     const cached = this.cache.get(key); if (cached && Date.now() - cached.ts < 1000) return cached.result;
     const quotes = [];
     await Promise.allSettled(Object.entries(this.adapters).map(async ([name, adapter]) => {
@@ -465,10 +448,9 @@ class DexAdapterRegistry {
         else this._updateScore(name, false, null, null);
       } catch { this._updateScore(name, false, null, null); }
     }));
-    quotes.sort((a,b)=> {
-      // Prefer higher score, then higher amountOut
-      const sa = (this.scores.get(a.dex)?.score || 50);
-      const sb = (this.scores.get(b.dex)?.score || 50);
+    quotes.sort((a, b) => {
+      const sa = this.scores.get(a.dex)?.score || 50;
+      const sb = this.scores.get(b.dex)?.score || 50;
       if (sa !== sb) return sb - sa;
       return Number(b.amountOut - a.amountOut);
     });
@@ -487,7 +469,9 @@ class DexAdapterRegistry {
       try {
         const q = await adapter.getQuote(tokenA, tokenB, amount);
         checks.push({ name, ok: !!q, latencyMs: q?.latencyMs || null, liquidity: q?.liquidity || '0', score: (this.scores.get(name)?.score || null) });
-      } catch { checks.push({ name, ok: false, latencyMs: null, liquidity: '0', score: (this.scores.get(name)?.score || null) }); }
+      } catch {
+        checks.push({ name, ok: false, latencyMs: null, liquidity: '0', score: (this.scores.get(name)?.score || null) });
+      }
     }
     return { count: checks.length, checks, timestamp: Date.now() };
   }
@@ -498,8 +482,10 @@ class DexAdapterRegistry {
    ========================================================================= */
 
 async function bootstrapSCWForPaymaster(aa) {
-  const provider = chainRegistry.getPrimary();
+  const provider = chainRegistry.getProvider();
   const scw = LIVE.SCW_ADDRESS;
+
+  // v0.7 EntryPoint ABI (deposit/search)
   const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
     'function getDeposit(address) view returns (uint256)',
     'function depositTo(address) payable'
@@ -516,6 +502,7 @@ async function bootstrapSCWForPaymaster(aa) {
     console.warn('EntryPoint deposit check failed:', e.message);
   }
 
+  // Approve BWAEZI allowance from SCW to paymaster (AA userOp)
   const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const calldata = erc20Iface.encodeFunctionData('approve', [LIVE.PAYMASTER_ADDRESS, ethers.MaxUint256]);
 
@@ -523,6 +510,7 @@ async function bootstrapSCWForPaymaster(aa) {
   const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
 
   const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n });
+  // Allow bootstrap approval to run via EP deposit (paymasterAndData cleared)
   userOp.paymasterAndData = '0x';
 
   const signed = await aa.signUserOp(userOp);
@@ -620,7 +608,7 @@ class ProfitVerifier {
     let totalUsdProfit=0; for(const [token, amt] of Object.entries(tokenProfits)){ if(amt===0n) continue; totalUsdProfit += await this.convertToUSD(token, amt); }
     const gasCostUsd= await this.estimateGasCostUSD(800_000n); totalUsdProfit -= gasCostUsd; return { tokenProfits, totalUsdProfit, gasCostUsd, netProfitUsd: totalUsdProfit }; }
   async convertToUSD(token, amount){ const dec = token===LIVE.TOKENS.USDC || token===LIVE.TOKENS.USDT ? 6 : 18; const amt=Number(ethers.formatUnits(amount, dec)); if(token===LIVE.TOKENS.USDC || token===LIVE.TOKENS.USDT || token===LIVE.TOKENS.DAI) return amt*1.0; if(token===LIVE.TOKENS.WETH) return amt*2000.0; return amt*LIVE.PEG.TARGET_USD; }
-  async estimateGasCostUSD(gasUsed){ try{ const gasPrice=await chainRegistry.getPrimary().getFeeData(); const maxFee=gasPrice.maxFeePerGas || ethers.parseUnits('30','gwei'); const gasEth=Number(ethers.formatEther(gasUsed*maxFee)); const ethUsd=2000.0; return gasEth*ethUsd; } catch{ return 0; } }
+  async estimateGasCostUSD(gasUsed){ try{ const gasPrice=await chainRegistry.getFeeData(); const maxFee=gasPrice.maxFeePerGas || ethers.parseUnits('30','gwei'); const gasEth=Number(ethers.formatEther(gasUsed*maxFee)); const ethUsd=2000.0; return gasEth*ethUsd; } catch{ return 0; } }
   updateLedger(id, profit){ const date=new Date().toISOString().split('T')[0]; const d=this.profitLedger.get(date)||{ totalProfit:0, trades:0, gasCosts:0, netProfit:0 }; d.trades++; d.totalProfit+=(profit.totalUsdProfit||0); d.gasCosts+=(profit.gasCostUsd||0); d.netProfit=d.totalProfit-d.gasCosts; this.profitLedger.set(date,d); }
   getDailyReport(date=null){ const target=date||new Date().toISOString().split('T')[0]; return this.profitLedger.get(target)||{ totalProfit:0, trades:0, gasCosts:0, netProfit:0 }; }
   getAllTimeStats(){ const s={ totalProfit:0, trades:0, gasCosts:0, netProfit:0 }; for(const d of this.profitLedger.values()){ s.totalProfit+=d.totalProfit; s.trades+=d.trades; s.gasCosts+=d.gasCosts; s.netProfit+=d.netProfit; } return s; }
@@ -628,10 +616,9 @@ class ProfitVerifier {
 }
 
 /* =========================================================================
-   Strategy engine — event-driven peg, governors preserved
+   Strategy engine — event-driven peg (governors preserved)
    ========================================================================= */
 
-function entropySeed(e){ try{ const h=createHash('sha256').update(`${e.value}:${e.coherence}:${e.timestamp}`).digest(); return h.readUInt32BE(0)/0xFFFFFFFF; } catch{ return Math.random(); } }
 function mapElementToFeeTier(elemental) { if (elemental === 'WATER') return 500; if (elemental === 'FIRE') return 10000; return 3000; }
 function chooseRoute(elemental) { if (elemental === 'FIRE') return 'ONE_INCH_V5'; return 'UNISWAP_V3'; }
 
@@ -825,14 +812,14 @@ class ProductionSovereignCore extends EventEmitter {
   }
 
   async initialize() {
-    console.log('SOVEREIGN MEV BRAIN v13.5.5 — Booting');
+    console.log(`SOVEREIGN MEV BRAIN ${LIVE.VERSION} — Booting`);
 
     await chainRegistry.init();
-    this.provider = chainRegistry.getPrimary();
+    this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
     this.aa = new EnterpriseAASDK(this.signer);
-    this.dexRegistry = new DexAdapterRegistry(this.provider, 'mainnet');
+    this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.entropy = new EntropyShockDetector();
     this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dexRegistry, this.entropy);
     this.oracle = new MultiAnchorOracle(this.provider, this.dexRegistry);
@@ -848,6 +835,7 @@ class ProductionSovereignCore extends EventEmitter {
 
     await this.strategy.watchPeg();
 
+    // Maker periodic adjust
     this.loops.push(setInterval(async () => {
       try {
         const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -917,30 +905,6 @@ class APIServer {
 
     this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dexRegistry.getScores(), ts: Date.now() }));
 
-    this.app.get('/chains', (req,res)=> res.json({ chains: chainRegistry.info(), ts: Date.now() }));
-
-    this.app.post('/routes/preview', express.json(), async (req,res)=> {
-      try {
-        const { tokenIn, tokenOut, amount } = req.body || {};
-        const ain = BigInt(amount || '0');
-        const quotes = await this.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
-        res.json({ quotes, ts: Date.now() });
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    this.app.post('/routes/best', express.json(), async (req,res)=> {
-      try {
-        const { tokenIn, tokenOut, amount } = req.body || {};
-        const ain = BigInt(amount || '0');
-        const quotes = await this.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
-        const best = quotes?.best;
-        if (!best) { res.status(404).json({ error: 'No route found' }); return; }
-        const calldata = await best.adapter.buildSwapCalldata({
-          tokenIn, tokenOut, amountIn: ain, amountOutMin: 0n, recipient: LIVE.SCW_ADDRESS, fee: best.fee || LIVE.PEG.FEE_TIER_DEFAULT
-        });
-        res.json({ dex: best.dex, router: LIVE.DEXES[best.dex]?.router || LIVE.DEXES.UNISWAP_V3.router, calldata, ts: Date.now() });
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
   }
   async start(){ this.server=this.app.listen(this.port, ()=> console.log(`🌐 API server on :${this.port}`)); }
 }
