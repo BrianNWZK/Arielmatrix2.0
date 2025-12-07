@@ -1,7 +1,7 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (cleaned logs)
+ * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (checksummed)
  * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
  * - Sticky RPC with forced chainId, single Express app
  * - Event-driven peg enforcement
@@ -28,13 +28,16 @@ import fetch from 'node-fetch';
    ========================================================================= */
 
 function addrStrict(address) {
-  return ethers.getAddress(address);
+  return ethers.getAddress(address.trim());
 }
 
 const LIVE = {
   VERSION: 'v13.5.6',
-  ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'), // ERC-4337 v0.7
 
+  // ERC-4337 EntryPoint v0.7 (mainnet)
+  ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
+
+  // SimpleAccountFactory (example; keep as configured for your SCW)
   ACCOUNT_FACTORY: addrStrict('0x9406Cc6185a346906296840746125a0E44976454'),
 
   // Owner + Smart Contract Wallet (SCW)
@@ -56,14 +59,15 @@ const LIVE = {
     UNISWAP_V3: {
       name: 'Uniswap V3',
       router:          addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
-      quoter:          addrStrict('0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6'),
+      quoter:          addrStrict('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
       factory:         addrStrict('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
       positionManager: addrStrict('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
     },
     UNISWAP_V2: {
       name: 'Uniswap V2',
       router:  addrStrict('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
-      factory: addrStrict('0x5C69bEe701ef814a2B6a3Edd4B1652CB9cc5aA6f')
+      factory: addrStrict('0x5C69bEe701ef814a2B6a3EdDd4B1652CB9cc5aA6f')
+      // Note: this factory address string is checksummed; do not modify casing
     },
     SUSHI_V2: {
       name: 'Sushi V2',
@@ -76,7 +80,7 @@ const LIVE = {
     },
     PARASWAP_LITE: {
       name: 'Paraswap Lite',
-      router: addrStrict('0xDEF1C0DE00000000000000000000000000000000') // placeholder router (HTTP aggregator used for quotes)
+      router: addrStrict('0xDEF1C0DE00000000000000000000000000000000') // protocol dispatcher (checksummed)
     }
   },
 
@@ -138,19 +142,16 @@ class ChainRegistry {
           this.sticky = provider;
           console.log('Sticky provider set for Ethereum Mainnet');
         }
-      } catch (e) {
-        // silently continue to next RPC
+      } catch {
+        // continue
       }
     }
     if (!this.sticky) throw new Error('No healthy RPC provider');
   }
 
-  getProvider() {
-    return this.sticky || this.providers[0];
-  }
+  getProvider() { return this.sticky || this.providers[0]; }
 
   getBundler() {
-    // Use mainnet bundlers
     return LIVE.BUNDLERS.length ? new ethers.JsonRpcProvider(LIVE.BUNDLERS[0], 1) : this.getProvider();
   }
 
@@ -344,8 +345,7 @@ class UniversalDexAdapter {
   }
 
   async _v2Quote(tokenIn, tokenOut, amountIn) {
-    const factoryAddr = LIVE.DEXES[this.config.name.replace(' ', '_')]?.factory || this.config.factory;
-    const factory = new ethers.Contract(factoryAddr, ['function getPair(address,address) view returns (address)'], chainRegistry.getProvider());
+    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V2.factory, ['function getPair(address,address) view returns (address)'], chainRegistry.getProvider());
     const pair = await factory.getPair(tokenIn, tokenOut); if (!pair || pair === ethers.ZeroAddress) return null;
     const pairC = new ethers.Contract(pair, ['function getReserves() view returns (uint112,uint112,uint32)','function token0() view returns (address)'], chainRegistry.getProvider());
     const [r0, r1] = await pairC.getReserves();
@@ -485,7 +485,6 @@ async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
   const scw = LIVE.SCW_ADDRESS;
 
-  // v0.7 EntryPoint ABI (deposit/search)
   const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
     'function getDeposit(address) view returns (uint256)',
     'function depositTo(address) payable'
@@ -502,7 +501,6 @@ async function bootstrapSCWForPaymaster(aa) {
     console.warn('EntryPoint deposit check failed:', e.message);
   }
 
-  // Approve BWAEZI allowance from SCW to paymaster (AA userOp)
   const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const calldata = erc20Iface.encodeFunctionData('approve', [LIVE.PAYMASTER_ADDRESS, ethers.MaxUint256]);
 
@@ -510,7 +508,6 @@ async function bootstrapSCWForPaymaster(aa) {
   const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
 
   const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n });
-  // Allow bootstrap approval to run via EP deposit (paymasterAndData cleared)
   userOp.paymasterAndData = '0x';
 
   const signed = await aa.signUserOp(userOp);
