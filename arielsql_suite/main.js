@@ -1,5 +1,5 @@
-// arielsql_suite/main.js - ULTRA-FAST DEPLOYMENT (Guaranteed Port Binding)
-// SOVEREIGN MEV BRAIN v13.5.1 - Hyper-Speed Production Engine
+// arielsql_suite/main.js — ULTRA-FAST DEPLOYMENT
+// SOVEREIGN MEV BRAIN v13.5.5 — Mainnet Production
 
 import express from 'express';
 import cors from 'cors';
@@ -7,11 +7,7 @@ import { ethers } from 'ethers';
 import process from 'process';
 import net from 'net';
 
-import { ProductionSovereignCore } from '../core/sovereign-brain.js';
-
-// =========================================================================
-// Port binding
-// =========================================================================
+import { ProductionSovereignCore, chainRegistry } from '../core/sovereign-brain.js';
 
 async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
   return new Promise((resolve) => {
@@ -38,10 +34,6 @@ async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
   });
 }
 
-// =========================================================================
-// Ultra-fast deployment
-// =========================================================================
-
 class UltraFastDeployment {
   constructor() {
     this.deploymentStartTime = Date.now();
@@ -63,7 +55,7 @@ class UltraFastDeployment {
     this.app = app;
     this.server = server;
 
-    this.initializeBlockchainConnection();
+    this.initializeBlockchainConnections();
 
     this.deploySovereignBrain();
 
@@ -111,53 +103,33 @@ class UltraFastDeployment {
     return { app, server };
   }
 
-  async initializeBlockchainConnection() {
+  async initializeBlockchainConnections() {
     try {
-      console.log('🔗 Initializing blockchain connection...');
-      const rpcUrls = [
-        ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
-        "https://eth.llamarpc.com",
-        "https://rpc.ankr.com/eth",
-        "https://cloudflare-eth.com",
-        "https://ethereum.publicnode.com"
-      ];
-      let provider = null;
-      for (const rpcUrl of rpcUrls) {
-        try {
-          provider = new ethers.JsonRpcProvider(rpcUrl);
-          await provider.getBlockNumber();
-          console.log(`✅ Blockchain connected via ${rpcUrl}`);
-          this.blockchainConnected = true;
-          global.blockchainProvider = provider;
-          break;
-        } catch {
-          console.log(`⚠️ RPC ${rpcUrl} failed, trying next...`);
-        }
-      }
-      if (!this.blockchainConnected) {
-        console.error('❌ All RPCs failed, retrying in 15 seconds...');
-        setTimeout(()=> this.initializeBlockchainConnection(), 15000);
-      }
+      console.log('🔗 Initializing multi-chain connections...');
+      await chainRegistry.init();
+      const primary = chainRegistry.getProvider('mainnet');
+      await primary.getBlockNumber();
+      this.blockchainConnected = true;
+      global.blockchainProvider = primary;
+      console.log('✅ Blockchain connected (mainnet sticky provider)');
     } catch (error) {
       console.error('⚠️ Blockchain connection failed:', error.message);
-      setTimeout(()=> this.initializeBlockchainConnection(), 15000);
+      setTimeout(()=> this.initializeBlockchainConnections(), 15000);
     }
   }
 
   async deploySovereignBrain() {
     try {
-      console.log('🧠 Deploying Sovereign MEV Brain v13.5.1...');
-      // Ensure core uses sticky provider
+      console.log('🧠 Deploying Sovereign MEV Brain v13.5.5...');
       const core = new ProductionSovereignCore();
       await core.initialize();
       this.core = core;
       this.revenueGenerationActive = true;
 
-      // Mount production API on the same app (no double handlers)
       const productionApp = createProductionAPI(this);
       this.app.use('/', productionApp);
 
-      console.log('✅ SOVEREIGN MEV BRAIN v13.5.1 DEPLOYED - ACTIVE');
+      console.log('✅ SOVEREIGN MEV BRAIN v13.5.5 DEPLOYED — MAINNET ACTIVE');
       console.log(`📊 Dashboard: http://localhost:${this.server.address().port}/revenue-dashboard`);
     } catch (error) {
       console.error('⚠️ Brain deployment failed (retry in 10s):', error.message);
@@ -169,19 +141,12 @@ class UltraFastDeployment {
     console.log('💰 Starting revenue loop...');
     setInterval(()=> {
       if (this.revenueGenerationActive && this.core) {
-        try {
-          // Event-driven core; loop reserved for periodic maintenance if needed
-        } catch (error) {
-          console.log('⚠️ Revenue loop error:', error.message);
-        }
+        try { /* event-driven core; loop for maintenance */ }
+        catch (error) { console.log('⚠️ Revenue loop error:', error.message); }
       }
     }, 45000);
   }
 }
-
-// =========================================================================
-// Production API (mounted on the same app)
-// =========================================================================
 
 function createProductionAPI(deployment) {
   const app = express.Router();
@@ -190,7 +155,7 @@ function createProductionAPI(deployment) {
   app.get('/revenue-dashboard', (req,res)=> {
     try {
       const stats = deployment.core ? deployment.core.getStats() : {
-        system: { status: 'DEPLOYING', version: 'v13.5.1' },
+        system: { status: 'DEPLOYING', version: 'v13.5.5' },
         trading: { tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, projectedDaily: 0 },
         peg: { actions: 0, targetUSD: 100 }
       };
@@ -231,31 +196,64 @@ function createProductionAPI(deployment) {
     });
   });
 
-  // Proxy useful core endpoints
   app.get('/status', (req,res)=> {
     if (!deployment.core) return res.json({ status: 'DEPLOYING' });
     res.json(deployment.core.getStats());
   });
-  app.get('/anchors/composite', async (req,res)=> {
+
+  // Mirror core endpoints
+  app.get('/dex/list', (req,res)=> {
+    if (!deployment.core) return res.json({ adapters: [] });
+    res.json({ adapters: deployment.core.dexRegistry.getAllAdapters(), ts: Date.now() });
+  });
+
+  app.get('/dex/health', async (req,res)=> {
+    try {
+      if (!deployment.core) return res.json({ count: 0, checks: [] });
+      const health = await deployment.core.dexRegistry.healthCheck();
+      res.json({ ...health, ts: Date.now() });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/dex/scores', (req,res)=> {
+    if (!deployment.core) return res.json({ scores: [] });
+    res.json({ scores: deployment.core.dexRegistry.getScores(), ts: Date.now() });
+  });
+
+  app.get('/chains', (req,res)=> res.json({ chains: chainRegistry.info(), ts: Date.now() }));
+
+  app.post('/routes/preview', express.json(), async (req,res)=> {
     try {
       if (!deployment.core) return res.status(503).json({ error: 'DEPLOYING' });
-      const r = await deployment.core.oracle.getCompositePriceUSD(deployment.core ? deployment.core.maker?.signer?.address : LIVE.TOKENS.BWAEZI);
-      res.json({ priceUSD: r.price, confidence: r.confidence, components: r.components, ts: Date.now() });
+      const { tokenIn, tokenOut, amount } = req.body || {};
+      const ain = BigInt(amount || '0');
+      const quotes = await deployment.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
+      res.json({ quotes, ts: Date.now() });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/routes/best', express.json(), async (req,res)=> {
+    try {
+      if (!deployment.core) return res.status(503).json({ error: 'DEPLOYING' });
+      const { tokenIn, tokenOut, amount } = req.body || {};
+      const ain = BigInt(amount || '0');
+      const quotes = await deployment.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
+      const best = quotes?.best;
+      if (!best) { res.status(404).json({ error: 'No route found' }); return; }
+      const calldata = await best.adapter.buildSwapCalldata({
+        tokenIn, tokenOut, amountIn: ain, amountOutMin: 0n, recipient: deployment.core.mev.scw, fee: best.fee || 500
+      });
+      res.json({ dex: best.dex, router: (deployment.core ? LIVE.DEXES[best.dex]?.router : null) || LIVE.DEXES.UNISWAP_V3.router, calldata, ts: Date.now() });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   return app;
 }
 
-// =========================================================================
-// Main
-// =========================================================================
-
 (async ()=>{
   console.log('\n' + '='.repeat(70));
-  console.log('🚀 SOVEREIGN MEV BRAIN v13.5.1 - ULTRA-FAST DEPLOYMENT');
-  console.log('💰 Guaranteed Port • Zero Dependency Blocking');
-  console.log('⚡ Event-driven Peg • Maker–Taker Hybrid • AA Ready • Sticky RPC');
+  console.log('🚀 SOVEREIGN MEV BRAIN v13.5.5 — ULTRA-FAST DEPLOYMENT (Mainnet)');
+  console.log('💰 AA-Primary • BWAEZI Paymaster • Expanded DEX • Reliability Scoring • Multi-chain Wiring');
   console.log('='.repeat(70) + '\n');
 
   try {
@@ -268,7 +266,7 @@ function createProductionAPI(deployment) {
     console.log(`📊 Dashboard: http://localhost:${port}/revenue-dashboard`);
     console.log(`🔗 Blockchain: http://localhost:${port}/blockchain-status`);
     console.log(`📈 Metrics: http://localhost:${port}/system-metrics`);
-    console.log('💰 Revenue: ACTIVE');
+    console.log('💰 Revenue: ACTIVE (Mainnet)');
     console.log('='.repeat(70) + '\n');
 
     process.on('uncaughtException', (error)=> console.error('💥 UNCAUGHT EXCEPTION:', error.message));
@@ -278,12 +276,7 @@ function createProductionAPI(deployment) {
     try {
       const emergencyPort = await guaranteePortBinding();
       const app = express();
-      app.get('/', (req,res)=> res.json({
-        status: 'EMERGENCY_MODE',
-        error: error.message,
-        timestamp: new Date().toISOString(),
-        message: 'System in emergency mode, revenue generation may be limited'
-      }));
+      app.get('/', (req,res)=> res.json({ status: 'EMERGENCY_MODE', error: error.message, timestamp: new Date().toISOString(), message: 'System in emergency mode' }));
       app.listen(emergencyPort, ()=> console.log(`🛡️ EMERGENCY SERVER ON PORT ${emergencyPort}`));
     } catch (e) {
       console.error('💀 COMPLETE SYSTEM FAILURE:', e.message);
@@ -292,5 +285,4 @@ function createProductionAPI(deployment) {
   }
 })();
 
-// Export
 export { UltraFastDeployment, guaranteePortBinding };
