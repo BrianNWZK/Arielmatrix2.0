@@ -1,5 +1,5 @@
 // arielsql_suite/main.js - ULTRA-FAST DEPLOYMENT (Guaranteed Port Binding)
-// SOVEREIGN MEV BRAIN v13.5 - Hyper-Speed Production Engine
+// SOVEREIGN MEV BRAIN v13.5.1 - Hyper-Speed Production Engine
 
 import express from 'express';
 import cors from 'cors';
@@ -39,9 +39,7 @@ async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
 }
 
 // =========================================================================
-/**
- * Ultra-fast deployment
- */
+// Ultra-fast deployment
 // =========================================================================
 
 class UltraFastDeployment {
@@ -51,21 +49,31 @@ class UltraFastDeployment {
     this.portBound = false;
     this.blockchainConnected = false;
     this.core = null;
+    this.app = null;
+    this.server = null;
   }
 
   async deployImmediately() {
     console.log('🚀 ULTRA-FAST DEPLOYMENT INITIATED');
+
     const port = await this.guaranteePortBinding();
     this.portBound = true;
+
     const { app, server } = this.launchMinimalServer(port);
+    this.app = app;
+    this.server = server;
+
     this.initializeBlockchainConnection();
+
     this.deploySovereignBrain();
+
     this.startRevenueGenerationLoop();
+
     return { port, app, server };
   }
 
   async guaranteePortBinding() {
-    const startPort = process.env.PORT || 10000;
+    const startPort = process.env.PORT ? Number(process.env.PORT) : 10000;
     return await guaranteePortBinding(startPort);
   }
 
@@ -107,17 +115,18 @@ class UltraFastDeployment {
     try {
       console.log('🔗 Initializing blockchain connection...');
       const rpcUrls = [
+        ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
         "https://eth.llamarpc.com",
         "https://rpc.ankr.com/eth",
         "https://cloudflare-eth.com",
-        "https://eth-mainnet.g.alchemy.com/v2/demo"
+        "https://ethereum.publicnode.com"
       ];
       let provider = null;
       for (const rpcUrl of rpcUrls) {
         try {
           provider = new ethers.JsonRpcProvider(rpcUrl);
-          const blockNumber = await provider.getBlockNumber();
-          console.log(`✅ Connected via ${rpcUrl.split('/')[2]} - Block: ${blockNumber}`);
+          await provider.getBlockNumber();
+          console.log(`✅ Blockchain connected via ${rpcUrl}`);
           this.blockchainConnected = true;
           global.blockchainProvider = provider;
           break;
@@ -126,22 +135,30 @@ class UltraFastDeployment {
         }
       }
       if (!this.blockchainConnected) {
-        console.error('❌ All RPCs failed, retrying in 5 seconds...');
-        setTimeout(()=> this.initializeBlockchainConnection(), 5000);
+        console.error('❌ All RPCs failed, retrying in 15 seconds...');
+        setTimeout(()=> this.initializeBlockchainConnection(), 15000);
       }
     } catch (error) {
       console.error('⚠️ Blockchain connection failed:', error.message);
-      setTimeout(()=> this.initializeBlockchainConnection(), 10000);
+      setTimeout(()=> this.initializeBlockchainConnection(), 15000);
     }
   }
 
   async deploySovereignBrain() {
     try {
-      console.log('🧠 Deploying Sovereign MEV Brain v13.5...');
-      this.core = new ProductionSovereignCore();
-      await this.core.initialize();
+      console.log('🧠 Deploying Sovereign MEV Brain v13.5.1...');
+      // Ensure core uses sticky provider
+      const core = new ProductionSovereignCore();
+      await core.initialize();
+      this.core = core;
       this.revenueGenerationActive = true;
-      console.log('✅ SOVEREIGN MEV BRAIN v13.5 DEPLOYED - ACTIVE');
+
+      // Mount production API on the same app (no double handlers)
+      const productionApp = createProductionAPI(this);
+      this.app.use('/', productionApp);
+
+      console.log('✅ SOVEREIGN MEV BRAIN v13.5.1 DEPLOYED - ACTIVE');
+      console.log(`📊 Dashboard: http://localhost:${this.server.address().port}/revenue-dashboard`);
     } catch (error) {
       console.error('⚠️ Brain deployment failed (retry in 10s):', error.message);
       setTimeout(()=> this.deploySovereignBrain(), 10000);
@@ -163,20 +180,17 @@ class UltraFastDeployment {
 }
 
 // =========================================================================
-/**
- * Production API
- */
+// Production API (mounted on the same app)
 // =========================================================================
 
 function createProductionAPI(deployment) {
-  const app = express();
-  app.use(cors());
+  const app = express.Router();
   app.use(express.json({ limit: '10mb' }));
 
   app.get('/revenue-dashboard', (req,res)=> {
     try {
       const stats = deployment.core ? deployment.core.getStats() : {
-        system: { status: 'DEPLOYING', version: 'v13.5' },
+        system: { status: 'DEPLOYING', version: 'v13.5.1' },
         trading: { tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, projectedDaily: 0 },
         peg: { actions: 0, targetUSD: 100 }
       };
@@ -217,6 +231,19 @@ function createProductionAPI(deployment) {
     });
   });
 
+  // Proxy useful core endpoints
+  app.get('/status', (req,res)=> {
+    if (!deployment.core) return res.json({ status: 'DEPLOYING' });
+    res.json(deployment.core.getStats());
+  });
+  app.get('/anchors/composite', async (req,res)=> {
+    try {
+      if (!deployment.core) return res.status(503).json({ error: 'DEPLOYING' });
+      const r = await deployment.core.oracle.getCompositePriceUSD(deployment.core ? deployment.core.maker?.signer?.address : LIVE.TOKENS.BWAEZI);
+      res.json({ priceUSD: r.price, confidence: r.confidence, components: r.components, ts: Date.now() });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   return app;
 }
 
@@ -226,16 +253,14 @@ function createProductionAPI(deployment) {
 
 (async ()=>{
   console.log('\n' + '='.repeat(70));
-  console.log('🚀 SOVEREIGN MEV BRAIN v13.5 - ULTRA-FAST DEPLOYMENT');
+  console.log('🚀 SOVEREIGN MEV BRAIN v13.5.1 - ULTRA-FAST DEPLOYMENT');
   console.log('💰 Guaranteed Port • Zero Dependency Blocking');
-  console.log('⚡ Event-driven Peg • Maker–Taker Hybrid • AA Ready');
+  console.log('⚡ Event-driven Peg • Maker–Taker Hybrid • AA Ready • Sticky RPC');
   console.log('='.repeat(70) + '\n');
 
   try {
     const deployment = new UltraFastDeployment();
-    const { port, server } = await deployment.deployImmediately();
-    const productionApp = createProductionAPI(deployment);
-    server.on('request', productionApp);
+    const { port } = await deployment.deployImmediately();
 
     console.log('\n' + '='.repeat(70));
     console.log('✅ SYSTEM OPERATIONAL');
