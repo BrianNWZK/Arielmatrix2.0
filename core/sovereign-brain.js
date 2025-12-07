@@ -56,7 +56,7 @@ const LIVE = {
     UNISWAP_V3: {
       name: 'Uniswap V3',
       router:          addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
-      quoter:          addrStrict('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
+      quoter:          addrStrict('0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6'),
       factory:         addrStrict('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
       positionManager: addrStrict('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
     },
