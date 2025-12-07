@@ -1,5 +1,5 @@
 // arielsql_suite/main.js — ULTRA-FAST DEPLOYMENT
-// SOVEREIGN MEV BRAIN v13.5.5 — Mainnet Production
+// SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (cleaned logs)
 
 import express from 'express';
 import cors from 'cors';
@@ -7,7 +7,7 @@ import { ethers } from 'ethers';
 import process from 'process';
 import net from 'net';
 
-import { ProductionSovereignCore, chainRegistry } from '../core/sovereign-brain.js';
+import { ProductionSovereignCore, chainRegistry, LIVE } from '../core/sovereign-brain.js';
 
 async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
   return new Promise((resolve) => {
@@ -55,7 +55,7 @@ class UltraFastDeployment {
     this.app = app;
     this.server = server;
 
-    this.initializeBlockchainConnections();
+    this.initializeBlockchainConnection();
 
     this.deploySovereignBrain();
 
@@ -103,24 +103,24 @@ class UltraFastDeployment {
     return { app, server };
   }
 
-  async initializeBlockchainConnections() {
+  async initializeBlockchainConnection() {
     try {
-      console.log('🔗 Initializing multi-chain connections...');
+      console.log('🔗 Initializing mainnet connection...');
       await chainRegistry.init();
-      const primary = chainRegistry.getProvider('mainnet');
+      const primary = chainRegistry.getProvider();
       await primary.getBlockNumber();
       this.blockchainConnected = true;
       global.blockchainProvider = primary;
       console.log('✅ Blockchain connected (mainnet sticky provider)');
     } catch (error) {
       console.error('⚠️ Blockchain connection failed:', error.message);
-      setTimeout(()=> this.initializeBlockchainConnections(), 15000);
+      setTimeout(()=> this.initializeBlockchainConnection(), 15000);
     }
   }
 
   async deploySovereignBrain() {
     try {
-      console.log('🧠 Deploying Sovereign MEV Brain v13.5.5...');
+      console.log(`🧠 Deploying Sovereign MEV Brain ${LIVE.VERSION}...`);
       const core = new ProductionSovereignCore();
       await core.initialize();
       this.core = core;
@@ -129,7 +129,7 @@ class UltraFastDeployment {
       const productionApp = createProductionAPI(this);
       this.app.use('/', productionApp);
 
-      console.log('✅ SOVEREIGN MEV BRAIN v13.5.5 DEPLOYED — MAINNET ACTIVE');
+      console.log(`✅ SOVEREIGN MEV BRAIN ${LIVE.VERSION} DEPLOYED — MAINNET ACTIVE`);
       console.log(`📊 Dashboard: http://localhost:${this.server.address().port}/revenue-dashboard`);
     } catch (error) {
       console.error('⚠️ Brain deployment failed (retry in 10s):', error.message);
@@ -155,7 +155,7 @@ function createProductionAPI(deployment) {
   app.get('/revenue-dashboard', (req,res)=> {
     try {
       const stats = deployment.core ? deployment.core.getStats() : {
-        system: { status: 'DEPLOYING', version: 'v13.5.5' },
+        system: { status: 'DEPLOYING', version: LIVE.VERSION },
         trading: { tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, projectedDaily: 0 },
         peg: { actions: 0, targetUSD: 100 }
       };
@@ -220,40 +220,13 @@ function createProductionAPI(deployment) {
     res.json({ scores: deployment.core.dexRegistry.getScores(), ts: Date.now() });
   });
 
-  app.get('/chains', (req,res)=> res.json({ chains: chainRegistry.info(), ts: Date.now() }));
-
-  app.post('/routes/preview', express.json(), async (req,res)=> {
-    try {
-      if (!deployment.core) return res.status(503).json({ error: 'DEPLOYING' });
-      const { tokenIn, tokenOut, amount } = req.body || {};
-      const ain = BigInt(amount || '0');
-      const quotes = await deployment.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
-      res.json({ quotes, ts: Date.now() });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  app.post('/routes/best', express.json(), async (req,res)=> {
-    try {
-      if (!deployment.core) return res.status(503).json({ error: 'DEPLOYING' });
-      const { tokenIn, tokenOut, amount } = req.body || {};
-      const ain = BigInt(amount || '0');
-      const quotes = await deployment.core.dexRegistry.getBestQuote(tokenIn, tokenOut, ain);
-      const best = quotes?.best;
-      if (!best) { res.status(404).json({ error: 'No route found' }); return; }
-      const calldata = await best.adapter.buildSwapCalldata({
-        tokenIn, tokenOut, amountIn: ain, amountOutMin: 0n, recipient: deployment.core.mev.scw, fee: best.fee || 500
-      });
-      res.json({ dex: best.dex, router: (deployment.core ? LIVE.DEXES[best.dex]?.router : null) || LIVE.DEXES.UNISWAP_V3.router, calldata, ts: Date.now() });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
   return app;
 }
 
 (async ()=>{
   console.log('\n' + '='.repeat(70));
-  console.log('🚀 SOVEREIGN MEV BRAIN v13.5.5 — ULTRA-FAST DEPLOYMENT (Mainnet)');
-  console.log('💰 AA-Primary • BWAEZI Paymaster • Expanded DEX • Reliability Scoring • Multi-chain Wiring');
+  console.log(`🚀 SOVEREIGN MEV BRAIN ${LIVE.VERSION} — ULTRA-FAST DEPLOYMENT (Mainnet)`);
+  console.log('💰 AA-Primary • BWAEZI Paymaster • Expanded DEX • Reliability Scoring');
   console.log('='.repeat(70) + '\n');
 
   try {
