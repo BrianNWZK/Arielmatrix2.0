@@ -1,16 +1,17 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5 — Maker–Taker Hybrid + Composite Oracle + AA
+ * SOVEREIGN MEV BRAIN v13.5.1 — Maker–Taker Hybrid + Composite Oracle + AA
+ * Sticky provider + hardened deployment fixes
  *
  * REQUIREMENTS:
  * - Node.js 20+ (ESM). package.json: { "type":"module" }
  * - ENV:
  *   SOVEREIGN_PRIVATE_KEY=0x...
- *   ALCHEMY_API_KEY=...
- *   INFURA_API_KEY=...
- *   PIMLICO_API_KEY=... (optional)
- *   STACKUP_API_KEY=... (optional)
+ *   ALCHEMY_API_KEY=... (optional; when set we include Alchemy RPC)
+ *   INFURA_API_KEY=... (optional; not required)
+ *   PIMLICO_API_KEY=... (optional AA sponsorship)
+ *   STACKUP_API_KEY=... (optional AA sponsorship)
  */
 
 import express from 'express';
@@ -66,17 +67,18 @@ const LIVE = {
   },
 
   RPC_PROVIDERS: [
-    'https://eth-mainnet.g.alchemy.com/v2/' + (process.env.ALCHEMY_API_KEY || 'demo'),
-    'https://mainnet.infura.io/v3/' + (process.env.INFURA_API_KEY || '84842078b09946638c03157f83405213'),
-    'https://ethereum.publicnode.com',
-    'https://rpc.ankr.com/eth'
+    ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
+    'https://eth.llamarpc.com',
+    'https://rpc.ankr.com/eth',
+    'https://cloudflare-eth.com',
+    'https://ethereum.publicnode.com'
   ],
 
   BUNDLERS: [
-    `https://api.pimlico.io/v1/eth/rpc?apikey=${process.env.PIMLICO_API_KEY || ''}`,
+    ...(process.env.PIMLICO_API_KEY ? [`https://api.pimlico.io/v1/eth/rpc?apikey=${process.env.PIMLICO_API_KEY}`] : []),
     'https://bundler.candide.dev/rpc/mainnet',
-    `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY || ''}`
-  ].filter(url => !url.includes('demo') && url.length > 30),
+    ...(process.env.STACKUP_API_KEY ? [`https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}`] : [])
+  ],
 
   PEG: {
     TARGET_USD: 100,
@@ -97,39 +99,45 @@ const LIVE = {
   ANCHORS: [
     { symbol: 'USDC', address: getAddressSafely('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'), decimals: 6 },
     { symbol: 'WETH', address: getAddressSafely('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'), decimals: 18 },
-    { symbol: 'DAI',  address: getAddressSafely('0x6B175474E89094C44Da98b954EedeAC495271d0F'), decimals: 18 } // optional
+    { symbol: 'DAI',  address: getAddressSafely('0x6B175474E89094C44Da98b954EedeAC495271d0F'), decimals: 18 }
   ]
 };
 
 /* =========================================================================
-   Connections
+   Connections (sticky provider)
    ========================================================================= */
 
 class BlockchainConnections {
   constructor() {
-    this.providers = LIVE.RPC_PROVIDERS.map(url => {
-      try {
-        if (url.startsWith('wss://')) return new ethers.WebSocketProvider(url);
-        return new ethers.JsonRpcProvider(url);
-      } catch { return new ethers.JsonRpcProvider(url); }
-    });
+    this.providers = LIVE.RPC_PROVIDERS.map(url => new ethers.JsonRpcProvider(url));
     this.bundlers = LIVE.BUNDLERS.map(url => new ethers.JsonRpcProvider(url));
     this._pi = 0; this._bi = 0;
+    this.sticky = null;
+  }
+  async initSticky() {
+    for (const p of this.providers) {
+      try {
+        await p.getBlockNumber();
+        this.sticky = p;
+        const url = p._network ? p._network.name : (p.connection?.url || 'unknown');
+        console.log(`Sticky provider set`);
+        break;
+      } catch { /* try next */ }
+    }
+    if (!this.sticky) throw new Error('No healthy RPC provider');
   }
   getProvider() {
-    const p = this.providers[this._pi % this.providers.length];
-    this._pi = (this._pi + 1) % this.providers.length;
-    return p;
+    return this.sticky || this.providers[this._pi++ % this.providers.length];
   }
   getBundler() {
     if (this.bundlers.length === 0) return this.getProvider();
-    const b = this.bundlers[this._bi % this.bundlers.length];
-    this._bi = (this._bi + 1) % this.bundlers.length;
+    const b = this.bundlers[this._bi++ % this.bundlers.length];
     return b;
   }
   async getFeeData() {
+    const p = this.getProvider();
     try {
-      const fd = await this.getProvider().getFeeData();
+      const fd = await p.getFeeData();
       return {
         maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('30','gwei'),
         maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('2','gwei'),
@@ -541,13 +549,11 @@ class MultiAnchorOracle {
     if (components.length === 0) return { price: LIVE.PEG.TARGET_USD, confidence: 0.2, components: [] };
     const totalWeight = components.reduce((s, c) => s + (c.weight || 1), 0);
     const price = components.reduce((s, c) => s + c.perUnitUSD * ((c.weight || 1) / totalWeight), 0);
-    const confidence = Math.min(1, Math.max(0.2, totalWeight / (1e9))); // heuristic
+    const confidence = Math.min(1, Math.max(0.2, totalWeight / (1e9)));
     return { price, confidence, components };
   }
   async anchorUSD(a) {
-    if (a.symbol === 'USDC') return 1.0;
-    if (a.symbol === 'DAI') return 1.0;
-    if (a.symbol === 'USDT') return 1.0;
+    if (a.symbol === 'USDC' || a.symbol === 'DAI' || a.symbol === 'USDT') return 1.0;
     if (a.symbol === 'WETH') return 2000.0;
     return 1.0;
   }
@@ -899,8 +905,30 @@ class GenesisSelfLiquiditySingularity {
 class ProductionSovereignCore extends EventEmitter {
   constructor() {
     super();
+    this.provider = null;
+    this.signer = null;
+    this.aa = null;
+    this.dexRegistry = null;
+    this.entropy = null;
+    this.maker = null;
+    this.oracle = null;
+    this.mev = null;
+    this.verifier = null;
+    this.strategy = null;
+    this.feeFarmer = null;
+
+    this.stats = { startTs: Date.now(), tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, lastProfitUSD: 0, pegActions: 0, streamsActive: 0 };
+    this.status = 'INIT';
+    this.loops = [];
+  }
+
+  async initialize() {
+    console.log('SOVEREIGN MEV BRAIN v13.5.1 — Booting');
+    await chain.initSticky();
+
     this.provider = chain.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
+
     this.aa = new EnterpriseAASDK(this.signer);
     this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.entropy = new EntropyShockDetector();
@@ -910,19 +938,13 @@ class ProductionSovereignCore extends EventEmitter {
     this.verifier = new ProfitVerifier(this.provider);
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, this.maker, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
-    this.stats = { startTs: Date.now(), tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, lastProfitUSD: 0, pegActions: 0, streamsActive: 0 };
-    this.status = 'INIT';
-    this.loops = [];
-  }
 
-  async initialize() {
-    console.log('SOVEREIGN MEV BRAIN v13.5 — Booting');
     await ensureApprovals(this.signer);
+
     const genesis = new GenesisSelfLiquiditySingularity(this.provider, this.signer, this.strategy);
     const anchor = await genesis.executeIrreversibleSingularity();
     if (!anchor.alreadyActive) console.log('Genesis anchored:', anchor);
 
-    // Maker periodic adjust
     this.loops.push(setInterval(async () => {
       try {
         const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -933,7 +955,6 @@ class ProductionSovereignCore extends EventEmitter {
       } catch (e) { console.warn('maker adjust error:', e.message); }
     }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
 
-    // Peg enforcement loop
     this.loops.push(setInterval(async () => {
       try {
         const res = await this.strategy.enforcePegIfNeeded();
@@ -953,7 +974,7 @@ class ProductionSovereignCore extends EventEmitter {
     const hours = Math.max(0.01, (Date.now() - this.stats.startTs) / 3600000);
     const projectedDaily = (this.stats.currentDayUSD / hours) * 24;
     return {
-      system: { status: this.status, version: 'v13.5 — Maker+Composite+AA' },
+      system: { status: this.status, version: 'v13.5.1 — Maker+Composite+AA+Sticky' },
       trading: {
         tradesExecuted: this.stats.tradesExecuted,
         totalRevenueUSD: this.stats.totalRevenueUSD,
@@ -976,7 +997,7 @@ class APIServer {
     this.app.get('/', (req,res) => {
       const s = this.core.getStats();
       res.send(`
-        <h1>SOVEREIGN MEV BRAIN v13.5 — LIVE</h1>
+        <h1>SOVEREIGN MEV BRAIN v13.5.1 — LIVE</h1>
         <p>Status: ${s.system.status}</p>
         <p>Trades Executed: ${s.trading.tradesExecuted}</p>
         <p>Revenue Today: $${(s.trading.currentDayUSD||0).toFixed(2)}</p>
@@ -1025,11 +1046,12 @@ class APIServer {
 if (import.meta.url === `file://${process.argv[1]}`) {
   (async ()=>{
     try {
+      await chain.initSticky();
       const core = new ProductionSovereignCore();
       await core.initialize();
       const api = new APIServer(core, process.env.PORT ? Number(process.env.PORT) : 8081);
       await api.start();
-      console.log('🚀 Sovereign MEV Brain v13.5 — ONLINE');
+      console.log('🚀 Sovereign MEV Brain v13.5.1 — ONLINE');
     } catch (err) {
       console.error('Fatal boot error:', err?.stack || err);
       process.exit(1);
