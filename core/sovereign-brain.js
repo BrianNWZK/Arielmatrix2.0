@@ -98,7 +98,7 @@ const LIVE = {
   ],
 
   BUNDLERS: [
-    'https://bundler.candide.dev/rpc/mainnet'
+    'https://bundler.candide.xyz/rpc/mainnet'
   ],
 
   PEG: {
