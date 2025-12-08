@@ -1,5 +1,5 @@
 // arielsql_suite/main.js — ULTRA-FAST DEPLOYMENT
-// SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (resilient RPC & bundler)
+// SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (provider fix)
 
 import express from 'express';
 import cors from 'cors';
