@@ -89,17 +89,19 @@ const LIVE = {
     }
   },
 
-  RPC_PROVIDERS: [
-    ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
-    'https://eth.llamarpc.com',
-    'https://rpc.ankr.com/eth',
-    'https://cloudflare-eth.com',
-    'https://ethereum.publicnode.com'
-  ],
+ RPC_PROVIDERS: [
+  `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
+  `https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`,
+  'https://rpc.ankr.com/eth',
+  'https://cloudflare-eth.com',
+  'https://ethereum.publicnode.com'
+],
 
-  BUNDLERS: [
-    'https://bundler.candide.dev/rpc/mainnet'
-  ],
+BUNDLERS: [
+  'https://api.stackup.sh/v1/node/YOUR_API_KEY',
+  'https://bundler.candide.xyz/rpc/mainnet'
+]
+
 
   PEG: {
     TARGET_USD: 100,
