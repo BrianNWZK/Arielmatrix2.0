@@ -1,9 +1,9 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (checksummed, checksum-safe)
+ * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (resilient RPC & bundler)
  * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
- * - Sticky RPC with forced chainId, single Express app
+ * - Sticky RPC with forced chainId, intelligent health & circuit breaker
  * - Event-driven peg enforcement
  * - Adaptive concentrated liquidity (Uniswap V3)
  * - Composite multi-anchor oracle
@@ -14,7 +14,11 @@
  * - Node.js 20+ (ESM). package.json: { "type":"module" }
  * - ENV:
  *   SOVEREIGN_PRIVATE_KEY=0x...
- *   ALCHEMY_API_KEY=... (optional; included only if set)
+ *   ALCHEMY_API_KEY=... (optional)
+ *   INFURA_PROJECT_ID=... (optional)
+ *   STACKUP_API_KEY=... (optional)
+ *   BICONOMY_API_KEY=... (optional)
+ *   PIMLICO_API_KEY=... (optional)
  */
 
 import express from 'express';
@@ -27,7 +31,7 @@ import fetch from 'node-fetch';
    Configuration
    ========================================================================= */
 
-// Checksum-safe normalizer: prefer checksummed, fallback to lowercase (to avoid startup/runtime crashes)
+// Checksum-safe normalizer: prefer checksummed, fallback to lowercase
 function addrStrict(address) {
   try {
     return ethers.getAddress(address.trim());
@@ -43,7 +47,7 @@ const LIVE = {
   // ERC-4337 EntryPoint v0.7 (mainnet)
   ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  // Smart Account Factory (example; keep as configured for your SCW)
+  // Smart Account Factory (example)
   ACCOUNT_FACTORY: addrStrict('0x9406Cc6185a346906296840746125a0E44976454'),
 
   // Owner + Smart Contract Wallet (SCW)
@@ -89,16 +93,22 @@ const LIVE = {
     }
   },
 
+  // Stable public RPC endpoints (with optional keys)
   RPC_PROVIDERS: [
     ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
-    'https://eth.llamarpc.com',
+    ...(process.env.INFURA_PROJECT_ID ? [`https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`] : []),
     'https://rpc.ankr.com/eth',
     'https://cloudflare-eth.com',
-    'https://ethereum.publicnode.com'
+    'https://ethereum.publicnode.com',
+    'https://eth.llamarpc.com'
   ],
 
+  // Multiple bundlers for resilience (set env keys where needed)
   BUNDLERS: [
-    'https://bundler.candide.xyz/rpc/mainnet'
+    ...(process.env.STACKUP_API_KEY ? [`https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}`] : []),
+    'https://bundler.candide.xyz/rpc/mainnet',
+    ...(process.env.PIMLICO_API_KEY ? [`https://bundler.pimlico.io/v2/1/${process.env.PIMLICO_API_KEY}`] : []),
+    ...(process.env.BICONOMY_API_KEY ? [`https://bundler.biconomy.io/api/v2/1/${process.env.BICONOMY_API_KEY}`] : [])
   ],
 
   PEG: {
@@ -126,44 +136,104 @@ const LIVE = {
 };
 
 /* =========================================================================
-   Connections (sticky provider; force chainId)
+   Intelligent RPC manager (health checks, timeouts, circuit breakers)
    ========================================================================= */
 
-class ChainRegistry {
+class IntelligentRPCManager {
   constructor(rpcUrls, chainId = 1) {
     this.rpcUrls = rpcUrls;
     this.chainId = chainId;
-    this.providers = [];
+    this.providers = [];           // { url, provider, health, latency, failures }
     this.sticky = null;
+    this.healthScores = new Map(); // url -> score
+    this.circuits = new Map();     // url -> { failures, lastFailure, state }
+    this.initialized = false;
+  }
+
+  _newProvider(url) {
+    return new ethers.JsonRpcProvider({ url, timeout: 8000 }, this.chainId);
+  }
+
+  async _probe(url) {
+    const start = Date.now();
+    const provider = this._newProvider(url);
+    try {
+      const [blockNumber, network] = await Promise.all([
+        provider.getBlockNumber(),
+        provider.getNetwork()
+      ]);
+      const latency = Date.now() - start;
+      const healthy = !!blockNumber && !!network?.chainId;
+      return { url, provider, healthy, latency, chainId: network?.chainId || this.chainId };
+    } catch {
+      return { url, provider: null, healthy: false, latency: null, chainId: null };
+    }
+  }
+
+  _updateCircuit(url, ok) {
+    const c = this.circuits.get(url) || { failures: 0, lastFailure: 0, state: 'CLOSED' };
+    if (ok) {
+      c.failures = 0; c.state = 'CLOSED';
+    } else {
+      c.failures += 1; c.lastFailure = Date.now();
+      if (c.failures >= 3) c.state = 'OPEN';
+    }
+    this.circuits.set(url, c);
   }
 
   async init() {
-    for (const url of this.rpcUrls) {
-      try {
-        const provider = new ethers.JsonRpcProvider(url, this.chainId); // force mainnet chainId
-        await provider.getBlockNumber();
-        this.providers.push(provider);
-        if (!this.sticky) {
-          this.sticky = provider;
-          console.log('Sticky provider set for Ethereum Mainnet');
-        }
-      } catch {
-        // continue
-      }
+    const probes = await Promise.all(this.rpcUrls.map(url => this._probe(url)));
+    this.providers = probes
+      .filter(p => p.healthy)
+      .map(p => ({ url: p.url, provider: p.provider, health: 100, latency: p.latency, failures: 0 }));
+
+    if (this.providers.length === 0) {
+      throw new Error('No healthy RPC provider');
     }
-    if (!this.sticky) throw new Error('No healthy RPC provider');
+
+    // choose the lowest-latency as sticky
+    this.providers.sort((a, b) => (a.latency ?? 99999) - (b.latency ?? 99999));
+    this.sticky = this.providers[0].provider;
+    console.log('Sticky provider set for Ethereum Mainnet');
+    this.initialized = true;
+
+    // start health monitor
+    this._startHealthMonitor();
   }
 
-  getProvider() { return this.sticky || this.providers[0]; }
+  _startHealthMonitor() {
+    setInterval(async () => {
+      for (const p of this.providers) {
+        try {
+          const s = Date.now();
+          await p.provider.getBlockNumber();
+          const lat = Date.now() - s;
+          p.latency = lat;
+          p.health = Math.min(100, Math.round(p.health * 0.8 + (100 - Math.min(100, lat)) * 0.2));
+          this._updateCircuit(p.url, true);
+        } catch {
+          p.failures += 1;
+          p.health = Math.max(0, p.health - 15);
+          this._updateCircuit(p.url, false);
+        }
+      }
+      // rotate sticky if health drops
+      const best = this.providers.slice().sort((a, b) => (b.health - a.health) || (a.latency - b.latency))[0];
+      if (best && best.provider !== this.sticky) {
+        this.sticky = best.provider;
+        console.log('Sticky provider rotated to healthier RPC');
+      }
+    }, 30000);
+  }
 
-  getBundler() {
-    return LIVE.BUNDLERS.length ? new ethers.JsonRpcProvider(LIVE.BUNDLERS[0], 1) : this.getProvider();
+  getProvider() {
+    if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized');
+    return this.sticky;
   }
 
   async getFeeData() {
-    const p = this.getProvider();
     try {
-      const fd = await p.getFeeData();
+      const fd = await this.getProvider().getFeeData();
       return {
         maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
         maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei'),
@@ -177,9 +247,34 @@ class ChainRegistry {
       };
     }
   }
+
+  // Bundler selection: probe capability and choose healthiest
+  async getBundlerProvider() {
+    const urls = LIVE.BUNDLERS.length ? LIVE.BUNDLERS : [];
+    const probes = await Promise.all(urls.map(async (url) => {
+      try {
+        const provider = new ethers.JsonRpcProvider({ url, timeout: 8000 }, 1);
+        // Capability probe (may fail silently)
+        let supported = [];
+        try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
+        return { url, provider, healthy: true, supported };
+      } catch {
+        return { url, provider: null, healthy: false, supported: [] };
+      }
+    }));
+    const healthy = probes.filter(p => p.healthy && p.provider);
+    if (healthy.length === 0) {
+      // fallback to sticky provider if no bundler
+      return this.getProvider();
+    }
+    // prefer those that reported supported entry points
+    const withSupport = healthy.filter(h => Array.isArray(h.supported) && h.supported.length > 0);
+    const chosen = (withSupport[0] || healthy[0]).provider;
+    return chosen;
+  }
 }
 
-const chainRegistry = new ChainRegistry(LIVE.RPC_PROVIDERS, 1);
+const chainRegistry = new IntelligentRPCManager(LIVE.RPC_PROVIDERS, 1);
 
 /* =========================================================================
    Utilities
@@ -280,18 +375,18 @@ class EnterpriseAASDK {
     return userOp;
   }
   async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    const bundlers = LIVE.BUNDLERS.map(url => new ethers.JsonRpcProvider(url, 1));
+    const bundler = await chainRegistry.getBundlerProvider();
     const op = this._formatBundlerUserOp(userOp);
     const entryPoint = LIVE.ENTRY_POINT;
-    let attempt = 0; let lastErr;
+
+    let attempt = 0, lastErr;
     while (attempt < maxAttempts) {
-      const b = bundlers[attempt % bundlers.length];
       try {
-        const hash = await b.send('eth_sendUserOperation', [op, entryPoint]);
+        const hash = await bundler.send('eth_sendUserOperation', [op, entryPoint]);
         const start = Date.now(); const timeout = 180_000;
         while (Date.now() - start < timeout) {
           try {
-            const receipt = await b.send('eth_getUserOperationReceipt', [hash]);
+            const receipt = await bundler.send('eth_getUserOperationReceipt', [hash]);
             if (receipt?.transactionHash) return receipt.transactionHash;
           } catch {}
           await new Promise(r => setTimeout(r, 2000));
@@ -490,13 +585,14 @@ async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
   const scw = LIVE.SCW_ADDRESS;
 
+  // EntryPoint v0.7 ABI uses deposits(address)
   const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
-    'function getDeposit(address) view returns (uint256)',
+    'function deposits(address) view returns (uint256)',
     'function depositTo(address) payable'
   ], provider);
 
   try {
-    const dep = await ep.getDeposit(scw);
+    const dep = await ep.deposits(scw);
     if (dep < ethers.parseEther('0.01')) {
       const tx = await ep.depositTo(scw, { value: ethers.parseEther('0.02') });
       await tx.wait();
@@ -506,6 +602,7 @@ async function bootstrapSCWForPaymaster(aa) {
     console.warn('EntryPoint deposit check failed:', e.message);
   }
 
+  // Approve BWAEZI allowance from SCW to paymaster (AA userOp)
   const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const calldata = erc20Iface.encodeFunctionData('approve', [LIVE.PAYMASTER_ADDRESS, ethers.MaxUint256]);
 
@@ -513,6 +610,7 @@ async function bootstrapSCWForPaymaster(aa) {
   const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
 
   const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n });
+  // Allow bootstrap approval via EP deposit (no paymaster)
   userOp.paymasterAndData = '0x';
 
   const signed = await aa.signUserOp(userOp);
