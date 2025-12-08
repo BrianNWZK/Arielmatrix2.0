@@ -1,7 +1,7 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (resilient RPC & bundler)
+ * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (resilient RPC & bundler, provider fix)
  * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
  * - Sticky RPC with forced chainId, intelligent health & circuit breaker
  * - Event-driven peg enforcement
@@ -151,7 +151,11 @@ class IntelligentRPCManager {
   }
 
   _newProvider(url) {
-    return new ethers.JsonRpcProvider({ url, timeout: 8000 }, this.chainId);
+    const req = new ethers.FetchRequest(url);
+    req.timeout = 8000;
+    req.retry = 2;
+    req.allowGzip = true;
+    return new ethers.JsonRpcProvider(req, this.chainId);
   }
 
   async _probe(url) {
@@ -253,7 +257,9 @@ class IntelligentRPCManager {
     const urls = LIVE.BUNDLERS.length ? LIVE.BUNDLERS : [];
     const probes = await Promise.all(urls.map(async (url) => {
       try {
-        const provider = new ethers.JsonRpcProvider({ url, timeout: 8000 }, 1);
+        const req = new ethers.FetchRequest(url);
+        req.timeout = 8000;
+        const provider = new ethers.JsonRpcProvider(req, 1);
         // Capability probe (may fail silently)
         let supported = [];
         try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
