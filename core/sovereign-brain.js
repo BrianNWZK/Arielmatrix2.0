@@ -46,11 +46,11 @@ const LIVE = {
   // ERC-4337 EntryPoint v0.7 (mainnet)
   ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  // Smart Account Factory (example)
+  // Smart Account Factory (kept for compatibility but no longer used to derive SCW)
   ACCOUNT_FACTORY: addrStrict('0x9406Cc6185a346906296840746125a0E44976454'),
 
-  // Owner + Smart Contract Wallet (SCW) — CONSTANT THROUGHOUT (asserted against prediction)
-  EOA_OWNER_ADDRESS: addrStrict('0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
+  // Owner + Smart Contract Wallet (SCW) — CONSTANT THROUGHOUT
+  EOA_OWNER_ADDRESS: addrStrict('0xd8e1Fa4d571b6Fce89fb5A145D6397192632F1aA'),
   SCW_ADDRESS: addrStrict('0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
 
   // BWAEZI Paymaster (mainnet)
@@ -193,7 +193,6 @@ class IntelligentRPCManager {
   }
 
   async init() {
-    // Probe and keep only healthy providers to avoid "failed to detect network" loops
     const probes = await Promise.all(this.rpcUrls.map(url => this._probe(url)));
     this.providers = probes
       .filter(p => p.healthy)
@@ -260,47 +259,30 @@ class IntelligentRPCManager {
     }
   }
 
-  // Bundler selection: probe capability and choose healthiest; filter out endpoints that error (e.g., 526)
+  // Bundler selection: probe capability and choose healthiest
   async getBundlerProvider() {
     const urls = LIVE.BUNDLERS.length ? LIVE.BUNDLERS : [];
     const probes = await Promise.all(urls.map(async (url) => {
       try {
-        // Lightweight HTTP probe to detect obvious SSL/526 issues
-        let okHttp = true;
-        try {
-          const res = await fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'web3_clientVersion', params: [] }), headers: { 'content-type': 'application/json' } });
-          okHttp = res.status >= 200 && res.status < 500; // treat 5xx (e.g., 526) as unhealthy
-        } catch {
-          okHttp = false;
-        }
-
-        if (!okHttp) {
-          return { url, provider: null, healthy: false, supported: [] };
-        }
-
         const req = new ethers.FetchRequest(url);
         req.timeout = 8000;
         const provider = new ethers.JsonRpcProvider(req, { chainId: 1, name: 'mainnet' });
         // Capability probe (may fail silently)
         let supported = [];
         try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
-        const healthy = Array.isArray(supported) && supported.length > 0;
-        return { url, provider: healthy ? provider : null, healthy, supported };
+        return { url, provider, healthy: true, supported };
       } catch {
         return { url, provider: null, healthy: false, supported: [] };
       }
     }));
-    // Prefer healthy providers; fall back to any that responded even if they didn't report support
     const healthy = probes.filter(p => p.healthy && p.provider);
-    if (healthy.length > 0) {
-      return healthy[0].provider;
+    if (healthy.length === 0) {
+      throw new Error('No healthy ERC-4337 bundler available');
     }
-    const responders = probes.filter(p => p.provider);
-    if (responders.length > 0) {
-      return responders[0].provider;
-    }
-    // As a last resort, use sticky L1 provider to avoid hard failure
-    return this.getProvider();
+    // prefer those that reported supported entry points
+    const withSupport = healthy.filter(h => Array.isArray(h.supported) && h.supported.length > 0);
+    const chosen = (withSupport[0] || healthy[0]).provider;
+    return chosen;
   }
 }
 
@@ -324,22 +306,14 @@ class EnterpriseAASDK {
   constructor(signer, entryPoint = LIVE.ENTRY_POINT) {
     if (!signer?.address) throw new Error('EnterpriseAASDK: signer required');
     this.signer = signer; this.entryPoint = entryPoint; this.factory = LIVE.ACCOUNT_FACTORY;
-    this.scwAddress = LIVE.SCW_ADDRESS; // USE CONSTANT SCW THROUGHOUT (asserted in core)
+    this.scwAddress = LIVE.SCW_ADDRESS; // USE CONSTANT SCW THROUGHOUT
   }
   async isDeployed(address) {
     const code = await chainRegistry.getProvider().getCode(address);
     return code && code !== '0x';
   }
-  async getSCWAddress(owner) {
-    // Deterministic SCW; we assert it matches LIVE.SCW_ADDRESS
-    const salt = ethers.zeroPadValue(ethers.toBeArray(0), 32);
-    const i = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
-    const initCall = i.encodeFunctionData('createAccount', [owner, 0]);
-    const initCode = ethers.concat([LIVE.ACCOUNT_FACTORY, initCall]);
-    const bytecode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${LIVE.ACCOUNT_FACTORY.slice(2)}5af43d82803e903d91602b57fd5bf3`;
-    const addr = ethers.getCreate2Address(LIVE.ACCOUNT_FACTORY, salt,
-      ethers.keccak256(ethers.concat([ethers.keccak256(bytecode), ethers.keccak256(initCode)])));
-    // Return the constant SCW to ensure single source of truth
+  async getSCWAddress(_owner) {
+    // Hard-wire the funded SCW; do not derive via factory
     return addrStrict(this.scwAddress);
   }
   async getNonce(smartAccount) {
@@ -348,22 +322,18 @@ class EnterpriseAASDK {
   }
   buildPaymasterAndData(userOpSender) {
     // Placeholder for real paymaster payload; currently returns simple context.
-    // For production, replace with signed payload per paymaster policy.
     const paymaster = LIVE.PAYMASTER_ADDRESS;
     const context = ethers.AbiCoder.defaultAbiCoder().encode(['address'], [userOpSender]);
     return ethers.concat([paymaster, context]);
   }
   async createUserOp(callData, opts = {}) {
     const sender = await this.getSCWAddress(this.signer.address);
-    const deployed = await this.isDeployed(sender);
     const nonce = await this.getNonce(sender);
     const gas = await chainRegistry.getFeeData();
     const userOp = {
       sender, nonce,
-      initCode: deployed ? '0x' : (() => {
-        const i = new ethers.Interface(['function createAccount(address owner, uint256 salt) returns (address)']);
-        return ethers.concat([LIVE.ACCOUNT_FACTORY, i.encodeFunctionData('createAccount', [this.signer.address, 0])]);
-      })(),
+      // Always treat SCW as deployed; do not attempt initCode
+      initCode: '0x',
       callData,
       callGasLimit: opts.callGasLimit || 1_400_000n,
       verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
@@ -626,35 +596,42 @@ class DexAdapterRegistry {
    SCW bootstrap: EntryPoint deposit + BWAEZI allowance to paymaster
    ========================================================================= */
 
+// CHANGED: Deposit threshold and signer funding reduced to 0.00001 ETH,
+// and deposit value minimized to ~0.000005 ETH.
 async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
-  const signer = aa.signer; // funded signer
+  const signer = aa.signer; // signer may have tiny ETH
   const scw = LIVE.SCW_ADDRESS;
 
-  // Read current EP deposit
-  const epReader = new ethers.Contract(LIVE.ENTRY_POINT, ['function deposits(address) view returns (uint256)'], provider);
+  // Reader for deposits (provider-only)
+  const epReader = new ethers.Contract(
+    LIVE.ENTRY_POINT,
+    ['function deposits(address) view returns (uint256)'],
+    provider
+  );
 
   try {
-    const current = await epReader.deposits(scw);
+    const dep = await epReader.deposits(scw);
 
-    // Adaptive top-up: aim for a small reserve (e.g., 0.005 ETH)
-    const target = ethers.parseEther('0.005');
-    const needed = current >= target ? 0n : (target - current);
-
-    if (needed > 0n) {
+    // Only attempt deposit if signer has at least 0.00001 ETH
+    const minThreshold = ethers.parseEther('0.00001');
+    if (dep < minThreshold) {
       const bal = await provider.getBalance(signer.address);
-      // Tiny gas buffer (0.0003 ETH) and ensure we can send the needed value
-      const gasBuffer = ethers.parseEther('0.0003');
-      if (bal >= needed + gasBuffer) {
+      if (bal >= minThreshold) {
+        // Raw tx send: depositTo(address) with tiny value (~0.000005 ETH)
         const epIface = new ethers.Interface(['function depositTo(address) payable']);
         const data = epIface.encodeFunctionData('depositTo', [scw]);
 
-        // Optional: let provider estimate gas; omit gasLimit to auto-estimate
-        const tx = await signer.sendTransaction({ to: LIVE.ENTRY_POINT, data, value: needed });
+        const tx = await signer.sendTransaction({
+          to: LIVE.ENTRY_POINT,
+          data,
+          value: ethers.parseEther('0.000005')
+        });
+
         await tx.wait();
-        console.log(`EntryPoint deposit topped up by ${ethers.formatEther(needed)} ETH (target ${ethers.formatEther(target)} ETH)`);
+        console.log('EntryPoint deposit minimally topped up for SCW');
       } else {
-        console.warn(`EntryPoint deposit low; signer balance ${ethers.formatEther(bal)} ETH insufficient to top up ${ethers.formatEther(needed)} ETH (buffer ${ethers.formatEther(gasBuffer)} ETH). Skipping.`);
+        console.warn('Signer balance below 0.00001 ETH; skipping EntryPoint deposit bootstrap.');
       }
     }
   } catch (e) {
@@ -668,6 +645,7 @@ async function bootstrapSCWForPaymaster(aa) {
   const scwExec = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
 
+  // Allow bootstrap approval with no paymaster data (or plug your policy)
   const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n, paymasterAndData: '0x' });
   const signed = await aa.signUserOp(userOp);
   const txHash = await aa.sendUserOpWithBackoff(signed, 4);
@@ -976,10 +954,8 @@ class ProductionSovereignCore extends EventEmitter {
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
     this.aa = new EnterpriseAASDK(this.signer);
-    const predictedSCW = await this.aa.getSCWAddress(this.signer.address);
-    if (predictedSCW.toLowerCase() !== LIVE.SCW_ADDRESS.toLowerCase()) {
-      throw new Error(`SCW mismatch: LIVE=${LIVE.SCW_ADDRESS} vs predicted=${predictedSCW}`);
-    }
+    // CHANGED: Do not assert predicted SCW; we trust the provided LIVE.SCW_ADDRESS
+    // and wire it directly for all ops.
 
     this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.entropy = new EntropyShockDetector();
@@ -990,7 +966,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, this.maker, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    // Bootstrap AA funding paths (requires ETH or proper paymaster)
+    // Bootstrap AA funding paths (now minimal ETH requirement)
     await bootstrapSCWForPaymaster(this.aa);
 
     const genesis = new GenesisSelfLiquiditySingularity(this.provider, this.signer, this.strategy);
