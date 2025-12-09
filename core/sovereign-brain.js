@@ -193,6 +193,7 @@ class IntelligentRPCManager {
   }
 
   async init() {
+    // Probe and keep only healthy providers to avoid "failed to detect network" loops
     const probes = await Promise.all(this.rpcUrls.map(url => this._probe(url)));
     this.providers = probes
       .filter(p => p.healthy)
@@ -259,30 +260,47 @@ class IntelligentRPCManager {
     }
   }
 
-  // Bundler selection: probe capability and choose healthiest
+  // Bundler selection: probe capability and choose healthiest; filter out endpoints that error (e.g., 526)
   async getBundlerProvider() {
     const urls = LIVE.BUNDLERS.length ? LIVE.BUNDLERS : [];
     const probes = await Promise.all(urls.map(async (url) => {
       try {
+        // Lightweight HTTP probe to detect obvious SSL/526 issues
+        let okHttp = true;
+        try {
+          const res = await fetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'web3_clientVersion', params: [] }), headers: { 'content-type': 'application/json' } });
+          okHttp = res.status >= 200 && res.status < 500; // treat 5xx (e.g., 526) as unhealthy
+        } catch {
+          okHttp = false;
+        }
+
+        if (!okHttp) {
+          return { url, provider: null, healthy: false, supported: [] };
+        }
+
         const req = new ethers.FetchRequest(url);
         req.timeout = 8000;
         const provider = new ethers.JsonRpcProvider(req, { chainId: 1, name: 'mainnet' });
         // Capability probe (may fail silently)
         let supported = [];
         try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
-        return { url, provider, healthy: true, supported };
+        const healthy = Array.isArray(supported) && supported.length > 0;
+        return { url, provider: healthy ? provider : null, healthy, supported };
       } catch {
         return { url, provider: null, healthy: false, supported: [] };
       }
     }));
+    // Prefer healthy providers; fall back to any that responded even if they didn't report support
     const healthy = probes.filter(p => p.healthy && p.provider);
-    if (healthy.length === 0) {
-      throw new Error('No healthy ERC-4337 bundler available');
+    if (healthy.length > 0) {
+      return healthy[0].provider;
     }
-    // prefer those that reported supported entry points
-    const withSupport = healthy.filter(h => Array.isArray(h.supported) && h.supported.length > 0);
-    const chosen = (withSupport[0] || healthy[0]).provider;
-    return chosen;
+    const responders = probes.filter(p => p.provider);
+    if (responders.length > 0) {
+      return responders[0].provider;
+    }
+    // As a last resort, use sticky L1 provider to avoid hard failure
+    return this.getProvider();
   }
 }
 
@@ -610,37 +628,33 @@ class DexAdapterRegistry {
 
 async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
-  const signer = aa.signer; // signer must be funded with ETH
+  const signer = aa.signer; // funded signer
   const scw = LIVE.SCW_ADDRESS;
 
-  // Reader for deposits (provider-only)
-  const epReader = new ethers.Contract(
-    LIVE.ENTRY_POINT,
-    ['function deposits(address) view returns (uint256)'],
-    provider
-  );
+  // Read current EP deposit
+  const epReader = new ethers.Contract(LIVE.ENTRY_POINT, ['function deposits(address) view returns (uint256)'], provider);
 
   try {
-    const dep = await epReader.deposits(scw);
+    const current = await epReader.deposits(scw);
 
-    // Only attempt deposit if signer is present and funded
-    if (dep < ethers.parseEther('0.01')) {
+    // Adaptive top-up: aim for a small reserve (e.g., 0.005 ETH)
+    const target = ethers.parseEther('0.005');
+    const needed = current >= target ? 0n : (target - current);
+
+    if (needed > 0n) {
       const bal = await provider.getBalance(signer.address);
-      if (bal >= ethers.parseEther('0.03')) {
-        // Raw tx send avoids runner mismatch: encode depositTo(address)
+      // Tiny gas buffer (0.0003 ETH) and ensure we can send the needed value
+      const gasBuffer = ethers.parseEther('0.0003');
+      if (bal >= needed + gasBuffer) {
         const epIface = new ethers.Interface(['function depositTo(address) payable']);
         const data = epIface.encodeFunctionData('depositTo', [scw]);
 
-        const tx = await signer.sendTransaction({
-          to: LIVE.ENTRY_POINT,
-          data,
-          value: ethers.parseEther('0.02')
-        });
-
+        // Optional: let provider estimate gas; omit gasLimit to auto-estimate
+        const tx = await signer.sendTransaction({ to: LIVE.ENTRY_POINT, data, value: needed });
         await tx.wait();
-        console.log('EntryPoint deposit topped up for SCW');
+        console.log(`EntryPoint deposit topped up by ${ethers.formatEther(needed)} ETH (target ${ethers.formatEther(target)} ETH)`);
       } else {
-        throw new Error('Signer lacks ETH to bootstrap AA approval and EntryPoint deposit. Fund >= 0.03 ETH.');
+        console.warn(`EntryPoint deposit low; signer balance ${ethers.formatEther(bal)} ETH insufficient to top up ${ethers.formatEther(needed)} ETH (buffer ${ethers.formatEther(gasBuffer)} ETH). Skipping.`);
       }
     }
   } catch (e) {
