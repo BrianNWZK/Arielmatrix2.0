@@ -1,7 +1,7 @@
 /**
  * core/sovereign-brain.js
  *
- * SOVEREIGN MEV BRAIN v13.5.6 — Mainnet Production (resilient RPC & bundler, provider fix)
+ * SOVEREIGN MEV BRAIN v13.5.7 — Mainnet Production (resilient RPC & bundler, provider fix)
  * - AA-primary with BWAEZI paymaster (gas in BWAEZI)
  * - Sticky RPC with forced chainId, intelligent health & circuit breaker
  * - Event-driven peg enforcement
@@ -42,7 +42,7 @@ function addrStrict(address) {
 }
 
 const LIVE = {
-  VERSION: 'v13.5.6',
+  VERSION: 'v13.5.7',
 
   // ERC-4337 EntryPoint v0.7 (mainnet)
   ENTRY_POINT: addrStrict('0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -589,20 +589,40 @@ class DexAdapterRegistry {
 
 async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
+  const signer = aa.signer; // signer must be funded with ETH
   const scw = LIVE.SCW_ADDRESS;
 
-  // EntryPoint v0.7 ABI uses deposits(address)
-  const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
-    'function deposits(address) view returns (uint256)',
-    'function depositTo(address) payable'
-  ], provider);
+  // Reader for deposits (provider-only)
+  const epReader = new ethers.Contract(
+    LIVE.ENTRY_POINT,
+    ['function deposits(address) view returns (uint256)'],
+    provider
+  );
 
   try {
-    const dep = await ep.deposits(scw);
+    const dep = await epReader.deposits(scw);
+
+    // Only attempt deposit if signer is present and funded
     if (dep < ethers.parseEther('0.01')) {
-      const tx = await ep.depositTo(scw, { value: ethers.parseEther('0.02') });
-      await tx.wait();
-      console.log('EntryPoint deposit topped up for SCW');
+      const bal = await provider.getBalance(signer.address);
+      if (bal >= ethers.parseEther('0.03')) {
+        // Raw tx send avoids runner mismatch: encode depositTo(address)
+        const epIface = new ethers.Interface(['function depositTo(address) payable']);
+        const data = epIface.encodeFunctionData('depositTo', [scw]);
+
+        const tx = await signer.sendTransaction({
+          to: LIVE.ENTRY_POINT,
+          data,
+          value: ethers.parseEther('0.02'),
+          // Optional gas guard; provider will estimate if omitted
+          // gasLimit: 120000
+        });
+
+        await tx.wait();
+        console.log('EntryPoint deposit topped up for SCW');
+      } else {
+        console.warn('EntryPoint deposit low and signer not funded enough; skipping top-up');
+      }
     }
   } catch (e) {
     console.warn('EntryPoint deposit check failed:', e.message);
@@ -616,8 +636,7 @@ async function bootstrapSCWForPaymaster(aa) {
   const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
 
   const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n });
-  // Allow bootstrap approval via EP deposit (no paymaster)
-  userOp.paymasterAndData = '0x';
+  userOp.paymasterAndData = '0x'; // bootstrap without paymaster for this approval
 
   const signed = await aa.signUserOp(userOp);
   const txHash = await aa.sendUserOpWithBackoff(signed, 4);
