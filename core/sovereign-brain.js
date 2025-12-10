@@ -103,13 +103,10 @@ const LIVE = {
     }
   },
 
-  // Stable public RPC endpoints (with optional keys)
+  // Stable public RPC endpoints (with forced network behavior via Patched manager)
   RPC_PROVIDERS: [
-    ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
-    ...(process.env.INFURA_PROJECT_ID ? [`https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`] : []),
+    'https://ethereum-rpc.publicnode.com', // primary
     'https://rpc.ankr.com/eth',
-    'https://cloudflare-eth.com',
-    'https://ethereum.publicnode.com',
     'https://eth.llamarpc.com'
   ],
 
@@ -1146,8 +1143,12 @@ class QuorumRPC {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-    this.providers = registry._patched? registry._patched._enhancedManager.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }))
-                                     : registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
+
+    // Use the patched manager’s rpcUrls and always force network
+    const urls = registry._patched ? registry._patched.rpcUrls : [];
+    this.providers = (urls.length ? urls.slice(0, quorumSize) : LIVE.RPC_PROVIDERS.slice(0, quorumSize))
+      .map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }));
+
     this.lastForkAlert = null;
     this.health = [];
   }
