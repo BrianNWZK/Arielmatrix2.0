@@ -1,47 +1,43 @@
-// modules/aa-loaves-fishes.js - INTEGRATED SELF-HOSTED AA INFRASTRUCTURE FOR MEV v13.7
+// modules/aa-loaves-fishes.js — SELF-HOSTED AA INFRASTRUCTURE FOR MEV v13.7 (corrected, SCW-fixed, dual EP, forced-network providers)
 import { ethers } from 'ethers';
 
-// =========================================================================
-// ENHANCED CONFIGURATION WITH DUAL ENTRYPOINT SUPPORT + FIXED SCW
-// =========================================================================
+/* =========================================================================
+   Enhanced configuration (dual EntryPoint + fixed SCW + safe BigInt)
+   ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v2.1.0-SELF-HOSTED',
+  VERSION: 'v2.2.0-SELF-HOSTED',
 
-  // Ethereum Mainnet Configuration (forced)
   NETWORK: {
     name: 'mainnet',
     chainId: 1
   },
 
-  // ERC-4337 EntryPoint Addresses (Dual Support - matches MEV v13.7)
   ENTRY_POINTS: {
-    V07: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789', // v0.7
-    V06: '0x5FF137D4bEAA7036d654a88Ea898df565D304B88'  // v0.6 (compatibility)
+    V07: '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789', // ERC-4337 v0.7
+    V06: '0x5FF137D4bEAA7036d654a88Ea898df565D304B88'  // ERC-4337 v0.6 (read-only compatibility)
   },
 
-  // Smart Account Factory (kept for compatibility; not used when SCW is fixed)
+  // Factory retained for compatibility; not used since SCW is permanently deployed
   FACTORY_ADDRESS: '0x9406Cc6185a346906296840746125a0E44976454',
 
-  // Fixed SCW (permanent, funded in v13.7)
+  // Fixed and funded Smart Contract Wallet (permanent)
   SCW_ADDRESS: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
 
-  // BWAEZI Token and Paymaster
+  // Paymaster + BWAEZI
   PAYMASTER_ADDRESS: '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47',
   BWAEZI_ADDRESS: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da',
 
-  // Self-Hosted Configuration
   SELF_HOSTED: {
     enabled: true,
     localNodeUrl: 'http://localhost:8545',
     batchSize: 5,
     maxOpsPerBundle: 10,
-    paymasterMaxGasPerUserOp: 5_000_000n, // BigInt for safe comparison
+    paymasterMaxGasPerUserOp: 5_000_000n, // corrected BigInt for safe comparison
     paymasterMaxFeePerGas: ethers.parseUnits('100', 'gwei'),
-    sponsorshipPolicy: 'OPEN' // OPEN, ALLOWLIST, CUSTOM
+    sponsorshipPolicy: 'OPEN' // OPEN | ALLOWLIST | CUSTOM
   },
 
-  // Enhanced Connection Settings
   CONNECTION_SETTINGS: {
     timeout: 15000,
     maxRetries: 3,
@@ -50,7 +46,6 @@ const ENHANCED_CONFIG = {
     fallbackRotationDelay: 1000
   },
 
-  // Public RPC Fallbacks (Network-forced)
   PUBLIC_RPC_ENDPOINTS: [
     'https://eth.llamarpc.com',
     'https://rpc.ankr.com/eth',
@@ -59,9 +54,9 @@ const ENHANCED_CONFIG = {
   ]
 };
 
-// =========================================================================
-// NETWORK-FORCED PROVIDER FACTORY (SOLVES DETECTION ISSUES)
-// =========================================================================
+/* =========================================================================
+   Forced-network provider factory (prevents autodetect loops)
+   ========================================================================= */
 
 function createNetworkForcedProvider(url, chainId = 1) {
   const request = new ethers.FetchRequest(url);
@@ -70,14 +65,14 @@ function createNetworkForcedProvider(url, chainId = 1) {
   request.allowGzip = true;
 
   return new ethers.JsonRpcProvider(request, {
-    chainId: chainId,
+    chainId,
     name: 'mainnet'
   });
 }
 
-// =========================================================================
-// ENHANCED INTELLIGENT RPC MANAGER WITH BUNDLER INTEGRATION
-// =========================================================================
+/* =========================================================================
+   Enhanced RPC manager (health probe + sticky + bundler shim)
+   ========================================================================= */
 
 class EnhancedRPCManager {
   constructor(rpcUrls = ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS, chainId = 1) {
@@ -87,15 +82,13 @@ class EnhancedRPCManager {
     this.sticky = null;
     this.initialized = false;
     this._failureCounts = new Map();
-    this.selfBundler = null; // Set after AA init
-    this.selfPaymaster = null; // Set after AA init
 
-    console.log('🔧 EnhancedRPCManager initializing with network-forced providers');
+    // Self-hosted hooks
+    this.selfBundler = null;
+    this.selfPaymaster = null;
   }
 
   async init() {
-    console.log('🚀 Initializing EnhancedRPCManager...');
-
     const probes = await Promise.all(this.rpcUrls.map(async (url) => {
       try {
         const provider = createNetworkForcedProvider(url, this.chainId);
@@ -122,7 +115,6 @@ class EnhancedRPCManager {
 
     this.providers.sort((a, b) => (a.latency ?? 99999) - (b.latency ?? 99999));
     this.sticky = this.providers[0].provider;
-    console.log(`✅ Sticky provider set: ${this.providers[0].url}`);
     this.initialized = true;
 
     this._startHealthMonitor();
@@ -143,14 +135,12 @@ class EnhancedRPCManager {
           p.health = Math.max(0, p.health - 15);
           const count = (this._failureCounts.get(p.url) || 0) + 1;
           this._failureCounts.set(p.url, count);
-          if (count % 10 === 0) console.warn(`RPC ${p.url} failures: ${p.failures} (throttled log)`);
         }
       }
 
       const best = this.providers.slice().sort((a, b) => (b.health - a.health) || (a.latency - b.latency))[0];
       if (best && best.provider !== this.sticky) {
         this.sticky = best.provider;
-        console.log('🔄 Sticky provider rotated to healthier RPC');
       }
     }, ENHANCED_CONFIG.CONNECTION_SETTINGS.healthCheckInterval);
   }
@@ -178,55 +168,29 @@ class EnhancedRPCManager {
   }
 
   async getBundlerProvider() {
-    // Prefer self-hosted Bundler shim when registered
+    // Prefer self-hosted bundler shim when available
     if (this.selfBundler && globalThis.__BUNDLER_RPC_SHIM__) {
-      console.log('🔄 Using self-hosted BundlerRPC shim');
       return globalThis.__BUNDLER_RPC_SHIM__;
     }
-
-    // Optional: probe external bundlers via env (comma-separated URLs)
-    const externalUrls = process.env.BUNDLER_URLS ? process.env.BUNDLER_URLS.split(',') : [];
-    if (externalUrls.length > 0) {
-      const probes = await Promise.all(externalUrls.map(async (url) => {
-        try {
-          const provider = createNetworkForcedProvider(url, 1);
-          let supported = [];
-          try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
-          const ok = Array.isArray(supported) && supported.length > 0;
-          return { url, provider: ok ? provider : null, ok };
-        } catch {
-          return { url, provider: null, ok: false };
-        }
-      }));
-
-      const healthy = probes.find(p => p.ok && p.provider);
-      if (healthy) {
-        console.log(`✅ Using external bundler: ${healthy.url}`);
-        return healthy.provider;
-      }
-    }
-
-    // Final fallback: base provider
-    console.warn('⚠️ No bundler available, using base provider (AA methods will fail if called)');
     return this.getProvider();
   }
 
   setSelfHostedInfrastructure(bundler, paymaster) {
     this.selfBundler = bundler;
     this.selfPaymaster = paymaster;
-    console.log('✅ Self-hosted infrastructure registered with EnhancedRPCManager');
   }
 }
 
-// =========================================================================
-/* SELF-HOSTED BUNDLER WITH RPC SHIM INTERFACE */
-// =========================================================================
+/* =========================================================================
+   Self-hosted bundler (basic queue + simulated receipts)
+   ========================================================================= */
 
 class SelfHostedBundler {
   constructor(provider, entryPointAddress = ENHANCED_CONFIG.ENTRY_POINTS.V07) {
     this.provider = provider;
     this.entryPointAddress = entryPointAddress;
-    this.userOperations = new Map();
+
+    this.userOperations = new Map(); // hash -> { userOp, status, receipt? }
     this.pendingOps = [];
     this.bundleCache = new Map();
     this.stats = {
@@ -236,116 +200,22 @@ class SelfHostedBundler {
       failures: 0,
       lastBundleAt: null
     };
-
-    console.log('🔧 SelfHostedBundler initialized');
-  }
-
-  async sendUserOperation(userOp, entryPoint) {
-    console.log('📤 SelfHostedBundler: Receiving UserOperation');
-
-    try {
-      const targetEntryPoint = entryPoint || this.entryPointAddress;
-      this._validateUserOp(userOp);
-      const userOpHash = await this._calculateUserOpHash(userOp, targetEntryPoint);
-
-      this.userOperations.set(userOpHash, {
-        userOp,
-        entryPoint: targetEntryPoint,
-        status: 'pending',
-        receivedAt: Date.now(),
-        hash: userOpHash
-      });
-
-      this.pendingOps.push(userOpHash);
-
-      if (this.pendingOps.length >= ENHANCED_CONFIG.SELF_HOSTED.batchSize) {
-        await this._processBundle();
-      }
-
-      console.log(`✅ UserOperation accepted: ${userOpHash.slice(0, 20)}...`);
-      return userOpHash;
-    } catch (error) {
-      console.error('❌ sendUserOperation failed:', error.message);
-      this.stats.failures++;
-      throw error;
-    }
-  }
-
-  async estimateUserOperationGas(userOp) {
-    console.log('⛽ SelfHostedBundler: Estimating gas');
-
-    try {
-      const baseEstimate = {
-        callGasLimit: 200000n,
-        verificationGasLimit: 150000n,
-        preVerificationGas: 21000n
-      };
-
-      const calldataSize = ethers.dataLength(userOp.callData);
-      if (calldataSize > 1000) {
-        baseEstimate.callGasLimit += BigInt(calldataSize) * 16n;
-      }
-
-      if (userOp.initCode && userOp.initCode !== '0x') {
-        baseEstimate.verificationGasLimit += 100000n;
-        baseEstimate.preVerificationGas += 5000n;
-      }
-
-      console.log('✅ Gas estimate:', baseEstimate);
-      return baseEstimate;
-    } catch (error) {
-      console.warn('⚠️ Gas estimation failed, returning defaults:', error.message);
-      return {
-        callGasLimit: 250000n,
-        verificationGasLimit: 200000n,
-        preVerificationGas: 30000n
-      };
-    }
-  }
-
-  async getUserOperationReceipt(userOpHash) {
-    const op = this.userOperations.get(userOpHash);
-    if (!op) return null;
-
-    const bundleReceipt = this.bundleCache.get(op.bundleHash);
-    if (bundleReceipt) {
-      return {
-        userOpHash,
-        sender: op.userOp.sender,
-        transactionHash: bundleReceipt.transactionHash,
-        blockHash: bundleReceipt.blockHash,
-        blockNumber: bundleReceipt.blockNumber,
-        success: bundleReceipt.status === 1,
-        actualGasCost: bundleReceipt.gasUsed,
-        actualGasUsed: bundleReceipt.gasUsed
-      };
-    }
-
-    return null;
-  }
-
-  async getSupportedEntryPoints() {
-    return [ENHANCED_CONFIG.ENTRY_POINTS.V07, ENHANCED_CONFIG.ENTRY_POINTS.V06];
   }
 
   _validateUserOp(userOp) {
-    const requiredFields = ['sender', 'nonce', 'callData', 'signature'];
-    for (const field of requiredFields) {
-      if (!userOp[field]) {
-        throw new Error(`Missing required field: ${field}`);
+    const required = ['sender', 'nonce', 'callData', 'signature'];
+    for (const k of required) {
+      if (userOp[k] === undefined || userOp[k] === null) {
+        throw new Error(`Missing required field: ${k}`);
       }
     }
-
-    if (ethers.dataLength(userOp.signature) < 65) {
-      throw new Error('Invalid signature length');
-    }
-
-    if (!ethers.isAddress(userOp.sender)) {
-      throw new Error(`Invalid sender address: ${userOp.sender}`);
-    }
+    if (!ethers.isAddress(userOp.sender)) throw new Error(`Invalid sender address: ${userOp.sender}`);
+    // Accept 65+ bytes to allow module/aggregated signatures in the future
+    if (ethers.dataLength(userOp.signature) < 65) throw new Error('Invalid signature length (<65 bytes)');
   }
 
   async _calculateUserOpHash(userOp, entryPoint) {
+    // EIP-4337 hash (simplified): keccak( keccak(packedUserOp) | entryPoint | chainId )
     const packedUserOp = ethers.AbiCoder.defaultAbiCoder().encode(
       [
         'address', 'uint256', 'bytes32', 'bytes32', 'uint256', 'uint256',
@@ -353,53 +223,112 @@ class SelfHostedBundler {
       ],
       [
         userOp.sender,
-        userOp.nonce,
+        BigInt(userOp.nonce),
         ethers.keccak256(userOp.initCode || '0x'),
         ethers.keccak256(userOp.callData),
-        userOp.callGasLimit || 0n,
-        userOp.verificationGasLimit || 0n,
-        userOp.preVerificationGas || 0n,
-        userOp.maxFeePerGas || 0n,
-        userOp.maxPriorityFeePerGas || 0n,
+        BigInt(userOp.callGasLimit || 0),
+        BigInt(userOp.verificationGasLimit || 0),
+        BigInt(userOp.preVerificationGas || 0),
+        BigInt(userOp.maxFeePerGas || 0),
+        BigInt(userOp.maxPriorityFeePerGas || 0),
         ethers.keccak256(userOp.paymasterAndData || '0x')
       ]
     );
-
-    const network = await this.provider.getNetwork();
+    const net = await this.provider.getNetwork();
     const enc = ethers.AbiCoder.defaultAbiCoder().encode(
       ['bytes32', 'address', 'uint256'],
-      [ethers.keccak256(packedUserOp), entryPoint, network.chainId]
+      [ethers.keccak256(packedUserOp), entryPoint, net.chainId]
     );
-
     return ethers.keccak256(enc);
   }
 
-  async _processBundle() {
-    if (this.pendingOps.length === 0) return;
+  async sendUserOperation(userOp, entryPoint) {
+    const targetEntryPoint = entryPoint || this.entryPointAddress;
+    this._validateUserOp(userOp);
 
-    console.log(`🔄 Processing bundle with ${this.pendingOps.length} UserOperations`);
+    const userOpHash = await this._calculateUserOpHash(userOp, targetEntryPoint);
+    this.userOperations.set(userOpHash, {
+      userOp,
+      entryPoint: targetEntryPoint,
+      status: 'pending',
+      receivedAt: Date.now(),
+      hash: userOpHash
+    });
+
+    this.pendingOps.push(userOpHash);
+
+    // Simple trigger by batch size
+    if (this.pendingOps.length >= ENHANCED_CONFIG.SELF_HOSTED.batchSize) {
+      await this._processBundle();
+    }
+
+    return userOpHash;
+  }
+
+  async estimateUserOperationGas(userOp) {
+    // Basic heuristic + initCode overheads
+    const base = {
+      callGasLimit: 220000n,
+      verificationGasLimit: 180000n,
+      preVerificationGas: 30000n
+    };
+    const size = ethers.dataLength(userOp.callData || '0x');
+    if (size > 0) base.callGasLimit += BigInt(size) * 10n;
+    if (userOp.initCode && userOp.initCode !== '0x') {
+      base.verificationGasLimit += 100000n;
+      base.preVerificationGas += 5000n;
+    }
+    return base;
+  }
+
+  async getUserOperationReceipt(userOpHash) {
+    const entry = this.userOperations.get(userOpHash);
+    if (!entry) return null;
+
+    // If bundled and we have a receipt
+    if (entry.bundleHash) {
+      const rec = this.bundleCache.get(entry.bundleHash);
+      if (rec) {
+        return {
+          userOpHash,
+          sender: entry.userOp.sender,
+          transactionHash: rec.transactionHash,
+          blockHash: rec.blockHash,
+          blockNumber: rec.blockNumber,
+          success: rec.status === 1,
+          actualGasCost: rec.gasUsed,
+          actualGasUsed: rec.gasUsed
+        };
+      }
+    }
+    return null;
+  }
+
+  async getSupportedEntryPoints() {
+    return [ENHANCED_CONFIG.ENTRY_POINTS.V07, ENHANCED_CONFIG.ENTRY_POINTS.V06];
+  }
+
+  async _processBundle() {
+    if (this.pendingOps.length === 0) return null;
 
     try {
       const bundleHash = ethers.keccak256(ethers.toUtf8Bytes(`bundle_${Date.now()}_${Math.random()}`));
-
-      // Simulated receipt; in production, call EntryPoint.handleOps
       const simulatedReceipt = {
         transactionHash: ethers.keccak256(ethers.toUtf8Bytes(`tx_${Date.now()}_${Math.random()}`)),
         blockHash: ethers.keccak256(ethers.toUtf8Bytes(`block_${Date.now()}_${Math.random()}`)),
-        blockNumber: Math.floor(Math.random() * 1_000_000),
+        blockNumber: Math.floor(Math.random() * 10_000_000),
         status: 1,
         gasUsed: 250000n,
         timestamp: Date.now()
       };
 
-      for (const userOpHash of this.pendingOps) {
-        const op = this.userOperations.get(userOpHash);
-        if (op) {
-          op.status = 'bundled';
-          op.bundleHash = bundleHash;
-          op.bundledAt = Date.now();
-          this.userOperations.set(userOpHash, op);
-        }
+      for (const h of this.pendingOps) {
+        const entry = this.userOperations.get(h);
+        if (!entry) continue;
+        entry.status = 'bundled';
+        entry.bundleHash = bundleHash;
+        entry.bundledAt = Date.now();
+        this.userOperations.set(h, entry);
       }
 
       this.bundleCache.set(bundleHash, simulatedReceipt);
@@ -408,19 +337,16 @@ class SelfHostedBundler {
       this.stats.totalGasUsed += simulatedReceipt.gasUsed;
       this.stats.lastBundleAt = Date.now();
 
-      const processedOps = [...this.pendingOps];
+      const processed = [...this.pendingOps];
       this.pendingOps = [];
-
-      console.log(`✅ Bundle processed: ${bundleHash.slice(0, 20)}...`);
 
       return {
         bundleHash,
         transactionHash: simulatedReceipt.transactionHash,
-        userOpHashes: processedOps,
+        userOpHashes: processed,
         receipt: simulatedReceipt
       };
-    } catch (error) {
-      console.error('❌ Bundle processing failed:', error);
+    } catch (err) {
       this.stats.failures++;
       return null;
     }
@@ -441,77 +367,72 @@ class SelfHostedBundler {
   }
 }
 
-// =========================================================================
-/* BUNDLER RPC SHIM (ERC-4337 subset) */
-// =========================================================================
+/* =========================================================================
+   Bundler RPC shim (ERC-4337 subset)
+   ========================================================================= */
 
 class BundlerRPC {
   constructor(selfBundler) {
     this.selfBundler = selfBundler;
-    console.log('🔧 BundlerRPC shim initialized');
   }
 
   async send(method, params) {
-    console.log(`📞 BundlerRPC: ${method}`);
-
-    try {
-      switch (method) {
-        case 'eth_supportedEntryPoints': {
-          const entryPoints = await this.selfBundler.getSupportedEntryPoints();
-          return entryPoints;
-        }
-        case 'eth_sendUserOperation': {
-          const [op, entryPoint] = params;
-          const userOp = {
-            sender: op.sender,
-            nonce: BigInt(op.nonce),
-            initCode: op.initCode || '0x',
-            callData: op.callData || '0x',
-            callGasLimit: BigInt(op.callGasLimit),
-            verificationGasLimit: BigInt(op.verificationGasLimit),
-            preVerificationGas: BigInt(op.preVerificationGas),
-            maxFeePerGas: BigInt(op.maxFeePerGas),
-            maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas),
-            paymasterAndData: op.paymasterAndData || '0x',
-            signature: op.signature || '0x'
-          };
-          return await this.selfBundler.sendUserOperation(userOp, entryPoint);
-        }
-        case 'eth_getUserOperationReceipt': {
-          const [userOpHash] = params;
-          return await this.selfBundler.getUserOperationReceipt(userOpHash);
-        }
-        case 'eth_estimateUserOperationGas': {
-          const [op, entryPoint] = params;
-          const userOp = {
-            sender: op.sender,
-            nonce: BigInt(op.nonce || 0),
-            initCode: op.initCode || '0x',
-            callData: op.callData || '0x',
-            callGasLimit: BigInt(op.callGasLimit || 0),
-            verificationGasLimit: BigInt(op.verificationGasLimit || 0),
-            preVerificationGas: BigInt(op.preVerificationGas || 0),
-            maxFeePerGas: BigInt(op.maxFeePerGas || 0),
-            maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas || 0),
-            paymasterAndData: op.paymasterAndData || '0x',
-            signature: op.signature || '0x'
-          };
-          return await this.selfBundler.estimateUserOperationGas(userOp, entryPoint);
-        }
-        default:
-          console.warn(`⚠️ BundlerRPC: method ${method} not implemented; returning null`);
-          return null;
+    switch (method) {
+      case 'eth_supportedEntryPoints': {
+        return await this.selfBundler.getSupportedEntryPoints();
       }
-    } catch (error) {
-      console.error(`❌ BundlerRPC.${method} failed:`, error.message);
-      throw error;
+      case 'eth_sendUserOperation': {
+        const [op, entryPoint] = params;
+
+        // Hydrate to correct types
+        const userOp = {
+          sender: op.sender,
+          nonce: typeof op.nonce === 'bigint'
+            ? op.nonce
+            : BigInt(op.nonce ?? 0),
+          initCode: op.initCode || '0x',
+          callData: op.callData || '0x',
+          callGasLimit: BigInt(op.callGasLimit ?? 0),
+          verificationGasLimit: BigInt(op.verificationGasLimit ?? 0),
+          preVerificationGas: BigInt(op.preVerificationGas ?? 0),
+          maxFeePerGas: BigInt(op.maxFeePerGas ?? 0),
+          maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas ?? 0),
+          paymasterAndData: op.paymasterAndData || '0x',
+          signature: op.signature || '0x'
+        };
+
+        return await this.selfBundler.sendUserOperation(userOp, entryPoint);
+      }
+      case 'eth_getUserOperationReceipt': {
+        const [userOpHash] = params;
+        return await this.selfBundler.getUserOperationReceipt(userOpHash);
+      }
+      case 'eth_estimateUserOperationGas': {
+        const [op, entryPoint] = params;
+        const userOp = {
+          sender: op.sender,
+          nonce: BigInt(op.nonce ?? 0),
+          initCode: op.initCode || '0x',
+          callData: op.callData || '0x',
+          callGasLimit: BigInt(op.callGasLimit ?? 0),
+          verificationGasLimit: BigInt(op.verificationGasLimit ?? 0),
+          preVerificationGas: BigInt(op.preVerificationGas ?? 0),
+          maxFeePerGas: BigInt(op.maxFeePerGas ?? 0),
+          maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas ?? 0),
+          paymasterAndData: op.paymasterAndData || '0x',
+          signature: op.signature || '0x'
+        };
+        return await this.selfBundler.estimateUserOperationGas(userOp, entryPoint);
+      }
+      default:
+        return null;
     }
   }
 }
 
-// =========================================================================
-/* SELF-SPONSORED PAYMASTER */
-// =========================================================================
+/* =========================================================================
+   Self-sponsored paymaster (OPEN policy, BigInt guards)
+   ========================================================================= */
 
 class SelfSponsoredPaymaster {
   constructor(provider) {
@@ -523,60 +444,38 @@ class SelfSponsoredPaymaster {
       totalGasSponsored: 0n,
       failures: 0
     };
-
-    console.log('🔧 SelfSponsoredPaymaster initialized');
   }
 
-  async sponsorUserOperation(userOp) {
-    console.log('💰 SelfSponsoredPaymaster: Sponsoring UserOperation');
-
-    try {
-      if (!this._checkSponsorshipPolicy(userOp.sender)) {
-        throw new Error('Sender not allowed by sponsorship policy');
-      }
-
-      if (userOp.callGasLimit > ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxGasPerUserOp) {
-        throw new Error(
-          `callGasLimit exceeds maximum: ${userOp.callGasLimit} > ${ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxGasPerUserOp}`
-        );
-      }
-
-      if (userOp.maxFeePerGas > ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxFeePerGas) {
-        throw new Error(
-          `maxFeePerGas exceeds maximum: ${userOp.maxFeePerGas} > ${ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxFeePerGas}`
-        );
-      }
-
-      const paymasterAndData = this._buildPaymasterData(userOp);
-
-      this.sponsorshipLog.push({
-        sender: userOp.sender,
-        timestamp: Date.now(),
-        callGasLimit: userOp.callGasLimit,
-        maxFeePerGas: userOp.maxFeePerGas,
-        paymasterAndData
-      });
-
-      if (this.sponsorshipLog.length > 1000) {
-        this.sponsorshipLog = this.sponsorshipLog.slice(-500);
-      }
-
-      this.stats.totalSponsored++;
-      this.stats.totalGasSponsored += userOp.callGasLimit;
-
-      console.log(`✅ UserOperation sponsored for ${userOp.sender.slice(0, 10)}...`);
-      return { paymasterAndData };
-    } catch (error) {
-      console.warn('⚠️ Sponsorship failed:', error.message);
-      this.stats.failures++;
-      throw error;
+  _checkSponsorshipPolicy(sender) {
+    switch (ENHANCED_CONFIG.SELF_HOSTED.sponsorshipPolicy) {
+      case 'OPEN':
+        return true;
+      case 'ALLOWLIST':
+        try { return this.allowlist.has(ethers.getAddress(sender)); } catch { return false; }
+      case 'CUSTOM':
+        return true;
+      default:
+        return false;
     }
+  }
+
+  _buildPaymasterData(userOp) {
+    const paymasterAddress = ENHANCED_CONFIG.PAYMASTER_ADDRESS;
+    const context = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['address', 'uint48', 'uint48'],
+      [
+        userOp.sender,
+        Math.floor(Date.now() / 1000) + 3600, // valid until +1h
+        Math.floor(Date.now() / 1000) - 300   // valid since -5m
+      ]
+    );
+    // paymasterAndData must be bytes; concat address with context as bytes
+    return ethers.concat([paymasterAddress, context]);
   }
 
   addToAllowlist(address) {
     if (ethers.isAddress(address)) {
       this.allowlist.add(ethers.getAddress(address));
-      console.log(`✅ Added to allowlist: ${address}`);
       return true;
     }
     return false;
@@ -585,10 +484,43 @@ class SelfSponsoredPaymaster {
   removeFromAllowlist(address) {
     if (ethers.isAddress(address)) {
       this.allowlist.delete(ethers.getAddress(address));
-      console.log(`🗑️ Removed from allowlist: ${address}`);
       return true;
     }
     return false;
+  }
+
+  async sponsorUserOperation(userOp) {
+    try {
+      if (!this._checkSponsorshipPolicy(userOp.sender)) {
+        throw new Error('Sender not allowed by sponsorship policy');
+      }
+      if (userOp.callGasLimit > ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxGasPerUserOp) {
+        throw new Error(`callGasLimit exceeds maximum: ${userOp.callGasLimit} > ${ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxGasPerUserOp}`);
+      }
+      if (userOp.maxFeePerGas > ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxFeePerGas) {
+        throw new Error(`maxFeePerGas exceeds maximum: ${userOp.maxFeePerGas} > ${ENHANCED_CONFIG.SELF_HOSTED.paymasterMaxFeePerGas}`);
+      }
+
+      const paymasterAndData = this._buildPaymasterData(userOp);
+
+      this.sponsorshipLog.push({
+        sender: userOp.sender,
+        timestamp: Date.now(),
+        callGasLimit: userOp.callGasLimit,
+        maxFeePerGas: userOp.maxFeePerGas
+      });
+      if (this.sponsorshipLog.length > 1000) {
+        this.sponsorshipLog = this.sponsorshipLog.slice(-500);
+      }
+
+      this.stats.totalSponsored++;
+      this.stats.totalGasSponsored += userOp.callGasLimit;
+
+      return { paymasterAndData };
+    } catch (err) {
+      this.stats.failures++;
+      throw err;
+    }
   }
 
   async checkSponsorshipCapacity() {
@@ -600,8 +532,7 @@ class SelfSponsoredPaymaster {
         maxOpsPerHour: 100,
         remainingCapacity: 100
       };
-    } catch (error) {
-      console.warn('⚠️ Capacity check failed:', error.message);
+    } catch {
       return {
         canSponsor: false,
         tokenBalance: 0n,
@@ -610,34 +541,6 @@ class SelfSponsoredPaymaster {
         remainingCapacity: 0
       };
     }
-  }
-
-  _checkSponsorshipPolicy(sender) {
-    switch (ENHANCED_CONFIG.SELF_HOSTED.sponsorshipPolicy) {
-      case 'OPEN':
-        return true;
-      case 'ALLOWLIST':
-        return this.allowlist.has(ethers.getAddress(sender));
-      case 'CUSTOM':
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  _buildPaymasterData(userOp) {
-    const paymasterAddress = ENHANCED_CONFIG.PAYMASTER_ADDRESS;
-
-    const context = ethers.AbiCoder.defaultAbiCoder().encode(
-      ['address', 'uint48', 'uint48'],
-      [
-        userOp.sender,
-        Math.floor(Date.now() / 1000) + 3600, // valid for 1 hour
-        Math.floor(Date.now() / 1000) - 300   // valid since 5 minutes ago
-      ]
-    );
-
-    return ethers.concat([paymasterAddress, context]);
   }
 
   getSponsorshipStats() {
@@ -652,16 +555,15 @@ class SelfSponsoredPaymaster {
   }
 }
 
-// =========================================================================
-/* ENTERPRISE AA SDK FOR MEV v13.7 INTEGRATION (SCW fixed) */
-// =========================================================================
+/* =========================================================================
+   Enterprise AA SDK (SCW fixed, v0.7 EP signing, bundler shim routing)
+   ========================================================================= */
 
 class EnterpriseAASDK {
   constructor(signer, entryPoint = ENHANCED_CONFIG.ENTRY_POINTS.V07) {
     if (!signer || !signer.address) {
       throw new Error('EnterpriseAASDK: Valid signer with address property is required');
     }
-
     this.signer = signer;
     this.entryPoint = entryPoint;
     this.factory = ENHANCED_CONFIG.FACTORY_ADDRESS;
@@ -672,148 +574,100 @@ class EnterpriseAASDK {
     this.bundlerRPC = null;
     this.provider = null;
     this.initialized = false;
-
-    console.log(`🔧 EnterpriseAASDK initialized for: ${signer.address.slice(0, 10)}...`);
   }
 
   async initialize(provider, scwAddress = null) {
+    this.provider = provider;
+    this.scwAddress = scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
+
+    // Initialize local bundler + paymaster + RPC shim
+    this.selfBundler = new SelfHostedBundler(this.provider, this.entryPoint);
+    this.selfPaymaster = new SelfSponsoredPaymaster(this.provider);
+    this.bundlerRPC = new BundlerRPC(this.selfBundler);
+
+    // Register globally for consumers
+    globalThis.__AA_SDK_INSTANCE__ = this;
+    globalThis.__BUNDLER_RPC_SHIM__ = this.bundlerRPC;
+
+    // Allowlist SCW by default (for ALLOWLIST policy switches)
+    this.selfPaymaster.addToAllowlist(this.scwAddress);
+
+    this.initialized = true;
+    return this;
+  }
+
+  async getNonce(smartAccount) {
+    const ep = new ethers.Contract(
+      this.entryPoint,
+      ['function getNonce(address sender, uint192 key) view returns (uint256)'],
+      this.provider
+    );
     try {
-      console.log('🚀 Initializing EnterpriseAASDK with self-hosted infrastructure...');
-
-      this.provider = provider;
-      this.scwAddress = scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
-
-      this.selfBundler = new SelfHostedBundler(this.provider, this.entryPoint);
-      this.selfPaymaster = new SelfSponsoredPaymaster(this.provider);
-      this.bundlerRPC = new BundlerRPC(this.selfBundler);
-
-      globalThis.__AA_SDK_INSTANCE__ = this;
-      globalThis.__BUNDLER_RPC_SHIM__ = this.bundlerRPC;
-
-      this.selfPaymaster.addToAllowlist(this.scwAddress);
-
-      this.initialized = true;
-      console.log('✅ EnterpriseAASDK fully initialized');
-
-      return this;
-    } catch (error) {
-      console.error('❌ EnterpriseAASDK initialization failed:', error);
-      throw error;
+      const n = await ep.getNonce(smartAccount, 0);
+      // Ensure BigInt
+      return typeof n === 'bigint' ? n : BigInt(n);
+    } catch {
+      return 0n;
     }
+  }
+
+  buildPaymasterAndData(userOpSender) {
+    const paymaster = ENHANCED_CONFIG.PAYMASTER_ADDRESS;
+    const context = ethers.AbiCoder.defaultAbiCoder().encode(['address'], [userOpSender]);
+    return ethers.concat([paymaster, context]);
   }
 
   async createUserOp(callData, opts = {}) {
-    if (!this.initialized) {
-      throw new Error('EnterpriseAASDK not initialized');
+    if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
+
+    const sender = this.scwAddress;
+    let nonce = await this.getNonce(sender);
+    if (nonce == null) nonce = 0n;
+    if (typeof nonce !== 'bigint') {
+      try { nonce = BigInt(nonce); } catch { nonce = 0n; }
     }
 
-    console.log('🔧 Creating UserOperation...');
+    const gas = await this.provider.getFeeData();
 
-    try {
-      const sender = this.scwAddress;
-      const nonce = await this.getNonce(sender);
-      const gas = await this.provider.getFeeData();
+    const userOp = {
+      sender,
+      nonce,
+      initCode: '0x', // SCW permanently deployed
+      callData,
+      callGasLimit: opts.callGasLimit || 1_400_000n,
+      verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
+      preVerificationGas: opts.preVerificationGas || 80_000n,
+      maxFeePerGas: opts.maxFeePerGas || gas.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas || gas.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei'),
+      paymasterAndData: opts.paymasterAndData !== undefined ? opts.paymasterAndData : this.buildPaymasterAndData(sender),
+      signature: '0x'
+    };
 
-      const initCode = '0x'; // SCW permanently deployed; never deploy via AA
-
-      const userOp = {
-        sender,
-        nonce,
-        initCode,
-        callData,
-        callGasLimit: opts.callGasLimit || 1_400_000n,
-        verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
-        preVerificationGas: opts.preVerificationGas || 80_000n,
-        maxFeePerGas: opts.maxFeePerGas || gas.maxFeePerGas,
-        maxPriorityFeePerGas: opts.maxPriorityFeePerGas || gas.maxPriorityFeePerGas,
-        paymasterAndData: opts.paymasterAndData !== undefined ? opts.paymasterAndData : this.buildPaymasterAndData(sender),
-        signature: '0x'
-      };
-
-      console.log(`✅ UserOperation created for ${sender.slice(0, 10)}...`);
-      return userOp;
-    } catch (error) {
-      console.error('❌ UserOperation creation failed:', error);
-      throw error;
-    }
+    return userOp;
   }
 
   async signUserOp(userOp) {
-    console.log('🔏 Signing UserOperation...');
+    const packed = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['address','uint256','bytes32','bytes32','uint256','uint256','uint256','uint256','uint256','bytes32'],
+      [
+        userOp.sender, userOp.nonce,
+        ethers.keccak256(userOp.initCode),
+        ethers.keccak256(userOp.callData),
+        userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas,
+        userOp.maxFeePerGas, userOp.maxPriorityFeePerGas,
+        ethers.keccak256(userOp.paymasterAndData)
+      ]
+    );
+    const network = await this.provider.getNetwork();
+    const enc = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['bytes32','address','uint256'],
+      [ethers.keccak256(packed), this.entryPoint, network.chainId]
+    );
+    const userOpHash = ethers.keccak256(enc);
 
-    try {
-      const packed = ethers.AbiCoder.defaultAbiCoder().encode(
-        ['address','uint256','bytes32','bytes32','uint256','uint256','uint256','uint256','uint256','bytes32'],
-        [
-          userOp.sender, userOp.nonce,
-          ethers.keccak256(userOp.initCode),
-          ethers.keccak256(userOp.callData),
-          userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas,
-          userOp.maxFeePerGas, userOp.maxPriorityFeePerGas,
-          ethers.keccak256(userOp.paymasterAndData)
-        ]
-      );
-
-      const network = await this.provider.getNetwork();
-      const enc = ethers.AbiCoder.defaultAbiCoder().encode(
-        ['bytes32','address','uint256'],
-        [ethers.keccak256(packed), this.entryPoint, network.chainId]
-      );
-
-      const userOpHash = ethers.keccak256(enc);
-      userOp.signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
-
-      console.log(`✅ UserOperation signed: ${userOpHash.slice(0, 20)}...`);
-      return userOp;
-    } catch (error) {
-      console.error('❌ UserOperation signing failed:', error);
-      throw error;
-    }
-  }
-
-  async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    console.log('📤 Sending UserOperation with backoff...');
-
-    try {
-      if (this.selfBundler) {
-        const opHash = await this.selfBundler.sendUserOperation(userOp, this.entryPoint);
-
-        for (let i = 0; i < 10; i++) {
-          const receipt = await this.selfBundler.getUserOperationReceipt(opHash);
-          if (receipt?.transactionHash) {
-            console.log(`✅ UserOperation confirmed: ${receipt.transactionHash}`);
-            return receipt.transactionHash;
-          }
-          await new Promise(r => setTimeout(r, 1000));
-        }
-
-        return opHash;
-      }
-
-      let lastError;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        try {
-          const formattedOp = this._formatBundlerUserOp(userOp);
-
-          const rpcManager = globalThis.chainRegistry || this.provider;
-          const bundler = rpcManager.getBundlerProvider ?
-            await rpcManager.getBundlerProvider() : rpcManager;
-
-          const opHash = await bundler.send('eth_sendUserOperation', [formattedOp, this.entryPoint]);
-          console.log(`✅ UserOperation sent: ${opHash}`);
-          return opHash;
-        } catch (error) {
-          lastError = error;
-          const backoffMs = Math.min(30000, 1000 * Math.pow(2, attempt));
-          await new Promise(r => setTimeout(r, backoffMs));
-        }
-      }
-
-      throw lastError || new Error('Failed to send UserOperation');
-    } catch (error) {
-      console.error('❌ sendUserOpWithBackoff failed:', error.message);
-      throw error;
-    }
+    // EOA-style message signature over the userOpHash
+    userOp.signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
+    return userOp;
   }
 
   _formatBundlerUserOp(userOp) {
@@ -832,38 +686,44 @@ class EnterpriseAASDK {
     };
   }
 
-  async getNonce(smartAccount) {
-    const ep = new ethers.Contract(
-      this.entryPoint,
-      ['function getNonce(address sender, uint192 key) view returns (uint256)'],
-      this.provider
-    );
-    try {
-      return await ep.getNonce(smartAccount, 0);
-    } catch {
-      return 0n;
+  async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
+    // Prefer local shim
+    if (globalThis.__BUNDLER_RPC_SHIM__) {
+      const opHash = await globalThis.__BUNDLER_RPC_SHIM__.send(
+        'eth_sendUserOperation',
+        [this._formatBundlerUserOp(userOp), this.entryPoint]
+      );
+
+      // Poll for simulated receipt
+      const start = Date.now();
+      const timeout = 180_000;
+      while (Date.now() - start < timeout) {
+        const receipt = await globalThis.__BUNDLER_RPC_SHIM__.send('eth_getUserOperationReceipt', [opHash]);
+        if (receipt?.transactionHash) return receipt.transactionHash;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      return opHash; // fallback to op hash if simulated receipt doesn’t appear
     }
+
+    // Fallback attempts via provider (should rarely be used)
+    let lastError;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const bundler = this.provider;
+        const opHash = await bundler.send('eth_sendUserOperation', [this._formatBundlerUserOp(userOp), this.entryPoint]);
+        return opHash;
+      } catch (err) {
+        lastError = err;
+        const backoffMs = Math.min(30000, 1000 * Math.pow(2, attempt));
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
+    }
+    throw lastError || new Error('Failed to send UserOperation');
   }
 
-  buildPaymasterAndData(userOpSender) {
-    const paymaster = ENHANCED_CONFIG.PAYMASTER_ADDRESS;
-    const context = ethers.AbiCoder.defaultAbiCoder().encode(['address'], [userOpSender]);
-    return ethers.concat([paymaster, context]);
-  }
-
-  async healthCheck() {
-    const checks = {
-      status: this.initialized ? 'HEALTHY' : 'NOT_INITIALIZED',
-      signerAddress: this.signer.address,
-      scwAddress: this.scwAddress,
-      entryPoint: this.entryPoint,
-      factory: this.factory,
-      bundler: this.selfBundler ? this.selfBundler.getStats() : null,
-      paymaster: this.selfPaymaster ? this.selfPaymaster.getSponsorshipStats() : null,
-      timestamp: new Date().toISOString()
-    };
-
-    return checks;
+  async triggerBundle() {
+    if (!this.selfBundler) throw new Error('Self-hosted bundler not available');
+    return await this.selfBundler.triggerBundle();
   }
 
   getStats() {
@@ -874,173 +734,85 @@ class EnterpriseAASDK {
       paymasterStats: this.selfPaymaster ? this.selfPaymaster.getSponsorshipStats() : null
     };
   }
-
-  async triggerBundle() {
-    if (!this.selfBundler) {
-      throw new Error('Self-hosted bundler not available');
-    }
-    return await this.selfBundler.triggerBundle();
-  }
 }
 
-// =========================================================================
-/* ENHANCED MEV EXECUTOR FOR SELF-HOSTED INFRASTRUCTURE */
-// =========================================================================
+/* =========================================================================
+   Enhanced MEV executor (SCW.execute wrapper using AA)
+   ========================================================================= */
 
 class EnhancedMevExecutor {
   constructor(aa, scwAddress) {
     this.aa = aa;
     this.scw = scwAddress;
-    console.log('🔧 EnhancedMevExecutor initialized');
   }
 
   buildSCWExecute(target, calldata, value = 0n) {
-    const i = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-    return i.encodeFunctionData('execute', [target, value, calldata]);
+    const iface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
+    return iface.encodeFunctionData('execute', [target, value, calldata]);
   }
 
   async sendCall(calldata, opts = {}) {
-    console.log('🚀 EnhancedMevExecutor: Sending call via self-hosted AA');
-
-    try {
-      const userOp = await this.aa.createUserOp(calldata, {
-        callGasLimit: opts.gasLimit || 1_600_000n,
-        verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
-        preVerificationGas: opts.preVerificationGas || 90_000n
-      });
-
-      const signed = await this.aa.signUserOp(userOp);
-      const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
-
-      console.log(`✅ EnhancedMevExecutor: Transaction hash: ${txHash}`);
-      return {
-        txHash,
-        timestamp: Date.now(),
-        description: opts.description || 'enhanced_scw_execute',
-        selfHosted: true
-      };
-    } catch (error) {
-      console.error('❌ EnhancedMevExecutor failed:', error);
-      throw error;
-    }
+    const userOp = await this.aa.createUserOp(calldata, {
+      callGasLimit: opts.gasLimit || 1_600_000n,
+      verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
+      preVerificationGas: opts.preVerificationGas || 90_000n
+    });
+    const signed = await this.aa.signUserOp(userOp);
+    const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
+    return {
+      txHash,
+      timestamp: Date.now(),
+      description: opts.description || 'enhanced_scw_execute',
+      selfHosted: true
+    };
   }
 }
 
-// =========================================================================
-/* BOOTSTRAP FUNCTIONS FOR MEV v13.7 INTEGRATION (read-only by default) */
-// =========================================================================
+/* =========================================================================
+   Bootstrap helper (SCW deposit probe only; approvals already live)
+   ========================================================================= */
 
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
-  console.log('🔄 Bootstrapping SCW for paymaster (enhanced)...');
+  const epCandidates = [ENHANCED_CONFIG.ENTRY_POINTS.V07, ENHANCED_CONFIG.ENTRY_POINTS.V06];
+  let chosenEP = ENHANCED_CONFIG.ENTRY_POINTS.V07;
 
-  try {
-    // Probe deposits on both EntryPoints (read-only)
-    const epCandidates = [ENHANCED_CONFIG.ENTRY_POINTS.V07, ENHANCED_CONFIG.ENTRY_POINTS.V06];
+  for (const epAddress of epCandidates) {
+    try {
+      const epReader = new ethers.Contract(epAddress, ['function deposits(address) view returns (uint256)'], provider);
+      const dep = await epReader.deposits(scwAddress);
+      if (dep >= ethers.parseEther('0.00001')) {
+        chosenEP = epAddress;
+        break;
+      }
+    } catch {}
+  }
 
-    let depositFound = false;
-    let chosenEP = ENHANCED_CONFIG.ENTRY_POINTS.V07;
-
-    for (const epAddress of epCandidates) {
-      try {
-        const epReader = new ethers.Contract(
-          epAddress,
-          ['function deposits(address) view returns (uint256)'],
-          provider
-        );
-        const deposit = await epReader.deposits(scwAddress);
-        if (deposit >= ethers.parseEther('0.00001')) {
-          console.log(`✅ Deposit found on ${epAddress.slice(0, 10)}...: ${ethers.formatEther(deposit)} ETH`);
-          depositFound = true;
-          chosenEP = epAddress;
-          break;
+  const AUTO_DEPOSIT = process.env.AUTO_EP_DEPOSIT === 'true';
+  if (AUTO_DEPOSIT) {
+    try {
+      const epReader = new ethers.Contract(chosenEP, ['function deposits(address) view returns (uint256)'], provider);
+      const dep = await epReader.deposits(scwAddress);
+      if (dep < ethers.parseEther('0.00001')) {
+        const bal = await provider.getBalance(signer.address);
+        if (bal >= ethers.parseEther('0.001')) {
+          const epIface = new ethers.Interface(['function depositTo(address) payable']);
+          const data = epIface.encodeFunctionData('depositTo', [scwAddress]);
+          const tx = await signer.sendTransaction({ to: chosenEP, data, value: ethers.parseEther('0.0005') });
+          await tx.wait();
         }
-      } catch (error) {
-        console.warn(`⚠️ Deposit check failed for ${epAddress.slice(0, 10)}...: ${error.message}`);
       }
+    } catch (err) {
+      // Non-fatal
     }
-
-    // Optional deposit if explicitly enabled
-    const AUTO_DEPOSIT = process.env.AUTO_EP_DEPOSIT === 'true';
-    if (!depositFound && AUTO_DEPOSIT) {
-      console.log('⚠️ No sufficient deposit found, attempting to deposit...');
-      const balance = await provider.getBalance(signer.address);
-      if (balance >= ethers.parseEther('0.001')) {
-        const epIface = new ethers.Interface(['function depositTo(address) payable']);
-        const data = epIface.encodeFunctionData('depositTo', [scwAddress]);
-
-        const tx = await signer.sendTransaction({
-          to: chosenEP,
-          data,
-          value: ethers.parseEther('0.0005')
-        });
-
-        await tx.wait();
-        console.log(`✅ EntryPoint deposit completed to ${chosenEP.slice(0, 10)}...`);
-      } else {
-        console.warn('⚠️ Insufficient ETH for deposit, skipping...');
-      }
-    } else if (!depositFound) {
-      console.log('ℹ️ Deposit not found; AUTO_EP_DEPOSIT disabled. Skipping.');
-    }
-
-    // Approvals already confirmed on-chain; do not send any AA approval here.
-    console.log('✅ SCW approvals already confirmed; no approval actions performed.');
-    return { entryPoint: chosenEP };
-  } catch (error) {
-    console.error('❌ SCW bootstrap failed:', error.message);
-    throw error;
   }
+
+  // Approvals already confirmed on-chain per v13.7 logs; no AA approval userOp here
+  return { entryPoint: chosenEP };
 }
 
-// =========================================================================
-/* QUICK INTEGRATION HELPER FOR MEV v13.7 */
-// =========================================================================
-
-async function integrateWithMEVv137() {
-  console.log('🚀 Integrating self-hosted AA infrastructure with MEV v13.7...');
-
-  try {
-    // 1. Create enhanced RPC manager
-    const chainRegistry = new EnhancedRPCManager();
-    await chainRegistry.init();
-
-    // 2. Create signer
-    const provider = chainRegistry.getProvider();
-    const signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
-
-    // 3. Initialize AA SDK with self-hosted infrastructure (SCW fixed)
-    const aa = new EnterpriseAASDK(signer);
-    await aa.initialize(provider, ENHANCED_CONFIG.SCW_ADDRESS);
-
-    // 4. Register self-hosted infrastructure with RPC manager
-    chainRegistry.setSelfHostedInfrastructure(aa.selfBundler, aa.selfPaymaster);
-
-    // 5. Bootstrap SCW (read-only deposit probe by default)
-    const scwAddress = ENHANCED_CONFIG.SCW_ADDRESS;
-    await bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress);
-
-    // 6. Create enhanced MevExecutor
-    const mevExecutor = new EnhancedMevExecutor(aa, scwAddress);
-
-    console.log('✅ Self-hosted AA infrastructure integrated successfully');
-
-    return {
-      chainRegistry,
-      aa,
-      mevExecutor,
-      provider,
-      signer,
-      scwAddress
-    };
-  } catch (error) {
-    console.error('❌ Integration failed:', error);
-    throw error;
-  }
-}
-
-// =========================================================================
-/* PATCHED INTELLIGENT RPC MANAGER (DROP-IN REPLACEMENT) */
-// =========================================================================
+/* =========================================================================
+   Patched manager wrapper (drop-in replacement for legacy IntelligentRPCManager)
+   ========================================================================= */
 
 class PatchedIntelligentRPCManager {
   constructor(rpcUrls, chainId = 1) {
@@ -1065,32 +837,69 @@ class PatchedIntelligentRPCManager {
   async getBundlerProvider() {
     return await this._enhancedManager.getBundlerProvider();
   }
+
+  setSelfHostedInfrastructure(bundler, paymaster) {
+    this._enhancedManager.setSelfHostedInfrastructure(bundler, paymaster);
+  }
+
+  get rpcUrls() {
+    return this._enhancedManager.rpcUrls;
+  }
 }
 
-// =========================================================================
-/* EXPORTS */
-// =========================================================================
+/* =========================================================================
+   Quick integration helper (optional)
+   ========================================================================= */
+
+async function integrateWithMEVv137() {
+  const chainRegistry = new EnhancedRPCManager();
+  await chainRegistry.init();
+
+  const provider = chainRegistry.getProvider();
+  const signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
+
+  const aa = new EnterpriseAASDK(signer, ENHANCED_CONFIG.ENTRY_POINTS.V07);
+  await aa.initialize(provider, ENHANCED_CONFIG.SCW_ADDRESS);
+
+  chainRegistry.setSelfHostedInfrastructure(aa.selfBundler, aa.selfPaymaster);
+
+  await bootstrapSCWForPaymasterEnhanced(aa, provider, signer, ENHANCED_CONFIG.SCW_ADDRESS);
+
+  const mevExecutor = new EnhancedMevExecutor(aa, ENHANCED_CONFIG.SCW_ADDRESS);
+
+  return {
+    chainRegistry,
+    aa,
+    mevExecutor,
+    provider,
+    signer,
+    scwAddress: ENHANCED_CONFIG.SCW_ADDRESS
+  };
+}
+
+/* =========================================================================
+   Exports
+   ========================================================================= */
 
 export {
-  // Core Classes
+  // Core classes
   EnterpriseAASDK,
   EnhancedMevExecutor,
   SelfHostedBundler,
   SelfSponsoredPaymaster,
   BundlerRPC,
 
-  // RPC Managers
+  // RPC managers
   EnhancedRPCManager,
   PatchedIntelligentRPCManager,
 
-  // Integration Functions
+  // Helpers
   integrateWithMEVv137,
   bootstrapSCWForPaymasterEnhanced,
   createNetworkForcedProvider,
 
-  // Configuration
+  // Config
   ENHANCED_CONFIG
 };
 
-// Default export for easy integration
 export default integrateWithMEVv137;
