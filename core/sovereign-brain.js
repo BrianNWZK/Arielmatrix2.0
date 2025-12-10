@@ -35,7 +35,7 @@ import {
   PatchedIntelligentRPCManager as PatchedRPCManagerSelfHosted,
   bootstrapSCWForPaymasterEnhanced,
   ENHANCED_CONFIG
-} from './modules/aa-loaves-fishes.js';
+} from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
    Configuration
