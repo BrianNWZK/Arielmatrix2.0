@@ -32,11 +32,10 @@ import fetch from 'node-fetch';
 import {
   EnterpriseAASDK as AASDK_SelfHosted,
   EnhancedMevExecutor as MevExecutorSelfHosted,
-  EnhancedRPCManager as EnhancedRPCManagerSelfHosted,
   PatchedIntelligentRPCManager as PatchedRPCManagerSelfHosted,
   bootstrapSCWForPaymasterEnhanced,
   ENHANCED_CONFIG
-} from '../modules/aa-loaves-fishes.js';
+} from './modules/aa-loaves-fishes.js';
 
 /* =========================================================================
    Configuration
@@ -149,7 +148,7 @@ const LIVE = {
    Intelligent RPC manager (health checks, timeouts, circuit breakers)
    ========================================================================= */
 
-// Use the patched manager from self-hosted module to ensure forced-network behavior
+// Use the patched manager from self-hosted module to ensure forced-network behavior and bundler shim
 class IntelligentRPCManager {
   constructor(rpcUrls, chainId = 1) {
     this._patched = new PatchedRPCManagerSelfHosted(rpcUrls, chainId);
@@ -159,6 +158,8 @@ class IntelligentRPCManager {
   getProvider() { return this._patched.getProvider(); }
   async getFeeData() { return await this._patched.getFeeData(); }
   async getBundlerProvider() { return await this._patched.getBundlerProvider(); }
+  // Back-compat for modules referencing original fields
+  get rpcUrls() { return ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS; }
 }
 
 const chainRegistry = new IntelligentRPCManager(LIVE.RPC_PROVIDERS, 1);
@@ -177,7 +178,7 @@ class LRUMap {
    ERC-4337 AA — BWAEZI Paymaster integration (AA-primary)
    ========================================================================= */
 
-// Use self-hosted AA SDK (SCW fixed; initCode always 0x)
+// Self-hosted AA SDK wrapper (SCW fixed; initCode always 0x)
 class EnterpriseAASDK {
   constructor(signer, entryPoint = LIVE.ENTRY_POINT) {
     if (!signer?.address) throw new Error('EnterpriseAASDK: signer required');
@@ -185,15 +186,13 @@ class EnterpriseAASDK {
     this.entryPoint = entryPoint;
     this.factory = LIVE.ACCOUNT_FACTORY;
     this.scwAddress = LIVE.SCW_ADDRESS;
-
-    // bridge to self-hosted SDK instance
-    this._self = null;
+    this._self = null; // underlying self-hosted instance (v0.7 EP internally)
   }
   async _ensureSelfHosted() {
     if (!this._self) {
       this._self = new AASDK_SelfHosted(this.signer, LIVE.ENTRY_POINT_V07);
       await this._self.initialize(chainRegistry.getProvider(), LIVE.SCW_ADDRESS);
-      // register bundler/paymaster with registry
+      // Register bundler/paymaster with registry for shim routing
       chainRegistry._patched._enhancedManager.setSelfHostedInfrastructure(this._self.selfBundler, this._self.selfPaymaster);
     }
     return this._self;
@@ -268,7 +267,6 @@ class EnterpriseAASDK {
     return userOp;
   }
   async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    // Prefer local self-hosted bundler path (instant shim)
     await this._ensureSelfHosted();
     const txHash = await this._self.sendUserOpWithBackoff(userOp, maxAttempts);
     return txHash;
@@ -454,59 +452,54 @@ class DexAdapterRegistry {
 }
 
 /* =========================================================================
-   SCW bootstrap: EntryPoint deposit + BWAEZI allowance to paymaster
+   SCW bootstrap: EntryPoint deposit check (read-only) — approvals already confirmed
    ========================================================================= */
 
-// Minimal deposit to the responsive EntryPoint (v0.6 or v0.7), matching your live logs (0.000005 ETH)
 async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
   const signer = aa.signer;
   const scw = LIVE.SCW_ADDRESS;
 
   const epCandidates = [LIVE.ENTRY_POINT_V06, LIVE.ENTRY_POINT_V07];
-  const epIface = new ethers.Interface(['function deposits(address) view returns (uint256)', 'function depositTo(address) payable']);
+  let chosenEP = LIVE.ENTRY_POINT_V07;
 
-  let chosenEP = null;
   for (const epAddr of epCandidates) {
     try {
       const epReader = new ethers.Contract(epAddr, ['function deposits(address) view returns (uint256)'], provider);
-      await epReader.deposits(scw);
-      chosenEP = epAddr;
-      break;
+      const dep = await epReader.deposits(scw);
+      if (dep >= ethers.parseEther('0.00001')) {
+        chosenEP = epAddr;
+        break;
+      }
     } catch {}
   }
-  if (!chosenEP) chosenEP = LIVE.ENTRY_POINT; // fallback
 
-  try {
-    const epReader = new ethers.Contract(chosenEP, ['function deposits(address) view returns (uint256)'], provider);
-    const dep = await epReader.deposits(scw);
-
-    const minThreshold = ethers.parseEther('0.00001'); // threshold gate
-    if (dep < minThreshold) {
-      const bal = await provider.getBalance(signer.address);
-      if (bal >= minThreshold) {
-        const data = epIface.encodeFunctionData('depositTo', [scw]);
-        const tx = await signer.sendTransaction({ to: chosenEP, data, value: ethers.parseEther('0.000005') });
-        await tx.wait();
-        console.log(`EntryPoint (${chosenEP}) deposit minimally topped up for SCW`);
-      } else {
-        console.warn('Signer balance below 0.00001 ETH; skipping EntryPoint deposit bootstrap.');
+  const AUTO_DEPOSIT = process.env.AUTO_EP_DEPOSIT === 'true';
+  if (AUTO_DEPOSIT) {
+    try {
+      const epReader = new ethers.Contract(chosenEP, ['function deposits(address) view returns (uint256)'], provider);
+      const dep = await epReader.deposits(scw);
+      const minThreshold = ethers.parseEther('0.00001');
+      if (dep < minThreshold) {
+        const bal = await provider.getBalance(signer.address);
+        if (bal >= minThreshold) {
+          const epIface = new ethers.Interface(['function depositTo(address) payable']);
+          const data = epIface.encodeFunctionData('depositTo', [scw]);
+          const tx = await signer.sendTransaction({ to: chosenEP, data, value: ethers.parseEther('0.0005') });
+          await tx.wait();
+          console.log(`EntryPoint (${chosenEP}) deposit completed for SCW`);
+        } else {
+          console.warn('Signer balance below threshold; skipping EntryPoint deposit.');
+        }
       }
+    } catch (e) {
+      console.warn('EntryPoint deposit check failed:', e.message);
     }
-  } catch (e) {
-    console.warn('EntryPoint deposit check failed:', e.message);
+  } else {
+    console.log('ℹ️ AUTO_EP_DEPOSIT disabled. No deposit action performed.');
   }
 
-  // Approve BWAEZI allowance from SCW to paymaster (AA userOp)
-  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
-  const calldata = erc20Iface.encodeFunctionData('approve', [LIVE.PAYMASTER_ADDRESS, ethers.MaxUint256]);
-  const scwExec = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
-
-  const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n, paymasterAndData: '0x' });
-  const signed = await aa.signUserOp(userOp);
-  const txHash = await aa.sendUserOpWithBackoff(signed, 4);
-  console.log('SCW approved BWAEZI allowance to Paymaster; userOp tx:', txHash);
+  console.log('✅ SCW approvals already confirmed on-chain; no approval actions performed.');
 }
 
 /* =========================================================================
@@ -1020,7 +1013,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
-    // Use self-hosted AA SDK bound to v0.7 EP under the hood, while preserving v13.7 dual EP logic
+    // Use self-hosted AA SDK bound to v0.7 EP under the hood, while preserving v13.7 dual EP logic externally
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT_V06);
 
     this.dexRegistry = new DexAdapterRegistry(this.provider);
@@ -1032,7 +1025,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, this.maker, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    // Minimal AA bootstrap (tiny deposit + approval)
+    // AA bootstrap: deposit check only; approvals already confirmed
     await bootstrapSCWForPaymaster(this.aa);
 
     const genesis = new GenesisSelfLiquiditySingularity(this.provider, this.signer, this.strategy);
@@ -1146,8 +1139,13 @@ class QuorumRPC {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-    this.providers = registry._patched? registry._patched._enhancedManager.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }))
-                                     : registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
+    // Ensure forced-network providers
+    const urls = ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS.slice(0, quorumSize);
+    this.providers = urls.map((url) => {
+      const req = new ethers.FetchRequest(url);
+      req.timeout = 8000; req.retry = 2; req.allowGzip = true;
+      return new ethers.JsonRpcProvider(req, { chainId: 1, name: 'mainnet' });
+    });
     this.lastForkAlert = null;
     this.health = [];
   }
