@@ -6,7 +6,7 @@ import { ethers } from 'ethers';
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v2.2.0-SELF-HOSTED',
+  VERSION: 'v2.2.1-RENDER-PROOF',
 
   NETWORK: {
     name: 'mainnet',
@@ -46,11 +46,11 @@ const ENHANCED_CONFIG = {
     fallbackRotationDelay: 1000
   },
 
+  // CRITICAL: primary endpoint is reliably whitelisted on serverless hosts
   PUBLIC_RPC_ENDPOINTS: [
-    'https://eth.llamarpc.com',
-    'https://rpc.ankr.com/eth',
-    'https://cloudflare-eth.com',
-    'https://ethereum.publicnode.com'
+    'https://ethereum-rpc.publicnode.com', // primary (bulletproof on Render/Vercel/Railway)
+    'https://rpc.ankr.com/eth',            // backup
+    'https://eth.llamarpc.com'             // backup
   ]
 };
 
@@ -64,6 +64,7 @@ function createNetworkForcedProvider(url, chainId = 1) {
   request.retry = ENHANCED_CONFIG.CONNECTION_SETTINGS.maxRetries;
   request.allowGzip = true;
 
+  // Provide the network explicitly to skip auto-detection
   return new ethers.JsonRpcProvider(request, {
     chainId,
     name: 'mainnet'
@@ -89,7 +90,8 @@ class EnhancedRPCManager {
   }
 
   async init() {
-    const probes = await Promise.all(this.rpcUrls.map(async (url) => {
+    // Probe endpoints in order, prefer publicnode first
+    for (const url of this.rpcUrls) {
       try {
         const provider = createNetworkForcedProvider(url, this.chainId);
         const start = Date.now();
@@ -99,24 +101,21 @@ class EnhancedRPCManager {
         ]);
         const latency = Date.now() - start;
         const healthy = !!blockNumber && Number(network?.chainId) === this.chainId;
-        return { url, provider, healthy, latency };
+
+        if (healthy) {
+          this.providers.push({ url, provider, health: 100, latency, failures: 0 });
+          if (!this.sticky) this.sticky = provider; // lock first healthy as sticky
+        }
       } catch {
-        return { url, provider: null, healthy: false, latency: null };
+        // ignore failures; we’ll continue to next endpoint
       }
-    }));
+    }
 
-    this.providers = probes
-      .filter(p => p.healthy)
-      .map(p => ({ url: p.url, provider: p.provider, health: 100, latency: p.latency, failures: 0 }));
-
-    if (this.providers.length === 0) {
+    if (!this.sticky) {
       throw new Error('No healthy RPC provider');
     }
 
-    this.providers.sort((a, b) => (a.latency ?? 99999) - (b.latency ?? 99999));
-    this.sticky = this.providers[0].provider;
     this.initialized = true;
-
     this._startHealthMonitor();
     return this;
   }
