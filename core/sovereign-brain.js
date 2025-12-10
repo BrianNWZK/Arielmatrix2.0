@@ -28,15 +28,6 @@ import { EventEmitter } from 'events';
 import { randomUUID, createHash } from 'crypto';
 import fetch from 'node-fetch';
 
-// === Self-hosted AA infrastructure integration (modules/aa-loaves-fishes.js) ===
-import {
-  EnterpriseAASDK as AASDK_SelfHosted,
-  EnhancedMevExecutor as MevExecutorSelfHosted,
-  PatchedIntelligentRPCManager as PatchedRPCManagerSelfHosted,
-  bootstrapSCWForPaymasterEnhanced,
-  ENHANCED_CONFIG
-} from '../modules/aa-loaves-fishes.js';
-
 /* =========================================================================
    Configuration
    ========================================================================= */
@@ -148,18 +139,115 @@ const LIVE = {
    Intelligent RPC manager (health checks, timeouts, circuit breakers)
    ========================================================================= */
 
-// Use the patched manager from self-hosted module to ensure forced-network behavior and bundler shim
 class IntelligentRPCManager {
   constructor(rpcUrls, chainId = 1) {
-    this._patched = new PatchedRPCManagerSelfHosted(rpcUrls, chainId);
+    this.rpcUrls = rpcUrls;
+    this.chainId = chainId;
+    this.providers = [];
+    this.sticky = null;
     this.initialized = false;
+    this._failureCounts = new Map();
   }
-  async init() { await this._patched.init(); this.initialized = true; }
-  getProvider() { return this._patched.getProvider(); }
-  async getFeeData() { return await this._patched.getFeeData(); }
-  async getBundlerProvider() { return await this._patched.getBundlerProvider(); }
-  // Back-compat for modules referencing original fields
-  get rpcUrls() { return ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS; }
+
+  _newProvider(url) {
+    const req = new ethers.FetchRequest(url);
+    req.timeout = 8000;
+    req.retry = 2;
+    req.allowGzip = true;
+    return new ethers.JsonRpcProvider(req, { chainId: this.chainId, name: 'mainnet' });
+  }
+
+  async _probe(url) {
+    const start = Date.now();
+    const provider = this._newProvider(url);
+    try {
+      const [blockNumber, network] = await Promise.all([provider.getBlockNumber(), provider.getNetwork()]);
+      const latency = Date.now() - start;
+      const healthy = !!blockNumber && !!network?.chainId;
+      return { url, provider, healthy, latency };
+    } catch {
+      return { url, provider: null, healthy: false, latency: null };
+    }
+  }
+
+  async init() {
+    const probes = await Promise.all(this.rpcUrls.map(url => this._probe(url)));
+    this.providers = probes.filter(p => p.healthy).map(p => ({ url: p.url, provider: p.provider, health: 100, latency: p.latency, failures: 0 }));
+    if (this.providers.length === 0) throw new Error('No healthy RPC provider');
+    this.providers.sort((a, b) => (a.latency ?? 99999) - (b.latency ?? 99999));
+    this.sticky = this.providers[0].provider;
+    console.log('Sticky provider set for Ethereum Mainnet');
+    this.initialized = true;
+    this._startHealthMonitor();
+  }
+
+  _startHealthMonitor() {
+    setInterval(async () => {
+      for (const p of this.providers) {
+        try {
+          const s = Date.now();
+          await p.provider.getBlockNumber();
+          const lat = Date.now() - s;
+          p.latency = lat;
+          p.health = Math.min(100, Math.round(p.health * 0.8 + (100 - Math.min(100, lat)) * 0.2));
+        } catch {
+          p.failures += 1;
+          p.health = Math.max(0, p.health - 15);
+          const count = (this._failureCounts.get(p.url) || 0) + 1;
+          this._failureCounts.set(p.url, count);
+          if (count % 10 === 0) console.warn(`RPC ${p.url} failures: ${p.failures} (throttled log)`);
+        }
+      }
+      const best = this.providers.slice().sort((a, b) => (b.health - a.health) || (a.latency - b.latency))[0];
+      if (best && best.provider !== this.sticky) {
+        this.sticky = best.provider;
+        console.log('Sticky provider rotated to healthier RPC');
+      }
+    }, 30000);
+  }
+
+  getProvider() {
+    if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized');
+    return this.sticky;
+  }
+
+  async getFeeData() {
+    try {
+      const fd = await this.getProvider().getFeeData();
+      return {
+        maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+        maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei'),
+        gasPrice: fd.gasPrice || ethers.parseUnits('25', 'gwei')
+      };
+    } catch {
+      return {
+        maxFeePerGas: ethers.parseUnits('30', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
+        gasPrice: ethers.parseUnits('25', 'gwei')
+      };
+    }
+  }
+
+  async getBundlerProvider() {
+    const urls = LIVE.BUNDLERS.length ? LIVE.BUNDLERS : [];
+    const probes = await Promise.all(urls.map(async (url) => {
+      try {
+        const req = new ethers.FetchRequest(url); req.timeout = 8000;
+        const provider = new ethers.JsonRpcProvider(req, { chainId: 1, name: 'mainnet' });
+        let supported = [];
+        try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
+        const ok = Array.isArray(supported) && supported.length > 0;
+        return { url, provider: ok ? provider : null, ok };
+      } catch {
+        return { url, provider: null, ok: false };
+      }
+    }));
+    const healthy = probes.find(p => p.ok && p.provider);
+    if (healthy) return healthy.provider;
+    const fallback = probes.find(p => p.provider);
+    if (fallback) return fallback.provider;
+    return this.getProvider();
+  }
 }
 
 const chainRegistry = new IntelligentRPCManager(LIVE.RPC_PROVIDERS, 1);
@@ -178,7 +266,6 @@ class LRUMap {
    ERC-4337 AA — BWAEZI Paymaster integration (AA-primary)
    ========================================================================= */
 
-// Self-hosted AA SDK wrapper (SCW fixed; initCode always 0x)
 class EnterpriseAASDK {
   constructor(signer, entryPoint = LIVE.ENTRY_POINT) {
     if (!signer?.address) throw new Error('EnterpriseAASDK: signer required');
@@ -186,22 +273,13 @@ class EnterpriseAASDK {
     this.entryPoint = entryPoint;
     this.factory = LIVE.ACCOUNT_FACTORY;
     this.scwAddress = LIVE.SCW_ADDRESS;
-    this._self = null; // underlying self-hosted instance (v0.7 EP internally)
-  }
-  async _ensureSelfHosted() {
-    if (!this._self) {
-      this._self = new AASDK_SelfHosted(this.signer, LIVE.ENTRY_POINT_V07);
-      await this._self.initialize(chainRegistry.getProvider(), LIVE.SCW_ADDRESS);
-      // Register bundler/paymaster with registry for shim routing
-      chainRegistry._patched._enhancedManager.setSelfHostedInfrastructure(this._self.selfBundler, this._self.selfPaymaster);
-    }
-    return this._self;
   }
   async isDeployed(address) {
     const code = await chainRegistry.getProvider().getCode(address);
     return code && code !== '0x';
   }
   async getSCWAddress(_owner) {
+    // Hard-wire funded SCW; do not derive via factory
     return addrStrict(this.scwAddress);
   }
   async getNonce(smartAccount) {
@@ -214,13 +292,12 @@ class EnterpriseAASDK {
     return ethers.concat([paymaster, context]);
   }
   async createUserOp(callData, opts = {}) {
-    await this._ensureSelfHosted();
     const sender = await this.getSCWAddress(this.signer.address);
     const nonce = await this.getNonce(sender);
     const gas = await chainRegistry.getFeeData();
     const userOp = {
       sender, nonce,
-      initCode: '0x',
+      initCode: '0x', // treat SCW as deployed
       callData,
       callGasLimit: opts.callGasLimit || 1_400_000n,
       verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
@@ -267,9 +344,31 @@ class EnterpriseAASDK {
     return userOp;
   }
   async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    await this._ensureSelfHosted();
-    const txHash = await this._self.sendUserOpWithBackoff(userOp, maxAttempts);
-    return txHash;
+    const bundler = await chainRegistry.getBundlerProvider();
+    const op = this._formatBundlerUserOp(userOp);
+    const entryPoint = this.entryPoint;
+
+    let attempt = 0, lastErr;
+    while (attempt < maxAttempts) {
+      try {
+        const hash = await bundler.send('eth_sendUserOperation', [op, entryPoint]);
+        const start = Date.now(); const timeout = 180_000;
+        while (Date.now() - start < timeout) {
+          try {
+            const receipt = await bundler.send('eth_getUserOperationReceipt', [hash]);
+            if (receipt?.transactionHash) return receipt.transactionHash;
+          } catch {}
+          await new Promise(r => setTimeout(r, 2000));
+        }
+        throw new Error('UserOperation confirmation timeout');
+      } catch (e) {
+        lastErr = e;
+        const backoffMs = Math.min(30_000, 1_000 * Math.pow(2, attempt));
+        await new Promise(r => setTimeout(r, backoffMs));
+        attempt++;
+      }
+    }
+    throw lastErr || new Error('Bundlers unavailable');
   }
 }
 
@@ -452,54 +551,59 @@ class DexAdapterRegistry {
 }
 
 /* =========================================================================
-   SCW bootstrap: EntryPoint deposit check (read-only) — approvals already confirmed
+   SCW bootstrap: EntryPoint deposit + BWAEZI allowance to paymaster
    ========================================================================= */
 
+// Minimal deposit to the responsive EntryPoint (v0.6 or v0.7), matching your live logs (0.000005 ETH)
 async function bootstrapSCWForPaymaster(aa) {
   const provider = chainRegistry.getProvider();
   const signer = aa.signer;
   const scw = LIVE.SCW_ADDRESS;
 
   const epCandidates = [LIVE.ENTRY_POINT_V06, LIVE.ENTRY_POINT_V07];
-  let chosenEP = LIVE.ENTRY_POINT_V07;
+  const epIface = new ethers.Interface(['function deposits(address) view returns (uint256)', 'function depositTo(address) payable']);
 
+  let chosenEP = null;
   for (const epAddr of epCandidates) {
     try {
       const epReader = new ethers.Contract(epAddr, ['function deposits(address) view returns (uint256)'], provider);
-      const dep = await epReader.deposits(scw);
-      if (dep >= ethers.parseEther('0.00001')) {
-        chosenEP = epAddr;
-        break;
-      }
+      await epReader.deposits(scw);
+      chosenEP = epAddr;
+      break;
     } catch {}
   }
+  if (!chosenEP) chosenEP = LIVE.ENTRY_POINT; // fallback
 
-  const AUTO_DEPOSIT = process.env.AUTO_EP_DEPOSIT === 'true';
-  if (AUTO_DEPOSIT) {
-    try {
-      const epReader = new ethers.Contract(chosenEP, ['function deposits(address) view returns (uint256)'], provider);
-      const dep = await epReader.deposits(scw);
-      const minThreshold = ethers.parseEther('0.00001');
-      if (dep < minThreshold) {
-        const bal = await provider.getBalance(signer.address);
-        if (bal >= minThreshold) {
-          const epIface = new ethers.Interface(['function depositTo(address) payable']);
-          const data = epIface.encodeFunctionData('depositTo', [scw]);
-          const tx = await signer.sendTransaction({ to: chosenEP, data, value: ethers.parseEther('0.0005') });
-          await tx.wait();
-          console.log(`EntryPoint (${chosenEP}) deposit completed for SCW`);
-        } else {
-          console.warn('Signer balance below threshold; skipping EntryPoint deposit.');
-        }
+  try {
+    const epReader = new ethers.Contract(chosenEP, ['function deposits(address) view returns (uint256)'], provider);
+    const dep = await epReader.deposits(scw);
+
+    const minThreshold = ethers.parseEther('0.00001'); // threshold gate
+    if (dep < minThreshold) {
+      const bal = await provider.getBalance(signer.address);
+      if (bal >= minThreshold) {
+        const data = epIface.encodeFunctionData('depositTo', [scw]);
+        const tx = await signer.sendTransaction({ to: chosenEP, data, value: ethers.parseEther('0.000005') });
+        await tx.wait();
+        console.log(`EntryPoint (${chosenEP}) deposit minimally topped up for SCW`);
+      } else {
+        console.warn('Signer balance below 0.00001 ETH; skipping EntryPoint deposit bootstrap.');
       }
-    } catch (e) {
-      console.warn('EntryPoint deposit check failed:', e.message);
     }
-  } else {
-    console.log('ℹ️ AUTO_EP_DEPOSIT disabled. No deposit action performed.');
+  } catch (e) {
+    console.warn('EntryPoint deposit check failed:', e.message);
   }
 
-  console.log('✅ SCW approvals already confirmed on-chain; no approval actions performed.');
+  // Approve BWAEZI allowance from SCW to paymaster (AA userOp)
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const calldata = erc20Iface.encodeFunctionData('approve', [LIVE.PAYMASTER_ADDRESS, ethers.MaxUint256]);
+  const scwExec = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const execCalldata = scwExec.encodeFunctionData('execute', [LIVE.TOKENS.BWAEZI, 0n, calldata]);
+
+  const userOp = await aa.createUserOp(execCalldata, { callGasLimit: 600000n, preVerificationGas: 60000n, paymasterAndData: '0x' });
+  const signed = await aa.signUserOp(userOp);
+  const txHash = await aa.sendUserOpWithBackoff(signed, 4);
+  console.log('SCW approved BWAEZI allowance to Paymaster; userOp tx:', txHash);
 }
 
 /* =========================================================================
@@ -1013,7 +1117,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
-    // Use self-hosted AA SDK bound to v0.7 EP under the hood, while preserving v13.7 dual EP logic externally
+    // Detect live EntryPoint preference (v0.6 deposits seen in logs)
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT_V06);
 
     this.dexRegistry = new DexAdapterRegistry(this.provider);
@@ -1025,7 +1129,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, this.maker, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    // AA bootstrap: deposit check only; approvals already confirmed
+    // Minimal AA bootstrap (tiny deposit)
     await bootstrapSCWForPaymaster(this.aa);
 
     const genesis = new GenesisSelfLiquiditySingularity(this.provider, this.signer, this.strategy);
@@ -1139,13 +1243,7 @@ class QuorumRPC {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-    // Ensure forced-network providers
-    const urls = ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS.slice(0, quorumSize);
-    this.providers = urls.map((url) => {
-      const req = new ethers.FetchRequest(url);
-      req.timeout = 8000; req.retry = 2; req.allowGzip = true;
-      return new ethers.JsonRpcProvider(req, { chainId: 1, name: 'mainnet' });
-    });
+    this.providers = registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
     this.lastForkAlert = null;
     this.health = [];
   }
