@@ -28,6 +28,16 @@ import { EventEmitter } from 'events';
 import { randomUUID, createHash } from 'crypto';
 import fetch from 'node-fetch';
 
+// === Self-hosted AA infrastructure integration (modules/aa-loaves-fishes.js) ===
+import {
+  EnterpriseAASDK as AASDK_SelfHosted,
+  EnhancedMevExecutor as MevExecutorSelfHosted,
+  EnhancedRPCManager as EnhancedRPCManagerSelfHosted,
+  PatchedIntelligentRPCManager as PatchedRPCManagerSelfHosted,
+  bootstrapSCWForPaymasterEnhanced,
+  ENHANCED_CONFIG
+} from './modules/aa-loaves-fishes.js';
+
 /* =========================================================================
    Configuration
    ========================================================================= */
@@ -139,115 +149,16 @@ const LIVE = {
    Intelligent RPC manager (health checks, timeouts, circuit breakers)
    ========================================================================= */
 
+// Use the patched manager from self-hosted module to ensure forced-network behavior
 class IntelligentRPCManager {
   constructor(rpcUrls, chainId = 1) {
-    this.rpcUrls = rpcUrls;
-    this.chainId = chainId;
-    this.providers = [];
-    this.sticky = null;
+    this._patched = new PatchedRPCManagerSelfHosted(rpcUrls, chainId);
     this.initialized = false;
-    this._failureCounts = new Map();
   }
-
-  _newProvider(url) {
-    const req = new ethers.FetchRequest(url);
-    req.timeout = 8000;
-    req.retry = 2;
-    req.allowGzip = true;
-    return new ethers.JsonRpcProvider(req, { chainId: this.chainId, name: 'mainnet' });
-  }
-
-  async _probe(url) {
-    const start = Date.now();
-    const provider = this._newProvider(url);
-    try {
-      const [blockNumber, network] = await Promise.all([provider.getBlockNumber(), provider.getNetwork()]);
-      const latency = Date.now() - start;
-      const healthy = !!blockNumber && !!network?.chainId;
-      return { url, provider, healthy, latency };
-    } catch {
-      return { url, provider: null, healthy: false, latency: null };
-    }
-  }
-
-  async init() {
-    const probes = await Promise.all(this.rpcUrls.map(url => this._probe(url)));
-    this.providers = probes.filter(p => p.healthy).map(p => ({ url: p.url, provider: p.provider, health: 100, latency: p.latency, failures: 0 }));
-    if (this.providers.length === 0) throw new Error('No healthy RPC provider');
-    this.providers.sort((a, b) => (a.latency ?? 99999) - (b.latency ?? 99999));
-    this.sticky = this.providers[0].provider;
-    console.log('Sticky provider set for Ethereum Mainnet');
-    this.initialized = true;
-    this._startHealthMonitor();
-  }
-
-  _startHealthMonitor() {
-    setInterval(async () => {
-      for (const p of this.providers) {
-        try {
-          const s = Date.now();
-          await p.provider.getBlockNumber();
-          const lat = Date.now() - s;
-          p.latency = lat;
-          p.health = Math.min(100, Math.round(p.health * 0.8 + (100 - Math.min(100, lat)) * 0.2));
-        } catch {
-          p.failures += 1;
-          p.health = Math.max(0, p.health - 15);
-          const count = (this._failureCounts.get(p.url) || 0) + 1;
-          this._failureCounts.set(p.url, count);
-          if (count % 10 === 0) console.warn(`RPC ${p.url} failures: ${p.failures} (throttled log)`);
-        }
-      }
-      const best = this.providers.slice().sort((a, b) => (b.health - a.health) || (a.latency - b.latency))[0];
-      if (best && best.provider !== this.sticky) {
-        this.sticky = best.provider;
-        console.log('Sticky provider rotated to healthier RPC');
-      }
-    }, 30000);
-  }
-
-  getProvider() {
-    if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized');
-    return this.sticky;
-  }
-
-  async getFeeData() {
-    try {
-      const fd = await this.getProvider().getFeeData();
-      return {
-        maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
-        maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei'),
-        gasPrice: fd.gasPrice || ethers.parseUnits('25', 'gwei')
-      };
-    } catch {
-      return {
-        maxFeePerGas: ethers.parseUnits('30', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
-        gasPrice: ethers.parseUnits('25', 'gwei')
-      };
-    }
-  }
-
-  async getBundlerProvider() {
-    const urls = LIVE.BUNDLERS.length ? LIVE.BUNDLERS : [];
-    const probes = await Promise.all(urls.map(async (url) => {
-      try {
-        const req = new ethers.FetchRequest(url); req.timeout = 8000;
-        const provider = new ethers.JsonRpcProvider(req, { chainId: 1, name: 'mainnet' });
-        let supported = [];
-        try { supported = await provider.send('eth_supportedEntryPoints', []); } catch {}
-        const ok = Array.isArray(supported) && supported.length > 0;
-        return { url, provider: ok ? provider : null, ok };
-      } catch {
-        return { url, provider: null, ok: false };
-      }
-    }));
-    const healthy = probes.find(p => p.ok && p.provider);
-    if (healthy) return healthy.provider;
-    const fallback = probes.find(p => p.provider);
-    if (fallback) return fallback.provider;
-    return this.getProvider();
-  }
+  async init() { await this._patched.init(); this.initialized = true; }
+  getProvider() { return this._patched.getProvider(); }
+  async getFeeData() { return await this._patched.getFeeData(); }
+  async getBundlerProvider() { return await this._patched.getBundlerProvider(); }
 }
 
 const chainRegistry = new IntelligentRPCManager(LIVE.RPC_PROVIDERS, 1);
@@ -266,6 +177,7 @@ class LRUMap {
    ERC-4337 AA — BWAEZI Paymaster integration (AA-primary)
    ========================================================================= */
 
+// Use self-hosted AA SDK (SCW fixed; initCode always 0x)
 class EnterpriseAASDK {
   constructor(signer, entryPoint = LIVE.ENTRY_POINT) {
     if (!signer?.address) throw new Error('EnterpriseAASDK: signer required');
@@ -273,13 +185,24 @@ class EnterpriseAASDK {
     this.entryPoint = entryPoint;
     this.factory = LIVE.ACCOUNT_FACTORY;
     this.scwAddress = LIVE.SCW_ADDRESS;
+
+    // bridge to self-hosted SDK instance
+    this._self = null;
+  }
+  async _ensureSelfHosted() {
+    if (!this._self) {
+      this._self = new AASDK_SelfHosted(this.signer, LIVE.ENTRY_POINT_V07);
+      await this._self.initialize(chainRegistry.getProvider(), LIVE.SCW_ADDRESS);
+      // register bundler/paymaster with registry
+      chainRegistry._patched._enhancedManager.setSelfHostedInfrastructure(this._self.selfBundler, this._self.selfPaymaster);
+    }
+    return this._self;
   }
   async isDeployed(address) {
     const code = await chainRegistry.getProvider().getCode(address);
     return code && code !== '0x';
   }
   async getSCWAddress(_owner) {
-    // Hard-wire funded SCW; do not derive via factory
     return addrStrict(this.scwAddress);
   }
   async getNonce(smartAccount) {
@@ -292,12 +215,13 @@ class EnterpriseAASDK {
     return ethers.concat([paymaster, context]);
   }
   async createUserOp(callData, opts = {}) {
+    await this._ensureSelfHosted();
     const sender = await this.getSCWAddress(this.signer.address);
     const nonce = await this.getNonce(sender);
     const gas = await chainRegistry.getFeeData();
     const userOp = {
       sender, nonce,
-      initCode: '0x', // treat SCW as deployed
+      initCode: '0x',
       callData,
       callGasLimit: opts.callGasLimit || 1_400_000n,
       verificationGasLimit: opts.verificationGasLimit || 1_000_000n,
@@ -344,31 +268,10 @@ class EnterpriseAASDK {
     return userOp;
   }
   async sendUserOpWithBackoff(userOp, maxAttempts = 5) {
-    const bundler = await chainRegistry.getBundlerProvider();
-    const op = this._formatBundlerUserOp(userOp);
-    const entryPoint = this.entryPoint;
-
-    let attempt = 0, lastErr;
-    while (attempt < maxAttempts) {
-      try {
-        const hash = await bundler.send('eth_sendUserOperation', [op, entryPoint]);
-        const start = Date.now(); const timeout = 180_000;
-        while (Date.now() - start < timeout) {
-          try {
-            const receipt = await bundler.send('eth_getUserOperationReceipt', [hash]);
-            if (receipt?.transactionHash) return receipt.transactionHash;
-          } catch {}
-          await new Promise(r => setTimeout(r, 2000));
-        }
-        throw new Error('UserOperation confirmation timeout');
-      } catch (e) {
-        lastErr = e;
-        const backoffMs = Math.min(30_000, 1_000 * Math.pow(2, attempt));
-        await new Promise(r => setTimeout(r, backoffMs));
-        attempt++;
-      }
-    }
-    throw lastErr || new Error('Bundlers unavailable');
+    // Prefer local self-hosted bundler path (instant shim)
+    await this._ensureSelfHosted();
+    const txHash = await this._self.sendUserOpWithBackoff(userOp, maxAttempts);
+    return txHash;
   }
 }
 
@@ -1117,7 +1020,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
-    // Detect live EntryPoint preference (v0.6 deposits seen in logs)
+    // Use self-hosted AA SDK bound to v0.7 EP under the hood, while preserving v13.7 dual EP logic
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT_V06);
 
     this.dexRegistry = new DexAdapterRegistry(this.provider);
@@ -1129,7 +1032,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, this.maker, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    // Minimal AA bootstrap (tiny deposit)
+    // Minimal AA bootstrap (tiny deposit + approval)
     await bootstrapSCWForPaymaster(this.aa);
 
     const genesis = new GenesisSelfLiquiditySingularity(this.provider, this.signer, this.strategy);
@@ -1243,7 +1146,8 @@ class QuorumRPC {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-    this.providers = registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
+    this.providers = registry._patched? registry._patched._enhancedManager.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }))
+                                     : registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
     this.lastForkAlert = null;
     this.health = [];
   }
