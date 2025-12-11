@@ -6,7 +6,7 @@ import { ethers } from 'ethers';
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v2.2.1-RENDER-PROOF',
+  VERSION: 'v2.3.0-RENDER-PROOF-PERMANENT',
 
   NETWORK: {
     name: 'mainnet',
@@ -46,11 +46,9 @@ const ENHANCED_CONFIG = {
     fallbackRotationDelay: 1000
   },
 
-  // CRITICAL: primary endpoint is reliably whitelisted on serverless hosts
+  // CRITICAL: only one ultra-reliable endpoint to avoid silent blocking and rate escalation
   PUBLIC_RPC_ENDPOINTS: [
-    'https://ethereum-rpc.publicnode.com', // primary (bulletproof on Render/Vercel/Railway)
-    'https://rpc.ankr.com/eth',            // backup
-    'https://eth.llamarpc.com'             // backup
+    'https://ethereum-rpc.publicnode.com' // always-whitelisted on Render/Vercel/Railway/Fly.io
   ]
 };
 
@@ -58,7 +56,7 @@ const ENHANCED_CONFIG = {
    Forced-network provider factory (prevents autodetect loops)
    ========================================================================= */
 
-function createNetworkForcedProvider(url, chainId = 1) {
+function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
   const request = new ethers.FetchRequest(url);
   request.timeout = ENHANCED_CONFIG.CONNECTION_SETTINGS.timeout;
   request.retry = ENHANCED_CONFIG.CONNECTION_SETTINGS.maxRetries;
@@ -67,7 +65,7 @@ function createNetworkForcedProvider(url, chainId = 1) {
   // Provide the network explicitly to skip auto-detection
   return new ethers.JsonRpcProvider(request, {
     chainId,
-    name: 'mainnet'
+    name: ENHANCED_CONFIG.NETWORK.name
   });
 }
 
@@ -76,7 +74,7 @@ function createNetworkForcedProvider(url, chainId = 1) {
    ========================================================================= */
 
 class EnhancedRPCManager {
-  constructor(rpcUrls = ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS, chainId = 1) {
+  constructor(rpcUrls = ENHANCED_CONFIG.PUBLIC_RPC_ENDPOINTS, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
     this.rpcUrls = rpcUrls;
     this.chainId = chainId;
     this.providers = [];
@@ -90,24 +88,21 @@ class EnhancedRPCManager {
   }
 
   async init() {
-    // Probe endpoints in order, prefer publicnode first
+    // Build only forced-network providers (no getNetwork() calls)
     for (const url of this.rpcUrls) {
       try {
         const provider = createNetworkForcedProvider(url, this.chainId);
         const start = Date.now();
-        const [blockNumber, network] = await Promise.all([
-          provider.getBlockNumber(),
-          provider.getNetwork()
-        ]);
+        const blockNumber = await provider.getBlockNumber(); // light probe
         const latency = Date.now() - start;
-        const healthy = !!blockNumber && Number(network?.chainId) === this.chainId;
+        const healthy = !!blockNumber;
 
         if (healthy) {
           this.providers.push({ url, provider, health: 100, latency, failures: 0 });
           if (!this.sticky) this.sticky = provider; // lock first healthy as sticky
         }
       } catch {
-        // ignore failures; we’ll continue to next endpoint
+        // ignore failures; continue
       }
     }
 
@@ -233,10 +228,13 @@ class SelfHostedBundler {
         ethers.keccak256(userOp.paymasterAndData || '0x')
       ]
     );
-    const net = await this.provider.getNetwork();
+
+    // PERMANENT FIX: do not call provider.getNetwork(); use forced network chainId
+    const netChainId = ENHANCED_CONFIG.NETWORK.chainId;
+
     const enc = ethers.AbiCoder.defaultAbiCoder().encode(
       ['bytes32', 'address', 'uint256'],
-      [ethers.keccak256(packedUserOp), entryPoint, net.chainId]
+      [ethers.keccak256(packedUserOp), entryPoint, netChainId]
     );
     return ethers.keccak256(enc);
   }
@@ -657,10 +655,13 @@ class EnterpriseAASDK {
         ethers.keccak256(userOp.paymasterAndData)
       ]
     );
-    const network = await this.provider.getNetwork();
+
+    // PERMANENT FIX: remove provider.getNetwork() and use forced chainId
+    const netChainId = ENHANCED_CONFIG.NETWORK.chainId;
+
     const enc = ethers.AbiCoder.defaultAbiCoder().encode(
       ['bytes32','address','uint256'],
-      [ethers.keccak256(packed), this.entryPoint, network.chainId]
+      [ethers.keccak256(packed), this.entryPoint, netChainId]
     );
     const userOpHash = ethers.keccak256(enc);
 
@@ -814,7 +815,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
    ========================================================================= */
 
 class PatchedIntelligentRPCManager {
-  constructor(rpcUrls, chainId = 1) {
+  constructor(rpcUrls, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
     this._enhancedManager = new EnhancedRPCManager(rpcUrls, chainId);
     this.initialized = false;
   }
