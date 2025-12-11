@@ -2,29 +2,7 @@
  * core/sovereign-brain.js
  *
  * SOVEREIGN FINALITY ENGINE v13.9 — Unified v13.7 + v13.8
- * - Preserves v13.5.9 core; integrates v13.6 control kernel/governor; merges v13.8 Finality Engine
- * - Self-hosted AA with dual EntryPoint (v0.6/v0.7), minimal deposit bootstrap
- * - Advanced Oracle (TWAP + dispersion + multi-anchors: USDC/WETH/WBTC)
- * - EV-gated strategy with slippage learning, rate caps, deterministic decision packets
- * - Maker streaming LP, periodic range adjust
- * - Reflexive Amplifier (commit–reveal, hysteresis, jitter, perception index)
- * - MEV Recapture (split routes laddering + backrun cover micro-leg)
- * - Perception Merkle Accumulator + immediate calldata anchoring
- * - Staked Governance Registry (slash/reward + rate-limit packets)
- * - Enhanced API + SSE feed + WebSocket broadcast
- *
- * REQUIREMENTS:
- * - Node.js 20+ (ESM). package.json: { "type":"module" }
- * - ENV:
- *   SOVEREIGN_PRIVATE_KEY=0x...
- *   ALCHEMY_API_KEY=... (optional)
- *   INFURA_PROJECT_ID=... (optional)
- *   STACKUP_API_KEY=... (optional)
- *   BICONOMY_API_KEY=... (optional)
- *   PIMLICO_API_KEY=... (optional)
- *   PORT=... (optional, default 8081)
- *   EXT_PORT=... (optional, default 8090)
- *   COMPLIANCE_MODE=strict|standard (optional)
+ * (Permanent infra fixes applied: single forced-network RPC, removed implicit network detection loops, WebSocketServer fix)
  */
 
 import express from 'express';
@@ -32,7 +10,7 @@ import { ethers } from 'ethers';
 import { EventEmitter } from 'events';
 import { randomUUID, createHash } from 'crypto';
 import fetch from 'node-fetch';
-import WebSocket from 'ws';
+import { WebSocketServer } from 'ws'; // PERMANENT FIX: use WebSocketServer in ESM
 
 // Self-hosted AA infrastructure (v13.7/v13.8 compatible)
 import {
@@ -41,7 +19,8 @@ import {
   EnhancedRPCManager as EnhancedRPCManagerSelfHosted,
   PatchedIntelligentRPCManager as PatchedRPCManagerSelfHosted,
   bootstrapSCWForPaymasterEnhanced,
-  ENHANCED_CONFIG
+  ENHANCED_CONFIG,
+  createNetworkForcedProvider // use in QuorumRPC
 } from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
@@ -110,17 +89,13 @@ const LIVE = {
     }
   },
 
-  // RPC providers (multi-source resilience)
+  // RPC providers — PERMANENT FIX: only one always-whitelisted endpoint
   RPC_PROVIDERS: [
-    ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
-    ...(process.env.INFURA_PROJECT_ID ? [`https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`] : []),
-    'https://eth.llamarpc.com',
-    'https://rpc.ankr.com/eth',
-    'https://cloudflare-eth.com',
-    'https://ethereum.publicnode.com'
+    'https://ethereum-rpc.publicnode.com'
   ],
 
-  // Bundlers
+  // Bundlers (unchanged; these are not used due to self-hosted shim,
+  // but keep optional env routes if needed)
   BUNDLERS: [
     ...(process.env.STACKUP_API_KEY ? [`https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}`] : []),
     'https://bundler.candide.xyz/rpc/mainnet',
@@ -130,12 +105,12 @@ const LIVE = {
 
   PEG: {
     TARGET_USD: 100,
-    FEE_TIER_DEFAULT: 500,            // BWAEZI–USDC canonical fee tier; adjust if needed
+    FEE_TIER_DEFAULT: 500,
     GENESIS_MIN_USDC: ethers.parseUnits('100', 6),
     GENESIS_BWAEZI_INIT: ethers.parseEther('1000'),
     SEED_BWAEZI_EXPAND: ethers.parseEther('50000'),
-    DEVIATION_THRESHOLD_PCT: 0.5,     // peg watcher enforcement trigger
-    PEG_ADJUSTMENT_THRESHOLD: 0.15    // threshold to consider peg drift adjustment (v13.8+)
+    DEVIATION_THRESHOLD_PCT: 0.5,
+    PEG_ADJUSTMENT_THRESHOLD: 0.15
   },
 
   MAKER: {
@@ -175,47 +150,41 @@ const LIVE = {
     DECAY_MS: 60_000
   },
 
-  // v13.9 Risk Governors — converting risks into guardrails and advantages
   RISK: {
-    // Runaway algorithms → Circuit breakers + loss-guard + global kill-switch
     CIRCUIT_BREAKERS: {
       ENABLED: true,
-      MAX_CONSECUTIVE_LOSSES_USD: 500,      // halt if recent net losses exceed this
-      MAX_NEG_EV_TRADES: 2,                  // halt after sequential negative EV decisions
-      GLOBAL_KILL_SWITCH: false,             // if true, no trading; can be toggled via API/admin script
-      WINDOW_MS: 10 * 60_000                 // 10-minute window for loss/runaway checks
+      MAX_CONSECUTIVE_LOSSES_USD: 500,
+      MAX_NEG_EV_TRADES: 2,
+      GLOBAL_KILL_SWITCH: false,
+      WINDOW_MS: 10 * 60_000
     },
-    // Market condition sensitivity → Adaptive degradation
     ADAPTIVE_DEGRADATION: {
       ENABLED: true,
-      HIGH_GAS_GWEI: 150,                    // above this, downsize notional by factor
-      DOWNSIZE_FACTOR: 0.5,                  // halve notional under stress
-      LOW_LIQUIDITY_NORM: 0.05,              // if liquidity norm < threshold, downsize and increase slippage guard
-      DISPERSION_HALT_PCT: 5.0,              // if dispersion beyond this, halt actions temporarily
-      HALT_COOLDOWN_MS: 5 * 60_000           // 5 minutes
+      HIGH_GAS_GWEI: 150,
+      DOWNSIZE_FACTOR: 0.5,
+      LOW_LIQUIDITY_NORM: 0.05,
+      DISPERSION_HALT_PCT: 5.0,
+      HALT_COOLDOWN_MS: 5 * 60_000
     },
-    // Competitive degradation → Cost-aware bidding and stealth routing
     COMPETITION: {
       ENABLED: true,
-      MAX_PRIORITY_FEE_GWEI: 4,              // cap priority fee bidding
-      RANDOMIZE_SPLITS: true,                // minor randomization of split ratios
-      BUDGET_PER_MINUTE_USD: 250000,         // hard budget cap to avoid arms race
-      COST_AWARE_SLIP_BIAS: 0.002            // bias minimum out to account for competition dynamics
+      MAX_PRIORITY_FEE_GWEI: 4,
+      RANDOMIZE_SPLITS: true,
+      BUDGET_PER_MINUTE_USD: 250000,
+      COST_AWARE_SLIP_BIAS: 0.002
     },
-    // Infrastructure dependency → Quorum + stale detection + backoff
     INFRA: {
       ENABLED: true,
-      MAX_PROVIDER_LATENCY_MS: 2000,         // prefer providers under 2s
-      STALE_BLOCK_THRESHOLD: 3,              // if block head lags >3 vs best, provider penalized
-      QUORUM_SIZE: 3,                        // minimum providers for fork check quorum
+      MAX_PROVIDER_LATENCY_MS: 2000,
+      STALE_BLOCK_THRESHOLD: 3,
+      QUORUM_SIZE: 3,
       BACKOFF_BASE_MS: 1000
     },
-    // Regulatory risk → Compliance modes
     COMPLIANCE: {
       MODE: (process.env.COMPLIANCE_MODE || 'standard'),
       STRICT: {
         DISABLE_SANDWICH: true,
-        DEFENSIVE_ONLY: true,                // no aggressive MEV; only protective cover
+        DEFENSIVE_ONLY: true,
         LOG_DECISIONS: true
       },
       STANDARD: {
@@ -232,7 +201,7 @@ const LIVE = {
    ========================================================================= */
 
 class IntelligentRPCManager {
-  constructor(rpcUrls, chainId = 1) {
+  constructor(rpcUrls, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
     this._patched = new PatchedRPCManagerSelfHosted(rpcUrls, chainId);
     this.initialized = false;
   }
@@ -242,7 +211,7 @@ class IntelligentRPCManager {
   async getBundlerProvider() { return await this._patched.getBundlerProvider(); }
 }
 
-const chainRegistry = new IntelligentRPCManager(LIVE.RPC_PROVIDERS, 1);
+const chainRegistry = new IntelligentRPCManager(LIVE.RPC_PROVIDERS, ENHANCED_CONFIG.NETWORK.chainId);
 
 /* =========================================================================
    Utilities
@@ -353,7 +322,6 @@ class UniversalDexAdapter {
       }
       if (!q) return null;
       q.latencyMs = Date.now() - t0;
-      // basic stale check guard
       if (q.latencyMs > 5000) return null;
       return q;
     } catch { return null; }
@@ -590,7 +558,7 @@ class MultiAnchorOracle {
       const q = await this.dexRegistry.getBestQuote(bwaeziAddr, a.address, amountProbe);
       if(!q?.best) continue;
       const out=q.best.amountOut; const liq=Number(q.best.liquidity||'0');
-      const usd = a.symbol==='WETH'?2000.0 : (a.symbol==='WBTC'? 40000.0 : 1.0); // rough anchors; replace with feed if desired
+      const usd = a.symbol==='WETH'?2000.0 : (a.symbol==='WBTC'? 40000.0 : 1.0);
       const perUnit = (Number(out)/Number(amountProbe))*usd;
       comps.push({symbol:a.symbol, perUnitUSD:perUnit, weight:liq});
     }
@@ -819,16 +787,13 @@ class EVGatingStrategyProxy {
       return ethUsd * eth;
     } catch { return 0; }
   }
-  // Risk-aware execution gate
   async executeIfEVPositive(mode, fn, args, tokenIn, tokenOut, notionalUSDC) {
     this.resetMinuteWindow();
 
-    // compliance: defensive-only? skip aggressive arbitrage mode
     if (this.compliance.isDefensiveOnly() && mode === 'arbitrage') {
       return { skipped: true, reason: 'compliance_defensive_only' };
     }
 
-    // budget cap
     const usdNotional = Number(ethers.formatUnits(notionalUSDC, 6));
     if ((this.minuteSpentUSD + usdNotional) > (LIVE.RISK.COMPETITION.BUDGET_PER_MINUTE_USD || 1e9)) {
       return { skipped: true, reason: 'budget_cap' };
@@ -843,12 +808,10 @@ class EVGatingStrategyProxy {
     const slipUSD = Number(ethers.formatUnits(notionalUSDC, 6)) * slipBase;
     const evUSD = (expectedOut / 1e6) - gasUSD - slipUSD;
 
-    // runaway guard and kill-switch
     if (this.health.runawayTriggered()) return { skipped: true, reason: 'circuit_breaker' };
     if (slipBase >= slipCeil) return { skipped: true, reason: 'slippage_ceiling', slipBase };
     if (evUSD <= 0) return { skipped: true, reason: 'negative_ev', evUSD, gasUSD, slipUSD };
 
-    // submit
     const res = await fn.apply(this.strategy, args);
     try {
       const id = this.strategy.verifier?.recent?.slice(-1)?.[0]?.id;
@@ -871,7 +834,7 @@ class EVGatingStrategyProxy {
 }
 
 /* =========================================================================
-   Strategy engine (peg watcher + arbitrage/rebalance) with health guard
+   Strategy engine (peg watcher + arbitrage/rebalance)
    ========================================================================= */
 
 function mapElementToFeeTier(elemental) { if (elemental === 'WATER') return 500; if (elemental === 'FIRE') return 10000; return 3000; }
@@ -1165,7 +1128,6 @@ class PolicyGovernor {
   async run(core) {
     const signals = await this.kernel.sense(LIVE.TOKENS.BWAEZI);
 
-    // adaptive market stress halt
     const feeData = await chainRegistry.getFeeData();
     const gasGwei = Number(ethers.formatUnits(feeData?.maxFeePerGas || ethers.parseUnits('30','gwei'), 'gwei'));
     if (this.health.marketStressHalt(signals.dispersionPct || 0, signals.liquidityNorm || 0, gasGwei)) {
@@ -1175,7 +1137,6 @@ class PolicyGovernor {
     const decision = this.kernel.decide(signals, this.pegUSD);
     if (decision.action === 'NOOP') return { skipped: true, reason: decision.reason, signals };
 
-    // adaptive downsizing under stress
     decision.usdNotional = this.health.adaptiveDownsize(decision.usdNotional, signals.liquidityNorm || 0, gasGwei);
 
     if (!this._withinCaps(decision.usdNotional)) return { skipped: true, reason: 'rate_cap', usd: decision.usdNotional, signals };
@@ -1286,7 +1247,7 @@ class StakedGovernanceRegistry {
 }
 
 /* =========================================================================
-   MEV recapture engine (defensive-first, regulatory-aware)
+   MEV recapture engine
    ========================================================================= */
 
 class MEVRecaptureEngine {
@@ -1304,7 +1265,6 @@ class MEVRecaptureEngine {
       return (pi > 1.5 && liq < 5e8);
     } catch { return false; }
   }
-  // Defensive split execution; randomized minor splits to avoid arms race predictability
   async splitAndExecute({ tokenIn, tokenOut, amountIn, recipient }) {
     const routes = LIVE.REFLEXIVE.SPLIT_ROUTES.slice();
     const baseParts = [0.4, 0.3, 0.3];
@@ -1325,7 +1285,6 @@ class MEVRecaptureEngine {
       const calldata = await adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn: partIn, amountOutMin: minOut, recipient });
       const execCalldata = this.mev.buildSCWExecute(LIVE.DEXES[routes[i]].router, calldata);
 
-      // Priority fee cap
       const sendRes = this.mev.sendCall(execCalldata, { description: `split_exec_${routes[i]}` });
       txs.push(sendRes);
 
@@ -1337,9 +1296,6 @@ class MEVRecaptureEngine {
     return results;
   }
   async backrunCover({ tokenIn, tokenOut, amountIn }) {
-    if (this.compliance.sandwichDisabled() && this.compliance.isDefensiveOnly() === false) {
-      // in standard mode, we still do defensive cover only (not aggressive)
-    }
     const adapter = this.dexRegistry.getAdapter('UNISWAP_V3');
     const microIn = amountIn / 10n;
     const q = await adapter.getQuote(tokenOut, tokenIn, microIn);
@@ -1501,7 +1457,7 @@ class ReflexiveAmplifier {
 }
 
 /* =========================================================================
-   Quorum RPC
+   Quorum RPC — PERMANENT FIX: use forced-network provider constructor only
    ========================================================================= */
 
 class QuorumRPC {
@@ -1509,8 +1465,12 @@ class QuorumRPC {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-    this.providers = registry._patched? registry._patched._enhancedManager.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }))
-                                     : registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
+
+    const urls = (registry._patched? registry._patched._enhancedManager.rpcUrls : registry.rpcUrls).slice(0, quorumSize);
+    this.providers = urls.map(url =>
+      createNetworkForcedProvider(url, ENHANCED_CONFIG.NETWORK.chainId)
+    );
+
     this.lastForkAlert = null;
     this.health = [];
   }
@@ -1570,17 +1530,14 @@ class ProductionSovereignCore extends EventEmitter {
     this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
-    // Self-hosted AA bound to v0.7 EP under the hood (keeps dual EP logic for bootstrap)
     const aa = new AASDK_SelfHosted(this.signer, LIVE.ENTRY_POINT_V07);
     await aa.initialize(this.provider, LIVE.SCW_ADDRESS);
     chainRegistry._patched.setSelfHostedInfrastructure(aa.selfBundler, aa.selfPaymaster);
     this.aa = aa;
 
-    // Legacy minimal bootstrap (deposit+approval)
     try { await bootstrapSCWForPaymaster({ signer:this.signer, createUserOp: aa.createUserOp.bind(aa), signUserOp: aa.signUserOp.bind(aa), sendUserOpWithBackoff: aa.sendUserOpWithBackoff.bind(aa) }); } catch(e){ console.warn('Bootstrap AA fallback skipped:', e.message); }
     try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ /* optional enhanced path */ }
 
-    // Core adapters
     this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.oracle = new MultiAnchorOracle(this.provider, this.dexRegistry);
     this.entropy = new EntropyShockDetector();
@@ -1589,7 +1546,6 @@ class ProductionSovereignCore extends EventEmitter {
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, { listStreams(){return[];} }, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    // v13.6 kernel + governor (risk-aware)
     const quorum = new QuorumRPC(chainRegistry, LIVE.RISK.INFRA.QUORUM_SIZE || 3, 2);
     const advancedOracle = new AdvancedOracle(this.provider, this.dexRegistry);
     const evProxy = new EVGatingStrategyProxy(this.strategy, this.dexRegistry, this.verifier, this.provider, this.health, this.compliance);
@@ -1598,14 +1554,11 @@ class ProductionSovereignCore extends EventEmitter {
     this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, { listStreams(){return[];} }, LIVE.PEG.TARGET_USD, this.health);
     console.log('Policy sealed:', this.policyHash);
 
-    // MEV recapture + amplifier (defensive-aware)
     this.recapture = new MEVRecaptureEngine(this.mev, this.dexRegistry, this.provider, this.compliance);
     this.amplifier = new ReflexiveAmplifier(this.kernel, this.provider, this.oracle, this.dexRegistry, this.verifier, this.mev, this.accumulator);
 
-    // Start peg watcher
     await this.strategy.watchPeg();
 
-    // Maker periodic adjust (optional)
     this.loops.push(setInterval(async () => {
       try {
         const adj = await (new AdaptiveRangeMaker(this.provider, this.signer, this.dexRegistry, this.entropy)).periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -1616,7 +1569,6 @@ class ProductionSovereignCore extends EventEmitter {
       } catch (e) { console.warn('maker adjust error:', e.message); }
     }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
 
-    // Decision loop (15s)
     this.loops.push(setInterval(async () => {
       try {
         const result = await this.governor.run(this);
@@ -1626,7 +1578,6 @@ class ProductionSovereignCore extends EventEmitter {
           this.stats.lastProfitUSD = result.packet?.ev?.evUSD || 0;
           this.lastDecision = result.packet;
 
-          // Anchor decision packet on-chain via calldata (quick proof)
           const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(result.packet)));
           const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
           await tx.wait();
@@ -1640,7 +1591,6 @@ class ProductionSovereignCore extends EventEmitter {
       }
     }, 15_000));
 
-    // Amplifier loop (20s)
     this.loops.push(setInterval(async () => {
       try {
         const result = await this.amplifier.checkAndTrigger(this.recapture);
@@ -1666,7 +1616,8 @@ class ProductionSovereignCore extends EventEmitter {
   }
 
   startWS(port=8082) {
-    this.wss = new WebSocket.Server({ port });
+    // PERMANENT FIX: use WebSocketServer in ESM
+    this.wss = new WebSocketServer({ port });
     this.wss.on('connection', ws => {
       this.clients.add(ws);
       ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, status: this.status, ts: Date.now() }));
@@ -1676,7 +1627,7 @@ class ProductionSovereignCore extends EventEmitter {
   }
   broadcast(message) {
     const s = JSON.stringify({ ...message, ts: Date.now() });
-    for (const c of this.clients) { if (c.readyState === WebSocket.OPEN) c.send(s); }
+    for (const c of this.clients) { if (c.readyState === 1 /* WebSocket.OPEN */) c.send(s); }
   }
 
   getStats(){
@@ -1722,17 +1673,14 @@ class APIServer {
     this.app.get('/dex/health', async (req,res)=> { try { const health = await this.core.dexRegistry.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ...health, ts: Date.now() }); } catch (e) { res.status(500).json({ error: e.message }); } });
     this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dexRegistry.getScores(), ts: Date.now() }));
 
-    // v13.6 endpoints
     this.app.get('/v13.6/policy', (req, res) => { res.json({ policyHash: this.core.policyHash || null, manifest: V13_6_MANIFEST, ts: Date.now() }); });
     this.app.get('/v13.6/decision/last', (req, res) => { res.json({ last: this.core.lastDecision || null, ts: Date.now() }); });
     this.app.get('/v13.6/signals/last', (req, res) => { res.json({ signals: this.core.kernel?.state?.lastSignals || null, ts: Date.now() }); });
 
-    // Equation state + accumulator + risk
     this.app.get('/v13.9/equation-state', (req,res)=> res.json({ equation: this.core.amplifier.getEquationState(), ts: Date.now() }));
     this.app.get('/v13.9/accumulator', (req,res)=> res.json({ merkleRoot: this.core.accumulator.merkleRoot, perceptionIndex: this.core.accumulator.getPerceptionIndex(), ts: Date.now() }));
     this.app.get('/v13.9/risk', (req,res)=> res.json({ risk: LIVE.RISK, ts: Date.now() }));
 
-    // Toggle global kill switch (POST /risk/kill-switch?enabled=true|false)
     this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
       const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
       LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
