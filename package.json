@@ -157,22 +157,4 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/arielsql-alltimate.git"
-  },
-  "bugs": {
-    "url": "https://github.com/your-username/arielsql-alltimate/issues"
-  },
-  "homepage": "https://github.com/your-username/arielsql-alltimate#readme",
-  "funding": {
-    "type": "patreon",
-    "url": "https://patreon.com/yourusername"
-  },
-  "wasm": {
-    "modules": {
-      "kyber": [512, 768, 1024],
-      "dilithium": [2, 3, 5]
-    },
-    "build": {
-      "source": "https://github.com/PQClean/PQClean",
-      "compiler": "emscripten",
-      "
+    "url": "https://github.com/your-username/arielsql-alltimate
