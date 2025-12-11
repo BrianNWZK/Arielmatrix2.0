@@ -96,7 +96,7 @@
     "big.js": "^6.2.2",
     "twitter-api-v2": "^1.17.0",
     "@storacha/client": "^1.8.12",
-    "@multiformats/multiaddr": "^13.0.1",
+    "@multiformats/multiaddr": "^12.1.7",
     "@multiformats/multiaddr-to-uri": "^11.0.0",
     "lru-cache": "^11.0.1",
     "rimraf": "^6.0.1",
@@ -169,13 +169,4 @@
   },
   "wasm": {
     "modules": {
-      "kyber": [512, 768, 1024],
-      "dilithium": [2, 3, 5]
-    },
-    "build": {
-      "source": "https://github.com/PQClean/PQClean",
-      "compiler": "emscripten",
-      "optimization": "-Os"
-    }
-  }
-}
+      "kyber": [512, 768
