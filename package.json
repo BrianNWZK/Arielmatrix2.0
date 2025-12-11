@@ -95,7 +95,6 @@
     "cors": "^2.8.5",
     "big.js": "^6.2.2",
     "twitter-api-v2": "^1.17.0",
-
     "@storacha/client": "^17.2.0",
     "@multiformats/multiaddr": "^12.2.0",
     "@multiformats/multiaddr-to-uri": "^12.2.0",
@@ -132,19 +131,12 @@
     "gauge": "^5.0.2",
     "are-we-there-yet": "^4.0.2",
     "sharp": "^0.33.5",
-    "pqclean": {
-      "rimraf": "^6.0.1"
-    },
     "web3.storage": "$@storacha/client",
     "@web3-storage/w3up-client": "$@storacha/client",
     "@web3-storage/*": "$@storacha/*",
     "multiaddr": "$@multiformats/multiaddr",
-    "multiaddr-to-uri": "$@multiformats/multi-to-uri",
+    "multiaddr-to-uri": "$@multiformats/multiaddr-to-uri",
     "crypto": "node:crypto"
-  },
-  "resolutions": {
-    "glob": "^11.0.0",
-    "rimraf": "^6.0.1"
   },
   "keywords": [
     "autonomous-ai",
@@ -176,7 +168,6 @@
     "url": "https://patreon.com/yourusername"
   },
   "wasm": {
-    {
     "modules": {
       "kyber": [512, 768, 1024],
       "dilithium": [2, 3, 5]
