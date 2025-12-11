@@ -1,5 +1,5 @@
 /**
- * core/sovereign-brain.v13.7.js
+ * core/sovereign-brain.js
  *
  * SOVEREIGN MEV BRAIN v13.7 — Unified Core + Consciousness Kernel + Policy Governor
  * - Preserves v13.5.9 core completely, incorporating v13.6 kernel/governor as an integrated layer
@@ -36,7 +36,7 @@ import {
   PatchedIntelligentRPCManager as PatchedRPCManagerSelfHosted,
   bootstrapSCWForPaymasterEnhanced,
   ENHANCED_CONFIG
-} from '../modules/aa-loaves-fishes.js';
+} from './modules/aa-loaves-fishes.js';
 
 /* =========================================================================
    Configuration
@@ -86,7 +86,7 @@ const LIVE = {
     UNISWAP_V2: {
       name: 'Uniswap V2',
       router:  addrStrict('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
-      factory: addrStrict('0x5C69bEe701ef814a2B6a3EdDd4B1652CB9cc5aA6f')
+      factory: addrStrict('0x5C69bEe701ef814a2B6a3EdDd4B1652CB9cc5aA6')
     },
     SUSHI_V2: {
       name: 'Sushi V2',
@@ -103,10 +103,13 @@ const LIVE = {
     }
   },
 
-  // Stable public RPC endpoints (with forced network behavior via Patched manager)
+  // Stable public RPC endpoints (with optional keys)
   RPC_PROVIDERS: [
-    'https://ethereum-rpc.publicnode.com', // primary
+    ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
+    ...(process.env.INFURA_PROJECT_ID ? [`https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`] : []),
     'https://rpc.ankr.com/eth',
+    'https://cloudflare-eth.com',
+    'https://ethereum.publicnode.com',
     'https://eth.llamarpc.com'
   ],
 
@@ -1143,12 +1146,8 @@ class QuorumRPC {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-
-    // Use the patched manager’s rpcUrls and always force network
-    const urls = registry._patched ? registry._patched.rpcUrls : [];
-    this.providers = (urls.length ? urls.slice(0, quorumSize) : LIVE.RPC_PROVIDERS.slice(0, quorumSize))
-      .map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }));
-
+    this.providers = registry._patched? registry._patched._enhancedManager.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(new ethers.FetchRequest(url), { chainId: 1, name: 'mainnet' }))
+                                     : registry.rpcUrls.slice(0, quorumSize).map(url => new ethers.JsonRpcProvider(url, 1));
     this.lastForkAlert = null;
     this.health = [];
   }
