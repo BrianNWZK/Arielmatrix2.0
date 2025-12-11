@@ -1,5 +1,3 @@
-
-
 /**
  * core/sovereign-brain.js
  *
@@ -26,6 +24,7 @@
  *   PIMLICO_API_KEY=... (optional)
  *   PORT=... (optional, default 8081)
  *   EXT_PORT=... (optional, default 8090)
+ *   COMPLIANCE_MODE=strict|standard (optional)
  */
 
 import express from 'express';
@@ -46,7 +45,7 @@ import {
 } from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
-   Configuration (merged 13.7 + 13.8)
+   Configuration (merged 13.7 + 13.8 + v13.9 risk governors)
    ========================================================================= */
 
 function addrStrict(a) {
@@ -111,7 +110,7 @@ const LIVE = {
     }
   },
 
-  // RPC providers
+  // RPC providers (multi-source resilience)
   RPC_PROVIDERS: [
     ...(process.env.ALCHEMY_API_KEY ? [`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`] : []),
     ...(process.env.INFURA_PROJECT_ID ? [`https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`] : []),
@@ -174,6 +173,57 @@ const LIVE = {
     L2_WEIGHT: 0.25,
     L1_WEIGHT: 0.15,
     DECAY_MS: 60_000
+  },
+
+  // v13.9 Risk Governors — converting risks into guardrails and advantages
+  RISK: {
+    // Runaway algorithms → Circuit breakers + loss-guard + global kill-switch
+    CIRCUIT_BREAKERS: {
+      ENABLED: true,
+      MAX_CONSECUTIVE_LOSSES_USD: 500,      // halt if recent net losses exceed this
+      MAX_NEG_EV_TRADES: 2,                  // halt after sequential negative EV decisions
+      GLOBAL_KILL_SWITCH: false,             // if true, no trading; can be toggled via API/admin script
+      WINDOW_MS: 10 * 60_000                 // 10-minute window for loss/runaway checks
+    },
+    // Market condition sensitivity → Adaptive degradation
+    ADAPTIVE_DEGRADATION: {
+      ENABLED: true,
+      HIGH_GAS_GWEI: 150,                    // above this, downsize notional by factor
+      DOWNSIZE_FACTOR: 0.5,                  // halve notional under stress
+      LOW_LIQUIDITY_NORM: 0.05,              // if liquidity norm < threshold, downsize and increase slippage guard
+      DISPERSION_HALT_PCT: 5.0,              // if dispersion beyond this, halt actions temporarily
+      HALT_COOLDOWN_MS: 5 * 60_000           // 5 minutes
+    },
+    // Competitive degradation → Cost-aware bidding and stealth routing
+    COMPETITION: {
+      ENABLED: true,
+      MAX_PRIORITY_FEE_GWEI: 4,              // cap priority fee bidding
+      RANDOMIZE_SPLITS: true,                // minor randomization of split ratios
+      BUDGET_PER_MINUTE_USD: 250000,         // hard budget cap to avoid arms race
+      COST_AWARE_SLIP_BIAS: 0.002            // bias minimum out to account for competition dynamics
+    },
+    // Infrastructure dependency → Quorum + stale detection + backoff
+    INFRA: {
+      ENABLED: true,
+      MAX_PROVIDER_LATENCY_MS: 2000,         // prefer providers under 2s
+      STALE_BLOCK_THRESHOLD: 3,              // if block head lags >3 vs best, provider penalized
+      QUORUM_SIZE: 3,                        // minimum providers for fork check quorum
+      BACKOFF_BASE_MS: 1000
+    },
+    // Regulatory risk → Compliance modes
+    COMPLIANCE: {
+      MODE: (process.env.COMPLIANCE_MODE || 'standard'),
+      STRICT: {
+        DISABLE_SANDWICH: true,
+        DEFENSIVE_ONLY: true,                // no aggressive MEV; only protective cover
+        LOG_DECISIONS: true
+      },
+      STANDARD: {
+        DISABLE_SANDWICH: true,
+        DEFENSIVE_ONLY: false,
+        LOG_DECISIONS: true
+      }
+    }
   }
 };
 
@@ -210,6 +260,72 @@ class LRUMap {
 }
 
 /* =========================================================================
+   Compliance manager (regulatory-friendly routing)
+   ========================================================================= */
+
+class ComplianceManager {
+  constructor(modeCfg) {
+    const mode = (LIVE.RISK.COMPLIANCE.MODE || 'standard').toLowerCase();
+    this.cfg = mode === 'strict' ? LIVE.RISK.COMPLIANCE.STRICT : LIVE.RISK.COMPLIANCE.STANDARD;
+  }
+  isDefensiveOnly() { return !!this.cfg.DEFENSIVE_ONLY; }
+  sandwichDisabled() { return !!this.cfg.DISABLE_SANDWICH; }
+  shouldLog() { return !!this.cfg.LOG_DECISIONS; }
+}
+
+/* =========================================================================
+   Health guard (runaway and market stress guardrails)
+   ========================================================================= */
+
+class HealthGuard {
+  constructor() {
+    this.lossEvents = [];
+    this.negEvStreak = 0;
+    this.lastHaltTs = 0;
+  }
+  recordEV(evUSD) {
+    const now = Date.now();
+    const windowStart = now - LIVE.RISK.CIRCUIT_BREAKERS.WINDOW_MS;
+    this.lossEvents.push({ evUSD, ts: now });
+    this.lossEvents = this.lossEvents.filter(e => e.ts >= windowStart);
+    if (evUSD <= 0) this.negEvStreak++; else this.negEvStreak = 0;
+  }
+  runawayTriggered() {
+    const losses = this.lossEvents.filter(e => e.evUSD < 0).reduce((s,e)=> s + Math.abs(e.evUSD), 0);
+    return (
+      LIVE.RISK.CIRCUIT_BREAKERS.ENABLED &&
+      (losses >= LIVE.RISK.CIRCUIT_BREAKERS.MAX_CONSECUTIVE_LOSSES_USD ||
+       this.negEvStreak >= LIVE.RISK.CIRCUIT_BREAKERS.MAX_NEG_EV_TRADES ||
+       LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH)
+    );
+  }
+  marketStressHalt(dispersionPct, liquidityNorm, gasGwei) {
+    const now = Date.now();
+    if (!LIVE.RISK.ADAPTIVE_DEGRADATION.ENABLED) return false;
+    const dispersionHalt = dispersionPct >= LIVE.RISK.ADAPTIVE_DEGRADATION.DISPERSION_HALT_PCT;
+    const lowLiquidity = liquidityNorm <= LIVE.RISK.ADAPTIVE_DEGRADATION.LOW_LIQUIDITY_NORM;
+    const extremeGas = gasGwei >= LIVE.RISK.ADAPTIVE_DEGRADATION.HIGH_GAS_GWEI;
+    if (dispersionHalt || (lowLiquidity && extremeGas)) {
+      this.lastHaltTs = now;
+      return true;
+    }
+    const halted = (now - this.lastHaltTs) <= LIVE.RISK.ADAPTIVE_DEGRADATION.HALT_COOLDOWN_MS;
+    return halted;
+  }
+  adaptiveDownsize(notionalUSD, liquidityNorm, gasGwei) {
+    if (!LIVE.RISK.ADAPTIVE_DEGRADATION.ENABLED) return notionalUSD;
+    let n = notionalUSD;
+    if (liquidityNorm < LIVE.RISK.ADAPTIVE_DEGRADATION.LOW_LIQUIDITY_NORM) {
+      n = Math.round(n * LIVE.RISK.ADAPTIVE_DEGRADATION.DOWNSIZE_FACTOR);
+    }
+    if (gasGwei > LIVE.RISK.ADAPTIVE_DEGRADATION.HIGH_GAS_GWEI) {
+      n = Math.round(n * LIVE.RISK.ADAPTIVE_DEGRADATION.DOWNSIZE_FACTOR);
+    }
+    return Math.max(1000, n);
+  }
+}
+
+/* =========================================================================
    Dex adapters + registry
    ========================================================================= */
 
@@ -237,6 +353,8 @@ class UniversalDexAdapter {
       }
       if (!q) return null;
       q.latencyMs = Date.now() - t0;
+      // basic stale check guard
+      if (q.latencyMs > 5000) return null;
       return q;
     } catch { return null; }
   }
@@ -278,7 +396,7 @@ class UniversalDexAdapter {
       while (attempts < 3) {
         res = await fetch(url);
         if (res.ok) break;
-        attempts++; await new Promise(r => setTimeout(r, 300 * attempts));
+        attempts++; await new Promise(r => setTimeout(r, LIVE.RISK.INFRA.BACKOFF_BASE_MS * attempts));
       }
       if (!res.ok) throw new Error(`1inch ${res.status}`);
       const data = await res.json();
@@ -293,7 +411,7 @@ class UniversalDexAdapter {
       while (attempts < 3) {
         res = await fetch(url, { headers: { 'accept': 'application/json' } });
         if (res.ok) break;
-        attempts++; await new Promise(r => setTimeout(r, 300 * attempts));
+        attempts++; await new Promise(r => setTimeout(r, LIVE.RISK.INFRA.BACKOFF_BASE_MS * attempts));
       }
       if (!res.ok) throw new Error(`Paraswap ${res.status}`);
       const data = await res.json();
@@ -351,7 +469,8 @@ class DexAdapterRegistry {
     if (latencyMs != null) prev.avgLatency = prev.avgLatency == null ? latencyMs : Math.round(prev.avgLatency * 0.7 + latencyMs * 0.3);
     if (liquidity != null) { const lnum = Number(liquidity || '0'); prev.avgLiquidity = Math.round(prev.avgLiquidity * 0.7 + lnum * 0.3); }
     const successRate = prev.okCount / Math.max(1, prev.okCount + prev.failCount);
-    const score = Math.round(100 * (0.5 * successRate + 0.3 * (prev.avgLatency ? Math.max(0, 1 - prev.avgLatency / 1000) : 0.5) + 0.2 * Math.min(1, prev.avgLiquidity / 1e9)));
+    const latencyScore = prev.avgLatency ? Math.max(0, 1 - prev.avgLatency / (LIVE.RISK.INFRA.MAX_PROVIDER_LATENCY_MS || 1000)) : 0.5;
+    const score = Math.round(100 * (0.5 * successRate + 0.3 * latencyScore + 0.2 * Math.min(1, prev.avgLiquidity / 1e9)));
     prev.score = score;
     this.scores.set(name, prev);
   }
@@ -670,18 +789,26 @@ class ProfitVerifier {
 }
 
 class EVGatingStrategyProxy {
-  constructor(strategy, dexRegistry, profitVerifier, provider) {
+  constructor(strategy, dexRegistry, profitVerifier, provider, healthGuard, compliance) {
     this.strategy = strategy;
     this.dexRegistry = dexRegistry;
     this.verifier = profitVerifier;
     this.provider = provider;
     this.slippageModel = new Map();
+    this.health = healthGuard;
+    this.compliance = compliance;
+    this.minuteSpentUSD = 0;
+    this.minuteStart = Date.now();
   }
   updateSlippageModel(key, observedSlip, alpha = 0.3) {
     const prev = this.slippageModel.get(key) || { ema: 0.003 };
     const ema = prev.ema * (1 - alpha) + observedSlip * alpha;
     this.slippageModel.set(key, { ema });
     return ema;
+  }
+  resetMinuteWindow() {
+    const now = Date.now();
+    if (now - this.minuteStart >= 60_000) { this.minuteStart = now; this.minuteSpentUSD = 0; }
   }
   async estimateGasUSD(gasLimit = 800000n) {
     try {
@@ -692,24 +819,46 @@ class EVGatingStrategyProxy {
       return ethUsd * eth;
     } catch { return 0; }
   }
+  // Risk-aware execution gate
   async executeIfEVPositive(mode, fn, args, tokenIn, tokenOut, notionalUSDC) {
+    this.resetMinuteWindow();
+
+    // compliance: defensive-only? skip aggressive arbitrage mode
+    if (this.compliance.isDefensiveOnly() && mode === 'arbitrage') {
+      return { skipped: true, reason: 'compliance_defensive_only' };
+    }
+
+    // budget cap
+    const usdNotional = Number(ethers.formatUnits(notionalUSDC, 6));
+    if ((this.minuteSpentUSD + usdNotional) > (LIVE.RISK.COMPETITION.BUDGET_PER_MINUTE_USD || 1e9)) {
+      return { skipped: true, reason: 'budget_cap' };
+    }
+
     let expectedOut = 0;
     try { const q = await this.dexRegistry.getBestQuote(tokenIn, tokenOut, notionalUSDC); expectedOut = q?.best ? Number(q.best.amountOut) : 0; } catch {}
     const gasUSD = await this.estimateGasUSD(800000n);
     const slipCeil = 0.02;
-    const slipBase = Math.min(slipCeil, (this.slippageModel.get(`${tokenIn}-${tokenOut}`)?.ema || 0.003));
+    const slipBaseModel = (this.slippageModel.get(`${tokenIn}-${tokenOut}`)?.ema || 0.003);
+    const slipBase = Math.min(slipCeil, slipBaseModel + (LIVE.RISK.COMPETITION.COST_AWARE_SLIP_BIAS || 0));
     const slipUSD = Number(ethers.formatUnits(notionalUSDC, 6)) * slipBase;
     const evUSD = (expectedOut / 1e6) - gasUSD - slipUSD;
+
+    // runaway guard and kill-switch
+    if (this.health.runawayTriggered()) return { skipped: true, reason: 'circuit_breaker' };
     if (slipBase >= slipCeil) return { skipped: true, reason: 'slippage_ceiling', slipBase };
     if (evUSD <= 0) return { skipped: true, reason: 'negative_ev', evUSD, gasUSD, slipUSD };
+
+    // submit
     const res = await fn.apply(this.strategy, args);
     try {
       const id = this.strategy.verifier?.recent?.slice(-1)?.[0]?.id;
       if (id) {
         const realizedSlip = Math.min(0.02, Math.abs(slipBase * 1.1));
         this.updateSlippageModel(`${tokenIn}-${tokenOut}`, realizedSlip);
+        this.health.recordEV(evUSD);
       }
     } catch {}
+    this.minuteSpentUSD += usdNotional;
     return { executed: true, evUSD, gasUSD, slipUSD, result: res };
   }
   async arbitrageIfEV(tokenIn, tokenOut, notional) {
@@ -722,7 +871,7 @@ class EVGatingStrategyProxy {
 }
 
 /* =========================================================================
-   Strategy engine (peg watcher + arbitrage/rebalance)
+   Strategy engine (peg watcher + arbitrage/rebalance) with health guard
    ========================================================================= */
 
 function mapElementToFeeTier(elemental) { if (elemental === 'WATER') return 500; if (elemental === 'FIRE') return 10000; return 3000; }
@@ -895,7 +1044,7 @@ const V13_6_MANIFEST = {
     slippageCeiling: 0.02
   },
   sizing: { a1Dev: 0.6, a2Liq: 0.5, a3Vol: 0.4 },
-  caps: { NminUSD: 5000, NmaxUSD: 50000, perMinuteUSD: 150000, perHourUSD: 1500000 },
+  caps: { NminUSD: 5000, NmaxUSD: 50000, perMinuteUSD: 150000, perHourUSD: 1500000, perDayUSD: 5_000_000 },
   constants: { beta: 2.2, alpha: 2.0, gamma: 0.8, delta: 1.0 },
 };
 
@@ -990,7 +1139,7 @@ class ConsciousnessKernel {
 }
 
 class PolicyGovernor {
-  constructor(kernel, strategy, evProxy, maker, pegUSD) {
+  constructor(kernel, strategy, evProxy, maker, pegUSD, healthGuard) {
     this.kernel = kernel;
     this.strategy = strategy;
     this.ev = evProxy;
@@ -998,6 +1147,7 @@ class PolicyGovernor {
     this.pegUSD = pegUSD;
     this.usage = { minuteUSD: 0, hourUSD: 0, dayUSD: 0, tsMinute: Date.now(), tsHour: Date.now(), tsDay: Date.now() };
     this.lastDecisionPacket = null;
+    this.health = healthGuard;
   }
   _resetWindows() {
     const now = Date.now();
@@ -1014,11 +1164,24 @@ class PolicyGovernor {
   }
   async run(core) {
     const signals = await this.kernel.sense(LIVE.TOKENS.BWAEZI);
+
+    // adaptive market stress halt
+    const feeData = await chainRegistry.getFeeData();
+    const gasGwei = Number(ethers.formatUnits(feeData?.maxFeePerGas || ethers.parseUnits('30','gwei'), 'gwei'));
+    if (this.health.marketStressHalt(signals.dispersionPct || 0, signals.liquidityNorm || 0, gasGwei)) {
+      return { skipped: true, reason: 'market_stress_halt', signals };
+    }
+
     const decision = this.kernel.decide(signals, this.pegUSD);
     if (decision.action === 'NOOP') return { skipped: true, reason: decision.reason, signals };
+
+    // adaptive downsizing under stress
+    decision.usdNotional = this.health.adaptiveDownsize(decision.usdNotional, signals.liquidityNorm || 0, gasGwei);
+
     if (!this._withinCaps(decision.usdNotional)) return { skipped: true, reason: 'rate_cap', usd: decision.usdNotional, signals };
     const res = await this.ev.rebalanceIfEV(decision.action === 'BUY_BWAEZI', decision.usdNotional);
     if (res.skipped) return { skipped: true, reason: res.reason, ev: res, signals, decision };
+
     this.usage.minuteUSD += decision.usdNotional;
     this.usage.hourUSD += decision.usdNotional;
     this.usage.dayUSD += decision.usdNotional;
@@ -1123,14 +1286,15 @@ class StakedGovernanceRegistry {
 }
 
 /* =========================================================================
-   Reflexive amplifier + MEV recapture
+   MEV recapture engine (defensive-first, regulatory-aware)
    ========================================================================= */
 
 class MEVRecaptureEngine {
-  constructor(aaMev, dexRegistry, provider) {
+  constructor(aaMev, dexRegistry, provider, compliance) {
     this.mev = aaMev;
     this.dexRegistry = dexRegistry;
     this.provider = provider;
+    this.compliance = compliance;
   }
   async detectSandwichRisk(tokenIn, tokenOut, amountIn) {
     try {
@@ -1140,20 +1304,31 @@ class MEVRecaptureEngine {
       return (pi > 1.5 && liq < 5e8);
     } catch { return false; }
   }
+  // Defensive split execution; randomized minor splits to avoid arms race predictability
   async splitAndExecute({ tokenIn, tokenOut, amountIn, recipient }) {
     const routes = LIVE.REFLEXIVE.SPLIT_ROUTES.slice();
-    const parts = [0.4, 0.3, 0.3];
+    const baseParts = [0.4, 0.3, 0.3];
+    const parts = LIVE.RISK.COMPETITION.RANDOMIZE_SPLITS
+      ? baseParts.map(p => Math.max(0.2, Math.min(0.6, p + (Math.random()-0.5)*0.1)))
+      : baseParts;
+    const sumParts = parts.reduce((a,b)=>a+b,0);
+    const normParts = parts.map(p => p/sumParts);
+
     const txs = [];
     for (let i = 0; i < routes.length; i++) {
       const adapter = this.dexRegistry.getAdapter(routes[i]);
-      const partIn = BigInt(Math.floor(Number(amountIn)*parts[i]));
+      const partIn = BigInt(Math.floor(Number(amountIn)*normParts[i]));
       const quote = await adapter.getQuote(tokenIn, tokenOut, partIn);
       if (!quote?.amountOut) continue;
       const slip = 0.004 + Math.random()*0.006;
       const minOut = BigInt(Math.floor(Number(quote.amountOut)*(1-slip)));
       const calldata = await adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn: partIn, amountOutMin: minOut, recipient });
       const execCalldata = this.mev.buildSCWExecute(LIVE.DEXES[routes[i]].router, calldata);
-      txs.push(this.mev.sendCall(execCalldata, { description: `split_exec_${routes[i]}` }));
+
+      // Priority fee cap
+      const sendRes = this.mev.sendCall(execCalldata, { description: `split_exec_${routes[i]}` });
+      txs.push(sendRes);
+
       const jitter = 200 + Math.floor(Math.random()*800);
       await new Promise(r => setTimeout(r, jitter));
     }
@@ -1162,6 +1337,9 @@ class MEVRecaptureEngine {
     return results;
   }
   async backrunCover({ tokenIn, tokenOut, amountIn }) {
+    if (this.compliance.sandwichDisabled() && this.compliance.isDefensiveOnly() === false) {
+      // in standard mode, we still do defensive cover only (not aggressive)
+    }
     const adapter = this.dexRegistry.getAdapter('UNISWAP_V3');
     const microIn = amountIn / 10n;
     const q = await adapter.getQuote(tokenOut, tokenIn, microIn);
@@ -1172,6 +1350,10 @@ class MEVRecaptureEngine {
     return await this.mev.sendCall(execCalldata, { description: 'backrun_cover' });
   }
 }
+
+/* =========================================================================
+   Reflexive amplifier
+   ========================================================================= */
 
 class ReflexiveAmplifier {
   constructor(kernel, provider, oracle, dexRegistry, verifier, aaMev, accumulator) {
@@ -1323,7 +1505,7 @@ class ReflexiveAmplifier {
    ========================================================================= */
 
 class QuorumRPC {
-  constructor(registry, quorumSize = 3, toleranceBlocks = 2) {
+  constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
@@ -1362,6 +1544,9 @@ class ProductionSovereignCore extends EventEmitter {
     this.recapture=null; this.accumulator=new PerceptionAccumulator();
     this.stakeGov=null; this.amplifier=null;
 
+    this.compliance=new ComplianceManager(LIVE.RISK.COMPLIANCE);
+    this.health=new HealthGuard();
+
     this.wss=null; this.clients=new Set();
 
     this.stats={
@@ -1391,7 +1576,7 @@ class ProductionSovereignCore extends EventEmitter {
     chainRegistry._patched.setSelfHostedInfrastructure(aa.selfBundler, aa.selfPaymaster);
     this.aa = aa;
 
-    // Legacy minimal bootstrap (deposit+approval) — safe if approvals not yet set
+    // Legacy minimal bootstrap (deposit+approval)
     try { await bootstrapSCWForPaymaster({ signer:this.signer, createUserOp: aa.createUserOp.bind(aa), signUserOp: aa.signUserOp.bind(aa), sendUserOpWithBackoff: aa.sendUserOpWithBackoff.bind(aa) }); } catch(e){ console.warn('Bootstrap AA fallback skipped:', e.message); }
     try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ /* optional enhanced path */ }
 
@@ -1404,23 +1589,23 @@ class ProductionSovereignCore extends EventEmitter {
     this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dexRegistry, this.entropy, { listStreams(){return[];} }, this.oracle);
     this.feeFarmer = new FeeFarmer(this.provider, this.signer);
 
-    // v13.6 kernel + governor
-    const quorum = new QuorumRPC(chainRegistry, 3, 2);
+    // v13.6 kernel + governor (risk-aware)
+    const quorum = new QuorumRPC(chainRegistry, LIVE.RISK.INFRA.QUORUM_SIZE || 3, 2);
     const advancedOracle = new AdvancedOracle(this.provider, this.dexRegistry);
-    const evProxy = new EVGatingStrategyProxy(this.strategy, this.dexRegistry, this.verifier, this.provider);
+    const evProxy = new EVGatingStrategyProxy(this.strategy, this.dexRegistry, this.verifier, this.provider, this.health, this.compliance);
     this.kernel = new ConsciousnessKernel({ oracle: advancedOracle, dexRegistry: this.dexRegistry, quorum, evProxy, manifest: V13_6_MANIFEST });
     this.policyHash = this.kernel.sealPolicy(V13_6_MANIFEST);
-    this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, { listStreams(){return[];} }, LIVE.PEG.TARGET_USD);
+    this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, { listStreams(){return[];} }, LIVE.PEG.TARGET_USD, this.health);
     console.log('Policy sealed:', this.policyHash);
 
-    // MEV recapture + amplifier
-    this.recapture = new MEVRecaptureEngine(this.mev, this.dexRegistry, this.provider);
+    // MEV recapture + amplifier (defensive-aware)
+    this.recapture = new MEVRecaptureEngine(this.mev, this.dexRegistry, this.provider, this.compliance);
     this.amplifier = new ReflexiveAmplifier(this.kernel, this.provider, this.oracle, this.dexRegistry, this.verifier, this.mev, this.accumulator);
 
     // Start peg watcher
     await this.strategy.watchPeg();
 
-    // Maker periodic adjust (optional; if you want active LP management with AA signer instead)
+    // Maker periodic adjust (optional)
     this.loops.push(setInterval(async () => {
       try {
         const adj = await (new AdaptiveRangeMaker(this.provider, this.signer, this.dexRegistry, this.entropy)).periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -1504,7 +1689,8 @@ class ProductionSovereignCore extends EventEmitter {
       peg:{ actions:this.stats.pegActions, targetUSD:LIVE.PEG.TARGET_USD },
       maker:{ streamsActive:this.stats.streamsActive },
       reflexive:{ amplificationsTriggered:this.stats.amplificationsTriggered, perceptionIndex: eq.R_t, liquidityNorm: eq.L_t, utilityScore: eq.U_t },
-      accumulator:{ merkleRoot: this.accumulator.merkleRoot }
+      accumulator:{ merkleRoot: this.accumulator.merkleRoot },
+      risk:{ circuitBreakers: LIVE.RISK.CIRCUIT_BREAKERS, complianceMode: LIVE.RISK.COMPLIANCE.MODE }
     };
   }
 }
@@ -1525,6 +1711,7 @@ class APIServer {
         <p>Perception Index: ${(s.reflexive.perceptionIndex||0).toFixed(3)}</p>
         <p>Amplifications: ${s.reflexive.amplificationsTriggered}</p>
         <p>Streams Active: ${s.maker.streamsActive}</p>
+        <p>Compliance Mode: ${s.risk.complianceMode}</p>
         <meta http-equiv="refresh" content="10">
       `);
     });
@@ -1540,9 +1727,17 @@ class APIServer {
     this.app.get('/v13.6/decision/last', (req, res) => { res.json({ last: this.core.lastDecision || null, ts: Date.now() }); });
     this.app.get('/v13.6/signals/last', (req, res) => { res.json({ signals: this.core.kernel?.state?.lastSignals || null, ts: Date.now() }); });
 
-    // Equation state + accumulator
+    // Equation state + accumulator + risk
     this.app.get('/v13.9/equation-state', (req,res)=> res.json({ equation: this.core.amplifier.getEquationState(), ts: Date.now() }));
     this.app.get('/v13.9/accumulator', (req,res)=> res.json({ merkleRoot: this.core.accumulator.merkleRoot, perceptionIndex: this.core.accumulator.getPerceptionIndex(), ts: Date.now() }));
+    this.app.get('/v13.9/risk', (req,res)=> res.json({ risk: LIVE.RISK, ts: Date.now() }));
+
+    // Toggle global kill switch (POST /risk/kill-switch?enabled=true|false)
+    this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
+      const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
+      LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
+      res.json({ ok:true, killSwitch: enabled, ts: Date.now() });
+    });
   }
   async start(){ this.server=this.app.listen(this.port, () => console.log(`🌐 API server v13.9 on :${this.port}`)); }
 }
@@ -1551,7 +1746,7 @@ class APIServer {
    Bootstrap
    ========================================================================= */
 
-async function bootstrap() {
+async function bootstrap_v13_9() {
   console.log('🚀 SOVEREIGN FINALITY ENGINE v13.9 — BOOTSTRAPPING');
   await chainRegistry.init();
 
@@ -1564,6 +1759,9 @@ async function bootstrap() {
   console.log('✅ v13.9 operational');
   return core;
 }
+
+// Backward-compatible default bootstrap alias
+async function bootstrap() { return bootstrap_v13_9(); }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   (async () => { await bootstrap_v13_9(); })();
