@@ -58,7 +58,15 @@ const ENHANCED_CONFIG = {
       || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
       || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
       || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
-    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000)
+    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+
+    // Compatibility addition: bundler rotation list for MEV v14.x references
+    ROTATION: [
+      ...(process.env.BUNDLER_RPC_URL ? [process.env.BUNDLER_RPC_URL] : []),
+      ...(process.env.PIMLICO_API_KEY ? [`https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}`] : []),
+      ...(process.env.STACKUP_API_KEY ? [`https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}`] : []),
+      ...(process.env.BICONOMY_API_KEY ? [`https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}`] : [])
+    ]
   },
 
   PUBLIC_RPC_ENDPOINTS: [
@@ -944,7 +952,11 @@ export {
   ENHANCED_CONFIG,
 
   // Miracle engine v3
-  MiracleEngineV3
+  MiracleEngineV3,
+
+  // Additional utilities for MEV v14.x compatibility
+  scwApproveToken,
+  PriceOracleAggregator
 };
 
 export default integrateWithMEVv137;
