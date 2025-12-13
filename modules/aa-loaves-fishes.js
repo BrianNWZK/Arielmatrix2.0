@@ -51,23 +51,24 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''          // optional if paymaster requires off-chain signatures
   },
 
-  BUNDLER: {
-    // v14.3 accepts runtime bundler URL; env is optional fallback
-    RPC_URL:
-      process.env.BUNDLER_RPC_URL
-      || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
-      || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
-      || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
-    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+ BUNDLER: {
+  // v14.3 accepts runtime bundler URL; env is optional fallback
+  RPC_URL:
+    process.env.BUNDLER_RPC_URL
+    || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
+    || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
+    || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
+  TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
 
-    // Compatibility addition: bundler rotation list for MEV v14.x references
-    ROTATION: [
-      ...(process.env.BUNDLER_RPC_URL ? [process.env.BUNDLER_RPC_URL] : []),
-      ...(process.env.PIMLICO_API_KEY ? [`https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}`] : []),
-      ...(process.env.STACKUP_API_KEY ? [`https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}`] : []),
-      ...(process.env.BICONOMY_API_KEY ? [`https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}`] : [])
-    ]
-  },
+  // Rotation list for resilient bundler failover
+  ROTATION: [
+    "https://bundler.candide.xyz/rpc/mainnet",                 // Candide public bundler
+    "https://bundler.pimlico.io/v2/1/YOUR_PIMLICO_API_KEY",    // Pimlico (replace with your API key)
+    "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",     // Stackup (replace with your API key)
+    "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY",  // Biconomy (replace with your API key)
+    "https://rpc.skandha.xyz/v1/mainnet"                       // Skandha open bundler (community maintained)
+  ]
+},
 
   PUBLIC_RPC_ENDPOINTS: [
     process.env.PUBLIC_RPC_URL || 'https://ethereum-rpc.publicnode.com'
