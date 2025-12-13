@@ -1689,12 +1689,17 @@ class APIServerV14_1 {
    Bootstrap
    ========================================================================= */
 
-async function bootstrap_v14_1(){
+async function bootstrap_v14_1() {
   console.log('🚀 SOVEREIGN FINALITY ENGINE v14.1 — BOOTSTRAPPING');
   await chainRegistry.init();
 
+  // Pick the healthiest bundler from rotation before initializing AA
+  const bundlerUrl = await pickHealthyBundler();
+
   const core = new ProductionSovereignCore();
-  await core.initialize();
+
+  // Pass bundlerUrl into initialize so AA SDK has a live bundler
+  await core.initialize(bundlerUrl);
 
   const api = new APIServerV14_1(core, process.env.PORT ? Number(process.env.PORT) : 8081);
   await api.start();
@@ -1706,7 +1711,6 @@ async function bootstrap_v14_1(){
 if (import.meta.url === `file://${process.argv[1]}`) {
   (async () => { await bootstrap_v14_1(); })();
 }
-
 /* =========================================================================
    Exports
    ========================================================================= */
