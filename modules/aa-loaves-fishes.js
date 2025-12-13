@@ -63,7 +63,12 @@ const ENHANCED_CONFIG = {
   // Rotation list for resilient bundler failover
   ROTATION: [
     "https://bundler.candide.xyz/rpc/mainnet",                 // Candide public bundler
-    "https://bundler.pimlico.io/v2/1/YOUR_PIMLICO_API_KEY",    // Pimlico (replace with your API key)
+    "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt",    // Pimlico (replace with your API key)
+    "https://bundler.candide.xyz/rpc/mainnet",   // Candide public bundler
+    "https://rpc.skandha.xyz/v1/mainnet",        // Skandha (Etherspot community bundler)
+    "https://rpc.4337.io",                       // 4337.io public bundler aggregator
+    "https://aa-bundler.etherspot.io/v1/mainnet",// Etherspot bundler
+    "https://bundler.openfort.xyz/v1/mainnet"    // Openfort bundler
     "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",     // Stackup (replace with your API key)
     "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY",  // Biconomy (replace with your API key)
     "https://rpc.skandha.xyz/v1/mainnet"                       // Skandha open bundler (community maintained)
