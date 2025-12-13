@@ -259,7 +259,11 @@ class PatchedRPCManager {
   async getFeeData(){ return await this._mgr.getFeeData(); }
   get rpcUrls(){ return this._mgr.rpcUrls; }
 }
-const chainRegistry = new PatchedRPCManager(LIVE.RPC_PROVIDERS, LIVE.NETWORK.chainId);
+
+// NEW STATIC PROVIDER MANAGER
+const chainRegistry = new PatchedIntelligentRPCManager();
+await chainRegistry.init();
+
 
 class QuorumRPC {
   constructor(registry, quorumSize=LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks=2){
