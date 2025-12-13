@@ -44,11 +44,10 @@ const ENHANCED_CONFIG = {
     V3_ROUTER_ADDRESS: addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564')
   },
 
-  // Core tokens (mainnet defaults; override via env)
   SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
-  BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'), // 18 decimals
-  USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),  // 6 decimals
-  WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),  // 18 decimals
+  BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
+  USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+  WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
 
   PAYMASTER: {
     MODE: (process.env.PAYMASTER_MODE || 'ONCHAIN').toUpperCase(), // NONE | API | ONCHAIN | PASSTHROUGH
@@ -57,18 +56,26 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
 
- BUNDLER: {
-  RPC_URL: process.env.BUNDLER_RPC_URL || "https://rpc.4337.io",
-  TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-
-  // Keep rotation empty or remove it entirely
-  ROTATION: []
-}
+  BUNDLER: {
+    RPC_URL:
+      process.env.BUNDLER_RPC_URL
+      || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
+      || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
+      || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
+    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+    ROTATION: [
+      "https://rpc.4337.io",
+      "https://aa-bundler.etherspot.io/v1/mainnet",
+      "https://bundler.openfort.xyz/v1/mainnet",
+      "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",
+      "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"
+    ]
+  },
 
   PUBLIC_RPC_ENDPOINTS: [
     "https://ethereum-rpc.publicnode.com",
     "https://rpc.ankr.com/eth",
-    "https://cloudflare-eth.com"
+    "https://eth.llamarpc.com"
   ],
 
   CONNECTION_SETTINGS: {
@@ -83,6 +90,7 @@ const ENHANCED_CONFIG = {
     STALE_SECONDS: Number(process.env.ORACLE_STALE_SECONDS || 7200)
   }
 };
+
 
 /* =========================================================================
    pickHealthyBundler
