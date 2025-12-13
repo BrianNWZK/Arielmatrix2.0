@@ -259,11 +259,7 @@ class PatchedRPCManager {
   async getFeeData(){ return await this._mgr.getFeeData(); }
   get rpcUrls(){ return this._mgr.rpcUrls; }
 }
-
-// NEW STATIC PROVIDER MANAGER
-const chainRegistry = new PatchedIntelligentRPCManager();
-await chainRegistry.init();
-
+const chainRegistry = new PatchedRPCManager(LIVE.RPC_PROVIDERS, LIVE.NETWORK.chainId);
 
 class QuorumRPC {
   constructor(registry, quorumSize=LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks=2){
@@ -319,7 +315,8 @@ class HealthGuard {
   constructor(){ this.lossEvents=[]; this.negEvStreak=0; this.lastHaltTs=0; }
   record(evUSD){
     const now=nowTs(); const windowStart=now - LIVE.RISK.CIRCUIT_BREAKERS.WINDOW_MS;
-    this.lossEvents.push({ evUSD, ts: now }); this.lossEvents = this.lossEvents.filter(e=> e.ts >= windowStart);
+    this.lossEvents.push({ evUSD, ts: now });
+    this.lossEvents = this.lossEvents.filter(e=> e.ts >= windowStart);
     if (evUSD <= 0) this.negEvStreak++; else this.negEvStreak=0;
   }
   runawayTriggered(){
@@ -435,29 +432,37 @@ class UniversalDexAdapter {
     if (rin === 0n || rout === 0n) return null;
     const amountInWithFee = amountIn * 997n / 1000n;
     const amountOut = (amountInWithFee * rout) / (rin + amountInWithFee);
-    return { amountOut, priceImpact: Number(amountIn) / Math.max(1, Number(rin)) * 100, fee: 30, liquidity: rin.toString(), dex: this.config.name, adapter: this };
+    const priceImpactPct = Math.min(100, (Number(amountIn) / Math.max(1, Number(rin))) * 100);
+    return { amountOut, priceImpact: priceImpactPct, fee: 30, liquidity: rin.toString(), dex: this.config.name, adapter: this };
   }
 
   async _agg1inchQuote(tokenIn, tokenOut, amountIn) {
     try {
       const url = `https://api.1inch.io/v5.0/1/quote?fromTokenAddress=${tokenIn}&toTokenAddress=${tokenOut}&amount=${amountIn.toString()}`;
       let res, attempts = 0;
-      while (attempts < 3) {
+      while (attempts < 5) {
         res = await fetch(url);
         if (res.ok) break;
         attempts++; await new Promise(r => setTimeout(r, LIVE.RISK.INFRA.BACKOFF_BASE_MS * attempts));
       }
       if (!res.ok) throw new Error(`1inch ${res.status}`);
       const data = await res.json();
-      return { amountOut: BigInt(data.toTokenAmount), priceImpact: 0.0, fee: 50, liquidity: '0', dex: 'ONE_INCH_V5', adapter: this };
+      return { amountOut: BigInt(data.toTokenAmount), priceImpact: 0.0, fee: 50, liquidity: amountIn.toString(), dex: 'ONE_INCH_V5', adapter: this };
     } catch { return null; }
   }
 
   async _paraswapLiteQuote(tokenIn, tokenOut, amountIn) {
     try {
-      const url = `https://apiv5.paraswap.io/prices/?srcToken=${tokenIn}&destToken=${tokenOut}&amount=${amountIn.toString()}&srcDecimals=18&destDecimals=18&network=1`;
+      const erc20Abi = ['function decimals() view returns (uint8)'];
+      const inC = new ethers.Contract(tokenIn, erc20Abi, this.provider);
+      const outC = new ethers.Contract(tokenOut, erc20Abi, this.provider);
+      let srcDecimals = 18, destDecimals = 18;
+      try { srcDecimals = Number(await inC.decimals()); } catch {}
+      try { destDecimals = Number(await outC.decimals()); } catch {}
+
+      const url = `https://apiv5.paraswap.io/prices/?srcToken=${tokenIn}&destToken=${tokenOut}&amount=${amountIn.toString()}&srcDecimals=${srcDecimals}&destDecimals=${destDecimals}&network=1`;
       let res, attempts = 0;
-      while (attempts < 3) {
+      while (attempts < 5) {
         res = await fetch(url, { headers: { 'accept': 'application/json' } });
         if (res.ok) break;
         attempts++; await new Promise(r => setTimeout(r, LIVE.RISK.INFRA.BACKOFF_BASE_MS * attempts));
@@ -466,7 +471,7 @@ class UniversalDexAdapter {
       const data = await res.json();
       const bestRoute = data?.priceRoute?.destAmount ? BigInt(data.priceRoute.destAmount) : 0n;
       if (bestRoute === 0n) return null;
-      return { amountOut: bestRoute, priceImpact: 0.0, fee: 50, liquidity: '0', dex: 'PARASWAP_LITE', adapter: this };
+      return { amountOut: bestRoute, priceImpact: 0.0, fee: 50, liquidity: amountIn.toString(), dex: 'PARASWAP_LITE', adapter: this };
     } catch { return null; }
   }
 
@@ -598,7 +603,8 @@ class OracleAggregator {
     const [, answer,, updatedAt] = await this.chainlink.latestRoundData();
     const dec = await this.chainlink.decimals();
     const now = Math.floor(nowTs()/1000);
-    if (Number(updatedAt) < now - 1800) throw new Error('CL stale');
+    const staleWindow = AA_CONFIG.ORACLES.STALE_SECONDS; // align with config
+    if (Number(updatedAt) < now - staleWindow) throw new Error('CL stale');
     if (!answer || answer <= 0n) throw new Error('CL invalid');
     return Number(answer) / (10 ** Number(dec));
   }
@@ -734,12 +740,17 @@ class EVGatingStrategyProxy {
     if (now - this.tsDay >= 86_400_000) { this.tsDay=now; this.dayUSD=0; }
   }
   _rateCapsOk(usd){ this._resetWindows(); const b=LIVE.RISK.BUDGETS; return (this.minuteUSD+usd)<=b.MINUTE_USD && (this.hourUSD+usd)<=b.HOUR_USD && (this.dayUSD+usd)<=b.DAY_USD; }
-  async estimateGasUSD(gl=850_000n){
+
+  async estimateGasUSD(gl = 850_000n) {
     try {
       const fd = await this.provider.getFeeData();
       const gasPrice = fd.maxFeePerGas || ethers.parseUnits('30', 'gwei');
-      const eth = Number(ethers.formatEther(gl * gasPrice));
-      return 2000*eth;
+      const ethCost = Number(ethers.formatEther(gl * gasPrice));
+      let ethUsd = 2000;
+      try {
+        ethUsd = await this.strategy.oracle.chainlinkEthUsd();
+      } catch {}
+      return ethUsd * ethCost;
     } catch { return 0; }
   }
 
@@ -749,10 +760,11 @@ class EVGatingStrategyProxy {
     if (!this._rateCapsOk(usd)) return { skipped:true, reason:'budget_cap' };
 
     const best = await this.dex.getBestRoute(tokenIn, tokenOut, notionalUSDC);
-    const expectedOut = best?.best?.amountOut ? Number(best.best.amountOut)/1e6 : 0;
+    const expectedOutUSDC = best?.best?.amountOut ? Number(best.best.amountOut)/1e6 : 0;
     const gasUSD = await this.estimateGasUSD(850_000n);
     const slipUSD = usd * Math.min(0.02, 0.003 + LIVE.RISK.COMPETITION.COST_AWARE_SLIP_BIAS);
-    const evUSD = expectedOut - gasUSD - slipUSD;
+    const grossProfitUSD = expectedOutUSDC - usd;
+    const evUSD = grossProfitUSD - gasUSD - slipUSD;
 
     if (this.health.runawayTriggered()) return { skipped:true, reason:'circuit_breaker' };
     if (evUSD <= 0) return { skipped:true, reason:'negative_ev', evUSD, gasUSD, slipUSD };
@@ -842,7 +854,8 @@ class StrategyEngine {
       'event Swap(address,address,int256,int256,uint160,uint128,int24)',
       'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
     ], this.provider);
-    this.provider.on(poolC.filters.Swap(), async () => {
+    // Patched: subscribe directly to contract event
+    poolC.on('Swap', async () => {
       try {
         const slot0 = await poolC.slot0();
         const tick = Number(slot0[1]);
@@ -1585,13 +1598,19 @@ class ProductionSovereignCore extends EventEmitter {
   }
 
   startWS(port=8082){
-    this.wss = new WebSocketServer({ port });
-    this.wss.on('connection', ws => {
-      this.clients.add(ws);
-      ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, policyHash: this.policyHash, status: this.status, ts: nowTs() }));
-      ws.on('close', () => this.clients.delete(ws));
-    });
-    console.log(`🔌 WebSocket server on :${port}`);
+    try {
+      this.wss = new WebSocketServer({ port });
+      this.wss.on('connection', ws => {
+        this.clients.add(ws);
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, policyHash: this.policyHash, status: this.status, ts: nowTs() }));
+        }
+        ws.on('close', () => this.clients.delete(ws));
+      });
+      console.log(`🔌 WebSocket server on :${port}`);
+    } catch (e) {
+      console.warn('WS server failed to start:', e.message);
+    }
   }
 
   broadcast(message){
