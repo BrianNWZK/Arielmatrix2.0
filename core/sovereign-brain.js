@@ -1473,7 +1473,7 @@ class MevExecutorAA {
    Production sovereign core v14.1 (full live wiring)
    ========================================================================= */
 
-class ProductionSovereignCoreV14_1 extends EventEmitter {
+class ProductionSovereignCore extends EventEmitter {
   constructor(){
     super();
     this.provider=null; this.signer=null; this.aa=null;
@@ -1693,7 +1693,7 @@ async function bootstrap_v14_1(){
   console.log('🚀 SOVEREIGN FINALITY ENGINE v14.1 — BOOTSTRAPPING');
   await chainRegistry.init();
 
-  const core = new ProductionSovereignCoreV14_1();
+  const core = new ProductionSovereignCore();
   await core.initialize();
 
   const api = new APIServerV14_1(core, process.env.PORT ? Number(process.env.PORT) : 8081);
@@ -1712,7 +1712,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
    ========================================================================= */
 
 export {
-  ProductionSovereignCoreV14_1,
+  ProductionSovereignCore,
   APIServerV14_1,
   DexAdapterRegistry,
   UniversalDexAdapter,
@@ -1734,4 +1734,4 @@ export {
   bootstrap_v14_1
 };
 
-export default ProductionSovereignCoreV14_1;
+export default ProductionSovereignCore;
