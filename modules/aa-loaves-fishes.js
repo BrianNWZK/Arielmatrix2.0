@@ -57,23 +57,13 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
 
-  BUNDLER: {
-    RPC_URL:
-      process.env.BUNDLER_RPC_URL
-      || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
-      || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
-      || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
-    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-    ROTATION: [
-      "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt",
-      "https://rpc.skandha.xyz/v1/mainnet",
-      "https://rpc.4337.io",
-      "https://aa-bundler.etherspot.io/v1/mainnet",
-      "https://bundler.openfort.xyz/v1/mainnet",
-      "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",
-      "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"
-    ]
-  },
+ BUNDLER: {
+  RPC_URL: process.env.BUNDLER_RPC_URL || "https://rpc.4337.io",
+  TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+
+  // Keep rotation empty or remove it entirely
+  ROTATION: []
+}
 
   PUBLIC_RPC_ENDPOINTS: [
     "https://ethereum-rpc.publicnode.com",
