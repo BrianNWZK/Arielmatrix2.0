@@ -65,7 +65,6 @@ const ENHANCED_CONFIG = {
       || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
     TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
     ROTATION: [
-      "https://bundler.candide.xyz/rpc/mainnet",
       "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt",
       "https://rpc.skandha.xyz/v1/mainnet",
       "https://rpc.4337.io",
