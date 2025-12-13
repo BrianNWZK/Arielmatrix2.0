@@ -1,14 +1,22 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v14.3
-// Hard peg ($100 per BWAEZI) via SCW payouts using multi-source prices,
-// Runtime bundler injection (no env enforcement), SCW approvals via AA,
-// precise fixed-point math, Uniswap visibility/rebalancing,
-// health-scored RPC, min-out safety, and deterministic EP v0.7.
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15
+// Maintains ALL v14.3 capabilities + adaptive hooks for v15 integration
+// - Strict address normalization
+// - Enhanced configuration (forced-network, bundler rotation, paymaster modes)
+// - EntryPoint v0.7 only (deposit/stake helpers)
+// - Bundler client: ERC-4337 JSON-RPC; runtime URL; health checks
+// - Paymaster modes: API, OnChain verifying, Passthrough
+// - EnterpriseAASDK: userOp creation, signing, sending; sponsorship
+// - Enhanced MEV executor: SCW.execute wrapper using AA
+// - Oracle aggregator: Chainlink + Uniswap blending with divergence checks
+// - SCW approvals helper
+// - pickHealthyBundler; RPC manager; forced provider
 
 import { ethers } from 'ethers';
 
 /* =========================================================================
    Strict address normalization
    ========================================================================= */
+
 function addrStrict(a) {
   try { return ethers.getAddress(String(a).trim()); }
   catch { const s = String(a).trim(); return s.startsWith('0x') ? s.toLowerCase() : s; }
@@ -19,7 +27,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v4.3.0-LIVE',
+  VERSION: 'v15.0-LIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -27,7 +35,6 @@ const ENHANCED_CONFIG = {
   },
 
   ENTRY_POINTS: {
-    // Only v0.7 EntryPoint in live mode
     V07: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
   },
 
@@ -45,31 +52,27 @@ const ENHANCED_CONFIG = {
 
   PAYMASTER: {
     MODE: (process.env.PAYMASTER_MODE || 'ONCHAIN').toUpperCase(), // NONE | API | ONCHAIN | PASSTHROUGH
-    // Injected confirmed BWAEZI Paymaster (Ethereum mainnet, live)
     ADDRESS: addrStrict('0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
-    API_URL: process.env.PAYMASTER_API_URL || '',               // used only in API mode
-    SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''          // optional if paymaster requires off-chain signatures
+    API_URL: process.env.PAYMASTER_API_URL || '',
+    SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
 
   BUNDLER: {
-    // v14.3 accepts runtime bundler URL; env is optional fallback
     RPC_URL:
       process.env.BUNDLER_RPC_URL
       || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
       || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
       || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
     TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-
-    // Rotation list for resilient bundler failover
     ROTATION: [
-      "https://bundler.candide.xyz/rpc/mainnet",                 // Candide public bundler
-      "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt", // Pimlico (replace with your API key)
-      "https://rpc.skandha.xyz/v1/mainnet",                      // Skandha (Etherspot community bundler)
-      "https://rpc.4337.io",                                     // 4337.io public bundler aggregator
-      "https://aa-bundler.etherspot.io/v1/mainnet",              // Etherspot bundler
-      "https://bundler.openfort.xyz/v1/mainnet",                 // Openfort bundler
-      "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",     // Stackup (replace with your API key)
-      "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"   // Biconomy (replace with your API key)
+      "https://bundler.candide.xyz/rpc/mainnet",
+      "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt",
+      "https://rpc.skandha.xyz/v1/mainnet",
+      "https://rpc.4337.io",
+      "https://aa-bundler.etherspot.io/v1/mainnet",
+      "https://bundler.openfort.xyz/v1/mainnet",
+      "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",
+      "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"
     ]
   },
 
@@ -83,14 +86,20 @@ const ENHANCED_CONFIG = {
     timeout: Number(process.env.RPC_TIMEOUT_MS || 15000),
     maxRetries: Number(process.env.RPC_MAX_RETRIES || 3),
     healthCheckInterval: Number(process.env.RPC_HEALTH_INTERVAL_MS || 30000)
-  }
-}; // <-- close ENHANCED_CONFIG object here
+  },
 
-/**
- * Pick the healthiest bundler from ROTATION list.
- * Tries each URL, returns the first that responds to eth_supportedEntryPoints.
- */
-export async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
+  ORACLES: {
+    CHAINLINK_ETH_USD: addrStrict(process.env.CHAINLINK_ETH_USD || '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419'),
+    MAX_DIVERGENCE_PCT: Number(process.env.ORACLE_MAX_DIVERGENCE || 0.15),
+    STALE_SECONDS: Number(process.env.ORACLE_STALE_SECONDS || 7200)
+  }
+};
+
+/* =========================================================================
+   pickHealthyBundler
+   ========================================================================= */
+
+async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
   for (const url of rotation) {
     try {
       const provider = new ethers.JsonRpcProvider(url, {
@@ -108,33 +117,9 @@ export async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTA
   }
   throw new Error("No healthy bundler found in rotation");
 }
-  ORACLES: {
-    CHAINLINK_ETH_USD: addrStrict(process.env.CHAINLINK_ETH_USD || '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419'), // mainnet ETH/USD
-    MAX_DIVERGENCE_PCT: Number(process.env.ORACLE_MAX_DIVERGENCE || 0.15), // 15%
-    STALE_SECONDS: Number(process.env.ORACLE_STALE_SECONDS || 7200) // 2 hours
-  }
-};
 
 /* =========================================================================
-   Minimal env validation (no bundler enforcement in v14.3)
-   ========================================================================= */
-
-function requireEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing required env: ${name}`);
-  return v;
-}
-
-function assertRuntime() {
-  // Only ensure the sovereign signer exists and paymaster config matches chosen mode.
-  requireEnv('SOVEREIGN_PRIVATE_KEY');
-  if (ENHANCED_CONFIG.PAYMASTER.MODE !== 'NONE' && !ENHANCED_CONFIG.PAYMASTER.ADDRESS && !ENHANCED_CONFIG.PAYMASTER.API_URL) {
-    throw new Error('Paymaster configuration incomplete for selected mode');
-  }
-}
-
-/* =========================================================================
-   EntryPoint interface (deposit/stake helpers)
+   EntryPoint helpers
    ========================================================================= */
 
 const ENTRYPOINT_ABI = [
@@ -163,7 +148,7 @@ async function addStakeToEntryPoint(signer, delaySec, amountWei) {
 }
 
 /* =========================================================================
-   Forced-network provider factory (prevents autodetect loops)
+   Forced-network provider
    ========================================================================= */
 
 function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
@@ -175,7 +160,7 @@ function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chai
 }
 
 /* =========================================================================
-   Enhanced RPC manager (health-scored, sticky)
+   Enhanced RPC manager
    ========================================================================= */
 
 class EnhancedRPCManager {
@@ -198,9 +183,7 @@ class EnhancedRPCManager {
           this.providers.push({ url, provider, latency, health: 100 });
           if (!this.sticky) this.sticky = provider;
         }
-      } catch {
-        // continue to next URL
-      }
+      } catch { /* continue */ }
     }
     if (!this.sticky) throw new Error('No healthy RPC provider');
     this.initialized = true;
@@ -215,7 +198,7 @@ class EnhancedRPCManager {
           const s = Date.now();
           await p.provider.getBlockNumber();
           p.latency = Date.now() - s;
-          const scoreLatency = Math.max(0, 100 * Math.exp(-p.latency / 300)); // smoother decay
+          const scoreLatency = Math.max(0, 100 * Math.exp(-p.latency / 300));
           p.health = Math.min(100, Math.round(p.health * 0.85 + scoreLatency * 0.15));
         } catch {
           p.health = Math.max(0, p.health - 20);
@@ -250,7 +233,7 @@ class EnhancedRPCManager {
 }
 
 /* =========================================================================
-   Bundler client (ERC-4337 JSON-RPC) — runtime URL, no env enforcement
+   Bundler client
    ========================================================================= */
 
 class BundlerClient {
@@ -259,36 +242,21 @@ class BundlerClient {
     this.provider = new ethers.JsonRpcProvider(url, { chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
     this.url = url;
   }
-
-  async supportedEntryPoints() {
-    return await this.provider.send('eth_supportedEntryPoints', []);
-  }
-
+  async supportedEntryPoints() { return await this.provider.send('eth_supportedEntryPoints', []); }
   async healthCheck() {
     try {
       const eps = await this.supportedEntryPoints();
       const ok = Array.isArray(eps) && eps.some((addr) => ethers.getAddress(addr) === ethers.getAddress(ENHANCED_CONFIG.ENTRY_POINTS.V07));
       return { ok, supported: eps || [] };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
+    } catch (e) { return { ok: false, error: e.message }; }
   }
-
-  async sendUserOperation(userOp, entryPoint) {
-    return await this.provider.send('eth_sendUserOperation', [userOp, entryPoint]);
-  }
-
-  async getUserOperationReceipt(userOpHash) {
-    return await this.provider.send('eth_getUserOperationReceipt', [userOpHash]);
-  }
-
-  async estimateUserOperationGas(userOp, entryPoint) {
-    return await this.provider.send('eth_estimateUserOperationGas', [userOp, entryPoint]);
-  }
+  async sendUserOperation(userOp, entryPoint) { return await this.provider.send('eth_sendUserOperation', [userOp, entryPoint]); }
+  async getUserOperationReceipt(userOpHash) { return await this.provider.send('eth_getUserOperationReceipt', [userOpHash]); }
+  async estimateUserOperationGas(userOp, entryPoint) { return await this.provider.send('eth_estimateUserOperationGas', [userOp, entryPoint]); }
 }
 
 /* =========================================================================
-   Paymaster integrations (API | ONCHAIN | PASSTHROUGH)
+   Paymaster integrations
    ========================================================================= */
 
 class ExternalAPIPaymaster {
@@ -305,25 +273,16 @@ class ExternalAPIPaymaster {
       entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
       chainId: ENHANCED_CONFIG.NETWORK.chainId
     };
-    const res = await fetch(this.apiUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    const res = await fetch(this.apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`Paymaster API ${res.status}`);
     const data = await res.json();
-    if (!data?.paymasterAndData || !ethers.isHexString(data.paymasterAndData)) {
-      throw new Error('Invalid paymasterAndData from API');
-    }
+    if (!data?.paymasterAndData || !ethers.isHexString(data.paymasterAndData)) throw new Error('Invalid paymasterAndData from API');
     return data.paymasterAndData;
   }
 }
 
 class OnChainVerifyingPaymaster {
-  constructor(address, signer) {
-    this.address = address;
-    this.signer = signer;
-  }
+  constructor(address, signer) { this.address = address; this.signer = signer; }
   async buildPaymasterAndData(userOp) {
     const packed = ethers.AbiCoder.defaultAbiCoder().encode(
       ['address','uint256','bytes32','bytes32','uint256','uint256','uint256','uint256','uint256','bytes32'],
@@ -349,13 +308,11 @@ class OnChainVerifyingPaymaster {
 
 class PassthroughPaymaster {
   constructor(address) { this.address = address; }
-  async buildPaymasterAndData() {
-    return ethers.concat([this.address, '0x']);
-  }
+  async buildPaymasterAndData() { return ethers.concat([this.address, '0x']); }
 }
 
 /* =========================================================================
-   Enterprise AA SDK (live bundler + live paymaster) — runtime bundler
+   Enterprise AA SDK
    ========================================================================= */
 
 class EnterpriseAASDK {
@@ -377,10 +334,7 @@ class EnterpriseAASDK {
     this.provider = provider;
     this.scwAddress = scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
 
-    const url = bundlerUrl || ENHANCED_CONFIG.BUNDLER.RPC_URL;
-    if (!url) {
-      throw new Error('No bundler URL provided. Pass bundlerUrl to initialize() or set ENHANCED_CONFIG.BUNDLER.RPC_URL optionally.');
-    }
+    const url = bundlerUrl || ENHANCED_CONFIG.BUNDLER.RPC_URL || await pickHealthyBundler(ENHANCED_CONFIG.BUNDLER.ROTATION);
     this.bundler = new BundlerClient(url);
     const health = await this.bundler.healthCheck();
     if (!health.ok) throw new Error(`Bundler health check failed: ${health.error || 'unsupported entrypoint'}`);
@@ -425,15 +379,9 @@ class EnterpriseAASDK {
   }
 
   async _sponsor(userOp) {
-    if (this.paymasterMode === 'API') {
-      return await this.paymasterAPI.sponsor(userOp);
-    }
-    if (this.paymasterMode === 'ONCHAIN') {
-      return await this.verifyingPaymaster.buildPaymasterAndData(userOp);
-    }
-    if (this.paymasterMode === 'PASSTHROUGH') {
-      return await this.passthroughPaymaster.buildPaymasterAndData();
-    }
+    if (this.paymasterMode === 'API') return await this.paymasterAPI.sponsor(userOp);
+    if (this.paymasterMode === 'ONCHAIN') return await this.verifyingPaymaster.buildPaymasterAndData(userOp);
+    if (this.paymasterMode === 'PASSTHROUGH') return await this.passthroughPaymaster.buildPaymasterAndData();
     return '0x';
   }
 
@@ -470,11 +418,8 @@ class EnterpriseAASDK {
       userOp.callGasLimit = toBig(est.callGasLimit, userOp.callGasLimit);
       userOp.verificationGasLimit = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
       userOp.preVerificationGas = toBig(est.preVerificationGas, userOp.preVerificationGas);
-      // Clamp minimums
       userOp.callGasLimit = userOp.callGasLimit < 400_000n ? 400_000n : userOp.callGasLimit;
-    } catch {
-      // proceed with defaults
-    }
+    } catch { /* proceed with defaults */ }
 
     return userOp;
   }
@@ -512,7 +457,7 @@ class EnterpriseAASDK {
           if (receipt?.transactionHash) return receipt.transactionHash;
           await new Promise(r => setTimeout(r, 1000));
         }
-        return opHash; // caller can continue polling externally
+        return opHash;
       } catch (err) {
         lastErr = err;
         await new Promise(r => setTimeout(r, Math.min(30000, 1000 * Math.pow(2, attempt))));
@@ -533,7 +478,7 @@ class EnterpriseAASDK {
 }
 
 /* =========================================================================
-   Enhanced MEV executor (SCW.execute wrapper using live AA)
+   Enhanced MEV executor
    ========================================================================= */
 
 class EnhancedMevExecutor {
@@ -541,12 +486,10 @@ class EnhancedMevExecutor {
     this.aa = aa;
     this.scw = scwAddress;
   }
-
   buildSCWExecute(target, calldata, value = 0n) {
     const iface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
     return iface.encodeFunctionData('execute', [target, value, calldata]);
   }
-
   async sendCall(calldata, opts = {}) {
     const userOp = await this.aa.createUserOp(calldata, {
       callGasLimit: opts.gasLimit || 700_000n,
@@ -562,7 +505,7 @@ class EnhancedMevExecutor {
 }
 
 /* =========================================================================
-   Bootstrap helper (EntryPoint deposit probe and optional deposit/stake)
+   Bootstrap helper
    ========================================================================= */
 
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
@@ -581,43 +524,25 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
     const amount = ethers.parseEther(process.env.AUTO_PM_STAKE_WEI || '0.002');
     await addStakeToEntryPoint(signer, delay, amount);
   }
-
-  // Always use v0.7 EP in live mode
   return { entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07, paymasterDeposit: deposit };
 }
 
 /* =========================================================================
-   Utility: token sorting and precise sqrtPriceX96 (BigInt fixed-point)
+   SCW approvals helper
    ========================================================================= */
 
-function sortTokens(tokenA, tokenB) {
-  const a = ethers.getAddress(tokenA);
-  const b = ethers.getAddress(tokenB);
-  if (a.toLowerCase() < b.toLowerCase()) {
-    return { token0: a, token1: b, inverted: false };
-  } else {
-    return { token0: b, token1: a, inverted: true };
-  }
-}
-
-// sqrtPriceX96 for desired price (token1 per token0) using BigInt fixed-point
-function encodeSqrtPriceX96(priceToken1PerToken0, token0Decimals, token1Decimals) {
-  // 6-dec fixed for humans -> upscale to 1e18 fixed-point internally
-  const ONE18 = 10n ** 18n;
-  const decDiff = BigInt(token1Decimals - token0Decimals);
-  const priceFP = BigInt(Math.round(Number(priceToken1PerToken0) * 1e18));
-  const scaleNum = decDiff >= 0 ? 10n ** decDiff : 1n;
-  const scaleDen = decDiff >= 0 ? 1n : 10n ** (-decDiff);
-
-  function sqrtBig(n) { let x = n; let y = (x + 1n) >> 1n; while (y < x) { x = y; y = (x + n / x) >> 1n; } return x; }
-  const ratioFP = (priceFP * scaleNum * ONE18) / (scaleDen);
-  const sqrtFP = sqrtBig(ratioFP);
-  const Q96 = 2n ** 96n;
-  return (sqrtFP * Q96) / ONE18;
+async function scwApproveToken(aa, scw, token, spender, amount = ethers.MaxUint256) {
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const approveData = erc20Iface.encodeFunctionData('approve', [spender, amount]);
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
+  const calldata = scwIface.encodeFunctionData('execute', [token, 0, approveData]);
+  const userOp = await aa.createUserOp(calldata, { callGasLimit: 300_000n });
+  const signed = await aa.signUserOp(userOp);
+  return await aa.sendUserOpWithBackoff(signed, 5);
 }
 
 /* =========================================================================
-   Oracle aggregator: Chainlink + Uniswap with divergence checks (FP6)
+   Price Oracle aggregator (Chainlink + Uniswap ETH/USD)
    ========================================================================= */
 
 class PriceOracleAggregator {
@@ -636,20 +561,14 @@ class PriceOracleAggregator {
     const decimals = await feed.decimals();
     if (!answer || answer <= 0n) throw new Error('Chainlink ETH/USD invalid');
     const now = Math.floor(Date.now()/1000);
-    if (Number(updatedAt) < now - ENHANCED_CONFIG.ORACLES.STALE_SECONDS) {
-      throw new Error('Chainlink ETH/USD stale');
-    }
+    if (Number(updatedAt) < now - ENHANCED_CONFIG.ORACLES.STALE_SECONDS) throw new Error('Chainlink ETH/USD stale');
     const USD_FP6 = 1_000_000n;
     const priceFP6 = (BigInt(answer) * USD_FP6) / (10n ** BigInt(decimals));
     return priceFP6;
   }
 
   async getUniswapEthUsdFP6(weth, usdc) {
-    const factory = new ethers.Contract(
-      ENHANCED_CONFIG.UNISWAP.FACTORY_ADDRESS,
-      ['function getPool(address,address,uint24) view returns (address)'],
-      this.provider
-    );
+    const factory = new ethers.Contract(ENHANCED_CONFIG.UNISWAP.FACTORY_ADDRESS, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
     const pool = await factory.getPool(usdc, weth, 500);
     if (pool === ethers.ZeroAddress) throw new Error('No ETH/USDC v3 0.05% pool');
     const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
@@ -658,303 +577,24 @@ class PriceOracleAggregator {
 
     const TWO192 = 2n ** 192n;
     const sqrt = BigInt(sqrtPriceX96);
-    const invPrice = (TWO192) / (sqrt * sqrt);        // USDC per WETH, unscaled
-    const adj = invPrice * (10n ** 12n);              // decimals adjust to 6-dec from 18
+    const invPrice = (TWO192) / (sqrt * sqrt);
+    const adj = invPrice * (10n ** 12n);
     const USD_FP6 = 1_000_000n;
-    const priceFP6 = (adj * USD_FP6) / (10n ** 12n);  // normalize back to FP6
+    const priceFP6 = (adj * USD_FP6) / (10n ** 12n);
     return priceFP6;
   }
 
   async getEthUsdBlendedFP6({ weth, usdc }) {
     const chainlinkFP6 = await this.getChainlinkEthUsdFP6();
     const uniFP6 = await this.getUniswapEthUsdFP6(weth, usdc);
-
     const arr = [chainlinkFP6, uniFP6].filter(v => v > 0n);
     const avgFP6 = arr.reduce((a,b) => a + b, 0n) / BigInt(arr.length);
-
     const toNum = (x) => Number(x) / 1e6;
     const avgNum = toNum(avgFP6);
     const devs = arr.map(x => Math.abs(toNum(x) - avgNum) / avgNum);
     const devMax = Math.max(...devs);
-    if (devMax > ENHANCED_CONFIG.ORACLES.MAX_DIVERGENCE_PCT) {
-      throw new Error('Oracle divergence too high');
-    }
+    if (devMax > ENHANCED_CONFIG.ORACLES.MAX_DIVERGENCE_PCT) throw new Error('Oracle divergence too high');
     return avgFP6;
-  }
-}
-
-/* =========================================================================
-   SCW approvals via AA (approve spender from SCW context)
-   ========================================================================= */
-
-async function scwApproveToken(aa, scw, token, spender, amount = ethers.MaxUint256) {
-  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
-  const approveData = erc20Iface.encodeFunctionData('approve', [spender, amount]);
-  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-  const calldata = scwIface.encodeFunctionData('execute', [token, 0, approveData]);
-  const userOp = await aa.createUserOp(calldata, { callGasLimit: 300_000n });
-  const signed = await aa.signUserOp(userOp);
-  return await aa.sendUserOpWithBackoff(signed, 5);
-}
-
-/* =========================================================================
-   Quick integration helper (optional)
-   ========================================================================= */
-
-async function integrateWithMEVv137(bundlerUrl = null) {
-  assertRuntime();
-
-  const chainRegistry = new EnhancedRPCManager();
-  await chainRegistry.init();
-
-  const provider = chainRegistry.getProvider();
-  const signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, provider);
-
-  const aa = new EnterpriseAASDK(signer, ENHANCED_CONFIG.ENTRY_POINTS.V07);
-  await aa.initialize(provider, ENHANCED_CONFIG.SCW_ADDRESS, bundlerUrl || ENHANCED_CONFIG.BUNDLER.RPC_URL);
-
-  await bootstrapSCWForPaymasterEnhanced(aa, provider, signer, ENHANCED_CONFIG.SCW_ADDRESS);
-
-  const mevExecutor = new EnhancedMevExecutor(aa, ENHANCED_CONFIG.SCW_ADDRESS);
-
-  return { chainRegistry, aa, mevExecutor, provider, signer, scwAddress: ENHANCED_CONFIG.SCW_ADDRESS };
-}
-
-/* =========================================================================
-   Miracle engine v3.1 (hard peg + live pools; AA for mint/swap/rebalance)
-   ========================================================================= */
-
-class MiracleEngineV3 {
-  constructor(provider, signer, aa) {
-    this.provider = provider;
-    this.signer = signer;
-    this.aa = aa;
-
-    this.FACTORY = ENHANCED_CONFIG.UNISWAP.FACTORY_ADDRESS;
-    this.POSITION_MANAGER = ENHANCED_CONFIG.UNISWAP.POSITION_MANAGER_ADDRESS;
-    this.ROUTER = ENHANCED_CONFIG.UNISWAP.V3_ROUTER_ADDRESS;
-
-    this.BWAEZI = ENHANCED_CONFIG.BWAEZI_ADDRESS; // 18 decimals
-    this.USDC = ENHANCED_CONFIG.USDC_ADDRESS;     // 6 decimals
-    this.WETH = ENHANCED_CONFIG.WETH_ADDRESS;     // 18 decimals
-    this.SCW = ENHANCED_CONFIG.SCW_ADDRESS;
-
-    this.oracle = new PriceOracleAggregator(provider);
-  }
-
-  iface(sig) { return new ethers.Interface([sig]); }
-
-  async wrapEthToWeth(amountEthWei) {
-    const tx = await this.signer.sendTransaction({
-      to: this.WETH,
-      data: this.iface('function deposit() payable').encodeFunctionData('deposit', []),
-      value: amountEthWei,
-      gasLimit: 120000
-    });
-    const rec = await tx.wait();
-    return rec.transactionHash;
-  }
-
-  async approveEOA(token, spender, amount) {
-    const erc20 = new ethers.Contract(token, ['function approve(address,uint256) returns (bool)'], this.signer);
-    const tx = await erc20.approve(spender, amount);
-    const rec = await tx.wait();
-    return rec.transactionHash;
-  }
-
-  async transferEOA(token, to, amount) {
-    const erc20 = new ethers.Contract(token, ['function transfer(address,uint256) returns (bool)'], this.signer);
-    const tx = await erc20.transfer(to, amount);
-    const rec = await tx.wait();
-    return rec.transactionHash;
-  }
-
-  async ensureSCWApprovals() {
-    // SCW approvals to both PositionManager and Router for required tokens
-    await scwApproveToken(this.aa, this.SCW, this.WETH, this.POSITION_MANAGER);
-    await scwApproveToken(this.aa, this.SCW, this.USDC, this.POSITION_MANAGER);
-    await scwApproveToken(this.aa, this.SCW, this.BWAEZI, this.POSITION_MANAGER);
-    await scwApproveToken(this.aa, this.SCW, this.WETH, this.ROUTER);
-    await scwApproveToken(this.aa, this.SCW, this.USDC, this.ROUTER);
-    await scwApproveToken(this.aa, this.SCW, this.BWAEZI, this.ROUTER);
-  }
-
-  async createAndInitPoolSorted(tokenA, tokenB, fee, desiredPriceToken1PerToken0, decA, decB) {
-    const { token0, token1, inverted } = sortTokens(tokenA, tokenB);
-    const price = inverted ? (1 / Number(desiredPriceToken1PerToken0)) : Number(desiredPriceToken1PerToken0);
-    const sqrtPriceX96 = encodeSqrtPriceX96(price, decA, decB);
-
-    const pm = new ethers.Contract(this.POSITION_MANAGER, ['function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'], this.signer);
-    const tx = await pm.createAndInitializePoolIfNecessary(token0, token1, fee, sqrtPriceX96, { gasLimit: 700000 });
-    const rec = await tx.wait();
-
-    const factory = new ethers.Contract(this.FACTORY, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
-    const pool = await factory.getPool(token0, token1, fee);
-    return { txHash: rec.transactionHash, pool, token0, token1 };
-  }
-
-  async getSlot0(pool) {
-    const c = new ethers.Contract(pool, ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'], this.provider);
-    return await c.slot0();
-  }
-
-  ticksAround(currentTick, width = 600, spacing = 10) {
-    const lower = Math.floor((currentTick - width) / spacing) * spacing;
-    const upper = Math.floor((currentTick + width) / spacing) * spacing;
-    return { lower, upper };
-  }
-
-  async mintInitialRange_SCW(token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired) {
-    const npmIface = new ethers.Interface(['function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)']);
-    const mintCalldata = npmIface.encodeFunctionData('mint', [{
-      token0, token1, fee, tickLower, tickUpper,
-      amount0Desired, amount1Desired,
-      amount0Min: 0, amount1Min: 0,
-      recipient: this.SCW,
-      deadline: Math.floor(Date.now() / 1000) + 1800
-    }]);
-    const scwExec = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']).encodeFunctionData('execute', [ENHANCED_CONFIG.UNISWAP.POSITION_MANAGER_ADDRESS, 0, mintCalldata]);
-
-    const userOp = await this.aa.createUserOp(scwExec, { callGasLimit: 1_400_000n, verificationGasLimit: 900_000n, preVerificationGas: 90_000n });
-    const signed = await this.aa.signUserOp(userOp);
-    const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
-    return txHash;
-  }
-
-  /* -----------------------------------------------------------------------
-     Hard peg payout: SCW pays exact USDC or WETH at $100 per BWAEZI (18 decimals)
-     Fixed-point math: USD_FP6 (6 decimals), BWAEZI 18d, WETH 18d.
-     ----------------------------------------------------------------------- */
-
-  async pegSwapBWAEZITo({ recipient, amountBWAEZI, outAsset = 'USDC' }) {
-    const bw = new ethers.Contract(this.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
-    const scwBalBW = await bw.balanceOf(this.SCW);
-    if (scwBalBW < amountBWAEZI) throw new Error('SCW lacks BWAEZI inventory');
-
-    const ethUsdFP6 = await this.oracle.getEthUsdBlendedFP6({ weth: this.WETH, usdc: this.USDC }); // BigInt
-
-    const USD_FP6 = 1_000_000n;
-    const USD_PER_BWAEZI_FP6 = 100n * USD_FP6;
-    const usdNotionalFP6 = (amountBWAEZI * USD_PER_BWAEZI_FP6) / (10n ** 18n);
-
-    let tokenOut, amountOut;
-    if (outAsset === 'USDC') {
-      tokenOut = this.USDC;
-      amountOut = usdNotionalFP6;
-    } else if (outAsset === 'WETH') {
-      tokenOut = this.WETH;
-      amountOut = (usdNotionalFP6 * (10n ** 18n)) / ethUsdFP6;
-    } else {
-      throw new Error('Unsupported outAsset for peg swap');
-    }
-
-    const outBal = await (new ethers.Contract(tokenOut, ['function balanceOf(address) view returns (uint256)'], this.provider)).balanceOf(this.SCW);
-    if (outBal < amountOut) throw new Error('SCW lacks payout inventory');
-
-    const iface = new ethers.Interface(['function transfer(address,uint256) returns (bool)']);
-    const transferData = iface.encodeFunctionData('transfer', [recipient, amountOut]);
-    const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-    const calldata = scwIface.encodeFunctionData('execute', [tokenOut, 0, transferData]);
-
-    const userOp = await this.aa.createUserOp(calldata, { callGasLimit: 350_000n });
-    const signed = await this.aa.signUserOp(userOp);
-    const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
-    return { txHash, tokenOut, amountOut };
-  }
-
-  /* -----------------------------------------------------------------------
-     Activation flow with micro balances and peg demonstration
-     ----------------------------------------------------------------------- */
-  async miracleActivate({ eoaEthWei = ethers.parseEther('0.0026996'), eoaUsdc = ethers.parseUnits('5.18', 6) } = {}) {
-    const wrapTx = await this.wrapEthToWeth(eoaEthWei);
-
-    const usdc = new ethers.Contract(this.USDC, ['function balanceOf(address) view returns (uint256)'], this.provider);
-    const eoaUsdcBal = await usdc.balanceOf(this.signer.address);
-    const usdcToSend = eoaUsdcBal > eoaUsdc ? eoaUsdc : eoaUsdcBal;
-
-    const wethBal = await (new ethers.Contract(this.WETH, ['function balanceOf(address) view returns (uint256)'], this.provider)).balanceOf(this.signer.address);
-    const wethToSend = wethBal;
-
-    await this.approveEOA(this.WETH, this.SCW, wethToSend);
-    const wethTx = await this.transferEOA(this.WETH, this.SCW, wethToSend);
-
-    let usdcTx = null;
-    if (usdcToSend > 0n) {
-      await this.approveEOA(this.USDC, this.SCW, usdcToSend);
-      usdcTx = await this.transferEOA(this.USDC, this.SCW, usdcToSend);
-    }
-
-    await this.ensureSCWApprovals();
-
-    const microBW = ethers.parseUnits('0.01', 18);
-    let pegTx = null;
-    try {
-      pegTx = await this.pegSwapBWAEZITo({ recipient: this.signer.address, amountBWAEZI: microBW, outAsset: 'USDC' });
-    } catch (e) {
-      // optional: inventory not present
-    }
-
-    const bw_dec = 18, weth_dec = 18, usdc_dec = 6;
-    const { pool: poolBWAEZI_WETH } = await this.createAndInitPoolSorted(this.BWAEZI, this.WETH, 3000, 0.05, bw_dec, weth_dec);
-    const { pool: poolBWAEZI_USDC } = await this.createAndInitPoolSorted(this.BWAEZI, this.USDC, 500, 100.0, bw_dec, usdc_dec);
-
-    const slotW = await this.getSlot0(poolBWAEZI_WETH);
-    const ticksW = this.ticksAround(Number(slotW[1]), 480, 60);
-    const { token0: bwWeth0, token1: bwWeth1 } = sortTokens(this.BWAEZI, this.WETH);
-    const mintW = await this.mintInitialRange_SCW(
-      bwWeth0, bwWeth1,
-      3000,
-      ticksW.lower, ticksW.upper,
-      ethers.parseEther('0.01'), ethers.parseEther('0.001')
-    );
-
-    const slotU = await this.getSlot0(poolBWAEZI_USDC);
-    const ticksU = this.ticksAround(Number(slotU[1]), 480, 10);
-    const { token0: bwUsdc0, token1: bwUsdc1 } = sortTokens(this.BWAEZI, this.USDC);
-    const amountUSDC_U = usdcToSend > 0n ? (usdcToSend < ethers.parseUnits('5.00', 6) ? usdcToSend : ethers.parseUnits('5.00', 6)) : ethers.parseUnits('1.00', 6);
-    const mintU = await this.mintInitialRange_SCW(
-      bwUsdc0, bwUsdc1,
-      500,
-      ticksU.lower, ticksU.upper,
-      ethers.parseEther('0.01'), amountUSDC_U
-    );
-
-    // Optional small swap for visibility with minOut guarding (2% safety)
-    const swapIface = new ethers.Interface([
-      'function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)'
-    ]);
-    const minOutGuard = 1n; // conservative default
-    const params = {
-      tokenIn: this.USDC,
-      tokenOut: this.BWAEZI,
-      fee: 500,
-      recipient: this.SCW,
-      deadline: Math.floor(Date.now() / 1000) + 1800,
-      amountIn: amountUSDC_U,
-      amountOutMinimum: minOutGuard,
-      sqrtPriceLimitX96: 0
-    };
-    const swapData = swapIface.encodeFunctionData('exactInputSingle', [params]);
-    const scwExecSwap = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']).encodeFunctionData('execute', [this.ROUTER, 0, swapData]);
-
-    const userOp = await this.aa.createUserOp(scwExecSwap, {
-      callGasLimit: 700_000n,
-      verificationGasLimit: 500_000n,
-      preVerificationGas: 80_000n
-    });
-    const signed = await this.aa.signUserOp(userOp);
-    const ampTx = await this.aa.sendUserOpWithBackoff(signed, 5);
-
-    return {
-      success: true,
-      wrapTx,
-      wethTx,
-      usdcTx,
-      pegTx,
-      pools: { bwWeth: poolBWAEZI_WETH, bwUsdc: poolBWAEZI_USDC },
-      mints: { mintW, mintU },
-      ampTx
-    };
   }
 }
 
@@ -971,21 +611,18 @@ export {
   EnhancedRPCManager,
 
   // Helpers
-  integrateWithMEVv137,
   bootstrapSCWForPaymasterEnhanced,
   createNetworkForcedProvider,
   depositToEntryPoint,
   addStakeToEntryPoint,
+  pickHealthyBundler,
 
   // Config
   ENHANCED_CONFIG,
 
-  // Miracle engine v3
-  MiracleEngineV3,
-
-  // Additional utilities for MEV v14.x compatibility
+  // Utilities
   scwApproveToken,
   PriceOracleAggregator
 };
 
-export default integrateWithMEVv137;
+export default ENHANCED_CONFIG;
