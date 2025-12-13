@@ -63,7 +63,7 @@ BUNDLER: {
   // Rotation list for resilient bundler failover
   ROTATION: [
     "https://bundler.candide.xyz/rpc/mainnet",                 // Candide public bundler
-    "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt",    // Pimlico (replace with your API key)
+    "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt", // Pimlico (replace with your API key)
     "https://rpc.skandha.xyz/v1/mainnet",                      // Skandha (Etherspot community bundler)
     "https://rpc.4337.io",                                     // 4337.io public bundler aggregator
     "https://aa-bundler.etherspot.io/v1/mainnet",              // Etherspot bundler
@@ -72,6 +72,29 @@ BUNDLER: {
     "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"   // Biconomy (replace with your API key)
   ]
 },
+
+/**
+ * Pick the healthiest bundler from ROTATION list.
+ * Tries each URL, returns the first that responds to eth_supportedEntryPoints.
+ */
+async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
+  for (const url of rotation) {
+    try {
+      const provider = new ethers.JsonRpcProvider(url, {
+        chainId: ENHANCED_CONFIG.NETWORK.chainId,
+        name: ENHANCED_CONFIG.NETWORK.name
+      });
+      const eps = await provider.send("eth_supportedEntryPoints", []);
+      if (Array.isArray(eps) && eps.length > 0) {
+        console.log(`✅ Healthy bundler selected: ${url}`);
+        return url;
+      }
+    } catch (e) {
+      console.warn(`⚠️ Bundler unhealthy: ${url} (${e.message})`);
+    }
+  }
+  throw new Error("No healthy bundler found in rotation");
+}
 
   PUBLIC_RPC_ENDPOINTS: [
     process.env.PUBLIC_RPC_URL || 'https://ethereum-rpc.publicnode.com'
