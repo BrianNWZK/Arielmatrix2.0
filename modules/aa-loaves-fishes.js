@@ -97,14 +97,10 @@ async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
 }
 
   PUBLIC_RPC_ENDPOINTS: [
-    process.env.PUBLIC_RPC_URL || 'https://ethereum-rpc.publicnode.com'
-  ],
-
-  CONNECTION_SETTINGS: {
-    timeout: Number(process.env.RPC_TIMEOUT_MS || 15000),
-    maxRetries: Number(process.env.RPC_MAX_RETRIES || 3),
-    healthCheckInterval: Number(process.env.RPC_HEALTH_INTERVAL_MS || 30000)
-  },
+  "https://ethereum-rpc.publicnode.com",
+  "https://rpc.ankr.com/eth",
+  "https://cloudflare-eth.com"
+],
 
   ORACLES: {
     CHAINLINK_ETH_USD: addrStrict(process.env.CHAINLINK_ETH_USD || '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419'), // mainnet ETH/USD
