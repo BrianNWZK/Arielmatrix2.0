@@ -22,6 +22,18 @@ function addrStrict(a) {
   catch { const s = String(a).trim(); return s.startsWith('0x') ? s.toLowerCase() : s; }
 }
 
+// NEW STATIC PROVIDER FIX
+function createStaticProvider(url) {
+  const request = new ethers.FetchRequest(url);
+  request.timeout = 12000;
+  const network = ethers.Network.from({ name: 'mainnet', chainId: 1 });
+  return new ethers.JsonRpcProvider(request, network, {
+    staticNetwork: network,
+    pollingInterval: 12_000
+  });
+}
+
+
 /* =========================================================================
    Enhanced configuration (forced-network, optional bundler/paymaster)
    ========================================================================= */
