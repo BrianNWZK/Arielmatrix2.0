@@ -51,33 +51,46 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''          // optional if paymaster requires off-chain signatures
   },
 
-BUNDLER: {
-  // v14.3 accepts runtime bundler URL; env is optional fallback
-  RPC_URL:
-    process.env.BUNDLER_RPC_URL
-    || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
-    || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
-    || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
-  TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+  BUNDLER: {
+    // v14.3 accepts runtime bundler URL; env is optional fallback
+    RPC_URL:
+      process.env.BUNDLER_RPC_URL
+      || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
+      || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
+      || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
+    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
 
-  // Rotation list for resilient bundler failover
-  ROTATION: [
-    "https://bundler.candide.xyz/rpc/mainnet",                 // Candide public bundler
-    "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt", // Pimlico (replace with your API key)
-    "https://rpc.skandha.xyz/v1/mainnet",                      // Skandha (Etherspot community bundler)
-    "https://rpc.4337.io",                                     // 4337.io public bundler aggregator
-    "https://aa-bundler.etherspot.io/v1/mainnet",              // Etherspot bundler
-    "https://bundler.openfort.xyz/v1/mainnet",                 // Openfort bundler
-    "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",     // Stackup (replace with your API key)
-    "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"   // Biconomy (replace with your API key)
-  ]
-},
+    // Rotation list for resilient bundler failover
+    ROTATION: [
+      "https://bundler.candide.xyz/rpc/mainnet",                 // Candide public bundler
+      "https://bundler.pimlico.io/v2/1/pim_K4etjrjHvpTx4We2SuLLjt", // Pimlico (replace with your API key)
+      "https://rpc.skandha.xyz/v1/mainnet",                      // Skandha (Etherspot community bundler)
+      "https://rpc.4337.io",                                     // 4337.io public bundler aggregator
+      "https://aa-bundler.etherspot.io/v1/mainnet",              // Etherspot bundler
+      "https://bundler.openfort.xyz/v1/mainnet",                 // Openfort bundler
+      "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",     // Stackup (replace with your API key)
+      "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"   // Biconomy (replace with your API key)
+    ]
+  },
+
+  PUBLIC_RPC_ENDPOINTS: [
+    "https://ethereum-rpc.publicnode.com",
+    "https://rpc.ankr.com/eth",
+    "https://cloudflare-eth.com"
+  ],
+
+  CONNECTION_SETTINGS: {
+    timeout: Number(process.env.RPC_TIMEOUT_MS || 15000),
+    maxRetries: Number(process.env.RPC_MAX_RETRIES || 3),
+    healthCheckInterval: Number(process.env.RPC_HEALTH_INTERVAL_MS || 30000)
+  }
+}; // <-- close ENHANCED_CONFIG object here
 
 /**
  * Pick the healthiest bundler from ROTATION list.
  * Tries each URL, returns the first that responds to eth_supportedEntryPoints.
  */
-async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
+export async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
   for (const url of rotation) {
     try {
       const provider = new ethers.JsonRpcProvider(url, {
@@ -95,13 +108,6 @@ async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
   }
   throw new Error("No healthy bundler found in rotation");
 }
-
-  PUBLIC_RPC_ENDPOINTS: [
-  "https://ethereum-rpc.publicnode.com",
-  "https://rpc.ankr.com/eth",
-  "https://cloudflare-eth.com"
-],
-
   ORACLES: {
     CHAINLINK_ETH_USD: addrStrict(process.env.CHAINLINK_ETH_USD || '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419'), // mainnet ETH/USD
     MAX_DIVERGENCE_PCT: Number(process.env.ORACLE_MAX_DIVERGENCE || 0.15), // 15%
