@@ -56,14 +56,16 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
 
-  // Permanently resolve bundler health issues by defaulting to a self-hosted local/private bundler.
   BUNDLER: {
-    RPC_URL:
-      process.env.BUNDLER_RPC_URL
-      || 'http://localhost:4337', // self-hosted Stackup/Pimlico bundler endpoint
-    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-    ROTATION: [] // disable dead/public rotations; sovereignty uses private bundler
-  },
+  RPC_URL:
+    process.env.BUNDLER_RPC_URL
+    || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt',  // Pimlico free key
+    // Or use Alchemy instead:
+    // 'https://eth-mainnet.g.alchemy.com/v2/QZvbhHBbWc5UwFE6sVPgw',
+  TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+  ROTATION: [] // disable rotation for reliability
+},
+
 
   PUBLIC_RPC_ENDPOINTS: [
     "https://ethereum-rpc.publicnode.com",
