@@ -1543,6 +1543,8 @@ class ProductionSovereignCore extends EventEmitter {
 
     await this.strategy.watchPeg();
 
+    await runGenesisMicroseed(this);
+    
     this.loops.push(setInterval(async () => {
       try {
         const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -1689,6 +1691,87 @@ class APIServerV15 {
   }
   async start(){ this.server=this.app.listen(this.port, () => console.log(`🌐 API Server v15 on :${this.port}`)); }
 }
+
+/* =========================================================================
+   Genesis microseed (inline, between API and Bootstrap)
+   ========================================================================= */
+
+// Ensure SCW has at least $5 USDC (EOA -> SCW transfer if needed)
+async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
+  const usdc = new ethers.Contract(
+    AA_CONFIG.USDC_ADDRESS,
+    ['function balanceOf(address) view returns (uint256)','function decimals() view returns (uint8)','function transfer(address,uint256) returns (bool)'],
+    provider
+  );
+  let dec = 6;
+  try { dec = await usdc.decimals(); } catch {}
+  const bal = await usdc.balanceOf(AA_CONFIG.SCW_ADDRESS);
+  const balFloat = Number(ethers.formatUnits(bal, dec));
+  if (balFloat >= minUSD) return { skipped: true, reason: 'scw_has_usdc' };
+
+  const amt = ethers.parseUnits(minUSD.toFixed(2), dec);
+  const tx = await usdc.connect(signer).transfer(AA_CONFIG.SCW_ADDRESS, amt, { gasLimit: 120000 });
+  const rc = await tx.wait();
+  return { transferred: true, txHash: rc.transactionHash, amount: amt };
+}
+
+// Approve USDC and BWAEZI to Uniswap V3 router via SCW.execute using AA
+async function _ensureApprovals(aa) {
+  const routerV3 = LIVE.DEXES.UNISWAP_V3.router;
+
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
+
+  const sendApprove = async (tokenAddr) => {
+    const approveData = erc20Iface.encodeFunctionData('approve', [routerV3, ethers.MaxUint256]);
+    const calldata = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
+    const userOp = await aa.createUserOp(calldata, { callGasLimit: 300_000n });
+    const signed = await aa.signUserOp(userOp);
+    return await aa.sendUserOpWithBackoff(signed, 5);
+  };
+
+  await sendApprove(AA_CONFIG.USDC_ADDRESS);
+  await sendApprove(AA_CONFIG.BWAEZI_ADDRESS);
+
+  return { ok: true };
+}
+
+// Tiny swaps to awaken perception and EV gating
+async function _genesisSwaps(core) {
+  const twoUSDC = ethers.parseUnits('2.00', 6);
+  const halfBW = ethers.parseEther('0.50');
+
+  try {
+    const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, twoUSDC);
+    await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC' });
+  } catch (e) { console.warn('Genesis USDC→BWAEZI failed:', e.message); }
+
+  try {
+    const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, halfBW);
+    await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC' });
+  } catch (e) { console.warn('Genesis BWAEZI→USDC failed:', e.message); }
+
+  return { ok: true };
+}
+
+// One-call orchestrator
+async function runGenesisMicroseed(core) {
+  try {
+    const recent = core.verifier.getRecent(5);
+    if (recent && recent.length > 0) return { skipped: true, reason: 'already_seeded' };
+
+    console.log('🌱 GENESIS MICROSEED — initializing');
+    await _ensureUSDCInSCW(core.provider, core.signer, 5.00);
+    await _ensureApprovals(core.aa);
+    await _genesisSwaps(core);
+    console.log('✅ GENESIS MICROSEED — complete');
+    return { ok: true };
+  } catch (e) {
+    console.warn('❌ GENESIS MICROSEED failed:', e.message);
+    return { ok: false, error: e.message };
+  }
+    }
+
 
 /* =========================================================================
    Bootstrap
