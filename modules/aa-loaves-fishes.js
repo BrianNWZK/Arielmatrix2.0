@@ -99,8 +99,10 @@ const ENHANCED_CONFIG = {
 async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
   for (const url of rotation) {
     try {
-      const network = ethers.Network.from({ chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
-      const provider = new ethers.JsonRpcProvider(url, network, { staticNetwork: network });
+      const provider = new ethers.JsonRpcProvider(url, {
+        chainId: ENHANCED_CONFIG.NETWORK.chainId,
+        name: ENHANCED_CONFIG.NETWORK.name
+      });
       const eps = await provider.send("eth_supportedEntryPoints", []);
       if (Array.isArray(eps) && eps.length > 0) {
         console.log(`✅ Healthy bundler selected: ${url}`);
@@ -143,7 +145,7 @@ async function addStakeToEntryPoint(signer, delaySec, amountWei) {
 }
 
 /* =========================================================================
-   Forced-network provider (patched: static network)
+   Forced-network provider
    ========================================================================= */
 
 function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
@@ -151,11 +153,7 @@ function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chai
   request.timeout = ENHANCED_CONFIG.CONNECTION_SETTINGS.timeout;
   request.retry = ENHANCED_CONFIG.CONNECTION_SETTINGS.maxRetries;
   request.allowGzip = true;
-  const network = ethers.Network.from({ name: ENHANCED_CONFIG.NETWORK.name, chainId });
-  return new ethers.JsonRpcProvider(request, network, {
-    staticNetwork: network,
-    pollingInterval: ENHANCED_CONFIG.CONNECTION_SETTINGS.healthCheckInterval
-  });
+  return new ethers.JsonRpcProvider(request, { chainId, name: ENHANCED_CONFIG.NETWORK.name });
 }
 
 /* =========================================================================
@@ -232,20 +230,13 @@ class EnhancedRPCManager {
 }
 
 /* =========================================================================
-   Bundler client (patched: static network)
+   Bundler client
    ========================================================================= */
 
 class BundlerClient {
   constructor(url) {
     if (!url) throw new Error('BundlerClient: runtime bundler URL required');
-    const network = ethers.Network.from({
-      chainId: ENHANCED_CONFIG.NETWORK.chainId,
-      name: ENHANCED_CONFIG.NETWORK.name
-    });
-    this.provider = new ethers.JsonRpcProvider(url, network, {
-      staticNetwork: network,
-      pollingInterval: ENHANCED_CONFIG.BUNDLER.TIMEOUT_MS / 30
-    });
+    this.provider = new ethers.JsonRpcProvider(url, { chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
     this.url = url;
   }
   async supportedEntryPoints() { return await this.provider.send('eth_supportedEntryPoints', []); }
