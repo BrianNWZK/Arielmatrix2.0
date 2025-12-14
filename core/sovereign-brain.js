@@ -640,8 +640,6 @@ class OracleAggregator {
 
 /* =========================================================================
    ProfitVerifier++
-// ... (unchanged full class as in original, omitted for brevity in this comment)
-// Keep entire ProfitVerifier class body from the original file.
    ========================================================================= */
 
 class ProfitVerifier {
@@ -685,7 +683,6 @@ class ProfitVerifier {
 
 /* =========================================================================
    PerceptionRegistry++
-// ... (unchanged full class)
    ========================================================================= */
 
 class PerceptionRegistry {
@@ -857,7 +854,7 @@ class StrategyEngine {
       'event Swap(address,address,int256,int256,uint160,uint128,int24)',
       'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
     ], this.provider);
-    // Subscribe directly to contract event
+    // Patched: subscribe directly to contract event
     poolC.on('Swap', async () => {
       try {
         const slot0 = await poolC.slot0();
@@ -1510,11 +1507,8 @@ class ProductionSovereignCore extends EventEmitter {
     this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
-    // AA boot (prefer explicit env/local self-hosted bundler, then fallback)
-    const bundler = bundlerUrlOverride
-      || process.env.BUNDLER_URL
-      || AA_CONFIG.BUNDLER.RPC_URL
-      || (LIVE.BUNDLER_URLS[0] || null);
+    // AA boot (runtime bundler rotation)
+    const bundler = bundlerUrlOverride || process.env.BUNDLER_URL || LIVE.BUNDLER_URLS[0] || await pickHealthyBundler(LIVE.BUNDLER_URLS);
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
     await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
 
@@ -1697,8 +1691,7 @@ class APIServerV15 {
 async function bootstrap_v15() {
   console.log('🚀 SOVEREIGN FINALITY ENGINE v15 — BOOTSTRAPPING');
   await chainRegistry.init();
-  // Use explicit env or AA config bundler, avoiding dead rotation
-  const bundlerUrl = process.env.BUNDLER_URL || AA_CONFIG.BUNDLER.RPC_URL;
+  const bundlerUrl = await pickHealthyBundler(LIVE.BUNDLER_URLS);
   const core = new ProductionSovereignCore();
   await core.initialize(bundlerUrl);
   const api = new APIServerV15(core, process.env.PORT ? Number(process.env.PORT) : 8081);
