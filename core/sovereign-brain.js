@@ -1766,11 +1766,11 @@ async function runGenesisMicroseed(core) {
     await _genesisSwaps(core);
     console.log('✅ GENESIS MICROSEED — complete');
     return { ok: true };
-  } catch (e) {
+   } catch (e) {
     console.warn('❌ GENESIS MICROSEED failed:', e.message);
     return { ok: false, error: e.message };
   }
-    }
+}
 
 
 /* =========================================================================
