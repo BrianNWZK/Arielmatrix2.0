@@ -763,7 +763,21 @@ class EVGatingStrategyProxy {
     if (!this._rateCapsOk(usd)) return { skipped:true, reason:'budget_cap' };
 
     const best = await this.dex.getBestRoute(tokenIn, tokenOut, notionalUSDC);
-    const expectedOutUSDC = best?.best?.amountOut ? Number(best.best.amountOut)/1e6 : 0;
+    let expectedOutUSD = 0;
+    if (tokenOut.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase()) {
+  expectedOutUSD = best?.best?.amountOut ? Number(best.best.amountOut) / 1e6 : 0;
+} else if (tokenOut.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase()) {
+  const outBW = best?.best?.amountOut ? Number(best.best.amountOut) / 1e18 : 0;
+  let p = LIVE.PEG.TARGET_USD;
+  try {
+    const comp = await this.strategy.oracle.compositeUSD(LIVE.TOKENS.BWAEZI);
+    p = comp.priceUSD || p;
+  } catch {}
+  expectedOutUSD = outBW * p;
+} else {
+  // Fallback: treat amountOut as USD if unknown token (conservative)
+  expectedOutUSD = best?.best?.amountOut ? Number(best.best.amountOut) : 0;
+}
     const gasUSD = await this.estimateGasUSD(850_000n);
     const slipUSD = usd * Math.min(0.02, 0.003 + LIVE.RISK.COMPETITION.COST_AWARE_SLIP_BIAS);
     const grossProfitUSD = expectedOutUSDC - usd;
