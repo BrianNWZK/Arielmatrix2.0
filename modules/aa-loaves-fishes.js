@@ -56,20 +56,13 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
 
+  // Permanently resolve bundler health issues by defaulting to a self-hosted local/private bundler.
   BUNDLER: {
     RPC_URL:
       process.env.BUNDLER_RPC_URL
-      || (process.env.PIMLICO_API_KEY ? `https://bundler.pimlico.io/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.PIMLICO_API_KEY}` : '')
-      || (process.env.STACKUP_API_KEY ? `https://api.stackup.sh/v1/node/${process.env.STACKUP_API_KEY}` : '')
-      || (process.env.BICONOMY_API_KEY ? `https://bundler.biconomy.io/api/v2/${Number(process.env.NETWORK_CHAIN_ID || 1)}/${process.env.BICONOMY_API_KEY}` : ''),
+      || 'http://localhost:4337', // self-hosted Stackup/Pimlico bundler endpoint
     TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-    ROTATION: [
-      "https://rpc.4337.io",
-      "https://aa-bundler.etherspot.io/v1/mainnet",
-      "https://bundler.openfort.xyz/v1/mainnet",
-      "https://api.stackup.sh/v1/node/YOUR_STACKUP_API_KEY",
-      "https://bundler.biconomy.io/api/v2/1/YOUR_BICONOMY_KEY"
-    ]
+    ROTATION: [] // disable dead/public rotations; sovereignty uses private bundler
   },
 
   PUBLIC_RPC_ENDPOINTS: [
@@ -99,10 +92,8 @@ const ENHANCED_CONFIG = {
 async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
   for (const url of rotation) {
     try {
-      const provider = new ethers.JsonRpcProvider(url, {
-        chainId: ENHANCED_CONFIG.NETWORK.chainId,
-        name: ENHANCED_CONFIG.NETWORK.name
-      });
+      const network = ethers.Network.from({ chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
+      const provider = new ethers.JsonRpcProvider(url, network, { staticNetwork: network });
       const eps = await provider.send("eth_supportedEntryPoints", []);
       if (Array.isArray(eps) && eps.length > 0) {
         console.log(`✅ Healthy bundler selected: ${url}`);
@@ -145,7 +136,7 @@ async function addStakeToEntryPoint(signer, delaySec, amountWei) {
 }
 
 /* =========================================================================
-   Forced-network provider
+   Forced-network provider (patched: static network)
    ========================================================================= */
 
 function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
@@ -153,7 +144,11 @@ function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chai
   request.timeout = ENHANCED_CONFIG.CONNECTION_SETTINGS.timeout;
   request.retry = ENHANCED_CONFIG.CONNECTION_SETTINGS.maxRetries;
   request.allowGzip = true;
-  return new ethers.JsonRpcProvider(request, { chainId, name: ENHANCED_CONFIG.NETWORK.name });
+  const network = ethers.Network.from({ name: ENHANCED_CONFIG.NETWORK.name, chainId });
+  return new ethers.JsonRpcProvider(request, network, {
+    staticNetwork: network,
+    pollingInterval: ENHANCED_CONFIG.CONNECTION_SETTINGS.healthCheckInterval
+  });
 }
 
 /* =========================================================================
@@ -230,13 +225,20 @@ class EnhancedRPCManager {
 }
 
 /* =========================================================================
-   Bundler client
+   Bundler client (patched: static network)
    ========================================================================= */
 
 class BundlerClient {
   constructor(url) {
     if (!url) throw new Error('BundlerClient: runtime bundler URL required');
-    this.provider = new ethers.JsonRpcProvider(url, { chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
+    const network = ethers.Network.from({
+      chainId: ENHANCED_CONFIG.NETWORK.chainId,
+      name: ENHANCED_CONFIG.NETWORK.name
+    });
+    this.provider = new ethers.JsonRpcProvider(url, network, {
+      staticNetwork: network,
+      pollingInterval: ENHANCED_CONFIG.BUNDLER.TIMEOUT_MS / 30
+    });
     this.url = url;
   }
   async supportedEntryPoints() { return await this.provider.send('eth_supportedEntryPoints', []); }
@@ -331,7 +333,7 @@ class EnterpriseAASDK {
     this.provider = provider;
     this.scwAddress = scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
 
-    const url = bundlerUrl || ENHANCED_CONFIG.BUNDLER.RPC_URL || await pickHealthyBundler(ENHANCED_CONFIG.BUNDLER.ROTATION);
+    const url = bundlerUrl || ENHANCED_CONFIG.BUNDLER.RPC_URL;
     this.bundler = new BundlerClient(url);
     const health = await this.bundler.healthCheck();
     if (!health.ok) throw new Error(`Bundler health check failed: ${health.error || 'unsupported entrypoint'}`);
