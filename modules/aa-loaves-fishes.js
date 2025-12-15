@@ -84,7 +84,7 @@ const ENHANCED_CONFIG = {
   },
 
   // Optional ERC-4337 Account factory (SimpleAccount/Kernels/etc.)
-  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
+  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0e449764545'),
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
 };
 
