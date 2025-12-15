@@ -1,4 +1,4 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15 (fixed)
 // Maintains ALL v14.3 capabilities + adaptive hooks for v15 integration
 // - Strict address normalization
 // - Enhanced configuration (forced-network, bundler rotation, paymaster modes)
@@ -84,7 +84,8 @@ const ENHANCED_CONFIG = {
   },
 
   // Optional ERC-4337 Account factory (SimpleAccount/Kernels/etc.)
-  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0e449764545'),
+  // IMPORTANT: Fixed to the actual SimpleAccountFactory (ends with ...545) to match your logs
+  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
 };
 
@@ -305,33 +306,62 @@ class OnChainVerifyingPaymaster {
     const userOpHash = ethers.keccak256(enc);
     const signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
     const context = ethers.AbiCoder.defaultAbiCoder().encode(['bytes'], [ethers.getBytes(signature)]);
-    return ethers.concat([this.address, context]);
+    // Construct paymasterAndData = paymasterAddress (20 bytes) + context
+    return ethers.concat([ethers.getAddress(this.address), context]);
   }
 }
 
 class PassthroughPaymaster {
   constructor(address) { this.address = address; }
-  async buildPaymasterAndData() { return ethers.concat([this.address, '0x']); }
+  async buildPaymasterAndData() { return ethers.concat([ethers.getAddress(this.address), '0x']); }
 }
 
 /* =========================================================================
-   SCW factory (minimal ABI) + initCode builder
+   SCW factory (minimal ABI) + initCode builder (with salt discovery)
    ========================================================================= */
 
-// Minimal factory ABI compatible with ERC-4337 style account factories:
-// createAccount(owner, salt) returns address (predictable), and we use the factory.createAccount as initCode target
+// Minimal factory ABI compatible with SimpleAccountFactory:
+// createAccount(owner, salt) returns address (predictable), getAddress(owner, salt) view
 const SCW_FACTORY_ABI = [
   'function createAccount(address owner, uint256 salt) returns (address)',
   'function getAddress(address owner, uint256 salt) view returns (address)'
 ];
 
 /**
- * Build ERC-4337 initCode: factory address + encoded function createAccount(owner, salt)
+ * Find salt that predicts the configured SCW address, using factory.getAddress.
+ * Tries salts [0..MAX_SALT_TRIES).
  */
-function buildInitCodeForSCW(factoryAddress, ownerAddress, salt = 0n) {
+async function findSaltForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, MAX_SALT_TRIES = 256) {
+  const factory = new ethers.Contract(factoryAddress, SCW_FACTORY_ABI, provider);
+  const target = ethers.getAddress(targetScwAddress);
+  for (let i = 0; i < MAX_SALT_TRIES; i++) {
+    const salt = BigInt(i);
+    try {
+      const predicted = await factory.getAddress(ownerAddress, salt);
+      if (ethers.getAddress(predicted) === target) {
+        return salt;
+      }
+    } catch { /* continue */ }
+  }
+  return null;
+}
+
+/**
+ * Build ERC-4337 initCode: factory address (20 bytes) + encoded function createAccount(owner, salt)
+ * Ensures salt matches target SCW if possible; falls back to provided salt or 0n.
+ */
+async function buildInitCodeForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, saltOverride = null) {
+  const factoryAddrNorm = ethers.getAddress(factoryAddress);
   const iface = new ethers.Interface(SCW_FACTORY_ABI);
+
+  let salt = saltOverride;
+  if (salt == null && targetScwAddress) {
+    salt = await findSaltForSCW(provider, factoryAddrNorm, ownerAddress, targetScwAddress);
+  }
+  if (salt == null) salt = 0n;
+
   const data = iface.encodeFunctionData('createAccount', [ownerAddress, salt]);
-  return ethers.concat([ethers.getAddress(factoryAddress), data]); // bytes: factory + calldata
+  return ethers.concat([factoryAddrNorm, data]); // bytes: factory + calldata
 }
 
 /* =========================================================================
@@ -413,8 +443,8 @@ class EnterpriseAASDK {
   }
 
   /**
-   * Create user operation. If account not yet deployed, pass initCode (factory + createAccount).
-   * You can force deployment by setting opts.forceDeploy = true.
+   * Create user operation. If account not yet deployed, pass initCode (factory + createAccount) with correct salt.
+   * You can force deployment by setting opts.forceDeploy = true, or supply opts.salt for the factory.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
@@ -431,9 +461,16 @@ class EnterpriseAASDK {
       !!opts.forceDeploy ||
       (await this.provider.getCode(sender)) === '0x';
 
-    const initCode = shouldDeploy && this.factoryAddress
-      ? buildInitCodeForSCW(this.factoryAddress, this.ownerAddress, 0n)
-      : '0x';
+    let initCode = '0x';
+    if (shouldDeploy && this.factoryAddress) {
+      initCode = await buildInitCodeForSCW(
+        this.provider,
+        this.factoryAddress,
+        this.ownerAddress,
+        sender,
+        opts.salt ?? null
+      );
+    }
 
     const userOp = {
       sender,
@@ -665,7 +702,8 @@ export {
 
   // SCW deploy helpers
   SCW_FACTORY_ABI,
-  buildInitCodeForSCW
+  buildInitCodeForSCW,
+  findSaltForSCW
 };
 
 export default ENHANCED_CONFIG;
