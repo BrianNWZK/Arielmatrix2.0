@@ -12,6 +12,7 @@
 // - pickHealthyBundler; RPC manager; forced provider
 
 import { ethers } from 'ethers';
+import fetch from 'node-fetch';
 
 /* =========================================================================
    Strict address normalization
@@ -57,20 +58,17 @@ const ENHANCED_CONFIG = {
   },
 
   BUNDLER: {
-  RPC_URL:
-    process.env.BUNDLER_RPC_URL
-    || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt',  // Pimlico free key
-    // Or use Alchemy instead:
-    // 'https://eth-mainnet.g.alchemy.com/v2/QZvbhHBbWc5UwFE6sVPgw',
-  TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-  ROTATION: [] // disable rotation for reliability
-},
-
+    RPC_URL:
+      process.env.BUNDLER_RPC_URL
+      || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt',
+    TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
+    ROTATION: [] // disable rotation for reliability
+  },
 
   PUBLIC_RPC_ENDPOINTS: [
-    "https://ethereum-rpc.publicnode.com",
-    "https://rpc.ankr.com/eth",
-    "https://eth.llamarpc.com"
+    'https://ethereum-rpc.publicnode.com',
+    'https://rpc.ankr.com/eth',
+    'https://eth.llamarpc.com'
   ],
 
   CONNECTION_SETTINGS: {
@@ -96,7 +94,7 @@ async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
     try {
       const network = ethers.Network.from({ chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
       const provider = new ethers.JsonRpcProvider(url, network, { staticNetwork: network });
-      const eps = await provider.send("eth_supportedEntryPoints", []);
+      const eps = await provider.send('eth_supportedEntryPoints', []);
       if (Array.isArray(eps) && eps.length > 0) {
         console.log(`✅ Healthy bundler selected: ${url}`);
         return url;
@@ -105,7 +103,7 @@ async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
       console.warn(`⚠️ Bundler unhealthy: ${url} (${e.message})`);
     }
   }
-  throw new Error("No healthy bundler found in rotation");
+  throw new Error('No healthy bundler found in rotation');
 }
 
 /* =========================================================================
@@ -536,7 +534,7 @@ async function scwApproveToken(aa, scw, token, spender, amount = ethers.MaxUint2
   const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const approveData = erc20Iface.encodeFunctionData('approve', [spender, amount]);
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-  const calldata = scwIface.encodeFunctionData('execute', [token, 0, approveData]);
+  const calldata = scwIface.encodeFunctionData('execute', [token, 0n, approveData]);
   const userOp = await aa.createUserOp(calldata, { callGasLimit: 300_000n });
   const signed = await aa.signUserOp(userOp);
   return await aa.sendUserOpWithBackoff(signed, 5);
