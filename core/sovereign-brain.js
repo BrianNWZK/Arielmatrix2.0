@@ -30,7 +30,6 @@ import { WebSocketServer } from 'ws';
 
 import {
   EnterpriseAASDK,
-  EnhancedMevExecutor,
   EnhancedRPCManager,
   bootstrapSCWForPaymasterEnhanced,
   ENHANCED_CONFIG as AA_CONFIG,
@@ -202,7 +201,7 @@ class AdaptiveEquation {
     // Embodied faith
     this.state.faithIndex = Math.max(0, Math.min(1, executedOps / Math.max(1, declaredOps)));
 
-    // Gravity pull: stronger when circumstances are strong and deviation is non-zero but bounded
+    // Gravity pull
     const d0 = 0.01;
     const M_circ = Math.max(0, Math.min(1, liquidityNorm * confidence * coherence));
     const absDev = Math.abs(deviation);
@@ -211,13 +210,13 @@ class AdaptiveEquation {
     // Volatility energy (baseline 0.5%)
     this.state.volatilityEnergy = sigma / 0.5;
 
-    // Directional symmetry (absolute deviation)
+    // Directional symmetry
     this.state.symmetry = absDev;
 
-    // Peg energy (accelerate convergence when coherent/confident)
+    // Peg energy
     this.state.pegEnergy = absDev * coherence * confidence;
 
-    // Carry-through additional modulator signals
+    // Carry-through
     this.state.coherence = coherence;
     this.state.confidence = confidence;
     this.state.novelty = novelty;
@@ -594,7 +593,7 @@ class OracleAggregator {
   constructor(provider, dexRegistry){
     this.provider=provider; this.dexRegistry=dexRegistry;
     this.chainlink = new ethers.Contract(
-      '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419',
+      AA_CONFIG.ORACLES.CHAINLINK_ETH_USD,
       ['function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)', 'function decimals() view returns (uint8)'],
       provider
     );
@@ -603,7 +602,7 @@ class OracleAggregator {
     const [, answer,, updatedAt] = await this.chainlink.latestRoundData();
     const dec = await this.chainlink.decimals();
     const now = Math.floor(nowTs()/1000);
-    const staleWindow = AA_CONFIG.ORACLES.STALE_SECONDS; // align with config
+    const staleWindow = AA_CONFIG.ORACLES.STALE_SECONDS;
     if (Number(updatedAt) < now - staleWindow) throw new Error('CL stale');
     if (!answer || answer <= 0n) throw new Error('CL invalid');
     return Number(answer) / (10 ** Number(dec));
@@ -640,8 +639,6 @@ class OracleAggregator {
 
 /* =========================================================================
    ProfitVerifier++
-// ... (unchanged full class as in original, omitted for brevity in this comment)
-// Keep entire ProfitVerifier class body from the original file.
    ========================================================================= */
 
 class ProfitVerifier {
@@ -685,7 +682,6 @@ class ProfitVerifier {
 
 /* =========================================================================
    PerceptionRegistry++
-// ... (unchanged full class)
    ========================================================================= */
 
 class PerceptionRegistry {
@@ -718,7 +714,7 @@ class PerceptionRegistry {
     return proof;
   }
 
-  async count(){ 
+  async count(){
     try { return this.registry ? Number(await this.registry.getHashCount()) : this.anchors.length; }
     catch { return this.anchors.length; }
   }
@@ -765,22 +761,22 @@ class EVGatingStrategyProxy {
     const best = await this.dex.getBestRoute(tokenIn, tokenOut, notionalUSDC);
     let expectedOutUSD = 0;
     if (tokenOut.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase()) {
-  expectedOutUSD = best?.best?.amountOut ? Number(best.best.amountOut) / 1e6 : 0;
-} else if (tokenOut.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase()) {
-  const outBW = best?.best?.amountOut ? Number(best.best.amountOut) / 1e18 : 0;
-  let p = LIVE.PEG.TARGET_USD;
-  try {
-    const comp = await this.strategy.oracle.compositeUSD(LIVE.TOKENS.BWAEZI);
-    p = comp.priceUSD || p;
-  } catch {}
-  expectedOutUSD = outBW * p;
-} else {
-  // Fallback: treat amountOut as USD if unknown token (conservative)
-  expectedOutUSD = best?.best?.amountOut ? Number(best.best.amountOut) : 0;
-}
+      expectedOutUSD = best?.best?.amountOut ? Number(best.best.amountOut) / 1e6 : 0;
+    } else if (tokenOut.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase()) {
+      const outBW = best?.best?.amountOut ? Number(best.best.amountOut) / 1e18 : 0;
+      let p = LIVE.PEG.TARGET_USD;
+      try {
+        const comp = await this.strategy.oracle.compositeUSD(LIVE.TOKENS.BWAEZI);
+        p = comp.priceUSD || p;
+      } catch {}
+      expectedOutUSD = outBW * p;
+    } else {
+      expectedOutUSD = best?.best?.amountOut ? Number(best.best.amountOut) : 0;
+    }
+
     const gasUSD = await this.estimateGasUSD(850_000n);
     const slipUSD = usd * Math.min(0.02, 0.003 + LIVE.RISK.COMPETITION.COST_AWARE_SLIP_BIAS);
-    const grossProfitUSD = expectedOutUSDC - usd;
+    const grossProfitUSD = expectedOutUSD - usd;
     const evUSD = grossProfitUSD - gasUSD - slipUSD;
 
     if (this.health.runawayTriggered()) return { skipped:true, reason:'circuit_breaker' };
@@ -788,7 +784,7 @@ class EVGatingStrategyProxy {
 
     const res = await this.strategy.execSwap(tokenIn, tokenOut, notionalUSDC);
     this.minuteUSD += usd; this.hourUSD += usd; this.dayUSD += usd;
-    const packet = await this.verifier.record({ 
+    const packet = await this.verifier.record({
       action:'arbitrage', tokenIn, tokenOut, notionalUSD: usd, txHash: res.txHash,
       evExAnte: { evUSD, gasUSD, slipUSD }
     });
@@ -871,7 +867,7 @@ class StrategyEngine {
       'event Swap(address,address,int256,int256,uint160,uint128,int24)',
       'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
     ], this.provider);
-    // Subscribe directly to contract event
+    // Subscribe directly to contract event (requires a WS-capable provider to be truly live)
     poolC.on('Swap', async () => {
       try {
         const slot0 = await poolC.slot0();
@@ -1242,7 +1238,7 @@ class ConsciousnessKernel {
 
     const lNorm = await this._liquidityNorm();
     const dDisp = Math.abs((comp.dispersionPct || 0) - (this.state.dispersionEMA || 0));
-    const Z = Math.max(0, 0.5*dDisp + 0.5*Math.max(0, 0.1 - lNorm));
+    const Z = Math.max(0, 0.5*dDisp + 0.5*Math.max(0,  0.1 - lNorm));
     this.state.novelty = this.state.novelty*0.8 + Z*0.2;
 
     const recent = this.ev?.verifier?.getRecent(30) || [];
@@ -1278,12 +1274,11 @@ class ConsciousnessKernel {
       liquidityNorm: lNorm, fork,
       coherence: this.state.coherence, novelty: this.state.novelty, error: this.state.errorEMA,
       frequency: this.state.frequency, magnetism: this.state.magnetism, dimensionIndex: this.state.dimensionIndex,
-      sigma: Math.min(2.5, Math.max(0, (comp.dispersionPct||0)/100)) // proxy vol for sizing pass
+      sigma: Math.min(2.5, Math.max(0, (comp.dispersionPct||0)/100)) // proxy vol
     };
 
-    // Feed adaptive EQ with execution cadence signals
     const executedOps = recent.length;
-    const declaredOps = Math.max(1, Math.floor(6)); // base cadence placeholder
+    const declaredOps = Math.max(1, Math.floor(6));
     this.adaptiveEq.update({
       ...signalsOut,
       executedOps, declaredOps,
@@ -1308,7 +1303,6 @@ class ConsciousnessKernel {
     const volNorm = (this.state.dispersionEMA || 0)/(m.gates.dispersionMaxPct || 2.0);
     const baseScale = Math.max(0, Math.min(1, m.sizing.a1Dev*Math.abs(devPct)/10 + m.sizing.a2Liq*(liquidityNorm||0) - m.sizing.a3Vol*volNorm));
 
-    // Adaptive EQ modulation
     const mod = this.adaptiveEq.modulation({
       lambda: V15_MANIFEST.enhanced.lambdaCoherence,
       mu: V15_MANIFEST.enhanced.muNovelty,
@@ -1524,7 +1518,6 @@ class ProductionSovereignCore extends EventEmitter {
     this.provider = chainRegistry.getProvider();
     this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
 
-    // AA boot (prefer explicit env/local self-hosted bundler, then fallback)
     const bundler = bundlerUrlOverride
       || process.env.BUNDLER_URL
       || AA_CONFIG.BUNDLER.RPC_URL
@@ -1532,10 +1525,8 @@ class ProductionSovereignCore extends EventEmitter {
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
     await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
 
-    // Bootstrap SCW deposit/allowance
     try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
 
-    // Core services
     this.dex = new DexAdapterRegistry(this.provider);
     this.oracle = new OracleAggregator(this.provider, this.dex);
     this.mev = new MevExecutorAA(this.aa, LIVE.SCW_ADDRESS);
@@ -1558,7 +1549,7 @@ class ProductionSovereignCore extends EventEmitter {
     await this.strategy.watchPeg();
 
     await runGenesisMicroseed(this);
-    
+
     this.loops.push(setInterval(async () => {
       try {
         const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -1757,12 +1748,12 @@ async function _genesisSwaps(core) {
 
   try {
     const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, twoUSDC);
-    await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC' });
+    await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: 2.0 });
   } catch (e) { console.warn('Genesis USDC→BWAEZI failed:', e.message); }
 
   try {
     const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, halfBW);
-    await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC' });
+    await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC', tokenIn: LIVE.TOKENS.BWAEZI, tokenOut: LIVE.TOKENS.USDC, notionalUSD: 0.0 });
   } catch (e) { console.warn('Genesis BWAEZI→USDC failed:', e.message); }
 
   return { ok: true };
@@ -1794,7 +1785,6 @@ async function runGenesisMicroseed(core) {
 async function bootstrap_v15() {
   console.log('🚀 SOVEREIGN FINALITY ENGINE v15 — BOOTSTRAPPING');
   await chainRegistry.init();
-  // Use explicit env or AA config bundler, avoiding dead rotation
   const bundlerUrl = process.env.BUNDLER_URL || AA_CONFIG.BUNDLER.RPC_URL;
   const core = new ProductionSovereignCore();
   await core.initialize(bundlerUrl);
