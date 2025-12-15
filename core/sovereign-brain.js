@@ -35,9 +35,10 @@ import {
   ENHANCED_CONFIG as AA_CONFIG,
   createNetworkForcedProvider,
   pickHealthyBundler,
-  // added for SCW deployment
+  // SCW deployment helpers (final v15-6)
   SCW_FACTORY_ABI,
-  buildInitCodeForSCW
+  buildInitCodeForSCW,
+  findSaltForSCW
 } from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
@@ -52,7 +53,7 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.0',
+  VERSION: 'v15.6',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -1178,7 +1179,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.0',
+  version: '15.6',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1494,23 +1495,35 @@ class AdaptiveRangeMaker {
    ========================================================================= */
 
 async function ensureScwDeployed(provider, aaSdk) {
-  const scw = AA_CONFIG.SCW_ADDRESS;
-  const code = await provider.getCode(scw);
-  if (code && code !== '0x') return { deployed: true, address: scw };
+  const initialScw = AA_CONFIG.SCW_ADDRESS;
+  const code = await provider.getCode(initialScw);
+  if (code && code !== '0x') return { deployed: true, address: initialScw };
 
   const factoryAddr = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
   if (!factoryAddr) throw new Error('ACCOUNT_FACTORY not configured for SCW deployment');
 
-  // Build a no-op call (zero callData) but include initCode in the userOp to deploy the SCW
-  const initCode = buildInitCodeForSCW(factoryAddr, aaSdk.signer.address, 0n);
+  // Align SCW to factory+owner prediction if not derivable
+  const owner = aaSdk.ownerAddress || aaSdk.signer.address;
+  let salt = await findSaltForSCW(provider, factoryAddr, owner, initialScw);
+  let sender = initialScw;
+  if (salt == null) {
+    const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
+    const predicted = await factory.getAddress(owner, 0n);
+    sender = ethers.getAddress(predicted);
+    aaSdk.scwAddress = sender;
+    salt = 0n;
+    console.warn(`SCW ${initialScw} not derivable; aligning to predicted ${sender} (salt=0)`);
+  }
 
-  const noopIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const noop = noopIface.encodeFunctionData('execute', [scw, 0n, '0x']);
+  const initCode = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt);
+
+  const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const noop = iface.encodeFunctionData('execute', [sender, 0n, '0x']);
 
   const userOp = await aaSdk.createUserOp(noop, { forceDeploy: true, callGasLimit: 400_000n, verificationGasLimit: 700_000n, preVerificationGas: 80_000n });
   const signed = await aaSdk.signUserOp(userOp);
   const txHash = await aaSdk.sendUserOpWithBackoff(signed, 5);
-  return { deployed: true, txHash, address: scw };
+  return { deployed: true, txHash, address: sender };
 }
 
 /* =========================================================================
@@ -1557,7 +1570,7 @@ class ProductionSovereignCore extends EventEmitter {
     this.aa.factoryAddress = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
     await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
 
-    // Deploy smart account if needed (prevents AA20 at first call)
+    // Deploy smart account if needed (prevents AA14/AA20 at first call)
     try {
       const deployed = await ensureScwDeployed(this.provider, this.aa);
       if (deployed?.txHash) console.log(`✅ SCW deployed via initCode: ${deployed.txHash}`);
