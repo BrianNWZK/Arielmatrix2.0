@@ -34,7 +34,10 @@ import {
   bootstrapSCWForPaymasterEnhanced,
   ENHANCED_CONFIG as AA_CONFIG,
   createNetworkForcedProvider,
-  pickHealthyBundler
+  pickHealthyBundler,
+  // added for SCW deployment
+  SCW_FACTORY_ABI,
+  buildInitCodeForSCW
 } from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
@@ -638,7 +641,7 @@ class OracleAggregator {
 }
 
 /* =========================================================================
-   ProfitVerifier++
+   ProfitVerifier++ (unchanged)
    ========================================================================= */
 
 class ProfitVerifier {
@@ -681,7 +684,7 @@ class ProfitVerifier {
 }
 
 /* =========================================================================
-   PerceptionRegistry++
+   PerceptionRegistry++ (unchanged)
    ========================================================================= */
 
 class PerceptionRegistry {
@@ -1149,7 +1152,7 @@ class ReflexiveAmplifier {
 }
 
 /* =========================================================================
-   Mev Executor (AA live)
+   Mev Executor (AA live) — add forceDeploy passthrough
    ========================================================================= */
 
 class MevExecutorAA {
@@ -1160,7 +1163,9 @@ class MevExecutorAA {
       verificationGasLimit: opts.verificationGasLimit || 650_000n,
       preVerificationGas: opts.preVerificationGas || 100_000n,
       maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
+      // allow first-call deployment when SCW code is empty
+      forceDeploy: opts.forceDeploy === true
     });
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
@@ -1485,6 +1490,30 @@ class AdaptiveRangeMaker {
 }
 
 /* =========================================================================
+   Smart account deployment helper (initCode via factory)
+   ========================================================================= */
+
+async function ensureScwDeployed(provider, aaSdk) {
+  const scw = AA_CONFIG.SCW_ADDRESS;
+  const code = await provider.getCode(scw);
+  if (code && code !== '0x') return { deployed: true, address: scw };
+
+  const factoryAddr = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
+  if (!factoryAddr) throw new Error('ACCOUNT_FACTORY not configured for SCW deployment');
+
+  // Build a no-op call (zero callData) but include initCode in the userOp to deploy the SCW
+  const initCode = buildInitCodeForSCW(factoryAddr, aaSdk.signer.address, 0n);
+
+  const noopIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const noop = noopIface.encodeFunctionData('execute', [scw, 0n, '0x']);
+
+  const userOp = await aaSdk.createUserOp(noop, { forceDeploy: true, callGasLimit: 400_000n, verificationGasLimit: 700_000n, preVerificationGas: 80_000n });
+  const signed = await aaSdk.signUserOp(userOp);
+  const txHash = await aaSdk.sendUserOpWithBackoff(signed, 5);
+  return { deployed: true, txHash, address: scw };
+}
+
+/* =========================================================================
    Production sovereign core v15 (full live wiring)
    ========================================================================= */
 
@@ -1522,8 +1551,19 @@ class ProductionSovereignCore extends EventEmitter {
       || process.env.BUNDLER_URL
       || AA_CONFIG.BUNDLER.RPC_URL
       || (LIVE.BUNDLER_URLS[0] || null);
+
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
+    // Provide factory to AA SDK for initCode deployment
+    this.aa.factoryAddress = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
     await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
+
+    // Deploy smart account if needed (prevents AA20 at first call)
+    try {
+      const deployed = await ensureScwDeployed(this.provider, this.aa);
+      if (deployed?.txHash) console.log(`✅ SCW deployed via initCode: ${deployed.txHash}`);
+    } catch (e) {
+      console.warn('SCW deployment skip/failure:', e.message);
+    }
 
     try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
 
