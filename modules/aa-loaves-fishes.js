@@ -1,3 +1,5 @@
+
+
 // modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15
 // Maintains ALL v14.3 capabilities + adaptive hooks for v15 integration
 // - Strict address normalization
@@ -81,7 +83,11 @@ const ENHANCED_CONFIG = {
     CHAINLINK_ETH_USD: addrStrict(process.env.CHAINLINK_ETH_USD || '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419'),
     MAX_DIVERGENCE_PCT: Number(process.env.ORACLE_MAX_DIVERGENCE || 0.15),
     STALE_SECONDS: Number(process.env.ORACLE_STALE_SECONDS || 7200)
-  }
+  },
+
+  // Optional ERC-4337 Account factory (SimpleAccount/Kernels/etc.)
+  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
+  EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
 };
 
 
@@ -311,6 +317,26 @@ class PassthroughPaymaster {
 }
 
 /* =========================================================================
+   SCW factory (minimal ABI) + initCode builder
+   ========================================================================= */
+
+// Minimal factory ABI compatible with ERC-4337 style account factories:
+// createAccount(owner, salt) returns address (predictable), and we use the factory.createAccount as initCode target
+const SCW_FACTORY_ABI = [
+  'function createAccount(address owner, uint256 salt) returns (address)',
+  'function getAddress(address owner, uint256 salt) view returns (address)'
+];
+
+/**
+ * Build ERC-4337 initCode: factory address + encoded function createAccount(owner, salt)
+ */
+function buildInitCodeForSCW(factoryAddress, ownerAddress, salt = 0n) {
+  const iface = new ethers.Interface(SCW_FACTORY_ABI);
+  const data = iface.encodeFunctionData('createAccount', [ownerAddress, salt]);
+  return ethers.concat([ethers.getAddress(factoryAddress), data]); // bytes: factory + calldata
+}
+
+/* =========================================================================
    Enterprise AA SDK
    ========================================================================= */
 
@@ -327,6 +353,10 @@ class EnterpriseAASDK {
     this.verifyingPaymaster = null;
     this.passthroughPaymaster = null;
     this.initialized = false;
+
+    // optional factory context
+    this.factoryAddress = ENHANCED_CONFIG.ACCOUNT_FACTORY || null;
+    this.ownerAddress = ENHANCED_CONFIG.EOA_OWNER || signer.address;
   }
 
   async initialize(provider, scwAddress = null, bundlerUrl = null) {
@@ -384,6 +414,10 @@ class EnterpriseAASDK {
     return '0x';
   }
 
+  /**
+   * Create user operation. If account not yet deployed, pass initCode (factory + createAccount).
+   * You can force deployment by setting opts.forceDeploy = true.
+   */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
     const sender = this.scwAddress;
@@ -395,13 +429,21 @@ class EnterpriseAASDK {
     let maxTip = opts.maxPriorityFeePerGas || fee.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
     if (maxFee < maxTip) maxFee = maxTip;
 
+    const shouldDeploy =
+      !!opts.forceDeploy ||
+      (await this.provider.getCode(sender)) === '0x';
+
+    const initCode = shouldDeploy && this.factoryAddress
+      ? buildInitCodeForSCW(this.factoryAddress, this.ownerAddress, 0n)
+      : '0x';
+
     const userOp = {
       sender,
       nonce,
-      initCode: '0x',
+      initCode,
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
-      verificationGasLimit: opts.verificationGasLimit || 600_000n,
+      verificationGasLimit: opts.verificationGasLimit || 700_000n,
       preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: maxFee,
       maxPriorityFeePerGas: maxTip,
@@ -621,7 +663,11 @@ export {
 
   // Utilities
   scwApproveToken,
-  PriceOracleAggregator
+  PriceOracleAggregator,
+
+  // SCW deploy helpers
+  SCW_FACTORY_ABI,
+  buildInitCodeForSCW
 };
 
 export default ENHANCED_CONFIG;
