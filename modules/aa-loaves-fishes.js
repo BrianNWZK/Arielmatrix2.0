@@ -1,5 +1,12 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15 (fixed)
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15-6 (final)
 // Maintains ALL v14.3 capabilities + adaptive hooks for v15 integration
+// Critical fixes applied:
+// - Correct initCode construction and sender alignment (AA14 resolved)
+// - SCW address coalescing with factory+owner during initialization (boot-time guard)
+// - Stricter owner address normalization (prevents invalid owner)
+// - Extra guard in createUserOp to align sender if undeployed mismatch
+//
+// Features preserved:
 // - Strict address normalization
 // - Enhanced configuration (forced-network, bundler rotation, paymaster modes)
 // - EntryPoint v0.7 only (deposit/stake helpers)
@@ -28,7 +35,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.0-LIVE',
+  VERSION: 'v15.6-LIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -384,7 +391,16 @@ class EnterpriseAASDK {
 
     // optional factory context
     this.factoryAddress = ENHANCED_CONFIG.ACCOUNT_FACTORY || null;
-    this.ownerAddress = ENHANCED_CONFIG.EOA_OWNER || signer.address;
+
+    // Stricter owner normalization with safe fallback to signer
+    try {
+      this.ownerAddress =
+        ENHANCED_CONFIG.EOA_OWNER && ENHANCED_CONFIG.EOA_OWNER.startsWith('0x')
+          ? ethers.getAddress(ENHANCED_CONFIG.EOA_OWNER)
+          : signer.address;
+    } catch {
+      this.ownerAddress = signer.address;
+    }
   }
 
   async initialize(provider, scwAddress = null, bundlerUrl = null) {
@@ -396,6 +412,7 @@ class EnterpriseAASDK {
     const health = await this.bundler.healthCheck();
     if (!health.ok) throw new Error(`Bundler health check failed: ${health.error || 'unsupported entrypoint'}`);
 
+    // Paymaster setup
     if (this.paymasterMode === 'API') {
       if (!ENHANCED_CONFIG.PAYMASTER.API_URL) throw new Error('PAYMASTER_API_URL required for API mode');
       this.paymasterAPI = new ExternalAPIPaymaster(ENHANCED_CONFIG.PAYMASTER.API_URL);
@@ -408,6 +425,22 @@ class EnterpriseAASDK {
     } else if (this.paymasterMode === 'PASSTHROUGH') {
       if (!ENHANCED_CONFIG.PAYMASTER.ADDRESS) throw new Error('PAYMASTER_ADDRESS required for PASSTHROUGH mode');
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
+    }
+
+    // Coalesce SCW with factory+owner so sender matches initCode result (boot-time guard)
+    if (this.factoryAddress && this.ownerAddress && this.scwAddress) {
+      try {
+        const salt = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, this.scwAddress);
+        if (salt == null) {
+          const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
+          const predicted = await factory.getAddress(this.ownerAddress, 0n);
+          const aligned = ethers.getAddress(predicted);
+          console.warn(`SCW ${this.scwAddress} not derivable; aligning to predicted ${aligned}`);
+          this.scwAddress = aligned;
+        }
+      } catch (e) {
+        console.warn(`SCW coalescing skipped: ${e.message}`);
+      }
     }
 
     this.initialized = true;
@@ -448,9 +481,22 @@ class EnterpriseAASDK {
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
-    const sender = this.scwAddress;
+
+    // Sender alignment guard: if undeployed and mismatch, realign scwAddress to factory prediction
+    let sender = this.scwAddress;
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
+
+    const undeployed = (await this.provider.getCode(sender)) === '0x';
+    if (undeployed && this.factoryAddress) {
+      const salt = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, sender);
+      if (salt == null) {
+        const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
+        const predicted = await factory.getAddress(this.ownerAddress, 0n);
+        this.scwAddress = ethers.getAddress(predicted);
+        sender = this.scwAddress;
+      }
+    }
 
     const fee = await this.provider.getFeeData();
     let maxFee = opts.maxFeePerGas || fee.maxFeePerGas || ethers.parseUnits('30', 'gwei');
