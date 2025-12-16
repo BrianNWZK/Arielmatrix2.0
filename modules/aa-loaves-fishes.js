@@ -1,10 +1,10 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15-6 (final)
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15-7 (final)
 // Maintains ALL v14.3 capabilities + adaptive hooks for v15 integration
 // Critical fixes applied:
 // - Correct initCode construction and sender alignment (AA14 resolved)
 // - SCW address coalescing with factory+owner during initialization (boot-time guard)
 // - Stricter owner address normalization (prevents invalid owner)
-// - Extra guard in createUserOp to align sender if undeployed mismatch
+// - Always use SCW as sender; include initCode only when undeployed (permanent SCW alignment fix)
 //
 // Features preserved:
 // - Strict address normalization
@@ -35,7 +35,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.6-LIVE',
+  VERSION: 'v15.7-LIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -52,7 +52,7 @@ const ENHANCED_CONFIG = {
     V3_ROUTER_ADDRESS: addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564')
   },
 
-  SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0xa84c655c1f8544a6f8a1976dab7cbc239007db98'),
+  SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
   BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
   USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
   WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
@@ -92,7 +92,7 @@ const ENHANCED_CONFIG = {
 
   // Optional ERC-4337 Account factory (SimpleAccount/Kernels/etc.)
   // IMPORTANT: Fixed to the actual SimpleAccountFactory (ends with ...545) to match your logs
-  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
+  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
 };
 
@@ -476,25 +476,28 @@ class EnterpriseAASDK {
   }
 
   /**
-   * Create user operation. If account not yet deployed, pass initCode (factory + createAccount) with correct salt.
-   * You can force deployment by setting opts.forceDeploy = true, or supply opts.salt for the factory.
+   * Create user operation. Always use SCW as sender.
+   * Include initCode (factory + createAccount) only when the SCW is undeployed or when forceDeploy=true.
+   * You can supply opts.salt for the factory.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
 
-    // Sender alignment guard: if undeployed and mismatch, realign scwAddress to factory prediction
-    let sender = this.scwAddress;
+    // === FIX: Always use SCW address as sender and only include initCode if undeployed ===
+    let sender = this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
 
-    const undeployed = (await this.provider.getCode(sender)) === '0x';
+    const codeAtAddress = await this.provider.getCode(sender);
+    const undeployed = (codeAtAddress === '0x');
+
     if (undeployed && this.factoryAddress) {
       const salt = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, sender);
       if (salt == null) {
         const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
         const predicted = await factory.getAddress(this.ownerAddress, 0n);
         this.scwAddress = ethers.getAddress(predicted);
-        sender = this.scwAddress;
+        sender = this.scwAddress;   // ✅ correct to SCW
       }
     }
 
@@ -503,12 +506,9 @@ class EnterpriseAASDK {
     let maxTip = opts.maxPriorityFeePerGas || fee.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
     if (maxFee < maxTip) maxFee = maxTip;
 
-    const shouldDeploy =
-      !!opts.forceDeploy ||
-      (await this.provider.getCode(sender)) === '0x';
-
+    // Build initCode only if undeployed (and factory exists) or forceDeploy is true
     let initCode = '0x';
-    if (shouldDeploy && this.factoryAddress) {
+    if ((undeployed || opts.forceDeploy) && this.factoryAddress) {
       initCode = await buildInitCodeForSCW(
         this.provider,
         this.factoryAddress,
@@ -519,9 +519,9 @@ class EnterpriseAASDK {
     }
 
     const userOp = {
-      sender,
+      sender,                // ✅ always SCW (never factory)
       nonce,
-      initCode,
+      initCode,              // ✅ initCode only when deploying
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
       verificationGasLimit: opts.verificationGasLimit || 700_000n,
