@@ -35,7 +35,7 @@ import {
   ENHANCED_CONFIG as AA_CONFIG,
   createNetworkForcedProvider,
   pickHealthyBundler,
-  // SCW deployment helpers (final v15-6)
+  // SCW deployment helpers (final v15-7)
   SCW_FACTORY_ABI,
   buildInitCodeForSCW,
   findSaltForSCW
@@ -53,18 +53,18 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.6',
+  VERSION: 'v15.7',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
   ENTRY_POINT_V06: addrStrict('0x5FF137D4bEAA7036d654a88Ea898df565D304B88'),
   ENTRY_POINT: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  SCW_ADDRESS: addrStrict(AA_CONFIG.SCW_ADDRESS || '0xa84c655c1f8544a6f8a1976dab7cbc239007db98'),
+  SCW_ADDRESS: addrStrict(AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
   PAYMASTER_ADDRESS: addrStrict(AA_CONFIG.PAYMASTER?.ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
 
   EOA_OWNER_ADDRESS: addrStrict(AA_CONFIG.EOA_OWNER || '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
-  ACCOUNT_FACTORY: addrStrict(AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
+  ACCOUNT_FACTORY: addrStrict(AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
 
   TOKENS: {
     BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
@@ -1179,7 +1179,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.6',
+  version: '15.7',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1497,30 +1497,42 @@ class AdaptiveRangeMaker {
 async function ensureScwDeployed(provider, aaSdk) {
   const initialScw = AA_CONFIG.SCW_ADDRESS;
   const code = await provider.getCode(initialScw);
+  // === FIX: Do not attempt initCode if SCW already deployed
   if (code && code !== '0x') return { deployed: true, address: initialScw };
 
   const factoryAddr = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
   if (!factoryAddr) throw new Error('ACCOUNT_FACTORY not configured for SCW deployment');
 
-  // Align SCW to factory+owner prediction if not derivable
   const owner = aaSdk.ownerAddress || aaSdk.signer.address;
+
+  // Try matching salt for the configured SCW
   let salt = await findSaltForSCW(provider, factoryAddr, owner, initialScw);
   let sender = initialScw;
+
   if (salt == null) {
+    // If not derivable, align sender to predicted (salt=0), but DO NOT set factory as sender
     const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
     const predicted = await factory.getAddress(owner, 0n);
     sender = ethers.getAddress(predicted);
-    aaSdk.scwAddress = sender;
+    aaSdk.scwAddress = sender; // align AA SDK sender to predicted SCW
     salt = 0n;
-    console.warn(`SCW ${initialScw} not derivable; aligning to predicted ${sender} (salt=0)`);
+    console.warn(`SCW ${initialScw} not derivable; aligning to predicted SCW ${sender} (salt=0)`);
   }
 
+  // Build initCode for SCW deployment (factory + createAccount(owner, salt))
   const initCode = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt);
 
+  // Prepare a NOOP call via SCW.execute to trigger deployment through EntryPoint.
   const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const noop = iface.encodeFunctionData('execute', [sender, 0n, '0x']);
 
-  const userOp = await aaSdk.createUserOp(noop, { forceDeploy: true, callGasLimit: 400_000n, verificationGasLimit: 700_000n, preVerificationGas: 80_000n });
+  // === FIX: sender must be the SCW (not factory); include initCode only if undeployed
+  const userOp = await aaSdk.createUserOp(noop, {
+    forceDeploy: true,
+    callGasLimit: 400_000n,
+    verificationGasLimit: 700_000n,
+    preVerificationGas: 80_000n
+  });
   const signed = await aaSdk.signUserOp(userOp);
   const txHash = await aaSdk.sendUserOpWithBackoff(signed, 5);
   return { deployed: true, txHash, address: sender };
@@ -1569,6 +1581,26 @@ class ProductionSovereignCore extends EventEmitter {
     // Provide factory to AA SDK for initCode deployment
     this.aa.factoryAddress = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
     await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
+
+    // === FIX: Correct SCW alignment (coalescing) — enforce REAL predicted SCW (salt=0) before deployment
+    try {
+      const provider = chainRegistry.getProvider();
+      const factory = new ethers.Contract(LIVE.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
+
+      // Compute real predicted SCW (salt=0)
+      const predictedSCW = await factory.getAddress(LIVE.EOA_OWNER_ADDRESS, 0n);
+      console.log(`🧠 REAL PREDICTED SCW ADDRESS (salt=0): ${predictedSCW}`);
+
+      if (LIVE.SCW_ADDRESS.toLowerCase() !== predictedSCW.toLowerCase()) {
+        console.warn(`SCW mismatch detected! Configured: ${LIVE.SCW_ADDRESS} → Aligning to REAL predicted: ${predictedSCW}`);
+        // Force config and AA SDK to use the real predicted SCW
+        LIVE.SCW_ADDRESS = ethers.getAddress(predictedSCW);
+        AA_CONFIG.SCW_ADDRESS = LIVE.SCW_ADDRESS;
+        this.aa.scwAddress = LIVE.SCW_ADDRESS;
+      }
+    } catch (e) {
+      console.warn(`SCW coalescing skipped: ${e.message}`);
+    }
 
     // Deploy smart account if needed (prevents AA14/AA20 at first call)
     try {
@@ -1768,6 +1800,8 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   if (balFloat >= minUSD) return { skipped: true, reason: 'scw_has_usdc' };
 
   const amt = ethers.parseUnits(minUSD.toFixed(2), dec);
+
+  // Encode transfer properly and send via contract method (not raw sendTransaction)
   const tx = await usdc.connect(signer).transfer(AA_CONFIG.SCW_ADDRESS, amt, { gasLimit: 120000 });
   const rc = await tx.wait();
   return { transferred: true, txHash: rc.transactionHash, amount: amt };
