@@ -1,9 +1,6 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.9 (FINAL COMPLETE & ERROR-FREE VERSION)
-// This is the full, ready-to-copy file.
-// All original features from your v15.8 preserved.
-// Permanent SCW fix applied (manual CREATE2, real alignment, no factory leakage).
-// No duplicate exports, no syntax errors, no missing exports.
-// SCW_FACTORY_ABI is exported so sovereign-brain.js can import it.
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.9 (FINAL ERROR-FREE VERSION)
+// All original features preserved + permanent SCW fix
+// No duplicate exports, no syntax errors
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -290,7 +287,7 @@ class PassthroughPaymaster {
 }
 
 /* =========================================================================
-   SCW factory ABI (exported for sovereign-brain.js)
+   SCW factory ABI (exported once for sovereign-brain.js)
    ========================================================================= */
 export const SCW_FACTORY_ABI = [
   'function createAccount(address owner,uint256 salt) public returns (address ret)',
@@ -631,7 +628,7 @@ class PriceOracleAggregator {
 }
 
 /* =========================================================================
-   Exports (SCW_FACTORY_ABI exported for sovereign-brain.js)
+   Exports (SCW_FACTORY_ABI exported once)
    ========================================================================= */
 export {
   EnterpriseAASDK,
@@ -645,7 +642,7 @@ export {
   ENHANCED_CONFIG,
   scwApproveToken,
   PriceOracleAggregator,
-  SCW_FACTORY_ABI,
+  SCW_FACTORY_ABI,  // exported here for sovereign-brain.js
   buildInitCodeForSCW,
   predictSCWAddress
 };
