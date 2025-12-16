@@ -1,7 +1,7 @@
 /**
  * core/sovereign-brain-v15.js
  *
- * SOVEREIGN FINALITY ENGINE v15 — Adaptive Living Systems
+ * SOVEREIGN FINALITY ENGINE v15.8 — Adaptive Living Systems
  * Unified v13.9 + v14.0 + v14.1 capabilities with adaptive sovereign equation
  *
  * Preserves ALL v14.1 features:
@@ -35,7 +35,7 @@ import {
   ENHANCED_CONFIG as AA_CONFIG,
   createNetworkForcedProvider,
   pickHealthyBundler,
-  // SCW deployment helpers (final v15-7)
+  // SCW deployment helpers (final v15-8)
   SCW_FACTORY_ABI,
   buildInitCodeForSCW,
   findSaltForSCW
@@ -53,7 +53,7 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.7',
+  VERSION: 'v15.8',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -871,7 +871,6 @@ class StrategyEngine {
       'event Swap(address,address,int256,int256,uint160,uint128,int24)',
       'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
     ], this.provider);
-    // Subscribe directly to contract event (requires a WS-capable provider to be truly live)
     poolC.on('Swap', async () => {
       try {
         const slot0 = await poolC.slot0();
@@ -1179,7 +1178,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.7',
+  version: '15.8',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1513,20 +1512,31 @@ async function ensureScwDeployed(provider, aaSdk) {
     // If not derivable, align sender to predicted (salt=0), but DO NOT set factory as sender
     const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
     const predicted = await factory.getAddress(owner, 0n);
-    sender = ethers.getAddress(predicted);
+    const predictedChecksum = ethers.getAddress(predicted);
+
+    // Guard: predicted MUST NOT equal factory address (prevents factory leakage as sender)
+    if (predictedChecksum.toLowerCase() === ethers.getAddress(factoryAddr).toLowerCase()) {
+      throw new Error(`Factory returned self as predicted SCW. Abort alignment. factory=${factoryAddr}`);
+    }
+
+    sender = predictedChecksum;
     aaSdk.scwAddress = sender; // align AA SDK sender to predicted SCW
     salt = 0n;
     console.warn(`SCW ${initialScw} not derivable; aligning to predicted SCW ${sender} (salt=0)`);
   }
 
-  // Build initCode for SCW deployment (factory + createAccount(owner, salt))
+  // Guard: if already deployed at aligned address, skip
+  const senderCode = await provider.getCode(sender);
+  if (senderCode && senderCode !== '0x') return { deployed: true, address: sender };
+
+  // Build initCode once
   const initCode = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt);
 
-  // Prepare a NOOP call via SCW.execute to trigger deployment through EntryPoint.
+  // NOOP via SCW.execute to self
   const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const noop = iface.encodeFunctionData('execute', [sender, 0n, '0x']);
 
-  // === FIX: sender must be the SCW (not factory); include initCode only if undeployed
+  // Create userOp: sender=SCW, include initCode, forceDeploy=true (first call only)
   const userOp = await aaSdk.createUserOp(noop, {
     forceDeploy: true,
     callGasLimit: 400_000n,
@@ -1588,15 +1598,22 @@ class ProductionSovereignCore extends EventEmitter {
       const factory = new ethers.Contract(LIVE.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
 
       // Compute real predicted SCW (salt=0)
-      const predictedSCW = await factory.getAddress(LIVE.EOA_OWNER_ADDRESS, 0n);
+      const predictedSCWRaw = await factory.getAddress(LIVE.EOA_OWNER_ADDRESS, 0n);
+      const predictedSCW = ethers.getAddress(predictedSCWRaw);
+
+      // Guard: predicted MUST NOT equal factory address (prevents self-leakage)
+      if (predictedSCW.toLowerCase() === LIVE.ACCOUNT_FACTORY.toLowerCase()) {
+        throw new Error(`Invalid predicted SCW equals factory. Check factory ABI/params. factory=${LIVE.ACCOUNT_FACTORY}`);
+      }
+
       console.log(`🧠 REAL PREDICTED SCW ADDRESS (salt=0): ${predictedSCW}`);
 
-      if (LIVE.SCW_ADDRESS.toLowerCase() !== predictedSCW.toLowerCase()) {
-        console.warn(`SCW mismatch detected! Configured: ${LIVE.SCW_ADDRESS} → Aligning to REAL predicted: ${predictedSCW}`);
+      if (ethers.getAddress(LIVE.SCW_ADDRESS) !== predictedSCW) {
+        console.warn(`SCW mismatch detected! Configured: ${ethers.getAddress(LIVE.SCW_ADDRESS)} → Aligning to REAL predicted: ${predictedSCW}`);
         // Force config and AA SDK to use the real predicted SCW
-        LIVE.SCW_ADDRESS = ethers.getAddress(predictedSCW);
-        AA_CONFIG.SCW_ADDRESS = LIVE.SCW_ADDRESS;
-        this.aa.scwAddress = LIVE.SCW_ADDRESS;
+        LIVE.SCW_ADDRESS = predictedSCW;
+        AA_CONFIG.SCW_ADDRESS = predictedSCW;
+        this.aa.scwAddress = predictedSCW;
       }
     } catch (e) {
       console.warn(`SCW coalescing skipped: ${e.message}`);
@@ -1786,7 +1803,7 @@ class APIServerV15 {
    Genesis microseed (inline, between API and Bootstrap)
    ========================================================================= */
 
-// Ensure SCW has at least $5 USDC (EOA -> SCW transfer if needed)
+// SCW-first funding: check SCW; only fallback to EOA→SCW transfer if SCW under threshold and EOA has balance
 async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   const usdc = new ethers.Contract(
     AA_CONFIG.USDC_ADDRESS,
@@ -1795,16 +1812,28 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   );
   let dec = 6;
   try { dec = await usdc.decimals(); } catch {}
-  const bal = await usdc.balanceOf(AA_CONFIG.SCW_ADDRESS);
-  const balFloat = Number(ethers.formatUnits(bal, dec));
-  if (balFloat >= minUSD) return { skipped: true, reason: 'scw_has_usdc' };
 
-  const amt = ethers.parseUnits(minUSD.toFixed(2), dec);
+  // Step 1: SCW balance check
+  const scwBal = await usdc.balanceOf(AA_CONFIG.SCW_ADDRESS);
+  const scwFloat = Number(ethers.formatUnits(scwBal, dec));
+  if (scwFloat >= minUSD) {
+    console.log(`SCW already funded with ${scwFloat} USDC — skipping EOA transfer.`);
+    return { funded: true, source: 'SCW', balance: scwFloat };
+  }
 
-  // Encode transfer properly and send via contract method (not raw sendTransaction)
-  const tx = await usdc.connect(signer).transfer(AA_CONFIG.SCW_ADDRESS, amt, { gasLimit: 120000 });
-  const rc = await tx.wait();
-  return { transferred: true, txHash: rc.transactionHash, amount: amt };
+  // Step 2: EOA fallback only if SCW underfunded
+  const eoaBal = await usdc.balanceOf(signer.address);
+  const eoaFloat = Number(ethers.formatUnits(eoaBal, dec));
+  if (eoaFloat >= minUSD) {
+    const amt = ethers.parseUnits(minUSD.toFixed(2), dec);
+    const tx = await usdc.connect(signer).transfer(AA_CONFIG.SCW_ADDRESS, amt, { gasLimit: 120000 });
+    const rc = await tx.wait();
+    console.log(`Transferred ${minUSD} USDC from EOA → SCW`);
+    return { funded: true, source: 'EOA', txHash: rc.transactionHash };
+  }
+
+  console.warn(`Funding insufficient: SCW=${scwFloat} USDC, EOA=${eoaFloat} USDC`);
+  return { funded: false, reason: 'insufficient_usdc' };
 }
 
 // Approve USDC and BWAEZI to Uniswap V3 router via SCW.execute using AA
