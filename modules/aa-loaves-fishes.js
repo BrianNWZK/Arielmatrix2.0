@@ -1,11 +1,14 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.10 (AA14-safe, full capabilities)
-// Maintains ALL v14.3/v15.7 features, and hardens AA behavior:
-// - Always use SCW as sender.
-// - InitCode only when deploying.
-// - AA14 guard: initCode must construct exactly sender (predict & enforce).
-// - Canonical factory + ABI sanity checks.
-// - Configurable salt discovery window.
-// - Optional token admin recovery hook (safe, non-invasive).
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.10 (final, AA14-hardened, MEV v15-8 wiring)
+// Maintains ALL v15.10 capabilities (hardened sender+initCode, paymaster modes, bundler estimation)
+// and is wired exactly like v15-8 (exports, names, behavior) so MEV v15-8 imports work.
+//
+// Key safeties:
+// - Sender is always the SCW (never the factory).
+// - InitCode only when SCW undeployed or forceDeploy=true.
+// - AA14 guard: initCode must construct exactly the sender (predict & enforce).
+// - Safe SCW coalescing: never align to factory address; surface mismatched factory configs.
+// - Paymaster modes and bundler gas estimation intact.
+// - Provides pickHealthyBundler (for MEV v15-8) and all required helpers.
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -20,7 +23,7 @@ function addrStrict(a) {
 }
 
 /* =========================================================================
-   Enhanced configuration
+   Enhanced configuration (forced-network, optional bundler/paymaster)
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
@@ -41,21 +44,11 @@ const ENHANCED_CONFIG = {
     V3_ROUTER_ADDRESS: addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564')
   },
 
-  // Configured SCW (what you want to use). This may be aligned to predicted during init.
   SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
-
-  // Canonical ERC-4337 SimpleAccountFactory (mainnet infinitism)
-  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
-
-  // Owner EOA of the SCW (checksummed if provided, otherwise signer.address is used)
-  EOA_OWNER: addrStrict(process.env.EOA_OWNER || ''),
-
-  // Tokens
   BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
   USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
   WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
 
-  // Paymaster settings
   PAYMASTER: {
     MODE: (process.env.PAYMASTER_MODE || 'ONCHAIN').toUpperCase(), // NONE | API | ONCHAIN | PASSTHROUGH
     ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
@@ -63,13 +56,12 @@ const ENHANCED_CONFIG = {
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
 
-  // Bundler
   BUNDLER: {
     RPC_URL:
       process.env.BUNDLER_RPC_URL
       || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt',
     TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-    ROTATION: [] // disable rotation for reliability
+    ROTATION: [] // disabled by default; pickHealthyBundler is exported for MEV compatibility
   },
 
   PUBLIC_RPC_ENDPOINTS: [
@@ -90,28 +82,33 @@ const ENHANCED_CONFIG = {
     STALE_SECONDS: Number(process.env.ORACLE_STALE_SECONDS || 7200)
   },
 
-  // Salt discovery window
-  MAX_SALT_TRIES: Number(process.env.MAX_SALT_TRIES || 1024),
+  // ERC-4337 SimpleAccountFactory (mainnet infinitism)
+  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
 
-  // Optional token admin recovery hook (if your token exposes such an owner-only function)
-  // Example config:
-  // RECOVERY: {
-  //   ENABLED: true,
-  //   TOKEN: '0xYourBWAEZI',
-  //   CONTRACT: '0xAdminContractOrTokenItself',
-  //   METHOD: 'rescueFrom(address,address,uint256)',
-  //   FROM: '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C',
-  //   TO: '<will use SCW>',
-  // }
-  RECOVERY: {
-    ENABLED: String(process.env.RECOVERY_ENABLED || 'false').toLowerCase() === 'true',
-    TOKEN: addrStrict(process.env.RECOVERY_TOKEN || ''),
-    CONTRACT: addrStrict(process.env.RECOVERY_CONTRACT || ''),
-    METHOD: (process.env.RECOVERY_METHOD || '').trim(),
-    FROM: addrStrict(process.env.RECOVERY_FROM || ''),
-    // TO is set dynamically to the active SCW at runtime
-  }
+  // Owner EOA of the SCW (checksummed if provided, otherwise signer.address is used)
+  EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
 };
+
+/* =========================================================================
+   pickHealthyBundler (kept for MEV v15-8 wiring)
+   ========================================================================= */
+
+async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
+  for (const url of rotation) {
+    try {
+      const network = ethers.Network.from({ chainId: ENHANCED_CONFIG.NETWORK.chainId, name: ENHANCED_CONFIG.NETWORK.name });
+      const provider = new ethers.JsonRpcProvider(url, network, { staticNetwork: network });
+      const eps = await provider.send('eth_supportedEntryPoints', []);
+      if (Array.isArray(eps) && eps.length > 0) {
+        console.log(`✅ Healthy bundler selected: ${url}`);
+        return url;
+      }
+    } catch (e) {
+      console.warn(`⚠️ Bundler unhealthy: ${url} (${e.message})`);
+    }
+  }
+  throw new Error('No healthy bundler found in rotation');
+}
 
 /* =========================================================================
    EntryPoint helpers
@@ -143,7 +140,7 @@ async function addStakeToEntryPoint(signer, delaySec, amountWei) {
 }
 
 /* =========================================================================
-   Forced-network provider (static network)
+   Forced-network provider (patched: static network)
    ========================================================================= */
 
 function createNetworkForcedProvider(url, chainId = ENHANCED_CONFIG.NETWORK.chainId) {
@@ -232,7 +229,7 @@ class EnhancedRPCManager {
 }
 
 /* =========================================================================
-   Bundler client
+   Bundler client (patched: static network)
    ========================================================================= */
 
 class BundlerClient {
@@ -318,27 +315,39 @@ class PassthroughPaymaster {
 }
 
 /* =========================================================================
-   SCW factory (minimal ABI) + salt discovery + initCode builder
+   SCW factory (minimal ABI) + initCode builder (with salt discovery)
    ========================================================================= */
 
+// Minimal factory ABI compatible with SimpleAccountFactory:
+// createAccount(owner, salt) returns address (predictable), getAddress(owner, salt) view
 const SCW_FACTORY_ABI = [
   'function createAccount(address owner, uint256 salt) returns (address)',
   'function getAddress(address owner, uint256 salt) view returns (address)'
 ];
 
-async function findSaltForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, MAX_SALT_TRIES = ENHANCED_CONFIG.MAX_SALT_TRIES) {
+/**
+ * Find salt that predicts the configured SCW address, using factory.getAddress.
+ * Tries salts [0..MAX_SALT_TRIES).
+ */
+async function findSaltForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, MAX_SALT_TRIES = 512) {
   const factory = new ethers.Contract(factoryAddress, SCW_FACTORY_ABI, provider);
   const target = ethers.getAddress(targetScwAddress);
   for (let i = 0; i < MAX_SALT_TRIES; i++) {
     const salt = BigInt(i);
     try {
       const predicted = await factory.getAddress(ownerAddress, salt);
-      if (ethers.getAddress(predicted) === target) return salt;
+      if (ethers.getAddress(predicted) === target) {
+        return salt;
+      }
     } catch { /* continue */ }
   }
   return null;
 }
 
+/**
+ * Build ERC-4337 initCode: factory address (20 bytes) + encoded function createAccount(owner, salt)
+ * Ensures salt matches target SCW if possible; falls back to provided salt or 0n.
+ */
 async function buildInitCodeForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, saltOverride = null) {
   const factoryAddrNorm = ethers.getAddress(factoryAddress);
   const iface = new ethers.Interface(SCW_FACTORY_ABI);
@@ -350,11 +359,11 @@ async function buildInitCodeForSCW(provider, factoryAddress, ownerAddress, targe
   if (salt == null) salt = 0n;
 
   const data = iface.encodeFunctionData('createAccount', [ownerAddress, salt]);
-  return { initCode: ethers.concat([factoryAddrNorm, data]), salt };
+  return ethers.concat([factoryAddrNorm, data]); // bytes: factory + calldata
 }
 
 /* =========================================================================
-   Enterprise AA SDK (AA14-safe)
+   Enterprise AA SDK (AA14-hardened, wired for MEV v15-8)
    ========================================================================= */
 
 class EnterpriseAASDK {
@@ -371,8 +380,10 @@ class EnterpriseAASDK {
     this.passthroughPaymaster = null;
     this.initialized = false;
 
+    // optional factory context
     this.factoryAddress = ENHANCED_CONFIG.ACCOUNT_FACTORY || null;
 
+    // Stricter owner normalization with safe fallback to signer
     try {
       this.ownerAddress =
         ENHANCED_CONFIG.EOA_OWNER && ENHANCED_CONFIG.EOA_OWNER.startsWith('0x')
@@ -407,29 +418,26 @@ class EnterpriseAASDK {
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
     }
 
-    // AA14-safe SCW alignment at init
+    // Safe SCW coalescing: never align to factory address
     if (this.factoryAddress && this.ownerAddress && this.scwAddress) {
       try {
-        const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
-        // salt=0 prediction
-        const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
-        const predicted = ethers.getAddress(predictedRaw);
-        const factoryAddr = ethers.getAddress(this.factoryAddress);
+        const saltMatch = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, this.scwAddress);
+        if (saltMatch == null) {
+          const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
+          const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
+          const predicted = ethers.getAddress(predictedRaw);
+          const factoryAddr = ethers.getAddress(this.factoryAddress);
 
-        // Factory ABI/address sanity
-        if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-          throw new Error('Factory.getAddress(owner,0) equals factory address — verify ACCOUNT_FACTORY and ABI');
-        }
-
-        // If configured SCW is not derivable, align to predicted
-        if (ethers.getAddress(this.scwAddress) !== predicted) {
-          console.warn(`SCW ${ethers.getAddress(this.scwAddress)} not derivable; aligning to predicted ${predicted}`);
-          this.scwAddress = predicted;
-        } else {
-          console.log(`SCW address matched predicted: ${predicted}`);
+          // Guard: predicted MUST NOT equal factory address
+          if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
+            console.warn(`SCW coalescing guard: predicted equals factory — keeping configured SCW ${this.scwAddress}`);
+          } else if (ethers.getAddress(this.scwAddress) !== predicted) {
+            console.warn(`SCW ${ethers.getAddress(this.scwAddress)} not derivable; aligning to predicted ${predicted}`);
+            this.scwAddress = predicted;
+          }
         }
       } catch (e) {
-        console.warn(`SCW alignment skipped: ${e.message}`);
+        console.warn(`SCW coalescing skipped: ${e.message}`);
       }
     }
 
@@ -470,12 +478,13 @@ class EnterpriseAASDK {
    * - If SCW undeployed, we ensure initCode constructs exactly 'sender'.
    * - Paths:
    *   a) salt found that produces configured SCW → keep sender=scw and include initCode with that salt.
-   *   b) salt not found → compute predicted with salt=0; if valid (not factory), align sender=scwAddress=predicted and include initCode.
+   *   b) salt not found → compute predicted with salt=0; if predicted !== factory, align sender=scwAddress=predicted and include initCode; WARN if funds at old SCW.
    *   c) prediction equals factory → throw descriptive error (bad factory/ABI) to avoid AA14.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
 
+    // Always use SCW address (checksummed) as sender
     let sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
 
     let nonce = await this.getNonce(sender);
@@ -484,14 +493,14 @@ class EnterpriseAASDK {
     const codeAtAddress = await this.provider.getCode(sender);
     const undeployed = (codeAtAddress === '0x');
 
+    // Build initCode only when undeployed or forceDeploy=true, and verify AA14 guard
     let initCode = '0x';
-
     if ((undeployed || opts.forceDeploy) && this.factoryAddress) {
       const factoryAddr = ethers.getAddress(this.factoryAddress);
       const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, this.provider);
 
       // Try to find a salt that produces the configured SCW
-      let salt = await findSaltForSCW(this.provider, factoryAddr, this.ownerAddress, sender, ENHANCED_CONFIG.MAX_SALT_TRIES);
+      let salt = await findSaltForSCW(this.provider, factoryAddr, this.ownerAddress, sender);
 
       if (salt == null) {
         // Fallback: predict salt=0 and align sender to predicted if valid
@@ -501,17 +510,17 @@ class EnterpriseAASDK {
           throw new Error(`AA14 guard: factory.getAddress(owner,0) equals factory — check ACCOUNT_FACTORY address/ABI`);
         }
         if (predicted !== sender) {
-          console.warn(`SCW AA14 alignment: configured SCW ${sender} not derivable. Aligning sender to predicted ${predicted}.`);
+          console.warn(`SCW AA14 alignment: configured SCW ${sender} not derivable. Aligning sender to predicted ${predicted}. Funds on old SCW must be moved manually.`);
           sender = predicted;
           this.scwAddress = predicted;
         }
         salt = 0n;
       }
 
-      // Build initCode with the decided salt; verify it constructs 'sender'
       const data = new ethers.Interface(SCW_FACTORY_ABI).encodeFunctionData('createAccount', [this.ownerAddress, salt]);
       initCode = ethers.concat([factoryAddr, data]);
 
+      // Verify that initCode constructs exactly 'sender'
       const checkPred = await factory.getAddress(this.ownerAddress, salt);
       const checkAddr = ethers.getAddress(checkPred);
       if (checkAddr !== sender) {
@@ -525,9 +534,9 @@ class EnterpriseAASDK {
     if (maxFee < maxTip) maxFee = maxTip;
 
     const userOp = {
-      sender, // always SCW (aligned to initCode prediction when needed)
+      sender,                // ✅ always SCW (never factory)
       nonce,
-      initCode,
+      initCode,              // ✅ initCode only when deploying (and AA14-safe)
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
       verificationGasLimit: opts.verificationGasLimit || 700_000n,
@@ -540,6 +549,7 @@ class EnterpriseAASDK {
 
     userOp.paymasterAndData = await this._sponsor(userOp);
 
+    // Optional bundler gas estimation retained (with floors)
     try {
       const est = await this.bundler.estimateUserOperationGas(this._formatUserOpForBundler(userOp), this.entryPoint);
       const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
@@ -588,7 +598,7 @@ class EnterpriseAASDK {
         return opHash;
       } catch (err) {
         lastErr = err;
-        await new Promise(r => setTimeout(r, Math.min(30000, 1000 * Math.pow(2, attempt)) ));
+        await new Promise(r => setTimeout(r, Math.min(30000, 1000 * Math.pow(2, attempt))));
       }
     }
     throw lastErr || new Error('Failed to send UserOperation');
@@ -637,7 +647,7 @@ class EnhancedMevExecutor {
    Bootstrap helper
    ========================================================================= */
 
-async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer) {
+async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
   const ep = getEntryPoint(provider);
   let deposit = 0n;
   try { deposit = await ep.getDeposit(ENHANCED_CONFIG.PAYMASTER.ADDRESS); } catch {}
@@ -671,53 +681,7 @@ async function scwApproveToken(aa, scw, token, spender, amount = ethers.MaxUint2
 }
 
 /* =========================================================================
-   Optional token admin recovery hook (safe)
-   ========================================================================= */
-
-async function tryAdminRecoveryIfConfigured(provider, signer, activeScw) {
-  const cfg = ENHANCED_CONFIG.RECOVERY;
-  if (!cfg.ENABLED) {
-    console.log('Recovery disabled: RECOVERY_ENABLED=false');
-    return { skipped: true, reason: 'disabled' };
-  }
-  if (!cfg.TOKEN || !cfg.CONTRACT || !cfg.METHOD || !cfg.FROM) {
-    console.warn('Recovery misconfigured: TOKEN/CONTRACT/METHOD/FROM required.');
-    return { skipped: true, reason: 'misconfigured' };
-  }
-
-  // NOTE: This assumes your token or admin contract exposes an owner-only method
-  // that can move tokens from arbitrary addresses (e.g., rescueFrom).
-  // Without such a method, recovery cannot be done programmatically.
-  const method = cfg.METHOD.trim();
-  const sig = `${method}`; // e.g. 'rescueFrom(address,address,uint256)'
-  const iface = new ethers.Interface([`function ${sig}`]);
-
-  // Query balances to compute amount if your method needs it (optional)
-  const erc20Iface = new ethers.Interface([
-    'function balanceOf(address) view returns (uint256)',
-    'function decimals() view returns (uint8)'
-  ]);
-  const token = new ethers.Contract(cfg.TOKEN, erc20Iface.fragments, provider);
-  let amount = 0n;
-  try {
-    amount = await token.balanceOf(cfg.FROM);
-  } catch {
-    console.warn('Could not read balance; proceeding with amount=0 (your rescue may compute internally).');
-  }
-
-  const to = activeScw;
-  const calldata = iface.encodeFunctionData(method.split('(')[0], [cfg.FROM, to, amount]);
-
-  const admin = new ethers.Contract(cfg.CONTRACT, iface.fragments, signer);
-  console.log(`Attempting admin recovery via ${cfg.CONTRACT}.${method} FROM=${cfg.FROM} TO=${to} AMOUNT=${amount.toString()}`);
-  const tx = await admin[method.split('(')[0]](cfg.FROM, to, amount);
-  const rec = await tx.wait();
-  console.log(`Admin recovery tx confirmed: ${rec.transactionHash}`);
-  return { ok: true, txHash: rec.transactionHash };
-}
-
-/* =========================================================================
-   Price Oracle aggregator
+   Price Oracle aggregator (Chainlink + Uniswap blending with divergence check)
    ========================================================================= */
 
 class PriceOracleAggregator {
@@ -749,6 +713,7 @@ class PriceOracleAggregator {
     const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
     const c = new ethers.Contract(pool, slotIface.fragments, this.provider);
     const [sqrtPriceX96] = await c.slot0();
+
     const TWO192 = 2n ** 192n;
     const sqrt = BigInt(sqrtPriceX96);
     const invPrice = (TWO192) / (sqrt * sqrt);
@@ -773,7 +738,7 @@ class PriceOracleAggregator {
 }
 
 /* =========================================================================
-   Exports
+   Exports (exact names expected by MEV v15-8)
    ========================================================================= */
 
 export {
@@ -789,6 +754,7 @@ export {
   createNetworkForcedProvider,
   depositToEntryPoint,
   addStakeToEntryPoint,
+  pickHealthyBundler,
 
   // Config
   ENHANCED_CONFIG,
@@ -800,10 +766,7 @@ export {
   // SCW deploy helpers
   SCW_FACTORY_ABI,
   buildInitCodeForSCW,
-  findSaltForSCW,
-
-  // Optional recovery hook
-  tryAdminRecoveryIfConfigured
+  findSaltForSCW
 };
 
 export default ENHANCED_CONFIG;
