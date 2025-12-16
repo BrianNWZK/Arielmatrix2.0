@@ -1,10 +1,11 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15-7 (final)
-// Maintains ALL v14.3 capabilities + adaptive hooks for v15 integration
-// Critical fixes applied:
-// - Correct initCode construction and sender alignment (AA14 resolved)
-// - SCW address coalescing with factory+owner during initialization (boot-time guard)
-// - Stricter owner address normalization (prevents invalid owner)
-// - Always use SCW as sender; include initCode only when undeployed (permanent SCW alignment fix)
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15-8 (final)
+// Maintains ALL v14.3/v15.7 capabilities + adaptive hooks for v15 integration
+// Critical fixes applied (from SCW SOLUTION pack):
+// - Always use SCW as sender (no drift).
+// - InitCode only when undeployed or forceDeploy=true.
+// - Boot-time SCW coalescing to factory prediction (salt=0) with checksum.
+// - Keep paymaster modes and bundler gas estimation intact.
+// - No factory address leakage in logs; SCW alignment uses checksummed addresses.
 //
 // Features preserved:
 // - Strict address normalization
@@ -35,7 +36,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.7-LIVE',
+  VERSION: 'v15.8-LIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -59,7 +60,7 @@ const ENHANCED_CONFIG = {
 
   PAYMASTER: {
     MODE: (process.env.PAYMASTER_MODE || 'ONCHAIN').toUpperCase(), // NONE | API | ONCHAIN | PASSTHROUGH
-    ADDRESS: addrStrict('0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
+    ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
     API_URL: process.env.PAYMASTER_API_URL || '',
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
@@ -91,8 +92,9 @@ const ENHANCED_CONFIG = {
   },
 
   // Optional ERC-4337 Account factory (SimpleAccount/Kernels/etc.)
-  // IMPORTANT: Fixed to the actual SimpleAccountFactory (ends with ...545) to match your logs
   ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
+
+  // Owner EOA of the SCW (checksummed if provided, otherwise signer.address is used)
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
 };
 
@@ -313,7 +315,6 @@ class OnChainVerifyingPaymaster {
     const userOpHash = ethers.keccak256(enc);
     const signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
     const context = ethers.AbiCoder.defaultAbiCoder().encode(['bytes'], [ethers.getBytes(signature)]);
-    // Construct paymasterAndData = paymasterAddress (20 bytes) + context
     return ethers.concat([ethers.getAddress(this.address), context]);
   }
 }
@@ -435,8 +436,10 @@ class EnterpriseAASDK {
           const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
           const predicted = await factory.getAddress(this.ownerAddress, 0n);
           const aligned = ethers.getAddress(predicted);
-          console.warn(`SCW ${this.scwAddress} not derivable; aligning to predicted ${aligned}`);
-          this.scwAddress = aligned;
+          if (ethers.getAddress(this.scwAddress) !== aligned) {
+            console.warn(`SCW ${ethers.getAddress(this.scwAddress)} not derivable; aligning to predicted ${aligned}`);
+            this.scwAddress = aligned;
+          }
         }
       } catch (e) {
         console.warn(`SCW coalescing skipped: ${e.message}`);
@@ -483,21 +486,26 @@ class EnterpriseAASDK {
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
 
-    // === FIX: Always use SCW address as sender and only include initCode if undeployed ===
+    // === FIX: Always use SCW address as sender ===
     let sender = this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
+
+    // Ensure checksummed for consistency
+    sender = ethers.getAddress(sender);
+
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
 
     const codeAtAddress = await this.provider.getCode(sender);
     const undeployed = (codeAtAddress === '0x');
 
+    // Best-effort alignment if undeployed (authoritative SCW alignment)
     if (undeployed && this.factoryAddress) {
       const salt = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, sender);
       if (salt == null) {
         const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
         const predicted = await factory.getAddress(this.ownerAddress, 0n);
-        this.scwAddress = ethers.getAddress(predicted);
-        sender = this.scwAddress;   // ✅ correct to SCW
+        this.scwAddress = ethers.getAddress(predicted); // authoritative SCW
+        sender = this.scwAddress;
       }
     }
 
@@ -506,7 +514,7 @@ class EnterpriseAASDK {
     let maxTip = opts.maxPriorityFeePerGas || fee.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
     if (maxFee < maxTip) maxFee = maxTip;
 
-    // Build initCode only if undeployed (and factory exists) or forceDeploy is true
+    // === FIX: Build initCode only when undeployed or forceDeploy=true ===
     let initCode = '0x';
     if ((undeployed || opts.forceDeploy) && this.factoryAddress) {
       initCode = await buildInitCodeForSCW(
@@ -534,6 +542,7 @@ class EnterpriseAASDK {
 
     userOp.paymasterAndData = await this._sponsor(userOp);
 
+    // Optional bundler gas estimation retained (with floors)
     try {
       const est = await this.bundler.estimateUserOperationGas(this._formatUserOpForBundler(userOp), this.entryPoint);
       const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
