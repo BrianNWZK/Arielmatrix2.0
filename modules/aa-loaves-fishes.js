@@ -2,6 +2,12 @@
 // Preserves ALL v15.10 capabilities (hardened sender+initCode, paymaster modes, bundler estimation)
 // and fixes AA20 by mandating initCode when sender has no code. Includes env-driven MAX_SALT_TRIES.
 // Exports and behavior remain exactly as MEV v15-8 expects.
+//
+// v15.12-NEW-SCW-LOOP:
+// - No implicit SCW alignment or initCode auto-redeployment inside AA SDK.
+// - Main loop (main.js) is responsible for funding, deployments, and salt/ABI handling.
+// - AA SDK now requires a deployed SCW, or explicit initCode passed via opts.initCode.
+// - All helpers (findSaltForSCW, buildInitCodeForSCW) retained and exported, but not auto-invoked.
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -82,7 +88,10 @@ const ENHANCED_CONFIG = {
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || ''),
 
   // Salt discovery window (env-driven)
-  MAX_SALT_TRIES: Number(process.env.MAX_SALT_TRIES || 512)
+  MAX_SALT_TRIES: Number(process.env.MAX_SALT_TRIES || 512),
+
+  // New SCW loop mode: when true, AA SDK will NOT auto-align or auto-deploy SCW
+  NEW_SCW_LOOP: (process.env.NEW_SCW_LOOP || 'true').toLowerCase() === 'true'
 };
 
 /* =========================================================================
@@ -357,7 +366,7 @@ async function buildInitCodeForSCW(provider, factoryAddress, ownerAddress, targe
 }
 
 /* =========================================================================
-   Enterprise AA SDK (AA14-hardened, wired for MEV v15-8)
+   Enterprise AA SDK (AA14-hardened, wired for MEV v15-8) — NEW SCW LOOP READY
    ========================================================================= */
 
 class EnterpriseAASDK {
@@ -386,6 +395,11 @@ class EnterpriseAASDK {
     }
   }
 
+  setSCWSender(address) {
+    this.scwAddress = ethers.getAddress(address);
+    return this.scwAddress;
+  }
+
   async initialize(provider, scwAddress = null, bundlerUrl = null) {
     this.provider = provider;
     this.scwAddress = scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
@@ -410,26 +424,10 @@ class EnterpriseAASDK {
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
     }
 
-    // Safe SCW coalescing (guarded)
-    if (this.factoryAddress && this.ownerAddress && this.scwAddress) {
-      try {
-        const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
-        const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
-        const predicted = ethers.getAddress(predictedRaw);
-        const factoryAddr = ethers.getAddress(this.factoryAddress);
-
-        if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-          console.warn(`SCW coalescing guard: predicted equals factory — keeping configured SCW ${this.scwAddress}`);
-        } else if (ethers.getAddress(this.scwAddress) !== predicted) {
-          console.warn(`SCW ${ethers.getAddress(this.scwAddress)} not derivable; aligning to predicted ${predicted}`);
-          this.scwAddress = predicted;
-        }
-      } catch (e) {
-        console.warn(`SCW coalescing skipped: ${e.message}`);
-      }
-    }
-
+    // NEW SCW LOOP: do NOT coalesce or auto-align SCW to factory prediction.
+    // Main runtime manages deployments and alignment. We only log current sender.
     console.log(`Using SCW sender: ${this.scwAddress}`);
+
     this.initialized = true;
     return this;
   }
@@ -463,9 +461,10 @@ class EnterpriseAASDK {
   }
 
   /**
-   * Create user operation — AA14 safe and AA20-proof:
-   * - If sender undeployed or forceDeploy=true → include initCode that constructs exactly 'sender'.
-   * - If salt not found, align sender to factory prediction (salt=0), guarded against factory=self.
+   * Create user operation — NEW SCW LOOP behavior:
+   * - No implicit initCode building or salt prediction. If sender has no code and no initCode provided → throw.
+   * - If opts.initCode is provided, it will be used (caller is responsible for correctness).
+   * - AA14/AA20 safety remains via explicit initCode path when provided.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
@@ -478,36 +477,13 @@ class EnterpriseAASDK {
     const codeAtAddress = await this.provider.getCode(sender);
     const undeployed = (codeAtAddress === '0x');
 
+    // NEW SCW LOOP: Only use initCode if caller explicitly provides it.
+    // No auto alignment or factory prediction inside SDK.
     let initCode = '0x';
-
-    if ((undeployed || opts.forceDeploy) && this.factoryAddress) {
-      const factoryAddr = ethers.getAddress(this.factoryAddress);
-      const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, this.provider);
-
-      let salt = await findSaltForSCW(this.provider, factoryAddr, this.ownerAddress, sender, ENHANCED_CONFIG.MAX_SALT_TRIES);
-
-      if (salt == null) {
-        const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
-        const predicted = ethers.getAddress(predictedRaw);
-        if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-          throw new Error(`AA14 guard: factory.getAddress(owner,0) equals factory — check ACCOUNT_FACTORY address/ABI`);
-        }
-        if (predicted !== sender) {
-          console.warn(`SCW AA14 alignment: configured SCW ${sender} not derivable. Aligning sender to predicted ${predicted}.`);
-          sender = predicted;
-          this.scwAddress = predicted;
-        }
-        salt = 0n;
-      }
-
-      const { initCode: built, salt: usedSalt } = await buildInitCodeForSCW(this.provider, factoryAddr, this.ownerAddress, sender, salt);
-      initCode = built;
-
-      const checkPred = await factory.getAddress(this.ownerAddress, usedSalt);
-      const checkAddr = ethers.getAddress(checkPred);
-      if (checkAddr !== sender) {
-        throw new Error(`AA14 guard: initCode (salt=${usedSalt}) would deploy ${checkAddr}, but sender is ${sender}. Aborting to prevent AA14.`);
-      }
+    if (opts.initCode && ethers.isHexString(opts.initCode)) {
+      initCode = opts.initCode;
+    } else if (undeployed) {
+      throw new Error('SCW sender not deployed and no initCode provided. Provide opts.initCode or deploy SCW before calling.');
     }
 
     const fee = await this.provider.getFeeData();
@@ -518,7 +494,7 @@ class EnterpriseAASDK {
     const userOp = {
       sender,
       nonce,
-      initCode, // includes deployment when needed to avoid AA20
+      initCode, // explicit only; no auto-build inside AA
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
       verificationGasLimit: opts.verificationGasLimit || 700_000n,
@@ -616,7 +592,8 @@ class EnhancedMevExecutor {
       preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: opts.maxFeePerGas,
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      forceDeploy: opts.forceDeploy === true
+      // NEW SCW LOOP: caller may pass initCode explicitly; we just pass through
+      initCode: opts.initCode
     });
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
@@ -744,7 +721,7 @@ export {
   scwApproveToken,
   PriceOracleAggregator,
 
-  // SCW deploy helpers
+  // SCW deploy helpers (retained, but not auto-invoked in AA SDK)
   SCW_FACTORY_ABI,
   buildInitCodeForSCW,
   findSaltForSCW
