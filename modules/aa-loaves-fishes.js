@@ -1,14 +1,7 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.10 (final, AA14-hardened, MEV v15-8 wiring)
-// Maintains ALL v15.10 capabilities (hardened sender+initCode, paymaster modes, bundler estimation)
-// and is wired exactly like v15-8 (exports, names, behavior) so MEV v15-8 imports work.
-//
-// Key safeties:
-// - Sender is always the SCW (never the factory).
-// - InitCode only when SCW undeployed or forceDeploy=true.
-// - AA14 guard: initCode must construct exactly the sender (predict & enforce).
-// - Safe SCW coalescing: never align to factory address; surface mismatched factory configs.
-// - Paymaster modes and bundler gas estimation intact.
-// - Provides pickHealthyBundler (for MEV v15-8) and all required helpers.
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.11 (final, AA14-safe, MEV v15-8 wiring)
+// Preserves ALL v15.10 capabilities (hardened sender+initCode, paymaster modes, bundler estimation)
+// plus permanent fix: if sender is the old funded SCW, do NOT include initCode (counterfactual ops)
+// Exports and behavior unchanged so MEV v15-8 imports work.
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -27,7 +20,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.10-LIVE',
+  VERSION: 'v15.11-LIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -44,7 +37,10 @@ const ENHANCED_CONFIG = {
     V3_ROUTER_ADDRESS: addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564')
   },
 
+  // Active SCW and the old funded SCW (permanent fix target)
   SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
+  OLD_FUNDED_SCW: addrStrict(process.env.OLD_FUNDED_SCW || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
+
   BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
   USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
   WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
@@ -418,7 +414,7 @@ class EnterpriseAASDK {
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
     }
 
-    // Safe SCW coalescing: never align to factory address
+    // Safe SCW coalescing remains (but won't affect old funded direct use)
     if (this.factoryAddress && this.ownerAddress && this.scwAddress) {
       try {
         const saltMatch = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, this.scwAddress);
@@ -441,6 +437,7 @@ class EnterpriseAASDK {
       }
     }
 
+    console.log(`Using SCW sender: ${this.scwAddress}`);
     this.initialized = true;
     return this;
   }
@@ -474,12 +471,9 @@ class EnterpriseAASDK {
   }
 
   /**
-   * Create user operation — AA14 safe:
-   * - If SCW undeployed, we ensure initCode constructs exactly 'sender'.
-   * - Paths:
-   *   a) salt found that produces configured SCW → keep sender=scw and include initCode with that salt.
-   *   b) salt not found → compute predicted with salt=0; if predicted !== factory, align sender=scwAddress=predicted and include initCode; WARN if funds at old SCW.
-   *   c) prediction equals factory → throw descriptive error (bad factory/ABI) to avoid AA14.
+   * Create user operation — AA14 safe with permanent old SCW fix:
+   * - If sender equals OLD_FUNDED_SCW, DO NOT include initCode (counterfactual ops).
+   * - Otherwise, if undeployed or forceDeploy=true, include AA14-verified initCode.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
@@ -493,13 +487,15 @@ class EnterpriseAASDK {
     const codeAtAddress = await this.provider.getCode(sender);
     const undeployed = (codeAtAddress === '0x');
 
-    // Build initCode only when undeployed or forceDeploy=true, and verify AA14 guard
+    // Permanent fix: no initCode when using the old funded SCW as sender
+    const isOldFunded = sender.toLowerCase() === ENHANCED_CONFIG.OLD_FUNDED_SCW.toLowerCase();
     let initCode = '0x';
-    if ((undeployed || opts.forceDeploy) && this.factoryAddress) {
+
+    if (!isOldFunded && (undeployed || opts.forceDeploy) && this.factoryAddress) {
       const factoryAddr = ethers.getAddress(this.factoryAddress);
       const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, this.provider);
 
-      // Try to find a salt that produces the configured SCW
+      // Try to find a salt that produces the configured SCW (current sender)
       let salt = await findSaltForSCW(this.provider, factoryAddr, this.ownerAddress, sender);
 
       if (salt == null) {
@@ -526,6 +522,9 @@ class EnterpriseAASDK {
       if (checkAddr !== sender) {
         throw new Error(`AA14 guard: initCode (salt=${salt}) would deploy ${checkAddr}, but sender is ${sender}. Aborting to prevent AA14.`);
       }
+    } else if (isOldFunded) {
+      // Explicitly confirm the counterfactual path
+      console.log(`Counterfactual path: sender=${sender} is old funded SCW, skipping initCode`);
     }
 
     const fee = await this.provider.getFeeData();
@@ -536,7 +535,7 @@ class EnterpriseAASDK {
     const userOp = {
       sender,                // ✅ always SCW (never factory)
       nonce,
-      initCode,              // ✅ initCode only when deploying (and AA14-safe)
+      initCode,              // ✅ no initCode for old funded SCW; AA14-safe otherwise
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
       verificationGasLimit: opts.verificationGasLimit || 700_000n,
@@ -635,7 +634,8 @@ class EnhancedMevExecutor {
       preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: opts.maxFeePerGas,
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      forceDeploy: opts.forceDeploy === true // allow first-call deployment when SCW code is empty
+      // Allow first-call deployment when SCW code is empty (won't trigger if sender is OLD_FUNDED_SCW)
+      forceDeploy: opts.forceDeploy === true
     });
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
