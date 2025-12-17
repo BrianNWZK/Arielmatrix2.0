@@ -1,7 +1,7 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.11 (final, AA14-safe, MEV v15-8 wiring)
+// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.12 (final, AA14-safe, MEV v15-8 wiring)
 // Preserves ALL v15.10 capabilities (hardened sender+initCode, paymaster modes, bundler estimation)
-// plus permanent fix: if sender is the old funded SCW, do NOT include initCode (counterfactual ops)
-// Exports and behavior unchanged so MEV v15-8 imports work.
+// and fixes AA20 by mandating initCode when sender has no code. Includes env-driven MAX_SALT_TRIES.
+// Exports and behavior remain exactly as MEV v15-8 expects.
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -20,7 +20,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.11-LIVE',
+  VERSION: 'v15.12-LIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -37,10 +37,7 @@ const ENHANCED_CONFIG = {
     V3_ROUTER_ADDRESS: addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564')
   },
 
-  // Active SCW and the old funded SCW (permanent fix target)
   SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
-  OLD_FUNDED_SCW: addrStrict(process.env.OLD_FUNDED_SCW || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
-
   BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
   USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
   WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
@@ -82,7 +79,10 @@ const ENHANCED_CONFIG = {
   ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
 
   // Owner EOA of the SCW (checksummed if provided, otherwise signer.address is used)
-  EOA_OWNER: addrStrict(process.env.EOA_OWNER || '')
+  EOA_OWNER: addrStrict(process.env.EOA_OWNER || ''),
+
+  // Salt discovery window (env-driven)
+  MAX_SALT_TRIES: Number(process.env.MAX_SALT_TRIES || 512)
 };
 
 /* =========================================================================
@@ -314,8 +314,6 @@ class PassthroughPaymaster {
    SCW factory (minimal ABI) + initCode builder (with salt discovery)
    ========================================================================= */
 
-// Minimal factory ABI compatible with SimpleAccountFactory:
-// createAccount(owner, salt) returns address (predictable), getAddress(owner, salt) view
 const SCW_FACTORY_ABI = [
   'function createAccount(address owner, uint256 salt) returns (address)',
   'function getAddress(address owner, uint256 salt) view returns (address)'
@@ -325,7 +323,7 @@ const SCW_FACTORY_ABI = [
  * Find salt that predicts the configured SCW address, using factory.getAddress.
  * Tries salts [0..MAX_SALT_TRIES).
  */
-async function findSaltForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, MAX_SALT_TRIES = 512) {
+async function findSaltForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, MAX_SALT_TRIES = ENHANCED_CONFIG.MAX_SALT_TRIES) {
   const factory = new ethers.Contract(factoryAddress, SCW_FACTORY_ABI, provider);
   const target = ethers.getAddress(targetScwAddress);
   for (let i = 0; i < MAX_SALT_TRIES; i++) {
@@ -355,7 +353,7 @@ async function buildInitCodeForSCW(provider, factoryAddress, ownerAddress, targe
   if (salt == null) salt = 0n;
 
   const data = iface.encodeFunctionData('createAccount', [ownerAddress, salt]);
-  return ethers.concat([factoryAddrNorm, data]); // bytes: factory + calldata
+  return { initCode: ethers.concat([factoryAddrNorm, data]), salt };
 }
 
 /* =========================================================================
@@ -376,10 +374,8 @@ class EnterpriseAASDK {
     this.passthroughPaymaster = null;
     this.initialized = false;
 
-    // optional factory context
     this.factoryAddress = ENHANCED_CONFIG.ACCOUNT_FACTORY || null;
 
-    // Stricter owner normalization with safe fallback to signer
     try {
       this.ownerAddress =
         ENHANCED_CONFIG.EOA_OWNER && ENHANCED_CONFIG.EOA_OWNER.startsWith('0x')
@@ -414,23 +410,19 @@ class EnterpriseAASDK {
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
     }
 
-    // Safe SCW coalescing remains (but won't affect old funded direct use)
+    // Safe SCW coalescing (guarded)
     if (this.factoryAddress && this.ownerAddress && this.scwAddress) {
       try {
-        const saltMatch = await findSaltForSCW(this.provider, this.factoryAddress, this.ownerAddress, this.scwAddress);
-        if (saltMatch == null) {
-          const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
-          const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
-          const predicted = ethers.getAddress(predictedRaw);
-          const factoryAddr = ethers.getAddress(this.factoryAddress);
+        const factory = new ethers.Contract(this.factoryAddress, SCW_FACTORY_ABI, this.provider);
+        const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
+        const predicted = ethers.getAddress(predictedRaw);
+        const factoryAddr = ethers.getAddress(this.factoryAddress);
 
-          // Guard: predicted MUST NOT equal factory address
-          if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-            console.warn(`SCW coalescing guard: predicted equals factory — keeping configured SCW ${this.scwAddress}`);
-          } else if (ethers.getAddress(this.scwAddress) !== predicted) {
-            console.warn(`SCW ${ethers.getAddress(this.scwAddress)} not derivable; aligning to predicted ${predicted}`);
-            this.scwAddress = predicted;
-          }
+        if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
+          console.warn(`SCW coalescing guard: predicted equals factory — keeping configured SCW ${this.scwAddress}`);
+        } else if (ethers.getAddress(this.scwAddress) !== predicted) {
+          console.warn(`SCW ${ethers.getAddress(this.scwAddress)} not derivable; aligning to predicted ${predicted}`);
+          this.scwAddress = predicted;
         }
       } catch (e) {
         console.warn(`SCW coalescing skipped: ${e.message}`);
@@ -471,14 +463,13 @@ class EnterpriseAASDK {
   }
 
   /**
-   * Create user operation — AA14 safe with permanent old SCW fix:
-   * - If sender equals OLD_FUNDED_SCW, DO NOT include initCode (counterfactual ops).
-   * - Otherwise, if undeployed or forceDeploy=true, include AA14-verified initCode.
+   * Create user operation — AA14 safe and AA20-proof:
+   * - If sender undeployed or forceDeploy=true → include initCode that constructs exactly 'sender'.
+   * - If salt not found, align sender to factory prediction (salt=0), guarded against factory=self.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
 
-    // Always use SCW address (checksummed) as sender
     let sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
 
     let nonce = await this.getNonce(sender);
@@ -487,44 +478,36 @@ class EnterpriseAASDK {
     const codeAtAddress = await this.provider.getCode(sender);
     const undeployed = (codeAtAddress === '0x');
 
-    // Permanent fix: no initCode when using the old funded SCW as sender
-    const isOldFunded = sender.toLowerCase() === ENHANCED_CONFIG.OLD_FUNDED_SCW.toLowerCase();
     let initCode = '0x';
 
-    if (!isOldFunded && (undeployed || opts.forceDeploy) && this.factoryAddress) {
+    if ((undeployed || opts.forceDeploy) && this.factoryAddress) {
       const factoryAddr = ethers.getAddress(this.factoryAddress);
       const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, this.provider);
 
-      // Try to find a salt that produces the configured SCW (current sender)
-      let salt = await findSaltForSCW(this.provider, factoryAddr, this.ownerAddress, sender);
+      let salt = await findSaltForSCW(this.provider, factoryAddr, this.ownerAddress, sender, ENHANCED_CONFIG.MAX_SALT_TRIES);
 
       if (salt == null) {
-        // Fallback: predict salt=0 and align sender to predicted if valid
         const predictedRaw = await factory.getAddress(this.ownerAddress, 0n);
         const predicted = ethers.getAddress(predictedRaw);
         if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
           throw new Error(`AA14 guard: factory.getAddress(owner,0) equals factory — check ACCOUNT_FACTORY address/ABI`);
         }
         if (predicted !== sender) {
-          console.warn(`SCW AA14 alignment: configured SCW ${sender} not derivable. Aligning sender to predicted ${predicted}. Funds on old SCW must be moved manually.`);
+          console.warn(`SCW AA14 alignment: configured SCW ${sender} not derivable. Aligning sender to predicted ${predicted}.`);
           sender = predicted;
           this.scwAddress = predicted;
         }
         salt = 0n;
       }
 
-      const data = new ethers.Interface(SCW_FACTORY_ABI).encodeFunctionData('createAccount', [this.ownerAddress, salt]);
-      initCode = ethers.concat([factoryAddr, data]);
+      const { initCode: built, salt: usedSalt } = await buildInitCodeForSCW(this.provider, factoryAddr, this.ownerAddress, sender, salt);
+      initCode = built;
 
-      // Verify that initCode constructs exactly 'sender'
-      const checkPred = await factory.getAddress(this.ownerAddress, salt);
+      const checkPred = await factory.getAddress(this.ownerAddress, usedSalt);
       const checkAddr = ethers.getAddress(checkPred);
       if (checkAddr !== sender) {
-        throw new Error(`AA14 guard: initCode (salt=${salt}) would deploy ${checkAddr}, but sender is ${sender}. Aborting to prevent AA14.`);
+        throw new Error(`AA14 guard: initCode (salt=${usedSalt}) would deploy ${checkAddr}, but sender is ${sender}. Aborting to prevent AA14.`);
       }
-    } else if (isOldFunded) {
-      // Explicitly confirm the counterfactual path
-      console.log(`Counterfactual path: sender=${sender} is old funded SCW, skipping initCode`);
     }
 
     const fee = await this.provider.getFeeData();
@@ -533,9 +516,9 @@ class EnterpriseAASDK {
     if (maxFee < maxTip) maxFee = maxTip;
 
     const userOp = {
-      sender,                // ✅ always SCW (never factory)
+      sender,
       nonce,
-      initCode,              // ✅ no initCode for old funded SCW; AA14-safe otherwise
+      initCode, // includes deployment when needed to avoid AA20
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
       verificationGasLimit: opts.verificationGasLimit || 700_000n,
@@ -548,7 +531,6 @@ class EnterpriseAASDK {
 
     userOp.paymasterAndData = await this._sponsor(userOp);
 
-    // Optional bundler gas estimation retained (with floors)
     try {
       const est = await this.bundler.estimateUserOperationGas(this._formatUserOpForBundler(userOp), this.entryPoint);
       const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
@@ -634,7 +616,6 @@ class EnhancedMevExecutor {
       preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: opts.maxFeePerGas,
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      // Allow first-call deployment when SCW code is empty (won't trigger if sender is OLD_FUNDED_SCW)
       forceDeploy: opts.forceDeploy === true
     });
     const signed = await this.aa.signUserOp(userOp);
