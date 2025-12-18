@@ -1,15 +1,18 @@
-// arielsql_suite/main.js — One-shot: move funds to EOA from old source (EOA or Recover contract),
-// forward to NEW SCW, approve router, print balances, exit.
+// arielsql_suite/main.js — One-shot: drain from old source (EOA or Recover contract), forward to NEW SCW,
+// ensure gas sponsorship (fix AA31), approve router, print balances, exit.
 //
 // Flow:
 // 1) Initialize provider + signer (sovereign EOA = receiver).
 // 2) Drain from old source → EOA:
-//    - If OLD_SOURCE_TYPE=EOA: send ERC-20 transfers from old EOA (requires OLD_SOVEREIGN_PRIVATE_KEY unless same as signer).
-//    - If OLD_SOURCE_TYPE=RECOVER_CONTRACT: call recoverERC20(token, receiver, amount) as contract owner.
+//    - OLD_SOURCE_TYPE=EOA: ERC-20 transfers from old EOA (requires OLD_SOVEREIGN_PRIVATE_KEY if different from receiver).
+//    - OLD_SOURCE_TYPE=RECOVER_CONTRACT: owner-only recoverERC20 to receiver.
 //    - Amounts are balance-aware to avoid reverts.
 // 3) Forward EOA → NEW SCW (balance-aware).
-// 4) Approve Uniswap V3 router for USDC and BWAEZI on NEW SCW via AA v15.12.
-// 5) Print final balances and exit.
+// 4) Ensure gas sponsorship for approvals:
+//    - If PAYMASTER_MODE != NONE: deposit to paymaster on EntryPoint to avoid AA31.
+//    - If PAYMASTER_MODE == NONE: deposit to SCW on EntryPoint so SCW self-pays.
+// 5) Approve Uniswap V3 router for USDC and BWAEZI on NEW SCW via AA v15.12.
+// 6) Print final balances and exit.
 //
 // Required env:
 //   - SOVEREIGN_PRIVATE_KEY           Primary EOA private key (receiver) — 0x-prefixed hex
@@ -21,11 +24,8 @@
 //   - NEW_SCW_ADDRESS                 New SCW address (already deployed). Default: 0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2
 //   - BUNDLER_RPC_URL                 Bundler RPC (for approvals)
 //   - EOA_OWNER                       Explicit owner address for approvals context (defaults to SOVEREIGN_PRIVATE_KEY address)
-//
-// Notes:
-// - USDC decimals=6; BWAEZI decimals=18.
-// - All token moves are balance-aware (min(actual, desired)).
-// - Approvals run regardless of whether partial or full amounts were forwarded.
+//   - PAYMASTER_MODE                  NONE | API | ONCHAIN | PASSTHROUGH (default from AA config)
+//   - PAYMASTER_ADDRESS               Required if PAYMASTER_MODE != NONE (default from AA config)
 
 import { ethers } from 'ethers';
 import {
@@ -67,6 +67,9 @@ const RUNTIME = {
     'https://eth.llamarpc.com',
   ],
   BUNDLER_RPC_URL: process.env.BUNDLER_RPC_URL || AA_CONFIG.BUNDLER?.RPC_URL || '',
+
+  PAYMASTER_MODE: (process.env.PAYMASTER_MODE || AA_CONFIG.PAYMASTER.MODE || 'ONCHAIN').toUpperCase(),
+  PAYMASTER_ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || AA_CONFIG.PAYMASTER.ADDRESS),
 };
 
 /* ------------ ERC interfaces ------------ */
@@ -79,6 +82,12 @@ const recoverIface = new ethers.Interface([
   'function owner() view returns (address)',
   'function recoverERC20(address tokenAddress, address tokenReceiver, uint256 tokenAmount) external',
 ]);
+
+/* ------------ EntryPoint ABI ------------ */
+const ENTRYPOINT_ABI = [
+  'function depositTo(address account) payable',
+  'function getDeposit(address account) view returns (uint256)'
+];
 
 /* ------------ State ------------ */
 const state = {
@@ -103,6 +112,7 @@ async function initProviderAndSigner() {
   console.log(`Owner/Receiver (EOA): ${state.owner}`);
   console.log(`Old source: ${RUNTIME.OLD_SOURCE_ADDRESS} (${RUNTIME.OLD_SOURCE_TYPE})`);
   console.log(`New SCW: ${RUNTIME.NEW_SCW}`);
+  console.log(`Paymaster mode: ${RUNTIME.PAYMASTER_MODE}`);
 }
 
 /* ------------ Drain from old source → EOA (balance-aware) ------------ */
@@ -114,7 +124,6 @@ async function drainToEoa() {
   const desiredBw = toUnits(100_000_000, RUNTIME.DECIMALS.BWAEZI);
 
   if (RUNTIME.OLD_SOURCE_TYPE === 'EOA') {
-    // If old source equals receiver EOA, we can sign directly; else require OLD_SOVEREIGN_PRIVATE_KEY.
     const needsSeparateKey = (addrStrict(RUNTIME.OLD_SOURCE_ADDRESS).toLowerCase() !== state.owner.toLowerCase());
     let oldSigner = state.signer;
     if (needsSeparateKey) {
@@ -156,7 +165,6 @@ async function drainToEoa() {
     }
 
   } else if (RUNTIME.OLD_SOURCE_TYPE === 'RECOVER_CONTRACT') {
-    // Contract must be owned by sovereign key (or OLD_SOVEREIGN_PRIVATE_KEY if provided)
     let ownerSigner = state.signer;
     const altPk = process.env.OLD_SOVEREIGN_PRIVATE_KEY;
     if (altPk && altPk.startsWith('0x') && altPk.length >= 66) {
@@ -231,6 +239,38 @@ async function forwardEoaToNewScwWithChecks() {
   }
 }
 
+/* ------------ Ensure gas sponsorship to avoid AA31 ------------ */
+async function ensureGasSponsorship() {
+  const ep = new ethers.Contract(RUNTIME.ENTRY_POINT, ENTRYPOINT_ABI, state.provider);
+  const epSigner = new ethers.Contract(RUNTIME.ENTRY_POINT, ENTRYPOINT_ABI, state.signer);
+
+  const minDepositWei = ethers.parseEther(process.env.MIN_EP_DEPOSIT_ETH || '0.005'); // adjust if needed
+
+  if (RUNTIME.PAYMASTER_MODE !== 'NONE') {
+    // Ensure paymaster deposit
+    const current = await ep.getDeposit(RUNTIME.PAYMASTER_ADDRESS);
+    if (current < minDepositWei) {
+      console.log(`Depositing ${fmtUnits(minDepositWei, 18)} ETH to paymaster ${RUNTIME.PAYMASTER_ADDRESS} on EntryPoint...`);
+      const tx = await epSigner.depositTo(RUNTIME.PAYMASTER_ADDRESS, { value: minDepositWei });
+      const rc = await tx.wait();
+      console.log(`Paymaster deposit tx: ${rc?.transactionHash || tx.hash}`);
+    } else {
+      console.log('Paymaster deposit sufficient; skipping deposit.');
+    }
+  } else {
+    // Self-sponsored SCW: deposit to SCW on EntryPoint
+    const current = await ep.getDeposit(RUNTIME.NEW_SCW);
+    if (current < minDepositWei) {
+      console.log(`Depositing ${fmtUnits(minDepositWei, 18)} ETH to SCW ${RUNTIME.NEW_SCW} on EntryPoint...`);
+      const tx = await epSigner.depositTo(RUNTIME.NEW_SCW, { value: minDepositWei });
+      const rc = await tx.wait();
+      console.log(`SCW deposit tx: ${rc?.transactionHash || tx.hash}`);
+    } else {
+      console.log('SCW deposit sufficient; skipping deposit.');
+    }
+  }
+}
+
 /* ------------ Initialize AA for NEW SCW and approve router ------------ */
 async function initAaNewAndApprove() {
   // Ensure NEW SCW has code
@@ -296,7 +336,7 @@ async function printBalances() {
 /* ------------ Main ------------ */
 (async () => {
   try {
-    console.log('🚀 One-shot — drain → EOA, forward → NEW SCW, approve, balances, exit');
+    console.log('🚀 One-shot — drain → EOA, forward → NEW SCW, fund EntryPoint, approve, balances, exit');
 
     await initProviderAndSigner();
 
@@ -306,10 +346,13 @@ async function printBalances() {
     // Step 2: Forward from EOA to NEW SCW (balance-aware)
     await forwardEoaToNewScwWithChecks();
 
-    // Step 3: Approve router on NEW SCW via AA v15.12
+    // Step 3: Ensure gas sponsorship (fix AA31) for approvals
+    await ensureGasSponsorship();
+
+    // Step 4: Approve router on NEW SCW via AA v15.12
     await initAaNewAndApprove();
 
-    // Step 4: Print final balances
+    // Step 5: Print final balances
     await printBalances();
 
     console.log('✅ Completed. Exiting.');
