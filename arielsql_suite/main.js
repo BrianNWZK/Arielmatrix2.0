@@ -73,6 +73,26 @@ async function initProviderAndAA() {
   aa.ownerAddress = RUNTIME.EOA_OWNER || signer.address;
   await aa.initialize(provider, RUNTIME.SCW_ADDRESS, bundlerUrl);
 
+  // Optional: guarded alignment via factory.getAddress(owner, 0)
+  try {
+    const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
+    const predictedRaw = await factory.getAddress(aa.ownerAddress, 0n);
+    const predicted = addrStrict(predictedRaw);
+    const factoryAddr = addrStrict(RUNTIME.ACCOUNT_FACTORY);
+    if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
+      console.warn(`SCW coalescing guard: predicted equals factory. Keeping configured SCW ${RUNTIME.SCW_ADDRESS}`);
+    } else if (addrStrict(RUNTIME.SCW_ADDRESS) !== predicted) {
+      console.warn(`Aligning SCW: ${RUNTIME.SCW_ADDRESS} → predicted ${predicted}`);
+      RUNTIME.SCW_ADDRESS = predicted;
+      state.scwAddress = predicted;
+      aa.scwAddress = predicted;
+    } else {
+      state.scwAddress = RUNTIME.SCW_ADDRESS;
+    }
+  } catch (e) {
+    console.warn(`SCW coalescing skipped: ${e.message}`);
+  }
+
   state.provider = provider;
   state.signer = signer;
   state.aa = aa;
@@ -127,7 +147,11 @@ async function sendApprovals() {
     const approveData = erc20Iface.encodeFunctionData('approve', [router, ethers.MaxUint256]);
     const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
 
-    const userOp = await aa.createUserOp(callData, { callGasLimit: 300_000n });
+    const userOp = await aa.createUserOp(callData, {
+      // resilience in case deployment race
+      forceDeploy: !state.scwDeployed,
+      callGasLimit: 300_000n
+    });
     const signed = await aa.signUserOp(userOp);
     const txHash = await aa.sendUserOpWithBackoff(signed, 5);
 
@@ -153,6 +177,7 @@ function createServer() {
     res.json({
       status: 'OPERATIONAL',
       version: RUNTIME.VERSION,
+      network: RUNTIME.NETWORK,
       scwAddress: state.scwAddress,
       scwDeployed: state.scwDeployed,
       approvalsSent: state.approvalsSent,
@@ -160,6 +185,24 @@ function createServer() {
       uptimeMs: nowTs() - state.startTs,
       timestamp: new Date().toISOString()
     });
+  });
+
+  app.get('/status', async (req, res) => {
+    try {
+      const blockNumber = await state.provider.getBlockNumber();
+      res.json({
+        connected: true,
+        chainId: RUNTIME.NETWORK.chainId,
+        blockNumber,
+        scwAddress: state.scwAddress,
+        scwDeployed: state.scwDeployed,
+        approvalsSent: state.approvalsSent,
+        lastTxs: state.lastTxHashes,
+        timestamp: new Date().toISOString()
+      });
+    } catch (e) {
+      res.status(500).json({ connected: false, error: e.message });
+    }
   });
 
   app.post('/approve', async (req, res) => {
@@ -182,4 +225,40 @@ function createServer() {
     }
   });
 
-  const server = app.listen(RUNTIME.PORT, '0.0.0.0', () =>
+  const server = app.listen(RUNTIME.PORT, '0.0.0.0', () => {
+    console.log(`✅ Settlement-only server on :${RUNTIME.PORT}`);
+    console.log(`→ Health:    http://localhost:${RUNTIME.PORT}/health`);
+    console.log(`→ Status:    http://localhost:${RUNTIME.PORT}/status`);
+    console.log(`→ Approvals: POST http://localhost:${RUNTIME.PORT}/approve`);
+    console.log(`→ Bootstrap: POST http://localhost:${RUNTIME.PORT}/bootstrap`);
+  });
+
+  return { app, server };
+}
+
+/* =========================================================================
+   Bootstrap (auto deploy + approvals on startup)
+   ========================================================================= */
+(async () => {
+  console.log(`🚀 Settlement-only init — ${RUNTIME.VERSION}`);
+  try {
+    await initProviderAndAA();
+
+    // Proactively deploy SCW (force-deploy) then approvals
+    await ensureScwDeployed();
+    await sendApprovals();
+
+    // Start minimal server
+    createServer();
+    console.log('✅ Ready — SCW deployed and approvals set.');
+  } catch (e) {
+    console.error(`❌ Initialization failed: ${e.message}`);
+    // Fallback server to keep service alive for logs/inspection
+    const app = express();
+    app.get('/', (req, res) => res.json({ status: 'FAILED_INIT', error: e.message }));
+    const port = RUNTIME.PORT || 11080;
+    app.listen(port, () => console.log(`🛑 Fallback server on :${port}`));
+  }
+})();
+
+export {};
