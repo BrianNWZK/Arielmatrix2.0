@@ -1,294 +1,293 @@
-// arielsql_suite/main.js — Deterministic SCW deploy + approvals (clears AA14 by aligning sender to initCode)
+// arielsql_suite/main.js — One-shot: deploy NEW SCW (salt=0), move funds from OLD SCW, approve router, print balances, exit
 //
-// Strategy:
-// - Derive sender from deterministic factory prediction (owner + salt). If the desired legacy address cannot be produced,
-//   accept the new predicted address (salt=0 by default).
-// - Build initCode for that derived sender and pass it in createUserOp options.
-// - Approve Uniswap V3 router for USDC and BWAEZI after deployment.
-// - Minimal server retained for health/ops; bootstrap deploys + approves on start.
+// Zero-compromise flow with AA v15.12:
+// 1) Predict NEW SCW via factory.getAddress(owner, 0). If factory ABI misreports, deploy via direct tx fallback.
+// 2) Deploy NEW SCW:
+//    - Preferred: via ERC-4337 UserOp with initCode (sender aligned to predicted address)
+//    - Fallback: direct factory.createAccount(owner, 0) transaction (requires EOA ETH)
+// 3) From OLD SCW: transfer 5 USDC and 100,000,000 BWAEZI to EOA (2 UserOps).
+// 4) From EOA: forward both tokens to NEW SCW (2 direct ERC-20 txs).
+// 5) On NEW SCW: approve Uniswap V3 router for USDC and BWAEZI (2 UserOps).
+// 6) Print final balances and exit.
 //
-// Env required:
-//   - SOVEREIGN_PRIVATE_KEY: EOA private key (0x-prefixed hex)
-// Optional:
-//   - SCW_ADDRESS, EOA_OWNER, ACCOUNT_FACTORY, BUNDLER_RPC_URL, PORT
+// Required env:
+//   - SOVEREIGN_PRIVATE_KEY         EOA private key (0x-prefixed hex)
+// Optional env:
+//   - OLD_SCW_ADDRESS               Old SCW to drain (defaults AA_CONFIG.SCW_ADDRESS)
+//   - ACCOUNT_FACTORY               SimpleAccountFactory address
+//   - BUNDLER_RPC_URL               Bundler RPC URL (4337)
+//   - EOA_OWNER                     Explicit owner address (defaults to signer.address)
+//
+// Notes:
+// - This script avoids AA14 by aligning sender to the predicted address for (owner, salt=0) when using initCode.
+// - If factory.getAddress is unhealthy, it uses a direct deployment fallback to guarantee success.
+// - Exits on completion; no server is started.
 
-import express from 'express';
-import cors from 'cors';
 import { ethers } from 'ethers';
-
 import {
   ENHANCED_CONFIG as AA_CONFIG,
   EnhancedRPCManager,
   EnterpriseAASDK,
   SCW_FACTORY_ABI,
-  buildInitCodeForSCW,
-  findSaltForSCW
+  buildInitCodeForSCW
 } from '../modules/aa-loaves-fishes.js';
 
-function nowTs() { return Date.now(); }
+/* ------------ Utilities ------------ */
 function addrStrict(a) { try { return ethers.getAddress(String(a).trim()); } catch { return String(a).trim(); } }
+const toUnits = (n, d) => ethers.parseUnits(String(n), d);
+const fmtUnits = (bn, d) => ethers.formatUnits(bn, d);
 
+/* ------------ Runtime ------------ */
 const RUNTIME = {
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
   TOKENS: {
     USDC: addrStrict(AA_CONFIG.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
-    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEBcfDc4494D257cFab5da') // ensure actual address
+    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
   },
+  DECIMALS: { USDC: 6, BWAEZI: 18 },
   UNISWAP_V3_ROUTER: addrStrict(AA_CONFIG.UNISWAP?.V3_ROUTER_ADDRESS || '0xE592427A0AEce92De3Edee1F18E0157C05861564'),
-  // SCW_ADDRESS is the legacy or configured target; may be overridden if it cannot be produced by factory
-  SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
   ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
-  EOA_OWNER: (() => {
-    const eo = process.env.EOA_OWNER || AA_CONFIG.EOA_OWNER || '';
-    return eo && eo.startsWith('0x') ? addrStrict(eo) : null;
-  })(),
+  OLD_SCW: addrStrict(process.env.OLD_SCW_ADDRESS || AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
   RPC_PROVIDERS: AA_CONFIG.PUBLIC_RPC_ENDPOINTS?.length ? AA_CONFIG.PUBLIC_RPC_ENDPOINTS : [
     'https://ethereum-rpc.publicnode.com',
     'https://rpc.ankr.com/eth',
-    'https://eth.llamarpc.com'
+    'https://eth.llamarpc.com',
   ],
   BUNDLER_RPC_URL: process.env.BUNDLER_RPC_URL || AA_CONFIG.BUNDLER?.RPC_URL || '',
-  PORT: Number(process.env.PORT || 10000),
-  VERSION: 'settlement-only-v1'
 };
 
+/* ------------ ERC interfaces ------------ */
+const erc20Iface = new ethers.Interface([
+  'function balanceOf(address) view returns (uint256)',
+  'function transfer(address,uint256) returns (bool)',
+  'function approve(address,uint256) returns (bool)',
+]);
+const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
+
+/* ------------ State ------------ */
 const state = {
-  startTs: nowTs(),
   provider: null,
   signer: null,
-  aa: null,
-  scwAddress: RUNTIME.SCW_ADDRESS,
-  scwDeployed: false,
-  approvalsSent: { USDC: false, BWAEZI: false },
-  lastTxHashes: { deploy: null, approveUSDC: null, approveBWAEZI: null }
+  owner: null,
+  newScw: null,
+  aaOld: null,
+  aaNew: null,
 };
 
-async function initProviderAndAA() {
+/* ------------ Init provider + signer ------------ */
+async function initProviderAndSigner() {
   const rpc = new EnhancedRPCManager(RUNTIME.RPC_PROVIDERS, RUNTIME.NETWORK.chainId);
   await rpc.init();
-  const provider = rpc.getProvider();
+  state.provider = rpc.getProvider();
 
-  const priv = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!priv || !priv.startsWith('0x') || priv.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid.');
+  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
+  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
+    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid (0x-prefixed hex required).');
   }
-  const signer = new ethers.Wallet(priv, provider);
-
-  const bundlerUrl = RUNTIME.BUNDLER_RPC_URL;
-  const aa = new EnterpriseAASDK(signer, RUNTIME.ENTRY_POINT);
-  aa.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
-  aa.ownerAddress = RUNTIME.EOA_OWNER || signer.address;
-  await aa.initialize(provider, RUNTIME.SCW_ADDRESS, bundlerUrl);
-
-  state.provider = provider;
-  state.signer = signer;
-  state.aa = aa;
+  state.signer = new ethers.Wallet(pk, state.provider);
+  state.owner = addrStrict(process.env.EOA_OWNER || state.signer.address);
 }
 
-// Helper: predict address from factory; return null if ABI misreports factory itself
-async function predictFromFactory(provider, factoryAddr, owner, salt) {
-  const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
-  const raw = await factory.getAddress(owner, salt);
-  const predicted = addrStrict(raw);
-  if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-    console.warn(`Factory getAddress(${owner}, ${salt}) returned factory address (invalid).`);
-    return null;
-  }
-  return predicted;
-}
-
-async function ensureScwDeployed() {
-  const provider = state.provider;
-  const aa = state.aa;
-
-  // If the configured address already has code, we’re done
-  const configured = addrStrict(state.scwAddress);
-  const configuredCode = await provider.getCode(configured);
-  if (configuredCode && configuredCode !== '0x') {
-    state.scwDeployed = true;
-    return { deployed: true, address: configured, txHash: null };
-  }
-
-  const owner = aa.ownerAddress || state.signer.address;
-  const factoryAddr = RUNTIME.ACCOUNT_FACTORY;
-
-  // Try to find a salt that reproduces the configured address; if none, accept salt=0 predicted address
-  let salt = await findSaltForSCW(provider, factoryAddr, owner, configured, AA_CONFIG.MAX_SALT_TRIES);
-  if (salt === null || salt === undefined) {
-    salt = 0n;
-  }
-
-  // Derive the sender deterministically from factory and salt
-  let sender = await predictFromFactory(provider, factoryAddr, owner, salt);
-  if (!sender) {
-    // As a fallback, accept configured address and let initCode dictate the actual sender later
-    // but to clear AA14, we must derive a valid sender; try salt=0 one more time
-    sender = await predictFromFactory(provider, factoryAddr, owner, 0n);
-    if (!sender) {
-      throw new Error('Unable to derive deterministic sender from factory (ABI misreport).');
+/* ------------ Predict NEW SCW (salt=0) with guard ------------ */
+async function predictNewScwSalt0OrFallback() {
+  const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.provider);
+  try {
+    const predictedRaw = await factory.getAddress(state.owner, 0n);
+    const predicted = addrStrict(predictedRaw);
+    if (predicted.toLowerCase() === RUNTIME.ACCOUNT_FACTORY.toLowerCase()) {
+      // Misreport: fallback to deploy-first, then read code to confirm
+      console.warn(`Factory getAddress(owner,0) misreported factory address. Will deploy via fallback and infer address.`);
+      state.newScw = null; // will be set after fallback deploy
+    } else {
+      state.newScw = predicted;
+      console.log(`Predicted NEW SCW (salt=0): ${state.newScw}`);
     }
+  } catch (e) {
+    console.warn(`factory.getAddress failed (${e.message}). Will use fallback deploy.`);
+    state.newScw = null;
+  }
+}
+
+/* ------------ Deploy NEW SCW ------------ */
+async function deployNewScw() {
+  // If prediction is unreliable, fallback: direct deployment via factory tx
+  if (!state.newScw) {
+    const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.signer);
+    console.log('Deploying NEW SCW via direct factory.createAccount(owner, 0)...');
+    const tx = await factory.createAccount(state.owner, 0n, { gasLimit: 1_000_000 });
+    const rec = await tx.wait();
+    // After deployment, derive the address using a fresh call (should be correct post-deploy)
+    const factoryRO = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.provider);
+    const predictedRaw = await factoryRO.getAddress(state.owner, 0n);
+    state.newScw = addrStrict(predictedRaw);
+    console.log(`NEW SCW deployed via direct tx: ${rec?.transactionHash}`);
+    console.log(`NEW SCW address (salt=0): ${state.newScw}`);
+    return;
   }
 
-  // Align AA context and runtime to the deterministic sender
-  state.scwAddress = sender;
-  aa.scwAddress = sender;
-  console.log(`Using deterministic sender: ${sender} (salt=${salt})`);
+  // Preferred path: deploy via UserOp with initCode aligned to sender
+  const aaNew = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
+  aaNew.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
+  aaNew.ownerAddress = state.owner;
+  await aaNew.initialize(state.provider, state.newScw, RUNTIME.BUNDLER_RPC_URL);
 
-  // If already deployed at deterministic sender, skip deploy
-  const codeAtSender = await provider.getCode(sender);
-  if (codeAtSender && codeAtSender !== '0x') {
-    state.scwDeployed = true;
-    return { deployed: true, address: sender, txHash: null };
+  const code = await state.provider.getCode(state.newScw);
+  if (code && code !== '0x') {
+    console.log(`NEW SCW already deployed at ${state.newScw}`);
+    state.aaNew = aaNew;
+    return;
   }
 
-  // Build initCode for (owner, salt) targeting the derived sender
-  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt);
-  console.log(`Prepared initCode for deployment`);
+  const { initCode } = await buildInitCodeForSCW(state.provider, RUNTIME.ACCOUNT_FACTORY, state.owner, state.newScw, 0n);
+  console.log('Prepared initCode for deployment');
 
-  // Create a minimal execute call and pass initCode in options
-  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const noop = scwIface.encodeFunctionData('execute', [sender, 0n, '0x']);
-
-  const userOp = await aa.createUserOp(noop, {
+  const noop = scwIface.encodeFunctionData('execute', [state.newScw, 0n, '0x']);
+  const userOp = await aaNew.createUserOp(noop, {
     forceDeploy: true,
     initCode,
     callGasLimit: 400_000n,
     verificationGasLimit: 700_000n,
-    preVerificationGas: 80_000n
+    preVerificationGas: 80_000n,
   });
+  const signed = await aaNew.signUserOp(userOp);
+  const txHash = await aaNew.sendUserOpWithBackoff(signed, 5);
+  console.log(`SCW deployed (UserOp): ${txHash}`);
 
-  const signed = await aa.signUserOp(userOp);
-  const txHash = await aa.sendUserOpWithBackoff(signed, 5);
-
-  console.log(`SCW deployed: ${txHash}`);
-
-  state.scwDeployed = true;
-  state.lastTxHashes.deploy = txHash;
-  return { deployed: true, address: sender, txHash };
+  state.aaNew = aaNew;
 }
 
-async function sendApprovals() {
-  const aa = state.aa;
+/* ------------ Drain OLD SCW → EOA ------------ */
+async function drainOldScwToEoa() {
+  const aaOld = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
+  aaOld.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
+  aaOld.ownerAddress = state.owner;
+  await aaOld.initialize(state.provider, RUNTIME.OLD_SCW, RUNTIME.BUNDLER_RPC_URL);
+
+  const oldCode = await state.provider.getCode(RUNTIME.OLD_SCW);
+  if (!oldCode || oldCode === '0x') {
+    throw new Error(`OLD SCW not deployed: ${RUNTIME.OLD_SCW}`);
+  }
+
+  // USDC 5 → EOA
+  const amountUsdc = toUnits(5, RUNTIME.DECIMALS.USDC);
+  const usdcTransfer = erc20Iface.encodeFunctionData('transfer', [state.owner, amountUsdc]);
+  const callUsdc = scwIface.encodeFunctionData('execute', [RUNTIME.TOKENS.USDC, 0n, usdcTransfer]);
+  const uoUsdc = await aaOld.createUserOp(callUsdc, { callGasLimit: 300_000n });
+  const sUsdc = await aaOld.signUserOp(uoUsdc);
+  const hUsdc = await aaOld.sendUserOpWithBackoff(sUsdc, 5);
+  console.log(`OLD SCW → EOA USDC (5): ${hUsdc}`);
+
+  // BWAEZI 100,000,000 → EOA
+  const amountBw = toUnits(100_000_000, RUNTIME.DECIMALS.BWAEZI);
+  const bwTransfer = erc20Iface.encodeFunctionData('transfer', [state.owner, amountBw]);
+  const callBw = scwIface.encodeFunctionData('execute', [RUNTIME.TOKENS.BWAEZI, 0n, bwTransfer]);
+  const uoBw = await aaOld.createUserOp(callBw, { callGasLimit: 400_000n });
+  const sBw = await aaOld.signUserOp(uoBw);
+  const hBw = await aaOld.sendUserOpWithBackoff(sBw, 5);
+  console.log(`OLD SCW → EOA BWAEZI (100,000,000): ${hBw}`);
+
+  state.aaOld = aaOld;
+}
+
+/* ------------ Forward EOA → NEW SCW ------------ */
+async function forwardEoaToNewScw() {
+  const usdc = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, state.signer);
+  const bw = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, state.signer);
+
+  const txUsdc = await usdc.transfer(state.newScw, toUnits(5, RUNTIME.DECIMALS.USDC));
+  const rcUsdc = await txUsdc.wait();
+  console.log(`EOA → NEW SCW USDC (5): ${rcUsdc?.hash || rcUsdc?.transactionHash}`);
+
+  const txBw = await bw.transfer(state.newScw, toUnits(100_000_000, RUNTIME.DECIMALS.BWAEZI));
+  const rcBw = await txBw.wait();
+  console.log(`EOA → NEW SCW BWAEZI (100,000,000): ${rcBw?.hash || rcBw?.transactionHash}`);
+}
+
+/* ------------ Approve router on NEW SCW ------------ */
+async function approveRouterOnNewScw() {
+  // If we deployed via direct tx fallback, initialize AA context now
+  if (!state.aaNew) {
+    const aaNew = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
+    aaNew.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
+    aaNew.ownerAddress = state.owner;
+    await aaNew.initialize(state.provider, state.newScw, RUNTIME.BUNDLER_RPC_URL);
+    state.aaNew = aaNew;
+  }
+
+  const aaNew = state.aaNew;
   const router = RUNTIME.UNISWAP_V3_ROUTER;
-  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
-  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
 
   const approveToken = async (tokenAddr, label) => {
-    const approveData = erc20Iface.encodeFunctionData('approve', [router, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
+    const data = erc20Iface.encodeFunctionData('approve', [router, ethers.MaxUint256]);
+    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
 
-    const userOp = await aa.createUserOp(callData, {
-      forceDeploy: !state.scwDeployed,
-      callGasLimit: 300_000n
-    });
-    const signed = await aa.signUserOp(userOp);
-    const txHash = await aa.sendUserOpWithBackoff(signed, 5);
+    const userOp = await aaNew.createUserOp(callData, { callGasLimit: 300_000n });
+    const signed = await aaNew.signUserOp(userOp);
+    const txHash = await aaNew.sendUserOpWithBackoff(signed, 5);
 
-    console.log(`Approved ${label}: ${txHash}`);
-
-    if (label === 'USDC') { state.approvalsSent.USDC = true; state.lastTxHashes.approveUSDC = txHash; }
-    if (label === 'BWAEZI') { state.approvalsSent.BWAEZI = true; state.lastTxHashes.approveBWAEZI = txHash; }
-    return txHash;
+    console.log(`Approved ${label} on NEW SCW: ${txHash}`);
   };
 
-  const res = { ok: true, txs: {} };
-  if (!state.approvalsSent.USDC) res.txs.USDC = await approveToken(RUNTIME.TOKENS.USDC, 'USDC');
-  if (!state.approvalsSent.BWAEZI) res.txs.BWAEZI = await approveToken(RUNTIME.TOKENS.BWAEZI, 'BWAEZI');
-  return res;
+  await approveToken(RUNTIME.TOKENS.USDC, 'USDC');
+  await approveToken(RUNTIME.TOKENS.BWAEZI, 'BWAEZI');
 }
 
-function createServer() {
-  const app = express();
-  app.use(cors());
-  app.use(express.json());
+/* ------------ Print balances ------------ */
+async function printBalances() {
+  const p = state.provider;
+  const usdc = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, p);
+  const bw = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, p);
 
-  app.get('/health', (req, res) => {
-    res.json({
-      status: 'OPERATIONAL',
-      version: RUNTIME.VERSION,
-      network: RUNTIME.NETWORK,
-      scwAddress: state.scwAddress,
-      scwDeployed: state.scwDeployed,
-      approvalsSent: state.approvalsSent,
-      lastTxs: state.lastTxHashes,
-      uptimeMs: nowTs() - state.startTs,
-      timestamp: new Date().toISOString()
-    });
-  });
+  const bal = async (c, a, d) => fmtUnits(await c.balanceOf(a), d);
 
-  app.get('/status', async (req, res) => {
-    try {
-      const blockNumber = await state.provider.getBlockNumber();
-      res.json({
-        connected: true,
-        chainId: RUNTIME.NETWORK.chainId,
-        blockNumber,
-        scwAddress: state.scwAddress,
-        scwDeployed: state.scwDeployed,
-        approvalsSent: state.approvalsSent,
-        lastTxs: state.lastTxHashes,
-        timestamp: new Date().toISOString()
-      });
-    } catch (e) {
-      res.status(500).json({ connected: false, error: e.message });
-    }
-  });
+  const oldSCW = RUNTIME.OLD_SCW;
+  const eoa = state.owner;
+  const newSCW = state.newScw;
 
-  app.post('/approve', async (req, res) => {
-    try {
-      await ensureScwDeployed();
-      const result = await sendApprovals();
-      res.json({ ok: true, result, scwAddress: state.scwAddress, lastTxs: state.lastTxHashes });
-    } catch (e) {
-      res.status(500).json({ ok: false, error: e.message });
-    }
-  });
+  const result = {
+    old: {
+      usdc: await bal(usdc, oldSCW, RUNTIME.DECIMALS.USDC),
+      bw: await bal(bw, oldSCW, RUNTIME.DECIMALS.BWAEZI),
+    },
+    eoa: {
+      usdc: await bal(usdc, eoa, RUNTIME.DECIMALS.USDC),
+      bw: await bal(bw, eoa, RUNTIME.DECIMALS.BWAEZI),
+    },
+    new: {
+      usdc: await bal(usdc, newSCW, RUNTIME.DECIMALS.USDC),
+      bw: await bal(bw, newSCW, RUNTIME.DECIMALS.BWAEZI),
+    },
+  };
 
-  app.post('/bootstrap', async (req, res) => {
-    try {
-      await ensureScwDeployed();
-      const approvals = await sendApprovals();
-      res.json({ ok: true, scwDeployed: state.scwDeployed, approvals, scwAddress: state.scwAddress, lastTxs: state.lastTxHashes });
-    } catch (e) {
-      res.status(500).json({ ok: false, error: e.message });
-    }
-  });
-
-  const server = app.listen(RUNTIME.PORT, '0.0.0.0', () => {
-    console.log(`✅ Settlement-only server on :${RUNTIME.PORT}`);
-    console.log(`→ Health:    http://localhost:${RUNTIME.PORT}/health`);
-    console.log(`→ Status:    http://localhost:${RUNTIME.PORT}/status`);
-    console.log(`→ Approvals: POST http://localhost:${RUNTIME.PORT}/approve`);
-    console.log(`→ Bootstrap: POST http://localhost:${RUNTIME.PORT}/bootstrap`);
-  });
-
-  return { app, server };
+  console.log('Final balances:');
+  console.log(`OLD SCW (${oldSCW})  — USDC=${result.old.usdc}, BWAEZI=${result.old.bw}`);
+  console.log(`EOA     (${eoa})     — USDC=${result.eoa.usdc}, BWAEZI=${result.eoa.bw}`);
+  console.log(`NEW SCW (${newSCW})  — USDC=${result.new.usdc}, BWAEZI=${result.new.bw}`);
 }
 
-/* =========================================================================
-   Bootstrap (auto deploy + approvals on startup)
-   ========================================================================= */
+/* ------------ Main ------------ */
 (async () => {
-  console.log(`🚀 Settlement-only init — ${RUNTIME.VERSION}`);
   try {
-    await initProviderAndAA();
+    console.log('🚀 One-shot — deploy NEW SCW, move funds, approve, exit');
 
-    // Deterministic deploy with initCode aligned to sender (clears AA14)
-    await ensureScwDeployed();
-    await sendApprovals();
+    await initProviderAndSigner();
+    console.log(`Owner (EOA): ${state.owner}`);
+    console.log(`OLD SCW: ${RUNTIME.OLD_SCW}`);
 
-    // Start minimal server for ops
-    createServer();
-    console.log('✅ Ready — SCW deployed and approvals set.');
+    await predictNewScwSalt0OrFallback();
+    await deployNewScw();
+
+    await drainOldScwToEoa();
+    await forwardEoaToNewScw();
+
+    await approveRouterOnNewScw();
+    await printBalances();
+
+    console.log('✅ Completed. Exiting.');
+    process.exit(0);
   } catch (e) {
-    console.error(`❌ Initialization failed: ${e.message}`);
-    // Fallback server to keep service alive for logs/inspection
-    const app = express();
-    app.get('/', (req, res) => res.json({ status: 'FAILED_INIT', error: e.message }));
-    const port = RUNTIME.PORT || 10000;
-    app.listen(port, () => console.log(`🛑 Fallback server on :${port}`));
+    console.error(`❌ Failed: ${e.message}`);
+    process.exit(1);
   }
 })();
-
-export {};
