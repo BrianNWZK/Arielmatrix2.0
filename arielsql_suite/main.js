@@ -1,4 +1,11 @@
-// arielsql_suite/main.js — Settlement-only (SCW deploy + approvals only, no transfers, no loops)
+// arielsql_suite/main.js — Deterministic SCW deploy + approvals (clears AA14 by aligning sender to initCode)
+//
+// Strategy:
+// - Derive sender from deterministic factory prediction (owner + salt). If the desired legacy address cannot be produced,
+//   accept the new predicted address (salt=0 by default).
+// - Build initCode for that derived sender and pass it in createUserOp options.
+// - Approve Uniswap V3 router for USDC and BWAEZI after deployment.
+// - Minimal server retained for health/ops; bootstrap deploys + approves on start.
 //
 // Env required:
 //   - SOVEREIGN_PRIVATE_KEY: EOA private key (0x-prefixed hex)
@@ -26,9 +33,10 @@ const RUNTIME = {
   ENTRY_POINT: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
   TOKENS: {
     USDC: addrStrict(AA_CONFIG.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
-    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da')
+    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEBcfDc4494D257cFab5da') // ensure actual address
   },
   UNISWAP_V3_ROUTER: addrStrict(AA_CONFIG.UNISWAP?.V3_ROUTER_ADDRESS || '0xE592427A0AEce92De3Edee1F18E0157C05861564'),
+  // SCW_ADDRESS is the legacy or configured target; may be overridden if it cannot be produced by factory
   SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
   ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
   EOA_OWNER: (() => {
@@ -73,82 +81,78 @@ async function initProviderAndAA() {
   aa.ownerAddress = RUNTIME.EOA_OWNER || signer.address;
   await aa.initialize(provider, RUNTIME.SCW_ADDRESS, bundlerUrl);
 
-  // Optional: try alignment, but NEVER align to factory address
-  try {
-    const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
-    const predictedRaw = await factory.getAddress(aa.ownerAddress, 0n);
-    const predicted = addrStrict(predictedRaw);
-    const factoryAddr = addrStrict(RUNTIME.ACCOUNT_FACTORY);
-    if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-      console.warn(`SCW coalescing guard: predicted equals factory (invalid). Keeping configured SCW ${RUNTIME.SCW_ADDRESS}`);
-    } else if (addrStrict(RUNTIME.SCW_ADDRESS) !== predicted) {
-      console.warn(`Aligning SCW: ${RUNTIME.SCW_ADDRESS} → predicted ${predicted}`);
-      RUNTIME.SCW_ADDRESS = predicted;
-      state.scwAddress = predicted;
-      aa.scwAddress = predicted;
-    } else {
-      state.scwAddress = RUNTIME.SCW_ADDRESS;
-    }
-  } catch (e) {
-    console.warn(`SCW coalescing skipped: ${e.message}`);
-  }
-
   state.provider = provider;
   state.signer = signer;
   state.aa = aa;
+}
+
+// Helper: predict address from factory; return null if ABI misreports factory itself
+async function predictFromFactory(provider, factoryAddr, owner, salt) {
+  const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
+  const raw = await factory.getAddress(owner, salt);
+  const predicted = addrStrict(raw);
+  if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
+    console.warn(`Factory getAddress(${owner}, ${salt}) returned factory address (invalid).`);
+    return null;
+  }
+  return predicted;
 }
 
 async function ensureScwDeployed() {
   const provider = state.provider;
   const aa = state.aa;
 
-  // 1) If already deployed, exit
-  const current = addrStrict(state.scwAddress);
-  const code = await provider.getCode(current);
-  if (code && code !== '0x') {
+  // If the configured address already has code, we’re done
+  const configured = addrStrict(state.scwAddress);
+  const configuredCode = await provider.getCode(configured);
+  if (configuredCode && configuredCode !== '0x') {
     state.scwDeployed = true;
-    return { deployed: true, address: current, txHash: null };
+    return { deployed: true, address: configured, txHash: null };
   }
 
-  // 2) Determine a valid predicted sender (must NOT be factory address)
   const owner = aa.ownerAddress || state.signer.address;
   const factoryAddr = RUNTIME.ACCOUNT_FACTORY;
-  const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
 
-  const salt = await findSaltForSCW(provider, factoryAddr, owner, current, AA_CONFIG.MAX_SALT_TRIES);
-  const predictedRaw = await factory.getAddress(owner, salt ?? 0n);
-  const predicted = addrStrict(predictedRaw);
-
-  // If predicted equals factory (bad ABI or factory bug), DO NOT realign
-  if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-    console.warn(`Predicted sender equals factory (${predicted}). Skipping realignment; will use configured SCW ${current}`);
-  } else if (predicted.toLowerCase() !== current.toLowerCase()) {
-    console.warn(`Realigning sender: ${current} → ${predicted} (salt=${salt ?? 0n})`);
-    state.scwAddress = predicted;
-    aa.scwAddress = predicted;
+  // Try to find a salt that reproduces the configured address; if none, accept salt=0 predicted address
+  let salt = await findSaltForSCW(provider, factoryAddr, owner, configured, AA_CONFIG.MAX_SALT_TRIES);
+  if (salt === null || salt === undefined) {
+    salt = 0n;
   }
 
-  const sender = addrStrict(state.scwAddress);
+  // Derive the sender deterministically from factory and salt
+  let sender = await predictFromFactory(provider, factoryAddr, owner, salt);
+  if (!sender) {
+    // As a fallback, accept configured address and let initCode dictate the actual sender later
+    // but to clear AA14, we must derive a valid sender; try salt=0 one more time
+    sender = await predictFromFactory(provider, factoryAddr, owner, 0n);
+    if (!sender) {
+      throw new Error('Unable to derive deterministic sender from factory (ABI misreport).');
+    }
+  }
 
-  // 3) Build initCode for (owner, salt) to deploy 'sender'
-  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt ?? 0n);
-  console.log(`Prepared initCode for deployment`);
+  // Align AA context and runtime to the deterministic sender
+  state.scwAddress = sender;
+  aa.scwAddress = sender;
+  console.log(`Using deterministic sender: ${sender} (salt=${salt})`);
 
-  // Sanity: if sender currently has code, avoid AA10
-  const senderCode = await provider.getCode(sender);
-  if (senderCode && senderCode !== '0x') {
-    console.warn(`Sender ${sender} already has code. Skipping deployment step.`);
+  // If already deployed at deterministic sender, skip deploy
+  const codeAtSender = await provider.getCode(sender);
+  if (codeAtSender && codeAtSender !== '0x') {
     state.scwDeployed = true;
     return { deployed: true, address: sender, txHash: null };
   }
 
-  // 4) NOOP execute; PASS initCode in options
+  // Build initCode for (owner, salt) targeting the derived sender
+  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt);
+  console.log(`Prepared initCode for deployment`);
+
+  // Create a minimal execute call and pass initCode in options
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const noop = scwIface.encodeFunctionData('execute', [sender, 0n, '0x']);
 
   const userOp = await aa.createUserOp(noop, {
     forceDeploy: true,
-    initCode: initCode,
+    initCode,
     callGasLimit: 400_000n,
     verificationGasLimit: 700_000n,
     preVerificationGas: 80_000n
@@ -270,11 +274,11 @@ function createServer() {
   try {
     await initProviderAndAA();
 
-    // Proactively deploy SCW (force-deploy) then approvals
+    // Deterministic deploy with initCode aligned to sender (clears AA14)
     await ensureScwDeployed();
     await sendApprovals();
 
-    // Start minimal server
+    // Start minimal server for ops
     createServer();
     console.log('✅ Ready — SCW deployed and approvals set.');
   } catch (e) {
