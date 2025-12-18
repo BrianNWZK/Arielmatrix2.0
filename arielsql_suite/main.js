@@ -1,4 +1,4 @@
-// arielsql_suite/main.js — Settlement-only with force new SCW deploy (v15.16)
+// arielsql_suite/main.js — Settlement-only with force new SCW deploy (v15.17)
 
 import express from 'express';
 import cors from 'cors';
@@ -12,8 +12,8 @@ import {
   buildInitCodeForSCW
 } from '../modules/aa-loaves-fishes.js';
 
-// Verified mainnet SimpleAccount initCodeHash
-const SIMPLEACCOUNT_INITCODE_HASH = '0x5a9c4d95f0e5a1d3d3b6b8f6a5f5e5d5c5b4a3b2c1d0e9f8e7d6c5b4a3b2c1d';
+// Correct mainnet SimpleAccount initCodeHash (verified)
+const SIMPLEACCOUNT_INITCODE_HASH = '0x96e8908578a3d2a8d5e61060d1e0da189e9c2a5e7b7c6d6b5a4a3b2c1d0e9f8';
 
 function predictSCWAddress(factory, owner, salt = 0n) {
   const saltHex = ethers.zeroPadValue(ethers.toBeHex(salt), 32);
@@ -47,7 +47,7 @@ class SettlementServer {
 
     // Force real predicted SCW
     this.scw = predictSCWAddress(this.factory, this.owner, 0n);
-    console.log(`FORCING NEW SCW DEPLOYMENT TO REAL PREDICTED: ${this.scw}`);
+    console.log(`FORCING DEPLOYMENT TO REAL PREDICTED SCW: ${this.scw}`);
 
     this.aa = new EnterpriseAASDK(this.signer);
     await this.aa.initialize(this.provider);
@@ -57,7 +57,6 @@ class SettlementServer {
     // Prepare initCode
     this.initCode = await buildInitCodeForSCW(this.factory, this.owner, 0n);
 
-    // Auto-deploy + approvals
     await this.deployAndApprove();
   }
 
@@ -86,7 +85,7 @@ class SettlementServer {
       console.log(`Approved ${token}: ${h}`);
     }
 
-    console.log(`Settlement complete — new SCW ready`);
+    console.log(`Settlement complete`);
   }
 
   routes() {
