@@ -41,7 +41,7 @@ const RUNTIME = {
     'https://eth.llamarpc.com'
   ],
   BUNDLER_RPC_URL: process.env.BUNDLER_RPC_URL || AA_CONFIG.BUNDLER?.RPC_URL || '',
-  PORT: Number(process.env.PORT || 10000), // keep 10000 to match Render detection
+  PORT: Number(process.env.PORT || 10000),
   VERSION: 'settlement-only-v1'
 };
 
@@ -73,14 +73,14 @@ async function initProviderAndAA() {
   aa.ownerAddress = RUNTIME.EOA_OWNER || signer.address;
   await aa.initialize(provider, RUNTIME.SCW_ADDRESS, bundlerUrl);
 
-  // Optional: guarded alignment via factory.getAddress(owner, 0)
+  // Optional: try alignment, but NEVER align to factory address
   try {
     const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
     const predictedRaw = await factory.getAddress(aa.ownerAddress, 0n);
     const predicted = addrStrict(predictedRaw);
     const factoryAddr = addrStrict(RUNTIME.ACCOUNT_FACTORY);
     if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-      console.warn(`SCW coalescing guard: predicted equals factory. Keeping configured SCW ${RUNTIME.SCW_ADDRESS}`);
+      console.warn(`SCW coalescing guard: predicted equals factory (invalid). Keeping configured SCW ${RUNTIME.SCW_ADDRESS}`);
     } else if (addrStrict(RUNTIME.SCW_ADDRESS) !== predicted) {
       console.warn(`Aligning SCW: ${RUNTIME.SCW_ADDRESS} → predicted ${predicted}`);
       RUNTIME.SCW_ADDRESS = predicted;
@@ -110,29 +110,41 @@ async function ensureScwDeployed() {
     return { deployed: true, address: current, txHash: null };
   }
 
-  // 2) Find salt and compute the factory-predicted address; align sender to predicted
+  // 2) Determine a valid predicted sender (must NOT be factory address)
   const owner = aa.ownerAddress || state.signer.address;
   const factoryAddr = RUNTIME.ACCOUNT_FACTORY;
+  const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
 
   const salt = await findSaltForSCW(provider, factoryAddr, owner, current, AA_CONFIG.MAX_SALT_TRIES);
-  const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
   const predictedRaw = await factory.getAddress(owner, salt ?? 0n);
   const predicted = addrStrict(predictedRaw);
 
-  // If configured SCW differs from predicted, align to avoid AA14
-  if (predicted.toLowerCase() !== current.toLowerCase()) {
+  // If predicted equals factory (bad ABI or factory bug), DO NOT realign
+  if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
+    console.warn(`Predicted sender equals factory (${predicted}). Skipping realignment; will use configured SCW ${current}`);
+  } else if (predicted.toLowerCase() !== current.toLowerCase()) {
     console.warn(`Realigning sender: ${current} → ${predicted} (salt=${salt ?? 0n})`);
     state.scwAddress = predicted;
     aa.scwAddress = predicted;
   }
 
-  // 3) Build initCode for (owner, salt). The target address is implied by factory.
-  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, predicted, salt ?? 0n);
+  const sender = addrStrict(state.scwAddress);
+
+  // 3) Build initCode for (owner, salt) to deploy 'sender'
+  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt ?? 0n);
   console.log(`Prepared initCode for deployment`);
 
-  // 4) NOOP execute (callData can be anything valid); pass initCode in options
+  // Sanity: if sender currently has code, avoid AA10
+  const senderCode = await provider.getCode(sender);
+  if (senderCode && senderCode !== '0x') {
+    console.warn(`Sender ${sender} already has code. Skipping deployment step.`);
+    state.scwDeployed = true;
+    return { deployed: true, address: sender, txHash: null };
+  }
+
+  // 4) NOOP execute; PASS initCode in options
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const noop = scwIface.encodeFunctionData('execute', [predicted, 0n, '0x']);
+  const noop = scwIface.encodeFunctionData('execute', [sender, 0n, '0x']);
 
   const userOp = await aa.createUserOp(noop, {
     forceDeploy: true,
@@ -149,7 +161,7 @@ async function ensureScwDeployed() {
 
   state.scwDeployed = true;
   state.lastTxHashes.deploy = txHash;
-  return { deployed: true, address: predicted, txHash };
+  return { deployed: true, address: sender, txHash };
 }
 
 async function sendApprovals() {
