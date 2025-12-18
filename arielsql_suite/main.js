@@ -41,7 +41,7 @@ const RUNTIME = {
     'https://eth.llamarpc.com'
   ],
   BUNDLER_RPC_URL: process.env.BUNDLER_RPC_URL || AA_CONFIG.BUNDLER?.RPC_URL || '',
-  PORT: Number(process.env.PORT || 11080),
+  PORT: Number(process.env.PORT || 10000), // keep 10000 to match Render detection
   VERSION: 'settlement-only-v1'
 };
 
@@ -101,25 +101,39 @@ async function initProviderAndAA() {
 async function ensureScwDeployed() {
   const provider = state.provider;
   const aa = state.aa;
-  const target = addrStrict(state.scwAddress);
 
-  const code = await provider.getCode(target);
+  // 1) If already deployed, exit
+  const current = addrStrict(state.scwAddress);
+  const code = await provider.getCode(current);
   if (code && code !== '0x') {
     state.scwDeployed = true;
-    return { deployed: true, address: target, txHash: null };
+    return { deployed: true, address: current, txHash: null };
   }
 
+  // 2) Find salt and compute the factory-predicted address; align sender to predicted
   const owner = aa.ownerAddress || state.signer.address;
   const factoryAddr = RUNTIME.ACCOUNT_FACTORY;
-  const salt = await findSaltForSCW(provider, factoryAddr, owner, target, AA_CONFIG.MAX_SALT_TRIES);
-  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, target, salt ?? 0n);
 
+  const salt = await findSaltForSCW(provider, factoryAddr, owner, current, AA_CONFIG.MAX_SALT_TRIES);
+  const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
+  const predictedRaw = await factory.getAddress(owner, salt ?? 0n);
+  const predicted = addrStrict(predictedRaw);
+
+  // If configured SCW differs from predicted, align to avoid AA14
+  if (predicted.toLowerCase() !== current.toLowerCase()) {
+    console.warn(`Realigning sender: ${current} → ${predicted} (salt=${salt ?? 0n})`);
+    state.scwAddress = predicted;
+    aa.scwAddress = predicted;
+  }
+
+  // 3) Build initCode for (owner, salt). The target address is implied by factory.
+  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, predicted, salt ?? 0n);
   console.log(`Prepared initCode for deployment`);
 
+  // 4) NOOP execute (callData can be anything valid); pass initCode in options
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const noop = scwIface.encodeFunctionData('execute', [target, 0n, '0x']);
+  const noop = scwIface.encodeFunctionData('execute', [predicted, 0n, '0x']);
 
-  // PASS initCode IN OPTIONS (do not set it after creation)
   const userOp = await aa.createUserOp(noop, {
     forceDeploy: true,
     initCode: initCode,
@@ -135,7 +149,7 @@ async function ensureScwDeployed() {
 
   state.scwDeployed = true;
   state.lastTxHashes.deploy = txHash;
-  return { deployed: true, address: target, txHash };
+  return { deployed: true, address: predicted, txHash };
 }
 
 async function sendApprovals() {
@@ -149,7 +163,6 @@ async function sendApprovals() {
     const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
 
     const userOp = await aa.createUserOp(callData, {
-      // resilience in case deployment race
       forceDeploy: !state.scwDeployed,
       callGasLimit: 300_000n
     });
@@ -257,7 +270,7 @@ function createServer() {
     // Fallback server to keep service alive for logs/inspection
     const app = express();
     app.get('/', (req, res) => res.json({ status: 'FAILED_INIT', error: e.message }));
-    const port = RUNTIME.PORT || 11080;
+    const port = RUNTIME.PORT || 10000;
     app.listen(port, () => console.log(`🛑 Fallback server on :${port}`));
   }
 })();
