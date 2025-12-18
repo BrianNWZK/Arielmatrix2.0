@@ -1,78 +1,64 @@
-// arielsql_suite/main.js — Settlement-only (SCW deploy + approvals only)
-// - Force SCW deploy on first call
-// - Approvals only (USDC, BWAEZI → Uniswap V3 router), no transfers
-// - No loops, no swaps, no arbitrage
+// arielsql_suite/main.js — Settlement-only (SCW deploy + approvals only, no transfers, no loops)
 //
-// Env required:
-//   - SOVEREIGN_PRIVATE_KEY: EOA private key (hex string)
-// Optional overrides:
-//   - EOA_OWNER: override SCW owner address (EOA) used by factory
-//   - ACCOUNT_FACTORY: ERC-4337 account factory address
-//   - BUNDLER_RPC_URL: Bundler RPC URL
+// What it does on startup:
+// - Initializes provider + AA SDK
+// - Binds to target SCW address (env or AA_CONFIG default)
+// - If SCW has no code, builds initCode and sends a NOOP userOp to deploy it (AA20-safe)
+// - Sends approvals for USDC and BWAEZI to Uniswap V3 router via SCW.execute
+// - Starts a minimal server with /health, /status, /approve, /bootstrap
 //
-// Dependencies expected in repo:
-//   - modules/aa-loaves-fishes.js (v15.12) exports EnterpriseAASDK, EnhancedRPCManager,
-//     SCW_FACTORY_ABI, buildInitCodeForSCW, findSaltForSCW,
-//     ENHANCED_CONFIG (AA_CONFIG-like), createNetworkForcedProvider
-//
-// Behavior:
-//   - Initialize provider and AA SDK (bundler from env)
-//   - Coalesce/align SCW to predicted address from factory (salt=0), guarded
-//   - Force deploy SCW (initCode + NOOP execute)
-//   - Send approvals via SCW.execute for USDC and BWAEZI to Uniswap V3 router
-//   - Minimal API: /health, /status, /approve (idempotent)
-//   - No token transfers, no background setInterval loops
+// Required env:
+//   - SOVEREIGN_PRIVATE_KEY    EOA private key (0x-prefixed hex)
+// Optional env:
+//   - SCW_ADDRESS              Target SCW to deploy/use (defaults to AA_CONFIG.SCW_ADDRESS)
+//   - EOA_OWNER                Owner EOA for factory.createAccount (defaults to signer.address)
+//   - ACCOUNT_FACTORY          ERC-4337 SimpleAccountFactory (defaults to AA_CONFIG.ACCOUNT_FACTORY)
+//   - BUNDLER_RPC_URL          Bundler RPC URL (defaults to AA_CONFIG.BUNDLER.RPC_URL)
+//   - PORT                     HTTP port (default 11080)
 
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 
 import {
-  // Core AA infra
-  EnterpriseAASDK,
-  EnhancedRPCManager,
+  // Config + infra
   ENHANCED_CONFIG as AA_CONFIG,
+  EnhancedRPCManager,
+  EnterpriseAASDK,
 
-  // SCW deploy helpers
+  // SCW deployment helpers
   SCW_FACTORY_ABI,
   buildInitCodeForSCW,
-  findSaltForSCW,
-
-  // Utils
-  createNetworkForcedProvider,
+  findSaltForSCW
 } from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
-   Strict helpers
+   Utilities
    ========================================================================= */
-
-function nowTs(){ return Date.now(); }
-function addrStrict(a) { try { return ethers.getAddress(String(a).trim()); } catch { const s=String(a).trim(); return s.startsWith('0x')?s.toLowerCase():s; } }
+function nowTs() { return Date.now(); }
+function addrStrict(a) { try { return ethers.getAddress(String(a).trim()); } catch { return String(a).trim(); } }
 
 /* =========================================================================
-   Runtime config coalesced from AA_CONFIG + env
+   Runtime config
    ========================================================================= */
-
 const RUNTIME = {
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  // Tokens + router
   TOKENS: {
     USDC: addrStrict(AA_CONFIG.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
-    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
+    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da')
   },
   UNISWAP_V3_ROUTER: addrStrict(AA_CONFIG.UNISWAP?.V3_ROUTER_ADDRESS || '0xE592427A0AEce92De3Edee1F18E0157C05861564'),
 
-  // SCW + factory
-  SCW_ADDRESS: addrStrict(AA_CONFIG.SCW_ADDRESS || process.env.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
+  // Target SCW address — explicitly set or fallback to AA_CONFIG
+  SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
   ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
   EOA_OWNER: (() => {
     const eo = process.env.EOA_OWNER || AA_CONFIG.EOA_OWNER || '';
     return eo && eo.startsWith('0x') ? addrStrict(eo) : null;
   })(),
 
-  // RPCs + Bundler
   RPC_PROVIDERS: AA_CONFIG.PUBLIC_RPC_ENDPOINTS?.length ? AA_CONFIG.PUBLIC_RPC_ENDPOINTS : [
     'https://ethereum-rpc.publicnode.com',
     'https://rpc.ankr.com/eth',
@@ -80,15 +66,13 @@ const RUNTIME = {
   ],
   BUNDLER_RPC_URL: process.env.BUNDLER_RPC_URL || AA_CONFIG.BUNDLER?.RPC_URL || '',
 
-  // App
   PORT: Number(process.env.PORT || 11080),
   VERSION: 'settlement-only-v1'
 };
 
 /* =========================================================================
-   Global state (no loops)
+   Global state
    ========================================================================= */
-
 const state = {
   startTs: nowTs(),
   provider: null,
@@ -96,25 +80,18 @@ const state = {
   aa: null,
   scwAddress: RUNTIME.SCW_ADDRESS,
   scwDeployed: false,
-  approvalsSent: {
-    USDC: false,
-    BWAEZI: false
-  },
-  lastTxHashes: {
-    deploy: null,
-    approveUSDC: null,
-    approveBWAEZI: null
-  }
+  approvalsSent: { USDC: false, BWAEZI: false },
+  lastTxHashes: { deploy: null, approveUSDC: null, approveBWAEZI: null }
 };
 
 /* =========================================================================
    Bootstrap: provider + signer + AA SDK
    ========================================================================= */
-
 async function initProviderAndAA() {
   const rpc = new EnhancedRPCManager(RUNTIME.RPC_PROVIDERS, RUNTIME.NETWORK.chainId);
   await rpc.init();
   const provider = rpc.getProvider();
+
   const priv = process.env.SOVEREIGN_PRIVATE_KEY;
   if (!priv || !priv.startsWith('0x') || priv.length < 66) {
     throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid. Provide a 0x-prefixed hex private key.');
@@ -124,22 +101,19 @@ async function initProviderAndAA() {
   const bundlerUrl = RUNTIME.BUNDLER_RPC_URL;
   const aa = new EnterpriseAASDK(signer, RUNTIME.ENTRY_POINT);
 
-  // Allow factory override at runtime
+  // AA SDK wiring
   aa.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
-  // Owner override (optional)
-  if (RUNTIME.EOA_OWNER) aa.ownerAddress = RUNTIME.EOA_OWNER;
-
+  aa.ownerAddress = RUNTIME.EOA_OWNER || signer.address;
   await aa.initialize(provider, RUNTIME.SCW_ADDRESS, bundlerUrl);
 
-  // Guarded SCW coalescing to predicted address (salt=0)
+  // Guarded SCW coalescing to predicted salt=0 (if ABI mismatch, keep configured)
   try {
     const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
-    const owner = aa.ownerAddress || signer.address;
-    const predictedRaw = await factory.getAddress(owner, 0n);
+    const predictedRaw = await factory.getAddress(aa.ownerAddress, 0n);
     const predicted = addrStrict(predictedRaw);
     const factoryAddr = addrStrict(RUNTIME.ACCOUNT_FACTORY);
     if (predicted.toLowerCase() === factoryAddr.toLowerCase()) {
-      console.warn(`SCW coalescing guard: predicted equals factory. Keep configured SCW ${RUNTIME.SCW_ADDRESS}`);
+      console.warn(`SCW coalescing guard: predicted equals factory. Keeping configured SCW ${RUNTIME.SCW_ADDRESS}`);
     } else if (addrStrict(RUNTIME.SCW_ADDRESS) !== predicted) {
       console.warn(`Aligning SCW: ${RUNTIME.SCW_ADDRESS} → predicted ${predicted}`);
       RUNTIME.SCW_ADDRESS = predicted;
@@ -160,25 +134,27 @@ async function initProviderAndAA() {
 /* =========================================================================
    Force SCW deployment (initCode + NOOP execute)
    ========================================================================= */
-
 async function ensureScwDeployed() {
   const provider = state.provider;
   const aa = state.aa;
+  const target = addrStrict(state.scwAddress);
 
-  const code = await provider.getCode(state.scwAddress);
+  const code = await provider.getCode(target);
   if (code && code !== '0x') {
     state.scwDeployed = true;
-    return { deployed: true, address: state.scwAddress, txHash: null };
+    return { deployed: true, address: target, txHash: null };
   }
 
   const owner = aa.ownerAddress || state.signer.address;
   const factoryAddr = RUNTIME.ACCOUNT_FACTORY;
-  const salt = await findSaltForSCW(provider, factoryAddr, owner, state.scwAddress, AA_CONFIG.MAX_SALT_TRIES);
-  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, state.scwAddress, salt ?? 0n);
 
-  // NOOP SCW.execute to self, first call includes initCode
+  // Find salt for exact target address if possible; else fallback to 0n
+  const salt = await findSaltForSCW(provider, factoryAddr, owner, target, AA_CONFIG.MAX_SALT_TRIES);
+  const { initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, target, salt ?? 0n);
+
+  // NOOP SCW.execute to self; include initCode explicitly
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const noop = scwIface.encodeFunctionData('execute', [state.scwAddress, 0n, '0x']);
+  const noop = scwIface.encodeFunctionData('execute', [target, 0n, '0x']);
 
   const userOp = await aa.createUserOp(noop, {
     forceDeploy: true,
@@ -186,8 +162,7 @@ async function ensureScwDeployed() {
     verificationGasLimit: 700_000n,
     preVerificationGas: 80_000n
   });
-  // Overwrite initCode (createUserOp has already set it if undeployed; keep explicit to be clear)
-  userOp.initCode = initCode;
+  userOp.initCode = initCode; // CRITICAL: force deployment
 
   const signed = await aa.signUserOp(userOp);
   const txHash = await aa.sendUserOpWithBackoff(signed, 5);
@@ -195,13 +170,12 @@ async function ensureScwDeployed() {
   state.scwDeployed = true;
   state.lastTxHashes.deploy = txHash;
 
-  return { deployed: true, address: state.scwAddress, txHash };
+  return { deployed: true, address: target, txHash };
 }
 
 /* =========================================================================
    Approvals-only settlement (USDC, BWAEZI → Uniswap V3 router)
    ========================================================================= */
-
 async function sendApprovals() {
   const aa = state.aa;
   const router = RUNTIME.UNISWAP_V3_ROUTER;
@@ -213,8 +187,7 @@ async function sendApprovals() {
     const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
 
     const userOp = await aa.createUserOp(callData, {
-      // pass through defaults, no forceDeploy here (SCW should be deployed),
-      // but allow it in case deployment race occurred
+      // If a race happens, forceDeploy makes it resilient
       forceDeploy: !state.scwDeployed,
       callGasLimit: 300_000n
     });
@@ -229,20 +202,15 @@ async function sendApprovals() {
 
   const res = { ok: true, txs: {} };
 
-  if (!state.approvalsSent.USDC) {
-    res.txs.USDC = await approveToken(RUNTIME.TOKENS.USDC, 'USDC');
-  }
-  if (!state.approvalsSent.BWAEZI) {
-    res.txs.BWAEZI = await approveToken(RUNTIME.TOKENS.BWAEZI, 'BWAEZI');
-  }
+  if (!state.approvalsSent.USDC) res.txs.USDC = await approveToken(RUNTIME.TOKENS.USDC, 'USDC');
+  if (!state.approvalsSent.BWAEZI) res.txs.BWAEZI = await approveToken(RUNTIME.TOKENS.BWAEZI, 'BWAEZI');
 
   return res;
 }
 
 /* =========================================================================
-   Minimal API (no loops)
+   Minimal API (no transfers, no loops)
    ========================================================================= */
-
 function createServer() {
   const app = express();
   app.use(cors());
@@ -283,7 +251,6 @@ function createServer() {
   // Idempotent approvals-only endpoint
   app.post('/approve', async (req, res) => {
     try {
-      // Ensure SCW deployed before approvals
       await ensureScwDeployed();
       const result = await sendApprovals();
       res.json({ ok: true, result, scwAddress: state.scwAddress, lastTxs: state.lastTxHashes });
@@ -315,9 +282,8 @@ function createServer() {
 }
 
 /* =========================================================================
-   Bootstrap (no loops)
+   Bootstrap (auto deploy + approvals on startup)
    ========================================================================= */
-
 (async () => {
   console.log(`🚀 Settlement-only init — ${RUNTIME.VERSION}`);
   try {
@@ -331,7 +297,8 @@ function createServer() {
     createServer();
     console.log('✅ Ready — SCW deployed and approvals set.');
   } catch (e) {
-    console.error('❌ Initialization failed:', e.message);
+    console.error(`❌ Initialization failed: ${e.message}`);
+    // Fallback server to keep service alive for logs/inspection
     const app = express();
     app.get('/', (req, res) => res.json({ status: 'FAILED_INIT', error: e.message }));
     const port = RUNTIME.PORT || 11080;
