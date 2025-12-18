@@ -119,13 +119,14 @@ async function ensureScwDeployed() {
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const noop = scwIface.encodeFunctionData('execute', [target, 0n, '0x']);
 
+  // PASS initCode IN OPTIONS (do not set it after creation)
   const userOp = await aa.createUserOp(noop, {
     forceDeploy: true,
+    initCode: initCode,
     callGasLimit: 400_000n,
     verificationGasLimit: 700_000n,
     preVerificationGas: 80_000n
   });
-  userOp.initCode = initCode; // force deployment
 
   const signed = await aa.signUserOp(userOp);
   const txHash = await aa.sendUserOpWithBackoff(signed, 5);
