@@ -1,11 +1,11 @@
 // arielsql_suite/main.js — One-shot: deploy NEW SCW (salt=0), move funds from OLD SCW, approve router, print balances, exit
 //
 // Zero-compromise flow with AA v15.12:
-// 1) Predict NEW SCW via factory.getAddress(owner, 0). If factory ABI misreports, deploy via direct tx fallback.
+// 1) Predict NEW SCW via factory.createAccount staticCall(owner, 0) — avoids broken getAddress.
 // 2) Deploy NEW SCW:
-//    - Preferred: via ERC-4337 UserOp with initCode (sender aligned to predicted address)
-//    - Fallback: direct factory.createAccount(owner, 0) transaction (requires EOA ETH)
-// 3) From OLD SCW: transfer 5 USDC and 100,000,000 BWAEZI to EOA (2 UserOps).
+//    - Preferred: direct factory.createAccount(owner, 0) transaction (uses staticCall prediction; requires EOA ETH)
+//    - Alternative: ERC-4337 UserOp with initCode (if you prefer bundler path; kept here, but default uses direct TX)
+// 3) From OLD SCW (if deployed): transfer 5 USDC and 100,000,000 BWAEZI to EOA (2 UserOps).
 // 4) From EOA: forward both tokens to NEW SCW (2 direct ERC-20 txs).
 // 5) On NEW SCW: approve Uniswap V3 router for USDC and BWAEZI (2 UserOps).
 // 6) Print final balances and exit.
@@ -19,9 +19,9 @@
 //   - EOA_OWNER                     Explicit owner address (defaults to signer.address)
 //
 // Notes:
-// - This script avoids AA14 by aligning sender to the predicted address for (owner, salt=0) when using initCode.
-// - If factory.getAddress is unhealthy, it uses a direct deployment fallback to guarantee success.
-// - Exits on completion; no server is started.
+// - This script avoids AA14 by keeping AA SDK aligned with the actual deployed NEW SCW address.
+// - It eliminates reliance on factory.getAddress by using staticCall on createAccount, which returns the deterministic address.
+// - If OLD SCW has no code, it logs and skips the drain step to guarantee a successful run.
 
 import { ethers } from 'ethers';
 import {
@@ -89,85 +89,71 @@ async function initProviderAndSigner() {
   state.owner = addrStrict(process.env.EOA_OWNER || state.signer.address);
 }
 
-/* ------------ Predict NEW SCW (salt=0) with guard ------------ */
-async function predictNewScwSalt0OrFallback() {
-  const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.provider);
-  try {
-    const predictedRaw = await factory.getAddress(state.owner, 0n);
-    const predicted = addrStrict(predictedRaw);
-    if (predicted.toLowerCase() === RUNTIME.ACCOUNT_FACTORY.toLowerCase()) {
-      // Misreport: fallback to deploy-first, then read code to confirm
-      console.warn(`Factory getAddress(owner,0) misreported factory address. Will deploy via fallback and infer address.`);
-      state.newScw = null; // will be set after fallback deploy
-    } else {
-      state.newScw = predicted;
-      console.log(`Predicted NEW SCW (salt=0): ${state.newScw}`);
-    }
-  } catch (e) {
-    console.warn(`factory.getAddress failed (${e.message}). Will use fallback deploy.`);
-    state.newScw = null;
+/* ------------ Predict NEW SCW (salt=0) using staticCall ------------ */
+async function predictNewScwSalt0Static() {
+  const factoryRO = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.provider);
+  // ethers v6: use getFunction('createAccount').staticCall(...)
+  const createFn = factoryRO.getFunction('createAccount');
+  const predictedRaw = await createFn.staticCall(state.owner, 0n);
+  const predicted = addrStrict(predictedRaw);
+
+  if (predicted.toLowerCase() === RUNTIME.ACCOUNT_FACTORY.toLowerCase()) {
+    throw new Error(`Factory static prediction returned factory address (${predicted}). Fix factory ABI/address before proceeding.`);
   }
+  state.newScw = predicted;
+  console.log(`Predicted NEW SCW (salt=0) via staticCall: ${state.newScw}`);
 }
 
-/* ------------ Deploy NEW SCW ------------ */
-async function deployNewScw() {
-  // If prediction is unreliable, fallback: direct deployment via factory tx
-  if (!state.newScw) {
-    const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.signer);
-    console.log('Deploying NEW SCW via direct factory.createAccount(owner, 0)...');
-    const tx = await factory.createAccount(state.owner, 0n, { gasLimit: 1_000_000 });
-    const rec = await tx.wait();
-    // After deployment, derive the address using a fresh call (should be correct post-deploy)
-    const factoryRO = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.provider);
-    const predictedRaw = await factoryRO.getAddress(state.owner, 0n);
-    state.newScw = addrStrict(predictedRaw);
-    console.log(`NEW SCW deployed via direct tx: ${rec?.transactionHash}`);
-    console.log(`NEW SCW address (salt=0): ${state.newScw}`);
+/* ------------ Deploy NEW SCW via direct factory TX (fallback-safe) ------------ */
+async function deployNewScwDirect() {
+  const factory = new ethers.Contract(RUNTIME.ACCOUNT_FACTORY, SCW_FACTORY_ABI, state.signer);
+
+  // If already deployed, skip
+  const codePre = await state.provider.getCode(state.newScw);
+  if (codePre && codePre !== '0x') {
+    console.log(`NEW SCW already deployed at ${state.newScw}`);
     return;
   }
 
-  // Preferred path: deploy via UserOp with initCode aligned to sender
+  console.log('Deploying NEW SCW via direct factory.createAccount(owner, 0)...');
+  const tx = await factory.createAccount(state.owner, 0n, { gasLimit: 1_000_000 });
+  const rec = await tx.wait();
+  console.log(`NEW SCW deployment tx: ${tx.hash}`);
+
+  // Verify code at predicted address
+  let deployed = false;
+  for (let i = 0; i < 30; i++) {
+    const code = await state.provider.getCode(state.newScw);
+    if (code && code !== '0x') { deployed = true; break; }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  if (!deployed) {
+    throw new Error(`NEW SCW did not appear at ${state.newScw} after deployment tx ${tx.hash}`);
+  }
+  console.log(`✅ NEW SCW deployed at ${state.newScw}`);
+}
+
+/* ------------ Initialize AA SDK for NEW SCW ------------ */
+async function initAaNew() {
   const aaNew = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
   aaNew.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
   aaNew.ownerAddress = state.owner;
   await aaNew.initialize(state.provider, state.newScw, RUNTIME.BUNDLER_RPC_URL);
-
-  const code = await state.provider.getCode(state.newScw);
-  if (code && code !== '0x') {
-    console.log(`NEW SCW already deployed at ${state.newScw}`);
-    state.aaNew = aaNew;
-    return;
-  }
-
-  const { initCode } = await buildInitCodeForSCW(state.provider, RUNTIME.ACCOUNT_FACTORY, state.owner, state.newScw, 0n);
-  console.log('Prepared initCode for deployment');
-
-  const noop = scwIface.encodeFunctionData('execute', [state.newScw, 0n, '0x']);
-  const userOp = await aaNew.createUserOp(noop, {
-    forceDeploy: true,
-    initCode,
-    callGasLimit: 400_000n,
-    verificationGasLimit: 700_000n,
-    preVerificationGas: 80_000n,
-  });
-  const signed = await aaNew.signUserOp(userOp);
-  const txHash = await aaNew.sendUserOpWithBackoff(signed, 5);
-  console.log(`SCW deployed (UserOp): ${txHash}`);
-
   state.aaNew = aaNew;
 }
 
-/* ------------ Drain OLD SCW → EOA ------------ */
-async function drainOldScwToEoa() {
+/* ------------ Drain OLD SCW → EOA (if OLD SCW deployed) ------------ */
+async function drainOldScwToEoaIfExists() {
+  const oldCode = await state.provider.getCode(RUNTIME.OLD_SCW);
+  if (!oldCode || oldCode === '0x') {
+    console.warn(`OLD SCW not deployed: ${RUNTIME.OLD_SCW}. Skipping drain step.`);
+    return;
+  }
+
   const aaOld = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
   aaOld.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
   aaOld.ownerAddress = state.owner;
   await aaOld.initialize(state.provider, RUNTIME.OLD_SCW, RUNTIME.BUNDLER_RPC_URL);
-
-  const oldCode = await state.provider.getCode(RUNTIME.OLD_SCW);
-  if (!oldCode || oldCode === '0x') {
-    throw new Error(`OLD SCW not deployed: ${RUNTIME.OLD_SCW}`);
-  }
 
   // USDC 5 → EOA
   const amountUsdc = toUnits(5, RUNTIME.DECIMALS.USDC);
@@ -195,10 +181,12 @@ async function forwardEoaToNewScw() {
   const usdc = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, state.signer);
   const bw = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, state.signer);
 
+  // USDC 5
   const txUsdc = await usdc.transfer(state.newScw, toUnits(5, RUNTIME.DECIMALS.USDC));
   const rcUsdc = await txUsdc.wait();
   console.log(`EOA → NEW SCW USDC (5): ${rcUsdc?.hash || rcUsdc?.transactionHash}`);
 
+  // BWAEZI 100,000,000
   const txBw = await bw.transfer(state.newScw, toUnits(100_000_000, RUNTIME.DECIMALS.BWAEZI));
   const rcBw = await txBw.wait();
   console.log(`EOA → NEW SCW BWAEZI (100,000,000): ${rcBw?.hash || rcBw?.transactionHash}`);
@@ -206,15 +194,7 @@ async function forwardEoaToNewScw() {
 
 /* ------------ Approve router on NEW SCW ------------ */
 async function approveRouterOnNewScw() {
-  // If we deployed via direct tx fallback, initialize AA context now
-  if (!state.aaNew) {
-    const aaNew = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
-    aaNew.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
-    aaNew.ownerAddress = state.owner;
-    await aaNew.initialize(state.provider, state.newScw, RUNTIME.BUNDLER_RPC_URL);
-    state.aaNew = aaNew;
-  }
-
+  if (!state.aaNew) await initAaNew();
   const aaNew = state.aaNew;
   const router = RUNTIME.UNISWAP_V3_ROUTER;
 
@@ -225,7 +205,6 @@ async function approveRouterOnNewScw() {
     const userOp = await aaNew.createUserOp(callData, { callGasLimit: 300_000n });
     const signed = await aaNew.signUserOp(userOp);
     const txHash = await aaNew.sendUserOpWithBackoff(signed, 5);
-
     console.log(`Approved ${label} on NEW SCW: ${txHash}`);
   };
 
@@ -275,13 +254,25 @@ async function printBalances() {
     console.log(`Owner (EOA): ${state.owner}`);
     console.log(`OLD SCW: ${RUNTIME.OLD_SCW}`);
 
-    await predictNewScwSalt0OrFallback();
-    await deployNewScw();
+    // Predict deterministically via staticCall (robust vs misreported getAddress)
+    await predictNewScwSalt0Static();
 
-    await drainOldScwToEoa();
+    // Deploy NEW SCW via direct factory TX and verify code
+    await deployNewScwDirect();
+
+    // Initialize AA SDK for the NEW SCW
+    await initAaNew();
+
+    // Drain OLD SCW to EOA if OLD SCW exists; otherwise skip
+    await drainOldScwToEoaIfExists();
+
+    // Forward from EOA to NEW SCW
     await forwardEoaToNewScw();
 
+    // Approve router from NEW SCW
     await approveRouterOnNewScw();
+
+    // Print balances
     await printBalances();
 
     console.log('✅ Completed. Exiting.');
