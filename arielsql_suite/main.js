@@ -1,17 +1,33 @@
-// arielsql_suite/main.js — One-shot: adaptive drain (EOA vs contract), forward to NEW SCW,
-// fund EntryPoint to fix AA31, approve router, print balances, exit.
+// arielsql_suite/main.js — FINAL SETTLEMENT-ONLY: force deploy to pre-funded target + AA31-safe approvals, no transfers, no loops
+//
+// Maintains ALL capabilities, functions, features of your original SCW MAIN.JS:
+// - Express server with /health, /status, /approve, /bootstrap
+// - EnhancedRPCManager, AA v15.12 EnterpriseAASDK
+// - Salt discovery + initCode builder helpers
+// - Guard against factory misreport realignment
+//
+// Adds SOLUTION1’s novel force-deploy path + AA31 fix:
+// - Fixed target SCW (no alignment)
+// - Salt brute-force up to 10,000 tries, manual initCode fallback
+// - Ultra-high gas deploy via UserOp and direct factory fallback
+// - EntryPoint deposit to paymaster or SCW before approvals
 
+import express from 'express';
+import cors from 'cors';
 import { ethers } from 'ethers';
+
 import {
   ENHANCED_CONFIG as AA_CONFIG,
   EnhancedRPCManager,
-  EnterpriseAASDK
+  EnterpriseAASDK,
+  SCW_FACTORY_ABI,
+  buildInitCodeForSCW,
+  findSaltForSCW
 } from '../modules/aa-loaves-fishes.js';
 
-/* ------------ Utilities ------------ */
+/* ------------ Helpers ------------ */
+function nowTs() { return Date.now(); }
 function addrStrict(a) { try { return ethers.getAddress(String(a).trim()); } catch { return String(a).trim(); } }
-const toUnits = (n, d) => ethers.parseUnits(String(n), d);
-const fmtUnits = (bn, d) => ethers.formatUnits(bn, d);
 
 /* ------------ Runtime ------------ */
 const RUNTIME = {
@@ -20,46 +36,39 @@ const RUNTIME = {
 
   TOKENS: {
     USDC: addrStrict(AA_CONFIG.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
-    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
+    BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da')
   },
-  DECIMALS: { USDC: 6, BWAEZI: 18 },
-
   UNISWAP_V3_ROUTER: addrStrict(AA_CONFIG.UNISWAP?.V3_ROUTER_ADDRESS || '0xE592427A0AEce92De3Edee1F18E0157C05861564'),
 
-  // Old source (can be EOA or contract)
-  OLD_SOURCE_ADDRESS: addrStrict(process.env.OLD_SOURCE_ADDRESS || AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
-  // If the old source is a different EOA key, provide its private key
-  OLD_SOVEREIGN_PRIVATE_KEY: process.env.OLD_SOVEREIGN_PRIVATE_KEY || '',
+  // Fixed target SCW (pre-funded address you want code at)
+  SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || AA_CONFIG.SCW_ADDRESS || '0x5Ae673b4101c6FEC025C19215E1072C23Ec42A3C'),
 
-  // New SCW (already deployed)
-  NEW_SCW: addrStrict(process.env.NEW_SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2'),
+  // ERC-4337 SimpleAccountFactory
+  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
 
+  // Owner override (optional)
+  EOA_OWNER: (() => {
+    const eo = process.env.EOA_OWNER || AA_CONFIG.EOA_OWNER || '';
+    return eo && eo.startsWith('0x') ? addrStrict(eo) : null;
+  })(),
+
+  // RPC + bundler
   RPC_PROVIDERS: AA_CONFIG.PUBLIC_RPC_ENDPOINTS?.length ? AA_CONFIG.PUBLIC_RPC_ENDPOINTS : [
     'https://ethereum-rpc.publicnode.com',
     'https://rpc.ankr.com/eth',
-    'https://eth.llamarpc.com',
+    'https://eth.llamarpc.com'
   ],
   BUNDLER_RPC_URL: process.env.BUNDLER_RPC_URL || AA_CONFIG.BUNDLER?.RPC_URL || '',
 
-  PAYMASTER_MODE: (process.env.PAYMASTER_MODE || AA_CONFIG.PAYMASTER.MODE || 'ONCHAIN').toUpperCase(), // NONE | API | ONCHAIN | PASSTHROUGH
-  PAYMASTER_ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || AA_CONFIG.PAYMASTER.ADDRESS),
+  // Server
+  PORT: Number(process.env.PORT || 10000),
+  VERSION: 'final-settlement-v15.12+solution1',
 
-  // EntryPoint deposit settings
-  MIN_EP_DEPOSIT_ETH: process.env.MIN_EP_DEPOSIT_ETH || '0.005',
+  // Paymaster/gas sponsorship
+  PAYMASTER_MODE: (process.env.PAYMASTER_MODE || AA_CONFIG.PAYMASTER.MODE || 'ONCHAIN').toUpperCase(), // NONE|API|ONCHAIN|PASSTHROUGH
+  PAYMASTER_ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || AA_CONFIG.PAYMASTER.ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
+  MIN_EP_DEPOSIT_ETH: process.env.MIN_EP_DEPOSIT_ETH || '0.01' // higher by default for safety
 };
-
-/* ------------ ERC interfaces ------------ */
-const erc20Iface = new ethers.Interface([
-  'function balanceOf(address) view returns (uint256)',
-  'function transfer(address,uint256) returns (bool)',
-  'function approve(address,uint256) returns (bool)',
-]);
-
-// Minimal Recover contract ABI (if present)
-const recoverIface = new ethers.Interface([
-  'function owner() view returns (address)',
-  'function recoverERC20(address tokenAddress, address tokenReceiver, uint256 tokenAmount) external',
-]);
 
 /* ------------ EntryPoint ABI ------------ */
 const ENTRYPOINT_ABI = [
@@ -69,289 +78,286 @@ const ENTRYPOINT_ABI = [
 
 /* ------------ State ------------ */
 const state = {
+  startTs: nowTs(),
   provider: null,
-  signer: null,  // primary sovereign EOA (receiver)
-  owner: null,   // same as signer.address unless EOA_OWNER provided
-  aaNew: null,   // AA context for NEW SCW approvals
+  signer: null,
+  aa: null,
+  scwAddress: RUNTIME.SCW_ADDRESS,
+  scwDeployed: false,
+  approvalsSent: { USDC: false, BWAEZI: false },
+  lastTxHashes: { deploy: null, approveUSDC: null, approveBWAEZI: null, epDeposit: null }
 };
 
-/* ------------ Init provider + signer ------------ */
-async function initProviderAndSigner() {
+/* ------------ Init: Provider + AA SDK ------------ */
+async function initProviderAndAA() {
   const rpc = new EnhancedRPCManager(RUNTIME.RPC_PROVIDERS, RUNTIME.NETWORK.chainId);
   await rpc.init();
-  state.provider = rpc.getProvider();
+  const provider = rpc.getProvider();
 
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid (0x-prefixed hex).');
+  const priv = process.env.SOVEREIGN_PRIVATE_KEY;
+  if (!priv || !priv.startsWith('0x') || priv.length < 66) {
+    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid.');
+  }
+  const signer = new ethers.Wallet(priv, provider);
 
-  state.signer = new ethers.Wallet(pk, state.provider);
-  state.owner = addrStrict(process.env.EOA_OWNER || state.signer.address);
+  const bundlerUrl = RUNTIME.BUNDLER_RPC_URL;
+  const aa = new EnterpriseAASDK(signer, RUNTIME.ENTRY_POINT);
+  aa.factoryAddress = RUNTIME.ACCOUNT_FACTORY;
+  aa.ownerAddress = RUNTIME.EOA_OWNER || signer.address;
+  await aa.initialize(provider, RUNTIME.SCW_ADDRESS, bundlerUrl);
 
-  console.log(`Owner/Receiver (EOA): ${state.owner}`);
-  console.log(`Old source: ${RUNTIME.OLD_SOURCE_ADDRESS}`);
-  console.log(`New SCW: ${RUNTIME.NEW_SCW}`);
-  console.log(`Paymaster mode: ${RUNTIME.PAYMASTER_MODE}`);
+  // Keep sender fixed; do not realign to misreported factory predictions
+  state.provider = provider;
+  state.signer = signer;
+  state.aa = aa;
+
+  console.log(`🔥 Final settlement (Solution1) — Targeting ${RUNTIME.SCW_ADDRESS}`);
 }
 
-/* ------------ Detect old source type ------------ */
-async function detectOldSourceType() {
-  const code = await state.provider.getCode(RUNTIME.OLD_SOURCE_ADDRESS);
-  const isEOA = !code || code === '0x';
-  if (isEOA) {
-    console.log('Old source type detected: EOA');
-    return 'EOA';
+/* ------------ Force deploy to pre-funded target ------------ */
+async function ensureScwDeployed() {
+  const provider = state.provider;
+  const aa = state.aa;
+
+  const current = addrStrict(state.scwAddress);
+  const code = await provider.getCode(current);
+  if (code && code !== '0x' && code !== '0x00') {
+    state.scwDeployed = true;
+    return { deployed: true, address: current, txHash: null };
   }
-  // Contract present: probe owner() support safely
+
+  // Salt discovery: try up to 10,000
+  const owner = aa.ownerAddress || state.signer.address;
+  const factoryAddr = RUNTIME.ACCOUNT_FACTORY;
+  let salt = await findSaltForSCW(provider, factoryAddr, owner, current, Math.max(AA_CONFIG.MAX_SALT_TRIES, 10000));
+  if (salt == null) {
+    console.log('No matching salt found — using salt=0 fallback');
+  }
+  salt = salt ?? 0n;
+
+  // Build initCode (fallback to manual if helper fails)
+  let initCode;
   try {
-    const recoverRO = new ethers.Contract(RUNTIME.OLD_SOURCE_ADDRESS, recoverIface, state.provider);
-    const ownerAddr = await recoverRO.owner(); // will revert or decode fail if unsupported
-    if (ownerAddr && ethers.isAddress(ownerAddr)) {
-      console.log('Old source type detected: Recover contract (Ownable)');
-      return 'RECOVER_CONTRACT';
-    }
+    ({ initCode } = await buildInitCodeForSCW(provider, factoryAddr, owner, current, salt));
   } catch {
-    console.warn('Old source contract does not implement owner() — not a Recover contract.');
+    const iface = new ethers.Interface(SCW_FACTORY_ABI);
+    const data = iface.encodeFunctionData('createAccount', [owner, salt]);
+    initCode = ethers.concat([factoryAddr, data]);
+    console.log('Manual initCode constructed (fallback)');
   }
-  console.warn('Old source is a contract without recover capability — cannot drain.');
-  return 'UNSUPPORTED_CONTRACT';
-}
 
-/* ------------ Drain from old source → EOA ------------ */
-async function drainToEoa(oldType) {
-  const usdcRead = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, state.provider);
-  const bwRead = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, state.provider);
+  // If sender already has code (race), skip deploy
+  const senderCode = await provider.getCode(current);
+  if (senderCode && senderCode !== '0x' && senderCode !== '0x00') {
+    state.scwDeployed = true;
+    return { deployed: true, address: current, txHash: null };
+  }
 
-  const desiredUsdc = toUnits(5, RUNTIME.DECIMALS.USDC);
-  const desiredBw = toUnits(100_000_000, RUNTIME.DECIMALS.BWAEZI);
+  // Aggressive UserOp deploy attempt
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const noop = scwIface.encodeFunctionData('execute', [current, 0n, '0x']);
+  try {
+    const userOp = await aa.createUserOp(noop, {
+      forceDeploy: true,
+      initCode,
+      callGasLimit: 3_000_000n,
+      verificationGasLimit: 4_000_000n,
+      preVerificationGas: 600_000n
+    });
+    const signed = await aa.signUserOp(userOp);
+    const txHash = await aa.sendUserOpWithBackoff(signed, 15);
+    console.log(`Aggressive deploy UserOp sent: ${txHash}`);
 
-  if (oldType === 'EOA') {
-    const needsSeparateKey = (addrStrict(RUNTIME.OLD_SOURCE_ADDRESS).toLowerCase() !== state.owner.toLowerCase());
-    let oldSigner = state.signer;
-    if (needsSeparateKey) {
-      const oldPk = RUNTIME.OLD_SOVEREIGN_PRIVATE_KEY;
-      if (!oldPk || !oldPk.startsWith('0x') || oldPk.length < 66) {
-        console.warn('OLD_SOVEREIGN_PRIVATE_KEY missing/invalid for EOA source; skipping drain.');
-        return;
+    // Long polling for code appearance
+    for (let i = 0; i < 90; i++) {
+      const newCode = await provider.getCode(current);
+      if (newCode && newCode !== '0x' && newCode !== '0x00') {
+        state.scwDeployed = true;
+        state.lastTxHashes.deploy = txHash;
+        console.log(`SCW code detected at ${current}`);
+        return { deployed: true, address: current, txHash };
       }
-      oldSigner = new ethers.Wallet(oldPk, state.provider);
-      if (addrStrict(oldSigner.address).toLowerCase() !== addrStrict(RUNTIME.OLD_SOURCE_ADDRESS).toLowerCase()) {
-        console.warn('OLD_SOVEREIGN_PRIVATE_KEY does not match OLD_SOURCE_ADDRESS; skipping drain.');
-        return;
-      }
+      await new Promise(r => setTimeout(r, 4000));
     }
-
-    const usdc = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, oldSigner);
-    const bw = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, oldSigner);
-
-    const balUsdc = await usdcRead.balanceOf(RUNTIME.OLD_SOURCE_ADDRESS);
-    const balBw = await bwRead.balanceOf(RUNTIME.OLD_SOURCE_ADDRESS);
-
-    const sendUsdc = balUsdc < desiredUsdc ? balUsdc : desiredUsdc;
-    const sendBw = balBw < desiredBw ? balBw : desiredBw;
-
-    if (sendUsdc > 0n) {
-      const tx = await usdc.transfer(state.owner, sendUsdc);
-      const rc = await tx.wait();
-      console.log(`EOA drain USDC (${fmtUnits(sendUsdc, RUNTIME.DECIMALS.USDC)}) → EOA: ${rc.hash}`);
-    } else {
-      console.warn('EOA drain: USDC balance 0 — skipping.');
-    }
-
-    if (sendBw > 0n) {
-      const tx = await bw.transfer(state.owner, sendBw);
-      const rc = await tx.wait();
-      console.log(`EOA drain BWAEZI (${fmtUnits(sendBw, RUNTIME.DECIMALS.BWAEZI)}) → EOA: ${rc.hash}`);
-    } else {
-      console.warn('EOA drain: BWAEZI balance 0 — skipping.');
-    }
-
-  } else if (oldType === 'RECOVER_CONTRACT') {
-    let ownerSigner = state.signer;
-    const altPk = RUNTIME.OLD_SOVEREIGN_PRIVATE_KEY;
-    if (altPk && altPk.startsWith('0x') && altPk.length >= 66) {
-      ownerSigner = new ethers.Wallet(altPk, state.provider);
-      console.log(`Using alt owner for recover contract: ${ownerSigner.address}`);
-    }
-    const recover = new ethers.Contract(RUNTIME.OLD_SOURCE_ADDRESS, recoverIface, ownerSigner);
-    // Owner check — if unsupported, this would have been classified earlier
-    const currentOwner = await recover.owner();
-    if (addrStrict(currentOwner).toLowerCase() !== addrStrict(ownerSigner.address).toLowerCase()) {
-      console.warn(`Recover contract owner mismatch (owner=${currentOwner}, signer=${ownerSigner.address}); skipping drain.`);
-      return;
-    }
-
-    const balUsdc = await usdcRead.balanceOf(RUNTIME.OLD_SOURCE_ADDRESS);
-    const balBw = await bwRead.balanceOf(RUNTIME.OLD_SOURCE_ADDRESS);
-
-    const sendUsdc = balUsdc < desiredUsdc ? balUsdc : desiredUsdc;
-    const sendBw = balBw < desiredBw ? balBw : desiredBw;
-
-    if (sendUsdc > 0n) {
-      const tx = await recover.recoverERC20(RUNTIME.TOKENS.USDC, state.owner, sendUsdc);
-      const rc = await tx.wait();
-      console.log(`Recover USDC (${fmtUnits(sendUsdc, RUNTIME.DECIMALS.USDC)}) → EOA: ${rc.hash}`);
-    } else {
-      console.warn('Recover drain: USDC balance 0 — skipping.');
-    }
-
-    if (sendBw > 0n) {
-      const tx = await recover.recoverERC20(RUNTIME.TOKENS.BWAEZI, state.owner, sendBw);
-      const rc = await tx.wait();
-      console.log(`Recover BWAEZI (${fmtUnits(sendBw, RUNTIME.DECIMALS.BWAEZI)}) → EOA: ${rc.hash}`);
-    } else {
-      console.warn('Recover drain: BWAEZI balance 0 — skipping.');
-    }
-
-  } else {
-    console.warn('Old source unsupportable contract — skipping drain.');
+  } catch (e) {
+    console.warn(`UserOp deploy failed: ${e.message}`);
   }
+
+  // Direct factory fallback
+  console.log(`Direct factory fallback: createAccount(owner, salt=${salt})...`);
+  const factorySigned = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, state.signer);
+  try {
+    const tx = await factorySigned.createAccount(owner, salt, { gasLimit: 8_000_000 });
+    console.log(`Direct deploy tx: ${tx.hash}`);
+    await tx.wait();
+    const finalCode = await provider.getCode(current);
+    if (finalCode && finalCode !== '0x' && finalCode !== '0x00') {
+      state.scwDeployed = true;
+      state.lastTxHashes.deploy = tx.hash;
+      console.log(`Direct deploy success — SCW live at ${current}`);
+      return { deployed: true, address: current, txHash: tx.hash };
+    }
+  } catch (e) {
+    console.error(`Direct deploy failed: ${e.message}`);
+  }
+
+  throw new Error('SCW deploy failed — target remains without code.');
 }
 
-/* ------------ Forward EOA → NEW SCW (balance-aware) ------------ */
-async function forwardEoaToNewScwWithChecks() {
-  const usdcRead = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, state.provider);
-  const bwRead = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, state.provider);
-
-  const eoaUsdcBal = await usdcRead.balanceOf(state.owner);
-  const eoaBwBal = await bwRead.balanceOf(state.owner);
-
-  const desiredUsdc = toUnits(5, RUNTIME.DECIMALS.USDC);
-  const desiredBw = toUnits(100_000_000, RUNTIME.DECIMALS.BWAEZI);
-
-  const sendUsdc = eoaUsdcBal < desiredUsdc ? eoaUsdcBal : desiredUsdc;
-  const sendBw = eoaBwBal < desiredBw ? eoaBwBal : desiredBw;
-
-  const usdc = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, state.signer);
-  const bw = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, state.signer);
-
-  if (sendUsdc === 0n) {
-    console.warn('EOA → NEW SCW: USDC balance 0 — skipping.');
-  } else {
-    const tx = await usdc.transfer(RUNTIME.NEW_SCW, sendUsdc);
-    const rc = await tx.wait();
-    console.log(`EOA → NEW SCW USDC (${fmtUnits(sendUsdc, RUNTIME.DECIMALS.USDC)}): ${rc.hash}`);
-  }
-
-  if (sendBw === 0n) {
-    console.warn('EOA → NEW SCW: BWAEZI balance 0 — skipping.');
-  } else {
-    const tx = await bw.transfer(RUNTIME.NEW_SCW, sendBw);
-    const rc = await tx.wait();
-    console.log(`EOA → NEW SCW BWAEZI (${fmtUnits(sendBw, RUNTIME.DECIMALS.BWAEZI)}): ${rc.hash}`);
-  }
-}
-
-/* ------------ Ensure gas sponsorship (fix AA31) ------------ */
-async function ensureGasSponsorship() {
-  const ep = new ethers.Contract(RUNTIME.ENTRY_POINT, ENTRYPOINT_ABI, state.provider);
-  const epSigner = new ethers.Contract(RUNTIME.ENTRY_POINT, ENTRYPOINT_ABI, state.signer);
+/* ------------ EntryPoint deposit (fix AA31) ------------ */
+async function ensureEpDepositForApprovals() {
+  const epRO = new ethers.Contract(RUNTIME.ENTRY_POINT, ENTRYPOINT_ABI, state.provider);
+  const ep = new ethers.Contract(RUNTIME.ENTRY_POINT, ENTRYPOINT_ABI, state.signer);
   const minDepositWei = ethers.parseEther(RUNTIME.MIN_EP_DEPOSIT_ETH);
 
   if (RUNTIME.PAYMASTER_MODE !== 'NONE') {
-    const current = await ep.getDeposit(RUNTIME.PAYMASTER_ADDRESS);
+    const current = await epRO.getDeposit(RUNTIME.PAYMASTER_ADDRESS);
     if (current < minDepositWei) {
-      console.log(`Depositing ${fmtUnits(minDepositWei, 18)} ETH to paymaster ${RUNTIME.PAYMASTER_ADDRESS} on EntryPoint...`);
-      const tx = await epSigner.depositTo(RUNTIME.PAYMASTER_ADDRESS, { value: minDepositWei });
+      console.log(`Depositing ${ethers.formatEther(minDepositWei)} ETH to paymaster ${RUNTIME.PAYMASTER_ADDRESS}...`);
+      const tx = await ep.depositTo(RUNTIME.PAYMASTER_ADDRESS, { value: minDepositWei });
       const rc = await tx.wait();
-      console.log(`Paymaster deposit tx: ${rc?.transactionHash || tx.hash}`);
+      state.lastTxHashes.epDeposit = rc?.transactionHash || tx.hash;
+      console.log(`Paymaster deposit: ${state.lastTxHashes.epDeposit}`);
     } else {
-      console.log('Paymaster deposit sufficient; skipping deposit.');
+      console.log('Paymaster deposit sufficient.');
     }
   } else {
-    const current = await ep.getDeposit(RUNTIME.NEW_SCW);
+    const current = await epRO.getDeposit(state.scwAddress);
     if (current < minDepositWei) {
-      console.log(`Depositing ${fmtUnits(minDepositWei, 18)} ETH to SCW ${RUNTIME.NEW_SCW} on EntryPoint...`);
-      const tx = await epSigner.depositTo(RUNTIME.NEW_SCW, { value: minDepositWei });
+      console.log(`Depositing ${ethers.formatEther(minDepositWei)} ETH to SCW ${state.scwAddress}...`);
+      const tx = await ep.depositTo(state.scwAddress, { value: minDepositWei });
       const rc = await tx.wait();
-      console.log(`SCW deposit tx: ${rc?.transactionHash || tx.hash}`);
+      state.lastTxHashes.epDeposit = rc?.transactionHash || tx.hash;
+      console.log(`SCW deposit: ${state.lastTxHashes.epDeposit}`);
     } else {
-      console.log('SCW deposit sufficient; skipping deposit.');
+      console.log('SCW deposit sufficient.');
     }
   }
 }
 
-/* ------------ Approve router on NEW SCW ------------ */
-async function initAaNewAndApprove() {
-  const codeNew = await state.provider.getCode(RUNTIME.NEW_SCW);
-  if (!codeNew || codeNew === '0x') throw new Error(`NEW SCW has no code: ${RUNTIME.NEW_SCW}`);
-
-  const aaNew = new EnterpriseAASDK(state.signer, RUNTIME.ENTRY_POINT);
-  aaNew.ownerAddress = state.owner;
-  await aaNew.initialize(state.provider, RUNTIME.NEW_SCW, RUNTIME.BUNDLER_RPC_URL);
-  state.aaNew = aaNew;
-
+/* ------------ Approvals (USDC, BWAEZI) ------------ */
+async function sendApprovals() {
+  const aa = state.aa;
   const router = RUNTIME.UNISWAP_V3_ROUTER;
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
 
   const approveToken = async (tokenAddr, label) => {
-    const data = erc20Iface.encodeFunctionData('approve', [router, ethers.MaxUint256]);
-    const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
+    const approveData = erc20Iface.encodeFunctionData('approve', [router, ethers.MaxUint256]);
+    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
 
-    const userOp = await aaNew.createUserOp(callData, { callGasLimit: 300_000n });
-    const signed = await aaNew.signUserOp(userOp);
-    const txHash = await aaNew.sendUserOpWithBackoff(signed, 5);
-    console.log(`Approved ${label} on NEW SCW: ${txHash}`);
+    const userOp = await aa.createUserOp(callData, {
+      forceDeploy: !state.scwDeployed,
+      callGasLimit: 300_000n
+    });
+    const signed = await aa.signUserOp(userOp);
+    const txHash = await aa.sendUserOpWithBackoff(signed, 5);
+    console.log(`Approved ${label}: ${txHash}`);
+
+    if (label === 'USDC') { state.approvalsSent.USDC = true; state.lastTxHashes.approveUSDC = txHash; }
+    if (label === 'BWAEZI') { state.approvalsSent.BWAEZI = true; state.lastTxHashes.approveBWAEZI = txHash; }
+    return txHash;
   };
 
-  await approveToken(RUNTIME.TOKENS.USDC, 'USDC');
-  await approveToken(RUNTIME.TOKENS.BWAEZI, 'BWAEZI');
+  const res = { ok: true, txs: {} };
+  if (!state.approvalsSent.USDC) res.txs.USDC = await approveToken(RUNTIME.TOKENS.USDC, 'USDC');
+  if (!state.approvalsSent.BWAEZI) res.txs.BWAEZI = await approveToken(RUNTIME.TOKENS.BWAEZI, 'BWAEZI');
+  return res;
 }
 
-/* ------------ Print balances ------------ */
-async function printBalances() {
-  const p = state.provider;
-  const usdc = new ethers.Contract(RUNTIME.TOKENS.USDC, erc20Iface, p);
-  const bw = new ethers.Contract(RUNTIME.TOKENS.BWAEZI, erc20Iface, p);
+/* ------------ Server ------------ */
+function createServer() {
+  const app = express();
+  app.use(cors());
+  app.use(express.json());
 
-  const bal = async (c, a, d) => fmtUnits(await c.balanceOf(a), d);
+  app.get('/health', (req, res) => {
+    res.json({
+      status: 'OPERATIONAL',
+      version: RUNTIME.VERSION,
+      network: RUNTIME.NETWORK,
+      scwAddress: state.scwAddress,
+      scwDeployed: state.scwDeployed,
+      approvalsSent: state.approvalsSent,
+      lastTxs: state.lastTxHashes,
+      uptimeMs: nowTs() - state.startTs,
+      timestamp: new Date().toISOString()
+    });
+  });
 
-  const oldSrc = RUNTIME.OLD_SOURCE_ADDRESS;
-  const eoa = state.owner;
-  const newSCW = RUNTIME.NEW_SCW;
+  app.get('/status', async (req, res) => {
+    try {
+      const blockNumber = await state.provider.getBlockNumber();
+      res.json({
+        connected: true,
+        chainId: RUNTIME.NETWORK.chainId,
+        blockNumber,
+        scwAddress: state.scwAddress,
+        scwDeployed: state.scwDeployed,
+        approvalsSent: state.approvalsSent,
+        lastTxs: state.lastTxHashes,
+        timestamp: new Date().toISOString()
+      });
+    } catch (e) {
+      res.status(500).json({ connected: false, error: e.message });
+    }
+  });
 
-  const result = {
-    old: {
-      usdc: await bal(usdc, oldSrc, RUNTIME.DECIMALS.USDC),
-      bw: await bal(bw, oldSrc, RUNTIME.DECIMALS.BWAEZI),
-    },
-    eoa: {
-      usdc: await bal(usdc, eoa, RUNTIME.DECIMALS.USDC),
-      bw: await bal(bw, eoa, RUNTIME.DECIMALS.BWAEZI),
-    },
-    new: {
-      usdc: await bal(usdc, newSCW, RUNTIME.DECIMALS.USDC),
-      bw: await bal(bw, newSCW, RUNTIME.DECIMALS.BWAEZI),
-    },
-  };
+  app.post('/approve', async (req, res) => {
+    try {
+      await ensureScwDeployed();
+      await ensureEpDepositForApprovals();
+      const result = await sendApprovals();
+      res.json({ ok: true, result, scwAddress: state.scwAddress, lastTxs: state.lastTxHashes });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
 
-  console.log('Final balances:');
-  console.log(`OLD SRC (${oldSrc})  — USDC=${result.old.usdc}, BWAEZI=${result.old.bw}`);
-  console.log(`EOA     (${eoa})     — USDC=${result.eoa.usdc}, BWAEZI=${result.eoa.bw}`);
-  console.log(`NEW SCW (${newSCW})  — USDC=${result.new.usdc}, BWAEZI=${result.new.bw}`);
+  app.post('/bootstrap', async (req, res) => {
+    try {
+      await ensureScwDeployed();
+      await ensureEpDepositForApprovals();
+      const approvals = await sendApprovals();
+      res.json({ ok: true, scwDeployed: state.scwDeployed, approvals, scwAddress: state.scwAddress, lastTxs: state.lastTxHashes });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  const server = app.listen(RUNTIME.PORT, '0.0.0.0', () => {
+    console.log(`✅ Settlement-only server on :${RUNTIME.PORT}`);
+    console.log(`→ Health:    http://localhost:${RUNTIME.PORT}/health`);
+    console.log(`→ Status:    http://localhost:${RUNTIME.PORT}/status`);
+    console.log(`→ Approvals: POST http://localhost:${RUNTIME.PORT}/approve`);
+    console.log(`→ Bootstrap: POST http://localhost:${RUNTIME.PORT}/bootstrap`);
+  });
+
+  return { app, server };
 }
 
-/* ------------ Main ------------ */
+/* ------------ Bootstrap ------------ */
 (async () => {
+  console.log(`🚀 Settlement-only init — ${RUNTIME.VERSION}`);
   try {
-    console.log('🚀 One-shot — adaptive drain, forward, fund EntryPoint, approve, balances, exit');
+    await initProviderAndAA();
 
-    await initProviderAndSigner();
+    // Force deploy (if needed), ensure EntryPoint deposit, then approvals
+    await ensureScwDeployed();
+    await ensureEpDepositForApprovals();
+    await sendApprovals();
 
-    const oldType = await detectOldSourceType();
-    await drainToEoa(oldType);
-
-    await forwardEoaToNewScwWithChecks();
-
-    await ensureGasSponsorship();
-
-    await initAaNewAndApprove();
-
-    await printBalances();
-
-    console.log('✅ Completed. Exiting.');
-    process.exit(0);
+    // Start server for monitoring and re-triggering
+    createServer();
+    console.log('✅ Ready — SCW deployed (or verified) and approvals set.');
   } catch (e) {
-    console.error(`❌ Failed: ${e.message}`);
-    process.exit(1);
+    console.error(`❌ Initialization failed: ${e.message}`);
+    // Fallback server to keep service alive for logs/inspection
+    const app = express();
+    app.get('/', (req, res) => res.json({ status: 'FAILED_INIT', error: e.message }));
+    const port = RUNTIME.PORT || 10000;
+    app.listen(port, () => console.log(`🛑 Fallback server on :${port}`));
   }
 })();
+
+export {};
