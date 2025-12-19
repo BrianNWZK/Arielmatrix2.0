@@ -34,11 +34,7 @@ import {
   bootstrapSCWForPaymasterEnhanced,
   ENHANCED_CONFIG as AA_CONFIG,
   createNetworkForcedProvider,
-  pickHealthyBundler,
-  // SCW deployment helpers (final v15-8)
-  SCW_FACTORY_ABI,
-  buildInitCodeForSCW,
-  findSaltForSCW
+  pickHealthyBundler
 } from '../modules/aa-loaves-fishes.js';
 
 /* =========================================================================
@@ -60,11 +56,11 @@ const LIVE = {
   ENTRY_POINT_V06: addrStrict('0x5FF137D4bEAA7036d654a88Ea898df565D304B88'),
   ENTRY_POINT: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  SCW_ADDRESS: addrStrict(AA_CONFIG.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2'),
+  SCW_ADDRESS: addrStrict(AA_CONFIG.SCW_ADDRESS),
   PAYMASTER_ADDRESS: addrStrict(AA_CONFIG.PAYMASTER?.ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
 
   EOA_OWNER_ADDRESS: addrStrict(AA_CONFIG.EOA_OWNER || '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
-  ACCOUNT_FACTORY: addrStrict(AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
+  ACCOUNT_FACTORY: addrStrict(AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
 
   TOKENS: {
     BWAEZI: addrStrict(AA_CONFIG.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
@@ -1152,7 +1148,7 @@ class ReflexiveAmplifier {
 }
 
 /* =========================================================================
-   Mev Executor (AA live) — add forceDeploy passthrough
+   Mev Executor (AA live)
    ========================================================================= */
 
 class MevExecutorAA {
@@ -1163,9 +1159,7 @@ class MevExecutorAA {
       verificationGasLimit: opts.verificationGasLimit || 650_000n,
       preVerificationGas: opts.preVerificationGas || 100_000n,
       maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      // allow first-call deployment when SCW code is empty
-      forceDeploy: opts.forceDeploy === true
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas
     });
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
@@ -1490,265 +1484,6 @@ class AdaptiveRangeMaker {
 }
 
 /* =========================================================================
-   Smart account deployment helper (initCode via factory)
-   ========================================================================= */
-
-async function ensureScwDeployed(provider, aaSdk) {
-  const initialScw = AA_CONFIG.SCW_ADDRESS;
-  const code = await provider.getCode(initialScw);
-  // === FIX: Do not attempt initCode if SCW already deployed
-  if (code && code !== '0x') return { deployed: true, address: initialScw };
-
-  const factoryAddr = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
-  if (!factoryAddr) throw new Error('ACCOUNT_FACTORY not configured for SCW deployment');
-
-  const owner = aaSdk.ownerAddress || aaSdk.signer.address;
-
-  // Try matching salt for the configured SCW
-  let salt = await findSaltForSCW(provider, factoryAddr, owner, initialScw);
-  let sender = initialScw;
-
-  if (salt == null) {
-    // If not derivable, align sender to predicted (salt=0), but DO NOT set factory as sender
-    const factory = new ethers.Contract(factoryAddr, SCW_FACTORY_ABI, provider);
-    const predicted = await factory.getAddress(owner, 0n);
-    const predictedChecksum = ethers.getAddress(predicted);
-
-    // Guard: predicted MUST NOT equal factory address (prevents factory leakage as sender)
-    if (predictedChecksum.toLowerCase() === ethers.getAddress(factoryAddr).toLowerCase()) {
-      throw new Error(`Factory returned self as predicted SCW. Abort alignment. factory=${factoryAddr}`);
-    }
-
-    sender = predictedChecksum;
-    aaSdk.scwAddress = sender; // align AA SDK sender to predicted SCW
-    salt = 0n;
-    console.warn(`SCW ${initialScw} not derivable; aligning to predicted SCW ${sender} (salt=0)`);
-  }
-
-  // Guard: if already deployed at aligned address, skip
-  const senderCode = await provider.getCode(sender);
-  if (senderCode && senderCode !== '0x') return { deployed: true, address: sender };
-
-  // Build initCode once
-  const initCode = await buildInitCodeForSCW(provider, factoryAddr, owner, sender, salt);
-
-  // NOOP via SCW.execute to self
-  const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-  const noop = iface.encodeFunctionData('execute', [sender, 0n, '0x']);
-
-  // Create userOp: sender=SCW, include initCode, forceDeploy=true (first call only)
-  const userOp = await aaSdk.createUserOp(noop, {
-    forceDeploy: true,
-    callGasLimit: 400_000n,
-    verificationGasLimit: 700_000n,
-    preVerificationGas: 80_000n
-  });
-  const signed = await aaSdk.signUserOp(userOp);
-  const txHash = await aaSdk.sendUserOpWithBackoff(signed, 5);
-  return { deployed: true, txHash, address: sender };
-}
-
-/* =========================================================================
-   Production sovereign core v15 (full live wiring)
-   ========================================================================= */
-
-class ProductionSovereignCore extends EventEmitter {
-  constructor(){
-    super();
-    this.provider=null; this.signer=null; this.aa=null;
-
-    this.dex=null; this.oracle=null; this.mev=null; this.verifier=null;
-    this.strategy=null; this.entropy=null;
-
-    this.kernel=null; this.governor=null; this.registry=null; this.policyHash=null;
-
-    this.recapture=null; this.accumulator=new PerceptionAccumulator();
-    this.stakeGov=null; this.amplifier=null; this.maker=null;
-
-    this.compliance = new ComplianceManager(LIVE.RISK.COMPLIANCE.MODE);
-    this.health = new HealthGuard();
-
-    this.wss=null; this.clients=new Set();
-    this.stats = {
-      startTs: nowTs(), tradesExecuted:0, lastProfitUSD:0, anchors:0, projectedDaily:0,
-      pegActions:0, amplificationsTriggered:0, streamsActive:0, perceptionsAnchored:0
-    };
-    this.status='INIT'; this.loops=[];
-  }
-
-  async initialize(bundlerUrlOverride=null){
-    console.log(`🚀 SOVEREIGN FINALITY ENGINE ${LIVE.VERSION} — BOOTING`);
-    await chainRegistry.init();
-    this.provider = chainRegistry.getProvider();
-    this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
-
-    const bundler = bundlerUrlOverride
-      || process.env.BUNDLER_URL
-      || AA_CONFIG.BUNDLER.RPC_URL
-      || (LIVE.BUNDLER_URLS[0] || null);
-
-    this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
-    // Provide factory to AA SDK for initCode deployment
-    this.aa.factoryAddress = LIVE.ACCOUNT_FACTORY || AA_CONFIG.ACCOUNT_FACTORY || process.env.ACCOUNT_FACTORY;
-    await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
-
-    // === FIX: Correct SCW alignment (coalescing) — enforce REAL predicted SCW (salt=0) before deployment
-    try {
-      const provider = chainRegistry.getProvider();
-      const factory = new ethers.Contract(LIVE.ACCOUNT_FACTORY, SCW_FACTORY_ABI, provider);
-
-      // Compute real predicted SCW (salt=0)
-      const predictedSCWRaw = await factory.getAddress(LIVE.EOA_OWNER_ADDRESS, 0n);
-      const predictedSCW = ethers.getAddress(predictedSCWRaw);
-
-      // Guard: predicted MUST NOT equal factory address (prevents self-leakage)
-      if (predictedSCW.toLowerCase() === LIVE.ACCOUNT_FACTORY.toLowerCase()) {
-        throw new Error(`Invalid predicted SCW equals factory. Check factory ABI/params. factory=${LIVE.ACCOUNT_FACTORY}`);
-      }
-
-      console.log(`🧠 REAL PREDICTED SCW ADDRESS (salt=0): ${predictedSCW}`);
-
-      if (ethers.getAddress(LIVE.SCW_ADDRESS) !== predictedSCW) {
-        console.warn(`SCW mismatch detected! Configured: ${ethers.getAddress(LIVE.SCW_ADDRESS)} → Aligning to REAL predicted: ${predictedSCW}`);
-        // Force config and AA SDK to use the real predicted SCW
-        LIVE.SCW_ADDRESS = predictedSCW;
-        AA_CONFIG.SCW_ADDRESS = predictedSCW;
-        this.aa.scwAddress = predictedSCW;
-      }
-    } catch (e) {
-      console.warn(`SCW coalescing skipped: ${e.message}`);
-    }
-
-    // Deploy smart account if needed (prevents AA14/AA20 at first call)
-    try {
-      const deployed = await ensureScwDeployed(this.provider, this.aa);
-      if (deployed?.txHash) console.log(`✅ SCW deployed via initCode: ${deployed.txHash}`);
-    } catch (e) {
-      console.warn('SCW deployment skip/failure:', e.message);
-    }
-
-    try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
-
-    this.dex = new DexAdapterRegistry(this.provider);
-    this.oracle = new OracleAggregator(this.provider, this.dex);
-    this.mev = new MevExecutorAA(this.aa, LIVE.SCW_ADDRESS);
-    this.verifier = new ProfitVerifier(this.provider);
-    this.entropy = new EntropyShockDetector();
-    this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dex, this.entropy, null, this.oracle);
-
-    const quorum = new QuorumRPC(chainRegistry, LIVE.RISK.INFRA.QUORUM_SIZE || 3, 2);
-    const evProxy = new EVGatingStrategyProxy(this.strategy, this.dex, this.verifier, this.provider, this.health, this.compliance);
-    this.kernel = new ConsciousnessKernel({ oracle: this.oracle, dexRegistry: this.dex, quorum, evProxy, manifest: V15_MANIFEST });
-    this.policyHash = this.kernel.sealPolicy(V15_MANIFEST);
-
-    this.registry = new PerceptionRegistry(this.provider, this.signer);
-    this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, LIVE.PEG.TARGET_USD, this.health, this.registry);
-
-    this.recapture = new MEVRecaptureEngine(this.mev, this.dex, this.provider, this.compliance);
-    this.amplifier = new ReflexiveAmplifier(this.kernel, this.provider, this.oracle, this.dex, this.verifier, this.mev, this.accumulator);
-    this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dex, this.entropy);
-
-    await this.strategy.watchPeg();
-
-    await runGenesisMicroseed(this);
-
-    this.loops.push(setInterval(async () => {
-      try {
-        const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
-        if (adj?.adjusted) {
-          this.stats.streamsActive = (this.maker?.listStreams?.().length || 0);
-          console.log(`Range adjusted tick=${adj.tick} width=[${adj.tickLower},${adj.tickUpper}] coherence=${adj.coherence?.toFixed?.(2) || 'n/a'} stream=${adj.streamId}`);
-        }
-      } catch (e) { console.warn('maker adjust error:', e.message); }
-    }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
-
-    this.loops.push(setInterval(async () => {
-      try {
-        const r = await this.governor.run(this);
-        if (r?.executed) {
-          this.stats.tradesExecuted += 1;
-          this.stats.pegActions += 1;
-
-          const last = this.verifier.getRecent(1)[0];
-          this.stats.lastProfitUSD = last?.evExPost || last?.evExAnte?.evUSD || 0;
-          this.stats.anchors += 1;
-          const hours = Math.max(0.01, (nowTs()-this.stats.startTs)/3600000);
-          this.stats.projectedDaily = (this.stats.lastProfitUSD/hours)*24;
-
-          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(r.packet)));
-          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
-          await tx.wait();
-          this.accumulator.addEvent({ hash, evUSD: r.packet.ev?.evUSD || 0, ts: nowTs(), source: 'l1', confidence: 0.9 });
-          this.stats.perceptionsAnchored += 1;
-
-          this.broadcast({ type:'decision', packet: r.packet, proof: r.proof, eq: this.amplifier.getEquationState() });
-        } else if (r?.skipped) {
-          this.broadcast({ type:'noop', reason: r.reason, signals: r.signals });
-        }
-      } catch(e){ console.warn('decision loop error:', e.message); }
-    }, 15_000));
-
-    this.loops.push(setInterval(async () => {
-      try {
-        const result = await this.amplifier.checkAndTrigger(this.recapture);
-        if (result.triggered) {
-          this.stats.amplificationsTriggered += 1;
-
-          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(result.packet)));
-          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
-          const rec = await tx.wait();
-
-          this.accumulator.addEvent({ hash, evUSD: result.packet.usdNotional, ts: nowTs(), source: 'l1', confidence: 0.9 });
-          this.stats.perceptionsAnchored += 1;
-
-          this.broadcast({ type:'amplification', packet: result.packet, txHash: rec.transactionHash, eq: this.amplifier.getEquationState() });
-        }
-      } catch (e) { console.warn('Amplifier loop error:', e.message); }
-    }, 20_000));
-
-    this.startWS();
-    this.status='SOVEREIGN_LIVE_V15';
-    console.log('✅ SOVEREIGN FINALITY ENGINE v15 — ONLINE');
-    console.log(`   Policy Hash: ${this.policyHash}`);
-  }
-
-  startWS(port=8082){
-    try {
-      this.wss = new WebSocketServer({ port });
-      this.wss.on('connection', ws => {
-        this.clients.add(ws);
-        if (ws.readyState === 1) {
-          ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, policyHash: this.policyHash, status: this.status, ts: nowTs() }));
-        }
-        ws.on('close', () => this.clients.delete(ws));
-      });
-      console.log(`🔌 WebSocket server on :${port}`);
-    } catch (e) {
-      console.warn('WS server failed to start:', e.message);
-    }
-  }
-
-  broadcast(message){
-    const s=JSON.stringify({ ...message, ts: nowTs() });
-    for (const c of this.clients) { if (c.readyState === 1) c.send(s); }
-  }
-
-  getStats(){
-    const eq = this.amplifier.getEquationState();
-    return {
-      system: { version: LIVE.VERSION, status: this.status, policyHash: this.policyHash, uptimeMs: nowTs()-this.stats.startTs },
-      trading: { tradesExecuted: this.stats.tradesExecuted, lastProfitUSD: this.stats.lastProfitUSD, projectedDaily: this.stats.projectedDaily },
-      anchors: { count: this.stats.anchors, registryRecent: this.registry.getRecent(5) },
-      accumulator: this.verifier.getAccumulator(),
-      reflexive:{ amplificationsTriggered:this.stats.amplificationsTriggered, perceptionIndex: eq.R_t, liquidityNorm: eq.L_t, utilityScore: eq.U_t },
-      maker:{ streamsActive:this.stats.streamsActive },
-      peg:{ actions:this.stats.pegActions, targetUSD:LIVE.PEG.TARGET_USD },
-      risk: { complianceMode: LIVE.RISK.COMPLIANCE.MODE, breakers: LIVE.RISK.CIRCUIT_BREAKERS }
-    };
-  }
-}
-
-/* =========================================================================
    API server v15
    ========================================================================= */
 
@@ -1893,6 +1628,169 @@ async function runGenesisMicroseed(core) {
   }
 }
 
+
+/* =========================================================================
+   Production sovereign core v15 (full live wiring)
+   ========================================================================= */
+
+class ProductionSovereignCore extends EventEmitter {
+  constructor(){
+    super();
+    this.provider=null; this.signer=null; this.aa=null;
+
+    this.dex=null; this.oracle=null; this.mev=null; this.verifier=null;
+    this.strategy=null; this.entropy=null;
+
+    this.kernel=null; this.governor=null; this.registry=null; this.policyHash=null;
+
+    this.recapture=null; this.accumulator=new PerceptionAccumulator();
+    this.stakeGov=null; this.amplifier=null; this.maker=null;
+
+    this.compliance = new ComplianceManager(LIVE.RISK.COMPLIANCE.MODE);
+    this.health = new HealthGuard();
+
+    this.wss=null; this.clients=new Set();
+    this.stats = {
+      startTs: nowTs(), tradesExecuted:0, lastProfitUSD:0, anchors:0, projectedDaily:0,
+      pegActions:0, amplificationsTriggered:0, streamsActive:0, perceptionsAnchored:0
+    };
+    this.status='INIT'; this.loops=[];
+  }
+
+  async initialize(bundlerUrlOverride=null){
+    console.log(`🚀 SOVEREIGN FINALITY ENGINE ${LIVE.VERSION} — BOOTING`);
+    await chainRegistry.init();
+    this.provider = chainRegistry.getProvider();
+    this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
+
+    const bundler = bundlerUrlOverride
+      || process.env.BUNDLER_URL
+      || AA_CONFIG.BUNDLER.RPC_URL
+      || (LIVE.BUNDLER_URLS[0] || null);
+
+    this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
+    await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
+
+    try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
+
+    this.dex = new DexAdapterRegistry(this.provider);
+    this.oracle = new OracleAggregator(this.provider, this.dex);
+    this.mev = new MevExecutorAA(this.aa, LIVE.SCW_ADDRESS);
+    this.verifier = new ProfitVerifier(this.provider);
+    this.entropy = new EntropyShockDetector();
+    this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dex, this.entropy, null, this.oracle);
+
+    const quorum = new QuorumRPC(chainRegistry, LIVE.RISK.INFRA.QUORUM_SIZE || 3, 2);
+    const evProxy = new EVGatingStrategyProxy(this.strategy, this.dex, this.verifier, this.provider, this.health, this.compliance);
+    this.kernel = new ConsciousnessKernel({ oracle: this.oracle, dexRegistry: this.dex, quorum, evProxy, manifest: V15_MANIFEST });
+    this.policyHash = this.kernel.sealPolicy(V15_MANIFEST);
+
+    this.registry = new PerceptionRegistry(this.provider, this.signer);
+    this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, LIVE.PEG.TARGET_USD, this.health, this.registry);
+
+    this.recapture = new MEVRecaptureEngine(this.mev, this.dex, this.provider, this.compliance);
+    this.amplifier = new ReflexiveAmplifier(this.kernel, this.provider, this.oracle, this.dex, this.verifier, this.mev, this.accumulator);
+    this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dex, this.entropy);
+
+    await this.strategy.watchPeg();
+
+    await runGenesisMicroseed(this);
+
+    this.loops.push(setInterval(async () => {
+      try {
+        const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
+        if (adj?.adjusted) {
+          this.stats.streamsActive = (this.maker?.listStreams?.().length || 0);
+          console.log(`Range adjusted tick=${adj.tick} width=[${adj.tickLower},${adj.tickUpper}] coherence=${adj.coherence?.toFixed?.(2) || 'n/a'} stream=${adj.streamId}`);
+        }
+      } catch (e) { console.warn('maker adjust error:', e.message); }
+    }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
+
+    this.loops.push(setInterval(async () => {
+      try {
+        const r = await this.governor.run(this);
+        if (r?.executed) {
+          this.stats.tradesExecuted += 1;
+          this.stats.pegActions += 1;
+
+          const last = this.verifier.getRecent(1)[0];
+          this.stats.lastProfitUSD = last?.evExPost || last?.evExAnte?.evUSD || 0;
+          this.stats.anchors += 1;
+          const hours = Math.max(0.01, (nowTs()-this.stats.startTs)/3600000);
+          this.stats.projectedDaily = (this.stats.lastProfitUSD/hours)*24;
+
+          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(r.packet)));
+          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
+          await tx.wait();
+          this.accumulator.addEvent({ hash, evUSD: r.packet.ev?.evUSD || 0, ts: nowTs(), source: 'l1', confidence: 0.9 });
+          this.stats.perceptionsAnchored += 1;
+
+          this.broadcast({ type:'decision', packet: r.packet, proof: r.proof, eq: this.amplifier.getEquationState() });
+        } else if (r?.skipped) {
+          this.broadcast({ type:'noop', reason: r.reason, signals: r.signals });
+        }
+      } catch(e){ console.warn('decision loop error:', e.message); }
+    }, 15_000));
+
+    this.loops.push(setInterval(async () => {
+      try {
+        const result = await this.amplifier.checkAndTrigger(this.recapture);
+        if (result.triggered) {
+          this.stats.amplificationsTriggered += 1;
+
+          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(result.packet)));
+          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
+          const rec = await tx.wait();
+
+          this.accumulator.addEvent({ hash, evUSD: result.packet.usdNotional, ts: nowTs(), source: 'l1', confidence: 0.9 });
+          this.stats.perceptionsAnchored += 1;
+
+          this.broadcast({ type:'amplification', packet: result.packet, txHash: rec.transactionHash, eq: this.amplifier.getEquationState() });
+        }
+      } catch (e) { console.warn('Amplifier loop error:', e.message); }
+    }, 20_000));
+
+    this.startWS();
+    this.status='SOVEREIGN_LIVE_V15';
+    console.log('✅ SOVEREIGN FINALITY ENGINE v15 — ONLINE');
+    console.log(`   Policy Hash: ${this.policyHash}`);
+  }
+
+  startWS(port=8082){
+    try {
+      this.wss = new WebSocketServer({ port });
+      this.wss.on('connection', ws => {
+        this.clients.add(ws);
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, policyHash: this.policyHash, status: this.status, ts: nowTs() }));
+        }
+        ws.on('close', () => this.clients.delete(ws));
+      });
+      console.log(`🔌 WebSocket server on :${port}`);
+    } catch (e) {
+      console.warn('WS server failed to start:', e.message);
+    }
+  }
+
+  broadcast(message){
+    const s=JSON.stringify({ ...message, ts: nowTs() });
+    for (const c of this.clients) { if (c.readyState === 1) c.send(s); }
+  }
+
+  getStats(){
+    const eq = this.amplifier.getEquationState();
+    return {
+      system: { version: LIVE.VERSION, status: this.status, policyHash: this.policyHash, uptimeMs: nowTs()-this.stats.startTs },
+      trading: { tradesExecuted: this.stats.tradesExecuted, lastProfitUSD: this.stats.lastProfitUSD, projectedDaily: this.stats.projectedDaily },
+      anchors: { count: this.stats.anchors, registryRecent: this.registry.getRecent(5) },
+      accumulator: this.verifier.getAccumulator(),
+      reflexive:{ amplificationsTriggered:this.stats.amplificationsTriggered, perceptionIndex: eq.R_t, liquidityNorm: eq.L_t, utilityScore: eq.U_t },
+      maker:{ streamsActive:this.stats.streamsActive },
+      peg:{ actions:this.stats.pegActions, targetUSD:LIVE.PEG.TARGET_USD },
+      risk: { complianceMode: LIVE.RISK.COMPLIANCE.MODE, breakers: LIVE.RISK.CIRCUIT_BREAKERS }
+    };
+  }
+}
 
 /* =========================================================================
    Bootstrap
