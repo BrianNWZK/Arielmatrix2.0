@@ -65,8 +65,8 @@ async function initProviders() {
 // Idempotent deposit: check SCW deposit; if below min, send exactly one deposit tx from EOA
 async function ensureScwDepositOnce(provider, signer) {
   const ep = new ethers.Contract(ENTRY_POINT, ENTRYPOINT_ABI, provider);
-  const minEthStr = (process.env.DEPOSIT_MIN_ETH || '0.001');
-  const sendEthStr = (process.env.DEPOSIT_ETH || '0.001');
+  const minEthStr = (process.env.DEPOSIT_MIN_ETH || '0.0002');
+  const sendEthStr = (process.env.DEPOSIT_ETH || '0.0002');
 
   let current = 0n;
   try { current = await ep.getDeposit(SCW); } catch {}
