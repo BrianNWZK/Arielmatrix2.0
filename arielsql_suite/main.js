@@ -32,11 +32,11 @@ const RPC_URLS = (process.env.RPC_URL ? [process.env.RPC_URL] : [
 
 // Spend addresses (routers/aggregators) — normalized checksums
 const ROUTERS = {
-  UNISWAP_V3:    ethers.getAddress('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
-  UNISWAP_V2:    ethers.getAddress('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
-  SUSHI_V2:      ethers.getAddress('0xd9e1CE17f2641f24Ae83637ab66a2cca9C378B9F'),
-  ONE_INCH_V5:   ethers.getAddress('0x1111111254EEB25477B68fb85Ed929f73A960582'),
-  PARASWAP_LITE: ethers.getAddress('0xDEF1C0DE00000000000000000000000000000000')
+  UNISWAP_V3: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+  UNISWAP_V2: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+  SUSHI_V2:   '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F', 
+  ONE_INCH_V5:'0x1111111254EEB25477B68fb85Ed929f73A960582',
+  PARASWAP_LITE:'0xDEF1C0DE00000000000000000000000000000000'
 };
 
 // Paymaster address (allowance only — not used for sponsorship here) — normalized
