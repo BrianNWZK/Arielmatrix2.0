@@ -1,4 +1,4 @@
-// main.js — Final 6 approvals only (optimized for Render timeout)
+// main.js — Final 3 approvals only (optimized for Render timeout)
 import express from 'express';
 import { ethers } from 'ethers';
 import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
@@ -13,13 +13,10 @@ const RPC_URLS = [
   'https://eth.llamarpc.com'
 ];
 
-// Only the 6 pending approvals
+// Only the 3 pending approvals
 const PENDING = {
-  BWAEZI_SUSHI:   { token: 'BWAEZI', spender: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F' },
-  USDC_1INCH:     { token: 'USDC',   spender: '0x1111111254EEB25477B68fb85Ed929f73A960582' },
-  BWAEZI_1INCH:   { token: 'BWAEZI', spender: '0x1111111254EEB25477B68fb85Ed929f73A960582' },
-  USDC_PARASWAP:  { token: 'USDC',   spender: '0xDEF1C0DE00000000000000000000000000000000' },
-  BWAEZI_PARASWAP:{ token: 'BWAEZI', spender: '0xDEF1C0DE00000000000000000000000000000000' },
+  USDC_PARASWAP:   { token: 'USDC',   spender: '0xDEF1C0DE00000000000000000000000000000000' },
+  BWAEZI_PARASWAP: { token: 'BWAEZI', spender: '0xDEF1C0DE00000000000000000000000000000000' },
   BWAEZI_PAYMASTER:{ token: 'BWAEZI', spender: '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47' }
 };
 
@@ -64,7 +61,7 @@ async function approvePending(aa) {
 
 (async () => {
   try {
-    console.log(`[FINAL] Running 6 pending approvals on SCW ${SCW}`);
+    console.log(`[FINAL] Running 3 pending approvals on SCW ${SCW}`);
     const { aa } = await init();
     await approvePending(aa);
     console.log('✅ All approvals complete — BWAEZI gasless live!');
