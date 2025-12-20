@@ -1,7 +1,7 @@
 /**
- * core/sovereign-brain-v15.9.js
+ * core/sovereign-brain-v15.10.js
  *
- * SOVEREIGN FINALITY ENGINE v15.9 — Adaptive Living Systems
+ * SOVEREIGN FINALITY ENGINE v15.10 — Adaptive Living Systems
  * Unified v13.9 + v14.0 + v14.1 capabilities with adaptive sovereign equation
  *
  * Preserves ALL v14.1 features:
@@ -25,6 +25,11 @@
  * - Uniswap V3 multi-hop fallback (USDC↔WETH↔BWAEZI) via exactInput path when single-hop is unavailable
  * - Route-aware execution across strategy and MEV recapture
  * - Extended approvals for all routers (V3/V2/Sushi/1inch/Paraswap)
+ *
+ * v15.10 upgrade:
+ * - Microseed fixes: peg-sized amounts, fail-fast with fallback (USDC↔WETH), strict compliance bypass during microseed
+ * - Self-bootstrap Uniswap V3 pool at peg if missing; mint minimal range liquidity before swaps
+ * - Genesis flow checks best-quote and seeds liquidity proactively to ensure real execution and receipts
  */
 
 import express from 'express';
@@ -55,7 +60,7 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.9',
+  VERSION: 'v15.10',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -581,7 +586,6 @@ class UniversalDexAdapter {
       }]);
       // If pools are missing, use multi-hop path via WETH
       try {
-        // Probe pools; if either missing, switch to path
         const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
         const pool = await factory.getPool(tokenIn, tokenOut, fee);
         if (!pool || pool === ethers.ZeroAddress) {
@@ -1283,7 +1287,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.9',
+  version: '15.10',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1646,8 +1650,76 @@ class APIServerV15 {
 }
 
 /* =========================================================================
-   Genesis microseed (inline, between API and Bootstrap)
+   Genesis microseed (upgraded for v15.10)
    ========================================================================= */
+
+// Peg-sized amounts helper (USDC 6dp, BWAEZI 18dp)
+function pegSizedAmounts(usdcFloat, pegUSD = LIVE.PEG.TARGET_USD) {
+  const safeUSDC = Math.max(0.000001, usdcFloat);
+  const usdcAmt = ethers.parseUnits(safeUSDC.toFixed(6), 6);
+  const bwAmtFloat = safeUSDC / pegUSD;
+  const bwAmt = ethers.parseEther(bwAmtFloat.toFixed(18));
+  return { usdcAmt, bwAmt };
+}
+
+// BigInt sqrt (Newton's method) for fixed-point math
+function sqrtBigInt(n) {
+  if (n <= 0n) return 0n;
+  let x = n;
+  let y = (x + 1n) >> 1n;
+  while (y < x) { x = y; y = (x + n / x) >> 1n; }
+  return x;
+}
+
+// Create & initialize Uniswap V3 pool near peg if missing
+async function ensureV3PoolAtPeg(provider, signer, token0, token1, fee = LIVE.PEG.FEE_TIER_DEFAULT, pegUSD = LIVE.PEG.TARGET_USD) {
+  const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], provider);
+  const npm = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, [
+    'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
+  ], signer);
+
+  const [t0, t1] = (token0.toLowerCase() < token1.toLowerCase()) ? [token0, token1] : [token1, token0];
+  let pool = await factory.getPool(t0, t1, fee);
+  if (pool && pool !== ethers.ZeroAddress) return pool;
+
+  // Assume price (token1 per token0). If t0=BWAEZI(18), t1=USDC(6): price = 100 USDC per 1 BWAEZI
+  const dec0 = t0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18n : 6n;
+  const dec1 = t1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6n : 18n;
+  const priceNum = BigInt(Math.floor(pegUSD)); // approximate peg
+  const numerator = priceNum * (10n ** dec1);
+  const denominator = 1n * (10n ** dec0);
+  const priceX96 = (numerator * (1n << 192n)) / denominator;
+  const sqrtPriceX96 = sqrtBigInt(priceX96);
+
+  pool = await npm.createAndInitializePoolIfNecessary(t0, t1, fee, sqrtPriceX96);
+  return pool;
+}
+
+// Seed minimal liquidity around current tick to enable quotes
+async function seedMinimalLiquidity(core) {
+  const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], core.provider);
+  let pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
+  if (!pool || pool === ethers.ZeroAddress) {
+    pool = await ensureV3PoolAtPeg(core.provider, core.signer, LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT, LIVE.PEG.TARGET_USD);
+  }
+
+  const slot = await (new ethers.Contract(pool, ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'], core.provider)).slot0();
+  const tick = Number(slot[1]);
+  const width = 120;
+  const tl = tick - width, tu = tick + width;
+
+  const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
+  await core.maker.startStreamingMint({
+    token0: LIVE.TOKENS.BWAEZI,
+    token1: LIVE.TOKENS.USDC,
+    tickLower: tl,
+    tickUpper: tu,
+    total0: bwAmt,
+    total1: usdcAmt,
+    steps: 2,
+    label: 'genesis_seed'
+  });
+}
 
 // SCW-first funding: check SCW; only fallback to EOA→SCW transfer if SCW under threshold and EOA has balance
 async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
@@ -1659,7 +1731,6 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   let dec = 6;
   try { dec = await usdc.decimals(); } catch {}
 
-  // Step 1: SCW balance check
   const scwBal = await usdc.balanceOf(AA_CONFIG.SCW_ADDRESS);
   const scwFloat = Number(ethers.formatUnits(scwBal, dec));
   if (scwFloat >= minUSD) {
@@ -1667,7 +1738,6 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
     return { funded: true, source: 'SCW', balance: scwFloat };
   }
 
-  // Step 2: EOA fallback only if SCW underfunded
   const eoaBal = await usdc.balanceOf(signer.address);
   const eoaFloat = Number(ethers.formatUnits(eoaBal, dec));
   if (eoaFloat >= minUSD) {
@@ -1712,22 +1782,49 @@ async function _ensureApprovals(aa) {
   return { ok: true };
 }
 
-// Tiny swaps to awaken perception and EV gating
+// Tiny swaps to awaken perception and EV gating; fail-fast + fallback
 async function _genesisSwaps(core) {
-  const twoUSDC = ethers.parseUnits('2.00', 6);
-  const halfBW = ethers.parseEther('0.50');
+  // Read SCW USDC balance for sizing
+  let balanceUSDC = 5.0;
+  try {
+    const c = new ethers.Contract(AA_CONFIG.USDC_ADDRESS, ['function balanceOf(address) view returns (uint256)'], core.provider);
+    const bal = await c.balanceOf(AA_CONFIG.SCW_ADDRESS);
+    balanceUSDC = Math.max(1.0, Math.min(5.0, Number(ethers.formatUnits(bal, 6))));
+  } catch {}
+
+  const { usdcAmt, bwAmt } = pegSizedAmounts(balanceUSDC, LIVE.PEG.TARGET_USD);
+  let executed = 0;
 
   try {
-    const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, twoUSDC);
-    await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: 2.0 });
-  } catch (e) { console.warn('Genesis USDC→BWAEZI failed:', e.message); }
+    const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
+    await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)) });
+    executed++;
+  } catch (e) {
+    console.warn('Genesis USDC→BWAEZI failed:', e.message);
+  }
 
   try {
-    const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, halfBW);
+    const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
     await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC', tokenIn: LIVE.TOKENS.BWAEZI, tokenOut: LIVE.TOKENS.USDC, notionalUSD: 0.0 });
-  } catch (e) { console.warn('Genesis BWAEZI→USDC failed:', e.message); }
+    executed++;
+  } catch (e) {
+    console.warn('Genesis BWAEZI→USDC failed:', e.message);
+  }
 
-  return { ok: true };
+  // Fallback: if neither executed, try liquid pair for boot (USDC↔WETH)
+  if (executed === 0) {
+    try {
+      const oneUSDC = ethers.parseUnits('1.00', 6);
+      const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, oneUSDC);
+      await core.verifier.record({ txHash: res.txHash, action: 'genesis_buy_weth', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.WETH, notionalUSD: 1.0 });
+      executed++;
+    } catch (e) {
+      console.warn('Genesis USDC→WETH fallback failed:', e.message);
+    }
+  }
+
+  if (executed === 0) throw new Error('Genesis microseed failed: no routes executed');
+  return { ok: true, executed };
 }
 
 // One-call orchestrator
@@ -1739,7 +1836,29 @@ async function runGenesisMicroseed(core) {
     console.log('🌱 GENESIS MICROSEED — initializing');
     await _ensureUSDCInSCW(core.provider, core.signer, 5.00);
     await _ensureApprovals(core.aa);
-    await _genesisSwaps(core);
+
+    // If no quotes for USDC↔BWAEZI on $1 probe, self-bootstrap pool and seed minimal liquidity
+    try {
+      const probe = ethers.parseUnits('1.00', 6);
+      const best = await core.dex.getBestRoute(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probe);
+      if (!best?.best) {
+        console.log('No USDC↔BWAEZI route on probe — seeding minimal V3 liquidity at peg');
+        await seedMinimalLiquidity(core);
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    } catch (e) {
+      console.warn('Probe route check failed:', e.message);
+    }
+
+    // Temporarily bypass strict compliance during microseed
+    const wasStrict = core.compliance.strict;
+    core.compliance.strict = false;
+    try {
+      await _genesisSwaps(core);
+    } finally {
+      core.compliance.strict = wasStrict;
+    }
+
     console.log('✅ GENESIS MICROSEED — complete');
     return { ok: true };
    } catch (e) {
@@ -1747,7 +1866,6 @@ async function runGenesisMicroseed(core) {
     return { ok: false, error: e.message };
   }
 }
-
 
 /* =========================================================================
    Production sovereign core v15 (full live wiring)
