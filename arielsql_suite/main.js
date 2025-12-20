@@ -1,4 +1,4 @@
-// main.js — Final 3 approvals only (optimized for Render timeout)
+// main.js — Final 2 approvals only (Paraswap BWAEZI + Paymaster BWAEZI)
 import express from 'express';
 import { ethers } from 'ethers';
 import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
@@ -13,9 +13,8 @@ const RPC_URLS = [
   'https://eth.llamarpc.com'
 ];
 
-// Only the 3 pending approvals
+// Only the 2 pending approvals
 const PENDING = {
-  USDC_PARASWAP:   { token: 'USDC',   spender: '0xDEF1C0DE00000000000000000000000000000000' },
   BWAEZI_PARASWAP: { token: 'BWAEZI', spender: '0xDEF1C0DE00000000000000000000000000000000' },
   BWAEZI_PAYMASTER:{ token: 'BWAEZI', spender: '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47' }
 };
@@ -45,13 +44,43 @@ async function init() {
   return { provider, aa };
 }
 
+// Fetch AA-aware gas prices from bundler; enforce minimums
+async function getBundlerGas(provider) {
+  try {
+    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
+    let maxFeePerGas = BigInt(res.maxFeePerGas);
+    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
+    const TIP_FLOOR = 50_000_000n;
+    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
+    maxFeePerGas = (maxFeePerGas * 12n) / 10n; // uplift
+    return { maxFeePerGas, maxPriorityFeePerGas };
+  } catch {
+    const fd = await provider.getFeeData();
+    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
+    const tip = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
+    const TIP_FLOOR = 50_000_000n;
+    return {
+      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
+      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
+    };
+  }
+}
+
 async function approvePending(aa) {
   for (const { token, spender } of Object.values(PENDING)) {
     const tokenAddr = TOKENS[token];
     const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
     const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
 
-    const userOp = await aa.createUserOp(callData, { callGasLimit: 400000n });
+    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
+
+    const userOp = await aa.createUserOp(callData, {
+      callGasLimit: 400000n,
+      verificationGasLimit: 700000n,
+      preVerificationGas: 80000n,
+      maxFeePerGas,
+      maxPriorityFeePerGas
+    });
     const signed = await aa.signUserOp(userOp);
     const hash = await aa.sendUserOpWithBackoff(signed, 5);
 
@@ -61,7 +90,7 @@ async function approvePending(aa) {
 
 (async () => {
   try {
-    console.log(`[FINAL] Running 3 pending approvals on SCW ${SCW}`);
+    console.log(`[FINAL] Running 2 pending approvals on SCW ${SCW}`);
     const { aa } = await init();
     await approvePending(aa);
     console.log('✅ All approvals complete — BWAEZI gasless live!');
