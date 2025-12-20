@@ -6,8 +6,10 @@
 //   - Bundler is HARD-CODED to Pimlico mainnet with your key.
 //   - Robust AA gas via pimlico_getUserOperationGasPrice.
 //   - Funding check accepts either native ETH or EntryPoint deposit.
-//   - Single import statements; no duplicates.
+//   - Addresses normalized to correct checksum.
+//   - Binds an HTTP port so Render stops port-scan timeouts.
 
+import express from 'express';
 import { ethers } from 'ethers';
 import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
 
@@ -19,7 +21,7 @@ const BUNDLER = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLL
 if (!process.env.SCW_ADDRESS || !process.env.SCW_ADDRESS.startsWith('0x') || process.env.SCW_ADDRESS.length !== 42) {
   throw new Error('SCW_ADDRESS must be set to a valid 0x-prefixed address');
 }
-const SCW = process.env.SCW_ADDRESS.trim();
+const SCW = ethers.getAddress(process.env.SCW_ADDRESS.trim());
 
 // Preferred RPC rotation
 const RPC_URLS = (process.env.RPC_URL ? [process.env.RPC_URL] : [
@@ -28,22 +30,22 @@ const RPC_URLS = (process.env.RPC_URL ? [process.env.RPC_URL] : [
   'https://eth.llamarpc.com'
 ]);
 
-// Spend addresses (routers/aggregators)
+// Spend addresses (routers/aggregators) — normalized checksums
 const ROUTERS = {
-  UNISWAP_V3:    '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-  UNISWAP_V2:    '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
-  SUSHI_V2:      '0xd9e1CE17f2641f24AE83637ab66a2cca9C378B9F',
-  ONE_INCH_V5:   '0x1111111254EEB25477B68fb85Ed929f73A960582',
-  PARASWAP_LITE: '0xDEF1C0DE00000000000000000000000000000000'
+  UNISWAP_V3:    ethers.getAddress('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
+  UNISWAP_V2:    ethers.getAddress('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
+  SUSHI_V2:      ethers.getAddress('0xd9e1CE17f2641f24Ae83637ab66a2cca9C378B9F'),
+  ONE_INCH_V5:   ethers.getAddress('0x1111111254EEB25477B68fb85Ed929f73A960582'),
+  PARASWAP_LITE: ethers.getAddress('0xDEF1C0DE00000000000000000000000000000000')
 };
 
-// Paymaster address (allowance only — not used for sponsorship here)
-const PAYMASTER = (process.env.PAYMASTER_ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47').trim();
+// Paymaster address (allowance only — not used for sponsorship here) — normalized
+const PAYMASTER = ethers.getAddress((process.env.PAYMASTER_ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47').trim());
 
-// Tokens to approve
+// Tokens to approve — normalized
 const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'
+  USDC:   ethers.getAddress('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+  BWAEZI: ethers.getAddress('0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da')
 };
 
 // Interfaces
@@ -86,7 +88,7 @@ async function getBundlerGas(provider) {
     const res = await provider.send('pimlico_getUserOperationGasPrice', []);
     let maxFeePerGas = BigInt(res.maxFeePerGas);
     let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n; // per Pimlico error floor
+    const TIP_FLOOR = 50_000_000n; // Pimlico minimum tip in wei
     if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
     // slight uplift to reduce race-condition rejections
     maxFeePerGas = (maxFeePerGas * 12n) / 10n;
@@ -176,9 +178,13 @@ async function printAllowances(provider) {
     await printAllowances(provider);
 
     console.log('✅ Approvals complete (deposit-aware; no ETH funding required).');
-    process.exit(0);
   } catch (e) {
     console.error('❌ Failed:', e);
-    process.exit(1);
   }
 })();
+
+// ---- Bind port for Render (prevents port-scan timeout) ----
+const app = express();
+app.get('/', (req, res) => res.send('Approvals worker running'));
+const PORT = Number(process.env.PORT || 8080);
+app.listen(PORT, () => console.log(`HTTP server bound on :${PORT}`));
