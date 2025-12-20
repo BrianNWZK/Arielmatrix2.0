@@ -1,7 +1,7 @@
 /**
- * core/sovereign-brain-v15.js
+ * core/sovereign-brain-v15.9.js
  *
- * SOVEREIGN FINALITY ENGINE v15.8 — Adaptive Living Systems
+ * SOVEREIGN FINALITY ENGINE v15.9 — Adaptive Living Systems
  * Unified v13.9 + v14.0 + v14.1 capabilities with adaptive sovereign equation
  *
  * Preserves ALL v14.1 features:
@@ -19,6 +19,12 @@
  * - Adaptive caps Nmax(t), adaptive rate Rmax(t), adaptive damping χ(t)
  * - Peg-accelerate mode; volatility-harvesting grid; adaptive governance hooks
  * - Audit fields: faithIndex, gravityPull, volatilityEnergy, pegEnergy
+ *
+ * v15.9 upgrade:
+ * - Correct aggregator execution: build real swap calldata for 1inch and Paraswap and use proper router
+ * - Uniswap V3 multi-hop fallback (USDC↔WETH↔BWAEZI) via exactInput path when single-hop is unavailable
+ * - Route-aware execution across strategy and MEV recapture
+ * - Extended approvals for all routers (V3/V2/Sushi/1inch/Paraswap)
  */
 
 import express from 'express';
@@ -49,7 +55,7 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.8',
+  VERSION: 'v15.9',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -474,28 +480,134 @@ class UniversalDexAdapter {
     } catch { return null; }
   }
 
+  async _agg1inchSwapCalldata(tokenIn, tokenOut, amountIn, recipient) {
+    const url = `https://api.1inch.io/v5.0/1/swap?fromTokenAddress=${tokenIn}&toTokenAddress=${tokenOut}&amount=${amountIn.toString()}&fromAddress=${LIVE.SCW_ADDRESS}&destReceiver=${recipient}&slippage=1&disableEstimate=true`;
+    let res, attempts = 0;
+    while (attempts < 5) {
+      res = await fetch(url, { headers: { 'accept': 'application/json' } });
+      if (res.ok) break;
+      attempts++;
+      await new Promise(r => setTimeout(r, LIVE.RISK.INFRA.BACKOFF_BASE_MS * attempts));
+    }
+    if (!res.ok) throw new Error(`1inch swap ${res.status}`);
+    const data = await res.json();
+    if (!data?.tx?.to || !data?.tx?.data) throw new Error('1inch swap missing tx');
+    return { router: ethers.getAddress(data.tx.to), calldata: data.tx.data };
+  }
+
+  async _paraswapLiteSwapCalldata(tokenIn, tokenOut, amountIn, recipient) {
+    const erc20Abi = ['function decimals() view returns (uint8)'];
+    const inC = new ethers.Contract(tokenIn, erc20Abi, this.provider);
+    const outC = new ethers.Contract(tokenOut, erc20Abi, this.provider);
+    let srcDecimals = 18, destDecimals = 18;
+    try { srcDecimals = Number(await inC.decimals()); } catch {}
+    try { destDecimals = Number(await outC.decimals()); } catch {}
+
+    const body = {
+      srcToken: tokenIn,
+      destToken: tokenOut,
+      srcDecimals,
+      destDecimals,
+      srcAmount: amountIn.toString(),
+      slippage: 100, // 1.00%
+      userAddress: LIVE.SCW_ADDRESS,
+      receiver: recipient,
+      partner: 'sovereign-v15'
+    };
+    let res, attempts = 0;
+    while (attempts < 5) {
+      res = await fetch('https://apiv5.paraswap.io/transactions/1?ignoreChecks=true', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (res.ok) break;
+      attempts++;
+      await new Promise(r => setTimeout(r, LIVE.RISK.INFRA.BACKOFF_BASE_MS * attempts));
+    }
+    if (!res.ok) throw new Error(`Paraswap tx ${res.status}`);
+    const tx = await res.json();
+    if (!tx?.to || !tx?.data) throw new Error('Paraswap tx missing fields');
+    return { router: ethers.getAddress(tx.to), calldata: tx.data };
+  }
+
+  async _v3PathCalldata(tokenIn, tokenOut, amountIn, recipient) {
+    const feeInWeth = 500;   // 0.05%
+    const feeWethOut = 3000; // 0.3%
+    const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory,
+      ['function getPool(address,address,uint24) view returns (address)'], this.provider);
+
+    const pool1 = await factory.getPool(tokenIn, LIVE.TOKENS.WETH, feeInWeth);
+    const pool2 = await factory.getPool(LIVE.TOKENS.WETH, tokenOut, feeWethOut);
+    if (!pool1 || pool1 === ethers.ZeroAddress || !pool2 || pool2 === ethers.ZeroAddress) return null;
+
+    // Build packed path bytes: tokenIn + fee1 (3 bytes) + WETH + fee2 + tokenOut
+    const path = ethers.concat([
+      ethers.getAddress(tokenIn),
+      ethers.hexlify(ethers.toBeArray(feeInWeth, 3)),
+      ethers.getAddress(LIVE.TOKENS.WETH),
+      ethers.hexlify(ethers.toBeArray(feeWethOut, 3)),
+      ethers.getAddress(tokenOut)
+    ]);
+
+    const iface = new ethers.Interface(['function exactInput((bytes,address,uint256,uint256)) returns (uint256)']);
+    const deadline = Math.floor(Date.now()/1000) + 600;
+    const calldata = iface.encodeFunctionData('exactInput', [{
+      path,
+      recipient,
+      amountIn,
+      amountOutMinimum: 0
+    }]);
+    return { router: LIVE.DEXES.UNISWAP_V3.router, calldata };
+  }
+
   async buildSwapCalldata(params) {
     const { tokenIn, tokenOut, amountIn, amountOutMin, recipient, fee = LIVE.PEG.FEE_TIER_DEFAULT } = params;
+
+    if (this.type === 'Aggregator') {
+      return await this._agg1inchSwapCalldata(tokenIn, tokenOut, amountIn, recipient);
+    }
+    if (this.type === 'Aggregator2') {
+      return await this._paraswapLiteSwapCalldata(tokenIn, tokenOut, amountIn, recipient);
+    }
+
     if (this.type === 'V3') {
+      // Try single-hop exactInputSingle
       const iface = new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)']);
-      return iface.encodeFunctionData('exactInputSingle', [{
+      const calldata = iface.encodeFunctionData('exactInputSingle', [{
         tokenIn, tokenOut, fee, recipient,
         deadline: Math.floor(Date.now()/1000)+600,
         amountIn, amountOutMinimum: amountOutMin || 0n, sqrtPriceLimitX96: 0n
       }]);
+      // If pools are missing, use multi-hop path via WETH
+      try {
+        // Probe pools; if either missing, switch to path
+        const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
+        const pool = await factory.getPool(tokenIn, tokenOut, fee);
+        if (!pool || pool === ethers.ZeroAddress) {
+          const pathTx = await this._v3PathCalldata(tokenIn, tokenOut, amountIn, recipient);
+          if (pathTx) return pathTx;
+        }
+      } catch {}
+      return { router: LIVE.DEXES.UNISWAP_V3.router, calldata };
     }
+
     if (this.type === 'V2') {
       const iface = new ethers.Interface(['function swapExactTokensForTokens(uint256,uint256,address[],address,uint256) returns (uint256[] memory)']);
-      return iface.encodeFunctionData('swapExactTokensForTokens', [
+      const calldata = iface.encodeFunctionData('swapExactTokensForTokens', [
         amountIn, amountOutMin || 0n, [tokenIn, tokenOut], recipient, Math.floor(Date.now()/1000)+600
       ]);
+      return { router: this.config.router, calldata };
     }
+
+    // Default to V3 single hop (as last resort)
     const fallback = new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)']);
-    return fallback.encodeFunctionData('exactInputSingle', [{
+    const fallbackData = fallback.encodeFunctionData('exactInputSingle', [{
       tokenIn, tokenOut, fee: LIVE.PEG.FEE_TIER_DEFAULT, recipient,
       deadline: Math.floor(Date.now()/1000)+600,
       amountIn, amountOutMinimum: amountOutMin || 0n, sqrtPriceLimitX96: 0n
     }]);
+    return { router: LIVE.DEXES.UNISWAP_V3.router, calldata: fallbackData };
   }
 }
 
@@ -579,9 +691,8 @@ class DexAdapterRegistry {
     if (!selected) return null;
     const slipGuard = 0.02;
     const minOut = BigInt(Math.floor(Number(selected.amountOut)*(1-slipGuard)));
-    const builtData = await selected.adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn, amountOutMin: minOut, recipient, fee: selected.fee || LIVE.PEG.FEE_TIER_DEFAULT });
-    const routerAddr = LIVE.DEXES[selected.dex]?.router || LIVE.DEXES.UNISWAP_V3.router;
-    return { router: routerAddr, calldata: builtData, routes: routes.all, minOut };
+    const tx = await selected.adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn, amountOutMin: minOut, recipient, fee: selected.fee || LIVE.PEG.FEE_TIER_DEFAULT });
+    return { router: tx.router, calldata: tx.calldata, routes: routes.all, minOut };
   }
 }
 
@@ -818,7 +929,7 @@ class StrategyEngine {
     if (!built) throw new Error('No route available');
     const iface=new ethers.Interface(['function execute(address,uint256,bytes)']);
     const calldata = iface.encodeFunctionData('execute',[built.router, 0n, built.calldata]);
-    const userOpRes = await this.mev.sendUserOp(calldata, { description:'swap_v3' });
+    const userOpRes = await this.mev.sendUserOp(calldata, { description:'swap_exec' });
     return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
   }
 
@@ -834,13 +945,13 @@ class StrategyEngine {
     const slip=this.entropy ? this.entropy.slippageGuard(0.003, entropyState.coherence, 0.0) : 0.003;
     const amountOutMin = q?.amountOut ? BigInt(Math.floor(Number(q.amountOut)*(1-slip))) : 0n;
 
-    const calldata = await adapter.buildSwapCalldata({
+    const tx = await adapter.buildSwapCalldata({
       tokenIn: buyBWAEZI? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI,
       tokenOut: buyBWAEZI? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC,
       amountIn: amountInUSDC, amountOutMin, recipient:LIVE.SCW_ADDRESS, fee:feeTier
     });
     const scwIface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-    const exec=scwIface.encodeFunctionData('execute',[LIVE.DEXES[route].router, 0n, calldata]);
+    const exec=scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
 
     const composite=this.oracle ? await this.oracle.compositeUSD(LIVE.TOKENS.BWAEZI) : { priceUSD: LIVE.PEG.TARGET_USD, confidence:0.5 };
     const packet = {
@@ -1172,7 +1283,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.8',
+  version: '15.9',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1414,9 +1525,9 @@ class MEVRecaptureEngine {
       if (!quote?.amountOut) continue;
       const slip = 0.004 + Math.random()*0.006;
       const minOut = BigInt(Math.floor(Number(quote.amountOut)*(1-slip)));
-      const calldata = await adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn: partIn, amountOutMin: minOut, recipient });
+      const tx = await adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn: partIn, amountOutMin: minOut, recipient });
       const scwIface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-      const execCalldata = scwIface.encodeFunctionData('execute',[LIVE.DEXES[routes[i]].router, 0n, calldata]);
+      const execCalldata = scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
 
       const sendRes = this.mev.sendUserOp(execCalldata, { description: `split_exec_${routes[i]}` });
       txs.push(sendRes);
@@ -1434,9 +1545,9 @@ class MEVRecaptureEngine {
     const q = await adapter.getQuote(tokenOut, tokenIn, microIn);
     if (!q?.amountOut) return null;
     const minOut = BigInt(Math.floor(Number(q.amountOut)*0.992));
-    const calldata = await adapter.buildSwapCalldata({ tokenIn: tokenOut, tokenOut: tokenIn, amountIn: microIn, amountOutMin: minOut, recipient: LIVE.SCW_ADDRESS });
+    const tx = await adapter.buildSwapCalldata({ tokenIn: tokenOut, tokenOut: tokenIn, amountIn: microIn, amountOutMin: minOut, recipient: LIVE.SCW_ADDRESS });
     const scwIface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-    const execCalldata = scwIface.encodeFunctionData('execute',[LIVE.DEXES.UNISWAP_V3.router, 0n, calldata]);
+    const execCalldata = scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
     return await this.mev.sendUserOp(execCalldata, { description: 'backrun_cover' });
   }
 }
@@ -1571,24 +1682,33 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   return { funded: false, reason: 'insufficient_usdc' };
 }
 
-// Approve USDC and BWAEZI to Uniswap V3 router via SCW.execute using AA
+// Approve USDC and BWAEZI to all routers via SCW.execute using AA
 async function _ensureApprovals(aa) {
-  const routerV3 = LIVE.DEXES.UNISWAP_V3.router;
-
   const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
 
-  const sendApprove = async (tokenAddr) => {
-    const approveData = erc20Iface.encodeFunctionData('approve', [routerV3, ethers.MaxUint256]);
+  const routersToApprove = [
+    LIVE.DEXES.UNISWAP_V3.router,
+    LIVE.DEXES.UNISWAP_V2.router,
+    LIVE.DEXES.SUSHI_V2.router,
+    LIVE.DEXES.ONE_INCH_V5.router,
+    LIVE.DEXES.PARASWAP_LITE.router
+  ];
+  const tokensToApprove = [AA_CONFIG.USDC_ADDRESS, AA_CONFIG.BWAEZI_ADDRESS];
+
+  const sendApprove = async (tokenAddr, routerAddr) => {
+    const approveData = erc20Iface.encodeFunctionData('approve', [routerAddr, ethers.MaxUint256]);
     const calldata = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
     const userOp = await aa.createUserOp(calldata, { callGasLimit: 300_000n });
     const signed = await aa.signUserOp(userOp);
     return await aa.sendUserOpWithBackoff(signed, 5);
   };
 
-  await sendApprove(AA_CONFIG.USDC_ADDRESS);
-  await sendApprove(AA_CONFIG.BWAEZI_ADDRESS);
-
+  for (const tokenAddr of tokensToApprove) {
+    for (const routerAddr of routersToApprove) {
+      try { await sendApprove(tokenAddr, routerAddr); } catch(e){ console.warn('Approval error:', e.message); }
+    }
+  }
   return { ok: true };
 }
 
