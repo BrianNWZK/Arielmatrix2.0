@@ -1,13 +1,6 @@
-// modules/aa-loaves-fishes.js — LIVE AA INFRASTRUCTURE v15.12 (final, AA14-safe, MEV v15-8 wiring)
-// Preserves ALL v15.10 capabilities (hardened sender+initCode, paymaster modes, bundler estimation)
-// and fixes AA20 by mandating initCode when sender has no code. Includes env-driven MAX_SALT_TRIES.
-// Exports and behavior remain exactly as MEV v15-8 expects.
-//
-// v15.12-NEW-SCW-LOOP:
-// - No implicit SCW alignment or initCode auto-redeployment inside AA SDK.
-// - Main loop (main.js) is responsible for funding, deployments, and salt/ABI handling.
-// - AA SDK now requires a deployed SCW, or explicit initCode passed via opts.initCode.
-// - All helpers (findSaltForSCW, buildInitCodeForSCW) retained and exported, but not auto-invoked.
+// modules/aa-loaves-fishes.js — CLEANED AA INFRASTRUCTURE v15.12 (deployment-free, MEV v15-8 aligned)
+// Focus: pure execution for an already-deployed SCW. No factory/initCode/salt logic.
+// Preserves bundler + paymaster wiring, RPC management, approvals helper, and price oracle.
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -26,7 +19,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.12-LIVE',
+  VERSION: 'v15.12-LIVE-CLEAN',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -43,7 +36,15 @@ const ENHANCED_CONFIG = {
     V3_ROUTER_ADDRESS: addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564')
   },
 
-  SCW_ADDRESS: addrStrict(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2'),
+  // SCW must be explicitly provided — no fallback, no auto-deploy
+  SCW_ADDRESS: (() => {
+    const v = process.env.SCW_ADDRESS;
+    if (!v || !v.startsWith('0x') || v.length !== 42) {
+      throw new Error('SCW_ADDRESS must be set to a valid 0x-prefixed address (deployment-free mode)');
+    }
+    return addrStrict(v);
+  })(),
+
   BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
   USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
   WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
@@ -60,7 +61,7 @@ const ENHANCED_CONFIG = {
       process.env.BUNDLER_RPC_URL
       || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt',
     TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
-    ROTATION: [] // disabled by default; pickHealthyBundler is exported for MEV compatibility
+    ROTATION: [] // optional; pickHealthyBundler exported for MEV compatibility
   },
 
   PUBLIC_RPC_ENDPOINTS: [
@@ -81,17 +82,11 @@ const ENHANCED_CONFIG = {
     STALE_SECONDS: Number(process.env.ORACLE_STALE_SECONDS || 7200)
   },
 
-  // ERC-4337 SimpleAccountFactory (mainnet infinitism)
-  ACCOUNT_FACTORY: addrStrict(process.env.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E44976454'),
-
   // Owner EOA of the SCW (checksummed if provided, otherwise signer.address is used)
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || ''),
 
-  // Salt discovery window (env-driven)
-  MAX_SALT_TRIES: Number(process.env.MAX_SALT_TRIES || 512),
-
-  // New SCW loop mode: when true, AA SDK will NOT auto-align or auto-deploy SCW
-  NEW_SCW_LOOP: (process.env.NEW_SCW_LOOP || 'true').toLowerCase() === 'true'
+  // CLEAN MODE: always deployment-free
+  NEW_SCW_LOOP: true
 };
 
 /* =========================================================================
@@ -320,53 +315,7 @@ class PassthroughPaymaster {
 }
 
 /* =========================================================================
-   SCW factory (minimal ABI) + initCode builder (with salt discovery)
-   ========================================================================= */
-
-const SCW_FACTORY_ABI = [
-  'function createAccount(address owner, uint256 salt) returns (address)',
-  'function getAddress(address owner, uint256 salt) view returns (address)'
-];
-
-/**
- * Find salt that predicts the configured SCW address, using factory.getAddress.
- * Tries salts [0..MAX_SALT_TRIES).
- */
-async function findSaltForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, MAX_SALT_TRIES = ENHANCED_CONFIG.MAX_SALT_TRIES) {
-  const factory = new ethers.Contract(factoryAddress, SCW_FACTORY_ABI, provider);
-  const target = ethers.getAddress(targetScwAddress);
-  for (let i = 0; i < MAX_SALT_TRIES; i++) {
-    const salt = BigInt(i);
-    try {
-      const predicted = await factory.getAddress(ownerAddress, salt);
-      if (ethers.getAddress(predicted) === target) {
-        return salt;
-      }
-    } catch { /* continue */ }
-  }
-  return null;
-}
-
-/**
- * Build ERC-4337 initCode: factory address (20 bytes) + encoded function createAccount(owner, salt)
- * Ensures salt matches target SCW if possible; falls back to provided salt or 0n.
- */
-async function buildInitCodeForSCW(provider, factoryAddress, ownerAddress, targetScwAddress, saltOverride = null) {
-  const factoryAddrNorm = ethers.getAddress(factoryAddress);
-  const iface = new ethers.Interface(SCW_FACTORY_ABI);
-
-  let salt = saltOverride;
-  if (salt == null && targetScwAddress) {
-    salt = await findSaltForSCW(provider, factoryAddrNorm, ownerAddress, targetScwAddress);
-  }
-  if (salt == null) salt = 0n;
-
-  const data = iface.encodeFunctionData('createAccount', [ownerAddress, salt]);
-  return { initCode: ethers.concat([factoryAddrNorm, data]), salt };
-}
-
-/* =========================================================================
-   Enterprise AA SDK (AA14-hardened, wired for MEV v15-8) — NEW SCW LOOP READY
+   Enterprise AA SDK (deployment-free; pure execution)
    ========================================================================= */
 
 class EnterpriseAASDK {
@@ -382,8 +331,6 @@ class EnterpriseAASDK {
     this.verifyingPaymaster = null;
     this.passthroughPaymaster = null;
     this.initialized = false;
-
-    this.factoryAddress = ENHANCED_CONFIG.ACCOUNT_FACTORY || null;
 
     try {
       this.ownerAddress =
@@ -402,7 +349,7 @@ class EnterpriseAASDK {
 
   async initialize(provider, scwAddress = null, bundlerUrl = null) {
     this.provider = provider;
-    this.scwAddress = scwAddress || ENHANCED_CONFIG.SCW_ADDRESS;
+    this.scwAddress = scwAddress ? ethers.getAddress(scwAddress) : ENHANCED_CONFIG.SCW_ADDRESS;
 
     const url = bundlerUrl || ENHANCED_CONFIG.BUNDLER.RPC_URL;
     this.bundler = new BundlerClient(url);
@@ -424,10 +371,7 @@ class EnterpriseAASDK {
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
     }
 
-    // NEW SCW LOOP: do NOT coalesce or auto-align SCW to factory prediction.
-    // Main runtime manages deployments and alignment. We only log current sender.
     console.log(`Using SCW sender: ${this.scwAddress}`);
-
     this.initialized = true;
     return this;
   }
@@ -461,40 +405,28 @@ class EnterpriseAASDK {
   }
 
   /**
-   * Create user operation — NEW SCW LOOP behavior:
-   * - No implicit initCode building or salt prediction. If sender has no code and no initCode provided → throw.
-   * - If opts.initCode is provided, it will be used (caller is responsible for correctness).
-   * - AA14/AA20 safety remains via explicit initCode path when provided.
+   * Create user operation — deployment-free:
+   * - No initCode usage; assumes SCW is already deployed.
+   * - Pure execution userOps only.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
 
-    let sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
-
+    const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
-
-    const codeAtAddress = await this.provider.getCode(sender);
-    const undeployed = (codeAtAddress === '0x');
-
-    // NEW SCW LOOP: Only use initCode if caller explicitly provides it.
-    // No auto alignment or factory prediction inside SDK.
-    let initCode = '0x';
-    if (opts.initCode && ethers.isHexString(opts.initCode)) {
-      initCode = opts.initCode;
-    } else if (undeployed) {
-      throw new Error('SCW sender not deployed and no initCode provided. Provide opts.initCode or deploy SCW before calling.');
-    }
 
     const fee = await this.provider.getFeeData();
     let maxFee = opts.maxFeePerGas || fee.maxFeePerGas || ethers.parseUnits('30', 'gwei');
     let maxTip = opts.maxPriorityFeePerGas || fee.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
+    const TIP_FLOOR = 50_000_000n; // Pimlico tip floor in wei
+    if (BigInt(maxTip) < TIP_FLOOR) maxTip = TIP_FLOOR;
     if (maxFee < maxTip) maxFee = maxTip;
 
     const userOp = {
       sender,
       nonce,
-      initCode, // explicit only; no auto-build inside AA
+      initCode: '0x', // always empty in deployment-free mode
       callData,
       callGasLimit: opts.callGasLimit || 1_000_000n,
       verificationGasLimit: opts.verificationGasLimit || 700_000n,
@@ -573,7 +505,7 @@ class EnterpriseAASDK {
 }
 
 /* =========================================================================
-   Enhanced MEV executor
+   Enhanced MEV executor (deployment-free)
    ========================================================================= */
 
 class EnhancedMevExecutor {
@@ -591,9 +523,8 @@ class EnhancedMevExecutor {
       verificationGasLimit: opts.verificationGasLimit || 500_000n,
       preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      // NEW SCW LOOP: caller may pass initCode explicitly; we just pass through
-      initCode: opts.initCode
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas
+      // No initCode in deployment-free mode
     });
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
@@ -602,7 +533,7 @@ class EnhancedMevExecutor {
 }
 
 /* =========================================================================
-   Bootstrap helper
+   Bootstrap helper (paymaster-only; no SCW deployment)
    ========================================================================= */
 
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
@@ -625,7 +556,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
 }
 
 /* =========================================================================
-   SCW approvals helper
+   SCW approvals helper (pure execute)
    ========================================================================= */
 
 async function scwApproveToken(aa, scw, token, spender, amount = ethers.MaxUint256) {
@@ -719,12 +650,7 @@ export {
 
   // Utilities
   scwApproveToken,
-  PriceOracleAggregator,
-
-  // SCW deploy helpers (retained, but not auto-invoked in AA SDK)
-  SCW_FACTORY_ABI,
-  buildInitCodeForSCW,
-  findSaltForSCW
+  PriceOracleAggregator
 };
 
 export default ENHANCED_CONFIG;
