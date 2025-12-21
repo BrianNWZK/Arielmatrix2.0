@@ -1857,7 +1857,7 @@ async function fallbackWethGenesis(core) {
   const tu = Number(tick) + 180;
 
   const bwAmt = ethers.parseEther('0.05');
-  const wethAmt = ethers.parse Ether('0.002');
+  const wethAmt = ethers.parseEther('0.002');
   await core.maker.startStreamingMint({
     token0: LIVE.TOKENS.BWAEZI,
     token1: LIVE.TOKENS.WETH,
