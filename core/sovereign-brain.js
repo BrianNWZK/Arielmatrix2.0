@@ -709,6 +709,122 @@ class DexAdapterRegistry {
 }
 
 /* =========================================================================
+   Ensure V3 Pool at Peg
+   ========================================================================= */
+
+async function ensureV3PoolAtPeg(
+  provider,
+  signer,
+  token0,
+  token1,
+  fee = LIVE.PEG.FEE_TIER_DEFAULT,
+  pegUSD = LIVE.PEG.TARGET_USD
+) {
+  const factory = new ethers.Contract(
+    LIVE.DEXES.UNISWAP_V3.factory,
+    ['function getPool(address,address,uint24) view returns (address)'],
+    provider
+  );
+  const npm = new ethers.Contract(
+    LIVE.DEXES.UNISWAP_V3.positionManager,
+    ['function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'],
+    signer
+  );
+
+  const [t0, t1] = (token0.toLowerCase() < token1.toLowerCase())
+    ? [token0, token1]
+    : [token1, token0];
+
+  let pool = await factory.getPool(t0, t1, fee);
+  if (pool && pool !== ethers.ZeroAddress) {
+    return { pool, txHash: null };
+  }
+
+  const dec0 = t0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18n : 6n;
+  const dec1 = t1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6n : 18n;
+  const numerator = BigInt(pegUSD) * (10n ** dec1);
+  const denominator = 1n * (10n ** dec0);
+  const priceX192 = (numerator << 192n) / denominator;
+  const sqrtPriceX96 = sqrtBigInt(priceX192);
+
+  const tx = await npm.createAndInitializePoolIfNecessary(t0, t1, fee, sqrtPriceX96);
+  const rc = await tx.wait();
+  pool = await factory.getPool(t0, t1, fee);
+
+  console.log(`🛠️ Created & initialized V3 pool at peg $${pegUSD}: ${pool} (tx=${rc.transactionHash})`);
+  return { pool, txHash: rc.transactionHash };
+}
+
+/* =========================================================================
+   Force Genesis Pool and Peg
+   ========================================================================= */
+
+async function forceGenesisPoolAndPeg(core) {
+  const factory = new ethers.Contract(
+    LIVE.DEXES.UNISWAP_V3.factory,
+    ['function getPool(address,address,uint24) view returns (address)'],
+    core.provider
+  );
+  const npm = new ethers.Contract(
+    LIVE.DEXES.UNISWAP_V3.positionManager,
+    ['function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'],
+    core.signer
+  );
+
+  const [t0, t1] = (LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase())
+    ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
+    : [LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI];
+
+  let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
+  let initTxHash = null;
+
+  if (!pool || pool === ethers.ZeroAddress) {
+    const dec0 = 18n;
+    const dec1 = 6n;
+    const numerator = BigInt(LIVE.PEG.TARGET_USD) * (10n ** dec1);
+    const denominator = 1n * (10n ** dec0);
+    const priceX192 = (numerator << 192n) / denominator;
+    const sqrtPriceX96 = sqrtBigInt(priceX192);
+
+    const tx = await npm.createAndInitializePoolIfNecessary(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96);
+    const rc = await tx.wait();
+    initTxHash = rc.transactionHash;
+    pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
+
+    console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/USDC pool at peg: ${pool} (tx=${initTxHash})`);
+  }
+
+  const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
+  const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
+  const [, tick] = await poolC.slot0();
+  const width = 120;
+  const tl = Number(tick) - width;
+  const tu = Number(tick) + width;
+
+  const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
+  console.log(`[forceGenesis] Minting initial range bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
+
+  try {
+    const stream = await core.maker.startStreamingMint({
+      token0: LIVE.TOKENS.BWAEZI,
+      token1: LIVE.TOKENS.USDC,
+      tickLower: tl,
+      tickUpper: tu,
+      total0: bwAmt,
+      total1: usdcAmt,
+      steps: 2,
+      label: 'force_genesis_seed'
+    });
+    return { pool, initTxHash, mintStreamId: stream.streamId };
+  } catch (e) {
+    console.error('[forceGenesis] mint failed:', e.message);
+    return { pool, initTxHash, mintStreamId: null, error: e.message };
+  }
+}
+
+
+
+/* =========================================================================
    Oracle aggregator
    ========================================================================= */
 
