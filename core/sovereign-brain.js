@@ -763,7 +763,7 @@ async function ensureV3PoolAtPeg(
 }
 
 /* =========================================================================
-   Force Genesis Pool and Peg
+   Force Genesis Pool and Peg (patched to init via SCW userOp)
    ========================================================================= */
 
 async function forceGenesisPoolAndPeg(core) {
@@ -772,11 +772,13 @@ async function forceGenesisPoolAndPeg(core) {
     ['function getPool(address,address,uint24) view returns (address)'],
     core.provider
   );
-  const npm = new ethers.Contract(
-    LIVE.DEXES.UNISWAP_V3.positionManager,
-    ['function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'],
-    core.signer
-  );
+
+  // Interfaces for PositionManager and SCW
+  const npm = LIVE.DEXES.UNISWAP_V3.positionManager;
+  const npmIface = new ethers.Interface([
+    'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
+  ]);
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
 
   const [t0, t1] = (LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase())
     ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
@@ -786,21 +788,29 @@ async function forceGenesisPoolAndPeg(core) {
   let initTxHash = null;
 
   if (!pool || pool === ethers.ZeroAddress) {
-    const dec0 = 18n;
-    const dec1 = 6n;
+    // Compute sqrtPriceX96 for peg initialization
+    const dec0 = 18n; // BWAEZI
+    const dec1 = 6n;  // USDC
     const numerator = BigInt(LIVE.PEG.TARGET_USD) * (10n ** dec1);
     const denominator = 1n * (10n ** dec0);
     const priceX192 = (numerator << 192n) / denominator;
     const sqrtPriceX96 = sqrtBigInt(priceX192);
 
-    const tx = await npm.createAndInitializePoolIfNecessary(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96);
-    const rc = await tx.wait();
-    initTxHash = rc.transactionHash;
-    pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
+    // Build PM create+init calldata and execute via SCW userOp (paymaster-covered)
+    const pmData = npmIface.encodeFunctionData(
+      'createAndInitializePoolIfNecessary',
+      [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
+    );
+    const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
+    const res = await core.mev.sendUserOp(exec, { description: 'init_pool_scw' });
+    initTxHash = res.txHash;
 
-    console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/USDC pool at peg: ${pool} (tx=${initTxHash})`);
+    // Re-read pool address after init
+    pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
+    console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/USDC pool at peg via SCW: ${pool} (tx=${initTxHash})`);
   }
 
+  // Read slot0 to derive a tight initial range around current tick
   const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
   const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
   const [, tick] = await poolC.slot0();
