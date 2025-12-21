@@ -1675,21 +1675,33 @@ class APIServerV15 {
   });
 
   // Manual force microseed endpoint (unstoppable genesis trigger)
-  this.app.post('/force-microseed', async (req,res) => {
-    try {
-      await forceGenesisPoolAndPeg(this.core);
-      res.json({ ok:true, msg:'Forced pool creation and seed at peg', ts: nowTs() });
-    } catch (e) {
-      res.status(500).json({ ok:false, error:e.message, ts: nowTs() });
-    }
-  });
+this.app.post('/force-microseed', async (req,res) => {
+  try {
+    await forceGenesisPoolAndPeg(this.core);
+    res.json({ ok:true, msg:'Forced pool creation and seed at peg', ts: nowTs() });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:e.message, ts: nowTs() });
+  }
+});
 
-  this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
-    const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
-    LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
-    res.json({ ok:true, killSwitch: enabled, ts: nowTs() });
+this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
+  const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
+  LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
+  res.json({ ok:true, killSwitch: enabled, ts: nowTs() });
+});
+}   // <-- closes the routes() method
+
+async start(){
+  if (globalThis.__SOVEREIGN_V15_API_RUNNING) {
+    console.warn('API server already running — skipping duplicate start');
+    return;
+  }
+  this.server=this.app.listen(this.port, () => {
+    globalThis.__SOVEREIGN_V15_API_RUNNING = true;
+    console.log(`🌐 API Server v15.12 on :${this.port}`);
   });
 }
+}   // <-- closes the APIServerV15 class
 
 /* =========================================================================
    Genesis microseed (upgraded for v15.12, unstoppable path)
