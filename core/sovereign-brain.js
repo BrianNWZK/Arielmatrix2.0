@@ -763,8 +763,23 @@ async function ensureV3PoolAtPeg(
 }
 
 /* =========================================================================
-   Force Genesis Pool and Peg (patched to init via SCW userOp)
+   Force Genesis Pool and Peg (patched to init via SCW userOp, canonical sqrtPriceX96)
    ========================================================================= */
+
+// Canonical Uniswap V3 sqrtPriceX96 encoder
+function encodePriceSqrt(token0, token1, targetPegUSD) {
+  const dec0 = token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18 : 6;
+  const dec1 = token1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6 : 18;
+
+  // Price scalar = targetPegUSD * 10^(dec1-dec0)
+  const exp = BigInt(dec1 - dec0);
+  const scale = exp >= 0n ? 10n ** exp : 1n / (10n ** (-exp));
+  const priceScalar = BigInt(Math.floor(targetPegUSD)) * scale;
+
+  const Q96 = 2n ** 96n;
+  const sqrtScalar = sqrtBigInt(priceScalar);
+  return sqrtScalar * Q96;
+}
 
 async function forceGenesisPoolAndPeg(core) {
   const factory = new ethers.Contract(
@@ -773,7 +788,6 @@ async function forceGenesisPoolAndPeg(core) {
     core.provider
   );
 
-  // Interfaces for PositionManager and SCW
   const npm = LIVE.DEXES.UNISWAP_V3.positionManager;
   const npmIface = new ethers.Interface([
     'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
@@ -788,29 +802,64 @@ async function forceGenesisPoolAndPeg(core) {
   let initTxHash = null;
 
   if (!pool || pool === ethers.ZeroAddress) {
-    // Compute sqrtPriceX96 for peg initialization
-    const dec0 = 18n; // BWAEZI
-    const dec1 = 6n;  // USDC
-    const numerator = BigInt(LIVE.PEG.TARGET_USD) * (10n ** dec1);
-    const denominator = 1n * (10n ** dec0);
-    const priceX192 = (numerator << 192n) / denominator;
-    const sqrtPriceX96 = sqrtBigInt(priceX192);
+    const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD);
 
-    // Build PM create+init calldata and execute via SCW userOp (paymaster-covered)
+    // Build calldata and execute via SCW userOp
     const pmData = npmIface.encodeFunctionData(
       'createAndInitializePoolIfNecessary',
       [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
     );
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
-    const res = await core.mev.sendUserOp(exec, { description: 'init_pool_scw' });
+    const res = await core.mev.sendUserOp(exec, {
+      description: 'init_pool_scw',
+      maxFeePerGas: ethers.parseUnits('35', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
+    });
     initTxHash = res.txHash;
 
-    // Re-read pool address after init
+    const receipt = await core.provider.getTransactionReceipt(res.txHash);
+    if (!receipt || receipt.status !== 1) {
+      throw new Error('Pool init userOp reverted');
+    }
+
     pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
+
+    // Retry with reversed order if still zero
+    if (!pool || pool === ethers.ZeroAddress) {
+      console.warn('[forceGenesis] pool missing; retrying with reversed token order');
+      const [rt0, rt1] = [t1, t0];
+      const sqrt2 = encodePriceSqrt(rt0, rt1, LIVE.PEG.TARGET_USD);
+      const pmData2 = npmIface.encodeFunctionData(
+        'createAndInitializePoolIfNecessary',
+        [rt0, rt1, LIVE.PEG.FEE_TIER_DEFAULT, sqrt2]
+      );
+      const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
+      const res2 = await core.mev.sendUserOp(exec2, {
+        description: 'init_pool_scw_retry',
+        maxFeePerGas: ethers.parseUnits('35', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
+      });
+      const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
+      if (!receipt2 || receipt2.status !== 1) {
+        throw new Error('Pool init retry reverted');
+      }
+      pool = await factory.getPool(rt0, rt1, LIVE.PEG.FEE_TIER_DEFAULT);
+    }
+
+    if (!pool || pool === ethers.ZeroAddress) {
+      throw new Error('Pool still missing after init attempts');
+    }
+
     console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/USDC pool at peg via SCW: ${pool} (tx=${initTxHash})`);
   }
 
-  // Read slot0 to derive a tight initial range around current tick
+  // Guard against zero pool before slot0
+  if (!pool || pool === ethers.ZeroAddress) {
+    console.error('[forceGenesis] pool missing after init; halting mint.');
+    return { pool: ethers.ZeroAddress, initTxHash, mintStreamId: null, error: 'pool_missing' };
+  }
+
+  // Read slot0 to derive tick range
   const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
   const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
   const [, tick] = await poolC.slot0();
@@ -838,7 +887,6 @@ async function forceGenesisPoolAndPeg(core) {
     return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
 }
-
 /* =========================================================================
    Oracle aggregator (patched with null-safety and normalized compositeUSD)
    ========================================================================= */
