@@ -1,8 +1,8 @@
 /**
- * core/sovereign-brain-v15.11.js
+ * core/sovereign-brain-v15.12.js
  *
- * SOVEREIGN FINALITY ENGINE v15.11 — Adaptive Living Systems
- * Unified v13.9 + v14.0 + v14.1 + v15.10 capabilities with end-to-end aggregator execution fixes
+ * SOVEREIGN FINALITY ENGINE v15.12 — Adaptive Living Systems
+ * Unified v13.9 + v14.0 + v14.1 + v15.10 + v15.11 capabilities with unstoppable genesis bootstrap
  *
  * Preserves ALL v14.1 features:
  * - Full live AA (ERC-4337) execution: userOps, SCW approvals, peg enforcement, swaps, pool mints
@@ -34,6 +34,12 @@
  * - End-to-end aggregator routing hardening: Strategy/Dex strictly preserve adapter-provided router + calldata
  * - Genesis telemetry: /genesis-state endpoint, route/type logs, calldata length visibility
  * - Jittered retries for microseed swaps to withstand aggregator rate limits
+ *
+ * v15.12 upgrades:
+ * - Unstoppable genesis: force pool creation + peg initialization + initial mint before swaps
+ * - Optional BWAEZI/WETH fallback pool seeding when USDC route stalls
+ * - Manual /force-microseed endpoint to trigger peg seeding on demand
+ * - Maintains all v15.11 routing hardening and telemetry
  */
 
 import express from 'express';
@@ -64,7 +70,7 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.11',
+  VERSION: 'v15.12',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -88,12 +94,12 @@ const LIVE = {
 
   DEXES: {
     UNISWAP_V3: {
-      name: 'Uniswap V3',
-      router:          addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
-      quoter:          addrStrict('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
-      factory:         addrStrict('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
-      positionManager: addrStrict('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
-    },
+  name: 'Uniswap V3',
+  router:          addrStrict('0xE592427A0AEce92De3Edee1F18E0157C05861564'),
+  quoter:          addrStrict('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
+  factory:         addrStrict('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
+  positionManager: addrStrict('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
+}
     UNISWAP_V2: {
       name: 'Uniswap V2',
       router:  addrStrict('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
@@ -521,7 +527,7 @@ class UniversalDexAdapter {
       slippage: 100, // 1.00%
       userAddress: LIVE.SCW_ADDRESS,
       receiver: recipient,
-      partner: 'sovereign-v15.11'
+      partner: 'sovereign-v15.12'
     };
     let res, attempts = 0;
     while (attempts < 5) {
@@ -550,7 +556,6 @@ class UniversalDexAdapter {
     const pool2 = await factory.getPool(LIVE.TOKENS.WETH, tokenOut, feeWethOut);
     if (!pool1 || pool1 === ethers.ZeroAddress || !pool2 || pool2 === ethers.ZeroAddress) return null;
 
-    // Build packed path bytes: tokenIn + fee1 (3 bytes) + WETH + fee2 + tokenOut
     const path = ethers.concat([
       ethers.getAddress(tokenIn),
       ethers.hexlify(ethers.toBeArray(feeInWeth, 3)),
@@ -572,7 +577,6 @@ class UniversalDexAdapter {
   async buildSwapCalldata(params) {
     const { tokenIn, tokenOut, amountIn, amountOutMin, recipient, fee = LIVE.PEG.FEE_TIER_DEFAULT } = params;
 
-    // Aggregators: return adapter-provided router+calldata (no overrides)
     if (this.type === 'Aggregator') {
       return await this._agg1inchSwapCalldata(tokenIn, tokenOut, amountIn, recipient);
     }
@@ -581,14 +585,12 @@ class UniversalDexAdapter {
     }
 
     if (this.type === 'V3') {
-      // Try single-hop exactInputSingle
       const iface = new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)']);
       const calldata = iface.encodeFunctionData('exactInputSingle', [{
         tokenIn, tokenOut, fee, recipient,
         deadline: Math.floor(Date.now()/1000)+600,
         amountIn, amountOutMinimum: amountOutMin || 0n, sqrtPriceLimitX96: 0n
       }]);
-      // If pools are missing, use multi-hop path via WETH
       try {
         const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], this.provider);
         const pool = await factory.getPool(tokenIn, tokenOut, fee);
@@ -608,7 +610,6 @@ class UniversalDexAdapter {
       return { router: this.config.router, calldata };
     }
 
-    // Default to V3 single hop (as last resort)
     const fallback = new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160)) returns (uint256)']);
     const fallbackData = fallback.encodeFunctionData('exactInputSingle', [{
       tokenIn, tokenOut, fee: LIVE.PEG.FEE_TIER_DEFAULT, recipient,
@@ -632,7 +633,7 @@ class DexAdapterRegistry {
     this.cache = new LRUMap(10000);
     this.scores = new Map();
     this.health = new DexHealth(provider);
-    this.lastErrors = new Map(); // collect route errors for visibility
+    this.lastErrors = new Map();
   }
 
   getAdapter(name) { const a = this.adapters[name]; if (!a) throw new Error(`Adapter ${name} not found`); return a; }
@@ -938,7 +939,6 @@ class StrategyEngine {
   async execSwap(tokenIn, tokenOut, amountIn){
     const built = await this.dex.buildSplitExec(tokenIn, tokenOut, amountIn, LIVE.SCW_ADDRESS);
     if (!built) throw new Error('No route available');
-    // Telemetry: show selected route details for visibility
     console.log(`[execSwap] router=${built.router} dex=${built.selectedDex} type=${built.selectedType} calldataLen=${built.calldata?.length || 0}`);
 
     const iface=new ethers.Interface(['function execute(address,uint256,bytes)']);
@@ -1297,7 +1297,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.11',
+  version: '15.12',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1613,87 +1613,86 @@ class AdaptiveRangeMaker {
 }
 
 /* =========================================================================
-   API server v15.11
+   API server v15.12
    ========================================================================= */
 
 class APIServerV15 {
   constructor(core, port=8081){ this.core=core; this.port=port; this.app=express(); this.server=null; this.routes(); }
   routes(){
-    this.app.get('/', (req,res)=> {
-      const s=this.core.getStats();
-      res.send(`
-        <h1>SOVEREIGN FINALITY ENGINE ${LIVE.VERSION}</h1>
-        <p>Status: ${s.system.status}</p>
-        <p>Policy: ${s.system.policyHash}</p>
-        <p>Trades Executed: ${s.trading.tradesExecuted}</p>
-        <p>Last Profit (USD): ${s.trading.lastProfitUSD}</p>
-        <p>Projected Daily (USD): ${s.trading.projectedDaily?.toFixed?.(2) || 0}</p>
-        <p>Amplifications: ${s.reflexive.amplificationsTriggered}</p>
-        <p>Streams Active: ${s.maker.streamsActive}</p>
-        <p>Anchors: ${s.anchors.count}</p>
-        <p>Compliance Mode: ${s.risk.complianceMode}</p>
-        <meta http-equiv="refresh" content="10">
-      `);
-    });
-    this.app.get('/status', (req,res)=> res.json(this.core.getStats()));
+  this.app.get('/', (req,res)=> {
+    const s=this.core.getStats();
+    res.send(`
+      <h1>SOVEREIGN FINALITY ENGINE ${LIVE.VERSION}</h1>
+      <p>Status: ${s.system.status}</p>
+      <p>Policy: ${s.system.policyHash}</p>
+      <p>Trades Executed: ${s.trading.tradesExecuted}</p>
+      <p>Last Profit (USD): ${s.trading.lastProfitUSD}</p>
+      <p>Projected Daily (USD): ${s.trading.projectedDaily?.toFixed?.(2) || 0}</p>
+      <p>Amplifications: ${s.reflexive.amplificationsTriggered}</p>
+      <p>Streams Active: ${s.maker.streamsActive}</p>
+      <p>Anchors: ${s.anchors.count}</p>
+      <p>Compliance Mode: ${s.risk.complianceMode}</p>
+      <meta http-equiv="refresh" content="10">
+    `);
+  });
+  this.app.get('/status', (req,res)=> res.json(this.core.getStats()));
 
-    // Minimal dashboard aliases to avoid 404s for advertised endpoints
-    this.app.get('/revenue-dashboard', (req,res)=> res.json({ ok:true, data:this.core.getStats().trading, ts: nowTs() }));
-    this.app.get('/blockchain-status', async (req,res)=> {
-      try {
-        const fee = await chainRegistry.getFeeData();
-        res.json({ ok:true, chain: LIVE.NETWORK, feeData: fee, ts: nowTs() });
-      } catch (e) {
-        res.status(500).json({ ok:false, error:e.message, ts: nowTs() });
-      }
-    });
-    this.app.get('/system-metrics', (req,res)=> res.json({ ok:true, metrics: this.core.getStats(), ts: nowTs() }));
-    this.app.get('/revenue-status', (req,res)=> res.json({ ok:true, revenue: this.core.getStats().trading, ts: nowTs() }));
-    this.app.get('/health', async (req,res)=> { try { const health = await this.core.dex.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ok:true, ...health, ts: nowTs() }); } catch (e) { res.status(500).json({ ok:false, error: e.message, ts:nowTs() }); } });
-
-    this.app.get('/dex/list', (req,res)=> res.json({ adapters:this.core.dex.getAllAdapters(), ts:nowTs() }));
-    this.app.get('/dex/health', async (req,res)=> { try { const health = await this.core.dex.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ...health, ts: nowTs() }); } catch (e) { res.status(500).json({ error: e.message }); } });
-    this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dex.getScores(), lastErrors: this.core.dex.getLastErrors(), ts: nowTs() }));
-
-    this.app.get('/anchors/composite', async (req,res)=> { try { const r=await this.core.oracle.compositeUSD(LIVE.TOKENS.BWAEZI); res.json({ priceUSD:r.priceUSD, confidence:r.confidence, dispersionPct:r.dispersionPct, components:r.components, ts:nowTs() }); } catch(e){ res.status(500).json({ error:e.message }); } });
-
-    this.app.get('/v15/equation-state', (req,res)=> res.json({ equation: this.core.kernel?.adaptiveEq?.state || null, ts: nowTs() }));
-    this.app.get('/v15/manifest', (req,res)=> res.json({ manifest: V15_MANIFEST, hash: this.core.policyHash, ts: nowTs() }));
-    this.app.get('/v15/anchors/recent', (req,res)=> res.json({ anchors: this.core.registry.getRecent(50), ts: nowTs() }));
-    this.app.get('/v15/accumulator', (req,res)=> res.json(this.core.verifier.getAccumulator()));
-
-    this.app.get('/v13.9/equation-state', (req,res)=> res.json({ equation: this.core.amplifier.getEquationState(), ts: nowTs() }));
-    this.app.get('/v13.9/accumulator', (req,res)=> res.json({ merkleRoot: this.core.accumulator.merkleRoot, perceptionIndex: this.core.accumulator.getPerceptionIndex(), ts: nowTs() }));
-    this.app.get('/v13.9/risk', (req,res)=> res.json({ risk: LIVE.RISK, ts: nowTs() }));
-
-    this.app.get('/trades/recent', (req,res)=> res.json({ recent: this.core.verifier.getRecent(100), ts: nowTs() }));
-
-    // Genesis telemetry
-    this.app.get('/genesis-state', (req,res)=> {
-      const s = this.core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
-      res.json({ ok:true, genesis: s, ts: nowTs() });
-    });
-
-    this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
-      const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
-      LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
-      res.json({ ok:true, killSwitch: enabled, ts: nowTs() });
-    });
-  }
-  async start(){
-    if (globalThis.__SOVEREIGN_V15_API_RUNNING) {
-      console.warn('API server already running — skipping duplicate start');
-      return;
+  // Minimal dashboard aliases to avoid 404s for advertised endpoints
+  this.app.get('/revenue-dashboard', (req,res)=> res.json({ ok:true, data:this.core.getStats().trading, ts: nowTs() }));
+  this.app.get('/blockchain-status', async (req,res)=> {
+    try {
+      const fee = await chainRegistry.getFeeData();
+      res.json({ ok:true, chain: LIVE.NETWORK, feeData: fee, ts: nowTs() });
+    } catch (e) {
+      res.status(500).json({ ok:false, error:e.message, ts: nowTs() });
     }
-    this.server=this.app.listen(this.port, () => {
-      globalThis.__SOVEREIGN_V15_API_RUNNING = true;
-      console.log(`🌐 API Server v15.11 on :${this.port}`);
-    });
-  }
+  });
+  this.app.get('/system-metrics', (req,res)=> res.json({ ok:true, metrics: this.core.getStats(), ts: nowTs() }));
+  this.app.get('/revenue-status', (req,res)=> res.json({ ok:true, revenue: this.core.getStats().trading, ts: nowTs() }));
+  this.app.get('/health', async (req,res)=> { try { const health = await this.core.dex.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ok:true, ...health, ts: nowTs() }); } catch (e) { res.status(500).json({ ok:false, error: e.message, ts:nowTs() }); } });
+
+  this.app.get('/dex/list', (req,res)=> res.json({ adapters:this.core.dex.getAllAdapters(), ts:nowTs() }));
+  this.app.get('/dex/health', async (req,res)=> { try { const health = await this.core.dex.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ...health, ts: nowTs() }); } catch (e) { res.status(500).json({ error: e.message }); } });
+  this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dex.getScores(), lastErrors: this.core.dex.getLastErrors(), ts: nowTs() }));
+
+  this.app.get('/anchors/composite', async (req,res)=> { try { const r=await this.core.oracle.compositeUSD(LIVE.TOKENS.BWAEZI); res.json({ priceUSD:r.priceUSD, confidence:r.confidence, dispersionPct:r.dispersionPct, components:r.components, ts:nowTs() }); } catch(e){ res.status(500).json({ error:e.message }); } });
+
+  this.app.get('/v15/equation-state', (req,res)=> res.json({ equation: this.core.kernel?.adaptiveEq?.state || null, ts: nowTs() }));
+  this.app.get('/v15/manifest', (req,res)=> res.json({ manifest: V15_MANIFEST, hash: this.core.policyHash, ts: nowTs() }));
+  this.app.get('/v15/anchors/recent', (req,res)=> res.json({ anchors: this.core.registry.getRecent(50), ts: nowTs() }));
+  this.app.get('/v15/accumulator', (req,res)=> res.json(this.core.verifier.getAccumulator()));
+
+  this.app.get('/v13.9/equation-state', (req,res)=> res.json({ equation: this.core.amplifier.getEquationState(), ts: nowTs() }));
+  this.app.get('/v13.9/accumulator', (req,res)=> res.json({ merkleRoot: this.core.accumulator.merkleRoot, perceptionIndex: this.core.accumulator.getPerceptionIndex(), ts: nowTs() }));
+  this.app.get('/v13.9/risk', (req,res)=> res.json({ risk: LIVE.RISK, ts: nowTs() }));
+
+  this.app.get('/trades/recent', (req,res)=> res.json({ recent: this.core.verifier.getRecent(100), ts: nowTs() }));
+
+  // Genesis telemetry
+  this.app.get('/genesis-state', (req,res)=> {
+    const s = this.core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
+    res.json({ ok:true, genesis: s, ts: nowTs() });
+  });
+
+  // Manual force microseed endpoint (unstoppable genesis trigger)
+  this.app.post('/force-microseed', async (req,res) => {
+    try {
+      await forceGenesisPoolAndPeg(this.core);
+      res.json({ ok:true, msg:'Forced pool creation and seed at peg', ts: nowTs() });
+    } catch (e) {
+      res.status(500).json({ ok:false, error:e.message, ts: nowTs() });
+    }
+  });
+
+  this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
+    const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
+    LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
+    res.json({ ok:true, killSwitch: enabled, ts: nowTs() });
+  });
 }
 
 /* =========================================================================
-   Genesis microseed (upgraded for v15.11)
+   Genesis microseed (upgraded for v15.12, unstoppable path)
    ========================================================================= */
 
 // Peg-sized amounts helper (USDC 6dp, BWAEZI 18dp)
@@ -1705,7 +1704,7 @@ function pegSizedAmounts(usdcFloat, pegUSD = LIVE.PEG.TARGET_USD) {
   return { usdcAmt, bwAmt };
 }
 
-// BigInt sqrt (Newton's method) for fixed-point math
+// BigInt sqrt (Newton's method) for fixed-point math (X192→sqrtPriceX96)
 function sqrtBigInt(n) {
   if (n <= 0n) return 0n;
   let x = n;
@@ -1725,13 +1724,13 @@ async function ensureV3PoolAtPeg(provider, signer, token0, token1, fee = LIVE.PE
   let pool = await factory.getPool(t0, t1, fee);
   if (pool && pool !== ethers.ZeroAddress) return pool;
 
-  // Assume price (token1 per token0). If t0=BWAEZI(18), t1=USDC(6): price = 100 USDC per 1 BWAEZI
+  // price (token1 per token0): BWAEZI priced in USDC at the peg
   const dec0 = t0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18n : 6n;
   const dec1 = t1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6n : 18n;
   const numerator = BigInt(pegUSD) * (10n ** dec1);
   const denominator = 1n * (10n ** dec0);
-  const priceX96 = (numerator << 192n) / denominator;
-  const sqrtPriceX96 = sqrtBigInt(priceX96);
+  const priceX192 = (numerator << 192n) / denominator;
+  const sqrtPriceX96 = sqrtBigInt(priceX192);
 
   pool = await npm.createAndInitializePoolIfNecessary(t0, t1, fee, sqrtPriceX96);
   console.log(`🛠️ Created & initialized V3 pool at peg: ${pool}`);
@@ -1765,7 +1764,101 @@ async function seedMinimalLiquidity(core) {
   });
 }
 
-// SCW-first funding: check SCW; only fallback to EOA→SCW transfer if SCW under threshold and EOA has balance
+// Unstoppable genesis: force-create BWAEZI/USDC pool at peg and mint initial liquidity
+async function forceGenesisPoolAndPeg(core) {
+  const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], core.provider);
+  const npm = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, [
+    'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
+  ], core.signer);
+
+  const [t0, t1] = (LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase())
+    ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
+    : [LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI];
+
+  let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
+  if (!pool || pool === ethers.ZeroAddress) {
+    const dec0 = t0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18n : 6n;
+    const dec1 = t1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6n : 18n;
+    const numerator = BigInt(LIVE.PEG.TARGET_USD) * (10n ** dec1);
+    const denominator = 1n * (10n ** dec0);
+    const priceX192 = (numerator << 192n) / denominator;
+    const sqrtPriceX96 = sqrtBigInt(priceX192);
+
+    pool = await npm.createAndInitializePoolIfNecessary(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96);
+    console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/USDC pool at peg: ${pool}`);
+  }
+
+  const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
+  const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
+  const [, tick] = await poolC.slot0();
+  const width = 120;
+  const tl = Number(tick) - width;
+  const tu = Number(tick) + width;
+
+  const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
+  console.log(`[forceGenesis] Minting initial range bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
+
+  try {
+    await core.maker.startStreamingMint({
+      token0: LIVE.TOKENS.BWAEZI,
+      token1: LIVE.TOKENS.USDC,
+      tickLower: tl,
+      tickUpper: tu,
+      total0: bwAmt,
+      total1: usdcAmt,
+      steps: 2,
+      label: 'force_genesis_seed'
+    });
+  } catch (e) {
+    console.error('[forceGenesis] mint failed:', e.message);
+  }
+}
+
+// Optional fallback: create/init BWAEZI/WETH pool and mint tiny seed
+async function fallbackWethGenesis(core) {
+  const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], core.provider);
+  const npm = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.positionManager, [
+    'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
+  ], core.signer);
+
+  const [t0, t1] = (LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.WETH.toLowerCase())
+    ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.WETH]
+    : [LIVE.TOKENS.WETH, LIVE.TOKENS.BWAEZI];
+
+  let pool = await factory.getPool(t0, t1, 3000);
+  if (!pool || pool === ethers.ZeroAddress) {
+    let ethUsd = 2000;
+    try { ethUsd = await core.oracle.chainlinkEthUsd(); } catch {}
+    const dec0 = 18n;
+    const dec1 = 18n;
+    const ratio = (100n * (10n ** dec1)) / BigInt(Math.floor(ethUsd)) / (10n ** dec0);
+    const priceX192 = ratio << 192n;
+    const sqrtPriceX96 = sqrtBigInt(priceX192);
+    pool = await npm.createAndInitializePoolIfNecessary(t0, t1, 3000, sqrtPriceX96);
+    console.log(`🛠️ [fallbackWethGenesis] Created+initialized BWAEZI/WETH pool: ${pool}`);
+  }
+
+  const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
+  const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
+  const [, tick] = await poolC.slot0();
+  const tl = Number(tick) - 180;
+  const tu = Number(tick) + 180;
+
+  const bwAmt = ethers.parseEther('0.05');
+  const wethAmt = ethers.parse Ether('0.002');
+  await core.maker.startStreamingMint({
+    token0: LIVE.TOKENS.BWAEZI,
+    token1: LIVE.TOKENS.WETH,
+    tickLower: tl,
+    tickUpper: tu,
+    total0: bwAmt,
+    total1: wethAmt,
+    steps: 2,
+    label: 'fallback_weth_seed'
+  });
+}
+
+// SCW-first funding: check SCW; fallback EOA→SCW transfer if necessary
 async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   const usdc = new ethers.Contract(
     AA_CONFIG.USDC_ADDRESS,
@@ -1774,24 +1867,21 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   );
   let dec = 6;
   try { dec = await usdc.decimals(); } catch {}
-
   const scwBal = await usdc.balanceOf(AA_CONFIG.SCW_ADDRESS);
   const scwFloat = Number(ethers.formatUnits(scwBal, dec));
   if (scwFloat >= minUSD) {
-    console.log(`💧 SCW already funded with ${scwFloat} USDC — skipping EOA transfer.`);
+    console.log(`💧 SCW funded: ${scwFloat} USDC — skipping EOA transfer.`);
     return { funded: true, source: 'SCW', balance: scwFloat };
   }
-
   const eoaBal = await usdc.balanceOf(signer.address);
   const eoaFloat = Number(ethers.formatUnits(eoaBal, dec));
   if (eoaFloat >= minUSD) {
     const amt = ethers.parseUnits(minUSD.toFixed(2), dec);
     const tx = await usdc.connect(signer).transfer(AA_CONFIG.SCW_ADDRESS, amt, { gasLimit: 120000 });
     const rc = await tx.wait();
-    console.log(`💧 Transferred ${minUSD} USDC from EOA → SCW (tx=${rc.transactionHash})`);
+    console.log(`💧 Transferred ${minUSD} USDC EOA → SCW (tx=${rc.transactionHash})`);
     return { funded: true, source: 'EOA', txHash: rc.transactionHash };
   }
-
   console.warn(`⚠️ Funding insufficient: SCW=${scwFloat} USDC, EOA=${eoaFloat} USDC`);
   return { funded: false, reason: 'insufficient_usdc' };
 }
@@ -1831,7 +1921,6 @@ async function _ensureApprovals(aa) {
 
 // Tiny swaps to awaken perception and EV gating; jittered retries + fallback
 async function _genesisSwaps(core) {
-  // Read SCW USDC balance for sizing
   let balanceUSDC = 5.0;
   try {
     const c = new ethers.Contract(AA_CONFIG.USDC_ADDRESS, ['function balanceOf(address) view returns (uint256)'], core.provider);
@@ -1902,17 +1991,23 @@ async function runGenesisMicroseed(core) {
     await _ensureUSDCInSCW(core.provider, core.signer, 5.00);
     await _ensureApprovals(core.aa);
 
-    // If no quotes for USDC↔BWAEZI on $1 probe, self-bootstrap pool and seed minimal V3 liquidity
+    // If no USDC↔BWAEZI quotes on $1 probe, force-create pool and seed liquidity at peg; then optional WETH fallback
     try {
       const probe = ethers.parseUnits('1.00', 6);
       const best = await core.dex.getBestRoute(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probe);
       if (!best?.best) {
-        console.log('🧪 No USDC↔BWAEZI route on probe — seeding minimal V3 liquidity at peg');
-        await seedMinimalLiquidity(core);
-        await new Promise(r => setTimeout(r, 3000));
+        console.log('🧪 No USDC↔BWAEZI route — forcing genesis pool + peg initialization');
+        await forceGenesisPoolAndPeg(core);
+        await new Promise(r => setTimeout(r, 3500));
+        const best2 = await core.dex.getBestRoute(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probe);
+        if (!best2?.best) {
+          console.log('🧪 Still no BWAEZI↔USDC route — seeding BWAEZI/WETH fallback');
+          await fallbackWethGenesis(core);
+          await new Promise(r => setTimeout(r, 3500));
+        }
       }
     } catch (e) {
-      console.error('Probe route check failed:', e.message);
+      console.error('Probe/force genesis check failed:', e.message);
     }
 
     // Temporarily bypass strict compliance during microseed
@@ -1941,7 +2036,7 @@ async function runGenesisMicroseed(core) {
 }
 
 /* =========================================================================
-   Production sovereign core v15.11 (full live wiring)
+   Production sovereign core v15.12 (full live wiring)
    ========================================================================= */
 
 class ProductionSovereignCore extends EventEmitter {
@@ -2067,9 +2162,9 @@ class ProductionSovereignCore extends EventEmitter {
     }, 20_000));
 
     this.startWS();
-    this.status='SOVEREIGN_LIVE_V15.11';
+    this.status='SOVEREIGN_LIVE_V15.12';
     globalThis.__SOVEREIGN_V15_LIVE = true;
-    console.log('✅ SOVEREIGN FINALITY ENGINE v15.11 — ONLINE');
+    console.log('✅ SOVEREIGN FINALITY ENGINE v15.12 — ONLINE');
     console.log(`   Policy Hash: ${this.policyHash}`);
   }
 
@@ -2123,14 +2218,14 @@ async function bootstrap_v15() {
     console.warn('bootstrap_v15 already called — skipping duplicate bootstrap');
     return globalThis.__SOVEREIGN_V15_CORE || null;
     }
-  console.log('🚀 SOVEREIGN FINALITY ENGINE v15.11 — BOOTSTRAPPING');
+  console.log('🚀 SOVEREIGN FINALITY ENGINE v15.12 — BOOTSTRAPPING');
   await chainRegistry.init();
   const bundlerUrl = process.env.BUNDLER_URL || AA_CONFIG.BUNDLER.RPC_URL;
   const core = new ProductionSovereignCore();
   await core.initialize(bundlerUrl);
   const api = new APIServerV15(core, process.env.PORT ? Number(process.env.PORT) : 8081);
   await api.start();
-  console.log('✅ v15.11 operational');
+  console.log('✅ v15.12 operational');
   globalThis.__SOVEREIGN_V15_BOOTSTRAPPED = true;
   globalThis.__SOVEREIGN_V15_CORE = core;
   return core;
