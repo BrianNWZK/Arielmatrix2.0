@@ -1843,14 +1843,31 @@ function sqrtBigInt(n) {
 
 // Seed minimal liquidity around current tick to enable quotes
 async function seedMinimalLiquidity(core) {
-  const factory = new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory, ['function getPool(address,address,uint24) view returns (address)'], core.provider);
+  const factory = new ethers.Contract(
+    LIVE.DEXES.UNISWAP_V3.factory,
+    ['function getPool(address,address,uint24) view returns (address)'],
+    core.provider
+  );
+
   let pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
   if (!pool || pool === ethers.ZeroAddress) {
-    const r = await ensureV3PoolAtPeg(core.provider, core.signer, LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT, LIVE.PEG.TARGET_USD);
+    const r = await ensureV3PoolAtPeg(
+      core.provider,
+      core.signer,
+      LIVE.TOKENS.BWAEZI,
+      LIVE.TOKENS.USDC,
+      LIVE.PEG.FEE_TIER_DEFAULT,
+      LIVE.PEG.TARGET_USD
+    );
     pool = r.pool;
+    console.log(`🧩 seedMinimalLiquidity: pool=${pool} initTx=${r.txHash || 'n/a'}`);
   }
 
-  const slot = await (new ethers.Contract(pool, ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'], core.provider)).slot0();
+  const slot = await (new ethers.Contract(
+    pool,
+    ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'],
+    core.provider
+  )).slot0();
   const tick = Number(slot[1]);
   const width = 120;
   const tl = tick - width, tu = tick + width;
@@ -1873,7 +1890,11 @@ async function seedMinimalLiquidity(core) {
 async function _genesisSwaps(core) {
   let balanceUSDC = 5.0;
   try {
-    const c = new ethers.Contract(AA_CONFIG.USDC_ADDRESS, ['function balanceOf(address) view returns (uint256)'], core.provider);
+    const c = new ethers.Contract(
+      AA_CONFIG.USDC_ADDRESS,
+      ['function balanceOf(address) view returns (uint256)'],
+      core.provider
+    );
     const bal = await c.balanceOf(AA_CONFIG.SCW_ADDRESS);
     balanceUSDC = Math.max(1.0, Math.min(5.0, Number(ethers.formatUnits(bal, 6))));
   } catch {}
@@ -1886,12 +1907,18 @@ async function _genesisSwaps(core) {
   while (attempts < 3 && executed === 0) {
     try {
       const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
-      await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)) });
+      await core.verifier.record({
+        txHash: res1.txHash,
+        action: 'genesis_buy_bwzC',
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.BWAEZI,
+        notionalUSD: Number(ethers.formatUnits(usdcAmt, 6))
+      });
       console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
       executed++;
     } catch (e) {
-      console.error(`❌ Genesis USDC→BWAEZI failed [attempt ${attempts+1}]:`, e.message);
-      const backoff = 500 + Math.floor(Math.random()*1500);
+      console.error(`❌ Genesis USDC→BWAEZI failed [attempt ${attempts + 1}]:`, e.message);
+      const backoff = 500 + Math.floor(Math.random() * 1500);
       await new Promise(r => setTimeout(r, backoff));
       attempts++;
     }
@@ -1902,12 +1929,18 @@ async function _genesisSwaps(core) {
   while (attempts < 2 && executed === 1) {
     try {
       const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
-      await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC', tokenIn: LIVE.TOKENS.BWAEZI, tokenOut: LIVE.TOKENS.USDC, notionalUSD: 0.0 });
+      await core.verifier.record({
+        txHash: res2.txHash,
+        action: 'genesis_sell_bwzC',
+        tokenIn: LIVE.TOKENS.BWAEZI,
+        tokenOut: LIVE.TOKENS.USDC,
+        notionalUSD: 0.0
+      });
       console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
       executed++;
     } catch (e) {
-      console.error(`❌ Genesis BWAEZI→USDC failed [attempt ${attempts+1}]:`, e.message);
-      const backoff = 500 + Math.floor(Math.random()*1500);
+      console.error(`❌ Genesis BWAEZI→USDC failed [attempt ${attempts + 1}]:`, e.message);
+      const backoff = 500 + Math.floor(Math.random() * 1500);
       await new Promise(r => setTimeout(r, backoff));
       attempts++;
     }
@@ -1918,7 +1951,13 @@ async function _genesisSwaps(core) {
     try {
       const oneUSDC = ethers.parseUnits('1.00', 6);
       const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, oneUSDC);
-      await core.verifier.record({ txHash: res.txHash, action: 'genesis_buy_weth', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.WETH, notionalUSD: 1.0 });
+      await core.verifier.record({
+        txHash: res.txHash,
+        action: 'genesis_buy_weth',
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.WETH,
+        notionalUSD: 1.0
+      });
       console.log(`✅ Genesis USDC→WETH fallback swap tx=${res.txHash}`);
       executed++;
     } catch (e) {
@@ -1938,12 +1977,14 @@ async function runGenesisMicroseed(core) {
     if (recent && recent.length > 0) return { skipped: true, reason: 'already_seeded' };
 
     console.log('🌱 GENESIS MICROSEED — initializing');
+
+    // Ensure SCW has USDC
     await _ensureUSDCInSCW(core.provider, core.signer, 5.00);
 
     // Approvals intentionally skipped
     console.log('[APPROVALS] Skipped — all 11 approvals already satisfied.');
 
-    // Force pool creation if missing
+    // Force pool creation if missing and capture tx hash
     const r = await forceGenesisPoolAndPeg(core);
     console.log(`✅ Genesis pool ready: ${r.pool} (tx=${r.initTxHash || 'n/a'})`);
 
@@ -1951,6 +1992,7 @@ async function runGenesisMicroseed(core) {
     const wasStrict = core.compliance.strict;
     core.compliance.strict = false;
     core.genesisState.attempts += 1;
+
     try {
       const res = await _genesisSwaps(core);
       core.genesisState.lastExecCount = res.executed;
