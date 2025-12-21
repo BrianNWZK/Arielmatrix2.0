@@ -1,8 +1,8 @@
 /**
- * core/sovereign-brain-v15.10.js
+ * core/sovereign-brain-v15.11.js
  *
- * SOVEREIGN FINALITY ENGINE v15.10 — Adaptive Living Systems
- * Unified v13.9 + v14.0 + v14.1 capabilities with adaptive sovereign equation
+ * SOVEREIGN FINALITY ENGINE v15.11 — Adaptive Living Systems
+ * Unified v13.9 + v14.0 + v14.1 + v15.10 capabilities with end-to-end aggregator execution fixes
  *
  * Preserves ALL v14.1 features:
  * - Full live AA (ERC-4337) execution: userOps, SCW approvals, peg enforcement, swaps, pool mints
@@ -14,23 +14,26 @@
  * - Reflexive amplifier; Adaptive range maker (Uniswap V3 position manager); streaming mints
  * - Staked governance registry; WebSocket feeds; extensive audit API endpoints
  *
- * Adds v15 adaptive sovereign equation:
+ * v15 adaptive sovereign equation:
  * - Terms: A(t) Embodied Faith; G(t) Gravity Law; Ev Volatility Energy; Ω Directional Symmetry; Epeg Peg Energy
  * - Adaptive caps Nmax(t), adaptive rate Rmax(t), adaptive damping χ(t)
  * - Peg-accelerate mode; volatility-harvesting grid; adaptive governance hooks
  * - Audit fields: faithIndex, gravityPull, volatilityEnergy, pegEnergy
  *
- * v15.9 upgrade:
+ * v15.9/15.10 upgrades:
  * - Correct aggregator execution: build real swap calldata for 1inch and Paraswap and use proper router
  * - Uniswap V3 multi-hop fallback (USDC↔WETH↔BWAEZI) via exactInput path when single-hop is unavailable
  * - Route-aware execution across strategy and MEV recapture
  * - Extended approvals for all routers (V3/V2/Sushi/1inch/Paraswap)
- *
- * v15.10 upgrade:
  * - Microseed fixes: peg-sized amounts, fail-fast with fallback (USDC↔WETH), strict compliance bypass during microseed
  * - Self-bootstrap Uniswap V3 pool at peg if missing; mint minimal range liquidity before swaps
  * - Genesis flow checks best-quote and seeds liquidity proactively to ensure real execution and receipts
  * - Single-runtime guard to avoid double boot loops; clearer microseed failure logging; minimal dashboard endpoints
+ *
+ * v15.11 upgrades:
+ * - End-to-end aggregator routing hardening: Strategy/Dex strictly preserve adapter-provided router + calldata
+ * - Genesis telemetry: /genesis-state endpoint, route/type logs, calldata length visibility
+ * - Jittered retries for microseed swaps to withstand aggregator rate limits
  */
 
 import express from 'express';
@@ -61,7 +64,7 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.10',
+  VERSION: 'v15.11',
 
   NETWORK: AA_CONFIG.NETWORK,
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
@@ -518,7 +521,7 @@ class UniversalDexAdapter {
       slippage: 100, // 1.00%
       userAddress: LIVE.SCW_ADDRESS,
       receiver: recipient,
-      partner: 'sovereign-v15'
+      partner: 'sovereign-v15.11'
     };
     let res, attempts = 0;
     while (attempts < 5) {
@@ -557,7 +560,6 @@ class UniversalDexAdapter {
     ]);
 
     const iface = new ethers.Interface(['function exactInput((bytes,address,uint256,uint256)) returns (uint256)']);
-    const deadline = Math.floor(Date.now()/1000) + 600;
     const calldata = iface.encodeFunctionData('exactInput', [{
       path,
       recipient,
@@ -570,6 +572,7 @@ class UniversalDexAdapter {
   async buildSwapCalldata(params) {
     const { tokenIn, tokenOut, amountIn, amountOutMin, recipient, fee = LIVE.PEG.FEE_TIER_DEFAULT } = params;
 
+    // Aggregators: return adapter-provided router+calldata (no overrides)
     if (this.type === 'Aggregator') {
       return await this._agg1inchSwapCalldata(tokenIn, tokenOut, amountIn, recipient);
     }
@@ -700,7 +703,7 @@ class DexAdapterRegistry {
     const slipGuard = 0.02;
     const minOut = BigInt(Math.floor(Number(selected.amountOut)*(1-slipGuard)));
     const tx = await selected.adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn, amountOutMin: minOut, recipient, fee: selected.fee || LIVE.PEG.FEE_TIER_DEFAULT });
-    return { router: tx.router, calldata: tx.calldata, routes: routes.all, minOut };
+    return { router: tx.router, calldata: tx.calldata, routes: routes.all, minOut, selectedDex: selected.dex, selectedType: selected.adapter?.type || 'unknown' };
   }
 }
 
@@ -935,9 +938,12 @@ class StrategyEngine {
   async execSwap(tokenIn, tokenOut, amountIn){
     const built = await this.dex.buildSplitExec(tokenIn, tokenOut, amountIn, LIVE.SCW_ADDRESS);
     if (!built) throw new Error('No route available');
+    // Telemetry: show selected route details for visibility
+    console.log(`[execSwap] router=${built.router} dex=${built.selectedDex} type=${built.selectedType} calldataLen=${built.calldata?.length || 0}`);
+
     const iface=new ethers.Interface(['function execute(address,uint256,bytes)']);
     const calldata = iface.encodeFunctionData('execute',[built.router, 0n, built.calldata]);
-    const userOpRes = await this.mev.sendUserOp(calldata, { description:'swap_exec' });
+    const userOpRes = await this.mev.sendUserOp(calldata, { description:`swap_exec_${built.selectedDex}` });
     return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
   }
 
@@ -1291,7 +1297,7 @@ class MevExecutorAA {
    ========================================================================= */
 
 const V15_MANIFEST = {
-  version: '15.10',
+  version: '15.11',
   pegUSD: LIVE.PEG.TARGET_USD,
   liquidityBaseline: 1e9,
   gates: { confidenceMin:0.6, dispersionMaxPct:2.0, bandPctMin:0.35, slippageCeiling:0.02, coherenceMin:0.5 },
@@ -1607,7 +1613,7 @@ class AdaptiveRangeMaker {
 }
 
 /* =========================================================================
-   API server v15
+   API server v15.11
    ========================================================================= */
 
 class APIServerV15 {
@@ -1662,26 +1668,32 @@ class APIServerV15 {
 
     this.app.get('/trades/recent', (req,res)=> res.json({ recent: this.core.verifier.getRecent(100), ts: nowTs() }));
 
+    // Genesis telemetry
+    this.app.get('/genesis-state', (req,res)=> {
+      const s = this.core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
+      res.json({ ok:true, genesis: s, ts: nowTs() });
+    });
+
     this.app.post('/risk/kill-switch', express.json(), (req,res)=> {
       const enabled = (req.query.enabled || req.body?.enabled || 'false').toString() === 'true';
       LIVE.RISK.CIRCUIT_BREAKERS.GLOBAL_KILL_SWITCH = enabled;
       res.json({ ok:true, killSwitch: enabled, ts: nowTs() });
     });
   }
-  async start(){ 
+  async start(){
     if (globalThis.__SOVEREIGN_V15_API_RUNNING) {
       console.warn('API server already running — skipping duplicate start');
       return;
     }
     this.server=this.app.listen(this.port, () => {
       globalThis.__SOVEREIGN_V15_API_RUNNING = true;
-      console.log(`🌐 API Server v15 on :${this.port}`);
+      console.log(`🌐 API Server v15.11 on :${this.port}`);
     });
   }
 }
 
 /* =========================================================================
-   Genesis microseed (upgraded for v15.10)
+   Genesis microseed (upgraded for v15.11)
    ========================================================================= */
 
 // Peg-sized amounts helper (USDC 6dp, BWAEZI 18dp)
@@ -1716,7 +1728,7 @@ async function ensureV3PoolAtPeg(provider, signer, token0, token1, fee = LIVE.PE
   // Assume price (token1 per token0). If t0=BWAEZI(18), t1=USDC(6): price = 100 USDC per 1 BWAEZI
   const dec0 = t0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18n : 6n;
   const dec1 = t1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6n : 18n;
-  const numerator = 100n * (10n ** dec1);
+  const numerator = BigInt(pegUSD) * (10n ** dec1);
   const denominator = 1n * (10n ** dec0);
   const priceX96 = (numerator << 192n) / denominator;
   const sqrtPriceX96 = sqrtBigInt(priceX96);
@@ -1808,7 +1820,7 @@ async function _ensureApprovals(aa) {
 
   for (const tokenAddr of tokensToApprove) {
     for (const routerAddr of routersToApprove) {
-      try { 
+      try {
         const tx = await sendApprove(tokenAddr, routerAddr);
         console.log(`[APPROVAL] ${tokenAddr} → ${routerAddr}: ${tx}`);
       } catch(e){ console.error('Approval error:', e.message); }
@@ -1817,7 +1829,7 @@ async function _ensureApprovals(aa) {
   return { ok: true };
 }
 
-// Tiny swaps to awaken perception and EV gating; fail-fast + fallback
+// Tiny swaps to awaken perception and EV gating; jittered retries + fallback
 async function _genesisSwaps(core) {
   // Read SCW USDC balance for sizing
   let balanceUSDC = 5.0;
@@ -1829,23 +1841,37 @@ async function _genesisSwaps(core) {
 
   const { usdcAmt, bwAmt } = pegSizedAmounts(balanceUSDC, LIVE.PEG.TARGET_USD);
   let executed = 0;
+  let attempts = 0;
 
-  try {
-    const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
-    await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)) });
-    console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
-    executed++;
-  } catch (e) {
-    console.error('❌ Genesis USDC→BWAEZI failed:', e.message);
+  // USDC → BWAEZI
+  while (attempts < 3 && executed === 0) {
+    try {
+      const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
+      await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)) });
+      console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
+      executed++;
+    } catch (e) {
+      console.error(`❌ Genesis USDC→BWAEZI failed [attempt ${attempts+1}]:`, e.message);
+      const backoff = 500 + Math.floor(Math.random()*1500);
+      await new Promise(r => setTimeout(r, backoff));
+      attempts++;
+    }
   }
 
-  try {
-    const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
-    await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC', tokenIn: LIVE.TOKENS.BWAEZI, tokenOut: LIVE.TOKENS.USDC, notionalUSD: 0.0 });
-    console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
-    executed++;
-  } catch (e) {
-    console.error('❌ Genesis BWAEZI→USDC failed:', e.message);
+  // BWAEZI → USDC
+  attempts = 0;
+  while (attempts < 2 && executed === 1) {
+    try {
+      const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
+      await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC', tokenIn: LIVE.TOKENS.BWAEZI, tokenOut: LIVE.TOKENS.USDC, notionalUSD: 0.0 });
+      console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
+      executed++;
+    } catch (e) {
+      console.error(`❌ Genesis BWAEZI→USDC failed [attempt ${attempts+1}]:`, e.message);
+      const backoff = 500 + Math.floor(Math.random()*1500);
+      await new Promise(r => setTimeout(r, backoff));
+      attempts++;
+    }
   }
 
   // Fallback: if neither executed, try liquid pair for boot (USDC↔WETH)
@@ -1867,6 +1893,7 @@ async function _genesisSwaps(core) {
 
 // One-call orchestrator
 async function runGenesisMicroseed(core) {
+  core.genesisState = core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
   try {
     const recent = core.verifier.getRecent(5);
     if (recent && recent.length > 0) return { skipped: true, reason: 'already_seeded' };
@@ -1875,7 +1902,7 @@ async function runGenesisMicroseed(core) {
     await _ensureUSDCInSCW(core.provider, core.signer, 5.00);
     await _ensureApprovals(core.aa);
 
-    // If no quotes for USDC↔BWAEZI on $1 probe, self-bootstrap pool and seed minimal liquidity
+    // If no quotes for USDC↔BWAEZI on $1 probe, self-bootstrap pool and seed minimal V3 liquidity
     try {
       const probe = ethers.parseUnits('1.00', 6);
       const best = await core.dex.getBestRoute(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probe);
@@ -1891,8 +1918,16 @@ async function runGenesisMicroseed(core) {
     // Temporarily bypass strict compliance during microseed
     const wasStrict = core.compliance.strict;
     core.compliance.strict = false;
+    core.genesisState.attempts += 1;
     try {
-      await _genesisSwaps(core);
+      const r = await _genesisSwaps(core);
+      core.genesisState.lastExecCount = r.executed;
+      core.genesisState.lastError = null;
+      core.genesisState.lastTs = nowTs();
+    } catch (err) {
+      core.genesisState.lastError = err?.message || String(err);
+      core.genesisState.lastTs = nowTs();
+      throw err;
     } finally {
       core.compliance.strict = wasStrict;
     }
@@ -1906,7 +1941,7 @@ async function runGenesisMicroseed(core) {
 }
 
 /* =========================================================================
-   Production sovereign core v15 (full live wiring)
+   Production sovereign core v15.11 (full live wiring)
    ========================================================================= */
 
 class ProductionSovereignCore extends EventEmitter {
@@ -1931,6 +1966,7 @@ class ProductionSovereignCore extends EventEmitter {
       pegActions:0, amplificationsTriggered:0, streamsActive:0, perceptionsAnchored:0
     };
     this.status='INIT'; this.loops=[];
+    this.genesisState = { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
   }
 
   async initialize(bundlerUrlOverride=null){
@@ -2031,9 +2067,9 @@ class ProductionSovereignCore extends EventEmitter {
     }, 20_000));
 
     this.startWS();
-    this.status='SOVEREIGN_LIVE_V15';
+    this.status='SOVEREIGN_LIVE_V15.11';
     globalThis.__SOVEREIGN_V15_LIVE = true;
-    console.log('✅ SOVEREIGN FINALITY ENGINE v15 — ONLINE');
+    console.log('✅ SOVEREIGN FINALITY ENGINE v15.11 — ONLINE');
     console.log(`   Policy Hash: ${this.policyHash}`);
   }
 
@@ -2086,15 +2122,15 @@ async function bootstrap_v15() {
   if (globalThis.__SOVEREIGN_V15_BOOTSTRAPPED) {
     console.warn('bootstrap_v15 already called — skipping duplicate bootstrap');
     return globalThis.__SOVEREIGN_V15_CORE || null;
-  }
-  console.log('🚀 SOVEREIGN FINALITY ENGINE v15 — BOOTSTRAPPING');
+    }
+  console.log('🚀 SOVEREIGN FINALITY ENGINE v15.11 — BOOTSTRAPPING');
   await chainRegistry.init();
   const bundlerUrl = process.env.BUNDLER_URL || AA_CONFIG.BUNDLER.RPC_URL;
   const core = new ProductionSovereignCore();
   await core.initialize(bundlerUrl);
   const api = new APIServerV15(core, process.env.PORT ? Number(process.env.PORT) : 8081);
   await api.start();
-  console.log('✅ v15 operational');
+  console.log('✅ v15.11 operational');
   globalThis.__SOVEREIGN_V15_BOOTSTRAPPED = true;
   globalThis.__SOVEREIGN_V15_CORE = core;
   return core;
