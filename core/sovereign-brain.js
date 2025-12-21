@@ -30,6 +30,7 @@
  * - Microseed fixes: peg-sized amounts, fail-fast with fallback (USDC↔WETH), strict compliance bypass during microseed
  * - Self-bootstrap Uniswap V3 pool at peg if missing; mint minimal range liquidity before swaps
  * - Genesis flow checks best-quote and seeds liquidity proactively to ensure real execution and receipts
+ * - Single-runtime guard to avoid double boot loops; clearer microseed failure logging; minimal dashboard endpoints
  */
 
 import express from 'express';
@@ -628,12 +629,13 @@ class DexAdapterRegistry {
     this.cache = new LRUMap(10000);
     this.scores = new Map();
     this.health = new DexHealth(provider);
+    this.lastErrors = new Map(); // collect route errors for visibility
   }
 
   getAdapter(name) { const a = this.adapters[name]; if (!a) throw new Error(`Adapter ${name} not found`); return a; }
   getAllAdapters() { return Object.entries(this.adapters).map(([name, adapter]) => ({ name, config: adapter.config, type: adapter.type })); }
 
-  _updateScore(name, ok, latencyMs, liquidity) {
+  _updateScore(name, ok, latencyMs, liquidity, errorMsg = null) {
     const prev = this.scores.get(name) || { okCount: 0, failCount: 0, avgLatency: null, avgLiquidity: 0, score: 50 };
     if (ok) prev.okCount++; else prev.failCount++;
     if (latencyMs != null) prev.avgLatency = prev.avgLatency == null ? latencyMs : Math.round(prev.avgLatency * 0.7 + latencyMs * 0.3);
@@ -643,6 +645,7 @@ class DexAdapterRegistry {
     const score = Math.round(100 * (0.5 * successRate + 0.3 * latencyScore + 0.2 * Math.min(1, prev.avgLiquidity / 1e9)));
     prev.score = score;
     this.scores.set(name, prev);
+    if (errorMsg) this.lastErrors.set(name, { at: nowTs(), error: String(errorMsg) });
   }
 
   async getBestQuote(tokenIn, tokenOut, amountIn) {
@@ -653,8 +656,8 @@ class DexAdapterRegistry {
       try {
         const q = await adapter.getQuote(tokenIn, tokenOut, amountIn);
         if (q && q.amountOut > 0n) { quotes.push({ dex: name, ...q, adapter }); this._updateScore(name, true, q.latencyMs, q.liquidity); }
-        else this._updateScore(name, false, null, null);
-      } catch { this._updateScore(name, false, null, null); }
+        else this._updateScore(name, false, null, null, 'no quote or amountOut=0');
+      } catch (err) { this._updateScore(name, false, null, null, err?.message || 'quote exception'); }
     }));
     quotes.sort((a, b) => {
       const sa = this.scores.get(a.dex)?.score || 50;
@@ -662,21 +665,22 @@ class DexAdapterRegistry {
       if (sa !== sb) return sb - sa;
       return Number(b.amountOut - a.amountOut);
     });
-    const result = { best: quotes[0] || null, secondBest: quotes[1] || quotes[0] || null, all: quotes, scores: Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })) };
+    const result = { best: quotes[0] || null, secondBest: quotes[1] || quotes[0] || null, all: quotes, scores: Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })), lastErrors: Array.from(this.lastErrors.entries()).map(([dex, e]) => ({ dex, ...e })) };
     this.cache.set(key, { result, ts: nowTs() });
     return result;
   }
 
   getScores() { return Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })); }
+  getLastErrors() { return Array.from(this.lastErrors.entries()).map(([dex, e]) => ({ dex, ...e })); }
 
   async healthCheck(tokenA = LIVE.TOKENS.WETH, tokenB = LIVE.TOKENS.USDC, amount = ethers.parseEther('0.01')) {
     const checks = [];
     for (const [name, adapter] of Object.entries(this.adapters)) {
       try {
         const q = await adapter.getQuote(tokenA, tokenB, amount);
-        checks.push({ name, ok: !!q, latencyMs: q?.latencyMs || null, liquidity: q?.liquidity || '0', score: (this.scores.get(name)?.score || null) });
-      } catch {
-        checks.push({ name, ok: false, latencyMs: null, liquidity: '0', score: (this.scores.get(name)?.score || null) });
+        checks.push({ name, ok: !!q, latencyMs: q?.latencyMs || null, liquidity: q?.liquidity || '0', score: (this.scores.get(name)?.score || null), lastError: this.lastErrors.get(name)?.error || null });
+      } catch (err) {
+        checks.push({ name, ok: false, latencyMs: null, liquidity: '0', score: (this.scores.get(name)?.score || null), lastError: err?.message || 'adapter error' });
       }
     }
     return { count: checks.length, checks, timestamp: nowTs() };
@@ -684,9 +688,9 @@ class DexAdapterRegistry {
 
   async getBestRoute(tokenIn, tokenOut, amountIn){
     const bestQuote = await this.getBestQuote(tokenIn, tokenOut, amountIn);
-    if (!bestQuote?.best) return { best:null, routes:[] };
+    if (!bestQuote?.best) return { best:null, routes:[], lastErrors: this.getLastErrors() };
     const score = await this.health.scoreAdapter(bestQuote.best.dex, tokenIn, tokenOut);
-    return { best: { ...bestQuote.best, adapter: bestQuote.best.dex, health: score.health }, routes: bestQuote.all };
+    return { best: { ...bestQuote.best, adapter: bestQuote.best.dex, health: score.health }, routes: bestQuote.all, lastErrors: this.getLastErrors() };
   }
 
   async buildSplitExec(tokenIn, tokenOut, amountIn, recipient){
@@ -1526,7 +1530,10 @@ class MEVRecaptureEngine {
       const adapter = this.dexRegistry.getAdapter(routes[i]);
       const partIn = BigInt(Math.floor(Number(amountIn)*normParts[i]));
       const quote = await adapter.getQuote(tokenIn, tokenOut, partIn);
-      if (!quote?.amountOut) continue;
+      if (!quote?.amountOut) {
+        console.error(`[split_exec] route=${routes[i]} failed to quote for partIn=${partIn.toString()}`);
+        continue;
+      }
       const slip = 0.004 + Math.random()*0.006;
       const minOut = BigInt(Math.floor(Number(quote.amountOut)*(1-slip)));
       const tx = await adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn: partIn, amountOutMin: minOut, recipient });
@@ -1540,7 +1547,7 @@ class MEVRecaptureEngine {
       await new Promise(r => setTimeout(r, jitter));
     }
     const results = [];
-    for (const t of txs) { try { results.push(await t); } catch {} }
+    for (const t of txs) { try { results.push(await t); } catch (err) { console.error(`[split_exec] userOp send failed: ${err?.message || err}`); } }
     return results;
   }
   async backrunCover({ tokenIn, tokenOut, amountIn }) {
@@ -1578,7 +1585,8 @@ class AdaptiveRangeMaker {
         try{
           const tx=await this.npm.mint({ token0:st.token0, token1:st.token1, fee:LIVE.PEG.FEE_TIER_DEFAULT, tickLower:st.tickLower, tickUpper:st.tickUpper, amount0Desired:st.chunk0, amount1Desired:st.chunk1, amount0Min:0, amount1Min:0, recipient:LIVE.SCW_ADDRESS, deadline:Math.floor(nowTs()/1000)+1200 });
           const rec=await tx.wait(); st.positions.push({ txHash:rec.transactionHash, at:nowTs() });
-        } catch(e){ console.warn('Streaming mint error:', e.message); }
+          console.log(`[maker_stream:${label}] mint chunk done tx=${rec.transactionHash}`);
+        } catch(e){ console.error('Streaming mint error:', e.message); }
         st.done++; this.running.set(id, st); await new Promise(r=>setTimeout(r, delayMs));
       }
     })();
@@ -1623,9 +1631,23 @@ class APIServerV15 {
     });
     this.app.get('/status', (req,res)=> res.json(this.core.getStats()));
 
+    // Minimal dashboard aliases to avoid 404s for advertised endpoints
+    this.app.get('/revenue-dashboard', (req,res)=> res.json({ ok:true, data:this.core.getStats().trading, ts: nowTs() }));
+    this.app.get('/blockchain-status', async (req,res)=> {
+      try {
+        const fee = await chainRegistry.getFeeData();
+        res.json({ ok:true, chain: LIVE.NETWORK, feeData: fee, ts: nowTs() });
+      } catch (e) {
+        res.status(500).json({ ok:false, error:e.message, ts: nowTs() });
+      }
+    });
+    this.app.get('/system-metrics', (req,res)=> res.json({ ok:true, metrics: this.core.getStats(), ts: nowTs() }));
+    this.app.get('/revenue-status', (req,res)=> res.json({ ok:true, revenue: this.core.getStats().trading, ts: nowTs() }));
+    this.app.get('/health', async (req,res)=> { try { const health = await this.core.dex.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ok:true, ...health, ts: nowTs() }); } catch (e) { res.status(500).json({ ok:false, error: e.message, ts:nowTs() }); } });
+
     this.app.get('/dex/list', (req,res)=> res.json({ adapters:this.core.dex.getAllAdapters(), ts:nowTs() }));
     this.app.get('/dex/health', async (req,res)=> { try { const health = await this.core.dex.healthCheck(LIVE.TOKENS.WETH, LIVE.TOKENS.USDC, ethers.parseEther('0.01')); res.json({ ...health, ts: nowTs() }); } catch (e) { res.status(500).json({ error: e.message }); } });
-    this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dex.getScores(), ts: nowTs() }));
+    this.app.get('/dex/scores', (req,res)=> res.json({ scores: this.core.dex.getScores(), lastErrors: this.core.dex.getLastErrors(), ts: nowTs() }));
 
     this.app.get('/anchors/composite', async (req,res)=> { try { const r=await this.core.oracle.compositeUSD(LIVE.TOKENS.BWAEZI); res.json({ priceUSD:r.priceUSD, confidence:r.confidence, dispersionPct:r.dispersionPct, components:r.components, ts:nowTs() }); } catch(e){ res.status(500).json({ error:e.message }); } });
 
@@ -1646,7 +1668,16 @@ class APIServerV15 {
       res.json({ ok:true, killSwitch: enabled, ts: nowTs() });
     });
   }
-  async start(){ this.server=this.app.listen(this.port, () => console.log(`🌐 API Server v15 on :${this.port}`)); }
+  async start(){ 
+    if (globalThis.__SOVEREIGN_V15_API_RUNNING) {
+      console.warn('API server already running — skipping duplicate start');
+      return;
+    }
+    this.server=this.app.listen(this.port, () => {
+      globalThis.__SOVEREIGN_V15_API_RUNNING = true;
+      console.log(`🌐 API Server v15 on :${this.port}`);
+    });
+  }
 }
 
 /* =========================================================================
@@ -1685,13 +1716,13 @@ async function ensureV3PoolAtPeg(provider, signer, token0, token1, fee = LIVE.PE
   // Assume price (token1 per token0). If t0=BWAEZI(18), t1=USDC(6): price = 100 USDC per 1 BWAEZI
   const dec0 = t0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18n : 6n;
   const dec1 = t1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6n : 18n;
-  const priceNum = BigInt(Math.floor(pegUSD)); // approximate peg
-  const numerator = priceNum * (10n ** dec1);
+  const numerator = 100n * (10n ** dec1);
   const denominator = 1n * (10n ** dec0);
-  const priceX96 = (numerator * (1n << 192n)) / denominator;
+  const priceX96 = (numerator << 192n) / denominator;
   const sqrtPriceX96 = sqrtBigInt(priceX96);
 
   pool = await npm.createAndInitializePoolIfNecessary(t0, t1, fee, sqrtPriceX96);
+  console.log(`🛠️ Created & initialized V3 pool at peg: ${pool}`);
   return pool;
 }
 
@@ -1709,6 +1740,7 @@ async function seedMinimalLiquidity(core) {
   const tl = tick - width, tu = tick + width;
 
   const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
+  console.log(`🌱 Seeding minimal V3 liquidity bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
   await core.maker.startStreamingMint({
     token0: LIVE.TOKENS.BWAEZI,
     token1: LIVE.TOKENS.USDC,
@@ -1734,7 +1766,7 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
   const scwBal = await usdc.balanceOf(AA_CONFIG.SCW_ADDRESS);
   const scwFloat = Number(ethers.formatUnits(scwBal, dec));
   if (scwFloat >= minUSD) {
-    console.log(`SCW already funded with ${scwFloat} USDC — skipping EOA transfer.`);
+    console.log(`💧 SCW already funded with ${scwFloat} USDC — skipping EOA transfer.`);
     return { funded: true, source: 'SCW', balance: scwFloat };
   }
 
@@ -1744,11 +1776,11 @@ async function _ensureUSDCInSCW(provider, signer, minUSD = 5.00) {
     const amt = ethers.parseUnits(minUSD.toFixed(2), dec);
     const tx = await usdc.connect(signer).transfer(AA_CONFIG.SCW_ADDRESS, amt, { gasLimit: 120000 });
     const rc = await tx.wait();
-    console.log(`Transferred ${minUSD} USDC from EOA → SCW`);
+    console.log(`💧 Transferred ${minUSD} USDC from EOA → SCW (tx=${rc.transactionHash})`);
     return { funded: true, source: 'EOA', txHash: rc.transactionHash };
   }
 
-  console.warn(`Funding insufficient: SCW=${scwFloat} USDC, EOA=${eoaFloat} USDC`);
+  console.warn(`⚠️ Funding insufficient: SCW=${scwFloat} USDC, EOA=${eoaFloat} USDC`);
   return { funded: false, reason: 'insufficient_usdc' };
 }
 
@@ -1776,7 +1808,10 @@ async function _ensureApprovals(aa) {
 
   for (const tokenAddr of tokensToApprove) {
     for (const routerAddr of routersToApprove) {
-      try { await sendApprove(tokenAddr, routerAddr); } catch(e){ console.warn('Approval error:', e.message); }
+      try { 
+        const tx = await sendApprove(tokenAddr, routerAddr);
+        console.log(`[APPROVAL] ${tokenAddr} → ${routerAddr}: ${tx}`);
+      } catch(e){ console.error('Approval error:', e.message); }
     }
   }
   return { ok: true };
@@ -1798,17 +1833,19 @@ async function _genesisSwaps(core) {
   try {
     const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
     await core.verifier.record({ txHash: res1.txHash, action: 'genesis_buy_bwzC', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)) });
+    console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
     executed++;
   } catch (e) {
-    console.warn('Genesis USDC→BWAEZI failed:', e.message);
+    console.error('❌ Genesis USDC→BWAEZI failed:', e.message);
   }
 
   try {
     const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
     await core.verifier.record({ txHash: res2.txHash, action: 'genesis_sell_bwzC', tokenIn: LIVE.TOKENS.BWAEZI, tokenOut: LIVE.TOKENS.USDC, notionalUSD: 0.0 });
+    console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
     executed++;
   } catch (e) {
-    console.warn('Genesis BWAEZI→USDC failed:', e.message);
+    console.error('❌ Genesis BWAEZI→USDC failed:', e.message);
   }
 
   // Fallback: if neither executed, try liquid pair for boot (USDC↔WETH)
@@ -1817,9 +1854,10 @@ async function _genesisSwaps(core) {
       const oneUSDC = ethers.parseUnits('1.00', 6);
       const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, oneUSDC);
       await core.verifier.record({ txHash: res.txHash, action: 'genesis_buy_weth', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.WETH, notionalUSD: 1.0 });
+      console.log(`✅ Genesis USDC→WETH fallback swap tx=${res.txHash}`);
       executed++;
     } catch (e) {
-      console.warn('Genesis USDC→WETH fallback failed:', e.message);
+      console.error('❌ Genesis USDC→WETH fallback failed:', e.message);
     }
   }
 
@@ -1842,12 +1880,12 @@ async function runGenesisMicroseed(core) {
       const probe = ethers.parseUnits('1.00', 6);
       const best = await core.dex.getBestRoute(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probe);
       if (!best?.best) {
-        console.log('No USDC↔BWAEZI route on probe — seeding minimal V3 liquidity at peg');
+        console.log('🧪 No USDC↔BWAEZI route on probe — seeding minimal V3 liquidity at peg');
         await seedMinimalLiquidity(core);
         await new Promise(r => setTimeout(r, 3000));
       }
     } catch (e) {
-      console.warn('Probe route check failed:', e.message);
+      console.error('Probe route check failed:', e.message);
     }
 
     // Temporarily bypass strict compliance during microseed
@@ -1862,7 +1900,7 @@ async function runGenesisMicroseed(core) {
     console.log('✅ GENESIS MICROSEED — complete');
     return { ok: true };
    } catch (e) {
-    console.warn('❌ GENESIS MICROSEED failed:', e.message);
+    console.error('❌ GENESIS MICROSEED failed:', e.message);
     return { ok: false, error: e.message };
   }
 }
@@ -1896,6 +1934,10 @@ class ProductionSovereignCore extends EventEmitter {
   }
 
   async initialize(bundlerUrlOverride=null){
+    if (globalThis.__SOVEREIGN_V15_LIVE) {
+      console.warn('⚠️ Sovereign v15 already initialized — skipping duplicate boot');
+      return;
+    }
     console.log(`🚀 SOVEREIGN FINALITY ENGINE ${LIVE.VERSION} — BOOTING`);
     await chainRegistry.init();
     this.provider = chainRegistry.getProvider();
@@ -1939,7 +1981,7 @@ class ProductionSovereignCore extends EventEmitter {
         const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
         if (adj?.adjusted) {
           this.stats.streamsActive = (this.maker?.listStreams?.().length || 0);
-          console.log(`Range adjusted tick=${adj.tick} width=[${adj.tickLower},${adj.tickUpper}] coherence=${adj.coherence?.toFixed?.(2) || 'n/a'} stream=${adj.streamId}`);
+          console.log(`🔧 Range adjusted tick=${adj.tick} width=[${adj.tickLower},${adj.tickUpper}] coherence=${adj.coherence?.toFixed?.(2) || 'n/a'} stream=${adj.streamId}`);
         }
       } catch (e) { console.warn('maker adjust error:', e.message); }
     }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
@@ -1990,12 +2032,17 @@ class ProductionSovereignCore extends EventEmitter {
 
     this.startWS();
     this.status='SOVEREIGN_LIVE_V15';
+    globalThis.__SOVEREIGN_V15_LIVE = true;
     console.log('✅ SOVEREIGN FINALITY ENGINE v15 — ONLINE');
     console.log(`   Policy Hash: ${this.policyHash}`);
   }
 
   startWS(port=8082){
     try {
+      if (globalThis.__SOVEREIGN_V15_WS_RUNNING) {
+        console.warn('WS server already running — skipping duplicate start');
+        return;
+      }
       this.wss = new WebSocketServer({ port });
       this.wss.on('connection', ws => {
         this.clients.add(ws);
@@ -2004,6 +2051,7 @@ class ProductionSovereignCore extends EventEmitter {
         }
         ws.on('close', () => this.clients.delete(ws));
       });
+      globalThis.__SOVEREIGN_V15_WS_RUNNING = true;
       console.log(`🔌 WebSocket server on :${port}`);
     } catch (e) {
       console.warn('WS server failed to start:', e.message);
@@ -2035,6 +2083,10 @@ class ProductionSovereignCore extends EventEmitter {
    ========================================================================= */
 
 async function bootstrap_v15() {
+  if (globalThis.__SOVEREIGN_V15_BOOTSTRAPPED) {
+    console.warn('bootstrap_v15 already called — skipping duplicate bootstrap');
+    return globalThis.__SOVEREIGN_V15_CORE || null;
+  }
   console.log('🚀 SOVEREIGN FINALITY ENGINE v15 — BOOTSTRAPPING');
   await chainRegistry.init();
   const bundlerUrl = process.env.BUNDLER_URL || AA_CONFIG.BUNDLER.RPC_URL;
@@ -2043,6 +2095,8 @@ async function bootstrap_v15() {
   const api = new APIServerV15(core, process.env.PORT ? Number(process.env.PORT) : 8081);
   await api.start();
   console.log('✅ v15 operational');
+  globalThis.__SOVEREIGN_V15_BOOTSTRAPPED = true;
+  globalThis.__SOVEREIGN_V15_CORE = core;
   return core;
 }
 
