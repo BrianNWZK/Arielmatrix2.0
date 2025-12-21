@@ -99,7 +99,7 @@ const LIVE = {
   quoter:          addrStrict('0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6'),
   factory:         addrStrict('0x1F98431c8aD98523631AE4a59f267346ea31F984'),
   positionManager: addrStrict('0xC36442b4a4522E871399CD717aBDD847Ab11FE88')
-}
+},
     UNISWAP_V2: {
       name: 'Uniswap V2',
       router:  addrStrict('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
