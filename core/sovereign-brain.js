@@ -1491,15 +1491,23 @@ class ReflexiveAmplifier {
    ========================================================================= */
 
 class MevExecutorAA {
-  constructor(aa, scw){ this.aa=aa; this.scw=scw; }
-  async sendUserOp(calldata, opts={}){
+  constructor(aa, scw) {
+    this.aa = aa;
+    this.scw = scw;
+  }
+
+  async sendUserOp(calldata, opts = {}) {
     const userOp = await this.aa.createUserOp(calldata, {
-      callGasLimit: opts.callGasLimit || 850_000n,
-      verificationGasLimit: opts.verificationGasLimit || 650_000n,
-      preVerificationGas: opts.preVerificationGas || 100_000n,
+      // ✅ lowered baselines; bundler can lift if needed
+      callGasLimit: opts.callGasLimit || 600_000n,
+      verificationGasLimit: opts.verificationGasLimit || 450_000n,
+      preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
+      // ✅ propagate explicit paymaster override
+      paymasterAndData: opts.paymasterAndData
     });
+
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
     return { txHash, ts: nowTs(), meta: { desc: opts.description || 'scw.execute' } };
