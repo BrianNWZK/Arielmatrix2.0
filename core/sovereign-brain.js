@@ -817,7 +817,11 @@ async function forceGenesisPoolAndPeg(core) {
     let pmd = '0x';
     try {
       if (typeof core.aa?.getPaymasterData === 'function') {
-        pmd = await core.aa.getPaymasterData(exec);
+        pmd = await core.aa.getPaymasterData(exec, {
+          callGasLimit: 600_000n,
+          verificationGasLimit: 450_000n,
+          preVerificationGas: 80_000n
+        });
       }
     } catch {}
 
@@ -825,7 +829,10 @@ async function forceGenesisPoolAndPeg(core) {
       description: 'init_pool_scw',
       maxFeePerGas: ethers.parseUnits('35', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
-      paymasterAndData: pmd
+      paymasterAndData: pmd,
+      callGasLimit: 600_000n,
+      verificationGasLimit: 450_000n,
+      preVerificationGas: 80_000n
     });
     initTxHash = res.txHash;
 
@@ -850,7 +857,11 @@ async function forceGenesisPoolAndPeg(core) {
       let pmd2 = '0x';
       try {
         if (typeof core.aa?.getPaymasterData === 'function') {
-          pmd2 = await core.aa.getPaymasterData(exec2);
+          pmd2 = await core.aa.getPaymasterData(exec2, {
+            callGasLimit: 600_000n,
+            verificationGasLimit: 450_000n,
+            preVerificationGas: 80_000n
+          });
         }
       } catch {}
 
@@ -858,7 +869,10 @@ async function forceGenesisPoolAndPeg(core) {
         description: 'init_pool_scw_retry',
         maxFeePerGas: ethers.parseUnits('35', 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
-        paymasterAndData: pmd2
+        paymasterAndData: pmd2,
+        callGasLimit: 600_000n,
+        verificationGasLimit: 450_000n,
+        preVerificationGas: 80_000n
       });
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
       if (!receipt2 || receipt2.status !== 1) {
