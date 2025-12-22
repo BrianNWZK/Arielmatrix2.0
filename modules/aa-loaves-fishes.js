@@ -1,6 +1,15 @@
-// modules/aa-loaves-fishes.js — CLEANED AA INFRASTRUCTURE v15.12 (deployment-free, MEV v15-8 aligned)
+// modules/aa-loaves-fishes.js — CLEANED AA INFRASTRUCTURE v15.13 (deployment-free, MEV v15-8 aligned)
 // Focus: pure execution for an already-deployed SCW. No factory/initCode/salt logic.
 // Preserves bundler + paymaster wiring, RPC management, approvals helper, and price oracle.
+// Upgrades in v15.13:
+// - Explicit paymaster override support: opts.paymasterAndData is honored end-to-end
+// - EnterpriseAASDK.getPaymasterData(userOpLikeOrCalldata, gasHints) helper
+// - Dynamic EntryPoint deposit sizing with margin and optional auto-stake
+// - Slightly lowered initial gas caps; bundler lifts if needed
+// - Tip floor and fee sanity retained
+// - Telemetry-friendly return values (unchanged exports and capabilities)
+// Correction:
+// - Auto stake default lowered to 0.002 ETH (configurable via AUTO_PM_STAKE_WEI) to fit low-deposit environments
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -19,7 +28,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.12-LIVE-CLEAN',
+  VERSION: 'v15.13-LIVE-CLEAN',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -404,10 +413,37 @@ class EnterpriseAASDK {
     return '0x';
   }
 
+  // New: explicit helper to construct paymasterAndData for external callers (e.g., genesis path)
+  async getPaymasterData(userOpLikeOrCalldata, gasHints = {}) {
+    const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
+    const nonce = await this.getNonce(sender);
+
+    const toUserOpLike = (calldata) => ({
+      sender,
+      nonce,
+      initCode: '0x',
+      callData: calldata,
+      callGasLimit: gasHints.callGasLimit ?? 800_000n,
+      verificationGasLimit: gasHints.verificationGasLimit ?? 600_000n,
+      preVerificationGas: gasHints.preVerificationGas ?? 100_000n,
+      maxFeePerGas: gasHints.maxFeePerGas ?? ethers.parseUnits('35', 'gwei'),
+      maxPriorityFeePerGas: gasHints.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei'),
+      paymasterAndData: '0x',
+      signature: '0x'
+    });
+
+    const fakeOp = typeof userOpLikeOrCalldata === 'string'
+      ? toUserOpLike(userOpLikeOrCalldata)
+      : userOpLikeOrCalldata;
+
+    return await this._sponsor(fakeOp);
+  }
+
   /**
    * Create user operation — deployment-free:
    * - No initCode usage; assumes SCW is already deployed.
    * - Pure execution userOps only.
+   * - Honors explicit opts.paymasterAndData override if provided.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
@@ -419,7 +455,7 @@ class EnterpriseAASDK {
     const fee = await this.provider.getFeeData();
     let maxFee = opts.maxFeePerGas || fee.maxFeePerGas || ethers.parseUnits('30', 'gwei');
     let maxTip = opts.maxPriorityFeePerGas || fee.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
-    const TIP_FLOOR = 50_000_000n; // Pimlico tip floor in wei
+    const TIP_FLOOR = 50_000_000n; // floor tip in wei (~0.05 gwei)
     if (BigInt(maxTip) < TIP_FLOOR) maxTip = TIP_FLOOR;
     if (maxFee < maxTip) maxFee = maxTip;
 
@@ -428,16 +464,21 @@ class EnterpriseAASDK {
       nonce,
       initCode: '0x', // always empty in deployment-free mode
       callData,
-      callGasLimit: opts.callGasLimit || 1_000_000n,
-      verificationGasLimit: opts.verificationGasLimit || 700_000n,
-      preVerificationGas: opts.preVerificationGas || 80_000n,
+      // Lower initial caps; bundler estimation will lift if needed
+      callGasLimit: opts.callGasLimit ?? 600_000n,
+      verificationGasLimit: opts.verificationGasLimit ?? 450_000n,
+      preVerificationGas: opts.preVerificationGas ?? 80_000n,
       maxFeePerGas: maxFee,
       maxPriorityFeePerGas: maxTip,
       paymasterAndData: '0x',
       signature: '0x'
     };
 
-    userOp.paymasterAndData = await this._sponsor(userOp);
+    if (opts.paymasterAndData && ethers.isHexString(opts.paymasterAndData)) {
+      userOp.paymasterAndData = opts.paymasterAndData;
+    } else {
+      userOp.paymasterAndData = await this._sponsor(userOp);
+    }
 
     try {
       const est = await this.bundler.estimateUserOperationGas(this._formatUserOpForBundler(userOp), this.entryPoint);
@@ -519,11 +560,13 @@ class EnhancedMevExecutor {
   }
   async sendCall(calldata, opts = {}) {
     const userOp = await this.aa.createUserOp(calldata, {
-      callGasLimit: opts.gasLimit || 700_000n,
+      callGasLimit: opts.gasLimit || 650_000n,
       verificationGasLimit: opts.verificationGasLimit || 500_000n,
       preVerificationGas: opts.preVerificationGas || 80_000n,
       maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
+      // Honor explicit paymaster override
+      paymasterAndData: opts.paymasterAndData
       // No initCode in deployment-free mode
     });
     const signed = await this.aa.signUserOp(userOp);
@@ -536,6 +579,12 @@ class EnhancedMevExecutor {
    Bootstrap helper (paymaster-only; no SCW deployment)
    ========================================================================= */
 
+function _computeRequiredDeposit({ callGasLimit, verificationGasLimit, preVerificationGas, maxFeePerGas, marginPct = 25 }) {
+  const totalGas = BigInt(callGasLimit) + BigInt(verificationGasLimit) + BigInt(preVerificationGas);
+  const base = totalGas * BigInt(maxFeePerGas);
+  return (base * BigInt(100 + marginPct)) / 100n;
+}
+
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
   const ep = getEntryPoint(provider);
   let deposit = 0n;
@@ -544,13 +593,45 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
   const AUTO_PM_DEPOSIT = process.env.AUTO_PM_DEPOSIT === 'true';
   const AUTO_PM_STAKE = process.env.AUTO_PM_STAKE === 'true';
 
-  if (AUTO_PM_DEPOSIT && deposit < ethers.parseEther('0.001')) {
-    await depositToEntryPoint(signer, ethers.parseEther(process.env.AUTO_PM_DEPOSIT_WEI || '0.002'));
+  // Dynamic sizing: target envelope similar to heavy ops
+  const fd = await provider.getFeeData();
+  const maxFee = fd.maxFeePerGas || ethers.parseUnits('35', 'gwei');
+  const required = _computeRequiredDeposit({
+    callGasLimit: 850_000n,
+    verificationGasLimit: 650_000n,
+    preVerificationGas: 100_000n,
+    maxFeePerGas: maxFee,
+    marginPct: Number(process.env.AUTO_PM_MARGIN_PCT || 25)
+  });
+
+  if (AUTO_PM_DEPOSIT && deposit < required) {
+    const delta = required - deposit;
+    const prettyDep = ethers.formatEther(deposit);
+    const prettyReq = ethers.formatEther(required);
+    const prettyDelta = ethers.formatEther(delta);
+    console.log(`[AA PM TOPUP] deposit=${prettyDep} required=${prettyReq} topping=${prettyDelta}`);
+    const txh = await depositToEntryPoint(signer, delta);
+    console.log(`[AA PM TOPUP] tx=${txh}`);
+    // refresh
+    try { deposit = await ep.getDeposit(ENHANCED_CONFIG.PAYMASTER.ADDRESS); } catch {}
+  } else if (AUTO_PM_DEPOSIT && deposit < ethers.parseEther('0.001')) {
+    // Legacy tiny top-up fallback
+    const top = ethers.parseEther(process.env.AUTO_PM_DEPOSIT_WEI || '0.002');
+    const txh = await depositToEntryPoint(signer, top);
+    console.log(`[AA PM TOPUP] tiny top-up=${ethers.formatEther(top)} tx=${txh}`);
+    try { deposit = await ep.getDeposit(ENHANCED_CONFIG.PAYMASTER.ADDRESS); } catch {}
   }
+
+  // Correction: default stake lowered to 0.002 ETH, configurable via AUTO_PM_STAKE_WEI
   if (AUTO_PM_STAKE) {
     const delay = Number(process.env.AUTO_PM_UNSTAKE_DELAY || 86400);
     const amount = ethers.parseEther(process.env.AUTO_PM_STAKE_WEI || '0.002');
-    await addStakeToEntryPoint(signer, delay, amount);
+    try {
+      const txh = await addStakeToEntryPoint(signer, delay, amount);
+      console.log(`[AA PM STAKE] staked=${ethers.formatEther(amount)} tx=${txh}`);
+    } catch (e) {
+      console.warn(`[AA PM STAKE] stake failed: ${e.message}`);
+    }
   }
   return { entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07, paymasterDeposit: deposit };
 }
