@@ -763,7 +763,7 @@ async function ensureV3PoolAtPeg(
 }
 
 /* =========================================================================
-   Force Genesis Pool and Peg (patched to init via SCW userOp, canonical sqrtPriceX96)
+   Force Genesis Pool and Peg (patched to init via SCW userOp, canonical sqrtPriceX96 + sponsorship)
    ========================================================================= */
 
 // Canonical Uniswap V3 sqrtPriceX96 encoder
@@ -771,9 +771,11 @@ function encodePriceSqrt(token0, token1, targetPegUSD) {
   const dec0 = token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18 : 6;
   const dec1 = token1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6 : 18;
 
-  // Price scalar = targetPegUSD * 10^(dec1-dec0)
+  // Price scalar = targetPegUSD * 10^(dec1 - dec0)
   const exp = BigInt(dec1 - dec0);
   const scale = exp >= 0n ? 10n ** exp : 1n / (10n ** (-exp));
+
+  // Use integer component for deterministic init; peg rounding is acceptable for boot
   const priceScalar = BigInt(Math.floor(targetPegUSD)) * scale;
 
   const Q96 = 2n ** 96n;
@@ -810,10 +812,20 @@ async function forceGenesisPoolAndPeg(core) {
       [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
     );
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
+
+    // Attempt to attach sponsorship from paymaster
+    let pmd = '0x';
+    try {
+      if (typeof core.aa?.getPaymasterData === 'function') {
+        pmd = await core.aa.getPaymasterData(exec);
+      }
+    } catch {}
+
     const res = await core.mev.sendUserOp(exec, {
       description: 'init_pool_scw',
       maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
+      maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
+      paymasterAndData: pmd
     });
     initTxHash = res.txHash;
 
@@ -834,10 +846,19 @@ async function forceGenesisPoolAndPeg(core) {
         [rt0, rt1, LIVE.PEG.FEE_TIER_DEFAULT, sqrt2]
       );
       const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
+
+      let pmd2 = '0x';
+      try {
+        if (typeof core.aa?.getPaymasterData === 'function') {
+          pmd2 = await core.aa.getPaymasterData(exec2);
+        }
+      } catch {}
+
       const res2 = await core.mev.sendUserOp(exec2, {
         description: 'init_pool_scw_retry',
         maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
+        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
+        paymasterAndData: pmd2
       });
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
       if (!receipt2 || receipt2.status !== 1) {
@@ -887,6 +908,7 @@ async function forceGenesisPoolAndPeg(core) {
     return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
 }
+
 /* =========================================================================
    Oracle aggregator (patched with null-safety and normalized compositeUSD)
    ========================================================================= */
