@@ -1501,30 +1501,111 @@ class ReflexiveAmplifier {
 }
 
 /* =========================================================================
-   Mev Executor (AA live)
+   Mev Executor (AA live) — with SponsorGuard, AA31 hardening
    ========================================================================= */
+
+class SponsorGuard {
+  constructor(aa, provider) {
+    this.aa = aa;
+    this.provider = provider;
+    this.lastPmd = '0x';
+    this.maxRetries = 5;
+    this.backoffBaseMs = LIVE.RISK.INFRA.BACKOFF_BASE_MS || 1000;
+  }
+
+  async attachPaymaster(calldata, caps) {
+    // Request PM data with the exact caps the PM will simulate under
+    try {
+      const pmd = await this.aa.getPaymasterData(calldata, caps);
+      if (pmd && pmd !== '0x') this.lastPmd = pmd;
+      return pmd || this.lastPmd || '0x';
+    } catch {
+      return this.lastPmd || '0x';
+    }
+  }
+
+  // Lean genesis caps to keep sponsorship requirement tiny but valid
+  leanCaps(opts = {}) {
+    const base = {
+      callGasLimit: 420_000n,
+      verificationGasLimit: 350_000n,
+      preVerificationGas: 60_000n,
+      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+    };
+    return {
+      callGasLimit: opts.callGasLimit ?? base.callGasLimit,
+      verificationGasLimit: opts.verificationGasLimit ?? base.verificationGasLimit,
+      preVerificationGas: opts.preVerificationGas ?? base.preVerificationGas,
+      maxFeePerGas: opts.maxFeePerGas ?? base.maxFeePerGas,
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? base.maxPriorityFeePerGas,
+    };
+  }
+
+  async preflight(userOp) {
+    try {
+      if (typeof this.aa.simulateUserOp === 'function') {
+        await this.aa.simulateUserOp(userOp);
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  }
+
+  async sendWithGuard(calldata, opts = {}) {
+    // Build caps first, then get PM data under those caps
+    const caps = this.leanCaps(opts);
+    let paymasterAndData = opts.paymasterAndData || (await this.attachPaymaster(calldata, caps));
+
+    let attempt = 0;
+    let lastErr = null;
+
+    while (attempt < this.maxRetries) {
+      try {
+        const userOp = await this.aa.createUserOp(calldata, {
+          ...caps,
+          paymasterAndData,
+        });
+
+        const pre = await this.preflight(userOp);
+        if (!pre.ok) {
+          // Slight uplift to verification & preVerification if simulation complains
+          caps.verificationGasLimit += 25_000n;
+          caps.preVerificationGas += 5_000n;
+        }
+
+        const signed = await this.aa.signUserOp(userOp);
+        const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
+        return { txHash, ts: nowTs(), meta: { desc: opts.description || 'scw.execute', attempt } };
+      } catch (e) {
+        lastErr = String(e?.message || e);
+
+        // On AA31 or sponsor validation issue: refresh PM data and nudge caps
+        if (lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster')) {
+          paymasterAndData = await this.attachPaymaster(calldata, caps);
+          caps.verificationGasLimit += 50_000n;
+          caps.preVerificationGas += 10_000n;
+        }
+
+        const jitter = this.backoffBaseMs * (attempt + 1) + Math.floor(Math.random() * 500);
+        await new Promise((r) => setTimeout(r, jitter));
+        attempt++;
+      }
+    }
+    throw new Error(`UserOp failed after ${this.maxRetries} attempts: ${lastErr || 'unknown error'}`);
+  }
+}
 
 class MevExecutorAA {
   constructor(aa, scw) {
     this.aa = aa;
     this.scw = scw;
+    this.sponsor = new SponsorGuard(aa, chainRegistry.getProvider());
   }
 
   async sendUserOp(calldata, opts = {}) {
-    const userOp = await this.aa.createUserOp(calldata, {
-      // ✅ lowered baselines; bundler can lift if needed
-      callGasLimit: opts.callGasLimit || 600_000n,
-      verificationGasLimit: opts.verificationGasLimit || 450_000n,
-      preVerificationGas: opts.preVerificationGas || 80_000n,
-      maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      // ✅ propagate explicit paymaster override
-      paymasterAndData: opts.paymasterAndData
-    });
-
-    const signed = await this.aa.signUserOp(userOp);
-    const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
-    return { txHash, ts: nowTs(), meta: { desc: opts.description || 'scw.execute' } };
+    return await this.sponsor.sendWithGuard(calldata, opts);
   }
 }
 
@@ -1740,7 +1821,7 @@ class PolicyGovernor {
 }
 
 /* =========================================================================
-   MEV recapture engine
+   MEV recapture engine — aligned with MevExecutorAA SponsorGuard (AA31-safe)
    ========================================================================= */
 
 class MEVRecaptureEngine {
@@ -1749,62 +1830,95 @@ class MEVRecaptureEngine {
     this.dexRegistry = dexRegistry;
     this.provider = provider;
     this.compliance = compliance;
+
+    // Lean AA caps consistent with SponsorGuard to keep sponsorship tiny and valid
+    this.leanCaps = {
+      callGasLimit: 420_000n,
+      verificationGasLimit: 350_000n,
+      preVerificationGas: 60_000n,
+      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
+    };
   }
+
   async detectSandwichRisk(tokenIn, tokenOut, amountIn) {
     try {
       const best = await this.dexRegistry.getBestQuote(tokenIn, tokenOut, amountIn);
       const liq = Number(best?.best?.liquidity || 0);
       const pi = Number(best?.best?.priceImpact || 0);
-      return (pi > 1.5 && liq < 5e8);
-    } catch { return false; }
+      return pi > 1.5 && liq < 5e8;
+    } catch {
+      return false;
+    }
   }
+
   async splitAndExecute({ tokenIn, tokenOut, amountIn, recipient }) {
     const routes = LIVE.REFLEXIVE.SPLIT_ROUTES.slice();
     const baseParts = [0.4, 0.3, 0.3];
     const parts = LIVE.RISK.COMPETITION.RANDOMIZE_SPLITS
-      ? baseParts.map(p => Math.max(0.2, Math.min(0.6, p + (Math.random()-0.5)*0.1)))
+      ? baseParts.map(p => Math.max(0.2, Math.min(0.6, p + (Math.random() - 0.5) * 0.1)))
       : baseParts;
-    const sumParts = parts.reduce((a,b)=>a+b,0);
-    const normParts = parts.map(p => p/sumParts);
+    const sumParts = parts.reduce((a, b) => a + b, 0);
+    const normParts = parts.map(p => p / sumParts);
 
     const txs = [];
     for (let i = 0; i < routes.length; i++) {
       const adapter = this.dexRegistry.getAdapter(routes[i]);
-      const partIn = BigInt(Math.floor(Number(amountIn)*normParts[i]));
+      const partIn = BigInt(Math.floor(Number(amountIn) * normParts[i]));
       const quote = await adapter.getQuote(tokenIn, tokenOut, partIn);
       if (!quote?.amountOut) {
         console.error(`[split_exec] route=${routes[i]} failed to quote for partIn=${partIn.toString()}`);
         continue;
       }
-      const slip = 0.004 + Math.random()*0.006;
-      const minOut = BigInt(Math.floor(Number(quote.amountOut)*(1-slip)));
+      const slip = 0.004 + Math.random() * 0.006;
+      const minOut = BigInt(Math.floor(Number(quote.amountOut) * (1 - slip)));
       const tx = await adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn: partIn, amountOutMin: minOut, recipient });
-      const scwIface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-      const execCalldata = scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
+      const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+      const execCalldata = scwIface.encodeFunctionData('execute', [tx.router, 0n, tx.calldata]);
 
-      const sendRes = this.mev.sendUserOp(execCalldata, { description: `split_exec_${routes[i]}` });
+      // MevExecutorAA uses SponsorGuard internally → AA31-safe caps + auto sponsorship
+      const sendRes = this.mev.sendUserOp(execCalldata, {
+        description: `split_exec_${routes[i]}`,
+        ...this.leanCaps
+      });
       txs.push(sendRes);
 
-      const jitter = 200 + Math.floor(Math.random()*800);
+      const jitter = 200 + Math.floor(Math.random() * 800);
       await new Promise(r => setTimeout(r, jitter));
     }
     const results = [];
-    for (const t of txs) { try { results.push(await t); } catch (err) { console.error(`[split_exec] userOp send failed: ${err?.message || err}`); } }
+    for (const t of txs) {
+      try {
+        results.push(await t);
+      } catch (err) {
+        console.error(`[split_exec] userOp send failed: ${err?.message || err}`);
+      }
+    }
     return results;
   }
+
   async backrunCover({ tokenIn, tokenOut, amountIn }) {
     const adapter = this.dexRegistry.getAdapter('UNISWAP_V3');
     const microIn = amountIn / 10n;
     const q = await adapter.getQuote(tokenOut, tokenIn, microIn);
     if (!q?.amountOut) return null;
-    const minOut = BigInt(Math.floor(Number(q.amountOut)*0.992));
-    const tx = await adapter.buildSwapCalldata({ tokenIn: tokenOut, tokenOut: tokenIn, amountIn: microIn, amountOutMin: minOut, recipient: LIVE.SCW_ADDRESS });
-    const scwIface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-    const execCalldata = scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
-    return await this.mev.sendUserOp(execCalldata, { description: 'backrun_cover' });
+    const minOut = BigInt(Math.floor(Number(q.amountOut) * 0.992));
+    const tx = await adapter.buildSwapCalldata({
+      tokenIn: tokenOut,
+      tokenOut: tokenIn,
+      amountIn: microIn,
+      amountOutMin: minOut,
+      recipient: LIVE.SCW_ADDRESS
+    });
+    const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+    const execCalldata = scwIface.encodeFunctionData('execute', [tx.router, 0n, tx.calldata]);
+
+    return await this.mev.sendUserOp(execCalldata, {
+      description: 'backrun_cover',
+      ...this.leanCaps
+    });
   }
 }
-
 /* =========================================================================
    Adaptive Range Maker (patched: SCW mints via userOps)
    ========================================================================= */
