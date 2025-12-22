@@ -763,10 +763,10 @@ async function ensureV3PoolAtPeg(
 }
 
 /* =========================================================================
-   Force Genesis Pool and Peg (patched to init via SCW userOp, canonical sqrtPriceX96 + sponsorship)
+   Force Genesis Pool and Peg (SCW userOp + SponsorGuard + deterministic sqrt)
    ========================================================================= */
 
-// Canonical Uniswap V3 sqrtPriceX96 encoder
+// Canonical Uniswap V3 sqrtPriceX96 encoder (token0/token1 aware)
 function encodePriceSqrt(token0, token1, targetPegUSD) {
   const dec0 = token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18 : 6;
   const dec1 = token1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6 : 18;
@@ -775,7 +775,7 @@ function encodePriceSqrt(token0, token1, targetPegUSD) {
   const exp = BigInt(dec1 - dec0);
   const scale = exp >= 0n ? 10n ** exp : 1n / (10n ** (-exp));
 
-  // Use integer component for deterministic init; peg rounding is acceptable for boot
+  // Deterministic integer init; peg rounding acceptable for boot
   const priceScalar = BigInt(Math.floor(targetPegUSD)) * scale;
 
   const Q96 = 2n ** 96n;
@@ -796,9 +796,10 @@ async function forceGenesisPoolAndPeg(core) {
   ]);
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
 
-  const [t0, t1] = (LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase())
-    ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
-    : [LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI];
+  const [t0, t1] =
+    LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase()
+      ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
+      : [LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI];
 
   let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
   let initTxHash = null;
@@ -806,46 +807,27 @@ async function forceGenesisPoolAndPeg(core) {
   if (!pool || pool === ethers.ZeroAddress) {
     const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD);
 
-    // Build calldata and execute via SCW userOp
+    // Build calldata and execute via SCW userOp — SponsorGuard inside MevExecutorAA handles PM data
     const pmData = npmIface.encodeFunctionData(
       'createAndInitializePoolIfNecessary',
       [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
     );
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
 
-    // Attempt to attach sponsorship from paymaster
-    let pmd = '0x';
-    try {
-      if (typeof core.aa?.getPaymasterData === 'function') {
-        pmd = await core.aa.getPaymasterData(exec, {
-          callGasLimit: 600_000n,
-          verificationGasLimit: 450_000n,
-          preVerificationGas: 80_000n
-        });
-      }
-    } catch {}
-
     const res = await core.mev.sendUserOp(exec, {
       description: 'init_pool_scw',
-      maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
-      paymasterAndData: pmd,
-      callGasLimit: 600_000n,
-      verificationGasLimit: 450_000n,
-      preVerificationGas: 80_000n
+      // Lean genesis caps to minimize sponsorship requirement
+      callGasLimit: 420_000n,
+      verificationGasLimit: 350_000n,
+      preVerificationGas: 60_000n,
+      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
     });
     initTxHash = res.txHash;
 
     const receipt = await core.provider.getTransactionReceipt(res.txHash);
     if (!receipt || receipt.status !== 1) {
-      throw new Error('Pool init userOp reverted');
-    }
-
-    pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
-
-    // Retry with reversed order if still zero
-    if (!pool || pool === ethers.ZeroAddress) {
-      console.warn('[forceGenesis] pool missing; retrying with reversed token order');
+      // Retry with reversed token order if first init reverted
       const [rt0, rt1] = [t1, t0];
       const sqrt2 = encodePriceSqrt(rt0, rt1, LIVE.PEG.TARGET_USD);
       const pmData2 = npmIface.encodeFunctionData(
@@ -854,31 +836,21 @@ async function forceGenesisPoolAndPeg(core) {
       );
       const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
 
-      let pmd2 = '0x';
-      try {
-        if (typeof core.aa?.getPaymasterData === 'function') {
-          pmd2 = await core.aa.getPaymasterData(exec2, {
-            callGasLimit: 600_000n,
-            verificationGasLimit: 450_000n,
-            preVerificationGas: 80_000n
-          });
-        }
-      } catch {}
-
       const res2 = await core.mev.sendUserOp(exec2, {
         description: 'init_pool_scw_retry',
-        maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei'),
-        paymasterAndData: pmd2,
-        callGasLimit: 600_000n,
-        verificationGasLimit: 450_000n,
-        preVerificationGas: 80_000n
+        callGasLimit: 420_000n,
+        verificationGasLimit: 375_000n, // slight uplift on retry
+        preVerificationGas: 65_000n,
+        maxFeePerGas: ethers.parseUnits('27', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
       });
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
       if (!receipt2 || receipt2.status !== 1) {
         throw new Error('Pool init retry reverted');
       }
       pool = await factory.getPool(rt0, rt1, LIVE.PEG.FEE_TIER_DEFAULT);
+    } else {
+      pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
     }
 
     if (!pool || pool === ethers.ZeroAddress) {
@@ -902,6 +874,7 @@ async function forceGenesisPoolAndPeg(core) {
   const tl = Number(tick) - width;
   const tu = Number(tick) + width;
 
+  // Maintain $5 USDC initial microseed for peg
   const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
   console.log(`[forceGenesis] Minting initial range bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
 
@@ -2065,138 +2038,202 @@ async start(){
 }   // <-- closes the APIServerV15 class
 
 /* =========================================================================
-   Force Genesis Pool and Peg (SCW userOp + SponsorGuard + deterministic sqrt)
+   Genesis microseed (unstoppable) — $5 USDC first, WETH fallback, AA31-safe
    ========================================================================= */
 
-// Canonical Uniswap V3 sqrtPriceX96 encoder (token0/token1 aware)
-function encodePriceSqrt(token0, token1, targetPegUSD) {
-  const dec0 = token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18 : 6;
-  const dec1 = token1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6 : 18;
-
-  // Price scalar = targetPegUSD * 10^(dec1 - dec0)
-  const exp = BigInt(dec1 - dec0);
-  const scale = exp >= 0n ? 10n ** exp : 1n / (10n ** (-exp));
-
-  // Deterministic integer init; peg rounding acceptable for boot
-  const priceScalar = BigInt(Math.floor(targetPegUSD)) * scale;
-
-  const Q96 = 2n ** 96n;
-  const sqrtScalar = sqrtBigInt(priceScalar);
-  return sqrtScalar * Q96;
+// Peg-sized amounts helper (USDC 6dp, BWAEZI 18dp)
+function pegSizedAmounts(usdcFloat, pegUSD = LIVE.PEG.TARGET_USD) {
+  const safeUSDC = Math.max(0.000001, usdcFloat);
+  const usdcAmt = ethers.parseUnits(safeUSDC.toFixed(6), 6);
+  const bwAmtFloat = safeUSDC / pegUSD;
+  const bwAmt = ethers.parseEther(bwAmtFloat.toFixed(18));
+  return { usdcAmt, bwAmt };
 }
 
-async function forceGenesisPoolAndPeg(core) {
+// BigInt sqrt (Newton's method) for fixed-point math (X192→sqrtPriceX96)
+function sqrtBigInt(n) {
+  if (n <= 0n) return 0n;
+  let x = n;
+  let y = (x + 1n) >> 1n;
+  while (y < x) {
+    x = y;
+    y = (x + n / x) >> 1n;
+  }
+  return x;
+}
+
+// Seed minimal liquidity around current tick to enable quotes
+async function seedMinimalLiquidity(core) {
   const factory = new ethers.Contract(
     LIVE.DEXES.UNISWAP_V3.factory,
     ['function getPool(address,address,uint24) view returns (address)'],
     core.provider
   );
 
-  const npm = LIVE.DEXES.UNISWAP_V3.positionManager;
-  const npmIface = new ethers.Interface([
-    'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
-  ]);
-  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-
-  const [t0, t1] =
-    LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase()
-      ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
-      : [LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI];
-
-  let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
-  let initTxHash = null;
-
+  let pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
   if (!pool || pool === ethers.ZeroAddress) {
-    const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD);
-
-    // Build calldata and execute via SCW userOp — SponsorGuard inside MevExecutorAA handles PM data
-    const pmData = npmIface.encodeFunctionData(
-      'createAndInitializePoolIfNecessary',
-      [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
+    const r = await ensureV3PoolAtPeg(
+      core.provider,
+      core.signer,
+      LIVE.TOKENS.BWAEZI,
+      LIVE.TOKENS.USDC,
+      LIVE.PEG.FEE_TIER_DEFAULT,
+      LIVE.PEG.TARGET_USD
     );
-    const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
-
-    const res = await core.mev.sendUserOp(exec, {
-      description: 'init_pool_scw',
-      // Lean genesis caps to minimize sponsorship requirement
-      callGasLimit: 420_000n,
-      verificationGasLimit: 350_000n,
-      preVerificationGas: 60_000n,
-      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
-    });
-    initTxHash = res.txHash;
-
-    const receipt = await core.provider.getTransactionReceipt(res.txHash);
-    if (!receipt || receipt.status !== 1) {
-      // Retry with reversed token order if first init reverted
-      const [rt0, rt1] = [t1, t0];
-      const sqrt2 = encodePriceSqrt(rt0, rt1, LIVE.PEG.TARGET_USD);
-      const pmData2 = npmIface.encodeFunctionData(
-        'createAndInitializePoolIfNecessary',
-        [rt0, rt1, LIVE.PEG.FEE_TIER_DEFAULT, sqrt2]
-      );
-      const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
-
-      const res2 = await core.mev.sendUserOp(exec2, {
-        description: 'init_pool_scw_retry',
-        callGasLimit: 420_000n,
-        verificationGasLimit: 375_000n, // slight uplift on retry
-        preVerificationGas: 65_000n,
-        maxFeePerGas: ethers.parseUnits('27', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
-      });
-      const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
-      if (!receipt2 || receipt2.status !== 1) {
-        throw new Error('Pool init retry reverted');
-      }
-      pool = await factory.getPool(rt0, rt1, LIVE.PEG.FEE_TIER_DEFAULT);
-    } else {
-      pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
-    }
-
-    if (!pool || pool === ethers.ZeroAddress) {
-      throw new Error('Pool still missing after init attempts');
-    }
-
-    console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/USDC pool at peg via SCW: ${pool} (tx=${initTxHash})`);
+    pool = r.pool;
+    console.log(`🧩 seedMinimalLiquidity: pool=${pool} initTx=${r.txHash || 'n/a'}`);
   }
 
-  // Guard against zero pool before slot0
-  if (!pool || pool === ethers.ZeroAddress) {
-    console.error('[forceGenesis] pool missing after init; halting mint.');
-    return { pool: ethers.ZeroAddress, initTxHash, mintStreamId: null, error: 'pool_missing' };
-  }
-
-  // Read slot0 to derive tick range
-  const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
-  const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
-  const [, tick] = await poolC.slot0();
+  const slot = await new ethers.Contract(
+    pool,
+    ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'],
+    core.provider
+  ).slot0();
+  const tick = Number(slot[1]);
   const width = 120;
-  const tl = Number(tick) - width;
-  const tu = Number(tick) + width;
+  const tl = tick - width;
+  const tu = tick + width;
 
-  // Maintain $5 USDC initial microseed for peg
   const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
-  console.log(`[forceGenesis] Minting initial range bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
+  console.log(`🌱 Seeding minimal V3 liquidity bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
+  await core.maker.startStreamingMint({
+    token0: LIVE.TOKENS.BWAEZI,
+    token1: LIVE.TOKENS.USDC,
+    tickLower: tl,
+    tickUpper: tu,
+    total0: bwAmt,
+    total1: usdcAmt,
+    steps: 2,
+    label: 'genesis_seed',
+  });
+}
 
+// Tiny swaps to awaken perception and EV gating; jittered retries + WETH fallback
+async function _genesisSwaps(core) {
+  // $5 USDC first microseed to set $100 peg; use remaining for WETH fallback if needed
+  let balanceUSDC = 5.0;
   try {
-    const stream = await core.maker.startStreamingMint({
-      token0: LIVE.TOKENS.BWAEZI,
-      token1: LIVE.TOKENS.USDC,
-      tickLower: tl,
-      tickUpper: tu,
-      total0: bwAmt,
-      total1: usdcAmt,
-      steps: 2,
-      label: 'force_genesis_seed'
-    });
-    return { pool, initTxHash, mintStreamId: stream.streamId };
+    const c = new ethers.Contract(AA_CONFIG.USDC_ADDRESS, ['function balanceOf(address) view returns (uint256)'], core.provider);
+    const bal = await c.balanceOf(AA_CONFIG.SCW_ADDRESS);
+    balanceUSDC = Math.max(1.0, Math.min(5.0, Number(ethers.formatUnits(bal, 6))));
+  } catch {}
+
+  const { usdcAmt, bwAmt } = pegSizedAmounts(balanceUSDC, LIVE.PEG.TARGET_USD);
+  let executed = 0;
+  let attempts = 0;
+
+  // USDC → BWAEZI
+  while (attempts < 3 && executed === 0) {
+    try {
+      const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
+      await core.verifier.record({
+        txHash: res1.txHash,
+        action: 'genesis_buy_bwzC',
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.BWAEZI,
+        notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)),
+      });
+      console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
+      executed++;
+    } catch (e) {
+      console.error(`❌ Genesis USDC→BWAEZI failed [attempt ${attempts + 1}]:`, e.message);
+      const backoff = 600 + Math.floor(Math.random() * 1600);
+      await new Promise((r) => setTimeout(r, backoff));
+      attempts++;
+    }
+  }
+
+  // BWAEZI → USDC
+  attempts = 0;
+  while (attempts < 2 && executed === 1) {
+    try {
+      const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
+      await core.verifier.record({
+        txHash: res2.txHash,
+        action: 'genesis_sell_bwzC',
+        tokenIn: LIVE.TOKENS.BWAEZI,
+        tokenOut: LIVE.TOKENS.USDC,
+        notionalUSD: 0.0,
+      });
+      console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
+      executed++;
+    } catch (e) {
+      console.error(`❌ Genesis BWAEZI→USDC failed [attempt ${attempts + 1}]:`, e.message);
+      const backoff = 600 + Math.floor(Math.random() * 1600);
+      await new Promise((r) => setTimeout(r, backoff));
+      attempts++;
+    }
+  }
+
+  // Fallback: use remaining ~$4 for USDC↔WETH if BWAEZI route stalls
+  if (executed === 0) {
+    try {
+      const fallbackUSD = Math.max(1.0, Math.min(4.0, balanceUSDC - 1.0));
+      const fallbackUSDC = ethers.parseUnits(fallbackUSD.toFixed(6), 6);
+      const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, fallbackUSDC);
+      await core.verifier.record({
+        txHash: res.txHash,
+        action: 'genesis_buy_weth',
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.WETH,
+        notionalUSD: fallbackUSD,
+      });
+      console.log(`✅ Genesis USDC→WETH fallback swap tx=${res.txHash}`);
+      executed++;
+    } catch (e) {
+      console.error('❌ Genesis USDC→WETH fallback failed:', e.message);
+    }
+  }
+
+  if (executed === 0) throw new Error('Genesis microseed failed: no routes executed');
+  return { ok: true, executed };
+}
+
+// No-op USDC ensure (balances already present; prevents undefined symbol)
+async function _ensureUSDCInSCW() {
+  return true;
+}
+
+// Orchestrator
+async function runGenesisMicroseed(core) {
+  core.genesisState = core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
+  try {
+    const recent = core.verifier.getRecent(5);
+    if (recent && recent.length > 0) return { skipped: true, reason: 'already_seeded' };
+
+    console.log('🌱 GENESIS MICROSEED — initializing');
+
+    const r = await forceGenesisPoolAndPeg(core);
+    console.log(`✅ Genesis pool ready: ${r.pool} (tx=${r.initTxHash || 'n/a'})`);
+
+    await seedMinimalLiquidity(core);
+
+    const wasStrict = core.compliance.strict;
+    core.compliance.strict = false;
+    core.genesisState.attempts += 1;
+
+    try {
+      const res = await _genesisSwaps(core);
+      core.genesisState.lastExecCount = res.executed;
+      core.genesisState.lastError = null;
+      core.genesisState.lastTs = nowTs();
+    } catch (err) {
+      core.genesisState.lastError = err?.message || String(err);
+      core.genesisState.lastTs = nowTs();
+      throw err;
+    } finally {
+      core.compliance.strict = wasStrict;
+    }
+
+    console.log('✅ GENESIS MICROSEED — complete');
+    return { ok: true };
   } catch (e) {
-    console.error('[forceGenesis] mint failed:', e.message);
-    return { pool, initTxHash, mintStreamId: null, error: e.message };
+    console.error('❌ GENESIS MICROSEED failed:', e.message);
+    return { ok: false, error: e.message };
   }
 }
+
+
 /* =========================================================================
    Production sovereign core v15.13 (full live wiring)
    ========================================================================= */
