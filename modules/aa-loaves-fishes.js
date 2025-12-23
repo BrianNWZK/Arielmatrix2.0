@@ -1,6 +1,6 @@
 // modules/aa-loaves-fishes.js — CLEANED AA INFRASTRUCTURE v15.13 (deployment-free, MEV v15-8 aligned)
 // Focus: pure execution for an already-deployed SCW. No factory/initCode/salt logic.
-// Preserves bundler + paymaster wiring, RPC management, approvals helper, and price oracle.
+// Preserves bundler + paymaster wiring, RPC management, and price oracle.
 // Upgrades in v15.13:
 // - Explicit paymaster override support: opts.paymasterAndData is honored end-to-end
 // - EnterpriseAASDK.getPaymasterData(userOpLikeOrCalldata, gasHints) helper
@@ -413,7 +413,7 @@ class EnterpriseAASDK {
     return '0x';
   }
 
-  // New: explicit helper to construct paymasterAndData for external callers (e.g., genesis path)
+  // Explicit helper to construct paymasterAndData for external callers (e.g., genesis path)
   async getPaymasterData(userOpLikeOrCalldata, gasHints = {}) {
     const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
     const nonce = await this.getNonce(sender);
@@ -637,20 +637,6 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
 }
 
 /* =========================================================================
-   SCW approvals helper (pure execute)
-   ========================================================================= */
-
-async function scwApproveToken(aa, scw, token, spender, amount = ethers.MaxUint256) {
-  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
-  const approveData = erc20Iface.encodeFunctionData('approve', [spender, amount]);
-  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
-  const calldata = scwIface.encodeFunctionData('execute', [token, 0n, approveData]);
-  const userOp = await aa.createUserOp(calldata, { callGasLimit: 300_000n });
-  const signed = await aa.signUserOp(userOp);
-  return await aa.sendUserOpWithBackoff(signed, 5);
-}
-
-/* =========================================================================
    Price Oracle aggregator (Chainlink + Uniswap blending with divergence check)
    ========================================================================= */
 
@@ -730,7 +716,6 @@ export {
   ENHANCED_CONFIG,
 
   // Utilities
-  scwApproveToken,
   PriceOracleAggregator
 };
 
