@@ -68,7 +68,7 @@ const ENHANCED_CONFIG = {
   BUNDLER: {
     RPC_URL:
       process.env.BUNDLER_RPC_URL
-      || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt',
+      || 'https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb',
     TIMEOUT_MS: Number(process.env.BUNDLER_TIMEOUT_MS || 180000),
     ROTATION: [] // optional; pickHealthyBundler exported for MEV compatibility
   },
