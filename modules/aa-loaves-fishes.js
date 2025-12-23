@@ -474,10 +474,21 @@ class EnterpriseAASDK {
       signature: '0x'
     };
 
+    // Force paymaster sponsorship; never send "0x"
     if (opts.paymasterAndData && ethers.isHexString(opts.paymasterAndData)) {
       userOp.paymasterAndData = opts.paymasterAndData;
     } else {
-      userOp.paymasterAndData = await this._sponsor(userOp);
+      try {
+        const pmData = await this._sponsor(userOp);
+        if (pmData && ethers.isHexString(pmData)) {
+          userOp.paymasterAndData = pmData;
+        } else {
+          throw new Error('Invalid paymasterAndData from sponsor');
+        }
+      } catch (err) {
+        console.error('Paymaster sponsor failed:', err.message);
+        throw err;
+      }
     }
 
     try {
@@ -544,6 +555,7 @@ class EnterpriseAASDK {
     };
   }
 }
+
 
 /* =========================================================================
    Enhanced MEV executor (deployment-free)
