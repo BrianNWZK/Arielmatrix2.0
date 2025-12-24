@@ -1507,42 +1507,106 @@ class EntropyShockDetector {
 }
 
 /* =========================================================================
-   Perception accumulator
+   Perception accumulator (ES module-safe, full capabilities preserved)
    ========================================================================= */
 
-class PerceptionAccumulator {
-  constructor() { this.events = []; this.merkleRoot = null; }
+export class PerceptionAccumulator {
+  constructor() {
+    // Internal state
+    this.events = [];
+    this.merkleRoot = null;
+  }
+
+  /**
+   * Add a perception event and refresh the rolling Merkle root.
+   * Expected evt shape: { hash: 0x..., ts: number, source: 'local'|'l2'|'l1', confidence?: number, evUSD?: number }
+   */
   addEvent(evt) {
+    if (!evt || typeof evt !== 'object') return;
+
+    // Append new event
     this.events.push(evt);
+
+    // Apply rolling decay window using LIVE.PERCEPTION.DECAY_MS
     const cutoff = nowTs() - LIVE.PERCEPTION.DECAY_MS;
-    this.events = this.events.filter(e => e.ts >= cutoff);
+    this.events = this.events.filter((e) => (e?.ts ?? 0) >= cutoff);
+
+    // Recompute Merkle root
     this.merkleRoot = this.computeMerkle();
   }
+
+  /**
+   * Compute the Merkle root over the event hashes.
+   * Uses pairwise keccak256(concat(left, right)) with dup-right padding for odd layers.
+   */
   computeMerkle() {
-    if (this.events.length === 0) return ethers.ZeroHash;
-    let layer = this.events.map(e => e.hash);
+    if (!this.events.length) return ethers.ZeroHash;
+
+    // Seed layer with event hashes
+    let layer = this.events
+      .map((e) => e?.hash)
+      .filter((h) => typeof h === 'string' && h.startsWith('0x'));
+
+    if (!layer.length) return ethers.ZeroHash;
+
+    // Build up the tree
     while (layer.length > 1) {
       const next = [];
       for (let i = 0; i < layer.length; i += 2) {
         const left = layer[i];
-        const right = layer[i+1] || left;
+        const right = layer[i + 1] || left;
         next.push(ethers.keccak256(ethers.concat([left, right])));
       }
       layer = next;
     }
     return layer[0];
   }
+
+  /**
+   * Weighted perception index over sources with LIVE.PERCEPTION weights.
+   * local → LOCAL_WEIGHT, l2 → L2_WEIGHT, l1 → L1_WEIGHT
+   * Returns log1p(weighted sum), clamped at >= 0.
+   */
   getPerceptionIndex() {
-    const localCount = this.events.filter(e => e.source === 'local').length;
-    const l2Count = this.events.filter(e => e.source === 'l2').length;
-    const l1Count = this.events.filter(e => e.source === 'l1').length;
-    const weighted = LIVE.PERCEPTION.LOCAL_WEIGHT * localCount
-      + LIVE.PERCEPTION.L2_WEIGHT * l2Count
-      + LIVE.PERCEPTION.L1_WEIGHT * l1Count;
+    const localCount = this.events.filter((e) => e.source === 'local').length;
+    const l2Count = this.events.filter((e) => e.source === 'l2').length;
+    const l1Count = this.events.filter((e) => e.source === 'l1').length;
+
+    const weighted =
+      LIVE.PERCEPTION.LOCAL_WEIGHT * localCount +
+      LIVE.PERCEPTION.L2_WEIGHT * l2Count +
+      LIVE.PERCEPTION.L1_WEIGHT * l1Count;
+
     return Math.log1p(Math.max(0, weighted));
+  }
+
+  /**
+   * Return the current Merkle root and count.
+   */
+  getAccumulator() {
+    return { root: this.merkleRoot ?? ethers.ZeroHash, count: this.events.length };
+  }
+
+  /**
+   * Return recent events (default 100).
+   */
+  getRecent(n = 100) {
+    if (n <= 0) return [];
+    const start = Math.max(0, this.events.length - n);
+    return this.events.slice(start);
+  }
+
+  /**
+   * Clear all events and reset root.
+   */
+  reset() {
+    this.events = [];
+    this.merkleRoot = ethers.ZeroHash;
   }
 }
 
+       
+       
 /* =========================================================================
    Staked governance registry
    ========================================================================= */
