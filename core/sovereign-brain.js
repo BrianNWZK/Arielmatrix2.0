@@ -2506,7 +2506,16 @@ async function _genesisSwaps(core) {
     try {
       const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
       if (!res1?.txHash || res1.txHash === '0x') throw new Error('Missing txHash from USDC→BWAEZI');
-      await core.verifier.record({...});
+
+      await core.verifier.record({
+        txHash: res1.txHash,
+        action: 'genesis_buy_bwzC',
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.BWAEZI,
+        notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)),
+        ts: nowTs()
+      });
+
       console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
       executed++;
     } catch (e) {
@@ -2523,7 +2532,17 @@ async function _genesisSwaps(core) {
     try {
       const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
       if (!res2?.txHash || res2.txHash === '0x') throw new Error('Missing txHash from BWAEZI→USDC');
-      await core.verifier.record({...});
+
+      await core.verifier.record({
+        txHash: res2.txHash,
+        action: 'genesis_sell_bwzC',
+        tokenIn: LIVE.TOKENS.BWAEZI,
+        tokenOut: LIVE.TOKENS.USDC,
+        // Approximate USD notional using peg
+        notionalUSD: Number(ethers.formatEther(bwAmt)) * LIVE.PEG.TARGET_USD,
+        ts: nowTs()
+      });
+
       console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
       executed++;
     } catch (e) {
@@ -2541,7 +2560,16 @@ async function _genesisSwaps(core) {
       const fallbackUSDC = ethers.parseUnits(fallbackUSD.toFixed(6), 6);
       const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, fallbackUSDC);
       if (!res?.txHash || res.txHash === '0x') throw new Error('Missing txHash from USDC→WETH');
-      await core.verifier.record({...});
+
+      await core.verifier.record({
+        txHash: res.txHash,
+        action: 'genesis_buy_weth',
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.WETH,
+        notionalUSD: fallbackUSD,
+        ts: nowTs()
+      });
+
       console.log(`✅ Genesis USDC→WETH fallback swap tx=${res.txHash}`);
       executed++;
     } catch (e) {
@@ -2590,8 +2618,12 @@ async function runGenesisMicroseed(core) {
     }
 
     console.log('✅ GENESIS MICROSEED — complete');
-    return { ok: true
-
+    return { ok: true };
+  } catch (e) {
+    console.error('❌ GENESIS MICROSEED failed:', e.message);
+    return { ok: false, error: e.message };
+  }
+}
 
 /* =========================================================================
    Production sovereign core v15.13 (full live wiring)
