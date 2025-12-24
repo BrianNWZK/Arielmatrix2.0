@@ -762,6 +762,7 @@ async function ensureV3PoolAtPeg(
   return { pool, txHash: rc.transactionHash };
 }
 
+
 /* =========================================================================
    Force Genesis Pool and Peg (SCW userOp + SponsorGuard + deterministic sqrt)
    ========================================================================= */
@@ -1123,7 +1124,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
 }
 
 
-
 /* =========================================================================
    Oracle aggregator (patched with null-safety and normalized compositeUSD)
    ========================================================================= */
@@ -1369,29 +1369,13 @@ class StrategyEngine {
     this.lastPegEnforcement=0;
   }
 
+  // Let SponsorGuard derive lean deposit-fitting caps; no fixed fees or PM hints
   async _dynamicCaps(opts = {}) {
-    let maxFeePerGas = ethers.parseUnits('2', 'gwei');
-    let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei');
-    try {
-      const fd = await this.provider.getFeeData();
-      if (fd?.maxFeePerGas) {
-        const ceiling = ethers.parseUnits('3', 'gwei');
-        const clamped = fd.maxFeePerGas > ceiling ? ceiling : fd.maxFeePerGas;
-        maxFeePerGas = (clamped * 12n) / 10n; // +20% buffer
-      }
-      if (fd?.maxPriorityFeePerGas) {
-        const prioCeiling = ethers.parseUnits('0.5', 'gwei');
-        maxPriorityFeePerGas = fd.maxPriorityFeePerGas > prioCeiling ? prioCeiling : fd.maxPriorityFeePerGas;
-      }
-    } catch {}
     return {
-      callGasLimit: opts.callGasLimit ?? 160_000n,
-      verificationGasLimit: opts.verificationGasLimit ?? 120_000n,
-      preVerificationGas: opts.preVerificationGas ?? 45_000n,
-      maxFeePerGas: opts.maxFeePerGas ?? maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? maxPriorityFeePerGas,
-      allowNoPaymaster: true,
-      paymasterAndData: '0x'
+      callGasLimit: opts.callGasLimit ?? undefined,
+      verificationGasLimit: opts.verificationGasLimit ?? undefined,
+      preVerificationGas: opts.preVerificationGas ?? undefined,
+      allowNoPaymaster: true
     };
   }
 
@@ -1529,8 +1513,6 @@ class StrategyEngine {
     };
   }
 } // <-- properly closes StrategyEngine class
-
-
 
 /* =========================================================================
    Entropy
@@ -1835,13 +1817,13 @@ class SponsorGuard {
   // Lean caps + dynamic fees (low ceilings) to fit deposit and avoid AA21
   async leanCaps(opts = {}) {
     // Defaults under low-fee conditions
-    let maxFeePerGas = ethers.parseUnits('2', 'gwei');    // fallback
+    let maxFeePerGas = ethers.parseUnits('2', 'gwei');        // fallback
     let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei'); // fallback
 
     try {
       const fd = await this.provider.getFeeData();
 
-      // Clamp base fee to 3 gwei, add ~20% buffer for variance
+      // Clamp base fee to ~3 gwei, add ~20% buffer for variance
       if (fd?.maxFeePerGas) {
         const mf = fd.maxFeePerGas;
         const ceiling = ethers.parseUnits('3', 'gwei');
@@ -1915,8 +1897,8 @@ class SponsorGuard {
         const pre = await this.preflight(userOp);
         if (!pre.ok) {
           // Slight uplift to verification & preVerification if simulation complains
-          caps.verificationGasLimit += 20_000n;
-          caps.preVerificationGas += 5_000n;
+          caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) + 20_000n;
+          caps.preVerificationGas = (caps.preVerificationGas || 45_000n) + 5_000n;
         }
 
         const signed = await this.aa.signUserOp(userOp);
@@ -1928,8 +1910,8 @@ class SponsorGuard {
         // On AA31 or sponsor validation issue: refresh PM data and nudge caps (only when sponsorship is expected)
         if (!allowNoPM && (lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster'))) {
           paymasterAndData = await this.attachPaymaster(calldata, caps);
-          caps.verificationGasLimit += 30_000n;
-          caps.preVerificationGas += 5_000n;
+          caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) + 30_000n;
+          caps.preVerificationGas = (caps.preVerificationGas || 45_000n) + 5_000n;
         }
 
         const jitter = this.backoffBaseMs * (attempt + 1) + Math.floor(Math.random() * 500);
@@ -1959,7 +1941,6 @@ class MevExecutorAA {
     return await this.sponsor.sendWithGuard(calldata, merged);
   }
 }
-
 
 
 /* =========================================================================
@@ -2184,15 +2165,6 @@ class MEVRecaptureEngine {
     this.dexRegistry = dexRegistry;
     this.provider = provider;
     this.compliance = compliance;
-
-    // Lean AA caps consistent with SponsorGuard to keep sponsorship tiny and valid
-    this.leanCaps = {
-      callGasLimit: 250_000n,
-      verificationGasLimit: 180_000n,
-      preVerificationGas: 45_000n,
-      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
-    };
   }
 
   async detectSandwichRisk(tokenIn, tokenOut, amountIn) {
@@ -2230,10 +2202,10 @@ class MEVRecaptureEngine {
       const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
       const execCalldata = scwIface.encodeFunctionData('execute', [tx.router, 0n, tx.calldata]);
 
-      // MevExecutorAA uses SponsorGuard internally → AA31-safe caps + auto sponsorship
+      // Routed via SponsorGuard; deposit-aware, no hard-coded caps
       const sendRes = this.mev.sendUserOp(execCalldata, {
         description: `split_exec_${routes[i]}`,
-        ...this.leanCaps
+        allowNoPaymaster: true
       });
       txs.push(sendRes);
 
@@ -2269,7 +2241,7 @@ class MEVRecaptureEngine {
 
     return await this.mev.sendUserOp(execCalldata, {
       description: 'backrun_cover',
-      ...this.leanCaps
+      allowNoPaymaster: true
     });
   }
 }
@@ -2306,11 +2278,7 @@ class AdaptiveRangeMaker {
           const exec = this.scwIface.encodeFunctionData('execute', [this.npm, 0n, mintData]);
           const txRes = await this.core.mev.sendUserOp(exec, {
             description: `maker_mint_${label}`,
-            callGasLimit: 250_000n,
-            verificationGasLimit: 180_000n,
-            preVerificationGas: 45_000n,
-            maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-            maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+            allowNoPaymaster: true
           });
           st.positions.push({ txHash: txRes.txHash, at: nowTs() });
           console.log(`[maker_stream:${label}] mint chunk done tx=${txRes.txHash}`);
@@ -2333,7 +2301,6 @@ class AdaptiveRangeMaker {
   }
   listStreams(){ return Array.from(this.running.entries()).map(([id,st])=> ({ id, ...st })); }
 }
-
 
 
 /* =========================================================================
@@ -2427,6 +2394,7 @@ async start(){
 }
 }   // <-- closes the APIServerV15 class
 
+
 /* =========================================================================
    Genesis microseed (unstoppable) — $5 USDC first, WETH fallback, AA31-safe
    ========================================================================= */
@@ -2453,40 +2421,20 @@ function sqrtBigInt(n) {
 }
 
 /**
- * AA preflight probe — mode-aware sponsorship/signature validation.
- * In NONE mode, sponsorship is NOT required (SCW pays gas); signature IS required.
- * In API/ONCHAIN modes, sponsorship AND signature are required.
+ * AA preflight probe — deposit-funded, SponsorGuard-driven, mode-aware.
+ * Validates SCW can submit a minimal userOp under current deposit/fee conditions.
  */
 async function _aaPreflightProbe(core) {
-  if (!core?.aa) return; // If AA is abstracted inside strategy, skip probe
-  const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
-  const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
-
-  const dummyCalldata = LIVE.PLUMBING?.AA_NOOP_CALLDATA || '0x';
-  const userOp = await core.aa.createUserOp(dummyCalldata, {
-    callGasLimit: 80_000n,
-    verificationGasLimit: 120_000n,
-    preVerificationGas: 40_000n,
-    maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-    maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-  });
-
-  const pmLen = (userOp.paymasterAndData || '0x').length;
-  console.log('[AA] preflight sponsor length:', pmLen);
-
-  if (expectsSponsorship && userOp.paymasterAndData === '0x') {
-    throw new Error(`AA preflight failed: missing sponsorship (mode=${mode}, paymasterAndData=0x)`);
-  }
-  if (mode === 'NONE') {
-    // Explicitly ensure paymaster data is zeroed in NONE mode
-    userOp.paymasterAndData = '0x';
-  }
-
-  const signedOp = await core.aa.signUserOp(userOp);
-  const sigLen = (signedOp.signature || '0x').length;
-  console.log('[AA] preflight signature length:', sigLen);
-  if (!signedOp.signature || signedOp.signature === '0x') {
-    throw new Error('AA preflight failed: missing signature (signature=0x)');
+  if (!core?.mev) return;
+  try {
+    await core.mev.sendUserOp('0x', {
+      description: 'preflight_noop',
+      allowNoPaymaster: true
+    });
+    console.log('[AA] preflight via SponsorGuard completed (deposit-funded path)');
+  } catch (err) {
+    console.error('[AA] preflight via SponsorGuard failed:', err.message);
+    throw err;
   }
 }
 
@@ -2502,16 +2450,9 @@ async function seedMinimalLiquidity(core) {
 
   let pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
   if (!pool || pool === ethers.ZeroAddress) {
-    const r = await ensureV3PoolAtPeg(
-      core.provider,
-      core.signer,
-      LIVE.TOKENS.BWAEZI,
-      LIVE.TOKENS.USDC,
-      LIVE.PEG.FEE_TIER_DEFAULT,
-      LIVE.PEG.TARGET_USD
-    );
+    const r = await forceGenesisPoolAndPeg(core);
     pool = r.pool;
-    console.log(`🧩 seedMinimalLiquidity: pool=${pool} initTx=${r.txHash || 'n/a'}`);
+    console.log(`🧩 seedMinimalLiquidity: pool=${pool} initTx=${r.initTxHash || 'n/a'}`);
   }
 
   const slot = await new ethers.Contract(
@@ -2542,7 +2483,6 @@ async function seedMinimalLiquidity(core) {
  * Tiny swaps to awaken perception and EV gating; jittered retries + WETH fallback
  */
 async function _genesisSwaps(core) {
-  // $5 USDC first microseed to set $100 peg; use remaining for WETH fallback if needed
   let balanceUSDC = 5.0;
   try {
     const c = new ethers.Contract(AA_CONFIG.USDC_ADDRESS, ['function balanceOf(address) view returns (uint256)'], core.provider);
@@ -2550,7 +2490,6 @@ async function _genesisSwaps(core) {
     balanceUSDC = Math.max(1.0, Math.min(5.0, Number(ethers.formatUnits(bal, 6))));
   } catch {}
 
-  // AA preflight to avoid AA21/AA31 before real swaps (mode-aware)
   try {
     await _aaPreflightProbe(core);
   } catch (preErr) {
@@ -2567,13 +2506,7 @@ async function _genesisSwaps(core) {
     try {
       const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
       if (!res1?.txHash || res1.txHash === '0x') throw new Error('Missing txHash from USDC→BWAEZI');
-      await core.verifier.record({
-        txHash: res1.txHash,
-        action: 'genesis_buy_bwzC',
-        tokenIn: LIVE.TOKENS.USDC,
-        tokenOut: LIVE.TOKENS.BWAEZI,
-        notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)),
-      });
+      await core.verifier.record({...});
       console.log(`✅ Genesis USDC→BWAEZI swap tx=${res1.txHash}`);
       executed++;
     } catch (e) {
@@ -2590,13 +2523,7 @@ async function _genesisSwaps(core) {
     try {
       const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
       if (!res2?.txHash || res2.txHash === '0x') throw new Error('Missing txHash from BWAEZI→USDC');
-      await core.verifier.record({
-        txHash: res2.txHash,
-        action: 'genesis_sell_bwzC',
-        tokenIn: LIVE.TOKENS.BWAEZI,
-        tokenOut: LIVE.TOKENS.USDC,
-        notionalUSD: 0.0,
-      });
+      await core.verifier.record({...});
       console.log(`✅ Genesis BWAEZI→USDC swap tx=${res2.txHash}`);
       executed++;
     } catch (e) {
@@ -2607,20 +2534,14 @@ async function _genesisSwaps(core) {
     }
   }
 
-  // Fallback: use remaining ~$4 for USDC↔WETH if BWAEZI route stalls
+  // Fallback USDC→WETH if needed
   if (executed === 0) {
     try {
       const fallbackUSD = Math.max(1.0, Math.min(4.0, balanceUSDC - 1.0));
       const fallbackUSDC = ethers.parseUnits(fallbackUSD.toFixed(6), 6);
       const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, fallbackUSDC);
       if (!res?.txHash || res.txHash === '0x') throw new Error('Missing txHash from USDC→WETH');
-      await core.verifier.record({
-        txHash: res.txHash,
-        action: 'genesis_buy_weth',
-        tokenIn: LIVE.TOKENS.USDC,
-        tokenOut: LIVE.TOKENS.WETH,
-        notionalUSD: fallbackUSD,
-      });
+      await core.verifier.record({...});
       console.log(`✅ Genesis USDC→WETH fallback swap tx=${res.txHash}`);
       executed++;
     } catch (e) {
@@ -2632,7 +2553,7 @@ async function _genesisSwaps(core) {
   return { ok: true, executed };
 }
 
-// No-op USDC ensure (balances already present; prevents undefined symbol)
+// No-op USDC ensure
 async function _ensureUSDCInSCW() {
   return true;
 }
@@ -2669,13 +2590,7 @@ async function runGenesisMicroseed(core) {
     }
 
     console.log('✅ GENESIS MICROSEED — complete');
-    return { ok: true };
-  } catch (e) {
-    console.error('❌ GENESIS MICROSEED failed:', e.message);
-    return { ok: false, error: e.message };
-  }
-}
-
+    return { ok: true
 
 
 /* =========================================================================
