@@ -805,13 +805,15 @@ async function forceGenesisPoolAndPeg(core) {
   let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
   let initTxHash = null;
 
-  // Internal AA-safe sender with SponsorGuard and signature enforcement
+  // Internal AA-safe sender with mode-aware SponsorGuard and signature enforcement
   async function sendUserOpAA(execCalldata, opts) {
+    // If AA wrapper is not available, fall back to legacy path
     if (!core?.aa) {
-      // Fallback to legacy path if AA wrapper not available
       const res = await core.mev.sendUserOp(execCalldata, opts);
       return res;
     }
+
+    const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
 
     const userOp = await core.aa.createUserOp(execCalldata, {
       callGasLimit: opts.callGasLimit ?? 420_000n,
@@ -822,16 +824,24 @@ async function forceGenesisPoolAndPeg(core) {
       description: opts.description ?? 'force_genesis'
     });
 
-    // SponsorGuard: ensure paymasterAndData is present
-    if (userOp.paymasterAndData === '0x') {
-      throw new Error('Missing sponsorship (paymasterAndData=0x) during forceGenesis');
+    // In NONE mode, explicitly ensure no paymaster data and rely on SCW ETH
+    if (mode === 'NONE') {
+      userOp.paymasterAndData = '0x';
     }
 
+    // SponsorGuard — only enforce when a paymaster is expected
+    const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
+    if (expectsSponsorship && userOp.paymasterAndData === '0x') {
+      throw new Error(`Missing sponsorship (paymasterAndData=0x) in mode=${mode}`);
+    }
+
+    // Always sign — signature must be present in all modes
     const signedOp = await core.aa.signUserOp(userOp);
     if (!signedOp.signature || signedOp.signature === '0x') {
-      throw new Error('Missing signature (signature=0x) during forceGenesis');
+      throw new Error('Missing signature (signature=0x)');
     }
 
+    // Send with backoff
     const txHash = await core.aa.sendUserOpWithBackoff(signedOp, 5);
     return { txHash };
   }
@@ -839,7 +849,7 @@ async function forceGenesisPoolAndPeg(core) {
   if (!pool || pool === ethers.ZeroAddress) {
     const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD);
 
-    // Build calldata and execute via SCW userOp — AA-safe sender enforces sponsorship/signature
+    // Build calldata and execute via SCW userOp — AA-safe sender enforces sponsorship/signature conditionally
     const pmData = npmIface.encodeFunctionData(
       'createAndInitializePoolIfNecessary',
       [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
@@ -848,7 +858,7 @@ async function forceGenesisPoolAndPeg(core) {
 
     const res = await sendUserOpAA(exec, {
       description: 'init_pool_scw',
-      // Lean genesis caps to minimize sponsorship requirement
+      // Lean genesis caps to minimize requirement
       callGasLimit: 420_000n,
       verificationGasLimit: 350_000n,
       preVerificationGas: 60_000n,
@@ -928,6 +938,7 @@ async function forceGenesisPoolAndPeg(core) {
     return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
 }
+
 /* =========================================================================
    Oracle aggregator (patched with null-safety and normalized compositeUSD)
    ========================================================================= */
@@ -2095,23 +2106,36 @@ function sqrtBigInt(n) {
 }
 
 /**
- * AA preflight probe — ensures sponsorship + signature work before sending real swaps.
- * Builds a tiny noop UserOp via core.aa and verifies paymasterAndData and signature are non-empty.
+ * AA preflight probe — mode-aware sponsorship/signature validation.
+ * In NONE mode, sponsorship is NOT required (SCW pays gas); signature IS required.
+ * In API/ONCHAIN modes, sponsorship AND signature are required.
  */
 async function _aaPreflightProbe(core) {
   if (!core?.aa) return; // If AA is abstracted inside strategy, skip probe
+  const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
+  const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
+
   const dummyCalldata = LIVE.PLUMBING?.AA_NOOP_CALLDATA || '0x';
   const userOp = await core.aa.createUserOp(dummyCalldata, {
     callGasLimit: 120_000n,
     verificationGasLimit: 180_000n,
     preVerificationGas: 80_000n,
   });
-  console.log('[AA] preflight sponsor length:', (userOp.paymasterAndData || '0x').length);
-  if (userOp.paymasterAndData === '0x') {
-    throw new Error('AA preflight failed: missing sponsorship (paymasterAndData=0x)');
+
+  const pmLen = (userOp.paymasterAndData || '0x').length;
+  console.log('[AA] preflight sponsor length:', pmLen);
+
+  if (expectsSponsorship && userOp.paymasterAndData === '0x') {
+    throw new Error(`AA preflight failed: missing sponsorship (mode=${mode}, paymasterAndData=0x)`);
   }
+  if (mode === 'NONE') {
+    // Explicitly ensure paymaster data is zeroed in NONE mode
+    userOp.paymasterAndData = '0x';
+  }
+
   const signedOp = await core.aa.signUserOp(userOp);
-  console.log('[AA] preflight signature length:', (signedOp.signature || '0x').length);
+  const sigLen = (signedOp.signature || '0x').length;
+  console.log('[AA] preflight signature length:', sigLen);
   if (!signedOp.signature || signedOp.signature === '0x') {
     throw new Error('AA preflight failed: missing signature (signature=0x)');
   }
@@ -2177,7 +2201,7 @@ async function _genesisSwaps(core) {
     balanceUSDC = Math.max(1.0, Math.min(5.0, Number(ethers.formatUnits(bal, 6))));
   } catch {}
 
-  // AA preflight to avoid AA21/AA31 before real swaps
+  // AA preflight to avoid AA21/AA31 before real swaps (mode-aware)
   try {
     await _aaPreflightProbe(core);
   } catch (preErr) {
