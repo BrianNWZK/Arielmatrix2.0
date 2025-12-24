@@ -1476,19 +1476,60 @@ class StrategyEngine {
     return true;
   }
 
-  async enforcePegIfNeeded(){
-    const now=nowTs(); 
-    if(now-this.lastPegEnforcement<8000) return null; 
-    this.lastPegEnforcement=now;
+   async enforcePegIfNeeded(){
+    const now = nowTs();
+    if (now - this.lastPegEnforcement < 8000) return null;
+    this.lastPegEnforcement = now;
 
-    const entropyValue= Number(createHash('sha256').update(String(now)).digest().readUInt32BE(0))/0xFFFFFFFF;
-    const coherence= 0.6 + 0.3*Math.sin(now/60_000);
-    const sample=this.entropy ? this.entropy.sample(entropyValue, coherence) : { coherence, shock:0, ts:now };
-    const composite=this.oracle ? await this.oracle.compositeUSD(LIVE.TOKENS.BWAEZI) : { priceUSD: LIVE.PEG.TARGET_USD, confidence:0.5 };
-    const deviationPct=((composite.priceUSD - LIVE.PEG.TARGET_USD)/LIVE.PEG.TARGET_USD)*100;
-    const threshold = (composite.confidence||0.5) < 0.5 ? 0.6 : 0.35;
+    const entropyValue = Number(createHash('sha256').update(String(now)).digest().readUInt32BE(0)) / 0xFFFFFFFF;
+    const coherence = 0.6 + 0.3 * Math.sin(now / 60_000);
+    const sample = this.entropy ? this.entropy.sample(entropyValue, coherence) : { coherence, shock: 0, ts: now };
 
-    if(Math.abs(deviationPct) <
+    const composite = this.oracle
+      ? await this.oracle.compositeUSD(LIVE.TOKENS.BWAEZI)
+      : { priceUSD: LIVE.PEG.TARGET_USD, confidence: 0.5 };
+
+    const deviationPct = ((composite.priceUSD - LIVE.PEG.TARGET_USD) / LIVE.PEG.TARGET_USD) * 100;
+    const threshold = (composite.confidence || 0.5) < 0.5 ? 0.6 : 0.35;
+
+    // If deviation is inside tolerance band, do nothing
+    if (Math.abs(deviationPct) < threshold) {
+      return { enforced: false, reason: 'inside_band', deviationPct, threshold, coherence: sample.coherence };
+    }
+
+    // Size a small corrective rebalance proportional to deviation and coherence
+    const baseUSD = 5000;
+    const scale = Math.max(0.2, Math.min(1.0, Math.abs(deviationPct) / 2.0)) * Math.max(0.3, sample.coherence);
+    const usdNotional = Math.round(baseUSD * scale);
+
+    // Direction: if price below peg → BUY BWAEZI (raise price); above peg → SELL BWAEZI (lower price)
+    const buyBWAEZI = composite.priceUSD < LIVE.PEG.TARGET_USD;
+
+    // Execute corrective action via strategy
+    const result = await this.opportunisticRebalance(buyBWAEZI, usdNotional);
+
+    // Persist a peg enforcement record
+    await this.verifier.record({
+      txHash: result.txHash,
+      action: 'peg_enforce',
+      tokenIn: buyBWAEZI ? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI,
+      tokenOut: buyBWAEZI ? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC,
+      notionalUSD: usdNotional,
+      evExAnte: { evUSD: usdNotional, gasUSD: 0, slipUSD: 0 }
+    });
+
+    return {
+      enforced: true,
+      txHash: result.txHash,
+      deviationPct,
+      threshold,
+      buyBWAEZI,
+      usdNotional,
+      coherence: sample.coherence
+    };
+  }
+} // <-- properly closes StrategyEngine class
+
 
 
 /* =========================================================================
