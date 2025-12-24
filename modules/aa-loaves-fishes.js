@@ -407,6 +407,8 @@ class EnterpriseAASDK {
   }
 
   async _sponsor(userOp) {
+    // NONE mode: explicitly no sponsorship
+    if (this.paymasterMode === 'NONE') return '0x';
     if (this.paymasterMode === 'API') return await this.paymasterAPI.sponsor(userOp);
     if (this.paymasterMode === 'ONCHAIN') return await this.verifyingPaymaster.buildPaymasterAndData(userOp);
     if (this.paymasterMode === 'PASSTHROUGH') return await this.passthroughPaymaster.buildPaymasterAndData();
@@ -437,6 +439,8 @@ class EnterpriseAASDK {
       ? toUserOpLike(userOpLikeOrCalldata)
       : userOpLikeOrCalldata;
 
+    // NONE mode: return zero data immediately
+    if (this.paymasterMode === 'NONE') return '0x';
     return await this._sponsor(fakeOp);
   }
 
@@ -445,6 +449,7 @@ class EnterpriseAASDK {
    * - No initCode usage; assumes SCW is already deployed.
    * - Pure execution userOps only.
    * - Honors explicit opts.paymasterAndData override if provided.
+   * - Allows deposit-funded NONE mode without sponsorship.
    */
   async createUserOp(callData, opts = {}) {
     if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
@@ -463,7 +468,7 @@ class EnterpriseAASDK {
     const userOp = {
       sender,
       nonce,
-      initCode: '0x', // always empty in deployment-free mode
+      initCode: '0x',
       callData,
       // Lower initial caps; bundler estimation will lift if needed
       callGasLimit: opts.callGasLimit ?? 250_000n,
@@ -475,20 +480,28 @@ class EnterpriseAASDK {
       signature: '0x'
     };
 
-    // Force paymaster sponsorship; never send "0x" unless mode NONE upstream adjusts
+    // Paymaster strategy:
+    // 1) If explicit override provided, honor it.
+    // 2) If NONE mode or allowNoPaymaster, keep '0x' (deposit-funded).
+    // 3) Else try sponsorship; if sponsor fails, gracefully fall back to '0x'.
+    const allowNoPM = (opts.allowNoPaymaster === true) || (this.paymasterMode === 'NONE');
+
     if (opts.paymasterAndData && ethers.isHexString(opts.paymasterAndData)) {
       userOp.paymasterAndData = opts.paymasterAndData;
+    } else if (allowNoPM) {
+      userOp.paymasterAndData = '0x';
     } else {
       try {
         const pmData = await this._sponsor(userOp);
         if (pmData && ethers.isHexString(pmData)) {
           userOp.paymasterAndData = pmData;
         } else {
-          throw new Error('Invalid paymasterAndData from sponsor');
+          // Fall back to deposit-funded execution if sponsor returned invalid data
+          userOp.paymasterAndData = '0x';
         }
-      } catch (err) {
-        console.error('Paymaster sponsor failed:', err.message);
-        throw err;
+      } catch {
+        // Fall back to deposit-funded execution if sponsor fails
+        userOp.paymasterAndData = '0x';
       }
     }
 
@@ -578,9 +591,9 @@ class EnhancedMevExecutor {
       preVerificationGas: opts.preVerificationGas || 45_000n,
       maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
-      // Honor explicit paymaster override
-      paymasterAndData: opts.paymasterAndData
-      // No initCode in deployment-free mode
+      // Honor explicit paymaster override and allow deposit-funded NONE mode
+      paymasterAndData: opts.paymasterAndData,
+      allowNoPaymaster: opts.allowNoPaymaster === true
     });
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
