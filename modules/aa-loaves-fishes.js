@@ -8,8 +8,11 @@
 // - Slightly lowered initial gas caps; bundler lifts if needed
 // - Tip floor and fee sanity retained
 // - Telemetry-friendly return values (unchanged exports and capabilities)
-// Correction:
-// - Auto stake default lowered to 0.002 ETH (configurable via AUTO_PM_STAKE_WEI) to fit low-deposit environments
+// Corrections for SCW update:
+// - Mode-aware EntryPoint deposit target (SCW in NONE mode; paymaster otherwise)
+// - Added depositToEntryPointFor(target) helper
+// - EnhancedMevExecutor honors allowNoPaymaster (deposit-funded SCW path)
+// - Compatible with SponsorGuard routing via core.mev.sendUserOp
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -134,6 +137,15 @@ function getEntryPoint(provider) {
   return new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, provider);
 }
 
+// NEW: deposit to a specific account (SCW or paymaster), not always PM
+async function depositToEntryPointFor(signer, targetAddress, amountWei) {
+  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, signer);
+  const tx = await ep.depositTo(ethers.getAddress(targetAddress), { value: amountWei });
+  const rec = await tx.wait();
+  return rec.transactionHash;
+}
+
+// Legacy (kept for compatibility; targets PM)
 async function depositToEntryPoint(signer, amountWei) {
   const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, signer);
   const tx = await ep.depositTo(ENHANCED_CONFIG.PAYMASTER.ADDRESS, { value: amountWei });
@@ -602,7 +614,7 @@ class EnhancedMevExecutor {
 }
 
 /* =========================================================================
-   Bootstrap helper (paymaster-only; no SCW deployment)
+   Bootstrap helper (mode-aware deposit target; SCW in NONE mode, PM otherwise)
    ========================================================================= */
 
 function _computeRequiredDeposit({ callGasLimit, verificationGasLimit, preVerificationGas, maxFeePerGas, marginPct = 25 }) {
@@ -613,8 +625,11 @@ function _computeRequiredDeposit({ callGasLimit, verificationGasLimit, preVerifi
 
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
   const ep = getEntryPoint(provider);
+  const mode = (ENHANCED_CONFIG.PAYMASTER.MODE || 'ONCHAIN').toUpperCase();
+  const depositTarget = (mode === 'NONE') ? ethers.getAddress(scwAddress) : ENHANCED_CONFIG.PAYMASTER.ADDRESS;
+
   let deposit = 0n;
-  try { deposit = await ep.getDeposit(ENHANCED_CONFIG.PAYMASTER.ADDRESS); } catch {}
+  try { deposit = await ep.getDeposit(depositTarget); } catch {}
 
   const AUTO_PM_DEPOSIT = process.env.AUTO_PM_DEPOSIT === 'true';
   const AUTO_PM_STAKE = process.env.AUTO_PM_STAKE === 'true';
@@ -632,34 +647,30 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
 
   if (AUTO_PM_DEPOSIT && deposit < required) {
     const delta = required - deposit;
-    const prettyDep = ethers.formatEther(deposit);
-    const prettyReq = ethers.formatEther(required);
-    const prettyDelta = ethers.formatEther(delta);
-    console.log(`[AA PM TOPUP] deposit=${prettyDep} required=${prettyReq} topping=${prettyDelta}`);
-    const txh = await depositToEntryPoint(signer, delta);
-    console.log(`[AA PM TOPUP] tx=${txh}`);
-    // refresh
-    try { deposit = await ep.getDeposit(ENHANCED_CONFIG.PAYMASTER.ADDRESS); } catch {}
+    console.log(`[AA TOPUP] target=${depositTarget} deposit=${ethers.formatEther(deposit)} required=${ethers.formatEther(required)} topping=${ethers.formatEther(delta)}`);
+    const txh = await depositToEntryPointFor(signer, depositTarget, delta);
+    console.log(`[AA TOPUP] tx=${txh}`);
+    try { deposit = await ep.getDeposit(depositTarget); } catch {}
   } else if (AUTO_PM_DEPOSIT && deposit < ethers.parseEther('0.001')) {
     // Legacy tiny top-up fallback
     const top = ethers.parseEther(process.env.AUTO_PM_DEPOSIT_WEI || '0.002');
-    const txh = await depositToEntryPoint(signer, top);
-    console.log(`[AA PM TOPUP] tiny top-up=${ethers.formatEther(top)} tx=${txh}`);
-    try { deposit = await ep.getDeposit(ENHANCED_CONFIG.PAYMASTER.ADDRESS); } catch {}
+    const txh = await depositToEntryPointFor(signer, depositTarget, top);
+    console.log(`[AA TOPUP] tiny top-up=${ethers.formatEther(top)} tx=${txh}`);
+    try { deposit = await ep.getDeposit(depositTarget); } catch {}
   }
 
-  // Correction: default stake lowered to 0.002 ETH, configurable via AUTO_PM_STAKE_WEI
-  if (AUTO_PM_STAKE) {
+  // Stake only applies when using a paymaster (not NONE mode)
+  if (AUTO_PM_STAKE && mode !== 'NONE') {
     const delay = Number(process.env.AUTO_PM_UNSTAKE_DELAY || 86400);
     const amount = ethers.parseEther(process.env.AUTO_PM_STAKE_WEI || '0.002');
     try {
       const txh = await addStakeToEntryPoint(signer, delay, amount);
-      console.log(`[AA PM STAKE] staked=${ethers.formatEther(amount)} tx=${txh}`);
+      console.log(`[AA STAKE] staked=${ethers.formatEther(amount)} tx=${txh}`);
     } catch (e) {
-      console.warn(`[AA PM STAKE] stake failed: ${e.message}`);
+      console.warn(`[AA STAKE] stake failed: ${e.message}`);
     }
   }
-  return { entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07, paymasterDeposit: deposit };
+  return { entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07, depositTarget, paymasterDeposit: deposit };
 }
 
 /* =========================================================================
@@ -735,6 +746,7 @@ export {
   bootstrapSCWForPaymasterEnhanced,
   createNetworkForcedProvider,
   depositToEntryPoint,
+  depositToEntryPointFor,
   addStakeToEntryPoint,
   pickHealthyBundler,
 
