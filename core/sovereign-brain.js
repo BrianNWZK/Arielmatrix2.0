@@ -1507,10 +1507,10 @@ class EntropyShockDetector {
 }
 
 /* =========================================================================
-   Perception accumulator (ES module-safe, full capabilities preserved)
+   Perception accumulator (ESM-safe, full capabilities)
    ========================================================================= */
 
-export class PerceptionAccumulator {
+class PerceptionAccumulator {
   constructor() {
     this.events = [];
     this.merkleRoot = null;
@@ -1518,14 +1518,18 @@ export class PerceptionAccumulator {
 
   /**
    * Add a perception event and refresh the rolling Merkle root.
-   * Expected evt shape: { hash: 0x..., ts: number, source: 'local'|'l2'|'l1' }
+   * evt shape: { hash: '0x..', ts: number, source: 'local'|'l2'|'l1', confidence?: number, evUSD?: number }
    */
   addEvent(evt) {
     if (!evt || typeof evt !== 'object') return;
+    const ts = Number(evt.ts ?? nowTs());
+    const hash = typeof evt.hash === 'string' && evt.hash.startsWith('0x') ? evt.hash : null;
+    const source = evt.source || 'local';
+    if (!hash) return;
 
-    this.events.push(evt);
+    this.events.push({ hash, ts, source, confidence: evt.confidence ?? 0, evUSD: evt.evUSD ?? 0 });
 
-    // Apply rolling decay window using LIVE.PERCEPTION.DECAY_MS
+    // Apply rolling decay window
     const cutoff = nowTs() - LIVE.PERCEPTION.DECAY_MS;
     this.events = this.events.filter(e => (e?.ts ?? 0) >= cutoff);
 
@@ -1534,11 +1538,11 @@ export class PerceptionAccumulator {
   }
 
   /**
-   * Compute the Merkle root over the event hashes.
-   * Uses pairwise keccak256(concat(left, right)) with dup-right padding for odd layers.
+   * Compute the Merkle root over event hashes with dup-right padding.
+   * Uses ethers.keccak256(concat(left, right)) across layers.
    */
   computeMerkle() {
-    if (this.events.length === 0) return ethers.ZeroHash;
+    if (!this.events.length) return ethers.ZeroHash;
 
     let layer = this.events
       .map(e => e?.hash)
@@ -1550,12 +1554,12 @@ export class PerceptionAccumulator {
       const next = [];
       for (let i = 0; i < layer.length; i += 2) {
         const left = layer[i];
-        const right = layer[i + 1] || left;
+        const right = layer[i + 1] || layer[i]; // dup-right
         next.push(ethers.keccak256(ethers.concat([left, right])));
       }
       layer = next;
     }
-    return layer[0];
+    return layer[0] || ethers.ZeroHash;
   }
 
   /**
