@@ -768,8 +768,23 @@ async function ensureV3PoolAtPeg(
 
 // Canonical Uniswap V3 sqrtPriceX96 encoder (token0/token1 aware)
 function encodePriceSqrt(token0, token1, targetPegUSD) {
-  const dec0 = token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase() ? 18 : 6;
-  const dec1 = token1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase() ? 6 : 18;
+  const dec0 =
+    token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase()
+      ? 18
+      : token0.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase()
+      ? 6
+      : token0.toLowerCase() === LIVE.TOKENS.WETH.toLowerCase()
+      ? 18
+      : 18;
+
+  const dec1 =
+    token1.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase()
+      ? 6
+      : token1.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase()
+      ? 18
+      : token1.toLowerCase() === LIVE.TOKENS.WETH.toLowerCase()
+      ? 18
+      : 18;
 
   // Price scalar = targetPegUSD * 10^(dec1 - dec0)
   const exp = BigInt(dec1 - dec0);
@@ -783,6 +798,72 @@ function encodePriceSqrt(token0, token1, targetPegUSD) {
   return sqrtScalar * Q96;
 }
 
+// Internal AA-safe sender with mode-aware SponsorGuard and signature enforcement
+async function sendUserOpAA(core, execCalldata, opts) {
+  // If AA wrapper is not available, fall back to legacy path
+  if (!core?.aa) {
+    const res = await core.mev.sendUserOp(execCalldata, {
+      ...opts,
+      allowNoPaymaster: true,
+      paymasterAndData: '0x'
+    });
+    return res;
+  }
+
+  const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
+  const allowNoPM = mode === 'NONE' || opts?.allowNoPaymaster === true;
+
+  const userOp = await core.aa.createUserOp(execCalldata, {
+    callGasLimit: opts.callGasLimit ?? 300_000n,
+    verificationGasLimit: opts.verificationGasLimit ?? 200_000n,
+    preVerificationGas: opts.preVerificationGas ?? 50_000n,
+    maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
+    maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
+    description: opts.description ?? 'force_genesis',
+    allowNoPaymaster: allowNoPM
+  });
+
+  // In NONE mode, explicitly ensure no paymaster data and rely on SCW EntryPoint deposit
+  if (allowNoPM) {
+    userOp.paymasterAndData = '0x';
+  }
+
+  // SponsorGuard — only enforce when a paymaster is expected
+  const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
+  if (expectsSponsorship && userOp.paymasterAndData === '0x') {
+    // Try to attach sponsorship via MevExecutorAA path (if available), else proceed deposit-funded
+    // No throw here — we allow deposit-funded fallback for robustness
+    try {
+      const viaMev = await core.mev.sendUserOp(execCalldata, {
+        description: opts.description ?? 'force_genesis',
+        callGasLimit: userOp.callGasLimit,
+        verificationGasLimit: userOp.verificationGasLimit,
+        preVerificationGas: userOp.preVerificationGas,
+        maxFeePerGas: userOp.maxFeePerGas,
+        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+        paymasterAndData: opts.paymasterAndData,
+        allowNoPaymaster: allowNoPM
+      });
+      return { txHash: viaMev.txHash };
+    } catch (e) {
+      // Fall through to deposit-funded submission below
+    }
+  }
+
+  // Always sign — signature must be present in all modes
+  const signedOp = await core.aa.signUserOp(userOp);
+  if (!signedOp.signature || signedOp.signature === '0x') {
+    throw new Error('Missing signature (signature=0x)');
+  }
+
+  // Send with backoff
+  const txHash = await core.aa.sendUserOpWithBackoff(signedOp, 5);
+  return { txHash };
+}
+
+/**
+ * Ensure BWAEZI/USDC pool exists and is initialized at peg, then seed minimal range via SCW
+ */
 async function forceGenesisPoolAndPeg(core) {
   const factory = new ethers.Contract(
     LIVE.DEXES.UNISWAP_V3.factory,
@@ -805,65 +886,6 @@ async function forceGenesisPoolAndPeg(core) {
   let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
   let initTxHash = null;
 
-  // Internal AA-safe sender with mode-aware SponsorGuard and signature enforcement
-  async function sendUserOpAA(execCalldata, opts) {
-    // If AA wrapper is not available, fall back to legacy path
-    if (!core?.aa) {
-      const res = await core.mev.sendUserOp(execCalldata, { ...opts, allowNoPaymaster: true, paymasterAndData: '0x' });
-      return res;
-    }
-
-    const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
-    const allowNoPM = mode === 'NONE' || opts?.allowNoPaymaster === true;
-
-    const userOp = await core.aa.createUserOp(execCalldata, {
-      callGasLimit: opts.callGasLimit ?? 300_000n,
-      verificationGasLimit: opts.verificationGasLimit ?? 200_000n,
-      preVerificationGas: opts.preVerificationGas ?? 50_000n,
-      maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
-      description: opts.description ?? 'force_genesis',
-      allowNoPaymaster: allowNoPM
-    });
-
-    // In NONE mode, explicitly ensure no paymaster data and rely on SCW EntryPoint deposit
-    if (allowNoPM) {
-      userOp.paymasterAndData = '0x';
-    }
-
-    // SponsorGuard — only enforce when a paymaster is expected
-    const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
-    if (expectsSponsorship && userOp.paymasterAndData === '0x') {
-      // Try to attach sponsorship via MevExecutorAA path (if available), else proceed deposit-funded
-      // No throw here — we allow deposit-funded fallback for robustness
-      try {
-        const viaMev = await core.mev.sendUserOp(execCalldata, {
-          description: opts.description ?? 'force_genesis',
-          callGasLimit: userOp.callGasLimit,
-          verificationGasLimit: userOp.verificationGasLimit,
-          preVerificationGas: userOp.preVerificationGas,
-          maxFeePerGas: userOp.maxFeePerGas,
-          maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-          paymasterAndData: opts.paymasterAndData,
-          allowNoPaymaster: allowNoPM
-        });
-        return { txHash: viaMev.txHash };
-      } catch (e) {
-        // Fall through to deposit-funded submission below
-      }
-    }
-
-    // Always sign — signature must be present in all modes
-    const signedOp = await core.aa.signUserOp(userOp);
-    if (!signedOp.signature || signedOp.signature === '0x') {
-      throw new Error('Missing signature (signature=0x)');
-    }
-
-    // Send with backoff
-    const txHash = await core.aa.sendUserOpWithBackoff(signedOp, 5);
-    return { txHash };
-  }
-
   if (!pool || pool === ethers.ZeroAddress) {
     const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD);
 
@@ -874,7 +896,7 @@ async function forceGenesisPoolAndPeg(core) {
     );
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
 
-    const res = await sendUserOpAA(exec, {
+    const res = await sendUserOpAA(core, exec, {
       description: 'init_pool_scw',
       // Lean genesis caps to minimize requirement
       callGasLimit: 300_000n,
@@ -898,7 +920,7 @@ async function forceGenesisPoolAndPeg(core) {
       );
       const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
 
-      const res2 = await sendUserOpAA(exec2, {
+      const res2 = await sendUserOpAA(core, exec2, {
         description: 'init_pool_scw_retry',
         callGasLimit: 320_000n,
         verificationGasLimit: 220_000n, // slight uplift on retry
@@ -943,6 +965,7 @@ async function forceGenesisPoolAndPeg(core) {
   const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
   console.log(`[forceGenesis] Minting initial range bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
 
+  let mintStreamId = null;
   try {
     const stream = await core.maker.startStreamingMint({
       token0: LIVE.TOKENS.BWAEZI,
@@ -954,12 +977,151 @@ async function forceGenesisPoolAndPeg(core) {
       steps: 2,
       label: 'force_genesis_seed'
     });
-    return { pool, initTxHash, mintStreamId: stream.streamId };
+    mintStreamId = stream.streamId;
   } catch (e) {
     console.error('[forceGenesis] mint failed:', e.message);
-    return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
+
+  // Also ensure BWAEZI/WETH pool is initialized and seeded BW-only (no WETH), plus multihop bootstrap
+  const wethSeed = await ensureGenesisBwzWethPoolAndSeed(core).catch((e) => {
+    console.warn('[forceGenesis] BWAEZI/WETH init/seed failed:', e.message);
+    return { poolWeth: ethers.ZeroAddress, seedStreamId: null };
+  });
+
+  return { pool, initTxHash, mintStreamId, poolWeth: wethSeed.poolWeth, seedStreamIdWeth: wethSeed.seedStreamId };
 }
+
+/**
+ * Ensure BWAEZI/WETH pool exists and is initialized at the same $100 peg,
+ * then seed a minimal range via SCW userOps with zero WETH (SCW has no WETH).
+ * Also attempts a USDC→WETH→BWAEZI multihop probe to bootstrap routing.
+ */
+async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
+  const factory = new ethers.Contract(
+    LIVE.DEXES.UNISWAP_V3.factory,
+    ['function getPool(address,address,uint24) view returns (address)'],
+    core.provider
+  );
+  const npm = LIVE.DEXES.UNISWAP_V3.positionManager;
+  const npmIface = new ethers.Interface([
+    'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
+  ]);
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+
+  const [w0, w1] =
+    LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.WETH.toLowerCase()
+      ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.WETH]
+      : [LIVE.TOKENS.WETH, LIVE.TOKENS.BWAEZI];
+
+  let poolWeth = await factory.getPool(w0, w1, fee);
+  let initTx = null;
+
+  // Initialize BWAEZI/WETH at peg via SCW userOp
+  if (!poolWeth || poolWeth === ethers.ZeroAddress) {
+    const sqrtPriceX96Weth = encodePriceSqrt(w0, w1, LIVE.PEG.TARGET_USD);
+    const pmData = npmIface.encodeFunctionData('createAndInitializePoolIfNecessary', [w0, w1, fee, sqrtPriceX96Weth]);
+    const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
+
+    const res = await sendUserOpAA(core, exec, {
+      description: 'init_pool_bwz_weth_scw',
+      callGasLimit: 300_000n,
+      verificationGasLimit: 200_000n,
+      preVerificationGas: 50_000n,
+      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+      allowNoPaymaster: true,
+      paymasterAndData: '0x'
+    });
+    initTx = res.txHash;
+
+    const receipt = await core.provider.getTransactionReceipt(res.txHash);
+    if (!receipt || receipt.status !== 1) {
+      // Retry reversed
+      const [rw0, rw1] = [w1, w0];
+      const sqrt2 = encodePriceSqrt(rw0, rw1, LIVE.PEG.TARGET_USD);
+      const pmData2 = npmIface.encodeFunctionData('createAndInitializePoolIfNecessary', [rw0, rw1, fee, sqrt2]);
+      const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
+
+      await sendUserOpAA(core, exec2, {
+        description: 'init_pool_bwz_weth_retry',
+        callGasLimit: 320_000n,
+        verificationGasLimit: 220_000n,
+        preVerificationGas: 55_000n,
+        maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+        allowNoPaymaster: true,
+        paymasterAndData: '0x'
+      });
+      poolWeth = await factory.getPool(rw0, rw1, fee);
+    } else {
+      poolWeth = await factory.getPool(w0, w1, fee);
+    }
+
+    if (!poolWeth || poolWeth === ethers.ZeroAddress) {
+      throw new Error('BWAEZI/WETH pool still missing after init attempts');
+    }
+    console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/WETH pool at peg via SCW: ${poolWeth} (tx=${initTx})`);
+  }
+
+  // Seed minimal range on BWAEZI/WETH — zero WETH (SCW has none)
+  const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
+  const poolC = new ethers.Contract(poolWeth, slotIface.fragments, core.provider);
+  const [, tick] = await poolC.slot0();
+  const width = 120;
+  const tl = Number(tick) - width;
+  const tu = Number(tick) + width;
+
+  // BW leg sized to ~$5 at peg; WETH leg = 0
+  const { bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
+  const wethAmt = 0n;
+
+  console.log(`[forceGenesis] Minting BWAEZI/WETH range bw=${bwAmt.toString()} weth=${wethAmt.toString()} ticks [${tl},${tu}]`);
+
+  let seedStreamId = null;
+  try {
+    const seed = await core.maker.startStreamingMint({
+      token0: LIVE.TOKENS.BWAEZI,
+      token1: LIVE.TOKENS.WETH,
+      tickLower: tl,
+      tickUpper: tu,
+      total0: bwAmt,
+      total1: wethAmt, // zero WETH since SCW has none
+      steps: 1,
+      label: 'force_genesis_seed_bwz_weth_zero'
+    });
+    seedStreamId = seed.streamId;
+  } catch (e) {
+    console.error('[forceGenesis] BWAEZI/WETH mint failed:', e.message);
+  }
+
+  // Bootstrap routing via USDC→WETH→BWAEZI multihop probe (no balance changes, just path readiness)
+  try {
+    const adapter = core.dex.getAdapter('UNISWAP_V3');
+    const probeInUSDC = ethers.parseUnits('1', 6); // tiny probe
+    const pathTx = await adapter._v3PathCalldata(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probeInUSDC, LIVE.SCW_ADDRESS);
+    if (pathTx?.router && pathTx?.calldata) {
+      const execCalldata = new ethers.Interface(['function execute(address,uint256,bytes)'])
+        .encodeFunctionData('execute', [pathTx.router, 0n, pathTx.calldata]);
+      // Submit AA userOp (will revert harmlessly on transfer; purpose is router/path prewarm)
+      await core.mev.sendUserOp(execCalldata, {
+        description: 'bootstrap_multihop_usdc_weth_bwzC',
+        callGasLimit: 120_000n,
+        verificationGasLimit: 120_000n,
+        preVerificationGas: 40_000n,
+        maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+        allowNoPaymaster: true,
+        paymasterAndData: '0x'
+      }).catch(() => {});
+      console.log('[forceGenesis] Multihop USDC→WETH→BWAEZI path prewarmed');
+    }
+  } catch (e) {
+    console.warn('[forceGenesis] Multihop prewarm failed:', e.message);
+  }
+
+  return { poolWeth, seedStreamId };
+}
+
 
 
 /* =========================================================================
