@@ -796,6 +796,7 @@ async function forceGenesisPoolAndPeg(core) {
   ]);
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
 
+  // token ordering for Uniswap V3 (token0 < token1)
   const [t0, t1] =
     LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase()
       ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
@@ -804,17 +805,48 @@ async function forceGenesisPoolAndPeg(core) {
   let pool = await factory.getPool(t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
   let initTxHash = null;
 
+  // Internal AA-safe sender with SponsorGuard and signature enforcement
+  async function sendUserOpAA(execCalldata, opts) {
+    if (!core?.aa) {
+      // Fallback to legacy path if AA wrapper not available
+      const res = await core.mev.sendUserOp(execCalldata, opts);
+      return res;
+    }
+
+    const userOp = await core.aa.createUserOp(execCalldata, {
+      callGasLimit: opts.callGasLimit ?? 420_000n,
+      verificationGasLimit: opts.verificationGasLimit ?? 350_000n,
+      preVerificationGas: opts.preVerificationGas ?? 60_000n,
+      maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('25', 'gwei'),
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
+      description: opts.description ?? 'force_genesis'
+    });
+
+    // SponsorGuard: ensure paymasterAndData is present
+    if (userOp.paymasterAndData === '0x') {
+      throw new Error('Missing sponsorship (paymasterAndData=0x) during forceGenesis');
+    }
+
+    const signedOp = await core.aa.signUserOp(userOp);
+    if (!signedOp.signature || signedOp.signature === '0x') {
+      throw new Error('Missing signature (signature=0x) during forceGenesis');
+    }
+
+    const txHash = await core.aa.sendUserOpWithBackoff(signedOp, 5);
+    return { txHash };
+  }
+
   if (!pool || pool === ethers.ZeroAddress) {
     const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD);
 
-    // Build calldata and execute via SCW userOp — SponsorGuard inside MevExecutorAA handles PM data
+    // Build calldata and execute via SCW userOp — AA-safe sender enforces sponsorship/signature
     const pmData = npmIface.encodeFunctionData(
       'createAndInitializePoolIfNecessary',
       [t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96]
     );
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
 
-    const res = await core.mev.sendUserOp(exec, {
+    const res = await sendUserOpAA(exec, {
       description: 'init_pool_scw',
       // Lean genesis caps to minimize sponsorship requirement
       callGasLimit: 420_000n,
@@ -836,7 +868,7 @@ async function forceGenesisPoolAndPeg(core) {
       );
       const exec2 = scwIface.encodeFunctionData('execute', [npm, 0n, pmData2]);
 
-      const res2 = await core.mev.sendUserOp(exec2, {
+      const res2 = await sendUserOpAA(exec2, {
         description: 'init_pool_scw_retry',
         callGasLimit: 420_000n,
         verificationGasLimit: 375_000n, // slight uplift on retry
@@ -844,6 +876,7 @@ async function forceGenesisPoolAndPeg(core) {
         maxFeePerGas: ethers.parseUnits('27', 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
       });
+
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
       if (!receipt2 || receipt2.status !== 1) {
         throw new Error('Pool init retry reverted');
@@ -895,7 +928,6 @@ async function forceGenesisPoolAndPeg(core) {
     return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
 }
-
 /* =========================================================================
    Oracle aggregator (patched with null-safety and normalized compositeUSD)
    ========================================================================= */
@@ -2062,7 +2094,32 @@ function sqrtBigInt(n) {
   return x;
 }
 
-// Seed minimal liquidity around current tick to enable quotes
+/**
+ * AA preflight probe — ensures sponsorship + signature work before sending real swaps.
+ * Builds a tiny noop UserOp via core.aa and verifies paymasterAndData and signature are non-empty.
+ */
+async function _aaPreflightProbe(core) {
+  if (!core?.aa) return; // If AA is abstracted inside strategy, skip probe
+  const dummyCalldata = LIVE.PLUMBING?.AA_NOOP_CALLDATA || '0x';
+  const userOp = await core.aa.createUserOp(dummyCalldata, {
+    callGasLimit: 120_000n,
+    verificationGasLimit: 180_000n,
+    preVerificationGas: 80_000n,
+  });
+  console.log('[AA] preflight sponsor length:', (userOp.paymasterAndData || '0x').length);
+  if (userOp.paymasterAndData === '0x') {
+    throw new Error('AA preflight failed: missing sponsorship (paymasterAndData=0x)');
+  }
+  const signedOp = await core.aa.signUserOp(userOp);
+  console.log('[AA] preflight signature length:', (signedOp.signature || '0x').length);
+  if (!signedOp.signature || signedOp.signature === '0x') {
+    throw new Error('AA preflight failed: missing signature (signature=0x)');
+  }
+}
+
+/**
+ * Seed minimal liquidity around current tick to enable quotes
+ */
 async function seedMinimalLiquidity(core) {
   const factory = new ethers.Contract(
     LIVE.DEXES.UNISWAP_V3.factory,
@@ -2108,7 +2165,9 @@ async function seedMinimalLiquidity(core) {
   });
 }
 
-// Tiny swaps to awaken perception and EV gating; jittered retries + WETH fallback
+/**
+ * Tiny swaps to awaken perception and EV gating; jittered retries + WETH fallback
+ */
 async function _genesisSwaps(core) {
   // $5 USDC first microseed to set $100 peg; use remaining for WETH fallback if needed
   let balanceUSDC = 5.0;
@@ -2118,6 +2177,14 @@ async function _genesisSwaps(core) {
     balanceUSDC = Math.max(1.0, Math.min(5.0, Number(ethers.formatUnits(bal, 6))));
   } catch {}
 
+  // AA preflight to avoid AA21/AA31 before real swaps
+  try {
+    await _aaPreflightProbe(core);
+  } catch (preErr) {
+    console.error('❌ AA preflight failed:', preErr.message);
+    throw preErr;
+  }
+
   const { usdcAmt, bwAmt } = pegSizedAmounts(balanceUSDC, LIVE.PEG.TARGET_USD);
   let executed = 0;
   let attempts = 0;
@@ -2126,6 +2193,7 @@ async function _genesisSwaps(core) {
   while (attempts < 3 && executed === 0) {
     try {
       const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
+      if (!res1?.txHash || res1.txHash === '0x') throw new Error('Missing txHash from USDC→BWAEZI');
       await core.verifier.record({
         txHash: res1.txHash,
         action: 'genesis_buy_bwzC',
@@ -2148,6 +2216,7 @@ async function _genesisSwaps(core) {
   while (attempts < 2 && executed === 1) {
     try {
       const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
+      if (!res2?.txHash || res2.txHash === '0x') throw new Error('Missing txHash from BWAEZI→USDC');
       await core.verifier.record({
         txHash: res2.txHash,
         action: 'genesis_sell_bwzC',
@@ -2171,6 +2240,7 @@ async function _genesisSwaps(core) {
       const fallbackUSD = Math.max(1.0, Math.min(4.0, balanceUSDC - 1.0));
       const fallbackUSDC = ethers.parseUnits(fallbackUSD.toFixed(6), 6);
       const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, fallbackUSDC);
+      if (!res?.txHash || res.txHash === '0x') throw new Error('Missing txHash from USDC→WETH');
       await core.verifier.record({
         txHash: res.txHash,
         action: 'genesis_buy_weth',
@@ -2232,7 +2302,6 @@ async function runGenesisMicroseed(core) {
     return { ok: false, error: e.message };
   }
 }
-
 
 /* =========================================================================
    Production sovereign core v15.13 (full live wiring)
