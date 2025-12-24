@@ -423,11 +423,12 @@ class EnterpriseAASDK {
       nonce,
       initCode: '0x',
       callData: calldata,
-      callGasLimit: gasHints.callGasLimit ?? 800_000n,
-      verificationGasLimit: gasHints.verificationGasLimit ?? 600_000n,
-      preVerificationGas: gasHints.preVerificationGas ?? 100_000n,
-      maxFeePerGas: gasHints.maxFeePerGas ?? ethers.parseUnits('35', 'gwei'),
-      maxPriorityFeePerGas: gasHints.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei'),
+      // Reduced hints to keep prefund low when probing sponsorship
+      callGasLimit: gasHints.callGasLimit ?? 250_000n,
+      verificationGasLimit: gasHints.verificationGasLimit ?? 180_000n,
+      preVerificationGas: gasHints.preVerificationGas ?? 45_000n,
+      maxFeePerGas: gasHints.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
+      maxPriorityFeePerGas: gasHints.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
       paymasterAndData: '0x',
       signature: '0x'
     });
@@ -465,16 +466,16 @@ class EnterpriseAASDK {
       initCode: '0x', // always empty in deployment-free mode
       callData,
       // Lower initial caps; bundler estimation will lift if needed
-      callGasLimit: opts.callGasLimit ?? 600_000n,
-      verificationGasLimit: opts.verificationGasLimit ?? 450_000n,
-      preVerificationGas: opts.preVerificationGas ?? 80_000n,
+      callGasLimit: opts.callGasLimit ?? 250_000n,
+      verificationGasLimit: opts.verificationGasLimit ?? 180_000n,
+      preVerificationGas: opts.preVerificationGas ?? 45_000n,
       maxFeePerGas: maxFee,
       maxPriorityFeePerGas: maxTip,
       paymasterAndData: '0x',
       signature: '0x'
     };
 
-    // Force paymaster sponsorship; never send "0x"
+    // Force paymaster sponsorship; never send "0x" unless mode NONE upstream adjusts
     if (opts.paymasterAndData && ethers.isHexString(opts.paymasterAndData)) {
       userOp.paymasterAndData = opts.paymasterAndData;
     } else {
@@ -497,7 +498,7 @@ class EnterpriseAASDK {
       userOp.callGasLimit = toBig(est.callGasLimit, userOp.callGasLimit);
       userOp.verificationGasLimit = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
       userOp.preVerificationGas = toBig(est.preVerificationGas, userOp.preVerificationGas);
-      userOp.callGasLimit = userOp.callGasLimit < 400_000n ? 400_000n : userOp.callGasLimit;
+      userOp.callGasLimit = userOp.callGasLimit < 200_000n ? 200_000n : userOp.callGasLimit;
     } catch { /* proceed with defaults */ }
 
     return userOp;
@@ -572,11 +573,11 @@ class EnhancedMevExecutor {
   }
   async sendCall(calldata, opts = {}) {
     const userOp = await this.aa.createUserOp(calldata, {
-      callGasLimit: opts.gasLimit || 650_000n,
-      verificationGasLimit: opts.verificationGasLimit || 500_000n,
-      preVerificationGas: opts.preVerificationGas || 80_000n,
-      maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
+      callGasLimit: opts.gasLimit || 250_000n,
+      verificationGasLimit: opts.verificationGasLimit || 180_000n,
+      preVerificationGas: opts.preVerificationGas || 45_000n,
+      maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
       // Honor explicit paymaster override
       paymasterAndData: opts.paymasterAndData
       // No initCode in deployment-free mode
