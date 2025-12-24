@@ -1342,6 +1342,7 @@ class EVGatingStrategyProxy {
   }
 }
 
+
 /* =========================================================================
    Strategy engine (arbitrage/rebalance + peg watcher)
    ========================================================================= */
@@ -1368,6 +1369,32 @@ class StrategyEngine {
     this.lastPegEnforcement=0;
   }
 
+  async _dynamicCaps(opts = {}) {
+    let maxFeePerGas = ethers.parseUnits('2', 'gwei');
+    let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei');
+    try {
+      const fd = await this.provider.getFeeData();
+      if (fd?.maxFeePerGas) {
+        const ceiling = ethers.parseUnits('3', 'gwei');
+        const clamped = fd.maxFeePerGas > ceiling ? ceiling : fd.maxFeePerGas;
+        maxFeePerGas = (clamped * 12n) / 10n; // +20% buffer
+      }
+      if (fd?.maxPriorityFeePerGas) {
+        const prioCeiling = ethers.parseUnits('0.5', 'gwei');
+        maxPriorityFeePerGas = fd.maxPriorityFeePerGas > prioCeiling ? prioCeiling : fd.maxPriorityFeePerGas;
+      }
+    } catch {}
+    return {
+      callGasLimit: opts.callGasLimit ?? 160_000n,
+      verificationGasLimit: opts.verificationGasLimit ?? 120_000n,
+      preVerificationGas: opts.preVerificationGas ?? 45_000n,
+      maxFeePerGas: opts.maxFeePerGas ?? maxFeePerGas,
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? maxPriorityFeePerGas,
+      allowNoPaymaster: true,
+      paymasterAndData: '0x'
+    };
+  }
+
   async execSwap(tokenIn, tokenOut, amountIn){
     const built = await this.dex.buildSplitExec(tokenIn, tokenOut, amountIn, LIVE.SCW_ADDRESS);
     if (!built) throw new Error('No route available');
@@ -1375,17 +1402,8 @@ class StrategyEngine {
 
     const iface=new ethers.Interface(['function execute(address,uint256,bytes)']);
     const calldata = iface.encodeFunctionData('execute',[built.router, 0n, built.calldata]);
-    const userOpRes = await this.mev.sendUserOp(calldata, {
-      description:`swap_exec_${built.selectedDex}`,
-      // Lean AA hints to reduce prefund while preserving execution safety
-      callGasLimit: 250_000n,
-      verificationGasLimit: 180_000n,
-      preVerificationGas: 45_000n,
-      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-      allowNoPaymaster: true,
-      paymasterAndData: '0x'
-    });
+    const caps = await this._dynamicCaps();
+    const userOpRes = await this.mev.sendUserOp(calldata, { description:`swap_exec_${built.selectedDex}`, ...caps });
     return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
   }
 
@@ -1421,17 +1439,8 @@ class StrategyEngine {
       ts: nowTs()
     };
 
-    const result=await this.mev.sendUserOp(exec, {
-      description:'rebalance_bwaezi',
-      // Lean AA hints consistent with execSwap
-      callGasLimit: 250_000n,
-      verificationGasLimit: 180_000n,
-      preVerificationGas: 45_000n,
-      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-      allowNoPaymaster: true,
-      paymasterAndData: '0x'
-    });
+    const caps = await this._dynamicCaps();
+    const result=await this.mev.sendUserOp(exec, { description:'rebalance_bwaezi', ...caps });
     const rec = await this.verifier.record({ txHash: result.txHash, action:'rebalance', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: usdNotional, evExAnte: { evUSD: usdNotional, gasUSD: 0, slipUSD: usdNotional*slip } });
     return { txHash:result.txHash, decisionPacket:packet, record: rec };
   }
@@ -1479,17 +1488,7 @@ class StrategyEngine {
     const deviationPct=((composite.priceUSD - LIVE.PEG.TARGET_USD)/LIVE.PEG.TARGET_USD)*100;
     const threshold = (composite.confidence||0.5) < 0.5 ? 0.6 : 0.35;
 
-    if(Math.abs(deviationPct) < threshold) {
-      return { action:'NOOP', packet: { mode:'peg_enforcement', ts:now, compositePriceUSD: composite.priceUSD, confidence: composite.confidence } };
-    }
-
-    const buy = composite.priceUSD < LIVE.PEG.TARGET_USD;
-    const usdNotional = Math.round(20000*(1+ Math.min(0.8, Math.abs(deviationPct)/10)));
-    const res=await this.opportunisticRebalance(buy, usdNotional);
-    return { action: buy? 'BUY_BWAEZI':'SELL_BWAEZI', txHash:res.txHash, packet: res.decisionPacket };
-  }
-}
-
+    if(Math.abs(deviationPct) <
 
 
 /* =========================================================================
@@ -1765,21 +1764,48 @@ class SponsorGuard {
     }
   }
 
-  // Lean genesis caps to keep sponsorship requirement tiny but valid
-  leanCaps(opts = {}) {
+  // Lean caps + dynamic fees (low ceilings) to fit deposit and avoid AA21
+  async leanCaps(opts = {}) {
+    // Defaults under low-fee conditions
+    let maxFeePerGas = ethers.parseUnits('2', 'gwei');    // fallback
+    let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei'); // fallback
+
+    try {
+      const fd = await this.provider.getFeeData();
+
+      // Clamp base fee to 3 gwei, add ~20% buffer for variance
+      if (fd?.maxFeePerGas) {
+        const mf = fd.maxFeePerGas;
+        const ceiling = ethers.parseUnits('3', 'gwei');
+        const clamped = mf > ceiling ? ceiling : mf;
+        maxFeePerGas = (clamped * 12n) / 10n; // +20% buffer
+      }
+
+      // Clamp priority fee to 0.5 gwei
+      if (fd?.maxPriorityFeePerGas) {
+        const mp = fd.maxPriorityFeePerGas;
+        const prioCeiling = ethers.parseUnits('0.5', 'gwei');
+        maxPriorityFeePerGas = mp > prioCeiling ? prioCeiling : mp;
+      }
+    } catch {
+      // Use fallbacks
+    }
+
+    // Gas caps sized to fit small EntryPoint deposits while remaining AA31-safe
     const base = {
-      callGasLimit: 300_000n,
-      verificationGasLimit: 200_000n,
-      preVerificationGas: 50_000n,
-      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+      callGasLimit: 160_000n,
+      verificationGasLimit: 120_000n,
+      preVerificationGas: 45_000n,
+      maxFeePerGas,
+      maxPriorityFeePerGas
     };
+
     return {
       callGasLimit: opts.callGasLimit ?? base.callGasLimit,
       verificationGasLimit: opts.verificationGasLimit ?? base.verificationGasLimit,
       preVerificationGas: opts.preVerificationGas ?? base.preVerificationGas,
       maxFeePerGas: opts.maxFeePerGas ?? base.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? base.maxPriorityFeePerGas,
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? base.maxPriorityFeePerGas
     };
   }
 
@@ -1795,7 +1821,7 @@ class SponsorGuard {
   }
 
   async sendWithGuard(calldata, opts = {}) {
-    const caps = this.leanCaps(opts);
+    const caps = await this.leanCaps(opts);
 
     // Mode-aware: allow deposit-funded NONE mode or explicit allowance
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
@@ -1865,7 +1891,6 @@ class MevExecutorAA {
     return await this.sponsor.sendWithGuard(calldata, merged);
   }
 }
-
 
 
 
