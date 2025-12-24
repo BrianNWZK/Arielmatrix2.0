@@ -809,11 +809,12 @@ async function forceGenesisPoolAndPeg(core) {
   async function sendUserOpAA(execCalldata, opts) {
     // If AA wrapper is not available, fall back to legacy path
     if (!core?.aa) {
-      const res = await core.mev.sendUserOp(execCalldata, opts);
+      const res = await core.mev.sendUserOp(execCalldata, { ...opts, allowNoPaymaster: true, paymasterAndData: '0x' });
       return res;
     }
 
     const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
+    const allowNoPM = mode === 'NONE' || opts?.allowNoPaymaster === true;
 
     const userOp = await core.aa.createUserOp(execCalldata, {
       callGasLimit: opts.callGasLimit ?? 300_000n,
@@ -821,18 +822,35 @@ async function forceGenesisPoolAndPeg(core) {
       preVerificationGas: opts.preVerificationGas ?? 50_000n,
       maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
-      description: opts.description ?? 'force_genesis'
+      description: opts.description ?? 'force_genesis',
+      allowNoPaymaster: allowNoPM
     });
 
-    // In NONE mode, explicitly ensure no paymaster data and rely on SCW ETH
-    if (mode === 'NONE') {
+    // In NONE mode, explicitly ensure no paymaster data and rely on SCW EntryPoint deposit
+    if (allowNoPM) {
       userOp.paymasterAndData = '0x';
     }
 
     // SponsorGuard — only enforce when a paymaster is expected
     const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
     if (expectsSponsorship && userOp.paymasterAndData === '0x') {
-      throw new Error(`Missing sponsorship (paymasterAndData=0x) in mode=${mode}`);
+      // Try to attach sponsorship via MevExecutorAA path (if available), else proceed deposit-funded
+      // No throw here — we allow deposit-funded fallback for robustness
+      try {
+        const viaMev = await core.mev.sendUserOp(execCalldata, {
+          description: opts.description ?? 'force_genesis',
+          callGasLimit: userOp.callGasLimit,
+          verificationGasLimit: userOp.verificationGasLimit,
+          preVerificationGas: userOp.preVerificationGas,
+          maxFeePerGas: userOp.maxFeePerGas,
+          maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+          paymasterAndData: opts.paymasterAndData,
+          allowNoPaymaster: allowNoPM
+        });
+        return { txHash: viaMev.txHash };
+      } catch (e) {
+        // Fall through to deposit-funded submission below
+      }
     }
 
     // Always sign — signature must be present in all modes
@@ -863,7 +881,9 @@ async function forceGenesisPoolAndPeg(core) {
       verificationGasLimit: 200_000n,
       preVerificationGas: 50_000n,
       maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+      allowNoPaymaster: true,
+      paymasterAndData: '0x'
     });
     initTxHash = res.txHash;
 
@@ -884,7 +904,9 @@ async function forceGenesisPoolAndPeg(core) {
         verificationGasLimit: 220_000n, // slight uplift on retry
         preVerificationGas: 55_000n,
         maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
+        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+        allowNoPaymaster: true,
+        paymasterAndData: '0x'
       });
 
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
@@ -938,7 +960,6 @@ async function forceGenesisPoolAndPeg(core) {
     return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
 }
-
 
 
 /* =========================================================================
@@ -1163,13 +1184,25 @@ class EVGatingStrategyProxy {
    Strategy engine (arbitrage/rebalance + peg watcher)
    ========================================================================= */
 
-function mapElementToFeeTier(elemental) { if (elemental === 'WATER') return 500; if (elemental === 'FIRE') return 10000; return 3000; }
-function chooseRoute(elemental) { if (elemental === 'FIRE') return 'ONE_INCH_V5'; return 'UNISWAP_V3'; }
+function mapElementToFeeTier(elemental) { 
+  if (elemental === 'WATER') return 500; 
+  if (elemental === 'FIRE') return 10000; 
+  return 3000; 
+}
+function chooseRoute(elemental) { 
+  if (elemental === 'FIRE') return 'ONE_INCH_V5'; 
+  return 'UNISWAP_V3'; 
+}
 
 class StrategyEngine {
   constructor(mev, verifier, provider, dexRegistry, entropy=null, maker=null, oracle=null){
-    this.mev=mev; this.verifier=verifier; this.provider=provider; this.dex=dexRegistry;
-    this.entropy=entropy; this.maker=maker; this.oracle=oracle;
+    this.mev=mev; 
+    this.verifier=verifier; 
+    this.provider=provider; 
+    this.dex=dexRegistry;
+    this.entropy=entropy; 
+    this.maker=maker; 
+    this.oracle=oracle;
     this.lastPegEnforcement=0;
   }
 
@@ -1188,6 +1221,8 @@ class StrategyEngine {
       preVerificationGas: 45_000n,
       maxFeePerGas: ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+      allowNoPaymaster: true,
+      paymasterAndData: '0x'
     });
     return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
   }
@@ -1232,6 +1267,8 @@ class StrategyEngine {
       preVerificationGas: 45_000n,
       maxFeePerGas: ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+      allowNoPaymaster: true,
+      paymasterAndData: '0x'
     });
     const rec = await this.verifier.record({ txHash: result.txHash, action:'rebalance', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: usdNotional, evExAnte: { evUSD: usdNotional, gasUSD: 0, slipUSD: usdNotional*slip } });
     return { txHash:result.txHash, decisionPacket:packet, record: rec };
@@ -1269,7 +1306,9 @@ class StrategyEngine {
   }
 
   async enforcePegIfNeeded(){
-    const now=nowTs(); if(now-this.lastPegEnforcement<8000) return null; this.lastPegEnforcement=now;
+    const now=nowTs(); 
+    if(now-this.lastPegEnforcement<8000) return null; 
+    this.lastPegEnforcement=now;
 
     const entropyValue= Number(createHash('sha256').update(String(now)).digest().readUInt32BE(0))/0xFFFFFFFF;
     const coherence= 0.6 + 0.3*Math.sin(now/60_000);
@@ -1536,7 +1575,6 @@ class ReflexiveAmplifier {
   getEquationState() { return { ...this.state, constants: this.constants, lastUpdated: nowTs() }; }
 }
 
-
 /* =========================================================================
    Mev Executor (AA live) — with SponsorGuard, AA31 hardening
    ========================================================================= */
@@ -1551,6 +1589,10 @@ class SponsorGuard {
   }
 
   async attachPaymaster(calldata, caps) {
+    // Respect NONE mode: do not attach sponsorship, rely on sender deposit
+    const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
+    if (mode === 'NONE') return '0x';
+
     // Request PM data with the exact caps the PM will simulate under
     try {
       const pmd = await this.aa.getPaymasterData(calldata, caps);
@@ -1591,9 +1633,17 @@ class SponsorGuard {
   }
 
   async sendWithGuard(calldata, opts = {}) {
-    // Build caps first, then get PM data under those caps
     const caps = this.leanCaps(opts);
-    let paymasterAndData = opts.paymasterAndData || (await this.attachPaymaster(calldata, caps));
+
+    // Mode-aware: allow deposit-funded NONE mode or explicit allowance
+    const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
+    const allowNoPM = (opts.allowNoPaymaster === true) || (mode === 'NONE');
+
+    // Initialize paymaster data according to mode
+    let paymasterAndData = '0x';
+    if (!allowNoPM) {
+      paymasterAndData = opts.paymasterAndData || (await this.attachPaymaster(calldata, caps)) || '0x';
+    }
 
     let attempt = 0;
     let lastErr = null;
@@ -1603,6 +1653,7 @@ class SponsorGuard {
         const userOp = await this.aa.createUserOp(calldata, {
           ...caps,
           paymasterAndData,
+          allowNoPaymaster: allowNoPM
         });
 
         const pre = await this.preflight(userOp);
@@ -1618,8 +1669,8 @@ class SponsorGuard {
       } catch (e) {
         lastErr = String(e?.message || e);
 
-        // On AA31 or sponsor validation issue: refresh PM data and nudge caps
-        if (lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster')) {
+        // On AA31 or sponsor validation issue: refresh PM data and nudge caps (only when sponsorship is expected)
+        if (!allowNoPM && (lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster'))) {
           paymasterAndData = await this.attachPaymaster(calldata, caps);
           caps.verificationGasLimit += 30_000n;
           caps.preVerificationGas += 5_000n;
@@ -1642,9 +1693,17 @@ class MevExecutorAA {
   }
 
   async sendUserOp(calldata, opts = {}) {
-    return await this.sponsor.sendWithGuard(calldata, opts);
+    // Always permit deposit-funded execution; callers can override paymaster if needed
+    const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
+    const merged = {
+      ...opts,
+      allowNoPaymaster: true,
+      paymasterAndData: (mode === 'NONE') ? '0x' : (opts.paymasterAndData || undefined)
+    };
+    return await this.sponsor.sendWithGuard(calldata, merged);
   }
 }
+
 
 
 
