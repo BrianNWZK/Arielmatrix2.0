@@ -816,10 +816,10 @@ async function forceGenesisPoolAndPeg(core) {
     const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
 
     const userOp = await core.aa.createUserOp(execCalldata, {
-      callGasLimit: opts.callGasLimit ?? 420_000n,
-      verificationGasLimit: opts.verificationGasLimit ?? 350_000n,
-      preVerificationGas: opts.preVerificationGas ?? 60_000n,
-      maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('25', 'gwei'),
+      callGasLimit: opts.callGasLimit ?? 300_000n,
+      verificationGasLimit: opts.verificationGasLimit ?? 200_000n,
+      preVerificationGas: opts.preVerificationGas ?? 50_000n,
+      maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
       description: opts.description ?? 'force_genesis'
     });
@@ -859,10 +859,10 @@ async function forceGenesisPoolAndPeg(core) {
     const res = await sendUserOpAA(exec, {
       description: 'init_pool_scw',
       // Lean genesis caps to minimize requirement
-      callGasLimit: 420_000n,
-      verificationGasLimit: 350_000n,
-      preVerificationGas: 60_000n,
-      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
+      callGasLimit: 300_000n,
+      verificationGasLimit: 200_000n,
+      preVerificationGas: 50_000n,
+      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
     });
     initTxHash = res.txHash;
@@ -880,10 +880,10 @@ async function forceGenesisPoolAndPeg(core) {
 
       const res2 = await sendUserOpAA(exec2, {
         description: 'init_pool_scw_retry',
-        callGasLimit: 420_000n,
-        verificationGasLimit: 375_000n, // slight uplift on retry
-        preVerificationGas: 65_000n,
-        maxFeePerGas: ethers.parseUnits('27', 'gwei'),
+        callGasLimit: 320_000n,
+        verificationGasLimit: 220_000n, // slight uplift on retry
+        preVerificationGas: 55_000n,
+        maxFeePerGas: ethers.parseUnits('15', 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
       });
 
@@ -938,6 +938,8 @@ async function forceGenesisPoolAndPeg(core) {
     return { pool, initTxHash, mintStreamId: null, error: e.message };
   }
 }
+
+
 
 /* =========================================================================
    Oracle aggregator (patched with null-safety and normalized compositeUSD)
@@ -1178,7 +1180,15 @@ class StrategyEngine {
 
     const iface=new ethers.Interface(['function execute(address,uint256,bytes)']);
     const calldata = iface.encodeFunctionData('execute',[built.router, 0n, built.calldata]);
-    const userOpRes = await this.mev.sendUserOp(calldata, { description:`swap_exec_${built.selectedDex}` });
+    const userOpRes = await this.mev.sendUserOp(calldata, {
+      description:`swap_exec_${built.selectedDex}`,
+      // Lean AA hints to reduce prefund while preserving execution safety
+      callGasLimit: 250_000n,
+      verificationGasLimit: 180_000n,
+      preVerificationGas: 45_000n,
+      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+    });
     return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
   }
 
@@ -1214,7 +1224,15 @@ class StrategyEngine {
       ts: nowTs()
     };
 
-    const result=await this.mev.sendUserOp(exec, { description:'rebalance_bwaezi' });
+    const result=await this.mev.sendUserOp(exec, {
+      description:'rebalance_bwaezi',
+      // Lean AA hints consistent with execSwap
+      callGasLimit: 250_000n,
+      verificationGasLimit: 180_000n,
+      preVerificationGas: 45_000n,
+      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+    });
     const rec = await this.verifier.record({ txHash: result.txHash, action:'rebalance', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: usdNotional, evExAnte: { evUSD: usdNotional, gasUSD: 0, slipUSD: usdNotional*slip } });
     return { txHash:result.txHash, decisionPacket:packet, record: rec };
   }
@@ -1270,6 +1288,8 @@ class StrategyEngine {
     return { action: buy? 'BUY_BWAEZI':'SELL_BWAEZI', txHash:res.txHash, packet: res.decisionPacket };
   }
 }
+
+
 
 /* =========================================================================
    Entropy
@@ -1516,6 +1536,7 @@ class ReflexiveAmplifier {
   getEquationState() { return { ...this.state, constants: this.constants, lastUpdated: nowTs() }; }
 }
 
+
 /* =========================================================================
    Mev Executor (AA live) — with SponsorGuard, AA31 hardening
    ========================================================================= */
@@ -1543,10 +1564,10 @@ class SponsorGuard {
   // Lean genesis caps to keep sponsorship requirement tiny but valid
   leanCaps(opts = {}) {
     const base = {
-      callGasLimit: 420_000n,
-      verificationGasLimit: 350_000n,
-      preVerificationGas: 60_000n,
-      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
+      callGasLimit: 300_000n,
+      verificationGasLimit: 200_000n,
+      preVerificationGas: 50_000n,
+      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
     };
     return {
@@ -1587,7 +1608,7 @@ class SponsorGuard {
         const pre = await this.preflight(userOp);
         if (!pre.ok) {
           // Slight uplift to verification & preVerification if simulation complains
-          caps.verificationGasLimit += 25_000n;
+          caps.verificationGasLimit += 20_000n;
           caps.preVerificationGas += 5_000n;
         }
 
@@ -1600,8 +1621,8 @@ class SponsorGuard {
         // On AA31 or sponsor validation issue: refresh PM data and nudge caps
         if (lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster')) {
           paymasterAndData = await this.attachPaymaster(calldata, caps);
-          caps.verificationGasLimit += 50_000n;
-          caps.preVerificationGas += 10_000n;
+          caps.verificationGasLimit += 30_000n;
+          caps.preVerificationGas += 5_000n;
         }
 
         const jitter = this.backoffBaseMs * (attempt + 1) + Math.floor(Math.random() * 500);
@@ -1624,6 +1645,8 @@ class MevExecutorAA {
     return await this.sponsor.sendWithGuard(calldata, opts);
   }
 }
+
+
 
 /* =========================================================================
    Consciousness Kernel (sensing + decision) with adaptive sovereign equation
@@ -1836,6 +1859,7 @@ class PolicyGovernor {
   }
 }
 
+
 /* =========================================================================
    MEV recapture engine — aligned with MevExecutorAA SponsorGuard (AA31-safe)
    ========================================================================= */
@@ -1849,10 +1873,10 @@ class MEVRecaptureEngine {
 
     // Lean AA caps consistent with SponsorGuard to keep sponsorship tiny and valid
     this.leanCaps = {
-      callGasLimit: 420_000n,
-      verificationGasLimit: 350_000n,
-      preVerificationGas: 60_000n,
-      maxFeePerGas: ethers.parseUnits('25', 'gwei'),
+      callGasLimit: 250_000n,
+      verificationGasLimit: 180_000n,
+      preVerificationGas: 45_000n,
+      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
     };
   }
@@ -1966,7 +1990,14 @@ class AdaptiveRangeMaker {
           };
           const mintData = this.npmIface.encodeFunctionData('mint', [params]);
           const exec = this.scwIface.encodeFunctionData('execute', [this.npm, 0n, mintData]);
-          const txRes = await this.core.mev.sendUserOp(exec, { description: `maker_mint_${label}` });
+          const txRes = await this.core.mev.sendUserOp(exec, {
+            description: `maker_mint_${label}`,
+            callGasLimit: 250_000n,
+            verificationGasLimit: 180_000n,
+            preVerificationGas: 45_000n,
+            maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+            maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+          });
           st.positions.push({ txHash: txRes.txHash, at: nowTs() });
           console.log(`[maker_stream:${label}] mint chunk done tx=${txRes.txHash}`);
         } catch(e){ console.error('Streaming mint error:', e.message); }
@@ -1988,6 +2019,8 @@ class AdaptiveRangeMaker {
   }
   listStreams(){ return Array.from(this.running.entries()).map(([id,st])=> ({ id, ...st })); }
 }
+
+
 
 /* =========================================================================
    API server v15.13
@@ -2117,9 +2150,11 @@ async function _aaPreflightProbe(core) {
 
   const dummyCalldata = LIVE.PLUMBING?.AA_NOOP_CALLDATA || '0x';
   const userOp = await core.aa.createUserOp(dummyCalldata, {
-    callGasLimit: 120_000n,
-    verificationGasLimit: 180_000n,
-    preVerificationGas: 80_000n,
+    callGasLimit: 80_000n,
+    verificationGasLimit: 120_000n,
+    preVerificationGas: 40_000n,
+    maxFeePerGas: ethers.parseUnits('15', 'gwei'),
+    maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
   });
 
   const pmLen = (userOp.paymasterAndData || '0x').length;
@@ -2326,6 +2361,8 @@ async function runGenesisMicroseed(core) {
     return { ok: false, error: e.message };
   }
 }
+
+
 
 /* =========================================================================
    Production sovereign core v15.13 (full live wiring)
