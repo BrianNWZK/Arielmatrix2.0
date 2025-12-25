@@ -541,22 +541,30 @@ class EnterpriseAASDK {
       }
     }
 
+    // Dummy signature to let bundler estimate prevGas correctly (size-aware)
+    userOp.signature = '0x01';
+
     try {
       const est = await this.bundler.estimateUserOperationGas(this._formatUserOpForBundler(userOp), this.entryPoint);
       const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
 
-      userOp.callGasLimit = toBig(est.callGasLimit, userOp.callGasLimit);
-      userOp.verificationGasLimit = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
+      const estCall = toBig(est.callGasLimit, userOp.callGasLimit);
+      const estVeri = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
+      const estPrev = toBig(est.preVerificationGas, userOp.preVerificationGas);
 
-      // Fully adaptive preVerificationGas: use bundler estimate + proportional buffer
-      const estimatedPrev = toBig(est.preVerificationGas, userOp.preVerificationGas);
-      userOp.preVerificationGas = (estimatedPrev * 11n) / 10n; // +10% buffer
+      // Fully adaptive: apply proportional buffers (+10%) to estimates
+      userOp.callGasLimit = estCall + (estCall / 10n);
+      userOp.verificationGasLimit = estVeri + (estVeri / 10n);
+      userOp.preVerificationGas = estPrev + (estPrev / 10n);
 
-      // Keep minimal call gas floor for safety; bundler may lift
+      // Minimal safety floor for call gas; bundler may lift further
       if (userOp.callGasLimit < 200_000n) userOp.callGasLimit = 200_000n;
     } catch {
       // proceed with provided defaults if estimate fails
     }
+
+    // Clear dummy signature; caller will sign via signUserOp()
+    userOp.signature = '0x';
 
     return userOp;
   }
