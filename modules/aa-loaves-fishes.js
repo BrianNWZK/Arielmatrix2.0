@@ -433,7 +433,7 @@ class EnterpriseAASDK {
     const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
     const nonce = await this.getNonce(sender);
 
-    // Adaptive fee hints (replace 15/1 gwei hard-codes)
+    // Adaptive fee hints
     let hintMaxFee, hintMaxTip;
     try {
       const fd = await this.provider.getFeeData();
@@ -485,21 +485,21 @@ class EnterpriseAASDK {
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
 
-    // Global adaptive fees (replace hard-coded 15 gwei)
+    // Global adaptive fees
     let maxFee, maxTip;
     try {
       const fd = await this.provider.getFeeData();
       const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
-      const buffered = (base * 11n) / 10n; // +10% buffer to reduce stalling
+      const buffered = (base * 11n) / 10n; // +10% buffer
       const floor = ethers.parseUnits('1', 'gwei');
       maxFee = opts.maxFeePerGas || (buffered < floor ? floor : buffered);
-      maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei'); // tip floor (~0.05 gwei)
+      maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei'); // tip floor
     } catch {
       maxFee = opts.maxFeePerGas || ethers.parseUnits('1', 'gwei');
       maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei');
     }
 
-    const TIP_FLOOR = 50_000_000n; // floor tip in wei (~0.05 gwei)
+    const TIP_FLOOR = 50_000_000n; // ~0.05 gwei
     if (BigInt(maxTip) < TIP_FLOOR) maxTip = TIP_FLOOR;
     if (maxFee < maxTip) maxFee = maxTip;
 
