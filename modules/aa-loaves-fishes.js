@@ -335,6 +335,7 @@ class PassthroughPaymaster {
   async buildPaymasterAndData() { return ethers.concat([ethers.getAddress(this.address), '0x']); }
 }
 
+
 /* =========================================================================
    Enterprise AA SDK (deployment-free; pure execution)
    ========================================================================= */
@@ -432,6 +433,20 @@ class EnterpriseAASDK {
     const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
     const nonce = await this.getNonce(sender);
 
+    // Adaptive fee hints (replace 15/1 gwei hard-codes)
+    let hintMaxFee, hintMaxTip;
+    try {
+      const fd = await this.provider.getFeeData();
+      const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
+      const buffered = (base * 11n) / 10n; // +10% buffer
+      const floor = ethers.parseUnits('1', 'gwei');
+      hintMaxFee = buffered < floor ? floor : buffered;
+      hintMaxTip = ethers.parseUnits('0.05', 'gwei'); // tip floor
+    } catch {
+      hintMaxFee = ethers.parseUnits('1', 'gwei');
+      hintMaxTip = ethers.parseUnits('0.05', 'gwei');
+    }
+
     const toUserOpLike = (calldata) => ({
       sender,
       nonce,
@@ -441,8 +456,8 @@ class EnterpriseAASDK {
       callGasLimit: gasHints.callGasLimit ?? 250_000n,
       verificationGasLimit: gasHints.verificationGasLimit ?? 180_000n,
       preVerificationGas: gasHints.preVerificationGas ?? 45_000n,
-      maxFeePerGas: gasHints.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: gasHints.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
+      maxFeePerGas: gasHints.maxFeePerGas ?? hintMaxFee,
+      maxPriorityFeePerGas: gasHints.maxPriorityFeePerGas ?? hintMaxTip,
       paymasterAndData: '0x',
       signature: '0x'
     });
@@ -470,9 +485,20 @@ class EnterpriseAASDK {
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
 
-    const fee = await this.provider.getFeeData();
-    let maxFee = opts.maxFeePerGas || fee.maxFeePerGas || ethers.parseUnits('30', 'gwei');
-    let maxTip = opts.maxPriorityFeePerGas || fee.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
+    // Global adaptive fees (replace hard-coded 15 gwei)
+    let maxFee, maxTip;
+    try {
+      const fd = await this.provider.getFeeData();
+      const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
+      const buffered = (base * 11n) / 10n; // +10% buffer to reduce stalling
+      const floor = ethers.parseUnits('1', 'gwei');
+      maxFee = opts.maxFeePerGas || (buffered < floor ? floor : buffered);
+      maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei'); // tip floor (~0.05 gwei)
+    } catch {
+      maxFee = opts.maxFeePerGas || ethers.parseUnits('1', 'gwei');
+      maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei');
+    }
+
     const TIP_FLOOR = 50_000_000n; // floor tip in wei (~0.05 gwei)
     if (BigInt(maxTip) < TIP_FLOOR) maxTip = TIP_FLOOR;
     if (maxFee < maxTip) maxFee = maxTip;
@@ -508,11 +534,9 @@ class EnterpriseAASDK {
         if (pmData && ethers.isHexString(pmData)) {
           userOp.paymasterAndData = pmData;
         } else {
-          // Fall back to deposit-funded execution if sponsor returned invalid data
           userOp.paymasterAndData = '0x';
         }
       } catch {
-        // Fall back to deposit-funded execution if sponsor fails
         userOp.paymasterAndData = '0x';
       }
     }
