@@ -762,7 +762,6 @@ async function ensureV3PoolAtPeg(
   return { pool, txHash: rc.transactionHash };
 }
 
-
 /* =========================================================================
    Force Genesis Pool and Peg (SCW userOp + SponsorGuard + deterministic sqrt)
    ========================================================================= */
@@ -812,28 +811,54 @@ async function sendUserOpAA(core, execCalldata, opts) {
   }
 
   const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
-  const allowNoPM = mode === 'NONE' || opts?.allowNoPaymaster === true;
+  const allowNoPM = (opts?.allowNoPaymaster === true) || (mode === 'NONE');
+
+  // Adaptive fee calculation for genesis ops
+  let maxFeePerGas, maxPriorityFeePerGas;
+  try {
+    const fd = await core.provider.getFeeData();
+    const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
+    const buffered = (base * 11n) / 10n; // +10% buffer
+    const floor = ethers.parseUnits('1', 'gwei');
+    maxFeePerGas = opts.maxFeePerGas ?? (buffered < floor ? floor : buffered);
+    maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
+  } catch {
+    maxFeePerGas = opts.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
+    maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
+  }
+  if (maxFeePerGas < maxPriorityFeePerGas) maxFeePerGas = maxPriorityFeePerGas;
 
   const userOp = await core.aa.createUserOp(execCalldata, {
-    callGasLimit: opts.callGasLimit ?? 300_000n,
-    verificationGasLimit: opts.verificationGasLimit ?? 200_000n,
-    preVerificationGas: opts.preVerificationGas ?? 50_000n,
-    maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
-    maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
+    callGasLimit: opts.callGasLimit ?? 250_000n,
+    verificationGasLimit: opts.verificationGasLimit ?? 180_000n,
+    preVerificationGas: opts.preVerificationGas ?? 45_000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
     description: opts.description ?? 'force_genesis',
-    allowNoPaymaster: allowNoPM
+    allowNoPaymaster: allowNoPM,
+    paymasterAndData: '0x'
   });
 
   // In NONE mode, explicitly ensure no paymaster data and rely on SCW EntryPoint deposit
   if (allowNoPM) {
     userOp.paymasterAndData = '0x';
+  } else {
+    // Attach sponsorship when expected
+    try {
+      const pmd = await core.aa.getPaymasterData(userOp, {
+        callGasLimit: userOp.callGasLimit,
+        verificationGasLimit: userOp.verificationGasLimit,
+        preVerificationGas: userOp.preVerificationGas,
+        maxFeePerGas: userOp.maxFeePerGas,
+        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas
+      });
+      if (pmd && ethers.isHexString(pmd)) userOp.paymasterAndData = pmd;
+    } catch { /* fallback deposit-funded */ }
   }
 
-  // SponsorGuard — only enforce when a paymaster is expected
+  // SponsorGuard — if sponsorship was expected but missing, try MEV path once
   const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
   if (expectsSponsorship && userOp.paymasterAndData === '0x') {
-    // Try to attach sponsorship via MevExecutorAA path (if available), else proceed deposit-funded
-    // No throw here — we allow deposit-funded fallback for robustness
     try {
       const viaMev = await core.mev.sendUserOp(execCalldata, {
         description: opts.description ?? 'force_genesis',
@@ -842,12 +867,12 @@ async function sendUserOpAA(core, execCalldata, opts) {
         preVerificationGas: userOp.preVerificationGas,
         maxFeePerGas: userOp.maxFeePerGas,
         maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-        paymasterAndData: opts.paymasterAndData,
-        allowNoPaymaster: allowNoPM
+        allowNoPaymaster: allowNoPM,
+        paymasterAndData: '0x'
       });
       return { txHash: viaMev.txHash };
-    } catch (e) {
-      // Fall through to deposit-funded submission below
+    } catch {
+      // proceed with deposit-funded submission below
     }
   }
 
@@ -899,14 +924,7 @@ async function forceGenesisPoolAndPeg(core) {
 
     const res = await sendUserOpAA(core, exec, {
       description: 'init_pool_scw',
-      // Lean genesis caps to minimize requirement
-      callGasLimit: 300_000n,
-      verificationGasLimit: 200_000n,
-      preVerificationGas: 50_000n,
-      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-      allowNoPaymaster: true,
-      paymasterAndData: '0x'
+      // Lean genesis caps to minimize requirement (bundler will lift if needed)
     });
     initTxHash = res.txHash;
 
@@ -925,11 +943,7 @@ async function forceGenesisPoolAndPeg(core) {
         description: 'init_pool_scw_retry',
         callGasLimit: 320_000n,
         verificationGasLimit: 220_000n, // slight uplift on retry
-        preVerificationGas: 55_000n,
-        maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-        allowNoPaymaster: true,
-        paymasterAndData: '0x'
+        preVerificationGas: 55_000n
       });
 
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
@@ -1024,14 +1038,7 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
 
     const res = await sendUserOpAA(core, exec, {
-      description: 'init_pool_bwz_weth_scw',
-      callGasLimit: 300_000n,
-      verificationGasLimit: 200_000n,
-      preVerificationGas: 50_000n,
-      maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-      allowNoPaymaster: true,
-      paymasterAndData: '0x'
+      description: 'init_pool_bwz_weth_scw'
     });
     initTx = res.txHash;
 
@@ -1047,11 +1054,7 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
         description: 'init_pool_bwz_weth_retry',
         callGasLimit: 320_000n,
         verificationGasLimit: 220_000n,
-        preVerificationGas: 55_000n,
-        maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-        allowNoPaymaster: true,
-        paymasterAndData: '0x'
+        preVerificationGas: 55_000n
       });
       poolWeth = await factory.getPool(rw0, rw1, fee);
     } else {
@@ -1103,16 +1106,10 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     if (pathTx?.router && pathTx?.calldata) {
       const execCalldata = new ethers.Interface(['function execute(address,uint256,bytes)'])
         .encodeFunctionData('execute', [pathTx.router, 0n, pathTx.calldata]);
-      // Submit AA userOp (will revert harmlessly on transfer; purpose is router/path prewarm)
+      // Submit AA userOp (may revert harmlessly; purpose is router/path prewarm)
       await core.mev.sendUserOp(execCalldata, {
         description: 'bootstrap_multihop_usdc_weth_bwzC',
-        callGasLimit: 120_000n,
-        verificationGasLimit: 120_000n,
-        preVerificationGas: 40_000n,
-        maxFeePerGas: ethers.parseUnits('15', 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
-        allowNoPaymaster: true,
-        paymasterAndData: '0x'
+        allowNoPaymaster: true
       }).catch(() => {});
       console.log('[forceGenesis] Multihop USDC→WETH→BWAEZI path prewarmed');
     }
