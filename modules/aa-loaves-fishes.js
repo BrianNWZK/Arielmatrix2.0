@@ -592,21 +592,75 @@ class EnhancedMevExecutor {
     this.aa = aa;
     this.scw = scwAddress;
   }
+
   buildSCWExecute(target, calldata, value = 0n) {
     const iface = new ethers.Interface(['function execute(address,uint256,bytes) returns (bytes)']);
     return iface.encodeFunctionData('execute', [target, value, calldata]);
   }
+
   async sendCall(calldata, opts = {}) {
+    // Detect forced-genesis microseed ops by description
+    const desc = String(opts.description || '').toLowerCase();
+    const isGenesis =
+      desc.includes('force_genesis') ||
+      desc.includes('init_pool_scw') ||
+      desc.includes('init_pool_scw_retry') ||
+      desc.includes('init_pool_bwz_weth_scw') ||
+      desc.includes('init_pool_bwz_weth_retry') ||
+      desc.includes('bootstrap_multihop_usdc_weth_bwzc');
+
+    // Default caps (kept) — AA SDK will lift via bundler estimation if needed
+    let callGasLimit = opts.gasLimit || 250_000n;
+    let verificationGasLimit = opts.verificationGasLimit || 180_000n;
+    let preVerificationGas = opts.preVerificationGas || 45_000n;
+
+    // Targeted low-fee override for genesis microseed only
+    let maxFeePerGas = opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei');
+    let maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei');
+
+    if (isGenesis) {
+      try {
+        const fd = await this.aa.provider.getFeeData();
+
+        // Use current base fee when available; else fall back to 1 gwei
+        const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
+
+        // Keep it adaptive and at the lowest practical ceiling
+        // Slight buffer (10%) to reduce stalling if base fee wobbles
+        const buffered = (base * 11n) / 10n;
+
+        // Final low max fee (hard min at 1 gwei to avoid sub-we)
+        const floor = ethers.parseUnits('1', 'gwei');
+        maxFeePerGas = buffered < floor ? floor : buffered;
+
+        // Tip: AA SDK enforces a ~0.05 gwei floor internally.
+        // If you set below that, it will be raised to the floor.
+        // To avoid hidden uplift, set tip to 0.05 gwei explicitly.
+        // If you prefer your original 0.034 gwei, the SDK will bump it.
+        maxPriorityFeePerGas = ethers.parseUnits('0.05', 'gwei');
+
+      } catch {
+        // Fallback low fees if feeData fails
+        maxFeePerGas = ethers.parseUnits('1', 'gwei');
+        maxPriorityFeePerGas = ethers.parseUnits('0.05', 'gwei');
+      }
+    }
+
     const userOp = await this.aa.createUserOp(calldata, {
-      callGasLimit: opts.gasLimit || 250_000n,
-      verificationGasLimit: opts.verificationGasLimit || 180_000n,
-      preVerificationGas: opts.preVerificationGas || 45_000n,
-      maxFeePerGas: opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei'),
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
+      callGasLimit,
+      verificationGasLimit,
+      preVerificationGas,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
       // Honor explicit paymaster override and allow deposit-funded NONE mode
       paymasterAndData: opts.paymasterAndData,
       allowNoPaymaster: opts.allowNoPaymaster === true
     });
+
+    // If a caller truly wants sub-floor tip (e.g., 0.034 gwei), they can pass it via opts
+    // but the AA SDK will bump to its internal floor. No post-creation override is applied here
+    // to keep signature and sponsorship semantics correct.
+
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
     return { txHash, timestamp: Date.now(), description: opts.description || 'enhanced_scw_execute' };
