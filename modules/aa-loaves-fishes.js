@@ -433,7 +433,7 @@ class EnterpriseAASDK {
     const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
     const nonce = await this.getNonce(sender);
 
-    // Adaptive fee hints
+    // Adaptive fee hints (lean by default; sponsor can lift if needed)
     let hintMaxFee, hintMaxTip;
     try {
       const fd = await this.provider.getFeeData();
@@ -508,7 +508,7 @@ class EnterpriseAASDK {
       nonce,
       initCode: '0x',
       callData,
-      // Lower initial caps; bundler estimation will lift if needed
+      // Lean initial caps; bundler estimation will adapt/lift if needed
       callGasLimit: opts.callGasLimit ?? 250_000n,
       verificationGasLimit: opts.verificationGasLimit ?? 180_000n,
       preVerificationGas: opts.preVerificationGas ?? 45_000n,
@@ -544,11 +544,19 @@ class EnterpriseAASDK {
     try {
       const est = await this.bundler.estimateUserOperationGas(this._formatUserOpForBundler(userOp), this.entryPoint);
       const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
+
       userOp.callGasLimit = toBig(est.callGasLimit, userOp.callGasLimit);
       userOp.verificationGasLimit = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
-      userOp.preVerificationGas = toBig(est.preVerificationGas, userOp.preVerificationGas);
-      userOp.callGasLimit = userOp.callGasLimit < 200_000n ? 200_000n : userOp.callGasLimit;
-    } catch { /* proceed with defaults */ }
+
+      // Fully adaptive preVerificationGas: use bundler estimate + proportional buffer
+      const estimatedPrev = toBig(est.preVerificationGas, userOp.preVerificationGas);
+      userOp.preVerificationGas = (estimatedPrev * 11n) / 10n; // +10% buffer
+
+      // Keep minimal call gas floor for safety; bundler may lift
+      if (userOp.callGasLimit < 200_000n) userOp.callGasLimit = 200_000n;
+    } catch {
+      // proceed with provided defaults if estimate fails
+    }
 
     return userOp;
   }
