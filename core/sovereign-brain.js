@@ -762,6 +762,7 @@ async function ensureV3PoolAtPeg(
   return { pool, txHash: rc.transactionHash };
 }
 
+
 /* =========================================================================
    Force Genesis Pool and Peg (SCW userOp + SponsorGuard + deterministic sqrt)
    ========================================================================= */
@@ -798,8 +799,60 @@ function encodePriceSqrt(token0, token1, targetPegUSD) {
   return sqrtScalar * Q96;
 }
 
+// Pre-flight bundler gas validation to learn minima (stored on core)
+async function validateGenesisGasRequirements(core) {
+  try {
+    const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+    const dummyExec = scwIface.encodeFunctionData('execute', [
+      core.signer?.address || LIVE.SCW_ADDRESS,
+      0n,
+      '0x'
+    ]);
+
+    const testUserOp = await core.aa.createUserOp(dummyExec, {
+      callGasLimit: 100_000n,
+      verificationGasLimit: 100_000n,
+      preVerificationGas: 45_000n,
+      maxFeePerGas: ethers.parseUnits('2', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('0.5', 'gwei'),
+      allowNoPaymaster: true
+    });
+
+    const formatted = core.aa._formatUserOpForBundler(testUserOp);
+    const estimation = await core.aa.bundler.estimateUserOperationGas(
+      formatted,
+      LIVE.ENTRY_POINT
+    );
+
+    const mins = {
+      minPreVerificationGas: BigInt(estimation?.preVerificationGas ?? 46310n),
+      minVerificationGas: BigInt(estimation?.verificationGasLimit ?? 100000n),
+      minCallGasLimit: BigInt(estimation?.callGasLimit ?? 100000n),
+      recommendedBufferPct: 30n
+    };
+    core._genesisGasRequirements = mins;
+    console.log('[genesis][bundler] minima learned:', {
+      preVerificationGas: mins.minPreVerificationGas.toString(),
+      verificationGasLimit: mins.minVerificationGas.toString(),
+      callGasLimit: mins.minCallGasLimit.toString(),
+      bufferPct: Number(mins.recommendedBufferPct)
+    });
+    return mins;
+  } catch (e) {
+    const fallback = {
+      minPreVerificationGas: 50_000n,
+      minVerificationGas: 120_000n,
+      minCallGasLimit: 100_000n,
+      recommendedBufferPct: 35n
+    };
+    core._genesisGasRequirements = fallback;
+    console.warn('[genesis][bundler] minima probe failed, using fallback:', e.message);
+    return fallback;
+  }
+}
+
 // Internal AA-safe sender with mode-aware SponsorGuard and signature enforcement
-async function sendUserOpAA(core, execCalldata, opts) {
+async function sendUserOpAA(core, execCalldata, opts = {}) {
   // If AA wrapper is not available, fall back to legacy path
   if (!core?.aa) {
     const res = await core.mev.sendUserOp(execCalldata, {
@@ -813,25 +866,85 @@ async function sendUserOpAA(core, execCalldata, opts) {
   const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
   const allowNoPM = (opts?.allowNoPaymaster === true) || (mode === 'NONE');
 
-  // Adaptive fee calculation for genesis ops
+  // Operation profiles (bundler-aware)
+  const desc = String(opts.description || '').toLowerCase();
+  const isGenesis =
+    desc.includes('genesis') ||
+    desc.includes('init_pool') ||
+    desc.includes('bootstrap') ||
+    desc.includes('force_genesis');
+  const isPool = desc.includes('pool');
+  const isMint = desc.includes('mint');
+  const isSwap = desc.includes('swap');
+
+  const GAS_PROFILES = {
+    POOL_CREATION: { callGasLimit: 300_000n, verificationGasLimit: 250_000n, preVerificationGas: 60_000n, bufferPct: 30n },
+    MINT_LIQUIDITY: { callGasLimit: 220_000n, verificationGasLimit: 180_000n, preVerificationGas: 50_000n, bufferPct: 25n },
+    MICROSEED_SWAP: { callGasLimit: 150_000n, verificationGasLimit: 120_000n, preVerificationGas: 45_000n, bufferPct: 20n },
+    DEFAULT: { callGasLimit: 250_000n, verificationGasLimit: 180_000n, preVerificationGas: 50_000n, bufferPct: 20n }
+  };
+  const profile = isPool
+    ? GAS_PROFILES.POOL_CREATION
+    : isMint
+    ? GAS_PROFILES.MINT_LIQUIDITY
+    : isSwap
+    ? GAS_PROFILES.MICROSEED_SWAP
+    : GAS_PROFILES.DEFAULT;
+
+  // Adaptive fee calculation for genesis ops (caps applied)
   let maxFeePerGas, maxPriorityFeePerGas;
   try {
     const fd = await core.provider.getFeeData();
     const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
-    const buffered = (base * 11n) / 10n; // +10% buffer
+    const tipBase = fd?.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
+    const feeBuf = isGenesis ? 13n : 11n; // +30% for genesis, +10% otherwise approximated
+    const buffered = (base * feeBuf) / 10n;
     const floor = ethers.parseUnits('1', 'gwei');
     maxFeePerGas = opts.maxFeePerGas ?? (buffered < floor ? floor : buffered);
-    maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
+
+    const tipBuf = isGenesis ? 13n : 11n;
+    const tipBuffered = (tipBase * tipBuf) / 10n;
+    const tipFloor = ethers.parseUnits('0.05', 'gwei');
+    maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? (tipBuffered < tipFloor ? tipFloor : tipBuffered);
+
+    // Genesis fee caps
+    if (isGenesis) {
+      const MAX_FEE_CAP = ethers.parseUnits('10', 'gwei');
+      const MAX_TIP_CAP = ethers.parseUnits('2', 'gwei');
+      if (maxFeePerGas > MAX_FEE_CAP) maxFeePerGas = MAX_FEE_CAP;
+      if (maxPriorityFeePerGas > MAX_TIP_CAP) maxPriorityFeePerGas = MAX_TIP_CAP;
+    }
   } catch {
     maxFeePerGas = opts.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
     maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
   }
   if (maxFeePerGas < maxPriorityFeePerGas) maxFeePerGas = maxPriorityFeePerGas;
 
-  const userOp = await core.aa.createUserOp(execCalldata, {
-    callGasLimit: opts.callGasLimit ?? 250_000n,
-    verificationGasLimit: opts.verificationGasLimit ?? 180_000n,
-    preVerificationGas: opts.preVerificationGas ?? 45_000n,
+  // Bundler minima awareness
+  const mins = core._genesisGasRequirements || (isGenesis ? await validateGenesisGasRequirements(core) : null);
+  const bufferPct = (mins?.recommendedBufferPct ?? profile.bufferPct);
+  const bufMul = (100n + BigInt(bufferPct)) / 100n;
+
+  // Size caps considering profile + bundler minima
+  let callGasLimit = opts.callGasLimit ?? (profile.callGasLimit * bufMul);
+  let verificationGasLimit = opts.verificationGasLimit ?? (profile.verificationGasLimit * bufMul);
+  let preVerificationGas = opts.preVerificationGas ?? (profile.preVerificationGas * bufMul);
+
+  if (mins) {
+    if (verificationGasLimit < mins.minVerificationGas * bufMul) {
+      verificationGasLimit = mins.minVerificationGas * bufMul;
+    }
+    if (preVerificationGas < mins.minPreVerificationGas * bufMul) {
+      preVerificationGas = mins.minPreVerificationGas * bufMul;
+    }
+    if (callGasLimit < 200_000n) callGasLimit = 200_000n;
+  }
+
+  // Create initial userOp with adaptive caps
+  let userOp = await core.aa.createUserOp(execCalldata, {
+    callGasLimit,
+    verificationGasLimit,
+    preVerificationGas,
     maxFeePerGas,
     maxPriorityFeePerGas,
     description: opts.description ?? 'force_genesis',
@@ -876,21 +989,57 @@ async function sendUserOpAA(core, execCalldata, opts) {
     }
   }
 
-  // Always sign — signature must be present in all modes
-  const signedOp = await core.aa.signUserOp(userOp);
-  if (!signedOp.signature || signedOp.signature === '0x') {
-    throw new Error('Missing signature (signature=0x)');
-  }
+  // Retry-aware send: uplift gas if bundler complains
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // Always sign — signature must be present in all modes
+      const signedOp = await core.aa.signUserOp(userOp);
+      if (!signedOp.signature || signedOp.signature === '0x') {
+        throw new Error('Missing signature (signature=0x)');
+      }
+      const txHash = await core.aa.sendUserOpWithBackoff(signedOp, 5);
+      return { txHash };
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || e);
+      const gasFault =
+        msg.toLowerCase().includes('preverificationgas') ||
+        msg.toLowerCase().includes('verificationgas') ||
+        msg.toLowerCase().includes('aa21') ||
+        msg.toLowerCase().includes('aa31');
 
-  // Send with backoff
-  const txHash = await core.aa.sendUserOpWithBackoff(signedOp, 5);
-  return { txHash };
+      if (!gasFault) break;
+
+      // Uplift strategy per attempt
+      const upliftBuf = (110n + 10n * BigInt(attempt)) / 100n; // 10–20% per attempt
+      userOp.preVerificationGas = (userOp.preVerificationGas || preVerificationGas) * upliftBuf;
+      userOp.verificationGasLimit = (userOp.verificationGasLimit || verificationGasLimit) * upliftBuf;
+
+      // For pool init specifically, ensure strong caps by attempt 2+
+      if (isPool && attempt >= 1) {
+        userOp.callGasLimit = userOp.callGasLimit < 350_000n ? 350_000n : userOp.callGasLimit;
+        userOp.verificationGasLimit = userOp.verificationGasLimit < 250_000n ? 250_000n : userOp.verificationGasLimit;
+        userOp.preVerificationGas = userOp.preVerificationGas < 65_000n ? 65_000n : userOp.preVerificationGas;
+      }
+
+      console.warn(`[AA][retry ${attempt + 1}] uplifting gas: prev=${userOp.preVerificationGas.toString()} ver=${userOp.verificationGasLimit.toString()}`);
+      await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+      continue;
+    }
+  }
+  throw new Error(`UserOp failed after retries: ${lastErr?.message || 'unknown error'}`);
 }
 
 /**
  * Ensure BWAEZI/USDC pool exists and is initialized at peg, then seed minimal range via SCW
  */
 async function forceGenesisPoolAndPeg(core) {
+  // Learn bundler minima once at start (idempotent)
+  if (!core._genesisGasRequirements) {
+    await validateGenesisGasRequirements(core).catch(() => {});
+  }
+
   const factory = new ethers.Contract(
     LIVE.DEXES.UNISWAP_V3.factory,
     ['function getPool(address,address,uint24) view returns (address)'],
@@ -923,7 +1072,7 @@ async function forceGenesisPoolAndPeg(core) {
     const exec = scwIface.encodeFunctionData('execute', [npm, 0n, pmData]);
 
     const res = await sendUserOpAA(core, exec, {
-      description: 'init_pool_scw',
+      description: 'init_pool_scw'
       // Lean genesis caps to minimize requirement (bundler will lift if needed)
     });
     initTxHash = res.txHash;
@@ -941,9 +1090,9 @@ async function forceGenesisPoolAndPeg(core) {
 
       const res2 = await sendUserOpAA(core, exec2, {
         description: 'init_pool_scw_retry',
-        callGasLimit: 320_000n,
-        verificationGasLimit: 220_000n, // slight uplift on retry
-        preVerificationGas: 55_000n
+        callGasLimit: 350_000n,
+        verificationGasLimit: 250_000n,
+        preVerificationGas: 65_000n
       });
 
       const receipt2 = await core.provider.getTransactionReceipt(res2.txHash);
@@ -1052,9 +1201,9 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
 
       await sendUserOpAA(core, exec2, {
         description: 'init_pool_bwz_weth_retry',
-        callGasLimit: 320_000n,
-        verificationGasLimit: 220_000n,
-        preVerificationGas: 55_000n
+        callGasLimit: 350_000n,
+        verificationGasLimit: 250_000n,
+        preVerificationGas: 65_000n
       });
       poolWeth = await factory.getPool(rw0, rw1, fee);
     } else {
@@ -2391,7 +2540,6 @@ async start(){
 }
 }   // <-- closes the APIServerV15 class
 
-
 /* =========================================================================
    Genesis microseed (unstoppable) — $5 USDC first, WETH fallback, AA31-safe
    ========================================================================= */
@@ -2418,21 +2566,108 @@ function sqrtBigInt(n) {
 }
 
 /**
- * AA preflight probe — deposit-funded, SponsorGuard-driven, mode-aware.
+ * Bundler-aware gas validation for genesis path
+ */
+async function validateGenesisGasRequirements(core) {
+  try {
+    if (!core?.aa) {
+      // Fallback conservative defaults if AA SDK not present
+      return {
+        minPreVerificationGas: 55_000n,
+        minVerificationGas: 120_000n,
+        recommendedBuffer: 1.3
+      };
+    }
+
+    const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+    const dummyExec = scwIface.encodeFunctionData('execute', [
+      core.signer.address,
+      0n,
+      '0x'
+    ]);
+
+    // Conservative hints; bundler will lift as needed
+    const testUserOp = await core.aa.createUserOp(dummyExec, {
+      callGasLimit: 100_000n,
+      verificationGasLimit: 100_000n,
+      preVerificationGas: 45_000n,
+      maxFeePerGas: ethers.parseUnits('2', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('0.5', 'gwei'),
+      allowNoPaymaster: true
+    });
+
+    const formattedOp = core.aa._formatUserOpForBundler(testUserOp);
+    const estimation = await core.aa.bundler.estimateUserOperationGas(
+      formattedOp,
+      LIVE.ENTRY_POINT_V07
+    );
+
+    const minPrev = BigInt(estimation.preVerificationGas || 46310);
+    const minVeri = BigInt(estimation.verificationGasLimit || 100000);
+
+    console.log(`✅ Bundler gas requirements:`, {
+      preVerificationGas: estimation.preVerificationGas,
+      verificationGasLimit: estimation.verificationGasLimit,
+      callGasLimit: estimation.callGasLimit
+    });
+
+    return {
+      minPreVerificationGas: minPrev,
+      minVerificationGas: minVeri,
+      recommendedBuffer: 1.3
+    };
+  } catch (error) {
+    console.warn('Could not determine bundler requirements:', error.message);
+    return {
+      minPreVerificationGas: 55_000n,
+      minVerificationGas: 120_000n,
+      recommendedBuffer: 1.4
+    };
+  }
+}
+
+/**
+ * AA preflight probe — deposit-funded, SponsorGuard-driven, mode-aware, gas-aware.
  * Validates SCW can submit a minimal userOp under current deposit/fee conditions.
  */
 async function _aaPreflightProbe(core) {
   if (!core?.mev) return;
-  try {
-    await core.mev.sendUserOp('0x', {
-      description: 'preflight_noop',
-      allowNoPaymaster: true
-    });
-    console.log('[AA] preflight via SponsorGuard completed (deposit-funded path)');
-  } catch (err) {
-    console.error('[AA] preflight via SponsorGuard failed:', err.message);
-    throw err;
+
+  // Use validated min requirements if available, with buffer
+  const req = core._genesisGasRequirements || {
+    minPreVerificationGas: 55_000n,
+    minVerificationGas: 120_000n,
+    recommendedBuffer: 1.3
+  };
+  const buf = BigInt(Math.floor(req.recommendedBuffer * 100)) / 100n;
+  const preVerificationGas = (req.minPreVerificationGas * buf);
+  const verificationGasLimit = (req.minVerificationGas * buf);
+  const callGasLimit = 150_000n;
+
+  // Dummy SCW execute to simulate real path
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const calldata = scwIface.encodeFunctionData('execute', [LIVE.SCW_ADDRESS, 0n, '0x']);
+
+  let attempt = 0;
+  while (attempt < 3) {
+    try {
+      await core.mev.sendUserOp(calldata, {
+        description: 'preflight_noop_genesis',
+        allowNoPaymaster: true,
+        callGasLimit,
+        verificationGasLimit,
+        preVerificationGas
+      });
+      console.log('[AA] preflight via SponsorGuard completed (deposit-funded path)');
+      return;
+    } catch (err) {
+      console.warn(`[AA] preflight attempt ${attempt + 1} failed:`, err.message);
+      // Slightly lift caps on retry
+      attempt += 1;
+      await new Promise((r) => setTimeout(r, 800 * attempt));
+    }
   }
+  throw new Error('AA preflight failed after retries');
 }
 
 /**
@@ -2590,7 +2825,12 @@ async function runGenesisMicroseed(core) {
     const recent = core.verifier.getRecent(5);
     if (recent && recent.length > 0) return { skipped: true, reason: 'already_seeded' };
 
-    console.log('🌱 GENESIS MICROSEED — initializing');
+    console.log('🌱 GENESIS MICROSEED — initializing with gas validation');
+
+    // Validate gas requirements before proceeding and store for preflight
+    const gasRequirements = await validateGenesisGasRequirements(core);
+    core._genesisGasRequirements = gasRequirements;
+    console.log(`📊 Gas requirements: preVerificationGas ≥ ${gasRequirements.minPreVerificationGas}`);
 
     const r = await forceGenesisPoolAndPeg(core);
     console.log(`✅ Genesis pool ready: ${r.pool} (tx=${r.initTxHash || 'n/a'})`);
@@ -2622,181 +2862,6 @@ async function runGenesisMicroseed(core) {
   }
 }
 
-/* =========================================================================
-   Production sovereign core v15.13 (full live wiring)
-   ========================================================================= */
-
-class ProductionSovereignCore extends EventEmitter {
-  constructor(){
-    super();
-    this.provider=null; this.signer=null; this.aa=null;
-
-    this.dex=null; this.oracle=null; this.mev=null; this.verifier=null;
-    this.strategy=null; this.entropy=null;
-
-    this.kernel=null; this.governor=null; this.registry=null; this.policyHash=null;
-
-    this.recapture=null; this.accumulator=new PerceptionAccumulator();
-    this.stakeGov=null; this.amplifier=null; this.maker=null;
-
-    this.compliance = new ComplianceManager(LIVE.RISK.COMPLIANCE.MODE);
-    this.health = new HealthGuard();
-
-    this.wss=null; this.clients=new Set();
-    this.stats = {
-      startTs: nowTs(), tradesExecuted:0, lastProfitUSD:0, anchors:0, projectedDaily:0,
-      pegActions:0, amplificationsTriggered:0, streamsActive:0, perceptionsAnchored:0
-    };
-    this.status='INIT'; this.loops=[];
-    this.genesisState = { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
-  }
-
-  async initialize(bundlerUrlOverride=null){
-    if (globalThis.__SOVEREIGN_V15_LIVE) {
-      console.warn('⚠️ Sovereign v15 already initialized — skipping duplicate boot');
-      return;
-    }
-    console.log(`🚀 SOVEREIGN FINALITY ENGINE ${LIVE.VERSION} — BOOTING`);
-    await chainRegistry.init();
-    this.provider = chainRegistry.getProvider();
-    this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
-
-    const bundler = bundlerUrlOverride
-      || process.env.BUNDLER_URL
-      || AA_CONFIG.BUNDLER.RPC_URL
-      || (LIVE.BUNDLER_URLS[0] || null);
-
-    this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
-    await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
-
-    try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
-
-    this.dex = new DexAdapterRegistry(this.provider);
-    this.oracle = new OracleAggregator(this.provider, this.dex);
-    this.mev = new MevExecutorAA(this.aa, LIVE.SCW_ADDRESS);
-    this.verifier = new ProfitVerifier(this.provider);
-    this.entropy = new EntropyShockDetector();
-    this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dex, this.entropy, null, this.oracle);
-
-    const quorum = new QuorumRPC(chainRegistry, LIVE.RISK.INFRA.QUORUM_SIZE || 3, 2);
-    const evProxy = new EVGatingStrategyProxy(this.strategy, this.dex, this.verifier, this.provider, this.health, this.compliance);
-    this.kernel = new ConsciousnessKernel({ oracle: this.oracle, dexRegistry: this.dex, quorum, evProxy, manifest: V15_MANIFEST });
-    this.policyHash = this.kernel.sealPolicy(V15_MANIFEST);
-
-    this.registry = new PerceptionRegistry(this.provider, this.signer);
-    this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, LIVE.PEG.TARGET_USD, this.health, this.registry);
-
-    this.recapture = new MEVRecaptureEngine(this.mev, this.dex, this.provider, this.compliance);
-    this.amplifier = new ReflexiveAmplifier(this.kernel, this.provider, this.oracle, this.dex, this.verifier, this.mev, this.accumulator);
-
-    // Maker patched to SCW mints; pass core
-    this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dex, this.entropy, this);
-
-    await this.strategy.watchPeg();
-
-    await runGenesisMicroseed(this);
-
-    this.loops.push(setInterval(async () => {
-      try {
-        const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
-        if (adj?.adjusted) {
-          this.stats.streamsActive = (this.maker?.listStreams?.().length || 0);
-          console.log(`🔧 Range adjusted tick=${adj.tick} width=[${adj.tickLower},${adj.tickUpper}] coherence=${adj.coherence?.toFixed?.(2) || 'n/a'} stream=${adj.streamId}`);
-        }
-      } catch (e) { console.warn('maker adjust error:', e.message); }
-    }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
-
-    this.loops.push(setInterval(async () => {
-      try {
-        const r = await this.governor.run(this);
-        if (r?.executed) {
-          this.stats.tradesExecuted += 1;
-          this.stats.pegActions += 1;
-
-          const last = this.verifier.getRecent(1)[0];
-          this.stats.lastProfitUSD = last?.evExPost || last?.evExAnte?.evUSD || 0;
-          this.stats.anchors += 1;
-          const hours = Math.max(0.01, (nowTs()-this.stats.startTs)/3600000);
-          this.stats.projectedDaily = (this.stats.lastProfitUSD/hours)*24;
-
-          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(r.packet)));
-          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
-          await tx.wait();
-          this.accumulator.addEvent({ hash, evUSD: r.packet.ev?.evUSD || 0, ts: nowTs(), source: 'l1', confidence: 0.9 });
-          this.stats.perceptionsAnchored += 1;
-
-          this.broadcast({ type:'decision', packet: r.packet, proof: r.proof, eq: this.amplifier.getEquationState() });
-        } else if (r?.skipped) {
-          this.broadcast({ type:'noop', reason: r.reason, signals: r.signals });
-        }
-      } catch(e){ console.warn('decision loop error:', e.message); }
-    }, 15_000));
-
-    this.loops.push(setInterval(async () => {
-      try {
-        const result = await this.amplifier.checkAndTrigger(this.recapture);
-        if (result.triggered) {
-          this.stats.amplificationsTriggered += 1;
-
-          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(result.packet)));
-          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
-          const rec = await tx.wait();
-
-          this.accumulator.addEvent({ hash, evUSD: result.packet.usdNotional, ts: nowTs(), source: 'l1', confidence: 0.9 });
-          this.stats.perceptionsAnchored += 1;
-
-          this.broadcast({ type:'amplification', packet: result.packet, txHash: rec.transactionHash, eq: this.amplifier.getEquationState() });
-        }
-      } catch (e) { console.warn('Amplifier loop error:', e.message); }
-    }, 20_000));
-
-    this.startWS();
-    this.status='SOVEREIGN_LIVE_V15.13';
-    globalThis.__SOVEREIGN_V15_LIVE = true;
-    console.log('✅ SOVEREIGN FINALITY ENGINE v15.13 — ONLINE');
-    console.log(`   Policy Hash: ${this.policyHash}`);
-  }
-
-  startWS(port=8082){
-    try {
-      if (globalThis.__SOVEREIGN_V15_WS_RUNNING) {
-        console.warn('WS server already running — skipping duplicate start');
-        return;
-      }
-      this.wss = new WebSocketServer({ port });
-      this.wss.on('connection', ws => {
-        this.clients.add(ws);
-        if (ws.readyState === 1) {
-          ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, policyHash: this.policyHash, status: this.status, ts: nowTs() }));
-        }
-        ws.on('close', () => this.clients.delete(ws));
-      });
-      globalThis.__SOVEREIGN_V15_WS_RUNNING = true;
-      console.log(`🔌 WebSocket server on :${port}`);
-    } catch (e) {
-      console.warn('WS server failed to start:', e.message);
-    }
-  }
-
-  broadcast(message){
-    const s=JSON.stringify({ ...message, ts: nowTs() });
-    for (const c of this.clients) { if (c.readyState === 1) c.send(s); }
-  }
-
-  getStats(){
-    const eq = this.amplifier.getEquationState();
-    return {
-      system: { version: LIVE.VERSION, status: this.status, policyHash: this.policyHash, uptimeMs: nowTs()-this.stats.startTs },
-      trading: { tradesExecuted: this.stats.tradesExecuted, lastProfitUSD: this.stats.lastProfitUSD, projectedDaily: this.stats.projectedDaily },
-      anchors: { count: this.stats.anchors, registryRecent: this.registry.getRecent(5) },
-      accumulator: this.verifier.getAccumulator(),
-      reflexive:{ amplificationsTriggered:this.stats.amplificationsTriggered, perceptionIndex: eq.R_t, liquidityNorm: eq.L_t, utilityScore: eq.U_t },
-      maker:{ streamsActive:this.stats.streamsActive },
-      peg:{ actions:this.stats.pegActions, targetUSD:LIVE.PEG.TARGET_USD },
-      risk: { complianceMode: LIVE.RISK.COMPLIANCE.MODE, breakers: LIVE.RISK.CIRCUIT_BREAKERS }
-    };
-  }
-}
 
 /* =========================================================================
    Bootstrap
