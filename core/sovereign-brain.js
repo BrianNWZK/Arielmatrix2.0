@@ -799,58 +799,6 @@ function encodePriceSqrt(token0, token1, targetPegUSD) {
   return sqrtScalar * Q96;
 }
 
-// Pre-flight bundler gas validation to learn minima (stored on core)
-async function validateGenesisGasRequirements(core) {
-  try {
-    const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-    const dummyExec = scwIface.encodeFunctionData('execute', [
-      core.signer?.address || LIVE.SCW_ADDRESS,
-      0n,
-      '0x'
-    ]);
-
-    const testUserOp = await core.aa.createUserOp(dummyExec, {
-      callGasLimit: 100_000n,
-      verificationGasLimit: 100_000n,
-      preVerificationGas: 45_000n,
-      maxFeePerGas: ethers.parseUnits('2', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('0.5', 'gwei'),
-      allowNoPaymaster: true
-    });
-
-    const formatted = core.aa._formatUserOpForBundler(testUserOp);
-    const estimation = await core.aa.bundler.estimateUserOperationGas(
-      formatted,
-      LIVE.ENTRY_POINT
-    );
-
-    const mins = {
-      minPreVerificationGas: BigInt(estimation?.preVerificationGas ?? 46310n),
-      minVerificationGas: BigInt(estimation?.verificationGasLimit ?? 100000n),
-      minCallGasLimit: BigInt(estimation?.callGasLimit ?? 100000n),
-      recommendedBufferPct: 30n
-    };
-    core._genesisGasRequirements = mins;
-    console.log('[genesis][bundler] minima learned:', {
-      preVerificationGas: mins.minPreVerificationGas.toString(),
-      verificationGasLimit: mins.minVerificationGas.toString(),
-      callGasLimit: mins.minCallGasLimit.toString(),
-      bufferPct: Number(mins.recommendedBufferPct)
-    });
-    return mins;
-  } catch (e) {
-    const fallback = {
-      minPreVerificationGas: 50_000n,
-      minVerificationGas: 120_000n,
-      minCallGasLimit: 100_000n,
-      recommendedBufferPct: 35n
-    };
-    core._genesisGasRequirements = fallback;
-    console.warn('[genesis][bundler] minima probe failed, using fallback:', e.message);
-    return fallback;
-  }
-}
-
 // Internal AA-safe sender with mode-aware SponsorGuard and signature enforcement
 async function sendUserOpAA(core, execCalldata, opts = {}) {
   // If AA wrapper is not available, fall back to legacy path
@@ -920,8 +868,8 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
   }
   if (maxFeePerGas < maxPriorityFeePerGas) maxFeePerGas = maxPriorityFeePerGas;
 
-  // Bundler minima awareness
-  const mins = core._genesisGasRequirements || (isGenesis ? await validateGenesisGasRequirements(core) : null);
+  // Bundler minima awareness — pulled from AA V15-14 (core._genesisGasRequirements set upstream)
+  const mins = core._genesisGasRequirements || null;
   const bufferPct = (mins?.recommendedBufferPct ?? profile.bufferPct);
   const bufMul = (100n + BigInt(bufferPct)) / 100n;
 
@@ -1035,9 +983,31 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
  * Ensure BWAEZI/USDC pool exists and is initialized at peg, then seed minimal range via SCW
  */
 async function forceGenesisPoolAndPeg(core) {
-  // Learn bundler minima once at start (idempotent)
+  // Learn bundler minima once at start (idempotent) using AA's GenesisGasOptimizer
   if (!core._genesisGasRequirements) {
-    await validateGenesisGasRequirements(core).catch(() => {});
+    try {
+      const minsRaw = await core.aa.genesisOptimizer.getBundlerMinimumGas();
+      core._genesisGasRequirements = {
+        minPreVerificationGas: minsRaw.minPreVerificationGas,
+        minVerificationGas: minsRaw.minVerificationGas,
+        minCallGasLimit: 100_000n,
+        recommendedBufferPct: 30n
+      };
+      console.log('[genesis][bundler] minima learned:', {
+        preVerificationGas: core._genesisGasRequirements.minPreVerificationGas.toString(),
+        verificationGasLimit: core._genesisGasRequirements.minVerificationGas.toString(),
+        callGasLimit: core._genesisGasRequirements.minCallGasLimit.toString(),
+        bufferPct: Number(core._genesisGasRequirements.recommendedBufferPct)
+      });
+    } catch (e) {
+      core._genesisGasRequirements = {
+        minPreVerificationGas: 50_000n,
+        minVerificationGas: 120_000n,
+        minCallGasLimit: 100_000n,
+        recommendedBufferPct: 35n
+      };
+      console.warn('[genesis][bundler] minima probe failed, using fallback:', e.message);
+    }
   }
 
   const factory = new ethers.Contract(
