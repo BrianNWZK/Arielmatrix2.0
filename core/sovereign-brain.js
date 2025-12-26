@@ -2834,6 +2834,184 @@ async function runGenesisMicroseed(core) {
 
 
 /* =========================================================================
+   Production sovereign core v15.13 (full live wiring)
+   ========================================================================= */
+
+class ProductionSovereignCore extends EventEmitter {
+  constructor(){
+    super();
+    this.provider=null; this.signer=null; this.aa=null;
+
+    this.dex=null; this.oracle=null; this.mev=null; this.verifier=null;
+    this.strategy=null; this.entropy=null;
+
+    this.kernel=null; this.governor=null; this.registry=null; this.policyHash=null;
+
+    this.recapture=null; this.accumulator=new PerceptionAccumulator();
+    this.stakeGov=null; this.amplifier=null; this.maker=null;
+
+    this.compliance = new ComplianceManager(LIVE.RISK.COMPLIANCE.MODE);
+    this.health = new HealthGuard();
+
+    this.wss=null; this.clients=new Set();
+    this.stats = {
+      startTs: nowTs(), tradesExecuted:0, lastProfitUSD:0, anchors:0, projectedDaily:0,
+      pegActions:0, amplificationsTriggered:0, streamsActive:0, perceptionsAnchored:0
+    };
+    this.status='INIT'; this.loops=[];
+    this.genesisState = { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
+  }
+
+  async initialize(bundlerUrlOverride=null){
+    if (globalThis.__SOVEREIGN_V15_LIVE) {
+      console.warn('⚠️ Sovereign v15 already initialized — skipping duplicate boot');
+      return;
+    }
+    console.log(`🚀 SOVEREIGN FINALITY ENGINE ${LIVE.VERSION} — BOOTING`);
+    await chainRegistry.init();
+    this.provider = chainRegistry.getProvider();
+    this.signer = new ethers.Wallet(process.env.SOVEREIGN_PRIVATE_KEY, this.provider);
+
+    const bundler = bundlerUrlOverride
+      || process.env.BUNDLER_URL
+      || AA_CONFIG.BUNDLER.RPC_URL
+      || (LIVE.BUNDLER_URLS[0] || null);
+
+    this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
+    await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
+
+    try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
+
+    this.dex = new DexAdapterRegistry(this.provider);
+    this.oracle = new OracleAggregator(this.provider, this.dex);
+    this.mev = new MevExecutorAA(this.aa, LIVE.SCW_ADDRESS);
+    this.verifier = new ProfitVerifier(this.provider);
+    this.entropy = new EntropyShockDetector();
+    this.strategy = new StrategyEngine(this.mev, this.verifier, this.provider, this.dex, this.entropy, null, this.oracle);
+
+    const quorum = new QuorumRPC(chainRegistry, LIVE.RISK.INFRA.QUORUM_SIZE || 3, 2);
+    const evProxy = new EVGatingStrategyProxy(this.strategy, this.dex, this.verifier, this.provider, this.health, this.compliance);
+    this.kernel = new ConsciousnessKernel({ oracle: this.oracle, dexRegistry: this.dex, quorum, evProxy, manifest: V15_MANIFEST });
+    this.policyHash = this.kernel.sealPolicy(V15_MANIFEST);
+
+    this.registry = new PerceptionRegistry(this.provider, this.signer);
+    this.governor = new PolicyGovernor(this.kernel, this.strategy, evProxy, LIVE.PEG.TARGET_USD, this.health, this.registry);
+
+    this.recapture = new MEVRecaptureEngine(this.mev, this.dex, this.provider, this.compliance);
+    this.amplifier = new ReflexiveAmplifier(this.kernel, this.provider, this.oracle, this.dex, this.verifier, this.mev, this.accumulator);
+
+    // Maker patched to SCW mints; pass core
+    this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dex, this.entropy, this);
+
+    await this.strategy.watchPeg();
+
+    await runGenesisMicroseed(this);
+
+    this.loops.push(setInterval(async () => {
+      try {
+        const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
+        if (adj?.adjusted) {
+          this.stats.streamsActive = (this.maker?.listStreams?.().length || 0);
+          console.log(`🔧 Range adjusted tick=${adj.tick} width=[${adj.tickLower},${adj.tickUpper}] coherence=${adj.coherence?.toFixed?.(2) || 'n/a'} stream=${adj.streamId}`);
+        }
+      } catch (e) { console.warn('maker adjust error:', e.message); }
+    }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
+
+    this.loops.push(setInterval(async () => {
+      try {
+        const r = await this.governor.run(this);
+        if (r?.executed) {
+          this.stats.tradesExecuted += 1;
+          this.stats.pegActions += 1;
+
+          const last = this.verifier.getRecent(1)[0];
+          this.stats.lastProfitUSD = last?.evExPost || last?.evExAnte?.evUSD || 0;
+          this.stats.anchors += 1;
+          const hours = Math.max(0.01, (nowTs()-this.stats.startTs)/3600000);
+          this.stats.projectedDaily = (this.stats.lastProfitUSD/hours)*24;
+
+          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(r.packet)));
+          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
+          await tx.wait();
+          this.accumulator.addEvent({ hash, evUSD: r.packet.ev?.evUSD || 0, ts: nowTs(), source: 'l1', confidence: 0.9 });
+          this.stats.perceptionsAnchored += 1;
+
+          this.broadcast({ type:'decision', packet: r.packet, proof: r.proof, eq: this.amplifier.getEquationState() });
+        } else if (r?.skipped) {
+          this.broadcast({ type:'noop', reason: r.reason, signals: r.signals });
+        }
+      } catch(e){ console.warn('decision loop error:', e.message); }
+    }, 15_000));
+
+    this.loops.push(setInterval(async () => {
+      try {
+        const result = await this.amplifier.checkAndTrigger(this.recapture);
+        if (result.triggered) {
+          this.stats.amplificationsTriggered += 1;
+
+          const hash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(result.packet)));
+          const tx = await this.signer.sendTransaction({ to: this.signer.address, data: `0x${hash.slice(2,10)}`, value: 0 });
+          const rec = await tx.wait();
+
+          this.accumulator.addEvent({ hash, evUSD: result.packet.usdNotional, ts: nowTs(), source: 'l1', confidence: 0.9 });
+          this.stats.perceptionsAnchored += 1;
+
+          this.broadcast({ type:'amplification', packet: result.packet, txHash: rec.transactionHash, eq: this.amplifier.getEquationState() });
+        }
+      } catch (e) { console.warn('Amplifier loop error:', e.message); }
+    }, 20_000));
+
+    this.startWS();
+    this.status='SOVEREIGN_LIVE_V15.13';
+    globalThis.__SOVEREIGN_V15_LIVE = true;
+    console.log('✅ SOVEREIGN FINALITY ENGINE v15.13 — ONLINE');
+    console.log(`   Policy Hash: ${this.policyHash}`);
+  }
+
+  startWS(port=8082){
+    try {
+      if (globalThis.__SOVEREIGN_V15_WS_RUNNING) {
+        console.warn('WS server already running — skipping duplicate start');
+        return;
+      }
+      this.wss = new WebSocketServer({ port });
+      this.wss.on('connection', ws => {
+        this.clients.add(ws);
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type:'init', version: LIVE.VERSION, policyHash: this.policyHash, status: this.status, ts: nowTs() }));
+        }
+        ws.on('close', () => this.clients.delete(ws));
+      });
+      globalThis.__SOVEREIGN_V15_WS_RUNNING = true;
+      console.log(`🔌 WebSocket server on :${port}`);
+    } catch (e) {
+      console.warn('WS server failed to start:', e.message);
+    }
+  }
+
+  broadcast(message){
+    const s=JSON.stringify({ ...message, ts: nowTs() });
+    for (const c of this.clients) { if (c.readyState === 1) c.send(s); }
+  }
+
+  getStats(){
+    const eq = this.amplifier.getEquationState();
+    return {
+      system: { version: LIVE.VERSION, status: this.status, policyHash: this.policyHash, uptimeMs: nowTs()-this.stats.startTs },
+      trading: { tradesExecuted: this.stats.tradesExecuted, lastProfitUSD: this.stats.lastProfitUSD, projectedDaily: this.stats.projectedDaily },
+      anchors: { count: this.stats.anchors, registryRecent: this.registry.getRecent(5) },
+      accumulator: this.verifier.getAccumulator(),
+      reflexive:{ amplificationsTriggered:this.stats.amplificationsTriggered, perceptionIndex: eq.R_t, liquidityNorm: eq.L_t, utilityScore: eq.U_t },
+      maker:{ streamsActive:this.stats.streamsActive },
+      peg:{ actions:this.stats.pegActions, targetUSD:LIVE.PEG.TARGET_USD },
+      risk: { complianceMode: LIVE.RISK.COMPLIANCE.MODE, breakers: LIVE.RISK.CIRCUIT_BREAKERS }
+    };
+  }
+}
+
+
+
+/* =========================================================================
    Bootstrap
    ========================================================================= */
 
