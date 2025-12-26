@@ -427,16 +427,54 @@ async function fetchExternalFees(provider) {
 
 /* =========================================================================
    🔥 NEW: Genesis Gas Optimizer (Live Data Adaptation + env overrides)
+   — UPDATED with Fix 2: Bundler-aware minimum gas probing and profiles
    ========================================================================= */
 
 class GenesisGasOptimizer {
-  constructor(provider) {
+  constructor(provider, bundler = null) {
     this.provider = provider;
+    this.bundler = bundler; // optional; when present, enables bundler-aware minima
     this.lastBaseFee = ethers.parseUnits('15', 'gwei');
   }
 
+  async getBundlerMinimumGas() {
+    // Probe bundler for minimal preVerification/verification gas requirements
+    if (!this.bundler) {
+      // Conservative defaults when no bundler is available at construction time
+      return {
+        minPreVerificationGas: 45000n,
+        minVerificationGas: 100000n
+      };
+    }
+    try {
+      const dummyOp = {
+        sender: '0x0000000000000000000000000000000000000000',
+        nonce: '0x0',
+        initCode: '0x',
+        callData: '0x',
+        callGasLimit: '0x1',
+        verificationGasLimit: '0x1',
+        preVerificationGas: '0x1',
+        maxFeePerGas: '0x1',
+        maxPriorityFeePerGas: '0x1',
+        paymasterAndData: '0x',
+        signature: '0x'
+      };
+      const est = await this.bundler.estimateUserOperationGas(dummyOp, ENHANCED_CONFIG.ENTRY_POINTS.V07);
+      return {
+        minPreVerificationGas: BigInt(est.preVerificationGas || 45000),
+        minVerificationGas: BigInt(est.verificationGasLimit || 100000)
+      };
+    } catch {
+      return {
+        minPreVerificationGas: 45000n,
+        minVerificationGas: 100000n
+      };
+    }
+  }
+
   async getGenesisCaps(operationType = 'pool_creation') {
-    // External fees with +10% buffer
+    // External fees with +10% buffer, then env caps
     let fees = await fetchExternalFees(this.provider);
 
     // Env caps
@@ -451,43 +489,46 @@ class GenesisGasOptimizer {
     if (capMaxTip && fees.maxPriorityFeePerGas > capMaxTip) fees.maxPriorityFeePerGas = capMaxTip;
     if (fees.maxFeePerGas < fees.maxPriorityFeePerGas) fees.maxFeePerGas = fees.maxPriorityFeePerGas;
 
-    // Operation-specific gas profiles
+    // Bundler minimum requirements (Fix 2)
+    const bundlerMins = await this.getBundlerMinimumGas();
+
+    // Operation-specific, bundler-aware profiles
     const profiles = {
       'pool_creation': {
         callGasLimit: 300_000n,
-        verificationGasLimit: 250_000n,
-        preVerificationGas: 60_000n,
-        bufferPercent: ENHANCED_CONFIG.GENESIS.GAS_BUFFER_PCT
+        verificationGasLimit: Math.max(250_000n, bundlerMins.minVerificationGas * 2n),
+        preVerificationGas: Math.max(60_000n, (bundlerMins.minPreVerificationGas * 130n) / 100n),
+        bufferPercent: ENHANCED_CONFIG.GENESIS.GAS_BUFFER_PCT || 35
       },
       'mint_liquidity': {
         callGasLimit: 220_000n,
-        verificationGasLimit: 180_000n,
-        preVerificationGas: 50_000n,
-        bufferPercent: 20
+        verificationGasLimit: Math.max(180_000n, (bundlerMins.minVerificationGas * 150n) / 100n),
+        preVerificationGas: Math.max(50_000n, (bundlerMins.minPreVerificationGas * 120n) / 100n),
+        bufferPercent: 25
       },
       'microseed_swap': {
         callGasLimit: 150_000n,
-        verificationGasLimit: 120_000n,
-        preVerificationGas: 50_000n,
-        bufferPercent: 15
+        verificationGasLimit: Math.max(120_000n, bundlerMins.minVerificationGas),
+        preVerificationGas: Math.max(45_000n, bundlerMins.minPreVerificationGas),
+        bufferPercent: 20
       },
       'default': {
         callGasLimit: 250_000n,
-        verificationGasLimit: 180_000n,
-        preVerificationGas: 50_000n,
-        bufferPercent: 12
+        verificationGasLimit: Math.max(180_000n, bundlerMins.minVerificationGas),
+        preVerificationGas: Math.max(50_000n, bundlerMins.minPreVerificationGas),
+        bufferPercent: 25
       }
     };
 
     const profile = profiles[operationType] || profiles.default;
     const bufferMultiplier = (100n + BigInt(profile.bufferPercent)) / 100n;
 
-    const callGasLimit = (profile.callGasLimit * bufferMultiplier) > 200_000n ? profile.callGasLimit * bufferMultiplier : 200_000n;
+    const callGasLimit = profile.callGasLimit * bufferMultiplier;
     const verificationGasLimit = profile.verificationGasLimit * bufferMultiplier;
     const preVerificationGas = profile.preVerificationGas * bufferMultiplier;
 
     return {
-      callGasLimit,
+      callGasLimit: callGasLimit < 200_000n ? 200_000n : callGasLimit,
       verificationGasLimit,
       preVerificationGas,
       maxFeePerGas: fees.maxFeePerGas,
@@ -676,8 +717,8 @@ class EnterpriseAASDK {
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
     }
 
-    // 🔥 NEW: Initialize genesis optimizer
-    this.genesisOptimizer = new GenesisGasOptimizer(this.provider);
+    // 🔥 NEW: Initialize genesis optimizer (bundler-aware)
+    this.genesisOptimizer = new GenesisGasOptimizer(this.provider, this.bundler);
 
     if (process.env.WEB_CONCURRENCY == null) {
       // Soft hint log; does not change process env
