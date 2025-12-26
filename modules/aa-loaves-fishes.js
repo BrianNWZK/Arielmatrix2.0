@@ -1,7 +1,7 @@
-// modules/aa-loaves-fishes.js — CLEANED AA INFRASTRUCTURE v15.13 (deployment-free, MEV v15-8 aligned)
+// modules/aa-loaves-fishes.js — CLEANED AA INFRASTRUCTURE v15.14 (deployment-free, MEV v15-8 aligned)
 // Focus: pure execution for an already-deployed SCW. No factory/initCode/salt logic.
 // Preserves bundler + paymaster wiring, RPC management, and price oracle.
-// Upgrades in v15.13:
+// Upgrades in v15.14:
 // - Explicit paymaster override support: opts.paymasterAndData is honored end-to-end
 // - EnterpriseAASDK.getPaymasterData(userOpLikeOrCalldata, gasHints) helper
 // - Dynamic EntryPoint deposit sizing with margin and optional auto-stake
@@ -13,6 +13,13 @@
 // - Added depositToEntryPointFor(target) helper
 // - EnhancedMevExecutor honors allowNoPaymaster (deposit-funded SCW path)
 // - Compatible with SponsorGuard routing via core.mev.sendUserOp
+//
+// 🔥 NEW: Integrated adaptive genesis solutions & resilience
+// - GenesisGasOptimizer: env overrides + external fee oracle (Etherscan or custom URL) → fees = current +10%
+// - DepositBalancer: automatic fund rebalancing + retry; fallback to paymaster after 3 failed top-ups
+// - Pre-simulation of mint calldata before userOp to catch upfront issues
+// - Precise logging: required vs actual EntryPoint prefund
+// - WEB_CONCURRENCY default = 1 (soft hint; no operational impact)
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -31,7 +38,7 @@ function addrStrict(a) {
    ========================================================================= */
 
 const ENHANCED_CONFIG = {
-  VERSION: 'v15.13-LIVE-CLEAN',
+  VERSION: 'v15.14-LIVE-CLEAN-ADAPTIVE',
 
   NETWORK: {
     name: process.env.NETWORK_NAME || 'mainnet',
@@ -39,7 +46,9 @@ const ENHANCED_CONFIG = {
   },
 
   ENTRY_POINTS: {
-    V07: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
+    V07: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
+    // Some legacy helpers use V06 interior; keep aliases guarded by env if needed
+    V06: addrStrict(process.env.ENTRY_POINT_ADDRESS_V06 || process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
   },
 
   UNISWAP: {
@@ -97,6 +106,21 @@ const ENHANCED_CONFIG = {
   // Owner EOA of the SCW (checksummed if provided, otherwise signer.address is used)
   EOA_OWNER: addrStrict(process.env.EOA_OWNER || ''),
 
+  // 🔥 NEW: Genesis-specific settings + fee optimizer overrides
+  GENESIS: {
+    MIN_SCW_DEPOSIT: ethers.parseEther(process.env.MIN_SCW_DEPOSIT || '0.0015'),
+    MIN_PM_DEPOSIT: ethers.parseEther(process.env.MIN_PM_DEPOSIT || '0.002'),
+    GAS_BUFFER_PCT: Number(process.env.GENESIS_GAS_BUFFER || 25),
+    AUTO_REBALANCE: process.env.AUTO_REBALANCE === 'true',
+    // Fee optimizer environment overrides
+    MAX_FEE_GWEI: Number(process.env.GENESIS_MAX_FEE_GWEI || 0),             // 0 means no explicit cap
+    MAX_TIP_GWEI: Number(process.env.GENESIS_MAX_TIP_GWEI || 0),
+    // External gas oracle options (optional)
+    GAS_ORACLE_URL: process.env.GAS_ORACLE_URL || '',                        // custom endpoint that returns { maxFeePerGasWei, maxPriorityFeePerGasWei }
+    ETHERSCAN_API_KEY: process.env.ETHERSCAN_API_KEY || '',                  // when present, uses Etherscan gas oracle
+    USE_PIMLICO_FEE: process.env.USE_PIMLICO_FEE === 'true'                  // when true, query Pimlico RPC feeData and add +10%
+  },
+
   // CLEAN MODE: always deployment-free
   NEW_SCW_LOOP: true
 };
@@ -134,6 +158,7 @@ const ENTRYPOINT_ABI = [
 ];
 
 function getEntryPoint(provider) {
+  // Always prefer V07; legacy V06 kept for historical calls
   return new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, provider);
 }
 
@@ -335,6 +360,261 @@ class PassthroughPaymaster {
   async buildPaymasterAndData() { return ethers.concat([ethers.getAddress(this.address), '0x']); }
 }
 
+/* =========================================================================
+   🔥 NEW: External fee oracle integration
+   ========================================================================= */
+
+async function fetchExternalFees(provider) {
+  // Try prioritization order: Custom URL -> Etherscan -> Pimlico provider feeData -> fallback provider feeData
+  const add10pct = (wei) => (wei * 110n) / 100n;
+
+  try {
+    const url = ENHANCED_CONFIG.GENESIS.GAS_ORACLE_URL;
+    if (url) {
+      const res = await fetch(url, { headers: { 'accept': 'application/json' } });
+      if (res.ok) {
+        const j = await res.json();
+        const mf = BigInt(j.maxFeePerGasWei || j.maxFeePerGas || 0);
+        const mp = BigInt(j.maxPriorityFeePerGasWei || j.maxPriorityFeePerGas || 0);
+        if (mf > 0n && mp > 0n) {
+          return {
+            maxFeePerGas: add10pct(mf),
+            maxPriorityFeePerGas: add10pct(mp)
+          };
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const apiKey = ENHANCED_CONFIG.GENESIS.ETHERSCAN_API_KEY;
+    if (apiKey) {
+      const res = await fetch(`https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey=${apiKey}`);
+      if (res.ok) {
+        const j = await res.json();
+        const safe = Number(j?.result?.SafeGasPrice || 0);
+        const propose = Number(j?.result?.ProposeGasPrice || 0);
+        const priority = Number(j?.result?.FastGasPrice || 0);
+        const baseGwei = Math.max(safe, propose);
+        const tipGwei = Math.max(1, priority);
+        const mf = add10pct(ethers.parseUnits(String(baseGwei), 'gwei'));
+        const mp = add10pct(ethers.parseUnits(String(tipGwei), 'gwei'));
+        return { maxFeePerGas: mf, maxPriorityFeePerGas: mp };
+      }
+    }
+  } catch {}
+
+  try {
+    if (ENHANCED_CONFIG.GENESIS.USE_PIMLICO_FEE) {
+      const fd = await provider.getFeeData();
+      const mf = add10pct(fd?.maxFeePerGas || ethers.parseUnits('15', 'gwei'));
+      const mp = add10pct(fd?.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'));
+      return { maxFeePerGas: mf, maxPriorityFeePerGas: mp };
+    }
+  } catch {}
+
+  try {
+    const fd = await provider.getFeeData();
+    const mf = add10pct(fd?.maxFeePerGas || ethers.parseUnits('15', 'gwei'));
+    const mp = add10pct(fd?.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'));
+    return { maxFeePerGas: mf, maxPriorityFeePerGas: mp };
+  } catch {
+    const mf = add10pct(ethers.parseUnits('15', 'gwei'));
+    const mp = add10pct(ethers.parseUnits('1.5', 'gwei'));
+    return { maxFeePerGas: mf, maxPriorityFeePerGas: mp };
+  }
+}
+
+/* =========================================================================
+   🔥 NEW: Genesis Gas Optimizer (Live Data Adaptation + env overrides)
+   ========================================================================= */
+
+class GenesisGasOptimizer {
+  constructor(provider) {
+    this.provider = provider;
+    this.lastBaseFee = ethers.parseUnits('15', 'gwei');
+  }
+
+  async getGenesisCaps(operationType = 'pool_creation') {
+    // External fees with +10% buffer
+    let fees = await fetchExternalFees(this.provider);
+
+    // Env caps
+    const capMaxFee = ENHANCED_CONFIG.GENESIS.MAX_FEE_GWEI > 0
+      ? ethers.parseUnits(String(ENHANCED_CONFIG.GENESIS.MAX_FEE_GWEI), 'gwei')
+      : null;
+    const capMaxTip = ENHANCED_CONFIG.GENESIS.MAX_TIP_GWEI > 0
+      ? ethers.parseUnits(String(ENHANCED_CONFIG.GENESIS.MAX_TIP_GWEI), 'gwei')
+      : null;
+
+    if (capMaxFee && fees.maxFeePerGas > capMaxFee) fees.maxFeePerGas = capMaxFee;
+    if (capMaxTip && fees.maxPriorityFeePerGas > capMaxTip) fees.maxPriorityFeePerGas = capMaxTip;
+    if (fees.maxFeePerGas < fees.maxPriorityFeePerGas) fees.maxFeePerGas = fees.maxPriorityFeePerGas;
+
+    // Operation-specific gas profiles
+    const profiles = {
+      'pool_creation': {
+        callGasLimit: 300_000n,
+        verificationGasLimit: 250_000n,
+        preVerificationGas: 60_000n,
+        bufferPercent: ENHANCED_CONFIG.GENESIS.GAS_BUFFER_PCT
+      },
+      'mint_liquidity': {
+        callGasLimit: 220_000n,
+        verificationGasLimit: 180_000n,
+        preVerificationGas: 50_000n,
+        bufferPercent: 20
+      },
+      'microseed_swap': {
+        callGasLimit: 150_000n,
+        verificationGasLimit: 120_000n,
+        preVerificationGas: 50_000n,
+        bufferPercent: 15
+      },
+      'default': {
+        callGasLimit: 250_000n,
+        verificationGasLimit: 180_000n,
+        preVerificationGas: 50_000n,
+        bufferPercent: 12
+      }
+    };
+
+    const profile = profiles[operationType] || profiles.default;
+    const bufferMultiplier = (100n + BigInt(profile.bufferPercent)) / 100n;
+
+    const callGasLimit = (profile.callGasLimit * bufferMultiplier) > 200_000n ? profile.callGasLimit * bufferMultiplier : 200_000n;
+    const verificationGasLimit = profile.verificationGasLimit * bufferMultiplier;
+    const preVerificationGas = profile.preVerificationGas * bufferMultiplier;
+
+    return {
+      callGasLimit,
+      verificationGasLimit,
+      preVerificationGas,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas
+    };
+  }
+
+  async adjustForBundler(userOp, bundler) {
+    try {
+      const est = await bundler.estimateUserOperationGas(userOp, ENHANCED_CONFIG.ENTRY_POINTS.V07);
+      const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
+
+      const estCall = toBig(est.callGasLimit, userOp.callGasLimit);
+      const estVeri = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
+      const estPrev = toBig(est.preVerificationGas, userOp.preVerificationGas);
+
+      const buffer = (100n + BigInt(ENHANCED_CONFIG.GENESIS.GAS_BUFFER_PCT)) / 100n;
+      return {
+        callGasLimit: (estCall * buffer) > 200_000n ? estCall * buffer : 200_000n,
+        verificationGasLimit: estVeri * buffer,
+        preVerificationGas: estPrev * buffer,
+        maxFeePerGas: userOp.maxFeePerGas,
+        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas
+      };
+    } catch (e) {
+      console.warn(`Bundler estimation failed: ${e.message}, using original caps`);
+      return userOp;
+    }
+  }
+}
+
+/* =========================================================================
+   🔥 NEW: Deposit Balancer (Automatic Fund Rebalancing + fallback)
+   ========================================================================= */
+
+class DepositBalancer {
+  constructor(signer, scwAddress, paymasterAddress) {
+    this.signer = signer;
+    this.scwAddress = scwAddress;
+    this.paymasterAddress = paymasterAddress;
+    this.ep = getEntryPoint(signer.provider);
+    this._topupFailures = 0;
+  }
+
+  async rebalanceForGenesis() {
+    const balances = {
+      eoa: await this.signer.provider.getBalance(this.signer.address),
+      scwDeposit: await this.ep.getDeposit(this.scwAddress),
+      pmDeposit: await this.ep.getDeposit(this.paymasterAddress)
+    };
+
+    console.log('💰 Current Balances:', {
+      eoa: ethers.formatEther(balances.eoa),
+      scwDeposit: ethers.formatEther(balances.scwDeposit),
+      pmDeposit: ethers.formatEther(balances.pmDeposit)
+    });
+
+    const mode = (ENHANCED_CONFIG.PAYMASTER.MODE || 'NONE').toUpperCase();
+
+    // Prefer SCW deposit in NONE mode
+    if (mode === 'NONE') {
+      if (balances.scwDeposit < ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT &&
+          balances.eoa > ethers.parseEther('0.002')) {
+        const needed = ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT - balances.scwDeposit;
+        const transferAmount = needed > (balances.eoa * 70n / 100n) ? (balances.eoa * 70n / 100n) : needed;
+
+        console.log(`🔄 Transferring ${ethers.formatEther(transferAmount)} ETH to SCW deposit (required=${ethers.formatEther(needed)}, actual=${ethers.formatEther(balances.scwDeposit)})`);
+
+        try {
+          const tx = await this.ep.depositTo(this.scwAddress, {
+            value: transferAmount,
+            gasLimit: 100000
+          });
+          const rec = await tx.wait();
+          this._topupFailures = 0;
+          return { rebalanced: true, txHash: rec.transactionHash, target: 'SCW', fallbackToPaymaster: false };
+        } catch (e) {
+          this._topupFailures++;
+          console.warn(`SCW top-up failed [${this._topupFailures}]: ${e.message}`);
+          if (this._topupFailures >= 3) {
+            // Signal caller to fallback to paymaster mode submission
+            return { rebalanced: false, reason: 'scw_topup_failed', fallbackToPaymaster: true };
+          }
+        }
+      }
+      return { rebalanced: false, reason: 'balances_optimal', fallbackToPaymaster: false };
+    }
+
+    // Paymaster mode: ensure both have minimum
+    const needs = [];
+    if (balances.scwDeposit < ethers.parseEther('0.0005')) {
+      needs.push({ target: this.scwAddress, amount: ethers.parseEther('0.0005') - balances.scwDeposit });
+    }
+    if (balances.pmDeposit < ENHANCED_CONFIG.GENESIS.MIN_PM_DEPOSIT) {
+      needs.push({ target: this.paymasterAddress, amount: ENHANCED_CONFIG.GENESIS.MIN_PM_DEPOSIT - balances.pmDeposit });
+    }
+
+    if (needs.length > 0 && balances.eoa > ethers.parseEther('0.003')) {
+      const totalNeeded = needs.reduce((sum, n) => sum + n.amount, 0n);
+      const available = balances.eoa * 70n / 100n;
+
+      try {
+        for (const need of needs) {
+          const proportion = (need.amount * available) / totalNeeded;
+          if (proportion > 0) {
+            console.log(`🔄 Transferring ${ethers.formatEther(proportion)} ETH to ${need.target} (required=${ethers.formatEther(need.amount)})`);
+            const tx = await this.ep.depositTo(need.target, {
+              value: proportion,
+              gasLimit: 100000
+            });
+            await tx.wait();
+          }
+        }
+        this._topupFailures = 0;
+        return { rebalanced: true, txHash: 'multiple', target: 'both', fallbackToPaymaster: false };
+      } catch (e) {
+        this._topupFailures++;
+        console.warn(`PM/SCW top-up failed [${this._topupFailures}]: ${e.message}`);
+        if (this._topupFailures >= 3) {
+          return { rebalanced: false, reason: 'pm_topup_failed', fallbackToPaymaster: true };
+        }
+      }
+    }
+
+    return { rebalanced: false, reason: 'balances_optimal', fallbackToPaymaster: false };
+  }
+}
 
 /* =========================================================================
    Enterprise AA SDK (deployment-free; pure execution)
@@ -353,6 +633,9 @@ class EnterpriseAASDK {
     this.verifyingPaymaster = null;
     this.passthroughPaymaster = null;
     this.initialized = false;
+
+    // 🔥 NEW: Genesis optimizer
+    this.genesisOptimizer = null;
 
     try {
       this.ownerAddress =
@@ -391,6 +674,14 @@ class EnterpriseAASDK {
     } else if (this.paymasterMode === 'PASSTHROUGH') {
       if (!ENHANCED_CONFIG.PAYMASTER.ADDRESS) throw new Error('PAYMASTER_ADDRESS required for PASSTHROUGH mode');
       this.passthroughPaymaster = new PassthroughPaymaster(ENHANCED_CONFIG.PAYMASTER.ADDRESS);
+    }
+
+    // 🔥 NEW: Initialize genesis optimizer
+    this.genesisOptimizer = new GenesisGasOptimizer(this.provider);
+
+    if (process.env.WEB_CONCURRENCY == null) {
+      // Soft hint log; does not change process env
+      console.log('WEB_CONCURRENCY defaulting to 1');
     }
 
     console.log(`Using SCW sender: ${this.scwAddress}`);
@@ -433,19 +724,10 @@ class EnterpriseAASDK {
     const sender = ethers.getAddress(this.scwAddress || ENHANCED_CONFIG.SCW_ADDRESS);
     const nonce = await this.getNonce(sender);
 
-    // Adaptive fee hints (lean by default; sponsor can lift if needed)
-    let hintMaxFee, hintMaxTip;
-    try {
-      const fd = await this.provider.getFeeData();
-      const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
-      const buffered = (base * 11n) / 10n; // +10% buffer
-      const floor = ethers.parseUnits('1', 'gwei');
-      hintMaxFee = buffered < floor ? floor : buffered;
-      hintMaxTip = ethers.parseUnits('0.05', 'gwei'); // tip floor
-    } catch {
-      hintMaxFee = ethers.parseUnits('1', 'gwei');
-      hintMaxTip = ethers.parseUnits('0.05', 'gwei');
-    }
+    // External fee oracle
+    const extFees = await fetchExternalFees(this.provider);
+    let hintMaxFee = extFees.maxFeePerGas;
+    let hintMaxTip = extFees.maxPriorityFeePerGas;
 
     const toUserOpLike = (calldata) => ({
       sender,
@@ -455,7 +737,7 @@ class EnterpriseAASDK {
       // Reduced hints to keep prefund low when probing sponsorship
       callGasLimit: gasHints.callGasLimit ?? 250_000n,
       verificationGasLimit: gasHints.verificationGasLimit ?? 180_000n,
-      preVerificationGas: gasHints.preVerificationGas ?? 45_000n,
+      preVerificationGas: gasHints.preVerificationGas ?? 50_000n,
       maxFeePerGas: gasHints.maxFeePerGas ?? hintMaxFee,
       maxPriorityFeePerGas: gasHints.maxPriorityFeePerGas ?? hintMaxTip,
       paymasterAndData: '0x',
@@ -485,19 +767,10 @@ class EnterpriseAASDK {
     let nonce = await this.getNonce(sender);
     if (nonce == null) nonce = 0n;
 
-    // Global adaptive fees
-    let maxFee, maxTip;
-    try {
-      const fd = await this.provider.getFeeData();
-      const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
-      const buffered = (base * 11n) / 10n; // +10% buffer
-      const floor = ethers.parseUnits('1', 'gwei');
-      maxFee = opts.maxFeePerGas || (buffered < floor ? floor : buffered);
-      maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei'); // tip floor
-    } catch {
-      maxFee = opts.maxFeePerGas || ethers.parseUnits('1', 'gwei');
-      maxTip = opts.maxPriorityFeePerGas || ethers.parseUnits('0.05', 'gwei');
-    }
+    // External fee oracle with +10% buffer, then env caps
+    const extFees = await fetchExternalFees(this.provider);
+    let maxFee = opts.maxFeePerGas || extFees.maxFeePerGas;
+    let maxTip = opts.maxPriorityFeePerGas || extFees.maxPriorityFeePerGas;
 
     const TIP_FLOOR = 50_000_000n; // ~0.05 gwei
     if (BigInt(maxTip) < TIP_FLOOR) maxTip = TIP_FLOOR;
@@ -508,10 +781,10 @@ class EnterpriseAASDK {
       nonce,
       initCode: '0x',
       callData,
-      // Lean initial caps; bundler estimation will adapt/lift if needed
+      // UPDATED: Slightly higher preVerificationGas to avoid underestimation issues
       callGasLimit: opts.callGasLimit ?? 250_000n,
       verificationGasLimit: opts.verificationGasLimit ?? 180_000n,
-      preVerificationGas: opts.preVerificationGas ?? 45_000n,
+      preVerificationGas: opts.preVerificationGas ?? 55_000n,
       maxFeePerGas: maxFee,
       maxPriorityFeePerGas: maxTip,
       paymasterAndData: '0x',
@@ -552,12 +825,13 @@ class EnterpriseAASDK {
       const estVeri = toBig(est.verificationGasLimit, userOp.verificationGasLimit);
       const estPrev = toBig(est.preVerificationGas, userOp.preVerificationGas);
 
-      // Fully adaptive: apply proportional buffers (+10%) to estimates
-      userOp.callGasLimit = estCall + (estCall / 10n);
-      userOp.verificationGasLimit = estVeri + (estVeri / 10n);
-      userOp.preVerificationGas = estPrev + (estPrev / 10n);
+      // Fully adaptive: apply proportional buffers (+GENESIS_GAS_BUFFER%) to estimates
+      const buffer = (100n + BigInt(ENHANCED_CONFIG.GENESIS.GAS_BUFFER_PCT)) / 100n;
+      userOp.callGasLimit = estCall * buffer;
+      userOp.verificationGasLimit = estVeri * buffer;
+      userOp.preVerificationGas = estPrev * buffer;
 
-      // Minimal safety floor for call gas; bundler may lift further
+      // Minimal safety floor for call gas
       if (userOp.callGasLimit < 200_000n) userOp.callGasLimit = 200_000n;
     } catch {
       // proceed with provided defaults if estimate fails
@@ -567,6 +841,26 @@ class EnterpriseAASDK {
     userOp.signature = '0x';
 
     return userOp;
+  }
+
+  // 🔥 NEW: Genesis-optimized user op creation
+  async createGenesisUserOp(callData, operationType = 'pool_creation', opts = {}) {
+    if (!this.initialized) throw new Error('EnterpriseAASDK not initialized');
+    if (!this.genesisOptimizer) throw new Error('Genesis optimizer not initialized');
+
+    const genesisCaps = await this.genesisOptimizer.getGenesisCaps(operationType);
+
+    // Merge genesis caps with any explicit overrides
+    const mergedOpts = {
+      callGasLimit: opts.callGasLimit || genesisCaps.callGasLimit,
+      verificationGasLimit: opts.verificationGasLimit || genesisCaps.verificationGasLimit,
+      preVerificationGas: opts.preVerificationGas || genesisCaps.preVerificationGas,
+      maxFeePerGas: opts.maxFeePerGas || genesisCaps.maxFeePerGas,
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas || genesisCaps.maxPriorityFeePerGas,
+      ...opts
+    };
+
+    return await this.createUserOp(callData, mergedOpts);
   }
 
   async signUserOp(userOp) {
@@ -617,20 +911,25 @@ class EnterpriseAASDK {
       version: ENHANCED_CONFIG.VERSION,
       entryPoint: this.entryPoint,
       paymasterMode: this.paymasterMode,
-      paymasterAddress: ENHANCED_CONFIG.PAYMASTER.ADDRESS
+      paymasterAddress: ENHANCED_CONFIG.PAYMASTER.ADDRESS,
+      genesisOptimizer: !!this.genesisOptimizer
     };
   }
 }
 
-
 /* =========================================================================
-   Enhanced MEV executor (deployment-free)
+   Enhanced MEV executor (deployment-free) with Genesis Optimization & pre-sim
    ========================================================================= */
 
 class EnhancedMevExecutor {
   constructor(aa, scwAddress) {
     this.aa = aa;
     this.scw = scwAddress;
+    this.depositBalancer = new DepositBalancer(
+      aa.signer,
+      scwAddress,
+      ENHANCED_CONFIG.PAYMASTER.ADDRESS
+    );
   }
 
   buildSCWExecute(target, calldata, value = 0n) {
@@ -638,8 +937,21 @@ class EnhancedMevExecutor {
     return iface.encodeFunctionData('execute', [target, value, calldata]);
   }
 
+  // Try a light simulation: eth_call of target with provided calldata, from SCW
+  async preSimulate(target, calldata) {
+    try {
+      const rc = await this.aa.provider.call({
+        to: ethers.getAddress(target),
+        data: calldata,
+        from: this.scw
+      });
+      return { ok: true, result: rc };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  }
+
   async sendCall(calldata, opts = {}) {
-    // Detect forced-genesis microseed ops by description
     const desc = String(opts.description || '').toLowerCase();
     const isGenesis =
       desc.includes('force_genesis') ||
@@ -649,40 +961,64 @@ class EnhancedMevExecutor {
       desc.includes('init_pool_bwz_weth_retry') ||
       desc.includes('bootstrap_multihop_usdc_weth_bwzc');
 
-    // Default caps (kept) — AA SDK will lift via bundler estimation if needed
-    let callGasLimit = opts.gasLimit || 250_000n;
-    let verificationGasLimit = opts.verificationGasLimit || 180_000n;
-    let preVerificationGas = opts.preVerificationGas || 45_000n;
-
-    // Targeted low-fee override for genesis microseed only
-    let maxFeePerGas = opts.maxFeePerGas ?? ethers.parseUnits('15', 'gwei');
-    let maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei');
-
-    if (isGenesis) {
+    // Auto-rebalance before genesis if enabled; fallback to paymaster if topups fail 3 times
+    if (isGenesis && ENHANCED_CONFIG.GENESIS.AUTO_REBALANCE) {
       try {
-        const fd = await this.aa.provider.getFeeData();
+        const rebalance = await this.depositBalancer.rebalanceForGenesis();
+        if (rebalance.rebalanced) {
+          console.log(`✅ Auto-rebalanced: ${rebalance.txHash}`);
+          await new Promise(r => setTimeout(r, 1500));
+        } else if (rebalance.fallbackToPaymaster) {
+          console.warn('Top-ups failed repeatedly — will allow paymaster sponsorship if provided.');
+          opts.allowNoPaymaster = false;
+        }
+      } catch (e) {
+        console.warn(`Auto-rebalance failed: ${e.message}`);
+      }
+    }
 
-        // Use current base fee when available; else fall back to 1 gwei
-        const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
+    // Pre-simulate mints to catch upfront encoding/state issues
+    const looksMint = desc.includes('mint');
+    if (looksMint && opts.target && opts.rawCalldata) {
+      const sim = await this.preSimulate(opts.target, opts.rawCalldata);
+      if (!sim.ok) {
+        console.warn(`Mint pre-simulation failed: ${sim.error}`);
+        // slight uplift might help verification phase
+        opts.verificationGasLimit = (opts.verificationGasLimit || 180_000n) + 40_000n;
+        opts.preVerificationGas = (opts.preVerificationGas || 55_000n) + 10_000n;
+      }
+    }
 
-        // Keep it adaptive and at the lowest practical ceiling
-        // Slight buffer (10%) to reduce stalling if base fee wobbles
-        const buffered = (base * 11n) / 10n;
+    // Default caps — AA SDK will lift via optimizer/bundler
+    let callGasLimit = opts.callGasLimit || 250_000n;
+    let verificationGasLimit = opts.verificationGasLimit || 180_000n;
+    let preVerificationGas = opts.preVerificationGas || 55_000n;
 
-        // Final low max fee (hard min at 1 gwei to avoid sub-we)
-        const floor = ethers.parseUnits('1', 'gwei');
-        maxFeePerGas = buffered < floor ? floor : buffered;
+    // Genesis optimizer caps
+    if (isGenesis && this.aa.genesisOptimizer) {
+      try {
+        const operationType = desc.includes('pool') ? 'pool_creation' :
+                            desc.includes('mint') ? 'mint_liquidity' :
+                            desc.includes('swap') ? 'microseed_swap' : 'default';
 
-        // Tip: AA SDK enforces a ~0.05 gwei floor internally.
-        // If you set below that, it will be raised to the floor.
-        // To avoid hidden uplift, set tip to 0.05 gwei explicitly.
-        // If you prefer your original 0.034 gwei, the SDK will bump it.
-        maxPriorityFeePerGas = ethers.parseUnits('0.05', 'gwei');
+        const genesisCaps = await this.aa.genesisOptimizer.getGenesisCaps(operationType);
 
-      } catch {
-        // Fallback low fees if feeData fails
-        maxFeePerGas = ethers.parseUnits('1', 'gwei');
-        maxPriorityFeePerGas = ethers.parseUnits('0.05', 'gwei');
+        callGasLimit = genesisCaps.callGasLimit;
+        verificationGasLimit = genesisCaps.verificationGasLimit;
+        preVerificationGas = genesisCaps.preVerificationGas;
+
+        opts.maxFeePerGas = genesisCaps.maxFeePerGas;
+        opts.maxPriorityFeePerGas = genesisCaps.maxPriorityFeePerGas;
+
+        console.log(`🎯 Genesis caps ${operationType}:`, {
+          callGas: Number(callGasLimit),
+          verificationGas: Number(verificationGasLimit),
+          preVerificationGas: Number(preVerificationGas),
+          maxFee: ethers.formatUnits(genesisCaps.maxFeePerGas, 'gwei') + ' gwei',
+          maxTip: ethers.formatUnits(genesisCaps.maxPriorityFeePerGas, 'gwei') + ' gwei'
+        });
+      } catch (e) {
+        console.warn(`Genesis optimizer failed: ${e.message}, using defaults`);
       }
     }
 
@@ -690,25 +1026,90 @@ class EnhancedMevExecutor {
       callGasLimit,
       verificationGasLimit,
       preVerificationGas,
-      maxFeePerGas,
-      maxPriorityFeePerGas,
+      maxFeePerGas: opts.maxFeePerGas,
+      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
       // Honor explicit paymaster override and allow deposit-funded NONE mode
       paymasterAndData: opts.paymasterAndData,
       allowNoPaymaster: opts.allowNoPaymaster === true
     });
 
-    // If a caller truly wants sub-floor tip (e.g., 0.034 gwei), they can pass it via opts
-    // but the AA SDK will bump to its internal floor. No post-creation override is applied here
-    // to keep signature and sponsorship semantics correct.
+    // Bundler adjustment for genesis ops
+    if (isGenesis && this.aa.genesisOptimizer) {
+      try {
+        const adjusted = await this.aa.genesisOptimizer.adjustForBundler(
+          this.aa._formatUserOpForBundler(userOp),
+          this.aa.bundler
+        );
+        userOp.callGasLimit = adjusted.callGasLimit;
+        userOp.verificationGasLimit = adjusted.verificationGasLimit;
+        userOp.preVerificationGas = adjusted.preVerificationGas;
+        console.log(`📊 Bundler-adjusted genesis caps:`, {
+          callGas: Number(userOp.callGasLimit),
+          verificationGas: Number(userOp.verificationGasLimit),
+          preVerificationGas: Number(userOp.preVerificationGas)
+        });
+      } catch (e) {
+        console.warn(`Bundler adjustment failed: ${e.message}`);
+      }
+    }
 
     const signed = await this.aa.signUserOp(userOp);
     const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
     return { txHash, timestamp: Date.now(), description: opts.description || 'enhanced_scw_execute' };
   }
+
+  async sendGenesisCall(calldata, operationType = 'pool_creation', opts = {}) {
+    if (!this.aa.genesisOptimizer) {
+      throw new Error('Genesis optimizer not available');
+    }
+
+    const rebalance = await this.depositBalancer.rebalanceForGenesis();
+    if (rebalance.rebalanced) {
+      console.log(`✅ Pre-genesis rebalance: ${rebalance.txHash}`);
+      await new Promise(r => setTimeout(r, 1500));
+    } else if (rebalance.fallbackToPaymaster) {
+      opts.allowNoPaymaster = false;
+    }
+
+    const genesisCaps = await this.aa.genesisOptimizer.getGenesisCaps(operationType);
+
+    const userOp = await this.aa.createGenesisUserOp(calldata, operationType, {
+      ...genesisCaps,
+      ...opts
+    });
+
+    const adjusted = await this.aa.genesisOptimizer.adjustForBundler(
+      this.aa._formatUserOpForBundler(userOp),
+      this.aa.bundler
+    );
+
+    userOp.callGasLimit = adjusted.callGasLimit;
+    userOp.verificationGasLimit = adjusted.verificationGasLimit;
+    userOp.preVerificationGas = adjusted.preVerificationGas;
+
+    console.log(`🚀 Genesis execution with fully adaptive caps:`, {
+      operationType,
+      callGas: Number(userOp.callGasLimit),
+      verificationGas: Number(userOp.verificationGasLimit),
+      preVerificationGas: Number(userOp.preVerificationGas),
+      maxFee: ethers.formatUnits(userOp.maxFeePerGas, 'gwei') + ' gwei',
+      maxTip: ethers.formatUnits(userOp.maxPriorityFeePerGas, 'gwei') + ' gwei'
+    });
+
+    const signed = await this.aa.signUserOp(userOp);
+    const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
+    return {
+      txHash,
+      timestamp: Date.now(),
+      description: `genesis_${operationType}`,
+      optimized: true
+    };
+  }
 }
 
 /* =========================================================================
    Bootstrap helper (mode-aware deposit target; SCW in NONE mode, PM otherwise)
+   UPDATED: Unified deposit-first strategy with SCW priority in NONE mode
    ========================================================================= */
 
 function _computeRequiredDeposit({ callGasLimit, verificationGasLimit, preVerificationGas, maxFeePerGas, marginPct = 25 }) {
@@ -719,41 +1120,114 @@ function _computeRequiredDeposit({ callGasLimit, verificationGasLimit, preVerifi
 
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
   const ep = getEntryPoint(provider);
-  const mode = (ENHANCED_CONFIG.PAYMASTER.MODE || 'ONCHAIN').toUpperCase();
-  const depositTarget = (mode === 'NONE') ? ethers.getAddress(scwAddress) : ENHANCED_CONFIG.PAYMASTER.ADDRESS;
+  const mode = (ENHANCED_CONFIG.PAYMASTER.MODE || 'NONE').toUpperCase();
 
+  const scwDeposit = await ep.getDeposit(scwAddress);
+
+  if (mode === 'NONE') {
+    console.log(`🎯 NONE mode detected - prioritizing SCW deposit`);
+    // Compute a typical required envelope for a mid-weight genesis op
+    const fd = await fetchExternalFees(provider);
+    const required = _computeRequiredDeposit({
+      callGasLimit: 320_000n,
+      verificationGasLimit: 220_000n,
+      preVerificationGas: 60_000n,
+      maxFeePerGas: fd.maxFeePerGas,
+      marginPct: Number(process.env.AUTO_PM_MARGIN_PCT || ENHANCED_CONFIG.GENESIS.GAS_BUFFER_PCT || 25)
+    });
+
+    console.log(`[AA PREFUND] required=${ethers.formatEther(required)} ETH vs scwDeposit=${ethers.formatEther(scwDeposit)} ETH`);
+
+    if (scwDeposit < ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT) {
+      const topup = ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT - scwDeposit;
+      const eoaBalance = await provider.getBalance(signer.address);
+
+      console.log(`⚠️  SCW deposit low: ${ethers.formatEther(scwDeposit)} ETH`);
+      console.log(`💰 EOA balance: ${ethers.formatEther(eoaBalance)} ETH`);
+      console.log(`📈 Needed for SCW: ${ethers.formatEther(topup)} ETH`);
+
+      let attempts = 0;
+      while (attempts < 3) {
+        try {
+          const tx = await ep.depositTo(scwAddress, {
+            value: topup,
+            gasLimit: 100000
+          });
+          const rec = await tx.wait();
+          console.log(`✅ SCW deposit topped up to ${ethers.formatEther(ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT)} ETH`);
+          console.log(`📝 Transaction: ${rec.transactionHash}`);
+          const newDeposit = await ep.getDeposit(scwAddress);
+          return {
+            entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+            depositTarget: scwAddress,
+            scwDeposit: newDeposit,
+            mode: 'NONE',
+            action: 'scw_topped_up'
+          };
+        } catch (e) {
+          attempts++;
+          console.warn(`SCW deposit attempt ${attempts} failed: ${e.message}`);
+          await new Promise(r => setTimeout(r, 1000 * attempts));
+        }
+      }
+
+      // After 3 failures, indicate fallback to paymaster for later calls
+      console.warn('SCW deposit top-up failed 3 times — fallback to paymaster for subsequent userOps.');
+      return {
+        entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+        depositTarget: scwAddress,
+        scwDeposit,
+        mode: 'NONE',
+        action: 'fallback_to_paymaster'
+      };
+    }
+
+    console.log(`✅ SCW deposit sufficient: ${ethers.formatEther(scwDeposit)} ETH`);
+    return {
+      entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+      depositTarget: scwAddress,
+      scwDeposit,
+      mode: 'NONE',
+      action: 'no_action_needed'
+    };
+  }
+
+  // Paymaster mode logic
+  const depositTarget = ENHANCED_CONFIG.PAYMASTER.ADDRESS;
   let deposit = 0n;
   try { deposit = await ep.getDeposit(depositTarget); } catch {}
 
   const AUTO_PM_DEPOSIT = process.env.AUTO_PM_DEPOSIT === 'true';
   const AUTO_PM_STAKE = process.env.AUTO_PM_STAKE === 'true';
 
-  // Dynamic sizing: target envelope similar to heavy ops
-  const fd = await provider.getFeeData();
-  const maxFee = fd.maxFeePerGas || ethers.parseUnits('35', 'gwei');
+  const fd = await fetchExternalFees(provider);
   const required = _computeRequiredDeposit({
     callGasLimit: 850_000n,
     verificationGasLimit: 650_000n,
     preVerificationGas: 100_000n,
-    maxFeePerGas: maxFee,
+    maxFeePerGas: fd.maxFeePerGas,
     marginPct: Number(process.env.AUTO_PM_MARGIN_PCT || 25)
   });
+
+  console.log(`[AA PREFUND] required=${ethers.formatEther(required)} ETH vs paymasterDeposit=${ethers.formatEther(deposit)} ETH`);
 
   if (AUTO_PM_DEPOSIT && deposit < required) {
     const delta = required - deposit;
     console.log(`[AA TOPUP] target=${depositTarget} deposit=${ethers.formatEther(deposit)} required=${ethers.formatEther(required)} topping=${ethers.formatEther(delta)}`);
-    const txh = await depositToEntryPointFor(signer, depositTarget, delta);
-    console.log(`[AA TOPUP] tx=${txh}`);
-    try { deposit = await ep.getDeposit(depositTarget); } catch {}
+    try {
+      const txh = await depositToEntryPointFor(signer, depositTarget, delta);
+      console.log(`[AA TOPUP] tx=${txh}`);
+      try { deposit = await ep.getDeposit(depositTarget); } catch {}
+    } catch (e) {
+      console.warn(`[AA TOPUP] depositToEntryPointFor failed: ${e.message}`);
+    }
   } else if (AUTO_PM_DEPOSIT && deposit < ethers.parseEther('0.001')) {
-    // Legacy tiny top-up fallback
     const top = ethers.parseEther(process.env.AUTO_PM_DEPOSIT_WEI || '0.002');
     const txh = await depositToEntryPointFor(signer, depositTarget, top);
     console.log(`[AA TOPUP] tiny top-up=${ethers.formatEther(top)} tx=${txh}`);
     try { deposit = await ep.getDeposit(depositTarget); } catch {}
   }
 
-  // Stake only applies when using a paymaster (not NONE mode)
   if (AUTO_PM_STAKE && mode !== 'NONE') {
     const delay = Number(process.env.AUTO_PM_UNSTAKE_DELAY || 86400);
     const amount = ethers.parseEther(process.env.AUTO_PM_STAKE_WEI || '0.002');
@@ -764,7 +1238,14 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
       console.warn(`[AA STAKE] stake failed: ${e.message}`);
     }
   }
-  return { entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07, depositTarget, paymasterDeposit: deposit };
+
+  return {
+    entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+    depositTarget,
+    paymasterDeposit: deposit,
+    scwDeposit,
+    mode
+  };
 }
 
 /* =========================================================================
@@ -825,7 +1306,7 @@ class PriceOracleAggregator {
 }
 
 /* =========================================================================
-   Exports (exact names expected by MEV v15-8)
+   Exports (exact names expected by MEV v15-8) + NEW adaptive modules
    ========================================================================= */
 
 export {
@@ -835,6 +1316,10 @@ export {
 
   // RPC managers
   EnhancedRPCManager,
+
+  // 🔥 NEW: Adaptive genesis modules
+  GenesisGasOptimizer,
+  DepositBalancer,
 
   // Helpers
   bootstrapSCWForPaymasterEnhanced,
