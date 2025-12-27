@@ -2584,96 +2584,6 @@ function sqrtBigInt(n) {
 }
 
 /**
- * Integer-safe sqrt price encoding:
- * - price = token1 per token0 with rational precision
- * - normalized by 10^(dec0 - dec1) into Q192
- * - sqrtPriceX96 = sqrtBigInt(priceX192)
- *
- * amount0 and amount1 are nominal base amounts to encode the ratio.
- * For initialization, use representative base amounts (e.g., 1 token0 vs pegUSD token1).
- */
-function encodeSqrtPriceIntSafe(amount0, amount1, dec0, dec1) {
-  if (amount0 <= 0n || amount1 <= 0n) throw new Error('encodeSqrtPriceIntSafe: amounts must be positive');
-
-  // normalization factor 10^(dec0 - dec1)
-  let normPow = 0;
-  if (dec0 >= dec1) {
-    normPow = dec0 - dec1;
-    const scale = 10n ** BigInt(normPow);
-    // priceX192 = ((amount1 * scale) << 192) / amount0
-    const numerator = (amount1 * scale) << 192n;
-    const priceX192 = numerator / amount0;
-    return sqrtBigInt(priceX192);
-  } else {
-    normPow = dec1 - dec0;
-    const scale = 10n ** BigInt(normPow);
-    // priceX192 = (amount1 << 192) / (amount0 * scale)
-    const numerator = amount1 << 192n;
-    const denominator = amount0 * scale;
-    const priceX192 = numerator / denominator;
-    return sqrtBigInt(priceX192);
-  }
-}
-
-/**
- * Compute sqrtPriceX96 given a desired peg in USD for a pair (token0, token1).
- * The peg is defined as: price = token1 per token0.
- * - For BWAEZI/USDC: price = pegUSD USDC per 1 BWAEZI
- * - Handles arbitrary token order and decimals safely
- */
-function computePegSqrtPriceForPair(token0Meta, token1Meta, pegUSD) {
-  const dec0 = token0Meta.decimals;
-  const dec1 = token1Meta.decimals;
-
-  // We define representative integer amounts for the ratio:
-  // amount0 = 1 token0 (in smallest units)
-  // amount1 = pegUSD units of token1 (in smallest units)
-  // If token1 is USDC (6dp), amount1 = pegUSD * 10^6
-  // If token1 is WETH (18dp) and peg is USD, we need the USD→WETH conversion externally.
-  // For generic USD peg when token1 ≠ USD, caller must pass token1ValuePerToken0 already in token1 units.
-  const amount0 = 10n ** BigInt(dec0);
-
-  // If token1 is USD (USDC-like), pegUSD is numerically in token1 units after scaling.
-  // Otherwise, caller should provide peg in token1 units; here we detect USDC vs non-USD token.
-  if (token1Meta.symbol === 'USDC' || token1Meta.isUSD === true) {
-    const scaledPeg = BigInt(Math.round(pegUSD * 10 ** dec1));
-    return encodeSqrtPriceIntSafe(amount0, scaledPeg, dec0, dec1);
-  }
-
-  // If token1 is WETH or something else, pegUSD must be converted to token1 units:
-  // price(token1 per token0) = (USD per token0) / (USD per token1)
-  // Caller should pass pegUSD as USD per token0 AND provide token1USD (USD per 1 token1).
-  throw new Error('computePegSqrtPriceForPair: token1 is not USD-like; use computePegSqrtPriceWithToken1USD');
-}
-
-/**
- * Compute sqrtPriceX96 for pairs where token1 is not USD-like (e.g., WETH):
- * - Given pegUSD (USD per token0) and token1USD (USD per token1)
- * - price(token1 per token0) = pegUSD / token1USD
- * - Fully integer-safe normalization by decimals
- */
-function computePegSqrtPriceWithToken1USD(token0Meta, token1Meta, pegUSD, token1USD) {
-  if (!(pegUSD > 0) || !(token1USD > 0)) throw new Error('computePegSqrtPriceWithToken1USD: pegUSD and token1USD must be positive');
-
-  const dec0 = token0Meta.decimals;
-  const dec1 = token1Meta.decimals;
-
-  // amount0 = 1 token0 in smallest units
-  const amount0 = 10n ** BigInt(dec0);
-
-  // price(token1 per token0) = pegUSD / token1USD
-  // Represent price rationally in token1 smallest units:
-  // amount1 = (pegUSD / token1USD) * 10^dec1
-  // We keep integer safety via rational numerator/denominator expansion
-  // Transform ratio into integers: amount1/amount0 after normalization
-  // amount1 integer approximation:
-  const ratio = pegUSD / token1USD;
-  const amount1 = BigInt(Math.round(ratio * 10 ** dec1));
-
-  return encodeSqrtPriceIntSafe(amount0, amount1, dec0, dec1);
-}
-
-/**
  * Bundler-aware gas validation for genesis path
  */
 async function validateGenesisGasRequirements(core) {
@@ -2779,100 +2689,6 @@ async function _aaPreflightProbe(core) {
 }
 
 /**
- * Force-create the pool (if missing) and initialize peg using integer-safe sqrt price.
- * Handles both BWAEZI/USDC peg and USDC/WETH ratio using USD quotes.
- */
-async function forceGenesisPoolAndPeg(core) {
-  const factory = new ethers.Contract(
-    LIVE.DEXES.UNISWAP_V3.factory,
-    [
-      'function getPool(address,address,uint24) view returns (address)',
-      'function createPool(address,address,uint24) returns (address)'
-    ],
-    core.signer
-  );
-
-  const token0 = LIVE.TOKENS.BWAEZI;
-  const token1 = LIVE.TOKENS.USDC;
-  const fee = LIVE.PEG.FEE_TIER_DEFAULT;
-
-  let pool = await factory.getPool(token0.address, token1.address, fee);
-  let initTxHash = null;
-
-  if (!pool || pool === ethers.ZeroAddress) {
-    const tx = await factory.createPool(token0.address, token1.address, fee);
-    const rc = await tx.wait();
-    const ev = rc?.logs?.find(() => true); // consumer retrieves address via event in real impl
-    // In many factory ABIs, createPool returns address directly
-    pool = await factory.getPool(token0.address, token1.address, fee);
-    initTxHash = tx.hash;
-  }
-
-  // Initialize peg price using integer-safe sqrt if not initialized
-  const poolContract = new ethers.Contract(
-    pool,
-    [
-      'function initialize(uint160 sqrtPriceX96)',
-      'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
-    ],
-    core.signer
-  );
-
-  const slot = await poolContract.slot0();
-  const initialized = slot[6];
-
-  if (!initialized) {
-    // BWAEZI/USDC peg: price = USDC per 1 BWAEZI = TARGET_USD
-    const sqrtPriceX96 = computePegSqrtPriceForPair(
-      { address: token0.address, decimals: token0.decimals, symbol: token0.symbol },
-      { address: token1.address, decimals: token1.decimals, symbol: token1.symbol, isUSD: true },
-      LIVE.PEG.TARGET_USD
-    );
-
-    const tx = await poolContract.initialize(sqrtPriceX96);
-    await tx.wait();
-    initTxHash = tx.hash;
-  }
-
-  // Optionally ensure USDC/WETH pool with integer-safe calc using USD quotes
-  if (LIVE.PEG.ENSURE_WETH_POOL === true) {
-    const t0 = LIVE.TOKENS.USDC;
-    const t1 = LIVE.TOKENS.WETH;
-    const wethPool = await factory.getPool(t0.address, t1.address, fee);
-    if (!wethPool || wethPool === ethers.ZeroAddress) {
-      const tx2 = await factory.createPool(t0.address, t1.address, fee);
-      const rc2 = await tx2.wait();
-      // re-fetch
-    }
-    const wethPoolAddr = await factory.getPool(t0.address, t1.address, fee);
-    const wethPoolContract = new ethers.Contract(
-      wethPoolAddr,
-      [
-        'function initialize(uint160 sqrtPriceX96)',
-        'function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'
-      ],
-      core.signer
-    );
-    const slotW = await wethPoolContract.slot0();
-    const initW = slotW[6];
-    if (!initW) {
-      // price(token1 per token0) = WETH per 1 USDC = (USD per 1 USDC) / (USD per 1 WETH) = 1 / WETH_USD
-      // Use integer-safe calc with token1USD (USD per WETH) and pegUSD (USD per token0 = 1 for USDC)
-      const sqrtW = computePegSqrtPriceWithToken1USD(
-        { address: t0.address, decimals: t0.decimals, symbol: t0.symbol },
-        { address: t1.address, decimals: t1.decimals, symbol: t1.symbol },
-        1.0, // USD per USDC
-        LIVE.MARKETS.WETH_USD // USD per WETH (must be provided upstream)
-      );
-      const txW = await wethPoolContract.initialize(sqrtW);
-      await txW.wait();
-    }
-  }
-
-  return { pool, initTxHash };
-}
-
-/**
  * Seed minimal liquidity around current tick to enable quotes
  */
 async function seedMinimalLiquidity(core) {
@@ -2882,7 +2698,7 @@ async function seedMinimalLiquidity(core) {
     core.provider
   );
 
-  let pool = await factory.getPool(LIVE.TOKENS.BWAEZI.address, LIVE.TOKENS.USDC.address, LIVE.PEG.FEE_TIER_DEFAULT);
+  let pool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
   if (!pool || pool === ethers.ZeroAddress) {
     const r = await forceGenesisPoolAndPeg(core);
     pool = r.pool;
@@ -2902,8 +2718,8 @@ async function seedMinimalLiquidity(core) {
   const { usdcAmt, bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
   console.log(`🌱 Seeding minimal V3 liquidity bw=${bwAmt.toString()} usdc=${usdcAmt.toString()} ticks [${tl},${tu}]`);
   await core.maker.startStreamingMint({
-    token0: LIVE.TOKENS.BWAEZI.address,
-    token1: LIVE.TOKENS.USDC.address,
+    token0: LIVE.TOKENS.BWAEZI,
+    token1: LIVE.TOKENS.USDC,
     tickLower: tl,
     tickUpper: tu,
     total0: bwAmt,
@@ -2938,14 +2754,14 @@ async function _genesisSwaps(core) {
   // USDC → BWAEZI
   while (attempts < 3 && executed === 0) {
     try {
-      const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC.address, LIVE.TOKENS.BWAEZI.address, usdcAmt);
+      const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
       if (!res1?.txHash || res1.txHash === '0x') throw new Error('Missing txHash from USDC→BWAEZI');
 
       await core.verifier.record({
         txHash: res1.txHash,
         action: 'genesis_buy_bwzC',
-        tokenIn: LIVE.TOKENS.USDC.address,
-        tokenOut: LIVE.TOKENS.BWAEZI.address,
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.BWAEZI,
         notionalUSD: Number(ethers.formatUnits(usdcAmt, 6)),
         ts: nowTs()
       });
@@ -2964,14 +2780,14 @@ async function _genesisSwaps(core) {
   attempts = 0;
   while (attempts < 2 && executed === 1) {
     try {
-      const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI.address, LIVE.TOKENS.USDC.address, bwAmt);
+      const res2 = await core.strategy.execSwap(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, bwAmt);
       if (!res2?.txHash || res2.txHash === '0x') throw new Error('Missing txHash from BWAEZI→USDC');
 
       await core.verifier.record({
         txHash: res2.txHash,
         action: 'genesis_sell_bwzC',
-        tokenIn: LIVE.TOKENS.BWAEZI.address,
-        tokenOut: LIVE.TOKENS.USDC.address,
+        tokenIn: LIVE.TOKENS.BWAEZI,
+        tokenOut: LIVE.TOKENS.USDC,
         // Approximate USD notional using peg
         notionalUSD: Number(ethers.formatEther(bwAmt)) * LIVE.PEG.TARGET_USD,
         ts: nowTs()
@@ -2992,14 +2808,14 @@ async function _genesisSwaps(core) {
     try {
       const fallbackUSD = Math.max(1.0, Math.min(4.0, balanceUSDC - 1.0));
       const fallbackUSDC = ethers.parseUnits(fallbackUSD.toFixed(6), 6);
-      const res = await core.strategy.execSwap(LIVE.TOKENS.USDC.address, LIVE.TOKENS.WETH.address, fallbackUSDC);
+      const res = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, fallbackUSDC);
       if (!res?.txHash || res.txHash === '0x') throw new Error('Missing txHash from USDC→WETH');
 
       await core.verifier.record({
         txHash: res.txHash,
         action: 'genesis_buy_weth',
-        tokenIn: LIVE.TOKENS.USDC.address,
-        tokenOut: LIVE.TOKENS.WETH.address,
+        tokenIn: LIVE.TOKENS.USDC,
+        tokenOut: LIVE.TOKENS.WETH,
         notionalUSD: fallbackUSD,
         ts: nowTs()
       });
