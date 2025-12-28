@@ -815,8 +815,21 @@ function encodePriceSqrt(token0, token1, targetPegUSD) {
   const Q192 = 2n ** 192n;
   const priceX192 = (numerator * Q192) / denominator;
 
-  // Exact sqrt in Q192 → sqrtPriceX96
-  const sqrtPriceX96 = sqrtBigInt(priceX192);
+  // Compute sqrt and clamp to Uniswap V3 bounds
+  const MIN_SQRT_RATIO = 4295128739n;
+  const MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342n;
+
+  let sqrtPriceX96 = sqrtBigInt(priceX192);
+
+  if (sqrtPriceX96 < MIN_SQRT_RATIO) {
+    console.warn(`[encodePriceSqrt] Clamping low sqrtPriceX96 from ${sqrtPriceX96} to MIN ${MIN_SQRT_RATIO}`);
+    sqrtPriceX96 = MIN_SQRT_RATIO;
+  }
+  if (sqrtPriceX96 >= MAX_SQRT_RATIO) {
+    console.warn(`[encodePriceSqrt] Clamping high sqrtPriceX96 from ${sqrtPriceX96} to MAX-1`);
+    sqrtPriceX96 = MAX_SQRT_RATIO - 1n;
+  }
+
   return sqrtPriceX96;
 }
 
@@ -828,7 +841,6 @@ function pegSizedAmounts(usdcFloat, pegUSD = LIVE.PEG.TARGET_USD) {
   const bwAmt = ethers.parseEther(bwAmtFloat.toFixed(18));
   return { usdcAmt, bwAmt };
 }
-
 
 /* === Gas validation (AA optimizer → bundler estimate → fallback) ======== */
 
