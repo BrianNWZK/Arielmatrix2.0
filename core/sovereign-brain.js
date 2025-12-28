@@ -773,6 +773,8 @@ async function ensureV3PoolAtPeg(
 
 /* === Core helpers ======================================================= */
 
+// Simple timestamp helper for consistent logging
+function nowTs() { return Date.now(); }
 
 // BigInt sqrt (Newton’s method) for fixed-point math (X192 → sqrtPriceX96)
 function sqrtBigInt(n) {
@@ -981,8 +983,9 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
 
   // Bundler minima awareness — pulled from AA validations upstream
   const mins = core._genesisGasRequirements || null;
-  const bufferPct = (mins?.recommendedBufferPct ?? profile.bufferPct);
-  const bufMul = (100n + BigInt(bufferPct)) / 100n;
+  const bufferPctRaw = mins?.recommendedBufferPct ?? profile.bufferPct;
+  const bufferPctBig = typeof bufferPctRaw === 'bigint' ? bufferPctRaw : BigInt(bufferPctRaw);
+  const bufMul = (100n + bufferPctBig) / 100n;
 
   // Size caps considering profile + bundler minima
   let callGasLimit = opts.callGasLimit ?? (profile.callGasLimit * bufMul);
@@ -1336,15 +1339,29 @@ async function forceGenesisPoolAndPeg(core) {
 async function _aaPreflightProbe(core) {
   if (!core?.mev) return;
 
-  // Use validated min requirements if available, with buffer
+  // Use validated min requirements if available, with buffer (normalize to bigint percent)
   const req = core._genesisGasRequirements || {
     minPreVerificationGas: 55_000n,
     minVerificationGas: 120_000n,
     recommendedBuffer: 1.3
   };
-  const buf = BigInt(Math.floor((req.recommendedBufferPct ?? (req.recommendedBuffer ? req.recommendedBuffer * 100 : 130)) * 1)) / 100n;
-  const preVerificationGas = (req.minPreVerificationGas * buf);
-  const verificationGasLimit = (req.minVerificationGas * buf);
+
+  let pctBig;
+  if (typeof req.recommendedBufferPct === 'bigint') {
+    pctBig = req.recommendedBufferPct;             // e.g., 30n
+  } else if (typeof req.recommendedBufferPct !== 'undefined') {
+    // handle numeric percent given as number/string
+    pctBig = BigInt(Math.round(Number(req.recommendedBufferPct)));
+  } else if (typeof req.recommendedBuffer === 'number') {
+    // convert decimal (e.g., 1.3) to bigint percent (130n)
+    pctBig = BigInt(Math.round(req.recommendedBuffer * 100));
+  } else {
+    pctBig = 30n; // default 30%
+  }
+
+  const bufMul = (100n + pctBig) / 100n;
+  const preVerificationGas = req.minPreVerificationGas * bufMul;
+  const verificationGasLimit = req.minVerificationGas * bufMul;
   const callGasLimit = 150_000n;
 
   // Dummy SCW execute to simulate real path
