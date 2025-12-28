@@ -775,8 +775,6 @@ async function ensureV3PoolAtPeg(
 
 /* === Core helpers ======================================================= */
 
-// Simple timestamp helper for consistent logging
-function nowTs() { return Date.now(); }
 
 // BigInt sqrt (Newton’s method) for fixed-point math (X192 → sqrtPriceX96)
 function sqrtBigInt(n) {
