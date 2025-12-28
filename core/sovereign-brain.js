@@ -763,6 +763,7 @@ async function ensureV3PoolAtPeg(
 }
 
 
+
 /* =========================================================================
    Genesis Unstoppable — merged ForceGenesis + Microseed (production-polished)
    Patch: 7 novel solutions to pool init revert
