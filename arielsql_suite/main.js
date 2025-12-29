@@ -4,11 +4,12 @@ import { ethers } from "ethers";
 // --- CONFIG ---
 const RPC_URL = "https://rpc.ankr.com/eth";
 
-// Uniswap V3 NonfungiblePositionManager (normalized to lowercase)
+// Uniswap V3 NonfungiblePositionManager (normalized lowercase)
 const NPM_ADDRESS = "0xc36442b4a4522e871399cd717abdd847ab11fe88";
 
-// Paste the inner calldata from your logs here
-const INNER_CALLDATA = "0x..."; // replace with the hex blob you want to test
+// Inner calldata extracted from your logs (SCW.execute payload)
+const INNER_CALLDATA =
+  "0xb61d27f6000000000000000000000000c36442b4a4522e871399cd717abdd847ab11fe88000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000064a16712950000000000000000000000009be921e5efacd53bc4eebcfdc4494d257cfab5da000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000000000000000000000000000000000000000001f400000000000000000000000000000000000000000000000000000000";
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
