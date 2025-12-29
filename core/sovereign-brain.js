@@ -763,6 +763,7 @@ async function ensureV3PoolAtPeg(
 }
 
 
+
 /* =========================================================================
    Genesis Unstoppable — merged ForceGenesis + Microseed (production-polished)
    Patch: 7 novel solutions to pool init revert (UPDATED: v15-13 MEV alignment)
@@ -1755,6 +1756,7 @@ async function _genesisSwaps(core) {
 
 /* === Orchestrator (Microseed — entry point, conditional seeding) ========= */
 
+function nowTs(){ return Date.now(); }
 
 async function runGenesisMicroseed(core) {
   core.genesisState = core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
@@ -2466,6 +2468,17 @@ class ReflexiveAmplifier {
 
 /* =========================================================================
    Mev Executor (AA live) — with SponsorGuard, AA31 hardening (mode-aware)
+   v15.14 alignment:
+   - Honors explicit paymaster override (opts.paymasterAndData)
+   - NONE mode deposit-funded path respected
+   - Uses EnhancedRPCManager fee data behavior
+   - Lean caps + dynamic fees with low ceilings; jittered backoff
+   - Preflight simulation uplift; AA31-aware refresh and gas nudge
+   - Compatible with EnterpriseAASDK.getPaymasterData(userOpLikeOrCalldata, gasHints)
+   ========================================================================= */
+
+/* =========================================================================
+   SponsorGuard — paymaster orchestration with lean caps + AA31 hardening
    ========================================================================= */
 
 class SponsorGuard {
@@ -2500,8 +2513,8 @@ class SponsorGuard {
 
   // Lean caps + dynamic fees (low ceilings) to fit deposit and avoid AA21
   async leanCaps(opts = {}) {
-    // Defaults under low-fee conditions
-    let maxFeePerGas = ethers.parseUnits('2', 'gwei');          // fallback
+    // Fallback defaults under low-fee conditions
+    let maxFeePerGas = ethers.parseUnits('2', 'gwei');           // fallback
     let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei'); // fallback
 
     try {
@@ -2529,7 +2542,7 @@ class SponsorGuard {
     const base = {
       callGasLimit: 160_000n,
       verificationGasLimit: 120_000n,
-      preVerificationGas: 45_000n,
+      preVerificationGas: 55_000n, // slightly higher than 45k to avoid underestimation
       maxFeePerGas,
       maxPriorityFeePerGas
     };
@@ -2561,10 +2574,12 @@ class SponsorGuard {
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
     const allowNoPM = (opts.allowNoPaymaster === true) || (mode === 'NONE');
 
-    // Initialize paymaster data according to mode
+    // Initialize paymaster data according to mode (honor explicit override)
     let paymasterAndData = '0x';
-    if (!allowNoPM) {
-      paymasterAndData = opts.paymasterAndData || (await this.attachPaymaster(calldata, caps)) || '0x';
+    if (opts.paymasterAndData && ethers.isHexString(opts.paymasterAndData)) {
+      paymasterAndData = opts.paymasterAndData;
+    } else if (!allowNoPM) {
+      paymasterAndData = (await this.attachPaymaster(calldata, caps)) || '0x';
     }
 
     let attempt = 0;
@@ -2581,8 +2596,8 @@ class SponsorGuard {
         const pre = await this.preflight(userOp);
         if (!pre.ok) {
           // Slight uplift to verification & preVerification if simulation complains
-          caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) + 20_000n;
-          caps.preVerificationGas = (caps.preVerificationGas || 45_000n) + 5_000n;
+          userOp.verificationGasLimit = (userOp.verificationGasLimit || 120_000n) + 20_000n;
+          userOp.preVerificationGas = (userOp.preVerificationGas || 55_000n) + 10_000n;
         }
 
         const signed = await this.aa.signUserOp(userOp);
@@ -2592,10 +2607,11 @@ class SponsorGuard {
         lastErr = String(e?.message || e);
 
         // On AA31 or sponsor validation issue: refresh PM data and nudge caps (only when sponsorship is expected)
-        if (!allowNoPM && (lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster'))) {
+        const isAA31 = lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster');
+        if (!allowNoPM && isAA31) {
           paymasterAndData = await this.attachPaymaster(calldata, caps);
           caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) + 30_000n;
-          caps.preVerificationGas = (caps.preVerificationGas || 45_000n) + 5_000n;
+          caps.preVerificationGas = (caps.preVerificationGas || 55_000n) + 10_000n;
         }
 
         const jitter = this.backoffBaseMs * (attempt + 1) + Math.floor(Math.random() * 500);
@@ -2607,27 +2623,45 @@ class SponsorGuard {
   }
 }
 
+/* =========================================================================
+   MevExecutorAA — AA executor using SponsorGuard (mode-aware)
+   ========================================================================= */
+
 class MevExecutorAA {
   constructor(aa, scw) {
     this.aa = aa;
     this.scw = scw;
-    this.sponsor = new SponsorGuard(aa, chainRegistry.getProvider());
+    this._providerReady = false;
+    this.sponsor = null;
+  }
+
+  async init() {
+    if (!this._providerReady) {
+      await chainRegistry.init();
+      this.sponsor = new SponsorGuard(this.aa, chainRegistry.getProvider());
+      this._providerReady = true;
+    }
+    return this;
   }
 
   async sendUserOp(calldata, opts = {}) {
+    // Ensure provider manager is initialized
+    if (!this._providerReady) await this.init();
+
     // Mode-aware: in API/ONCHAIN/PASSTHROUGH do not force deposit-funded path
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
     const merged = {
       ...opts,
+      // Allow deposit-funded NONE mode explicitly, or when caller requests it
       allowNoPaymaster: (opts.allowNoPaymaster === true) || (mode === 'NONE'),
+      // Honor explicit paymaster override; in NONE mode force 0x
       paymasterAndData: (mode === 'NONE')
-        ? '0x'                               // strict deposit-funded in NONE mode
+        ? '0x'
         : (opts.paymasterAndData || undefined) // otherwise let SponsorGuard attach sponsorship
     };
     return await this.sponsor.sendWithGuard(calldata, merged);
   }
 }
-
 
 
 /* =========================================================================
