@@ -2529,7 +2529,7 @@ class ReflexiveAmplifier {
 }
 
 /* =========================================================================
-   Mev Executor (AA live) — with SponsorGuard, AA31 hardening
+   Mev Executor (AA live) — with SponsorGuard, AA31 hardening (mode-aware)
    ========================================================================= */
 
 class SponsorGuard {
@@ -2548,7 +2548,13 @@ class SponsorGuard {
 
     // Request PM data with the exact caps the PM will simulate under
     try {
-      const pmd = await this.aa.getPaymasterData(calldata, caps);
+      const pmd = await this.aa.getPaymasterData(calldata, {
+        callGasLimit: caps.callGasLimit,
+        verificationGasLimit: caps.verificationGasLimit,
+        preVerificationGas: caps.preVerificationGas,
+        maxFeePerGas: caps.maxFeePerGas,
+        maxPriorityFeePerGas: caps.maxPriorityFeePerGas
+      });
       if (pmd && pmd !== '0x') this.lastPmd = pmd;
       return pmd || this.lastPmd || '0x';
     } catch {
@@ -2559,7 +2565,7 @@ class SponsorGuard {
   // Lean caps + dynamic fees (low ceilings) to fit deposit and avoid AA21
   async leanCaps(opts = {}) {
     // Defaults under low-fee conditions
-    let maxFeePerGas = ethers.parseUnits('2', 'gwei');        // fallback
+    let maxFeePerGas = ethers.parseUnits('2', 'gwei');          // fallback
     let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei'); // fallback
 
     try {
@@ -2673,16 +2679,19 @@ class MevExecutorAA {
   }
 
   async sendUserOp(calldata, opts = {}) {
-    // Always permit deposit-funded execution; callers can override paymaster if needed
+    // Mode-aware: in API/ONCHAIN/PASSTHROUGH do not force deposit-funded path
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
     const merged = {
       ...opts,
-      allowNoPaymaster: true,
-      paymasterAndData: (mode === 'NONE') ? '0x' : (opts.paymasterAndData || undefined)
+      allowNoPaymaster: (opts.allowNoPaymaster === true) || (mode === 'NONE'),
+      paymasterAndData: (mode === 'NONE')
+        ? '0x'                               // strict deposit-funded in NONE mode
+        : (opts.paymasterAndData || undefined) // otherwise let SponsorGuard attach sponsorship
     };
     return await this.sponsor.sendWithGuard(calldata, merged);
   }
 }
+
 
 
 /* =========================================================================
@@ -2987,62 +2996,123 @@ class MEVRecaptureEngine {
     });
   }
 }
+
 /* =========================================================================
-   Adaptive Range Maker (patched: SCW mints via userOps)
+   Adaptive Range Maker (patched: SCW mints via userOps) — tuple array encoding
    ========================================================================= */
 
 class AdaptiveRangeMaker {
   constructor(provider, signer, dexRegistry, entropy, core){
     this.provider=provider; this.signer=signer; this.dexRegistry=dexRegistry; this.entropy=entropy; this.core=core;
     this.npm = LIVE.DEXES.UNISWAP_V3.positionManager;
-    this.npmIface = new ethers.Interface(['function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)']);
+    // Uniswap V3 NPM mint signature (ethers v6): positional tuple encoding required
+    this.npmIface = new ethers.Interface([
+      'function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)'
+    ]);
     this.scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
     this.running=new Map(); this.lastAdjust=0;
   }
+
   async startStreamingMint({ token0, token1, tickLower, tickUpper, total0, total1, steps=LIVE.MAKER.MAX_STREAM_STEPS, label='maker_stream' }){
     const id=`stream_${nowTs()}_${randomUUID().slice(0,8)}`;
-    const c0= total0>0n? total0/BigInt(steps):0n; const c1= total1>0n? total1/BigInt(steps):0n;
+    const c0 = total0>0n ? total0/BigInt(steps) : 0n;
+    const c1 = total1>0n ? total1/BigInt(steps) : 0n;
     this.running.set(id,{ token0, token1, tickLower, tickUpper, chunk0:c0, chunk1:c1, steps, done:0, label, positions:[] });
+
     (async()=>{
       while(true){
-        const st=this.running.get(id); if(!st) break; if(st.done>=st.steps){ this.running.delete(id); break; }
+        const st=this.running.get(id); if(!st) break;
+        if(st.done>=st.steps){ this.running.delete(id); break; }
+
         const coh=Math.max(0.2, (this.entropy.lastEntropy?.coherence ?? 0.6));
         const delayMs=Math.floor(8000*(1.2-coh));
+
         try{
-          const params = {
-            token0: st.token0, token1: st.token1, fee: LIVE.PEG.FEE_TIER_DEFAULT,
-            tickLower: st.tickLower, tickUpper: st.tickUpper,
-            amount0Desired: st.chunk0, amount1Desired: st.chunk1,
-            amount0Min: 0, amount1Min: 0, recipient: LIVE.SCW_ADDRESS,
-            deadline: Math.floor(nowTs()/1000)+1200
-          };
-          const mintData = this.npmIface.encodeFunctionData('mint', [params]);
+          // Ethers v6 requires positional array for tuple components
+          const paramsArray = [
+            st.token0,                      // address token0
+            st.token1,                      // address token1
+            LIVE.PEG.FEE_TIER_DEFAULT,      // uint24 fee
+            st.tickLower,                   // int24 tickLower
+            st.tickUpper,                   // int24 tickUpper
+            st.chunk0,                      // uint256 amount0Desired
+            st.chunk1,                      // uint256 amount1Desired
+            0,                              // uint256 amount0Min
+            0,                              // uint256 amount1Min
+            LIVE.SCW_ADDRESS,               // address recipient
+            Math.floor(nowTs()/1000)+1200   // uint256 deadline
+          ];
+
+          const mintData = this.npmIface.encodeFunctionData('mint', [paramsArray]);
           const exec = this.scwIface.encodeFunctionData('execute', [this.npm, 0n, mintData]);
+
+          // Send via MEV executor (mode-aware sponsorship honored upstream)
           const txRes = await this.core.mev.sendUserOp(exec, {
-            description: `maker_mint_${label}`,
-            allowNoPaymaster: true
+            description: `maker_mint_${label}`
           });
+
           st.positions.push({ txHash: txRes.txHash, at: nowTs() });
           console.log(`[maker_stream:${label}] mint chunk done tx=${txRes.txHash}`);
-        } catch(e){ console.error('Streaming mint error:', e.message); }
-        st.done++; this.running.set(id, st); await new Promise(r=>setTimeout(r, delayMs));
+        } catch(e){
+          console.error('Streaming mint error:', e.message);
+        }
+
+        st.done++;
+        this.running.set(id, st);
+        await new Promise(r=>setTimeout(r, delayMs));
       }
     })();
+
     return { streamId:id };
   }
+
   async periodicAdjustRange(bwaeziAddr){
-    const now=nowTs(); if(now-this.lastAdjust<LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS) return null; this.lastAdjust=now;
-    const factory=new ethers.Contract(LIVE.DEXES.UNISWAP_V3.factory,['function getPool(address,address,uint24) view returns (address)'],this.provider);
+    const now=nowTs();
+    if(now-this.lastAdjust<LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS) return null;
+    this.lastAdjust=now;
+
+    const factory=new ethers.Contract(
+      LIVE.DEXES.UNISWAP_V3.factory,
+      ['function getPool(address,address,uint24) view returns (address)'],
+      this.provider
+    );
+
     const pool=await factory.getPool(bwaeziAddr, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
     if(!pool || pool===ethers.ZeroAddress) return { adjusted:false, reason:'no_pool' };
-    const slot0 = await (new ethers.Contract(pool,['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'],this.provider)).slot0();
-    const tick=Number(slot0[1]); const coh=Math.max(0.2, this.entropy.lastEntropy?.coherence ?? 0.6); const width=Math.floor(600*(coh<LIVE.MAKER.ENTROPY_COHERENCE_MIN?1.5:0.8));
-    const tl=tick-width, tu=tick+width; const total0=LIVE.MAKER.STREAM_CHUNK_BWAEZI*4n; const total1=LIVE.MAKER.STREAM_CHUNK_USDC*4n;
-    const stream=await this.startStreamingMint({ token0:LIVE.TOKENS.BWAEZI, token1:LIVE.TOKENS.USDC, tickLower:tl, tickUpper:tu, total0, total1, steps:4, label:'periodic_adjust' });
+
+    const slot0 = await (new ethers.Contract(
+      pool,
+      ['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)'],
+      this.provider
+    )).slot0();
+
+    const tick=Number(slot0[1]);
+    const coh=Math.max(0.2, this.entropy.lastEntropy?.coherence ?? 0.6);
+    const width=Math.floor(600*(coh<LIVE.MAKER.ENTROPY_COHERENCE_MIN?1.5:0.8));
+    const tl=tick-width, tu=tick+width;
+
+    const total0=LIVE.MAKER.STREAM_CHUNK_BWAEZI*4n;
+    const total1=LIVE.MAKER.STREAM_CHUNK_USDC*4n;
+
+    const stream=await this.startStreamingMint({
+      token0:LIVE.TOKENS.BWAEZI,
+      token1:LIVE.TOKENS.USDC,
+      tickLower:tl,
+      tickUpper:tu,
+      total0,
+      total1,
+      steps:4,
+      label:'periodic_adjust'
+    });
+
     return { adjusted:true, tick, tickLower:tl, tickUpper:tu, coherence:coh, streamId:stream.streamId };
   }
-  listStreams(){ return Array.from(this.running.entries()).map(([id,st])=> ({ id, ...st })); }
+
+  listStreams(){
+    return Array.from(this.running.entries()).map(([id,st])=> ({ id, ...st }));
+  }
 }
+
 
 
 /* =========================================================================
