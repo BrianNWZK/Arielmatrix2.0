@@ -763,10 +763,9 @@ async function ensureV3PoolAtPeg(
 }
 
 
-
 /* =========================================================================
    Genesis Unstoppable — merged ForceGenesis + Microseed (production-polished)
-   Patch: 7 novel solutions to pool init revert
+   Patch: 7 novel solutions to pool init revert (UPDATED: v15-13 MEV alignment)
    Requirements:
    - Assumes `ethers` and `LIVE` are in scope.
    - Uses core.aa, core.mev, core.provider, core.maker, core.dex, core.strategy, core.verifier, core.compliance.
@@ -822,11 +821,6 @@ function encodePriceSqrt(token0, token1, targetPegUSD, options = {}) {
   const dec0 = _decFor(token0);
   const dec1 = _decFor(token1);
 
-  // Determine final price (token1 per token0) with dynamic handling:
-  // - For BWAEZI/WETH, use ETH-aware price if provided via options.ethUsdFP6
-  // - For hybrid peg anchoring, optionally blend peg with ETH-anchored basket
-  // - Otherwise fallback to numeric targetPegUSD
-
   const PEG_FP = 1_000_000n;
   const pow10 = (n) => 10n ** BigInt(n);
 
@@ -841,13 +835,11 @@ function encodePriceSqrt(token0, token1, targetPegUSD, options = {}) {
   const lower1 = String(token1).toLowerCase();
   const isBW = lower0 === LIVE.TOKENS.BWAEZI.toLowerCase() || lower1 === LIVE.TOKENS.BWAEZI.toLowerCase();
   const isWETH = lower0 === LIVE.TOKENS.WETH.toLowerCase() || lower1 === LIVE.TOKENS.WETH.toLowerCase();
-  const isUSDC = lower0 === LIVE.TOKENS.USDC.toLowerCase() || lower1 === LIVE.TOKENS.USDC.toLowerCase();
 
   // Compute token1 per token0 price in USD terms
   let priceToken1PerToken0USD = safeNum(targetPegUSD, LIVE.PEG.TARGET_USD);
 
-  // Novel 1 & 7: Dynamic price calibration + hybrid peg anchoring for WETH pairs.
-  // If BWAEZI/WETH: price(token1 per token0) = WETH_USD / BWAEZI_USD
+  // Dynamic price calibration + hybrid peg anchoring for WETH pairs.
   if (isBW && isWETH) {
     const pegUSDNum = safeNum(targetPegUSD, LIVE.PEG.TARGET_USD);
     const ethUsdNum =
@@ -855,12 +847,10 @@ function encodePriceSqrt(token0, token1, targetPegUSD, options = {}) {
       : safeNum(options.ethUsdUSD, null);
 
     if (ethUsdNum && ethUsdNum > 0) {
-      // Hybrid basket: 50% USDC peg (BWAEZI pegged to USD), 50% ETH anchor
-      // priceBW_WETH = (WETH_USD / BWAEZI_USD_basket)
-      const bwUSD_basket = 0.5 * pegUSDNum + 0.5 * pegUSDNum; // BW pegged to USD (basket keeps peg; ETH anchor affects relative ratio)
+      // Hybrid basket (keeps peg orientation stable)
+      const bwUSD_basket = pegUSDNum;
       priceToken1PerToken0USD = ethUsdNum / bwUSD_basket;
     } else {
-      // Fallback to direct peg mapping to avoid extremes (still clamped)
       priceToken1PerToken0USD = pegUSDNum;
     }
   }
@@ -892,7 +882,6 @@ function pegSizedAmounts(usdcFloat, pegUSD = LIVE.PEG.TARGET_USD) {
 /* === Gas validation (AA optimizer → bundler estimate → fallback) ======== */
 
 async function validateGenesisGasRequirements(core) {
-  // Prefer AA SDK optimizer if available
   try {
     if (core?.aa?.genesisOptimizer?.getBundlerMinimumGas) {
       const minsRaw = await core.aa.genesisOptimizer.getBundlerMinimumGas();
@@ -903,11 +892,8 @@ async function validateGenesisGasRequirements(core) {
         recommendedBufferPct: 30n
       };
     }
-  } catch (e) {
-    // continue to bundler estimate fallback
-  }
+  } catch (e) {}
 
-  // Bundler estimate fallback
   try {
     if (core?.aa) {
       const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
@@ -920,7 +906,7 @@ async function validateGenesisGasRequirements(core) {
       const testUserOp = await core.aa.createUserOp(dummyExec, {
         callGasLimit: 100_000n,
         verificationGasLimit: 100_000n,
-        preVerificationGas: 45_000n,
+        preVerificationGas: 50_000n,
         maxFeePerGas: ethers.parseUnits('2', 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('0.5', 'gwei'),
         allowNoPaymaster: true
@@ -942,11 +928,8 @@ async function validateGenesisGasRequirements(core) {
         recommendedBufferPct: 30n
       };
     }
-  } catch (e) {
-    // fall through
-  }
+  } catch (e) {}
 
-  // Conservative defaults
   return {
     minPreVerificationGas: 55_000n,
     minVerificationGas: 120_000n,
@@ -958,10 +941,9 @@ async function validateGenesisGasRequirements(core) {
 
 /* === SponsorGuard bootstrap: deposit-aware sponsorship ================== */
 
-// Novel 5: deposit-aware sponsorship to reduce “fee burn on revert”
+// Deposit-aware sponsorship to reduce “fee burn on revert”
 async function _ensureEntryPointDeposit(core) {
   try {
-    // If AA has helper, use it; else approximate via provider
     const epIface = new ethers.Interface([
       'function getDeposit(address account) view returns (uint256)'
     ]);
@@ -970,11 +952,16 @@ async function _ensureEntryPointDeposit(core) {
     try { deposit = await ep.getDeposit(LIVE.SCW_ADDRESS); } catch {}
 
     const AUTO_PM_DEPOSIT = String(process.env.AUTO_PM_DEPOSIT || 'true').toLowerCase() === 'true';
-    const minWei = ethers.parseEther(String(process.env.AUTO_PM_DEPOSIT_WEI || '0.001'));
+    const minWei = ethers.parseEther(String(process.env.AUTO_PM_DEPOSIT_WEI || '0.0000005'));
     if (AUTO_PM_DEPOSIT && deposit < minWei && core.signer?.sendTransaction) {
-      const tx = await core.signer.sendTransaction({ to: LIVE.ENTRY_POINT, data: '0x', value: minWei });
-      await tx.wait();
-      console.log(`[AA][deposit] auto-deposited ${ethers.formatEther(minWei)} ETH to EntryPoint`);
+      const eoaBal = await core.provider.getBalance(core.signer.address).catch(() => 0n);
+      if (eoaBal > minWei) {
+        const tx = await core.signer.sendTransaction({ to: LIVE.ENTRY_POINT, data: '0x', value: minWei });
+        await tx.wait();
+        console.log(`[AA][deposit] auto-deposited ${ethers.formatEther(minWei)} ETH to EntryPoint`);
+      } else {
+        console.warn('[AA][deposit] skipped auto-deposit (insufficient EOA balance)');
+      }
     }
   } catch (e) {
     console.warn('[AA][deposit] ensureEntryPointDeposit failed:', e.message);
@@ -985,10 +972,8 @@ async function _ensureEntryPointDeposit(core) {
 /* === AA sender (SponsorGuard + retries, env paymaster control + fee caps) */
 
 async function sendUserOpAA(core, execCalldata, opts = {}) {
-  // Sponsor bootstrap (deposit-aware)
   await _ensureEntryPointDeposit(core).catch(() => {});
 
-  // If AA wrapper is not available, fall back to legacy path
   if (!core?.aa) {
     const res = await core.mev.sendUserOp(execCalldata, {
       ...opts,
@@ -1000,11 +985,8 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
 
   const mode = (core?.config?.paymasterMode || process.env.PAYMASTER_MODE || 'API').toUpperCase();
   const allowNoPM = (opts?.allowNoPaymaster === true) || (mode === 'NONE');
-
-  // Allow per-env override to not force deposit-funded in genesis
   const FORCE_DEPOSIT_FUNDED_GENESIS = process.env.FORCE_DEPOSIT_FUNDED_GENESIS !== 'false';
 
-  // Operation profiles (bundler-aware)
   const desc = String(opts.description || '').toLowerCase();
   const isGenesis =
     desc.includes('genesis') ||
@@ -1016,10 +998,10 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
   const isSwap = desc.includes('swap');
 
   const GAS_PROFILES = {
-    POOL_CREATION: { callGasLimit: 300_000n, verificationGasLimit: 250_000n, preVerificationGas: 60_000n, bufferPct: 30n },
-    MINT_LIQUIDITY: { callGasLimit: 220_000n, verificationGasLimit: 180_000n, preVerificationGas: 50_000n, bufferPct: 25n },
-    MICROSEED_SWAP: { callGasLimit: 150_000n, verificationGasLimit: 120_000n, preVerificationGas: 45_000n, bufferPct: 20n },
-    DEFAULT: { callGasLimit: 250_000n, verificationGasLimit: 180_000n, preVerificationGas: 50_000n, bufferPct: 20n }
+    POOL_CREATION: { callGasLimit: 320_000n, verificationGasLimit: 270_000n, preVerificationGas: 60_000n, bufferPct: 30n },
+    MINT_LIQUIDITY: { callGasLimit: 240_000n, verificationGasLimit: 190_000n, preVerificationGas: 55_000n, bufferPct: 25n },
+    MICROSEED_SWAP: { callGasLimit: 160_000n, verificationGasLimit: 130_000n, preVerificationGas: 50_000n, bufferPct: 20n },
+    DEFAULT: { callGasLimit: 260_000n, verificationGasLimit: 190_000n, preVerificationGas: 55_000n, bufferPct: 25n }
   };
   const profile = isPool
     ? GAS_PROFILES.POOL_CREATION
@@ -1029,50 +1011,45 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
     ? GAS_PROFILES.MICROSEED_SWAP
     : GAS_PROFILES.DEFAULT;
 
-  // Env-based max fee caps
   const GENESIS_MAX_FEE =
     process.env.GENESIS_MAX_FEE_GWEI
       ? ethers.parseUnits(process.env.GENESIS_MAX_FEE_GWEI, 'gwei')
-      : ethers.parseUnits('5', 'gwei');
+      : ethers.parseUnits('7', 'gwei');
   const GENESIS_MAX_TIP =
     process.env.GENESIS_MAX_TIP_GWEI
       ? ethers.parseUnits(process.env.GENESIS_MAX_TIP_GWEI, 'gwei')
-      : ethers.parseUnits('2', 'gwei');
+      : ethers.parseUnits('3', 'gwei');
 
-  // Adaptive fee calculation for genesis ops (caps applied)
   let maxFeePerGas, maxPriorityFeePerGas;
   try {
     const fd = await core.provider.getFeeData();
-    const base = fd?.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
-    const tipBase = fd?.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
-    const feeBuf = isGenesis ? 13n : 11n; // +30% for genesis, +10% otherwise approximated
+    const base = fd?.maxFeePerGas ?? ethers.parseUnits('2', 'gwei');
+    const tipBase = fd?.maxPriorityFeePerGas ?? ethers.parseUnits('0.2', 'gwei');
+    const feeBuf = isGenesis ? 13n : 11n;
     const buffered = (base * feeBuf) / 10n;
-    const floor = ethers.parseUnits('1', 'gwei');
+    const floor = ethers.parseUnits('2', 'gwei');
     maxFeePerGas = opts.maxFeePerGas ?? (buffered < floor ? floor : buffered);
 
     const tipBuf = isGenesis ? 13n : 11n;
     const tipBuffered = (tipBase * tipBuf) / 10n;
-    const tipFloor = ethers.parseUnits('0.05', 'gwei');
+    const tipFloor = ethers.parseUnits('0.15', 'gwei');
     maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? (tipBuffered < tipFloor ? tipFloor : tipBuffered);
 
-    // Genesis fee caps (env overrides)
     if (isGenesis) {
       if (maxFeePerGas > GENESIS_MAX_FEE) maxFeePerGas = GENESIS_MAX_FEE;
       if (maxPriorityFeePerGas > GENESIS_MAX_TIP) maxPriorityFeePerGas = GENESIS_MAX_TIP;
     }
   } catch {
-    maxFeePerGas = opts.maxFeePerGas ?? ethers.parseUnits('1', 'gwei');
-    maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('0.05', 'gwei');
+    maxFeePerGas = opts.maxFeePerGas ?? ethers.parseUnits('2', 'gwei');
+    maxPriorityFeePerGas = opts.maxPriorityFeePerGas ?? ethers.parseUnits('0.15', 'gwei');
   }
   if (maxFeePerGas < maxPriorityFeePerGas) maxFeePerGas = maxPriorityFeePerGas;
 
-  // Bundler minima awareness — pulled from AA validations upstream
   const mins = core._genesisGasRequirements || null;
   const bufferPctRaw = mins?.recommendedBufferPct ?? profile.bufferPct;
   const bufferPctBig = typeof bufferPctRaw === 'bigint' ? bufferPctRaw : BigInt(bufferPctRaw);
   const bufMul = (100n + bufferPctBig) / 100n;
 
-  // Size caps considering profile + bundler minima
   let callGasLimit = opts.callGasLimit ?? (profile.callGasLimit * bufMul);
   let verificationGasLimit = opts.verificationGasLimit ?? (profile.verificationGasLimit * bufMul);
   let preVerificationGas = opts.preVerificationGas ?? (profile.preVerificationGas * bufMul);
@@ -1084,10 +1061,9 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
     if (preVerificationGas < mins.minPreVerificationGas * bufMul) {
       preVerificationGas = mins.minPreVerificationGas * bufMul;
     }
-    if (callGasLimit < 200_000n) callGasLimit = 200_000n;
+    if (callGasLimit < 220_000n) callGasLimit = 220_000n;
   }
 
-  // Create initial userOp with adaptive caps
   let userOp = await core.aa.createUserOp(execCalldata, {
     callGasLimit,
     verificationGasLimit,
@@ -1099,12 +1075,9 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
     paymasterAndData: '0x'
   });
 
-  // Paymaster handling with env override consideration
   if (allowNoPM && FORCE_DEPOSIT_FUNDED_GENESIS) {
-    // Explicitly deposit-funded path
     userOp.paymasterAndData = '0x';
   } else {
-    // Attempt to attach sponsorship when expected or when override disables force-no-paymaster
     try {
       const pmd = await core.aa.getPaymasterData(userOp, {
         callGasLimit: userOp.callGasLimit,
@@ -1115,19 +1088,16 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
       });
       if (pmd && ethers.isHexString(pmd)) userOp.paymasterAndData = pmd;
     } catch {
-      // fallback deposit-funded
       userOp.paymasterAndData = '0x';
     }
   }
 
-  // Quick prefund log (required vs actual deposit if exposed)
   try {
     const required = (userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas) * userOp.maxFeePerGas;
     const actual = await core.aa?.getDeposit?.(LIVE.SCW_ADDRESS);
     console.log(`[AA][prefund] required≈${required.toString()} actual=${(actual ?? 'n/a').toString?.() ?? actual}`);
-  } catch { /* non-fatal */ }
+  } catch {}
 
-  // SponsorGuard — if sponsorship was expected but missing, try MEV path once
   const expectsSponsorship = mode === 'API' || mode === 'ONCHAIN';
   if (expectsSponsorship && userOp.paymasterAndData === '0x') {
     try {
@@ -1142,16 +1112,12 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
         paymasterAndData: '0x'
       });
       return { txHash: viaMev.txHash };
-    } catch {
-      // proceed with deposit-funded submission below
-    }
+    } catch {}
   }
 
-  // Retry-aware send: uplift gas if bundler complains
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      // Always sign — signature must be present in all modes
       const signedOp = await core.aa.signUserOp(userOp);
       if (!signedOp.signature || signedOp.signature === '0x') {
         throw new Error('Missing signature (signature=0x)');
@@ -1169,20 +1135,18 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
 
       if (!gasFault) break;
 
-      // Uplift strategy per attempt
-      const upliftBuf = (110n + 10n * BigInt(attempt)) / 100n; // 10–20% per attempt
+      const upliftBuf = (110n + 10n * BigInt(attempt)) / 100n;
       userOp.preVerificationGas = (userOp.preVerificationGas || preVerificationGas) * upliftBuf;
       userOp.verificationGasLimit = (userOp.verificationGasLimit || verificationGasLimit) * upliftBuf;
 
-      // For pool init specifically, ensure strong caps by attempt 2+
       if (desc.includes('pool') && attempt >= 1) {
-        userOp.callGasLimit = userOp.callGasLimit < 350_000n ? 350_000n : userOp.callGasLimit;
-        userOp.verificationGasLimit = userOp.verificationGasLimit < 250_000n ? 250_000n : userOp.verificationGasLimit;
-        userOp.preVerificationGas = userOp.preVerificationGas < 65_000n ? 65_000n : userOp.preVerificationGas;
+        userOp.callGasLimit = userOp.callGasLimit < 360_000n ? 360_000n : userOp.callGasLimit;
+        userOp.verificationGasLimit = userOp.verificationGasLimit < 260_000n ? 260_000n : userOp.verificationGasLimit;
+        userOp.preVerificationGas = userOp.preVerificationGas < 68_000n ? 68_000n : userOp.preVerificationGas;
       }
 
       console.warn(`[AA][retry ${attempt + 1}] uplifting gas: prev=${userOp.preVerificationGas.toString()} ver=${userOp.verificationGasLimit.toString()}`);
-      await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+      await new Promise(r => setTimeout(r, 900 * (attempt + 1)));
       continue;
     }
   }
@@ -1196,40 +1160,37 @@ async function sendUserOpAA(core, execCalldata, opts = {}) {
 async function _getEthUsdFP6(core) {
   try {
     const agg = core?.oracle?.price || core?.PriceOracleAggregator || core?.oracles?.aggregator;
-    // Try known interface from your AA v15 infra (PriceOracleAggregator)
     if (core?.PriceOracleAggregator) {
       const oracle = new core.PriceOracleAggregator(core.provider);
       const fp6 = await oracle.getEthUsdBlendedFP6({ weth: LIVE.TOKENS.WETH, usdc: LIVE.TOKENS.USDC });
       return fp6;
     }
-    // If custom aggregator exposed on core.oracle, try method presence
     if (agg?.getEthUsdBlendedFP6) {
       return await agg.getEthUsdBlendedFP6({ weth: LIVE.TOKENS.WETH, usdc: LIVE.TOKENS.USDC });
     }
   } catch (e) {
     console.warn('[oracle] ETH/USD blended FP6 unavailable:', e.message);
   }
-  return null; // fallback handled by encoder
+  return null;
 }
 
 
 /* === Simulation guard for init params (novel 6) ========================= */
 
+// Patched: simulate SCW execute using SCW as both from/to to avoid EntryPoint-origin revert
 async function _simulateSCWExecute(core, target, value, data, adjusters = []) {
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   let exec = scwIface.encodeFunctionData('execute', [target, value, data]);
 
-  // Try simulation; if it reverts, iteratively apply adjusters (clamp, tick shifts, etc.)
   for (let i = 0; i <= adjusters.length; i++) {
     try {
-      await core.provider.call({ to: LIVE.SCW_ADDRESS, data: exec, from: LIVE.ENTRY_POINT });
-      return exec; // simulation passed
+      await core.provider.call({ to: LIVE.SCW_ADDRESS, data: exec, from: LIVE.SCW_ADDRESS });
+      return exec;
     } catch (simErr) {
       if (i === adjusters.length) {
         console.warn('[pre-sim] call simulation continued to fail:', String(simErr?.message || simErr));
-        return exec; // proceed anyway, AA retries will handle
+        return exec;
       }
-      // Apply next adjuster to produce new data and exec
       const adjusted = await adjusters[i]();
       exec = scwIface.encodeFunctionData('execute', [target, value, adjusted]);
     }
@@ -1248,19 +1209,16 @@ async function _bootstrapTickNearStable(core, tokenA, tokenB, feeTier) {
       core.provider
     );
 
-    // Use USDC/WETH 0.05% pool as anchor if available
     const stablePool = await factory.getPool(LIVE.TOKENS.USDC, LIVE.TOKENS.WETH, 500);
     if (stablePool && stablePool !== ethers.ZeroAddress) {
       const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
       const c = new ethers.Contract(stablePool, slotIface.fragments, core.provider);
       const [, anchorTick] = await c.slot0();
-      // Offset by ±60 to avoid exact copy and allow price discovery
       return Number(anchorTick);
     }
   } catch (e) {
     console.warn('[tick-bootstrap] failed:', e.message);
   }
-  // Fallback: use mid tick
   return 0;
 }
 
@@ -1268,18 +1226,15 @@ async function _bootstrapTickNearStable(core, tokenA, tokenB, feeTier) {
 /* === Two-phase pool creation (novel 3) ================================== */
 
 async function _twoPhaseCreateThenInitialize(core, npmIface, npm, token0, token1, fee, sqrtPriceX96) {
-  // Minimal ABI for separate create and initialize (some NPM releases support separate calls; else use combined)
   const createSig = 'function createPool(address,address,uint24) returns (address)';
   const initSig = 'function initialize(address,uint160)';
 
   const npmTwoPhaseIface = new ethers.Interface([createSig, initSig]);
 
-  // Phase 1: createPool
   const createCalldata = npmTwoPhaseIface.encodeFunctionData('createPool', [token0, token1, fee]);
   const execCreate = await _simulateSCWExecute(core, npm, 0n, createCalldata);
   await sendUserOpAA(core, execCreate, { description: 'init_pool_phase1_create' }).catch(() => {});
 
-  // Fetch pool
   const factory = new ethers.Contract(
     LIVE.DEXES.UNISWAP_V3.factory,
     ['function getPool(address,address,uint24) view returns (address)'],
@@ -1290,11 +1245,9 @@ async function _twoPhaseCreateThenInitialize(core, npmIface, npm, token0, token1
     throw new Error('two-phase: pool missing after create');
   }
 
-  // Phase 2: initialize
   const initCalldata = npmTwoPhaseIface.encodeFunctionData('initialize', [poolAddr, sqrtPriceX96]);
   const execInit = await _simulateSCWExecute(core, npm, 0n, initCalldata, [
     async () => {
-      // Adjuster: tighten clamp on sqrt (move toward mid range)
       const mid = (MIN_SQRT_RATIO + (MAX_SQRT_RATIO - 1n)) / 2n;
       const nearMid = _clampSqrt(mid);
       return npmTwoPhaseIface.encodeFunctionData('initialize', [poolAddr, nearMid]);
@@ -1307,15 +1260,29 @@ async function _twoPhaseCreateThenInitialize(core, npmIface, npm, token0, token1
 
 /* === Fallback minimal-liquidity mint path (novel 4) ===================== */
 
+// Patched: ensure int24 bounds and BigInt types to avoid encoder errors
+function _clampInt24(n) {
+  const min = -887272;
+  const max = 887272;
+  return Math.max(min, Math.min(max, Number(n)));
+}
+
 async function _forceMintIfInitFails(core, poolAddr, token0, token1, tickLower, tickUpper, total0, total1) {
   try {
+    const tl = _clampInt24(tickLower);
+    const tu = _clampInt24(tickUpper);
+
+    const total0BN = BigInt(total0 || 0n);
+    const total1BN = BigInt(total1 || 0n);
+
+    // Streaming maker expects plain fields; ensure all numeric fields are BigInt/number-safe
     const stream = await core.maker.startStreamingMint({
       token0,
       token1,
-      tickLower,
-      tickUpper,
-      total0,
-      total1,
+      tickLower: tl,
+      tickUpper: tu,
+      total0: total0BN,
+      total1: total1BN,
       steps: 1,
       label: 'force_mint_fallback'
     });
@@ -1348,20 +1315,16 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
   let poolWeth = await factory.getPool(w0, w1, fee);
   let initTx = null;
 
-  // Initialize BWAEZI/WETH at peg via SCW userOp
   if (!poolWeth || poolWeth === ethers.ZeroAddress) {
-    // Novel 1 & 7: use ETH-aware peg via blended oracle
     const ethUsdFP6 = await _getEthUsdFP6(core);
     const sqrtPriceX96Weth = encodePriceSqrt(w0, w1, LIVE.PEG.TARGET_USD, { ethUsdFP6 });
 
     const pmData = npmIface.encodeFunctionData('createAndInitializePoolIfNecessary', [w0, w1, fee, sqrtPriceX96Weth]);
 
-    // Novel 6: simulation guard with adjuster — try tick bootstrap if sim fails
     const exec = await _simulateSCWExecute(core, npm, 0n, pmData, [
       async () => {
         const anchorTick = await _bootstrapTickNearStable(core, w0, w1, fee);
-        // Shift sqrt toward anchor tick region (approx by small bias)
-        const bias = 1n; // minimal bias; actual tick influence handled via slot post-init
+        const bias = 1n;
         const adjSqrt = _clampSqrt(sqrtPriceX96Weth + bias);
         return npmIface.encodeFunctionData('createAndInitializePoolIfNecessary', [w0, w1, fee, adjSqrt]);
       }
@@ -1375,7 +1338,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     const receipt = await core.provider.getTransactionReceipt(res.txHash);
     if (!receipt || receipt.status !== 1) {
       console.warn('[forceGenesis] BWAEZI/WETH init reverted; attempting two-phase create+initialize.');
-      // Novel 3: two-phase fallback
       try {
         const two = await _twoPhaseCreateThenInitialize(core, npmIface, npm, w0, w1, fee, sqrtPriceX96Weth);
         poolWeth = two.poolAddr;
@@ -1388,7 +1350,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     }
 
     if (!poolWeth || poolWeth === ethers.ZeroAddress) {
-      // Novel 4: force minimal mint fallback path (range around anchor tick)
       const anchorTick = await _bootstrapTickNearStable(core, w0, w1, fee);
       const width = 120;
       const tl = Number(anchorTick) - width;
@@ -1398,7 +1359,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
       const wethAmt = 0n;
 
       await _forceMintIfInitFails(core, poolWeth, LIVE.TOKENS.BWAEZI, LIVE.TOKENS.WETH, tl, tu, bwAmt, wethAmt);
-      // Re-check pool
       poolWeth = await factory.getPool(w0, w1, fee);
       if (!poolWeth || poolWeth === ethers.ZeroAddress) {
         throw new Error('BWAEZI/WETH pool still missing after init/mint fallback attempts');
@@ -1408,7 +1368,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     console.log(`🛠️ [forceGenesis] Created+initialized BWAEZI/WETH pool via patched flow: ${poolWeth} (tx=${initTx || 'n/a'})`);
   }
 
-  // Seed minimal range on BWAEZI/WETH — zero WETH (SCW has none)
   const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
   const poolC = new ethers.Contract(poolWeth, slotIface.fragments, core.provider);
   const [, tick] = await poolC.slot0();
@@ -1416,7 +1375,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
   const tl = Number(tick) - width;
   const tu = Number(tick) + width;
 
-  // BW leg sized to ~$5 at peg; WETH leg = 0
   const { bwAmt } = pegSizedAmounts(5.0, LIVE.PEG.TARGET_USD);
   const wethAmt = 0n;
 
@@ -1427,10 +1385,10 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     const seed = await core.maker.startStreamingMint({
       token0: LIVE.TOKENS.BWAEZI,
       token1: LIVE.TOKENS.WETH,
-      tickLower: tl,
-      tickUpper: tu,
-      total0: bwAmt,
-      total1: wethAmt, // zero WETH since SCW has none
+      tickLower: _clampInt24(tl),
+      tickUpper: _clampInt24(tu),
+      total0: BigInt(bwAmt),
+      total1: BigInt(wethAmt),
       steps: 1,
       label: 'force_genesis_seed_bwz_weth_zero'
     });
@@ -1439,10 +1397,9 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
     console.error('[forceGenesis] BWAEZI/WETH mint failed:', e.message);
   }
 
-  // Bootstrap routing via USDC→WETH→BWAEZI multihop probe (no balance changes, just path readiness)
   try {
     const adapter = core.dex.getAdapter('UNISWAP_V3');
-    const probeInUSDC = ethers.parseUnits('1', 6); // tiny probe
+    const probeInUSDC = ethers.parseUnits('1', 6);
     const pathTx = await adapter._v3PathCalldata(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, probeInUSDC, LIVE.SCW_ADDRESS);
     if (pathTx?.router && pathTx?.calldata) {
       const execCalldata = new ethers.Interface(['function execute(address,uint256,bytes)'])
@@ -1463,7 +1420,6 @@ async function ensureGenesisBwzWethPoolAndSeed(core, fee = 3000) {
 
 // Ensure BWAEZI/USDC pool exists and is initialized at peg, then seed minimal range via SCW
 async function forceGenesisPoolAndPeg(core) {
-  // Learn bundler minima once at start (idempotent)
   if (!core._genesisGasRequirements) {
     core._genesisGasRequirements = await validateGenesisGasRequirements(core).catch(() => ({
       minPreVerificationGas: 50_000n,
@@ -1490,7 +1446,6 @@ async function forceGenesisPoolAndPeg(core) {
     'function createAndInitializePoolIfNecessary(address,address,uint24,uint160) returns (address)'
   ]);
 
-  // token ordering for Uniswap V3 (token0 < token1)
   const [t0, t1] =
     LIVE.TOKENS.BWAEZI.toLowerCase() < LIVE.TOKENS.USDC.toLowerCase()
       ? [LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC]
@@ -1500,7 +1455,6 @@ async function forceGenesisPoolAndPeg(core) {
   let initTxHash = null;
 
   if (!pool || pool === ethers.ZeroAddress) {
-    // Novel 6: pre-sim with oracle-aware sqrt
     const ethUsdFP6 = await _getEthUsdFP6(core);
     const sqrtPriceX96 = encodePriceSqrt(t0, t1, LIVE.PEG.TARGET_USD, { ethUsdFP6 });
 
@@ -1511,7 +1465,6 @@ async function forceGenesisPoolAndPeg(core) {
 
     const exec = await _simulateSCWExecute(core, npm, 0n, pmData, [
       async () => {
-        // Adjuster: bias sqrt slightly and try adaptive tick bootstrap
         const anchorTick = await _bootstrapTickNearStable(core, t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
         const bias = 1n;
         const adjSqrt = _clampSqrt(sqrtPriceX96 + bias);
@@ -1527,7 +1480,6 @@ async function forceGenesisPoolAndPeg(core) {
     const receipt = await core.provider.getTransactionReceipt(res.txHash);
     if (!receipt || receipt.status !== 1) {
       console.warn('[forceGenesis] USDC/BWAEZI init reverted; attempting two-phase create+initialize.');
-      // Novel 3: two-phase fallback
       try {
         const two = await _twoPhaseCreateThenInitialize(core, npmIface, npm, t0, t1, LIVE.PEG.FEE_TIER_DEFAULT, sqrtPriceX96);
         pool = two.poolAddr;
@@ -1541,7 +1493,6 @@ async function forceGenesisPoolAndPeg(core) {
 
     if (!pool || pool === ethers.ZeroAddress) {
       console.warn('[forceGenesis] USDC/BWAEZI pool missing after init attempts; applying mint fallback.');
-      // Novel 4: force minimal mint fallback around anchor tick
       const anchorTick = await _bootstrapTickNearStable(core, t0, t1, LIVE.PEG.FEE_TIER_DEFAULT);
       const width = 120;
       const tl = Number(anchorTick) - width;
@@ -1561,7 +1512,6 @@ async function forceGenesisPoolAndPeg(core) {
     }
   }
 
-  // If pool still missing, attempt WETH fallback here to keep flow unified
   let wethSeed = { poolWeth: ethers.ZeroAddress, seedStreamId: null };
   if (!pool || pool === ethers.ZeroAddress) {
     wethSeed = await ensureGenesisBwzWethPoolAndSeed(core).catch((e) => {
@@ -1569,7 +1519,6 @@ async function forceGenesisPoolAndPeg(core) {
       return { poolWeth: ethers.ZeroAddress, seedStreamId: null };
     });
   } else {
-    // Read slot0 to derive tick range and mint initial $5 symmetric liquidity
     const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
     const poolC = new ethers.Contract(pool, slotIface.fragments, core.provider);
     const [, tick] = await poolC.slot0();
@@ -1584,10 +1533,10 @@ async function forceGenesisPoolAndPeg(core) {
       const stream = await core.maker.startStreamingMint({
         token0: LIVE.TOKENS.BWAEZI,
         token1: LIVE.TOKENS.USDC,
-        tickLower: tl,
-        tickUpper: tu,
-        total0: bwAmt,
-        total1: usdcAmt,
+        tickLower: _clampInt24(tl),
+        tickUpper: _clampInt24(tu),
+        total0: BigInt(bwAmt),
+        total1: BigInt(usdcAmt),
         steps: 2,
         label: 'force_genesis_seed'
       });
@@ -1612,7 +1561,6 @@ async function forceGenesisPoolAndPeg(core) {
 async function _aaPreflightProbe(core) {
   if (!core?.mev) return;
 
-  // Use validated min requirements if available, with buffer (normalize to bigint percent)
   const req = core._genesisGasRequirements || {
     minPreVerificationGas: 55_000n,
     minVerificationGas: 120_000n,
@@ -1621,23 +1569,20 @@ async function _aaPreflightProbe(core) {
 
   let pctBig;
   if (typeof req.recommendedBufferPct === 'bigint') {
-    pctBig = req.recommendedBufferPct;             // e.g., 30n
+    pctBig = req.recommendedBufferPct;
   } else if (typeof req.recommendedBufferPct !== 'undefined') {
-    // handle numeric percent given as number/string
     pctBig = BigInt(Math.round(Number(req.recommendedBufferPct)));
   } else if (typeof req.recommendedBuffer === 'number') {
-    // convert decimal (e.g., 1.3) to bigint percent (130n)
     pctBig = BigInt(Math.round(req.recommendedBuffer * 100));
   } else {
-    pctBig = 30n; // default 30%
+    pctBig = 30n;
   }
 
   const bufMul = (100n + pctBig) / 100n;
   const preVerificationGas = req.minPreVerificationGas * bufMul;
   const verificationGasLimit = req.minVerificationGas * bufMul;
-  const callGasLimit = 150_000n;
+  const callGasLimit = 160_000n;
 
-  // Dummy SCW execute to simulate real path
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const calldata = scwIface.encodeFunctionData('execute', [LIVE.SCW_ADDRESS, 0n, '0x']);
 
@@ -1655,9 +1600,8 @@ async function _aaPreflightProbe(core) {
       return;
     } catch (err) {
       console.warn(`[AA] preflight attempt ${attempt + 1} failed:`, err.message);
-      // Slightly lift caps on retry
       attempt += 1;
-      await new Promise((r) => setTimeout(r, 800 * attempt));
+      await new Promise((r) => setTimeout(r, 900 * attempt));
     }
   }
   throw new Error('AA preflight failed after retries');
@@ -1679,7 +1623,6 @@ async function seedMinimalLiquidity(core) {
     pool = r.pool;
     console.log(`🧩 seedMinimalLiquidity: pool=${pool} initTx=${r.initTxHash || 'n/a'}`);
     if (!pool || pool === ethers.ZeroAddress) {
-      // Fallback to BWAEZI/WETH asymmetric seed if USDC pool still missing
       await ensureGenesisBwzWethPoolAndSeed(core).catch((e) => {
         console.warn('[seedMinimalLiquidity] BWAEZI/WETH fallback failed:', e.message);
       });
@@ -1702,10 +1645,10 @@ async function seedMinimalLiquidity(core) {
   await core.maker.startStreamingMint({
     token0: LIVE.TOKENS.BWAEZI,
     token1: LIVE.TOKENS.USDC,
-    tickLower: tl,
-    tickUpper: tu,
-    total0: bwAmt,
-    total1: usdcAmt,
+    tickLower: _clampInt24(tl),
+    tickUpper: _clampInt24(tu),
+    total0: BigInt(bwAmt),
+    total1: BigInt(usdcAmt),
     steps: 2,
     label: 'genesis_seed',
   });
@@ -1733,7 +1676,6 @@ async function _genesisSwaps(core) {
   let executed = 0;
   let attempts = 0;
 
-  // USDC → BWAEZI
   while (attempts < 3 && executed === 0) {
     try {
       const res1 = await core.strategy.execSwap(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, usdcAmt);
@@ -1752,13 +1694,12 @@ async function _genesisSwaps(core) {
       executed++;
     } catch (e) {
       console.error(`❌ Genesis USDC→BWAEZI failed [attempt ${attempts + 1}]:`, e.message);
-      const backoff = 600 + Math.floor(Math.random() * 1600);
+      const backoff = 800 + Math.floor(Math.random() * 1600);
       await new Promise((r) => setTimeout(r, backoff));
       attempts++;
     }
   }
 
-  // BWAEZI → USDC
   attempts = 0;
   while (attempts < 2 && executed === 1) {
     try {
@@ -1770,7 +1711,6 @@ async function _genesisSwaps(core) {
         action: 'genesis_sell_bwzC',
         tokenIn: LIVE.TOKENS.BWAEZI,
         tokenOut: LIVE.TOKENS.USDC,
-        // Approximate USD notional using peg
         notionalUSD: Number(ethers.formatEther(bwAmt)) * LIVE.PEG.TARGET_USD,
         ts: nowTs()
       });
@@ -1779,13 +1719,12 @@ async function _genesisSwaps(core) {
       executed++;
     } catch (e) {
       console.error(`❌ Genesis BWAEZI→USDC failed [attempt ${attempts + 1}]:`, e.message);
-      const backoff = 600 + Math.floor(Math.random() * 1600);
+      const backoff = 800 + Math.floor(Math.random() * 1600);
       await new Promise((r) => setTimeout(r, backoff));
       attempts++;
     }
   }
 
-  // Fallback USDC→WETH if needed
   if (executed === 0) {
     try {
       const fallbackUSD = Math.max(1.0, Math.min(4.0, balanceUSDC - 1.0));
@@ -1816,6 +1755,8 @@ async function _genesisSwaps(core) {
 
 /* === Orchestrator (Microseed — entry point, conditional seeding) ========= */
 
+function nowTs(){ return Date.now(); }
+
 async function runGenesisMicroseed(core) {
   core.genesisState = core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
   try {
@@ -1824,7 +1765,6 @@ async function runGenesisMicroseed(core) {
 
     console.log('🌱 GENESIS MICROSEED — initializing with gas validation');
 
-    // Validate gas requirements before proceeding and store for preflight
     const gasRequirements = await validateGenesisGasRequirements(core);
     core._genesisGasRequirements = gasRequirements;
     console.log(`📊 Gas requirements: preVerificationGas ≥ ${gasRequirements.minPreVerificationGas}`);
@@ -1832,7 +1772,6 @@ async function runGenesisMicroseed(core) {
     const r = await forceGenesisPoolAndPeg(core);
     console.log(`✅ Genesis pool ready: ${r.pool} (tx=${r.initTxHash || 'n/a'})`);
 
-    // Conditional seed: forceGenesis already tries mint; only seed if no mint stream
     if (!r.mintStreamId) {
       await seedMinimalLiquidity(core);
     }
@@ -1861,7 +1800,6 @@ async function runGenesisMicroseed(core) {
     return { ok: false, error: e.message };
   }
 }
-
 
 
 
