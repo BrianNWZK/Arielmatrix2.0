@@ -2465,20 +2465,28 @@ class ReflexiveAmplifier {
   getEquationState() { return { ...this.state, constants: this.constants, lastUpdated: nowTs() }; }
 }
 
-/* =========================================================================
-   Mev Executor (AA live) — with SponsorGuard, AA31 hardening (mode-aware)
-   v15.14 alignment:
-   - Honors explicit paymaster override (opts.paymasterAndData)
-   - NONE mode deposit-funded path respected
-   - Uses EnhancedRPCManager fee data behavior
-   - Lean caps + dynamic fees with low ceilings; jittered backoff
-   - Preflight simulation uplift; AA31-aware refresh and gas nudge
-   - Compatible with EnterpriseAASDK.getPaymasterData(userOpLikeOrCalldata, gasHints)
-   ========================================================================= */
 
 /* =========================================================================
-   SponsorGuard — paymaster orchestration with lean caps + AA31 hardening
+   Mev Executor (AA live) — SponsorGuard (mode-aware), AA31/AA33 hardening
+   Supports: NONE, API, ONCHAIN, PASSTHROUGH — resilient fallback
+   Bundler expectation: EntryPoint V06 (uses LIVE.ENTRY_POINT_V06 for EP-specific calls)
+   Notes:
+   - No duplicate nowTs() helper; use Date.now() inline wherever needed.
+   - Paymaster attach uses a proper userOp-like to avoid AA33 context mismatches.
+   - Gas uplift for pool init/mint to avoid OOG/AA33.
    ========================================================================= */
+
+// Helper: read SCW EntryPoint deposit via V06 (accurate prefund logging)
+async function _getSCWDepositV06(provider) {
+  try {
+    const ep = new ethers.Contract(
+      LIVE.ENTRY_POINT_V06,
+      ['function getDeposit(address) view returns (uint256)'],
+      provider
+    );
+    return await ep.getDeposit(LIVE.SCW_ADDRESS);
+  } catch { return null; }
+}
 
 class SponsorGuard {
   constructor(aa, provider) {
@@ -2487,16 +2495,36 @@ class SponsorGuard {
     this.lastPmd = '0x';
     this.maxRetries = 5;
     this.backoffBaseMs = LIVE.RISK.INFRA.BACKOFF_BASE_MS || 1000;
+
+    // Fallback behavior: if sponsorship repeatedly fails, allow deposit path
+    this.allowAutoFallbackToDeposit = (process.env.ALLOW_AUTO_FALLBACK_DEPOSIT || 'true').toLowerCase() === 'true';
+  }
+
+  // Build a userOp-like for sponsor PMD (avoids AA33 due to mismatched context)
+  async _userOpLike(calldata, caps) {
+    const sender = this.aa.scwAddress || LIVE.SCW_ADDRESS;
+    const nonce = await this.aa.getNonce(sender);
+    return {
+      sender, nonce,
+      initCode: '0x',
+      callData: calldata,
+      callGasLimit: caps.callGasLimit,
+      verificationGasLimit: caps.verificationGasLimit,
+      preVerificationGas: caps.preVerificationGas,
+      maxFeePerGas: caps.maxFeePerGas,
+      maxPriorityFeePerGas: caps.maxPriorityFeePerGas,
+      paymasterAndData: '0x',
+      signature: '0x'
+    };
   }
 
   async attachPaymaster(calldata, caps) {
-    // Respect NONE mode: do not attach sponsorship, rely on sender deposit
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
     if (mode === 'NONE') return '0x';
 
-    // Request PM data with the exact caps the PM will simulate under
     try {
-      const pmd = await this.aa.getPaymasterData(calldata, {
+      const userOpLike = await this._userOpLike(calldata, caps);
+      const pmd = await this.aa.getPaymasterData(userOpLike, {
         callGasLimit: caps.callGasLimit,
         verificationGasLimit: caps.verificationGasLimit,
         preVerificationGas: caps.preVerificationGas,
@@ -2510,38 +2538,28 @@ class SponsorGuard {
     }
   }
 
-  // Lean caps + dynamic fees (low ceilings) to fit deposit and avoid AA21
+  // Lean caps + dynamic fees to keep prefund low but avoid underestimation
   async leanCaps(opts = {}) {
-    // Fallback defaults under low-fee conditions
     let maxFeePerGas = ethers.parseUnits('2', 'gwei');           // fallback
     let maxPriorityFeePerGas = ethers.parseUnits('0.3', 'gwei'); // fallback
 
     try {
       const fd = await this.provider.getFeeData();
-
-      // Clamp base fee to ~3 gwei, add ~20% buffer for variance
       if (fd?.maxFeePerGas) {
-        const mf = fd.maxFeePerGas;
         const ceiling = ethers.parseUnits('3', 'gwei');
-        const clamped = mf > ceiling ? ceiling : mf;
-        maxFeePerGas = (clamped * 12n) / 10n; // +20% buffer
+        const clamped = fd.maxFeePerGas > ceiling ? ceiling : fd.maxFeePerGas;
+        maxFeePerGas = (clamped * 12n) / 10n; // +20%
       }
-
-      // Clamp priority fee to 0.5 gwei
       if (fd?.maxPriorityFeePerGas) {
-        const mp = fd.maxPriorityFeePerGas;
         const prioCeiling = ethers.parseUnits('0.5', 'gwei');
-        maxPriorityFeePerGas = mp > prioCeiling ? prioCeiling : mp;
+        maxPriorityFeePerGas = fd.maxPriorityFeePerGas > prioCeiling ? prioCeiling : fd.maxPriorityFeePerGas;
       }
-    } catch {
-      // Use fallbacks
-    }
+    } catch { /* keep fallbacks */ }
 
-    // Gas caps sized to fit small EntryPoint deposits while remaining AA31-safe
     const base = {
       callGasLimit: 160_000n,
       verificationGasLimit: 120_000n,
-      preVerificationGas: 55_000n, // slightly higher than 45k to avoid underestimation
+      preVerificationGas: 55_000n,
       maxFeePerGas,
       maxPriorityFeePerGas
     };
@@ -2558,7 +2576,7 @@ class SponsorGuard {
   async preflight(userOp) {
     try {
       if (typeof this.aa.simulateUserOp === 'function') {
-        await this.aa.simulateUserOp(userOp);
+        await this.aa.simulateUserOp(userOp); // AA SDK handles EP context internally
       }
       return { ok: true };
     } catch (e) {
@@ -2569,11 +2587,13 @@ class SponsorGuard {
   async sendWithGuard(calldata, opts = {}) {
     const caps = await this.leanCaps(opts);
 
-    // Mode-aware: allow deposit-funded NONE mode or explicit allowance
+    // Mode-aware
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
-    const allowNoPM = (opts.allowNoPaymaster === true) || (mode === 'NONE');
 
-    // Initialize paymaster data according to mode (honor explicit override)
+    // Allow deposit path only if requested or NONE mode
+    let allowNoPM = (opts.allowNoPaymaster === true) || (mode === 'NONE');
+
+    // Initialize PMD: honor explicit override first
     let paymasterAndData = '0x';
     if (opts.paymasterAndData && ethers.isHexString(opts.paymasterAndData)) {
       paymasterAndData = opts.paymasterAndData;
@@ -2583,34 +2603,75 @@ class SponsorGuard {
 
     let attempt = 0;
     let lastErr = null;
+    let pmdAttempts = 0;
 
     while (attempt < this.maxRetries) {
       try {
+        // Create UserOp
         const userOp = await this.aa.createUserOp(calldata, {
           ...caps,
           paymasterAndData,
           allowNoPaymaster: allowNoPM
         });
 
+        // Prefund envelope (visibility across modes; reads EP V06)
+        try {
+          const required = (userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas) * userOp.maxFeePerGas;
+          const actual = await _getSCWDepositV06(this.provider);
+          console.log(`[AA][prefund] required≈${required.toString()} actual=${actual ? actual.toString() : 'n/a'}`);
+        } catch {}
+
+        // Preflight
         const pre = await this.preflight(userOp);
         if (!pre.ok) {
-          // Slight uplift to verification & preVerification if simulation complains
           userOp.verificationGasLimit = (userOp.verificationGasLimit || 120_000n) + 20_000n;
           userOp.preVerificationGas = (userOp.preVerificationGas || 55_000n) + 10_000n;
         }
 
+        // Sign + Send
         const signed = await this.aa.signUserOp(userOp);
         const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
-        return { txHash, ts: nowTs(), meta: { desc: opts.description || 'scw.execute', attempt } };
+        return { txHash, ts: Date.now(), meta: { desc: opts.description || 'scw.execute', attempt } };
+
       } catch (e) {
         lastErr = String(e?.message || e);
+        const lower = lastErr.toLowerCase();
 
-        // On AA31 or sponsor validation issue: refresh PM data and nudge caps (only when sponsorship is expected)
-        const isAA31 = lastErr.includes('AA31') || lastErr.toLowerCase().includes('paymaster');
-        if (!allowNoPM && isAA31) {
+        // Handle sponsor issues (AA31), and execution reverts (AA33)
+        const sponsorFault = lower.includes('aa31') || lower.includes('paymaster');
+        const execFault = lower.includes('aa33') || lower.includes('reverted');
+
+        // If sponsorship expected and failed: refresh PMD and uplift caps
+        if (!allowNoPM && sponsorFault) {
+          pmdAttempts += 1;
           paymasterAndData = await this.attachPaymaster(calldata, caps);
           caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) + 30_000n;
           caps.preVerificationGas = (caps.preVerificationGas || 55_000n) + 10_000n;
+
+          // Pool init/mint uplift
+          const desc = String(opts.description || '').toLowerCase();
+          if (desc.includes('pool') || desc.includes('mint')) {
+            caps.callGasLimit = (caps.callGasLimit || 160_000n) < 420_000n ? 420_000n : caps.callGasLimit;
+            caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) < 300_000n ? 300_000n : caps.verificationGasLimit;
+            caps.preVerificationGas = (caps.preVerificationGas || 55_000n) < 70_000n ? 70_000n : caps.preVerificationGas;
+          }
+
+          // Optional auto-fallback to deposit-funded if sponsorship fails repeatedly
+          if (this.allowAutoFallbackToDeposit && pmdAttempts >= 2) {
+            console.warn('[SponsorGuard] Sponsorship unstable — enabling deposit-funded fallback for this op');
+            allowNoPM = true;
+            paymasterAndData = '0x';
+          }
+        }
+
+        // For AA33 (inner revert or OOG), lift caps strongly on pool init/mint
+        if (execFault) {
+          const desc = String(opts.description || '').toLowerCase();
+          if (desc.includes('pool') || desc.includes('mint')) {
+            caps.callGasLimit = (caps.callGasLimit || 160_000n) < 450_000n ? 450_000n : caps.callGasLimit;
+            caps.verificationGasLimit = (caps.verificationGasLimit || 120_000n) < 320_000n ? 320_000n : caps.verificationGasLimit;
+            caps.preVerificationGas = (caps.preVerificationGas || 55_000n) < 72_000n ? 72_000n : caps.preVerificationGas;
+          }
         }
 
         const jitter = this.backoffBaseMs * (attempt + 1) + Math.floor(Math.random() * 500);
@@ -2644,23 +2705,24 @@ class MevExecutorAA {
   }
 
   async sendUserOp(calldata, opts = {}) {
-    // Ensure provider manager is initialized
     if (!this._providerReady) await this.init();
 
-    // Mode-aware: in API/ONCHAIN/PASSTHROUGH do not force deposit-funded path
+    // Global mode analysis (NONE/API/ONCHAIN/PASSTHROUGH)
     const mode = (process.env.PAYMASTER_MODE || 'API').toUpperCase();
+
+    // Caller can enforce deposit or sponsorship; we merge safely
     const merged = {
       ...opts,
-      // Allow deposit-funded NONE mode explicitly, or when caller requests it
       allowNoPaymaster: (opts.allowNoPaymaster === true) || (mode === 'NONE'),
-      // Honor explicit paymaster override; in NONE mode force 0x
       paymasterAndData: (mode === 'NONE')
         ? '0x'
-        : (opts.paymasterAndData || undefined) // otherwise let SponsorGuard attach sponsorship
+        : (opts.paymasterAndData || undefined)
     };
+
     return await this.sponsor.sendWithGuard(calldata, merged);
   }
 }
+
 
 
 /* =========================================================================
