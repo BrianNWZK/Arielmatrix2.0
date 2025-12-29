@@ -1756,7 +1756,6 @@ async function _genesisSwaps(core) {
 
 /* === Orchestrator (Microseed — entry point, conditional seeding) ========= */
 
-function nowTs(){ return Date.now(); }
 
 async function runGenesisMicroseed(core) {
   core.genesisState = core.genesisState || { attempts: 0, lastError: null, lastExecCount: 0, lastTs: null };
