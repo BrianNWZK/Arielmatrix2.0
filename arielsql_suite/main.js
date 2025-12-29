@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 
 // --- CONFIG ---
 // Public Ethereum RPC endpoint (no API key required)
-const RPC_URL = "https://cloudflare-eth.com";
+const RPC_URL = "https://ethereum-rpc.publicnode.com";
 
 // Uniswap V3 NonfungiblePositionManager (lowercase address to avoid checksum errors)
 const NPM_ADDRESS = "0xc36442b4a4522e871399cd717abdd847ab11fe88";
