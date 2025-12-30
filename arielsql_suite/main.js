@@ -7,14 +7,14 @@ import { ethers } from "ethers";
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA with BWAEZI, USDC, ETH
 
-// Normalize all addresses with ethers.getAddress() to avoid checksum errors
-const FACTORY       = ethers.getAddress("0x1F98431c8aD98523631Ae4a59f267346ea31f984");
-const NPM           = ethers.getAddress("0xC36442b4a4522E871399Cd717aBbDD847Ab11FE88");
-const BWAEZI        = ethers.getAddress("0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da");
-const USDC          = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-const WETH          = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-const POOL_BW_USDC  = ethers.getAddress("0x051D003424c27987A4414F89B241a159a575b248");
-const SCW_RECIPIENT = ethers.getAddress("0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
+// Wrap all addresses with ethers.getAddress() to normalize checksum
+const FACTORY       = ethers.getAddress("0x1f98431c8ad98523631ae4a59f267346ea31f984");
+const NPM           = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
+const BWAEZI        = ethers.getAddress("0x9be921e5efacd53bc4eebcfdc4494d257cfab5da");
+const USDC          = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH          = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const POOL_BW_USDC  = ethers.getAddress("0x051d003424c27987a4414f89b241a159a575b248");
+const SCW_RECIPIENT = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
 
 const factoryAbi = [
   "function getPool(address,address,uint24) view returns (address)",
@@ -43,11 +43,11 @@ async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amoun
   const tokenBContract = new ethers.Contract(tokenB, erc20Abi, wallet);
 
   if (amountA > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)} ${tokenA === BWAEZI ? 'BWAEZI' : tokenA === USDC ? 'USDC' : 'WETH'}`);
+    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)}`);
     await (await tokenAContract.approve(NPM, amountA)).wait();
   }
   if (amountB > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)} ${tokenB === BWAEZI ? 'BWAEZI' : tokenB === USDC ? 'USDC' : 'WETH'}`);
+    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)}`);
     await (await tokenBContract.approve(NPM, amountB)).wait();
   }
 
