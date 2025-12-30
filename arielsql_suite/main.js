@@ -8,7 +8,7 @@ const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA with BWAEZI, USDC, ETH
 
 const FACTORY = "0x1F98431c8aD98523631Ae4a59f267346ea31f984";
-const NPM = "0xC36442b4a4522e871399CD717abDD847Ab11FE88";
+const NPM = "0xC36442b4a4522e871399CD717aBDD847Ab11FE88";
 
 const BWAEZI = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da"; // 18 decimals
 const USDC   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";   // 6 decimals
