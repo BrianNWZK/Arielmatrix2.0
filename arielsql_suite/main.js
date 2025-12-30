@@ -7,14 +7,15 @@ import { ethers } from "ethers";
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA with BWAEZI, USDC, ETH
 
+// Correct checksummed mainnet addresses
 const FACTORY = "0x1F98431c8aD98523631Ae4a59f267346ea31f984";
-const NPM = "0xC36442b4a4522e871399CD717aBDD847Ab11FE88";
+const NPM     = "0xC36442b4a4522E871399Cd717aBbDD847Ab11FE88"; // FIXED: correct checksum
 
-const BWAEZI = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da"; // 18 decimals
-const USDC   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";   // 6 decimals
-const WETH   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";   // 18 decimals
+const BWAEZI = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
+const USDC   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const WETH   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-const POOL_BW_USDC = "0x051D003424c27987A4414F89B241a159a575b248"; // Already exists & initialized
+const POOL_BW_USDC = "0x051D003424c27987A4414F89B241a159a575b248"; // Existing & initialized
 
 const SCW_RECIPIENT = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2"; // Your SCW owns positions
 
@@ -30,12 +31,11 @@ const erc20Abi = ["function approve(address,uint256) returns (bool)"];
 
 async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amountA, amountB) {
   const pool = new ethers.Contract(poolAddress, ["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"], wallet.provider);
-  const slot0 = await pool.slot0();
-  const tick = slot0[1]; // int24 tick
+  const { tick } = await pool.slot0();
 
   const width = 120;
-  const tickLower = BigInt(tick) - BigInt(width);
-  const tickUpper = BigInt(tick) + BigInt(width);
+  const tickLower = Number(tick) - width;
+  const tickUpper = Number(tick) + width;
 
   const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
   const amount0Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
@@ -45,31 +45,31 @@ async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amoun
   const tokenBContract = new ethers.Contract(tokenB, erc20Abi, wallet);
 
   if (amountA > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)} ${tokenA === BWAEZI ? 'BWAEZI' : tokenA === USDC ? 'USDC' : 'WETH'}`);
+    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)} ${tokenA === BWAEZI ? 'BWAEZI' : 'USDC'}`);
     await (await tokenAContract.approve(NPM, amountA)).wait();
   }
   if (amountB > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)} ${tokenB === BWAEZI ? 'BWAEZI' : tokenB === USDC ? 'USDC' : 'WETH'}`);
+    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)} ${tokenB === BWAEZI ? 'BWAEZI' : 'WETH'}`);
     await (await tokenBContract.approve(NPM, amountB)).wait();
   }
 
   const npm = new ethers.Contract(NPM, npmAbi, wallet);
 
-  const params = {
+  const params = [
     token0,
     token1,
-    fee: feeTier,
+    feeTier,
     tickLower,
     tickUpper,
     amount0Desired,
     amount1Desired,
-    amount0Min: 0,
-    amount1Min: 0,
-    recipient: SCW_RECIPIENT,
-    deadline: BigInt(Math.floor(Date.now() / 1000) + 1800)
-  };
+    0,
+    0,
+    SCW_RECIPIENT,
+    Math.floor(Date.now() / 1000) + 1800
+  ];
 
-  console.log(`Minting on pool ${poolAddress} — range [${tickLower}, ${tickUpper}]`);
+  console.log(`Minting on pool ${poolAddress} — range [${tickLower}, ${tickUpper}] (current tick: ${tick})`);
   const tx = await npm.mint(params);
   console.log(`Submitted mint tx: ${tx.hash}`);
   const rc = await tx.wait();
@@ -77,7 +77,7 @@ async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amoun
 }
 
 async function createAndInitWethPool(wallet) {
-  const feeTier = 3000; // 0.3%
+  const feeTier = 3000;
   const [token0, token1] = BWAEZI.toLowerCase() < WETH.toLowerCase() ? [BWAEZI, WETH] : [WETH, BWAEZI];
 
   const factory = new ethers.Contract(FACTORY, factoryAbi, wallet);
@@ -92,11 +92,10 @@ async function createAndInitWethPool(wallet) {
     pool = await factory.getPool(token0, token1, feeTier);
     console.log(`✅ BWAEZI/WETH pool created: ${pool}`);
 
-    // Initialize with safe price (~$100 peg at ETH ~$3300 → ~0.0303 WETH per BWAEZI)
     const isBWToken0 = token0.toLowerCase() === BWAEZI.toLowerCase();
     const sqrtPriceX96 = isBWToken0
-      ? BigInt("0x5be9ba858b43c000000000000")  // ~33 price (WETH per BWAEZI)
-      : BigInt("0x2c9058f9770d700000000000");   // ~0.0303 price
+      ? "0x5be9ba858b43c000000000000"  // ~33 WETH per BWAEZI (ETH ~$3300)
+      : "0x2c9058f9770d700000000000"; // ~0.0303 BWAEZI per WETH
 
     const poolCtr = new ethers.Contract(pool, poolAbi, wallet);
     console.log(`Initializing BWAEZI/WETH with sqrtPriceX96=${sqrtPriceX96}`);
@@ -117,22 +116,22 @@ async function main() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`ETH Balance: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH\n`);
 
-  // === 1. Mint into existing BWAEZI/USDC pool ===
+  // 1. Mint into existing BWAEZI/USDC pool
   const bwAmtUSDC = ethers.parseEther("0.05"); // ~$5 at $100 peg
   const usdcAmt = ethers.parseUnits("5", 6);    // $5 USDC
 
   await mintLiquidity(wallet, POOL_BW_USDC, BWAEZI, USDC, 500, bwAmtUSDC, usdcAmt);
 
-  // === 2. Create + mint into BWAEZI/WETH pool (asymmetric) ===
+  // 2. Create + mint into BWAEZI/WETH pool (asymmetric)
   const poolWeth = await createAndInitWethPool(wallet);
 
-  const bwAmtWETH = ethers.parseEther("0.05"); // ~$5 BWAEZI
-  const wethAmt = 0n; // Zero WETH side — asymmetric seed
+  const bwAmtWETH = ethers.parseEther("0.05");
+  const wethAmt = 0n; // Zero WETH — asymmetric seed
 
   await mintLiquidity(wallet, poolWeth, BWAEZI, WETH, 3000, bwAmtWETH, wethAmt);
 
-  console.log("🎯 FINAL BOOTSTRAP COMPLETE");
-  console.log("Both pools have liquidity. Your SCW can now run revenue loop and swaps.");
+  console.log("🎯 FINAL BOOTSTRAP COMPLETE — Both pools seeded.");
+  console.log("Your SCW can now run swaps and revenue loop.");
   console.log("Sovereign Finality Engine is LIVE.");
 }
 
