@@ -7,7 +7,7 @@ import { ethers } from "ethers";
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA with BWAEZI, USDC, ETH
 
-// Wrap all addresses with ethers.getAddress() to normalize checksum
+// Normalize all addresses to avoid checksum/ENS errors
 const FACTORY       = ethers.getAddress("0x1f98431c8ad98523631ae4a59f267346ea31f984");
 const NPM           = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
 const BWAEZI        = ethers.getAddress("0x9be921e5efacd53bc4eebcfdc4494d257cfab5da");
@@ -26,33 +26,73 @@ const npmAbi = [
 ];
 const erc20Abi = ["function approve(address,uint256) returns (bool)"];
 
+// Tick spacing per fee tier
+function getTickSpacing(feeTier) {
+  switch (feeTier) {
+    case 100: return 1;    // 0.01%
+    case 500: return 10;   // 0.05%
+    case 3000: return 60;  // 0.3%
+    case 10000: return 200; // 1%
+    default: throw new Error(`Unsupported fee tier: ${feeTier}`);
+  }
+}
+
+// Round to nearest usable tick (multiple of tickSpacing)
+function nearestUsableTick(tick, tickSpacing) {
+  // tick is Number (can be negative). Ensure integer division floors toward -Infinity.
+  const q = Math.floor(tick / tickSpacing);
+  return q * tickSpacing;
+}
+
 async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amountA, amountB) {
-  const pool = new ethers.Contract(poolAddress, ["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"], wallet.provider);
+  const pool = new ethers.Contract(
+    poolAddress,
+    ["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"],
+    wallet.provider
+  );
   const slot0 = await pool.slot0();
-  const tick = slot0[1]; // int24 tick
+  const tick = Number(slot0[1]); // int24 tick as Number
 
-  const width = 120;
-  const tickLower = BigInt(tick) - BigInt(width);
-  const tickUpper = BigInt(tick) + BigInt(width);
+  const tickSpacing = getTickSpacing(feeTier);
+  const halfWidth = 120; // desired half-width in ticks around current tick
 
+  // Center around current tick, aligned to tick spacing
+  const rawLower = tick - halfWidth;
+  const rawUpper = tick + halfWidth;
+  const tickLowerAligned = nearestUsableTick(rawLower, tickSpacing);
+  const tickUpperAligned = nearestUsableTick(rawUpper, tickSpacing);
+
+  // Ensure lower < upper and they differ by at least one spacing step
+  const tickLower = BigInt(tickLowerAligned);
+  const tickUpper = BigInt(
+    tickUpperAligned === tickLowerAligned
+      ? tickLowerAligned + tickSpacing
+      : tickUpperAligned
+  );
+
+  // Token ordering for Uniswap V3 (token0 < token1)
   const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
   const amount0Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
   const amount1Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountB : amountA;
 
+  // Approvals
   const tokenAContract = new ethers.Contract(tokenA, erc20Abi, wallet);
   const tokenBContract = new ethers.Contract(tokenB, erc20Abi, wallet);
 
   if (amountA > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)}`);
+    const decA = tokenA === USDC ? 6 : 18;
+    console.log(`Approving NPM for ${ethers.formatUnits(amountA, decA)} ${tokenA === BWAEZI ? 'BWAEZI' : tokenA === USDC ? 'USDC' : 'WETH'}`);
     await (await tokenAContract.approve(NPM, amountA)).wait();
   }
   if (amountB > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)}`);
+    const decB = tokenB === USDC ? 6 : 18;
+    console.log(`Approving NPM for ${ethers.formatUnits(amountB, decB)} ${tokenB === BWAEZI ? 'BWAEZI' : tokenB === USDC ? 'USDC' : 'WETH'}`);
     await (await tokenBContract.approve(NPM, amountB)).wait();
   }
 
   const npm = new ethers.Contract(NPM, npmAbi, wallet);
 
+  // Use struct object (ethers v6) and BigInt deadline
   const params = {
     token0,
     token1,
@@ -67,7 +107,9 @@ async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amoun
     deadline: BigInt(Math.floor(Date.now() / 1000) + 1800)
   };
 
-  console.log(`Minting on pool ${poolAddress} — range [${tickLower}, ${tickUpper}] (current tick: ${tick})`);
+  console.log(
+    `Minting on pool ${poolAddress} — range [${tickLowerAligned}, ${tickUpperAligned}] (current tick: ${tick}, spacing: ${tickSpacing})`
+  );
   const tx = await npm.mint(params);
   console.log(`Submitted mint tx: ${tx.hash}`);
   const rc = await tx.wait();
@@ -75,7 +117,7 @@ async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amoun
 }
 
 async function createAndInitWethPool(wallet) {
-  const feeTier = 3000;
+  const feeTier = 3000; // 0.3%
   const [token0, token1] = BWAEZI.toLowerCase() < WETH.toLowerCase() ? [BWAEZI, WETH] : [WETH, BWAEZI];
 
   const factory = new ethers.Contract(FACTORY, factoryAbi, wallet);
@@ -90,6 +132,7 @@ async function createAndInitWethPool(wallet) {
     pool = await factory.getPool(token0, token1, feeTier);
     console.log(`✅ BWAEZI/WETH pool created: ${pool}`);
 
+    // Initialize price
     const isBWToken0 = token0.toLowerCase() === BWAEZI.toLowerCase();
     const sqrtPriceX96 = isBWToken0
       ? BigInt("0x5be9ba858b43c000000000000")  // ~33 WETH per BWAEZI
@@ -114,23 +157,19 @@ async function main() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`ETH Balance: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH\n`);
 
-  // 1. Mint into existing BWAEZI/USDC pool
-  const bwAmtUSDC = ethers.parseEther("0.05"); // ~$5 at $100 peg
-  const usdcAmt = ethers.parseUnits("5", 6);    // $5 USDC
+  // 1) Mint into existing BWAEZI/USDC (fee 500)
+  const bwAmtUSDC = ethers.parseEther("0.05"); // BW token amount (18 decimals)
+  const usdcAmt   = ethers.parseUnits("5", 6); // USDC amount (6 decimals)
 
   await mintLiquidity(wallet, POOL_BW_USDC, BWAEZI, USDC, 500, bwAmtUSDC, usdcAmt);
 
-  // 2. Create + mint into BWAEZI/WETH pool (asymmetric)
-  const poolWeth = await createAndInitWethPool(wallet);
+  // 2) Optionally create + seed BWAEZI/WETH asymmetric
+  // const poolWeth = await createAndInitWethPool(wallet);
+  // const bwAmtWETH = ethers.parseEther("0.05");
+  // const wethAmt   = 0n;
+  // await mintLiquidity(wallet, poolWeth, BWAEZI, WETH, 3000, bwAmtWETH, wethAmt);
 
-  const bwAmtWETH = ethers.parseEther("0.05");
-  const wethAmt = 0n; // Zero WETH — asymmetric seed
-
-  await mintLiquidity(wallet, poolWeth, BWAEZI, WETH, 3000, bwAmtWETH, wethAmt);
-
-  console.log("🎯 FINAL BOOTSTRAP COMPLETE — Both pools seeded.");
-  console.log("Your SCW can now run swaps and revenue loop.");
-  console.log("Sovereign Finality Engine is LIVE.");
+  console.log("🎯 FINAL BOOTSTRAP COMPLETE — BWAEZI/USDC liquidity seeded.");
 }
 
 main().catch(e => {
