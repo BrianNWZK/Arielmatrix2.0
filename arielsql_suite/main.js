@@ -7,7 +7,7 @@ import { ethers } from "ethers";
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA with BWAEZI, USDC, ETH
 
-// Normalize all addresses with ethers.getAddress() to avoid checksum/ENS errors
+// Normalize all addresses with ethers.getAddress() to avoid checksum errors
 const FACTORY       = ethers.getAddress("0x1F98431c8aD98523631Ae4a59f267346ea31f984");
 const NPM           = ethers.getAddress("0xC36442b4a4522E871399Cd717aBbDD847Ab11FE88");
 const BWAEZI        = ethers.getAddress("0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da");
