@@ -7,17 +7,14 @@ import { ethers } from "ethers";
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA with BWAEZI, USDC, ETH
 
-// Correct checksummed mainnet addresses
-const FACTORY = "0x1F98431c8aD98523631Ae4a59f267346ea31f984";
-const NPM     = "0xC36442b4a4522E871399Cd717aBbDD847Ab11FE88"; // FIXED: correct checksum
-
-const BWAEZI = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
-const USDC   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const WETH   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-
-const POOL_BW_USDC = "0x051D003424c27987A4414F89B241a159a575b248"; // Existing & initialized
-
-const SCW_RECIPIENT = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2"; // Your SCW owns positions
+// Normalize all addresses with ethers.getAddress() to avoid checksum/ENS errors
+const FACTORY       = ethers.getAddress("0x1F98431c8aD98523631Ae4a59f267346ea31f984");
+const NPM           = ethers.getAddress("0xC36442b4a4522E871399Cd717aBbDD847Ab11FE88");
+const BWAEZI        = ethers.getAddress("0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da");
+const USDC          = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+const WETH          = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+const POOL_BW_USDC  = ethers.getAddress("0x051D003424c27987A4414F89B241a159a575b248");
+const SCW_RECIPIENT = ethers.getAddress("0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
 
 const factoryAbi = [
   "function getPool(address,address,uint24) view returns (address)",
@@ -31,11 +28,12 @@ const erc20Abi = ["function approve(address,uint256) returns (bool)"];
 
 async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amountA, amountB) {
   const pool = new ethers.Contract(poolAddress, ["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"], wallet.provider);
-  const { tick } = await pool.slot0();
+  const slot0 = await pool.slot0();
+  const tick = slot0[1]; // int24 tick
 
   const width = 120;
-  const tickLower = Number(tick) - width;
-  const tickUpper = Number(tick) + width;
+  const tickLower = BigInt(tick) - BigInt(width);
+  const tickUpper = BigInt(tick) + BigInt(width);
 
   const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
   const amount0Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
@@ -45,29 +43,29 @@ async function mintLiquidity(wallet, poolAddress, tokenA, tokenB, feeTier, amoun
   const tokenBContract = new ethers.Contract(tokenB, erc20Abi, wallet);
 
   if (amountA > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)} ${tokenA === BWAEZI ? 'BWAEZI' : 'USDC'}`);
+    console.log(`Approving NPM for ${ethers.formatUnits(amountA, tokenA === USDC ? 6 : 18)} ${tokenA === BWAEZI ? 'BWAEZI' : tokenA === USDC ? 'USDC' : 'WETH'}`);
     await (await tokenAContract.approve(NPM, amountA)).wait();
   }
   if (amountB > 0n) {
-    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)} ${tokenB === BWAEZI ? 'BWAEZI' : 'WETH'}`);
+    console.log(`Approving NPM for ${ethers.formatUnits(amountB, tokenB === USDC ? 6 : 18)} ${tokenB === BWAEZI ? 'BWAEZI' : tokenB === USDC ? 'USDC' : 'WETH'}`);
     await (await tokenBContract.approve(NPM, amountB)).wait();
   }
 
   const npm = new ethers.Contract(NPM, npmAbi, wallet);
 
-  const params = [
+  const params = {
     token0,
     token1,
-    feeTier,
+    fee: feeTier,
     tickLower,
     tickUpper,
     amount0Desired,
     amount1Desired,
-    0,
-    0,
-    SCW_RECIPIENT,
-    Math.floor(Date.now() / 1000) + 1800
-  ];
+    amount0Min: 0,
+    amount1Min: 0,
+    recipient: SCW_RECIPIENT,
+    deadline: BigInt(Math.floor(Date.now() / 1000) + 1800)
+  };
 
   console.log(`Minting on pool ${poolAddress} — range [${tickLower}, ${tickUpper}] (current tick: ${tick})`);
   const tx = await npm.mint(params);
@@ -94,8 +92,8 @@ async function createAndInitWethPool(wallet) {
 
     const isBWToken0 = token0.toLowerCase() === BWAEZI.toLowerCase();
     const sqrtPriceX96 = isBWToken0
-      ? "0x5be9ba858b43c000000000000"  // ~33 WETH per BWAEZI (ETH ~$3300)
-      : "0x2c9058f9770d700000000000"; // ~0.0303 BWAEZI per WETH
+      ? BigInt("0x5be9ba858b43c000000000000")  // ~33 WETH per BWAEZI
+      : BigInt("0x2c9058f9770d700000000000"); // ~0.0303 BWAEZI per WETH
 
     const poolCtr = new ethers.Contract(pool, poolAbi, wallet);
     console.log(`Initializing BWAEZI/WETH with sqrtPriceX96=${sqrtPriceX96}`);
