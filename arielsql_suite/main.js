@@ -25,7 +25,7 @@ const poolAbi = [
 ];
 
 const npmAbi = [
-  "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline))"
+  "function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)"
 ];
 
 function getTickSpacing(feeTier) {
@@ -38,42 +38,51 @@ function getTickSpacing(feeTier) {
   }
 }
 
-function nearestUsableTick(tick, spacing) {
-  return Math.floor(tick / spacing) * spacing;
-}
-
 async function buildMint(provider, pool, tokenA, tokenB, feeTier, amountA, amountB) {
-  const slot0 = await new ethers.Contract(pool, poolAbi, provider).slot0();
+  const poolCtr = new ethers.Contract(pool, poolAbi, provider);
+  const slot0 = await poolCtr.slot0();
   const tick = Number(slot0.tick);
   const spacing = getTickSpacing(feeTier);
 
   const halfWidth = 120;
-  const la = nearestUsableTick(tick - halfWidth, spacing);
-  const ua = nearestUsableTick(tick + halfWidth, spacing);
+  const lowerRaw = tick - halfWidth;
+  const upperRaw = tick + halfWidth;
 
-  const tickLower = BigInt(la);
-  const tickUpper = BigInt(ua === la ? la + spacing : ua);
+  // Align bounds to spacing: lower = floor, upper = ceil
+  const la = Math.floor(lowerRaw / spacing) * spacing;
+  const uaCeil = Math.ceil(upperRaw / spacing) * spacing;
+  const ua = uaCeil === la ? la + spacing : uaCeil;
 
-  const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
+  // token0/token1 orientation
+  const [token0, token1] =
+    tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
+
   const amount0Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
   const amount1Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountB : amountA;
 
-  const params = {
-    token0, token1, fee: feeTier,
-    tickLower, tickUpper,
-    amount0Desired, amount1Desired,
-    amount0Min: 0, amount1Min: 0,
-    recipient: SCW,
-    deadline: BigInt(Math.floor(Date.now() / 1000) + 1800)
-  };
+  // Ethers v6-safe positional tuple array with BigInt numerics
+  const paramsArray = [
+    token0,                     // address token0
+    token1,                     // address token1
+    feeTier,                    // uint24 fee (number)
+    BigInt(la),                 // int24 tickLower (BigInt)
+    BigInt(ua),                 // int24 tickUpper (BigInt)
+    amount0Desired,             // uint256 amount0Desired (BigInt)
+    amount1Desired,             // uint256 amount1Desired (BigInt)
+    0n,                         // uint256 amount0Min
+    0n,                         // uint256 amount1Min
+    SCW,                        // address recipient
+    BigInt(Math.floor(Date.now() / 1000) + 1800) // uint256 deadline
+  ];
 
   const iface = new ethers.Interface(npmAbi);
-  const mintData = iface.encodeFunctionData("mint", [params]);
+  const mintData = iface.encodeFunctionData("mint", [paramsArray]);
   return { mintData, tick, spacing, la, ua, pool };
 }
 
 async function executeMint(scw, mintData, pool, la, ua, tick, spacing) {
   console.log(`Mint via SCW — pool=${pool}, range [${la}, ${ua}] (tick: ${tick}, spacing: ${spacing})`);
+  // Pre-simulate SCW.execute to catch balance/encoding issues early
   try {
     await scw.callStatic.execute(NPM, 0n, mintData);
   } catch (e) {
