@@ -1,61 +1,106 @@
-// arielsql_suite/main.js
-// Minimal script: compile and deploy Paymaster, approve treasury token
+// main.js — Final approval only (Paymaster BWAEZI)
 
-import { deployPaymaster } from "./scripts/deploy-paymaster.js";
-import { compilePaymasterContract } from "./scripts/compile-paymaster.js";
-import { ethers } from "ethers";
-import * as dotenv from "dotenv";
-import * as dotenvExpand from "dotenv-expand";
+import express from 'express';
+import { ethers } from 'ethers';
+import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
 
-// Load environment variables
-const env = dotenv.config();
-dotenvExpand.expand(env);
+const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
+const BUNDLER = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt';
+const SCW = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
+
+const RPC_URLS = [
+  'https://ethereum-rpc.publicnode.com',
+  'https://rpc.ankr.com/eth',
+  'https://eth.llamarpc.com'
+];
+
+// Only the Paymaster approval now
+const PENDING = {
+  BWAEZI_PAYMASTER: { token: 'BWAEZI', spender: '0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9' }
+};
+
+const TOKENS = {
+  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  BWAEZI: '0x998232423d0b260ac397a893b360c8a254fcdd66'
+};
+
+const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
+const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
+
+async function init() {
+  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
+  await mgr.init();
+  const provider = mgr.getProvider();
+
+  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
+  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
+    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
+  }
+  const signer = new ethers.Wallet(pk, provider);
+
+  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
+  aa.paymasterMode = 'NONE';
+  await aa.initialize(provider, SCW, BUNDLER);
+  return { provider, aa };
+}
+
+// Fetch AA-aware gas prices from bundler; enforce minimums
+async function getBundlerGas(provider) {
+  try {
+    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
+    let maxFeePerGas = BigInt(res.maxFeePerGas);
+    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
+    const TIP_FLOOR = 50_000_000n;
+    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
+    maxFeePerGas = (maxFeePerGas * 12n) / 10n; // uplift
+    return { maxFeePerGas, maxPriorityFeePerGas };
+  } catch {
+    const fd = await provider.getFeeData();
+    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
+    const tip = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
+    const TIP_FLOOR = 50_000_000n;
+    return {
+      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
+      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
+    };
+  }
+}
+
+async function approvePending(aa) {
+  for (const { token, spender } of Object.values(PENDING)) {
+    const tokenAddr = TOKENS[token];
+    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
+    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
+
+    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
+
+    const userOp = await aa.createUserOp(callData, {
+      callGasLimit: 400000n,
+      verificationGasLimit: 700000n,
+      preVerificationGas: 80000n,
+      maxFeePerGas,
+      maxPriorityFeePerGas
+    });
+    const signed = await aa.signUserOp(userOp);
+    const hash = await aa.sendUserOpWithBackoff(signed, 5);
+
+    console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
+  }
+}
 
 (async () => {
-  console.log("=== PAYMASTER DEPLOYMENT ===");
-
   try {
-    // STEP 1: Compile Paymaster contract
-    console.log("--- Compiling Paymaster contract ---");
-    const artifactPath = await compilePaymasterContract();
-
-    // STEP 2: Wallet setup
-    const provider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
-    const privateKey = process.env.SOVEREIGN_PRIVATE_KEY;
-
-    if (!privateKey || privateKey.length < 32) {
-      throw new Error("Missing or invalid SOVEREIGN_PRIVATE_KEY env var");
-    }
-    const wallet = new ethers.Wallet(privateKey, provider);
-
-    // STEP 3: Deploy Paymaster with capped gas settings
-    console.log("--- Deploying Paymaster ---");
-    const paymasterAddr = await deployPaymaster(wallet, artifactPath, {
-      gasLimit: 1_000_000,
-      maxFeePerGas: ethers.parseUnits("5", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("1", "gwei")
-    });
-    console.log(`✅ Paymaster deployed at: ${paymasterAddr}`);
-
-    // STEP 4: Approve Paymaster to spend treasury token
-    const tokenAddress = "0x998232423d0b260ac397a893b360c8a254fcdd66"; // Treasury token
-    const tokenAbi = ["function approve(address spender, uint256 amount) returns (bool)"];
-    const token = new ethers.Contract(tokenAddress, tokenAbi, wallet);
-
-    console.log("⛽ Approving Paymaster to spend treasury token...");
-    const approveTx = await token.approve(paymasterAddr, ethers.MaxUint256, {
-      gasLimit: 100_000,
-      maxFeePerGas: ethers.parseUnits("5", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("1", "gwei")
-    });
-    await approveTx.wait();
-    console.log("✅ Paymaster approved successfully.");
-
-    console.log("\n🎉 PAYMASTER DEPLOYMENT COMPLETE");
-    console.log("Treasury token:", tokenAddress);
-    console.log("Paymaster:", paymasterAddr);
-  } catch (error) {
-    console.error("❌ Fatal error during Paymaster deployment:", error.message);
-    process.exit(1);
+    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
+    const { aa } = await init();
+    await approvePending(aa);
+    console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
+  } catch (e) {
+    console.error('❌ Failed:', e);
   }
 })();
+
+// Keep Render happy
+const app = express();
+app.get('/', (req, res) => res.send('Approvals worker running'));
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
