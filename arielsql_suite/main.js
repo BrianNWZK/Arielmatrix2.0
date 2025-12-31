@@ -1,5 +1,4 @@
-// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas
-// No EOA top-ups. Hardened preflight + safe gas settings.
+// main.js — AA mode approvals (SCW deposit pays gas)
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -47,12 +46,12 @@ async function init() {
   aa.paymasterMode = 'NONE'; // SCW pays its own prefund
   await aa.initialize(provider, SCW, BUNDLER);
 
-  // Ensure nonce is fresh
+  // Ensure fresh nonce
   if (aa.fetchAndUpdateNonce) {
     await aa.fetchAndUpdateNonce();
   }
 
-  return { provider, aa, signer };
+  return { provider, aa };
 }
 
 // Bundler gas fees (fallback to modest values)
@@ -71,51 +70,26 @@ async function getBundlerGas(provider) {
   }
 }
 
-// Preflight checks to avoid on-chain revert
-async function preflightChecks(provider, scwAddress, tokenAddr, spender, data) {
-  // 1) Ensure SCW, token, and spender have code where expected
-  const [codeSCW, codeToken, codeSpender] = await Promise.all([
-    provider.getCode(scwAddress),
-    provider.getCode(tokenAddr),
-    provider.getCode(spender)
-  ]);
-
-  if (codeSCW === '0x') throw new Error(`SCW has no code at ${scwAddress}`);
-  if (codeToken === '0x') throw new Error(`Token has no code at ${tokenAddr}`);
-  if (codeSpender === '0x') console.warn(`Warning: spender ${spender} has no code (EOA). Approve still OK, but verify address.`);
-
-  // 2) Dry-run the token approve from SCW context
-  // This simulates whether the token would accept the approve call from SCW.
-  try {
-    await provider.call({ to: tokenAddr, from: scwAddress, data });
-  } catch (e) {
-    throw new Error(`Preflight approve reverted: ${e.shortMessage || e.message}`);
-  }
-}
-
-// Approve pending tokens — safer preVerificationGas + preflight
-async function approvePending(aa, provider) {
+// Approve pending tokens — SCW deposit pays gas
+async function approvePending(aa) {
   for (const { token, spender } of Object.values(PENDING)) {
     const tokenAddr = TOKENS[token];
-    const approveData = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
-
-    // Preflight checks
-    await preflightChecks(aa.provider, SCW, tokenAddr, spender, approveData);
+    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
+    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
 
     const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
 
-    // Safe gas settings: enough to avoid bundler “preVerificationGas too low”
     const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 50000n,            // buffer for SCW.execute + ERC20 approve
-      verificationGasLimit: 120000n,   // ample for validation paths
-      preVerificationGas: 65000n,      // > required 46155 observed in logs
+      callGasLimit: 80000n,
+      verificationGasLimit: 200000n,
+      preVerificationGas: 100000n, // buffer above ~46k requirement
       maxFeePerGas,
       maxPriorityFeePerGas
     });
 
     const signed = await aa.signUserOp(userOp);
     const hash = await aa.sendUserOpWithBackoff(signed, 3);
+
     console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
   }
 }
@@ -123,10 +97,10 @@ async function approvePending(aa, provider) {
 // Run worker
 (async () => {
   try {
-    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa, provider } = await init();
-    await approvePending(aa, provider);
-    console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
+    console.log(`[FINAL] Running AA approvals on SCW ${SCW}`);
+    const { aa } = await init();
+    await approvePending(aa);
+    console.log('✅ Approvals complete — SCW deposit paid gas!');
   } catch (e) {
     console.error('❌ Failed:', e);
   }
