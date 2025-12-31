@@ -1,4 +1,4 @@
-// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas
+// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas, with auto EntryPoint top-up
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -29,6 +29,10 @@ const TOKENS = {
 // Interfaces
 const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
 const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
+const entryPointAbi = [
+  'function balanceOf(address) view returns (uint256)',
+  'function depositTo(address account) external payable'
+];
 
 // Initialize AA SDK
 async function init() {
@@ -45,7 +49,7 @@ async function init() {
   const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
   aa.paymasterMode = 'NONE'; // SCW pays its own prefund
   await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
+  return { provider, signer, aa };
 }
 
 // Get bundler gas fees (fallback to low fees)
@@ -64,8 +68,28 @@ async function getBundlerGas(provider) {
   }
 }
 
+// Ensure EntryPoint deposit for SCW is sufficient; top up if below threshold
+async function ensureEntryPointPrefund(provider, signer, scwAddress, minWei = ethers.parseEther('0.0002')) {
+  const ep = new ethers.Contract(ENTRY_POINT, entryPointAbi, provider);
+  const bal = await ep.balanceOf(scwAddress);
+  console.log(`EntryPoint deposit for SCW: ${ethers.formatEther(bal)} ETH`);
+
+  if (bal >= minWei) return;
+
+  const topUp = minWei - bal; // deposit only what’s needed
+  console.log(`▶ Topping up EntryPoint deposit by ${ethers.formatEther(topUp)} ETH...`);
+  const epWritable = ep.connect(signer);
+  const tx = await epWritable.depositTo(scwAddress, { value: topUp });
+  console.log(`⏳ deposit tx: ${tx.hash}`);
+  const rec = await tx.wait();
+  console.log(`✅ Deposit confirmed in block ${rec.blockNumber}`);
+}
+
 // Approve pending tokens with minimal gas caps to reduce prefund
-async function approvePending(aa) {
+async function approvePending(aa, provider, signer) {
+  // Ensure minimal EntryPoint deposit so AA21 doesn’t trigger
+  await ensureEntryPointPrefund(provider, signer, SCW, ethers.parseEther('0.0002'));
+
   for (const { token, spender } of Object.values(PENDING)) {
     const tokenAddr = TOKENS[token];
     const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
@@ -93,8 +117,8 @@ async function approvePending(aa) {
 (async () => {
   try {
     console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePending(aa);
+    const { aa, provider, signer } = await init();
+    await approvePending(aa, provider, signer);
     console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
   } catch (e) {
     console.error('❌ Failed:', e);
