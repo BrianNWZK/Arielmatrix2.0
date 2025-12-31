@@ -1,7 +1,7 @@
-// withdraw.js
-require('dotenv').config();
-const { ethers } = require('ethers');
-const artifact = require('./artifacts/contracts/BWAEZIPaymaster.json');
+// main.js
+import 'dotenv/config';                // replaces require('dotenv').config()
+import { ethers } from 'ethers';
+import artifact from './artifacts/contracts/BWAEZIPaymaster.json' assert { type: 'json' };
 
 // ---- Runtime constants ----
 const RPC_URLS = [
@@ -11,10 +11,8 @@ const RPC_URLS = [
 ];
 
 const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS; // deployed paymaster
-const PRIVATE_KEY = process.env.PRIVATE_KEY; // must be owner/deployer key
+const PRIVATE_KEY = process.env.PRIVATE_KEY;             // must be owner/deployer key
 
-// ---- ABIs ----
-const paymasterAbi = artifact.abi;
 const erc20Abi = ["function balanceOf(address account) view returns (uint256)"];
 
 async function main() {
@@ -37,7 +35,7 @@ async function main() {
   if (!provider) throw new Error("❌ No RPC endpoints available");
 
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-  const paymaster = new ethers.Contract(PAYMASTER_ADDRESS, paymasterAbi, wallet);
+  const paymaster = new ethers.Contract(PAYMASTER_ADDRESS, artifact.abi, wallet);
 
   // 2. Confirm ownership
   const owner = await paymaster.owner();
