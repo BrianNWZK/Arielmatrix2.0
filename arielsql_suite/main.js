@@ -33,7 +33,7 @@ const entryPointIface = new ethers.Interface([
       throw new Error(`Signer address ${signer.address} does not match expected EOA ${EOA_ADDRESS}`);
     }
 
-    // Withdraw exactly 3010197904000000 wei (≈0.003010197904 ETH) from EntryPoint back to EOA
+    // Withdraw exactly 3000000000000000 wei (≈0.003 ETH) from EntryPoint back to EOA
     const ep = new ethers.Contract(ENTRY_POINT, entryPointIface.fragments, signer);
     const amount = 3010197904000000n; // in wei
     const tx = await ep.withdrawTo(EOA_ADDRESS, amount);
