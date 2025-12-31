@@ -48,7 +48,7 @@ async function init() {
   return { provider, aa };
 }
 
-// Get bundler gas fees
+// Get bundler gas fees (fallback to low fees)
 async function getBundlerGas(provider) {
   try {
     const res = await provider.send('pimlico_getUserOperationGasPrice', []);
@@ -64,7 +64,7 @@ async function getBundlerGas(provider) {
   }
 }
 
-// Approve pending tokens
+// Approve pending tokens with minimal gas caps to reduce prefund
 async function approvePending(aa) {
   for (const { token, spender } of Object.values(PENDING)) {
     const tokenAddr = TOKENS[token];
@@ -73,10 +73,11 @@ async function approvePending(aa) {
 
     const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
 
+    // Minimal realistic caps for ERC20 approve via SCW.execute
     const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 100000n,
-      verificationGasLimit: 180000n,
-      preVerificationGas: 45000n,
+      callGasLimit: 30000n,           // approve typically ~20k–30k
+      verificationGasLimit: 80000n,   // trimmed from 180k
+      preVerificationGas: 21000n,     // minimal base to lower prefund
       maxFeePerGas,
       maxPriorityFeePerGas
     });
