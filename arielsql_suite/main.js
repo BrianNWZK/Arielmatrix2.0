@@ -1,4 +1,5 @@
-// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas, with EOA top-up
+// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas
+// No EOA top-ups. PreVerificationGas set high enough to avoid AA errors.
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -45,10 +46,10 @@ async function init() {
   const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
   aa.paymasterMode = 'NONE'; // SCW pays its own prefund
   await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, signer, aa };
+  return { provider, aa };
 }
 
-// Get bundler gas fees (fallback to low fees)
+// Bundler gas fees (fallback to modest values)
 async function getBundlerGas(provider) {
   try {
     const res = await provider.send('pimlico_getUserOperationGasPrice', []);
@@ -58,32 +59,14 @@ async function getBundlerGas(provider) {
     };
   } catch {
     return {
-      maxFeePerGas: ethers.parseUnits('2', 'gwei'),
+      maxFeePerGas: ethers.parseUnits('3', 'gwei'),
       maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
     };
   }
 }
 
-// Ensure SCW has ETH balance; top up from EOA if needed
-async function ensureScwBalance(provider, signer, scwAddress, minWei = ethers.parseEther('0.001')) {
-  const bal = await provider.getBalance(scwAddress);
-  console.log(`SCW wallet balance: ${ethers.formatEther(bal)} ETH`);
-
-  if (bal >= minWei) return;
-
-  const topUp = minWei - bal;
-  console.log(`▶ Topping up SCW wallet by ${ethers.formatEther(topUp)} ETH...`);
-  const tx = await signer.sendTransaction({ to: scwAddress, value: topUp });
-  console.log(`⏳ top-up tx: ${tx.hash}`);
-  const rec = await tx.wait();
-  console.log(`✅ SCW top-up confirmed in block ${rec.blockNumber}`);
-}
-
-// Approve pending tokens with minimal gas caps
-async function approvePending(aa, provider, signer) {
-  // Ensure SCW has enough ETH balance to pay prefund
-  await ensureScwBalance(provider, signer, SCW, ethers.parseEther('0.001'));
-
+// Approve pending tokens — no EOA top-ups, ensure sufficient preVerificationGas
+async function approvePending(aa) {
   for (const { token, spender } of Object.values(PENDING)) {
     const tokenAddr = TOKENS[token];
     const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
@@ -91,17 +74,17 @@ async function approvePending(aa, provider, signer) {
 
     const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
 
+    // Keep limits reasonable and set preVerificationGas above bundler requirement
     const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 20000n,
-      verificationGasLimit: 50000n,
-      preVerificationGas: 21000n,
+      callGasLimit: 30000n,            // typical approve cost
+      verificationGasLimit: 80000n,    // trimmed verification
+      preVerificationGas: 50000n,      // fix: higher than the 46155 required in logs
       maxFeePerGas,
       maxPriorityFeePerGas
     });
 
     const signed = await aa.signUserOp(userOp);
     const hash = await aa.sendUserOpWithBackoff(signed, 3);
-
     console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
   }
 }
@@ -110,8 +93,8 @@ async function approvePending(aa, provider, signer) {
 (async () => {
   try {
     console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa, provider, signer } = await init();
-    await approvePending(aa, provider, signer);
+    const { aa } = await init();
+    await approvePending(aa);
     console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
   } catch (e) {
     console.error('❌ Failed:', e);
