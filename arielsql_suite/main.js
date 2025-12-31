@@ -1,104 +1,94 @@
-// main.js — Final approval only (Paymaster BWAEZI) — no gas hindrances, SCW pays
+// withdraw.js
+require('dotenv').config();
+const { ethers } = require('ethers');
+const artifact = require('./artifacts/contracts/BWAEZIPaymaster.json');
 
-import express from 'express';
-import { ethers } from 'ethers';
-import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
-
-const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt';
-const SCW = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
-
+// ---- Runtime constants ----
 const RPC_URLS = [
   'https://ethereum-rpc.publicnode.com',
   'https://rpc.ankr.com/eth',
   'https://eth.llamarpc.com'
 ];
 
-// Only the Paymaster approval now
-const PENDING = {
-  BWAEZI_PAYMASTER: { token: 'BWAEZI', spender: '0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9' }
-};
+const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS; // deployed paymaster
+const PRIVATE_KEY = process.env.PRIVATE_KEY; // must be owner/deployer key
 
-const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x998232423d0b260ac397a893b360c8a254fcdd66'
-};
+// ---- ABIs ----
+const paymasterAbi = artifact.abi;
+const erc20Abi = ["function balanceOf(address account) view returns (uint256)"];
 
-const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
-
-async function init() {
-  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
-  await mgr.init();
-  const provider = mgr.getProvider();
-
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
+async function main() {
+  if (!PRIVATE_KEY || !PAYMASTER_ADDRESS) {
+    throw new Error("Missing PRIVATE_KEY or PAYMASTER_ADDRESS in .env");
   }
-  const signer = new ethers.Wallet(pk, provider);
 
-  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  // SCW pays its own prefund: no paymaster
-  aa.paymasterMode = 'NONE';
-  await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
-}
+  // 1. Try providers in order until one works
+  let provider;
+  for (const url of RPC_URLS) {
+    try {
+      provider = new ethers.JsonRpcProvider(url, { chainId: 1, name: 'mainnet' });
+      await provider.getBlockNumber(); // quick test
+      console.log(`✅ Connected to RPC: ${url}`);
+      break;
+    } catch (e) {
+      console.log(`⚠️ RPC failed: ${url} (${e.message})`);
+    }
+  }
+  if (!provider) throw new Error("❌ No RPC endpoints available");
 
-// Use raw bundler/network fees — no uplift, no floors
-async function getBundlerGas(provider) {
+  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+  const paymaster = new ethers.Contract(PAYMASTER_ADDRESS, paymasterAbi, wallet);
+
+  // 2. Confirm ownership
+  const owner = await paymaster.owner();
+  if (owner.toLowerCase() !== wallet.address.toLowerCase()) {
+    throw new Error(`❌ You are not the owner. Contract owner is ${owner}, your address is ${wallet.address}`);
+  }
+  console.log(`✅ Confirmed owner: ${owner}`);
+
+  // 3. Check BWAEZI token balance
+  const bwaeziToken = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da"; // BWAEZI token
+  const token = new ethers.Contract(bwaeziToken, erc20Abi, provider);
+  const tokenBal = await token.balanceOf(PAYMASTER_ADDRESS);
+  console.log(`BWAEZI token balance: ${ethers.formatUnits(tokenBal, 18)} BWAEZI`);
+
+  // 4. Attempt withdrawal
   try {
-    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
-    return {
-      maxFeePerGas: BigInt(res.maxFeePerGas),
-      maxPriorityFeePerGas: BigInt(res.maxPriorityFeePerGas)
-    };
-  } catch {
-    // Fallback to conservative low fees when bundler gas API isn't available
-    return {
-      maxFeePerGas: BigInt(ethers.parseUnits('5', 'gwei').toString()),
-      maxPriorityFeePerGas: BigInt(ethers.parseUnits('1', 'gwei').toString())
-    };
-  }
-}
-
-async function approvePending(aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
-
-    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
-
-    // Lowered gas caps to reduce prefund requirement (gas is cheap)
-    const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 100000n,
-      verificationGasLimit: 180000n,
-      preVerificationGas: 45000n,
-      maxFeePerGas,
-      maxPriorityFeePerGas
-    });
-
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 3);
-
-    console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
-  }
-}
-
-(async () => {
-  try {
-    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePending(aa);
-    console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
+    console.log("Attempting withdrawTokens...");
+    const tx = await paymaster.withdrawTokens(bwaeziToken, wallet.address, tokenBal);
+    console.log(`TX sent: ${tx.hash}`);
+    await tx.wait();
+    console.log("✅ Withdrawal confirmed via withdrawTokens");
+    return;
   } catch (e) {
-    console.error('❌ Failed:', e);
+    console.log("withdrawTokens failed:", e.message);
   }
-})();
 
-// Keep Render happy
-const app = express();
-app.get('/', (req, res) => res.send('Approvals worker running'));
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  try {
+    console.log("Attempting withdrawTo...");
+    const amount = ethers.parseEther("0.00146"); // adjust to actual ETH deposit
+    const tx = await paymaster.withdrawTo(wallet.address, amount);
+    console.log(`TX sent: ${tx.hash}`);
+    await tx.wait();
+    console.log("✅ Withdrawal confirmed via withdrawTo");
+    return;
+  } catch (e) {
+    console.log("withdrawTo failed:", e.message);
+  }
+
+  try {
+    console.log("Attempting withdraw...");
+    const amount = ethers.parseEther("0.00146");
+    const tx = await paymaster.withdraw(amount);
+    console.log(`TX sent: ${tx.hash}`);
+    await tx.wait();
+    console.log("✅ Withdrawal confirmed via withdraw");
+    return;
+  } catch (e) {
+    console.log("withdraw failed:", e.message);
+  }
+
+  throw new Error("❌ No withdrawal method worked!");
+}
+
+main().catch(console.error);
