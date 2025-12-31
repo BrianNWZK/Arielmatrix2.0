@@ -28,9 +28,13 @@ dotenvExpand.expand(env);
     }
     const wallet = new ethers.Wallet(privateKey, provider);
 
-    // STEP 3: Deploy Paymaster (no minimum balance check)
+    // STEP 3: Deploy Paymaster with capped gas settings
     console.log("--- Deploying Paymaster ---");
-    const paymasterAddr = await deployPaymaster(wallet, artifactPath);
+    const paymasterAddr = await deployPaymaster(wallet, artifactPath, {
+      gasLimit: 1_000_000,
+      maxFeePerGas: ethers.parseUnits("5", "gwei"),
+      maxPriorityFeePerGas: ethers.parseUnits("1", "gwei")
+    });
     console.log(`✅ Paymaster deployed at: ${paymasterAddr}`);
 
     // STEP 4: Approve Paymaster to spend treasury token
@@ -39,7 +43,11 @@ dotenvExpand.expand(env);
     const token = new ethers.Contract(tokenAddress, tokenAbi, wallet);
 
     console.log("⛽ Approving Paymaster to spend treasury token...");
-    const approveTx = await token.approve(paymasterAddr, ethers.MaxUint256);
+    const approveTx = await token.approve(paymasterAddr, ethers.MaxUint256, {
+      gasLimit: 100_000,
+      maxFeePerGas: ethers.parseUnits("5", "gwei"),
+      maxPriorityFeePerGas: ethers.parseUnits("1", "gwei")
+    });
     await approveTx.wait();
     console.log("✅ Paymaster approved successfully.");
 
