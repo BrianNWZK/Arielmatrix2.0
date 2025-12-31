@@ -1,106 +1,41 @@
-// main.js — Final approval only (Paymaster BWAEZI)
-
-import express from 'express';
 import { ethers } from 'ethers';
-import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
 
 const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt';
-const SCW = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
+const PAYMASTER = (process.env.PAYMASTER_ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47').trim();
+const RPC_URL = process.env.RPC_URL || 'https://ethereum-rpc.publicnode.com';
+const EOA_ADDRESS = '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA';
 
-const RPC_URLS = [
-  'https://ethereum-rpc.publicnode.com',
-  'https://rpc.ankr.com/eth',
-  'https://eth.llamarpc.com'
-];
-
-// Only the Paymaster approval now
-const PENDING = {
-  BWAEZI_PAYMASTER: { token: 'BWAEZI', spender: '0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9' }
-};
-
-const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x998232423d0b260ac397a893b360c8a254fcdd66'
-};
-
-const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
-
-async function init() {
-  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
-  await mgr.init();
-  const provider = mgr.getProvider();
-
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
-  }
-  const signer = new ethers.Wallet(pk, provider);
-
-  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  aa.paymasterMode = 'NONE';
-  await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
-}
-
-// Fetch AA-aware gas prices from bundler; enforce minimums
-async function getBundlerGas(provider) {
-  try {
-    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
-    let maxFeePerGas = BigInt(res.maxFeePerGas);
-    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n;
-    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
-    maxFeePerGas = (maxFeePerGas * 12n) / 10n; // uplift
-    return { maxFeePerGas, maxPriorityFeePerGas };
-  } catch {
-    const fd = await provider.getFeeData();
-    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
-    const tip = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
-    const TIP_FLOOR = 50_000_000n;
-    return {
-      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
-      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
-    };
-  }
-}
-
-async function approvePending(aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
-
-    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
-
-    const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 400000n,
-      verificationGasLimit: 700000n,
-      preVerificationGas: 80000n,
-      maxFeePerGas,
-      maxPriorityFeePerGas
-    });
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 5);
-
-    console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
-  }
-}
+const entryPointIface = new ethers.Interface([
+  'function withdrawTo(address withdrawAddress, uint256 amount)',
+  'function balanceOf(address) view returns (uint256)'
+]);
 
 (async () => {
   try {
-    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePending(aa);
-    console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
+    const provider = new ethers.JsonRpcProvider(RPC_URL, { chainId: 1, name: 'mainnet' });
+    const pk = process.env.SOVEREIGN_PRIVATE_KEY;
+    if (!pk || !pk.startsWith('0x') || pk.length < 66) throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
+    const signer = new ethers.Wallet(pk, provider);
+
+    if (signer.address.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
+      throw new Error(`Signer address ${signer.address} does not match expected EOA ${EOA_ADDRESS}`);
+    }
+
+    const ep = new ethers.Contract(ENTRY_POINT, entryPointIface.fragments, signer);
+    const bal = await ep.balanceOf(PAYMASTER);
+
+    if (bal === 0n) {
+      throw new Error(`No deposit available for ${PAYMASTER}`);
+    }
+
+    const tx = await ep.withdrawTo(EOA_ADDRESS, bal);
+    const rec = await tx.wait();
+
+    console.log(`💸 Withdrawn ${ethers.formatEther(bal)} ETH from paymaster ${PAYMASTER} back to ${EOA_ADDRESS}`);
+    console.log(`Tx hash: ${rec.transactionHash}`);
+    process.exit(0);
   } catch (e) {
-    console.error('❌ Failed:', e);
+    console.error(`❌ Failed: ${e.message}`);
+    process.exit(1);
   }
 })();
-
-// Keep Render happy
-const app = express();
-app.get('/', (req, res) => res.send('Approvals worker running'));
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
