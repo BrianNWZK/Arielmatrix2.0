@@ -2,39 +2,39 @@
 import 'dotenv/config';
 import { ethers } from 'ethers';
 
-// ---- Constants ----
+// RPC redundancy
 const RPC_URLS = [
   'https://ethereum-rpc.publicnode.com',
   'https://rpc.ankr.com/eth',
   'https://eth.llamarpc.com'
 ];
 
-// Deployed Paymaster & EntryPoint
+// Environment
 const PAYMASTER_ADDRESS = (process.env.PAYMASTER_ADDRESS || '').trim();
 const PRIVATE_KEY = (process.env.PRIVATE_KEY || '').trim();
+
+// Constants
 const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
+const OWNER_ADDRESS = (process.env.OWNER_ADDRESS || '').trim() || ''; // optionally force recipient
 
-// Hardcoded BWAEZI token (from bytecode)
-const BWAEZI = '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da';
+// ABIs
+const readOnlyAbi = ['function owner() view returns (address)'];
+const entryPointAbi = ['function balanceOf(address) view returns (uint256)'];
 
-// ---- Minimal ABIs ----
-const paymasterAbi = [
-  // Common patterns — if names differ, we’ll fallback to direct selector
-  'function owner() view returns (address)',
-  'function withdraw(uint256 amount)',                             // ETH (EntryPoint deposit) to owner
-  'function withdrawTo(address recipient, uint256 amount)',        // ETH/tokens to recipient
-  'function withdrawTokens(address token, address recipient, uint256 amount)'
+// Candidate withdraw signatures to try
+const candidateSigs = [
+  // most common
+  'function withdraw(uint256 amount)',
+  'function withdrawTo(address recipient, uint256 amount)',
+  // swapped order variant seen in some contracts
+  'function withdrawTo(uint256 amount, address recipient)',
+  // owner-only recipient (no arg recipient)
+  'function withdrawTo(uint256 amount)',
+  // withdraw full to caller (no args)
+  'function withdraw()',
 ];
 
-const entryPointAbi = [
-  'function balanceOf(address) view returns (uint256)'
-];
-
-const erc20Abi = [
-  'function balanceOf(address account) view returns (uint256)'
-];
-
-// Helper: connect to first healthy RPC
+// Provider selector
 async function getProvider() {
   for (const url of RPC_URLS) {
     try {
@@ -49,17 +49,6 @@ async function getProvider() {
   throw new Error('No RPC endpoints available');
 }
 
-// Helper: safe fee setup
-async function gasFees(provider) {
-  const fd = await provider.getFeeData();
-  const tip = fd.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
-  const base = fd.maxFeePerGas ?? ethers.parseUnits('25', 'gwei');
-  return {
-    maxPriorityFeePerGas: tip,
-    maxFeePerGas: base
-  };
-}
-
 async function main() {
   if (!PRIVATE_KEY) throw new Error('PRIVATE_KEY missing');
   if (!PAYMASTER_ADDRESS) throw new Error('PAYMASTER_ADDRESS missing');
@@ -67,120 +56,115 @@ async function main() {
   const provider = await getProvider();
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-  const paymaster = new ethers.Contract(PAYMASTER_ADDRESS, paymasterAbi, wallet);
-  const entryPoint = new ethers.Contract(ENTRY_POINT, entryPointAbi, provider);
-  const token = new ethers.Contract(BWAEZI, erc20Abi, provider);
-
-  // 1) Confirm owner
-  const owner = await paymaster.owner();
+  // Minimal contract (only owner())
+  const paymasterOwner = new ethers.Contract(PAYMASTER_ADDRESS, readOnlyAbi, provider);
+  const owner = await paymasterOwner.owner();
   if (owner.toLowerCase() !== wallet.address.toLowerCase()) {
     throw new Error(`You are not the owner. Owner: ${owner}, you: ${wallet.address}`);
   }
   console.log(`✅ Confirmed owner: ${owner}`);
 
-  // 2) Read balances precisely
+  // Read exact EntryPoint deposit
+  const entryPoint = new ethers.Contract(ENTRY_POINT, entryPointAbi, provider);
   const depositWei = await entryPoint.balanceOf(PAYMASTER_ADDRESS);
-  const tokenBal = await token.balanceOf(PAYMASTER_ADDRESS);
   console.log(`EntryPoint deposit: ${ethers.formatEther(depositWei)} ETH`);
-  console.log(`BWAEZI token:      ${ethers.formatUnits(tokenBal, 18)} BWAEZI`);
 
-  const fees = await gasFees(provider);
-
-  // 3) Try withdrawing BWAEZI tokens first (if any)
-  if (tokenBal > 0n) {
-    try {
-      console.log('▶ withdrawTokens(BWAEZI, owner, full token balance) — callStatic check');
-      await paymaster.callStatic.withdrawTokens(BWAEZI, wallet.address, tokenBal);
-      const tx = await paymaster.withdrawTokens(BWAEZI, wallet.address, tokenBal, {
-        maxFeePerGas: fees.maxFeePerGas,
-        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-        gasLimit: 180000n
-      });
-      console.log(`⏳ withdrawTokens tx: ${tx.hash}`);
-      const rec = await tx.wait();
-      console.log(`✅ Tokens withdrawn. Block: ${rec.blockNumber}`);
-    } catch (e) {
-      console.log(`withdrawTokens failed: ${e.shortMessage || e.message}`);
-    }
-  } else {
-    console.log('ℹ️ No BWAEZI token balance to withdraw.');
+  if (depositWei === 0n) {
+    console.log('ℹ️ No deposit to withdraw.');
+    return;
   }
 
-  // 4) Withdraw EntryPoint deposit (ETH) exactly; avoid mismatched amounts
-  if (depositWei > 0n) {
-    // Prefer withdrawTo(owner, amount); if not present, try withdraw(amount)
-    let ethDone = false;
+  // Fee config
+  const fd = await provider.getFeeData();
+  const maxPriorityFeePerGas = fd.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
+  const maxFeePerGas = fd.maxFeePerGas ?? ethers.parseUnits('25', 'gwei');
 
-    // A) Try withdrawTo(owner, depositWei)
-    try {
-      console.log('▶ withdrawTo(owner, full deposit) — callStatic check');
-      await paymaster.callStatic.withdrawTo(wallet.address, depositWei);
-      const tx = await paymaster.withdrawTo(wallet.address, depositWei, {
-        maxFeePerGas: fees.maxFeePerGas,
-        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-        gasLimit: 140000n
-      });
-      console.log(`⏳ withdrawTo tx: ${tx.hash}`);
-      const rec = await tx.wait();
-      console.log(`✅ ETH deposit withdrawn via withdrawTo. Block: ${rec.blockNumber}`);
-      ethDone = true;
-    } catch (e) {
-      console.log(`withdrawTo failed: ${e.shortMessage || e.message}`);
-    }
+  // Build try functions from candidate signatures
+  const interfaces = candidateSigs.map(sig => new ethers.Interface([sig]));
 
-    // B) Try withdraw(depositWei) if A failed
-    if (!ethDone) {
+  // Amount variants: exact deposit, deposit - 1, deposit - 1000 (guard against strict checks)
+  const amounts = [
+    depositWei,
+    depositWei > 0n ? depositWei - 1n : 0n,
+    depositWei > 1000n ? depositWei - 1000n : depositWei
+  ];
+
+  // Recipient to use (default: owner)
+  const recipient = OWNER_ADDRESS || wallet.address;
+
+  // Try each combination with callStatic before sending
+  let success = null;
+
+  for (const iface of interfaces) {
+    const frag = Object.values(iface.fragments).find(f => f.type === 'function');
+    const name = frag.name;
+
+    for (const amt of amounts) {
+      let args;
       try {
-        console.log('▶ withdraw(full deposit) — callStatic check');
-        await paymaster.callStatic.withdraw(depositWei);
-        const tx = await paymaster.withdraw(depositWei, {
-          maxFeePerGas: fees.maxFeePerGas,
-          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-          gasLimit: 120000n
-        });
-        console.log(`⏳ withdraw tx: ${tx.hash}`);
-        const rec = await tx.wait();
-        console.log(`✅ ETH deposit withdrawn via withdraw. Block: ${rec.blockNumber}`);
-        ethDone = true;
-      } catch (e) {
-        console.log(`withdraw failed: ${e.shortMessage || e.message}`);
-      }
-    }
+        if (frag.inputs.length === 0) {
+          // withdraw()
+          args = [];
+        } else if (frag.inputs.length === 1) {
+          // either withdraw(uint256) or withdrawTo(uint256)
+          const isUintOnly = frag.inputs[0].type.startsWith('uint');
+          args = isUintOnly ? [amt] : [recipient];
+        } else if (frag.inputs.length === 2) {
+          // withdrawTo(address,uint256) or withdrawTo(uint256,address)
+          const [a0, a1] = frag.inputs.map(i => i.type);
+          if (a0.startsWith('address') && a1.startsWith('uint')) {
+            args = [recipient, amt];
+          } else if (a0.startsWith('uint') && a1.startsWith('address')) {
+            args = [amt, recipient];
+          } else {
+            // unexpected types; skip
+            continue;
+          }
+        } else {
+          continue; // not a candidate we handle
+        }
 
-    // C) Final fallback: direct selector call for withdrawTo(address,uint256)
-    if (!ethDone) {
-      try {
-        console.log('▶ Fallback: direct selector 0x205c2878 (withdrawTo(address,uint256))');
-        // Build a minimal Interface on-the-fly to encode data
-        const iface = new ethers.Interface(['function withdrawTo(address,uint256)']);
-        const data = iface.encodeFunctionData('withdrawTo', [wallet.address, depositWei]);
-
-        // Send raw tx to Paymaster with explicit gas; skip estimateGas entirely
-        const tx = await wallet.sendTransaction({
+        // Encode and callStatic
+        const data = iface.encodeFunctionData(name, args);
+        // Use call directly to catch reverts without generating methods
+        const callResult = await provider.call({
           to: PAYMASTER_ADDRESS,
-          data,
-          maxFeePerGas: fees.maxFeePerGas,
-          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-          gasLimit: 160000n,
-          value: 0n
+          from: wallet.address,
+          data
         });
-        console.log(`⏳ raw selector tx: ${tx.hash}`);
-        const rec = await tx.wait();
-        console.log(`✅ ETH deposit withdrawn via raw selector. Block: ${rec.blockNumber}`);
-        ethDone = true;
+
+        // If call didn't revert, we consider it a valid path
+        console.log(`✅ callStatic succeeded: ${name}(${args.map(a => typeof a === 'bigint' ? a.toString() : a).join(', ')})`);
+        success = { iface, name, args };
+        break;
       } catch (e) {
-        console.log(`Raw selector withdrawTo failed: ${e.shortMessage || e.message}`);
+        // Reverted — log concise info
+        console.log(`✗ ${name}(${frag.inputs.map(i => i.type).join(', ')}) with amt=${amt.toString()} reverted`);
       }
     }
-
-    if (!ethDone) {
-      throw new Error('All ETH withdrawal paths failed. Likely signature mismatch or internal require on amount/recipient.');
-    }
-  } else {
-    console.log('ℹ️ No EntryPoint deposit to withdraw.');
+    if (success) break;
   }
 
-  console.log('🎯 Done.');
+  if (!success) {
+    throw new Error('All signature/amount combinations reverted. The contract likely uses a different signature or internal conditions (e.g., fixed recipient, timelock).');
+  }
+
+  // Send the actual transaction with explicit gas limit and fees
+  const { iface, name, args } = success;
+  const data = iface.encodeFunctionData(name, args);
+
+  const tx = await wallet.sendTransaction({
+    to: PAYMASTER_ADDRESS,
+    data,
+    value: 0n,
+    gasLimit: 180000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas
+  });
+
+  console.log(`⏳ Sending ${name} tx: ${tx.hash}`);
+  const rec = await tx.wait();
+  console.log(`✅ Withdraw confirmed in block ${rec.blockNumber}`);
 }
 
 main().catch((e) => {
