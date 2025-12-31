@@ -1,4 +1,4 @@
-// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas, with auto EntryPoint top-up
+// main.js — Final approval only (Paymaster BWAEZI) — SCW pays its own gas, with EOA top-up
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -29,10 +29,6 @@ const TOKENS = {
 // Interfaces
 const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
 const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
-const entryPointAbi = [
-  'function balanceOf(address) view returns (uint256)',
-  'function depositTo(address account) external payable'
-];
 
 // Initialize AA SDK
 async function init() {
@@ -62,33 +58,31 @@ async function getBundlerGas(provider) {
     };
   } catch {
     return {
-      maxFeePerGas: BigInt(ethers.parseUnits('5', 'gwei').toString()),
-      maxPriorityFeePerGas: BigInt(ethers.parseUnits('1', 'gwei').toString())
+      maxFeePerGas: ethers.parseUnits('2', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei')
     };
   }
 }
 
-// Ensure EntryPoint deposit for SCW is sufficient; top up if below threshold
-async function ensureEntryPointPrefund(provider, signer, scwAddress, minWei = ethers.parseEther('0.0002')) {
-  const ep = new ethers.Contract(ENTRY_POINT, entryPointAbi, provider);
-  const bal = await ep.balanceOf(scwAddress);
-  console.log(`EntryPoint deposit for SCW: ${ethers.formatEther(bal)} ETH`);
+// Ensure SCW has ETH balance; top up from EOA if needed
+async function ensureScwBalance(provider, signer, scwAddress, minWei = ethers.parseEther('0.001')) {
+  const bal = await provider.getBalance(scwAddress);
+  console.log(`SCW wallet balance: ${ethers.formatEther(bal)} ETH`);
 
   if (bal >= minWei) return;
 
-  const topUp = minWei - bal; // deposit only what’s needed
-  console.log(`▶ Topping up EntryPoint deposit by ${ethers.formatEther(topUp)} ETH...`);
-  const epWritable = ep.connect(signer);
-  const tx = await epWritable.depositTo(scwAddress, { value: topUp });
-  console.log(`⏳ deposit tx: ${tx.hash}`);
+  const topUp = minWei - bal;
+  console.log(`▶ Topping up SCW wallet by ${ethers.formatEther(topUp)} ETH...`);
+  const tx = await signer.sendTransaction({ to: scwAddress, value: topUp });
+  console.log(`⏳ top-up tx: ${tx.hash}`);
   const rec = await tx.wait();
-  console.log(`✅ Deposit confirmed in block ${rec.blockNumber}`);
+  console.log(`✅ SCW top-up confirmed in block ${rec.blockNumber}`);
 }
 
-// Approve pending tokens with minimal gas caps to reduce prefund
+// Approve pending tokens with minimal gas caps
 async function approvePending(aa, provider, signer) {
-  // Ensure minimal EntryPoint deposit so AA21 doesn’t trigger
-  await ensureEntryPointPrefund(provider, signer, SCW, ethers.parseEther('0.0002'));
+  // Ensure SCW has enough ETH balance to pay prefund
+  await ensureScwBalance(provider, signer, SCW, ethers.parseEther('0.001'));
 
   for (const { token, spender } of Object.values(PENDING)) {
     const tokenAddr = TOKENS[token];
@@ -97,11 +91,10 @@ async function approvePending(aa, provider, signer) {
 
     const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
 
-    // Minimal realistic caps for ERC20 approve via SCW.execute
     const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 30000n,           // approve typically ~20k–30k
-      verificationGasLimit: 80000n,   // trimmed from 180k
-      preVerificationGas: 21000n,     // minimal base to lower prefund
+      callGasLimit: 20000n,
+      verificationGasLimit: 50000n,
+      preVerificationGas: 21000n,
       maxFeePerGas,
       maxPriorityFeePerGas
     });
