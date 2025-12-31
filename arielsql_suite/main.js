@@ -1,7 +1,12 @@
 // main.js
-import 'dotenv/config';                // replaces require('dotenv').config()
+import 'dotenv/config';
 import { ethers } from 'ethers';
-import artifact from './artifacts/contracts/BWAEZIPaymaster.json' assert { type: 'json' };
+import fs from 'fs';
+import path from 'path';
+
+// ---- Load ABI JSON safely ----
+const artifactPath = path.resolve('./artifacts/contracts/BWAEZIPaymaster.json');
+const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
 
 // ---- Runtime constants ----
 const RPC_URLS = [
@@ -10,8 +15,8 @@ const RPC_URLS = [
   'https://eth.llamarpc.com'
 ];
 
-const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS; // deployed paymaster
-const PRIVATE_KEY = process.env.PRIVATE_KEY;             // must be owner/deployer key
+const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
 const erc20Abi = ["function balanceOf(address account) view returns (uint256)"];
 
@@ -25,7 +30,7 @@ async function main() {
   for (const url of RPC_URLS) {
     try {
       provider = new ethers.JsonRpcProvider(url, { chainId: 1, name: 'mainnet' });
-      await provider.getBlockNumber(); // quick test
+      await provider.getBlockNumber();
       console.log(`✅ Connected to RPC: ${url}`);
       break;
     } catch (e) {
@@ -45,7 +50,7 @@ async function main() {
   console.log(`✅ Confirmed owner: ${owner}`);
 
   // 3. Check BWAEZI token balance
-  const bwaeziToken = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da"; // BWAEZI token
+  const bwaeziToken = "0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da";
   const token = new ethers.Contract(bwaeziToken, erc20Abi, provider);
   const tokenBal = await token.balanceOf(PAYMASTER_ADDRESS);
   console.log(`BWAEZI token balance: ${ethers.formatUnits(tokenBal, 18)} BWAEZI`);
