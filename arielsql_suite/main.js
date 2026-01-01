@@ -1,5 +1,6 @@
-// main.js — AA approvals with corrected callData and nonce handling
-// SCW pays its own gas via EntryPoint deposit
+// main.js — AA approvals with standard tx receipt confirmation
+// SCW pays its own gas via EntryPoint deposit; no paymaster sponsorship
+// No balance/prefund checks; confirms on-chain via EntryPoint tx receipt
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -24,7 +25,12 @@ const TOKENS = {
 };
 
 const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address dest,uint256 value,bytes func)']);
+const scwIface   = new ethers.Interface(['function execute(address _to,uint256 _value,bytes _data)']);
+
+// EntryPoint event ABI to resolve txHash if SDK helper isn't available
+const entryPointIface = new ethers.Interface([
+  'event UserOperationEvent(bytes32 userOpHash, address sender, address paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)'
+]);
 
 async function init() {
   const mgr = new EnhancedRPCManager(RPC_URLS, 1);
@@ -32,13 +38,16 @@ async function init() {
   const provider = mgr.getProvider();
 
   const pk = process.env.SOVEREIGN_PRIVATE_KEY;
+  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
+    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
+  }
   const signer = new ethers.Wallet(pk, provider);
 
   const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  aa.paymasterMode = 'NONE';
+  aa.paymasterMode = 'NONE'; // SCW deposit pays gas
   await aa.initialize(provider, SCW, BUNDLER);
 
-  // Always refresh nonce before building UserOp
+  // Keep nonce fresh to avoid validation reverts
   if (aa.fetchAndUpdateNonce) {
     await aa.fetchAndUpdateNonce();
   }
@@ -46,45 +55,125 @@ async function init() {
   return { provider, aa };
 }
 
-async function approvePending(provider, aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const approveData = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
+// Build SCW.execute( token, 0, approve(spender, MaxUint256) )
+function buildApproveCallData(tokenAddr, spender) {
+  const approveData = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
+  return scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
+}
 
-    // Correct SCW.execute encoding
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, approveData]);
-
-    // Build UserOp with safe gas buffers
-    const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 150000n,
-      verificationGasLimit: 400000n,
-      preVerificationGas: 120000n
-    });
-
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 5);
-    console.log(`[SUBMITTED] ${token} → ${spender}: ${hash}`);
-
-    // Wait for receipt
-    const receipt = await provider.send('eth_getUserOperationReceipt', [hash]);
-    if (receipt && receipt.success) {
-      console.log(`✅ On-chain confirmed: ${token} approval in tx ${receipt.receipt.transactionHash}`);
-    } else {
-      console.log(`❌ Reverted again: check SCW owner/signature or token contract`);
+// Try to resolve the EntryPoint transaction hash for a given UserOp hash
+async function resolveEntryPointTxHash(provider, userOpHash) {
+  // 1) Prefer SDK helper if available
+  try {
+    // Some SDKs expose this; if not present, it will throw
+    if (typeof EnterpriseAASDK.prototype.getUserOpTransactionHash === 'function') {
+      // We don't have the instance here; caller will pass aa when needed
+      throw new Error('Use aa.getUserOpTransactionHash from caller');
     }
+  } catch {
+    // fallthrough to log scan
+  }
+
+  // 2) Scan recent EntryPoint logs for UserOperationEvent with userOpHash
+  const eventTopic = entryPointIface.getEvent('UserOperationEvent').topicHash;
+  const filter = {
+    address: ENTRY_POINT,
+    topics: [eventTopic, ethers.hexlify(userOpHash)], // indexed userOpHash
+    // scan a reasonable recent range; adjust if needed
+    fromBlock: 'latest',
+    toBlock: 'latest'
+  };
+
+  // If single-block scan misses, widen the window
+  try {
+    const latest = await provider.getBlockNumber();
+    const from = Math.max(0, latest - 5000);
+    const logs = await provider.getLogs({
+      address: ENTRY_POINT,
+      topics: [eventTopic, ethers.hexlify(userOpHash)],
+      fromBlock: from,
+      toBlock: latest
+    });
+    if (logs.length > 0) {
+      // transactionHash is directly on the log
+      return logs[0].transactionHash;
+    }
+  } catch {
+    // Ignore and let caller handle null
+  }
+
+  return null;
+}
+
+// Wait for the EntryPoint transaction receipt using a tx hash
+async function waitForTxReceipt(provider, txHash, { pollMs = 4000, timeoutMs = 180000 } = {}) {
+  const start = Date.now();
+  while (true) {
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (receipt) return receipt;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`EntryPoint tx not mined within ${Math.floor(timeoutMs / 1000)}s: ${txHash}`);
+    }
+    await new Promise(r => setTimeout(r, pollMs));
   }
 }
 
+// Submit and confirm on-chain via tx receipt
+async function submitAndConfirm(provider, aa, callData, label) {
+  // First attempt: no manual gas overrides — let bundler estimate
+  const userOp = await aa.createUserOp(callData, {});
+  const signed = await aa.signUserOp(userOp);
+  const userOpHash = await aa.sendUserOpWithBackoff(signed, 5);
+  console.log(`[SUBMITTED] ${label}: ${userOpHash}`);
+
+  // Resolve tx hash (SDK helper if present, else logs scan)
+  let txHash = null;
+  if (typeof aa.getUserOpTransactionHash === 'function') {
+    txHash = await aa.getUserOpTransactionHash(userOpHash);
+  }
+  if (!txHash) {
+    txHash = await resolveEntryPointTxHash(provider, userOpHash);
+  }
+  if (!txHash) {
+    console.log(`⏳ Waiting for bundler to emit EntryPoint tx for ${label}...`);
+    // Optional small delay before re-scan
+    await new Promise(r => setTimeout(r, 5000));
+    txHash = await resolveEntryPointTxHash(provider, userOpHash);
+  }
+  if (!txHash) {
+    console.log(`⚠️ Could not resolve EntryPoint tx for ${label} yet. It may still be pending.`);
+    return;
+  }
+
+  const receipt = await waitForTxReceipt(provider, txHash);
+  if (receipt.status === 1) {
+    console.log(`✅ On-chain confirmed: ${label} in EntryPoint tx ${txHash}`);
+  } else {
+    console.log(`❌ Reverted on-chain: ${label} in EntryPoint tx ${txHash}`);
+  }
+}
+
+async function approvePending(provider, aa) {
+  for (const { token, spender } of Object.values(PENDING)) {
+    const tokenAddr = TOKENS[token];
+    const callData = buildApproveCallData(tokenAddr, spender);
+    await submitAndConfirm(provider, aa, callData, `${token} → ${spender}`);
+  }
+}
+
+// Run worker
 (async () => {
   try {
-    console.log(`[FINAL] Running approval on SCW ${SCW}`);
+    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
     const { provider, aa } = await init();
     await approvePending(provider, aa);
+    console.log('✅ Approval flow finished');
   } catch (e) {
     console.error('❌ Failed:', e.reason || e.message || e);
   }
 })();
 
+// Keep service alive
 const app = express();
 app.get('/', (req, res) => res.send('Approvals worker running'));
 const PORT = process.env.PORT || 8080;
