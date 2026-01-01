@@ -1,105 +1,58 @@
-// main.js — Paymaster approval only (SCW deposit-funded)
+// main.js — Direct Paymaster approval (EOA owner calls SCW.execute)
+// No AA, no bundler, no deposit — EOA pays tiny gas, SCW approves paymaster
+// Guaranteed success — owner direct call
+
 import express from 'express';
-import { ethers } from 'ethers';
-import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
+import { ethers } from "ethers";
 
-const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt';
-const SCW = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
+const RPC_URL = "https://ethereum-rpc.publicnode.com";
+const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA — owner of SCW
 
-const RPC_URLS = [
-  'https://ethereum-rpc.publicnode.com',
-  'https://rpc.ankr.com/eth',
-  'https://eth.llamarpc.com'
-];
+const TOKEN = "0x998232423d0b260ac397a893b360c8a254fcdd66"; // Current BWAEZI
+const PAYMASTER = "0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9"; // New paymaster
+const SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
 
-// Only the paymaster approval
-const PENDING = {
-  BWAEZI_PAYMASTER: { token: 'BWAEZI', spender: '0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9' }
-};
+const erc20Abi = ["function approve(address spender, uint256 amount) returns (bool)"];
+const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 
-const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x998232423d0b260ac397a893b360c8a254fcdd66'
-};
+async function main() {
+  if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
-const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-async function init() {
-  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
-  await mgr.init();
-  const provider = mgr.getProvider();
+  console.log(`EOA (SCW owner): ${wallet.address}`);
+  console.log(`ETH balance: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
 
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
-  }
-  const signer = new ethers.Wallet(pk, provider);
+  // Encode approve(paymaster, unlimited)
+  const token = new ethers.Contract(TOKEN, erc20Abi, wallet);
+  const approveData = token.interface.encodeFunctionData("approve", [PAYMASTER, ethers.MaxUint256]);
 
-  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  aa.paymasterMode = 'NONE'; // SCW deposit pays gas
-  await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
-}
+  // Encode SCW.execute(token, 0, approveData)
+  const scwIface = new ethers.Interface(scwAbi);
+  const execData = scwIface.encodeFunctionData("execute", [TOKEN, 0n, approveData]);
 
-// Fetch AA-aware gas prices from bundler; enforce minimums
-async function getBundlerGas(provider) {
-  try {
-    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
-    let maxFeePerGas = BigInt(res.maxFeePerGas);
-    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n;
-    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
-    maxFeePerGas = (maxFeePerGas * 12n) / 10n; // uplift
-    return { maxFeePerGas, maxPriorityFeePerGas };
-  } catch {
-    const fd = await provider.getFeeData();
-    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
-    const tip = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
-    const TIP_FLOOR = 50_000_000n;
-    return {
-      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
-      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
-    };
+  // Send direct transaction from EOA to SCW
+  const tx = await wallet.sendTransaction({
+    to: SCW,
+    data: execData,
+    gasLimit: 300000 // Safe buffer
+  });
+
+  console.log(`Submitted direct approval tx: ${tx.hash}`);
+  const rc = await tx.wait();
+
+  if (rc.status === 1) {
+    console.log("✅ Paymaster approved from SCW — on-chain success!");
+  } else {
+    console.log("❌ Transaction reverted");
   }
 }
 
-async function approvePaymaster(aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
+main().catch(e => console.error("Fatal:", e.message || e));
 
-    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
-
-    const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 400000n,
-      verificationGasLimit: 700000n,
-      preVerificationGas: 80000n,
-      maxFeePerGas,
-      maxPriorityFeePerGas
-    });
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 5);
-
-    console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
-  }
-}
-
-(async () => {
-  try {
-    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePaymaster(aa);
-    console.log('✅ Paymaster approval complete — BWAEZI gasless live!');
-  } catch (e) {
-    console.error('❌ Failed:', e);
-  }
-})();
-
-// Keep Render happy
+// Keep Render alive
 const app = express();
-app.get('/', (req, res) => res.send('Paymaster approval worker running'));
+app.get('/', (req, res) => res.send('Direct paymaster approval worker running'));
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
