@@ -1,27 +1,22 @@
 // main.js
-// Goal: Create BWAEZI/WETH Uniswap V3 pool (if missing), initialize price, and mint liquidity via SCW
-// Caller signs; SCW executes. No approvals needed (SCW already has unlimited allowances).
+// Goal: Mint BWAEZI/USDC liquidity via SCW into existing Uniswap V3 pool
+// Pool already created and initialized, so we skip creation/init.
 
 import { ethers } from "ethers";
 
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const FACTORY = ethers.getAddress("0x1f98431c8ad98523631ae4a59f267346ea31f984");
 const NPM     = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
-const WETH    = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-const BWAEZI  = ethers.getAddress("0x998232423d0b260ac397a893b360c8a254fcdd66");
 const SCW     = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
+const POOL    = ethers.getAddress("0x051d003424c27987a4414f89b241a159a575b248"); // existing BWAEZI/USDC pool
+const BWAEZI  = ethers.getAddress("0x998232423d0b260ac397a893b360c8a254fcdd66");
+const USDC    = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 
-const FEE_TIER = 3000; // 0.3%
+const FEE_TIER = 500; // 0.05%
 
 // ABIs
-const factoryAbi = [
-  "function getPool(address,address,uint24) view returns (address)",
-  "function createPool(address,address,uint24) returns (address)"
-];
 const poolAbi = [
-  "function initialize(uint160 sqrtPriceX96)",
   "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool)"
 ];
 const scwAbi = [
@@ -46,48 +41,6 @@ function nearestUsableTick(tick, spacing) {
   return q * spacing;
 }
 
-// Price init: choose sqrtPriceX96 constant
-// Pick an initial price so one-sided BWAEZI liquidity is valid.
-// If BWAEZI is token0, set sqrtPrice so price(WETH/BWAEZI) ~ 33 (example peg).
-function getInitSqrtPriceX96(isBWToken0) {
-  // These constants are example starting prices used earlier in your stack.
-  // You can replace with a precise computed sqrtPriceX96 if needed.
-  return isBWToken0
-    ? BigInt("0x5be9ba858b43c000000000000")  // ~33 WETH per BWAEZI when BWAEZI is token0
-    : BigInt("0x2c9058f9770d700000000000"); // ~0.0303 BWAEZI per WETH when WETH is token0
-}
-
-async function ensurePool(provider, signer) {
-  const factory = new ethers.Contract(FACTORY, factoryAbi, signer);
-  const [token0, token1] = BWAEZI.toLowerCase() < WETH.toLowerCase() ? [BWAEZI, WETH] : [WETH, BWAEZI];
-
-  let pool = await factory.getPool(token0, token1, FEE_TIER);
-  if (pool !== ethers.ZeroAddress) {
-    console.log(`BWAEZI/WETH pool exists: ${pool}`);
-    return { pool, token0, token1 };
-  }
-
-  console.log("Creating BWAEZI/WETH pool...");
-  const tx = await factory.createPool(token0, token1, FEE_TIER);
-  console.log(`Create tx: ${tx.hash}`);
-  await tx.wait();
-
-  pool = await factory.getPool(token0, token1, FEE_TIER);
-  console.log(`✅ Pool created: ${pool}`);
-
-  const isBWToken0 = token0.toLowerCase() === BWAEZI.toLowerCase();
-  const sqrtPriceX96 = getInitSqrtPriceX96(isBWToken0);
-
-  const poolCtr = new ethers.Contract(pool, poolAbi, signer);
-  console.log(`Initializing price with sqrtPriceX96=${sqrtPriceX96}`);
-  const txInit = await poolCtr.initialize(sqrtPriceX96);
-  console.log(`Init tx: ${txInit.hash}`);
-  await txInit.wait();
-  console.log("✅ Pool initialized");
-
-  return { pool, token0, token1 };
-}
-
 async function buildMintViaSCW(provider, pool, token0, token1) {
   const poolCtr = new ethers.Contract(pool, poolAbi, provider);
   const slot0 = await poolCtr.slot0();
@@ -101,12 +54,12 @@ async function buildMintViaSCW(provider, pool, token0, token1) {
   const tickLower = BigInt(lowerAligned);
   const tickUpper = BigInt(upperAligned === lowerAligned ? lowerAligned + spacing : upperAligned);
 
-  // Decide amounts (asymmetric seed: BWAEZI only)
-  const bwAmt   = ethers.parseEther("0.05"); // adjust if needed
-  const wethAmt = 0n;
+  // Decide amounts (balanced seed: BWAEZI + USDC)
+  const bwAmt   = ethers.parseEther("0.05");   // adjust if needed
+  const usdcAmt = ethers.parseUnits("5", 6);   // adjust if needed
 
-  const amount0Desired = token0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : wethAmt;
-  const amount1Desired = token1.toLowerCase() === WETH.toLowerCase()   ? wethAmt : bwAmt;
+  const amount0Desired = token0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : usdcAmt;
+  const amount1Desired = token1.toLowerCase() === USDC.toLowerCase()   ? usdcAmt : bwAmt;
 
   const params = {
     token0,
@@ -136,23 +89,23 @@ async function main() {
   console.log(`Signer: ${signer.address}`);
   console.log(`ETH: ${ethers.formatEther(await provider.getBalance(signer.address))} ETH`);
 
-  // 1) Create/init pool if needed
-  const { pool, token0, token1 } = await ensurePool(provider, signer);
+  // Token ordering
+  const [token0, token1] = BWAEZI.toLowerCase() < USDC.toLowerCase() ? [BWAEZI, USDC] : [USDC, BWAEZI];
 
-  // 2) Build SCW execute for NPM.mint
+  // Build SCW execute for NPM.mint
   const { mintData, tick, spacing, lowerAligned, upperAligned } =
-    await buildMintViaSCW(provider, pool, token0, token1);
+    await buildMintViaSCW(provider, POOL, token0, token1);
 
   console.log(
-    `Mint BWAEZI/WETH via SCW — pool=${pool}, range [${lowerAligned}, ${upperAligned}] (tick: ${tick}, spacing: ${spacing})`
+    `Mint BWAEZI/USDC via SCW — pool=${POOL}, range [${lowerAligned}, ${upperAligned}] (tick: ${tick}, spacing: ${spacing})`
   );
 
-  // 3) Execute from SCW
+  // Execute from SCW
   const scw = new ethers.Contract(SCW, scwAbi, signer);
   const tx = await scw.execute(NPM, 0n, mintData);
   console.log(`SCW execute tx: ${tx.hash}`);
   const rc = await tx.wait();
-  console.log(`✅ BWAEZI/WETH seeded via SCW — block ${rc.blockNumber}`);
+  console.log(`✅ BWAEZI/USDC seeded via SCW — block ${rc.blockNumber}`);
 }
 
 main().catch(err => {
