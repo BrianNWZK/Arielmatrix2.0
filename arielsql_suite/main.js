@@ -20,7 +20,7 @@ const PENDING = {
 
 const TOKENS = {
   USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x998232423d0b260ac397a893b360c8a254fcdd66'
+  BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'
 };
 
 const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
