@@ -1,105 +1,122 @@
-// main.js — Final approval only (BWAEZI → Paymaster)
-import express from 'express';
-import { ethers } from 'ethers';
-import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
+// eoa-create-initialize-mint.js
+import { ethers } from "ethers";
 
-const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER     = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_K4etjrjHvpTx4We2SuLLjt';
-const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
+const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const RPC_URLS = [
-  'https://ethereum-rpc.publicnode.com',
-  'https://rpc.ankr.com/eth',
-  'https://eth.llamarpc.com'
+const FACTORY = "0x1f98431c8ad98523631ae4a59f267346ea31f984";
+const NPM     = "0xC36442b4a4522e871399cd717abdd847ab11fe88"; // NonfungiblePositionManager
+
+const factoryAbi = [
+  "function getPool(address,address,uint24) view returns (address)",
+  "function createPool(address,address,uint24) returns (address)"
+];
+const poolAbi = [ "function initialize(uint160)" ];
+const npmAbi  = [
+  "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)"
 ];
 
-// Only the one pending approval left
-const PENDING = {
-  BWAEZI_PAYMASTER: { token: 'BWAEZI', spender: process.env.PAYMASTER_ADDRESS || '0xNEW_PAYMASTER_ADDRESS' }
-};
+function normalize(a){ return ethers.getAddress(a.toLowerCase()); }
+function sortTokens(a,b){ const na=normalize(a), nb=normalize(b); return na<nb?[na,nb]:[nb,na]; }
 
-const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'
-};
+async function createInitMint(wallet, tokenA, tokenB, feeTier, sqrtPriceX96, amountA, amountB) {
+  const [token0, token1] = sortTokens(tokenA, tokenB);
+  console.log(`Pair: token0=${token0}, token1=${token1}, fee=${feeTier}`);
 
-const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const factory = new ethers.Contract(FACTORY, factoryAbi, wallet);
 
-async function init() {
-  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
-  await mgr.init();
-  const provider = mgr.getProvider();
-
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
+  // Step 1: Get or create pool
+  let pool = await factory.getPool(token0, token1, feeTier);
+  if (pool === ethers.ZeroAddress) {
+    console.log("Pool missing. Creating...");
+    const tx = await factory.createPool(token0, token1, feeTier); // gas auto-estimated
+    const rc = await tx.wait();
+    pool = await factory.getPool(token0, token1, feeTier);
+    if (pool === ethers.ZeroAddress) throw new Error("Pool still zero after create");
+    console.log(`✅ Pool created: ${pool} (tx=${rc.hash})`);
+  } else {
+    console.log(`ℹ️ Pool exists: ${pool}`);
   }
-  const signer = new ethers.Wallet(pk, provider);
 
-  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  aa.paymasterMode = 'NONE';
-  await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
-}
-
-// Fetch AA-aware gas prices from bundler; enforce minimums
-async function getBundlerGas(provider) {
+  // Step 2: Initialize pool
+  const poolCtr = new ethers.Contract(pool, poolAbi, wallet);
   try {
-    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
-    let maxFeePerGas = BigInt(res.maxFeePerGas);
-    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n;
-    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
-    maxFeePerGas = (maxFeePerGas * 12n) / 10n; // uplift
-    return { maxFeePerGas, maxPriorityFeePerGas };
-  } catch {
-    const fd = await provider.getFeeData();
-    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
-    const tip  = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
-    const TIP_FLOOR = 50_000_000n;
-    return {
-      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
-      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
-    };
-  }
-}
-
-async function approvePending(aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
-
-    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
-
-    const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 400000n,
-      verificationGasLimit: 700000n,
-      preVerificationGas: 80000n,
-      maxFeePerGas,
-      maxPriorityFeePerGas
-    });
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 5);
-
-    console.log(`[PENDING] ${token} → ${spender}: ${hash}`);
-  }
-}
-
-(async () => {
-  try {
-    console.log(`[FINAL] Running Paymaster approval on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePending(aa);
-    console.log('✅ Paymaster approval complete — ready for minting next');
+    console.log(`Initializing pool with sqrtPriceX96=${sqrtPriceX96}`);
+    const itx = await poolCtr.initialize(sqrtPriceX96); // gas auto-estimated
+    const irc = await itx.wait();
+    console.log(`✅ Pool initialized. tx=${irc.hash}`);
   } catch (e) {
-    console.error('❌ Failed:', e);
+    if (String(e?.message||"").includes("already initialized")) {
+      console.log("ℹ️ Pool already initialized; skipping.");
+    } else {
+      throw e;
+    }
   }
-})();
 
-// Keep Render happy
-const app = express();
-app.get('/', (req, res) => res.send('Paymaster approval worker running'));
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  // Step 3: Mint liquidity
+  const npm = new ethers.Contract(NPM, npmAbi, wallet);
+
+  const slotIface = new ethers.Interface(["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"]);
+  const poolView  = new ethers.Contract(pool, slotIface.fragments, wallet.provider);
+  const [, tick]  = await poolView.slot0();
+  const width     = 120;
+  const tickLower = tick - width;
+  const tickUpper = tick + width;
+
+  const erc20Abi = ["function approve(address spender,uint256 amount) returns (bool)"];
+  const tokenAContract = new ethers.Contract(tokenA, erc20Abi, wallet);
+  const tokenBContract = new ethers.Contract(tokenB, erc20Abi, wallet);
+  await tokenAContract.approve(NPM, amountA);
+  await tokenBContract.approve(NPM, amountB);
+
+  const params = {
+    token0,
+    token1,
+    fee: feeTier,
+    tickLower,
+    tickUpper,
+    amount0Desired: amountA,
+    amount1Desired: amountB,
+    amount0Min: 0,
+    amount1Min: 0,
+    recipient: wallet.address,
+    deadline: Math.floor(Date.now() / 1000) + 600
+  };
+
+  console.log(`Minting liquidity: amount0=${amountA.toString()} amount1=${amountB.toString()} ticks [${tickLower},${tickUpper}]`);
+  const txMint = await npm.mint(params); // gas auto-estimated
+  const rcMint = await txMint.wait();
+  console.log(`✅ Liquidity minted. tx=${rcMint.hash}`);
+
+  return pool;
+}
+
+async function main() {
+  if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
+
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
+
+  // BWAEZI/USDC
+  const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
+  const USDC   = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+  const sqrtBWUSDC = "0x2b5e3af16b1880000"; // peg: 1 BWAEZI = 100 USDC
+  const bwAmtUSDC  = ethers.parseEther("0.05");
+  const usdcAmt    = ethers.parseUnits("5", 6);
+
+  console.log("=== BWAEZI/USDC ===");
+  await createInitMint(wallet, BWAEZI, USDC, 500, sqrtBWUSDC, bwAmtUSDC, usdcAmt);
+
+  // BWAEZI/WETH
+  const WETH   = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+  const sqrtBWWETH = "0x2f3c8e0a7f0c000000000000"; // peg: 1 BWAEZI = $100, ETH/USD ≈ 3015
+  const bwAmtWETH  = ethers.parseEther("0.05");
+  const wethAmt    = ethers.parseEther("0.0016");
+
+  console.log("=== BWAEZI/WETH ===");
+  await createInitMint(wallet, BWAEZI, WETH, 3000, sqrtBWWETH, bwAmtWETH, wethAmt);
+
+  console.log("🎯 Done: both pools created, initialized, and seeded with liquidity.");
+}
+
+main().catch(e => { console.error("Fatal:", e.message); process.exit(1); });
