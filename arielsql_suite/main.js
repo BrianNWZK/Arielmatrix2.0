@@ -1,122 +1,157 @@
-// eoa-create-initialize-mint.js
+// main.js
+// Asymmetric mint to avoid USDC "STF": seed BWAEZI/USDC with BWAEZI-only, and BWAEZI/WETH with BWAEZI-only.
+// Uses SCW.execute(address,uint256,bytes) by sending a raw transaction to SCW.
+// Assumes BWAEZI/WETH pool already exists and is initialized.
+
 import { ethers } from "ethers";
 
-const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const FACTORY = "0x1f98431c8ad98523631ae4a59f267346ea31f984";
-const NPM     = "0xC36442b4a4522e871399cd717abdd847ab11fe88"; // NonfungiblePositionManager
+const NPM     = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
+const BWAEZI  = ethers.getAddress("0x998232423d0b260ac397a893b360c8a254fcdd66");
+const USDC    = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH    = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const SCW     = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
 
-const factoryAbi = [
-  "function getPool(address,address,uint24) view returns (address)",
-  "function createPool(address,address,uint24) returns (address)"
+// Existing pools
+const POOL_BW_USDC = ethers.getAddress("0x2538aF0f2892cFFAa2473D6ce1D642F935E77045");
+const POOL_BW_WETH = ethers.getAddress("0xa55CDEf550E19C85eA7734762EE762A440Bd2503");
+
+// ABIs
+const scwAbi = [
+  "function execute(address to, uint256 value, bytes data)"
 ];
-const poolAbi = [ "function initialize(uint160)" ];
-const npmAbi  = [
-  "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)"
+const poolAbi = [
+  "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool)"
+];
+const npmAbi = [
+  "function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)"
+];
+const erc20Abi = [
+  "function balanceOf(address) view returns (uint256)"
 ];
 
-function normalize(a){ return ethers.getAddress(a.toLowerCase()); }
-function sortTokens(a,b){ const na=normalize(a), nb=normalize(b); return na<nb?[na,nb]:[nb,na]; }
-
-async function createInitMint(wallet, tokenA, tokenB, feeTier, sqrtPriceX96, amountA, amountB) {
-  const [token0, token1] = sortTokens(tokenA, tokenB);
-  console.log(`Pair: token0=${token0}, token1=${token1}, fee=${feeTier}`);
-
-  const factory = new ethers.Contract(FACTORY, factoryAbi, wallet);
-
-  // Step 1: Get or create pool
-  let pool = await factory.getPool(token0, token1, feeTier);
-  if (pool === ethers.ZeroAddress) {
-    console.log("Pool missing. Creating...");
-    const tx = await factory.createPool(token0, token1, feeTier); // gas auto-estimated
-    const rc = await tx.wait();
-    pool = await factory.getPool(token0, token1, feeTier);
-    if (pool === ethers.ZeroAddress) throw new Error("Pool still zero after create");
-    console.log(`✅ Pool created: ${pool} (tx=${rc.hash})`);
-  } else {
-    console.log(`ℹ️ Pool exists: ${pool}`);
+// Helpers
+function getTickSpacing(feeTier) {
+  switch (feeTier) {
+    case 100: return 1;
+    case 500: return 10;
+    case 3000: return 60;
+    case 10000: return 200;
+    default: throw new Error("Unsupported fee");
   }
+}
 
-  // Step 2: Initialize pool
-  const poolCtr = new ethers.Contract(pool, poolAbi, wallet);
-  try {
-    console.log(`Initializing pool with sqrtPriceX96=${sqrtPriceX96}`);
-    const itx = await poolCtr.initialize(sqrtPriceX96); // gas auto-estimated
-    const irc = await itx.wait();
-    console.log(`✅ Pool initialized. tx=${irc.hash}`);
-  } catch (e) {
-    if (String(e?.message||"").includes("already initialized")) {
-      console.log("ℹ️ Pool already initialized; skipping.");
-    } else {
-      throw e;
-    }
-  }
+async function buildMint(provider, pool, tokenA, tokenB, feeTier, amountA, amountB) {
+  const poolCtr = new ethers.Contract(pool, poolAbi, provider);
+  const slot0 = await poolCtr.slot0();
+  const tick = Number(slot0.tick);
+  const spacing = getTickSpacing(feeTier);
 
-  // Step 3: Mint liquidity
-  const npm = new ethers.Contract(NPM, npmAbi, wallet);
+  const halfWidth = 120;
+  const lowerRaw = tick - halfWidth;
+  const upperRaw = tick + halfWidth;
 
-  const slotIface = new ethers.Interface(["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"]);
-  const poolView  = new ethers.Contract(pool, slotIface.fragments, wallet.provider);
-  const [, tick]  = await poolView.slot0();
-  const width     = 120;
-  const tickLower = tick - width;
-  const tickUpper = tick + width;
+  // Align: lower=floor, upper=ceil (ensure non-zero width)
+  const la = Math.floor(lowerRaw / spacing) * spacing;
+  const uaCeil = Math.ceil(upperRaw / spacing) * spacing;
+  const ua = uaCeil === la ? la + spacing : uaCeil;
 
-  const erc20Abi = ["function approve(address spender,uint256 amount) returns (bool)"];
-  const tokenAContract = new ethers.Contract(tokenA, erc20Abi, wallet);
-  const tokenBContract = new ethers.Contract(tokenB, erc20Abi, wallet);
-  await tokenAContract.approve(NPM, amountA);
-  await tokenBContract.approve(NPM, amountB);
+  // token0/token1 orientation
+  const [token0, token1] =
+    tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
 
-  const params = {
+  // Map amounts to sides (asymmetric allowed: one can be 0n)
+  const amount0Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
+  const amount1Desired = token1.toLowerCase() === tokenB.toLowerCase() ? amountB : amountA;
+
+  const paramsArray = [
     token0,
     token1,
-    fee: feeTier,
-    tickLower,
-    tickUpper,
-    amount0Desired: amountA,
-    amount1Desired: amountB,
-    amount0Min: 0,
-    amount1Min: 0,
-    recipient: wallet.address,
-    deadline: Math.floor(Date.now() / 1000) + 600
-  };
+    feeTier,                    // uint24 (number)
+    BigInt(la),                 // int24
+    BigInt(ua),                 // int24
+    amount0Desired,             // uint256 (BigInt)
+    amount1Desired,             // uint256 (BigInt)
+    0n,
+    0n,
+    SCW,
+    BigInt(Math.floor(Date.now() / 1000) + 1800)
+  ];
 
-  console.log(`Minting liquidity: amount0=${amountA.toString()} amount1=${amountB.toString()} ticks [${tickLower},${tickUpper}]`);
-  const txMint = await npm.mint(params); // gas auto-estimated
-  const rcMint = await txMint.wait();
-  console.log(`✅ Liquidity minted. tx=${rcMint.hash}`);
+  const npmIface = new ethers.Interface(npmAbi);
+  const mintData = npmIface.encodeFunctionData("mint", [paramsArray]);
 
-  return pool;
+  return { mintData, tick, spacing, la, ua, pool, token0, token1, amount0Desired, amount1Desired };
+}
+
+async function executeMintViaSCW(signer, mintData, pool, la, ua, tick, spacing) {
+  console.log(`Mint via SCW — pool=${pool}, range [${la}, ${ua}] (tick: ${tick}, spacing: ${spacing})`);
+
+  // Pre-simulate inner call (from SCW) to catch state issues early
+  try {
+    await signer.provider.call({ to: NPM, from: SCW, data: mintData });
+  } catch (e) {
+    throw new Error(`Pre-sim failed (SCW->NPM): ${e.reason || e.shortMessage || e.message}`);
+  }
+
+  // Encode SCW.execute and send directly
+  const scwIface = new ethers.Interface(scwAbi);
+  const execData = scwIface.encodeFunctionData("execute", [NPM, 0n, mintData]);
+
+  const tx = await signer.sendTransaction({ to: SCW, data: execData, value: 0n });
+  console.log(`SCW tx: ${tx.hash}`);
+  const rc = await tx.wait();
+  console.log(`✅ Minted via SCW at block ${rc.blockNumber}`);
+}
+
+async function assertBWBalance(signer, needed) {
+  const bw = new ethers.Contract(BWAEZI, erc20Abi, signer.provider);
+  const bal = await bw.balanceOf(SCW);
+  if (bal < needed) throw new Error(`Insufficient BWAEZI in SCW: need ${needed.toString()}, have ${bal.toString()}`);
 }
 
 async function main() {
   if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
-
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
+  const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-  // BWAEZI/USDC
-  const BWAEZI = "0x998232423d0b260ac397a893b360c8a254fcdd66";
-  const USDC   = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
-  const sqrtBWUSDC = "0x2b5e3af16b1880000"; // peg: 1 BWAEZI = 100 USDC
-  const bwAmtUSDC  = ethers.parseEther("0.05");
-  const usdcAmt    = ethers.parseUnits("5", 6);
+  console.log(`Signer EOA: ${signer.address}`);
+  console.log(`ETH balance: ${ethers.formatEther(await provider.getBalance(signer.address))} ETH`);
 
-  console.log("=== BWAEZI/USDC ===");
-  await createInitMint(wallet, BWAEZI, USDC, 500, sqrtBWUSDC, bwAmtUSDC, usdcAmt);
+  // 1) BWAEZI/USDC — BWAEZI-only to avoid USDC STF
+  const bwAmtUSDC = ethers.parseEther("0.05");
+  const usdcAmt   = 0n;
 
-  // BWAEZI/WETH
-  const WETH   = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-  const sqrtBWWETH = "0x2f3c8e0a7f0c000000000000"; // peg: 1 BWAEZI = $100, ETH/USD ≈ 3015
-  const bwAmtWETH  = ethers.parseEther("0.05");
-  const wethAmt    = ethers.parseEther("0.0016");
+  await assertBWBalance(signer, bwAmtUSDC);
 
-  console.log("=== BWAEZI/WETH ===");
-  await createInitMint(wallet, BWAEZI, WETH, 3000, sqrtBWWETH, bwAmtWETH, wethAmt);
+  const mUSDC =
+    await buildMint(provider, POOL_BW_USDC, BWAEZI, USDC, 500, bwAmtUSDC, usdcAmt);
 
-  console.log("🎯 Done: both pools created, initialized, and seeded with liquidity.");
+  console.log(`Token order: token0=${mUSDC.token0}, token1=${mUSDC.token1}`);
+  console.log(`Amounts: amount0=${mUSDC.amount0Desired.toString()}, amount1=${mUSDC.amount1Desired.toString()}`);
+
+  await executeMintViaSCW(signer, mUSDC.mintData, mUSDC.pool, mUSDC.la, mUSDC.ua, mUSDC.tick, mUSDC.spacing);
+
+  // 2) BWAEZI/WETH — BWAEZI-only
+  const bwAmtWETH = ethers.parseEther("0.05");
+  const wethAmt   = 0n;
+
+  await assertBWBalance(signer, bwAmtWETH);
+
+  const mWETH =
+    await buildMint(provider, POOL_BW_WETH, BWAEZI, WETH, 3000, bwAmtWETH, wethAmt);
+
+  console.log(`Token order: token0=${mWETH.token0}, token1=${mWETH.token1}`);
+  console.log(`Amounts: amount0=${mWETH.amount0Desired.toString()}, amount1=${mWETH.amount1Desired.toString()}`);
+
+  await executeMintViaSCW(signer, mWETH.mintData, mWETH.pool, mWETH.la, mWETH.ua, mWETH.tick, mWETH.spacing);
+
+  console.log("🎯 BOTH POOLS SEEDED ASYMMETRICALLY FROM SCW — GENESIS READY");
 }
 
-main().catch(e => { console.error("Fatal:", e.message); process.exit(1); });
+main().catch(err => {
+  console.error("Fatal:", err.reason || err.message || err);
+  process.exit(1);
+});
