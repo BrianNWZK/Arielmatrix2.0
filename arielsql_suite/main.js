@@ -107,9 +107,9 @@ async function ensureAllowanceViaAA(aa, provider, token, owner, spender, needed)
 
   const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(provider);
   const userOp = await aa.createUserOp(callData, {
-    callGasLimit:        300000n,
-    verificationGasLimit:700000n,
-    preVerificationGas:   80000n,
+    callGasLimit:         300000n,
+    verificationGasLimit: 700000n,
+    preVerificationGas:    80000n,
     maxFeePerGas,
     maxPriorityFeePerGas
   });
@@ -146,7 +146,18 @@ async function buildMint(provider, pool, tokenA, tokenB, feeTier, amountA, amoun
 
   const mintData = npmIface.encodeFunctionData("mint", [params]);
 
-  return { mintData, tick: Number(tick), spacing, tickLower, tickUpper, pool, token0, token1, amount0Desired, amount1Desired };
+  return {
+    mintData,
+    tick: Number(tick),
+    spacing,
+    tickLower,
+    tickUpper,
+    pool,
+    token0,
+    token1,
+    amount0Desired,
+    amount1Desired
+  };
 }
 
 async function mintViaAA(aa, provider, mintPack) {
@@ -159,4 +170,75 @@ async function mintViaAA(aa, provider, mintPack) {
     throw new Error(`Pre-sim failed (SCW->NPM): ${e?.reason || e?.shortMessage || e?.message}`);
   }
 
-  const callData = scwIface.encodeFunctionData("execute",
+  const callData = scwIface.encodeFunctionData("execute", [NPM, 0n, mintData]);
+
+  const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(provider);
+  const userOp = await aa.createUserOp(callData, {
+    callGasLimit:         600000n,
+    verificationGasLimit: 800000n,
+    preVerificationGas:    90000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas
+  });
+  const signed = await aa.signUserOp(userOp);
+  const hash = await aa.sendUserOpWithBackoff(signed, 5);
+  console.log(`SCW mint submitted: ${hash}`);
+}
+
+// Init AA
+async function initAA() {
+  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
+  await mgr.init();
+  const provider = mgr.getProvider();
+
+  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
+  if (!pk || !pk.startsWith("0x") || pk.length < 66) {
+    throw new Error("SOVEREIGN_PRIVATE_KEY missing/invalid");
+  }
+  const signer = new ethers.Wallet(pk, provider);
+
+  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
+  aa.paymasterMode = "NONE";
+  await aa.initialize(provider, SCW, BUNDLER);
+
+  return { provider, aa };
+}
+
+// Main flow
+(async () => {
+  try {
+    console.log(`[AA MINT] Using SCW ${SCW}`);
+    const { provider, aa } = await initAA();
+
+    // BWAEZI-only amounts
+    const bwAmtUSDC = ethers.parseEther("0.05"); // 0.05 BWAEZI
+    const bwAmtWETH = ethers.parseEther("0.05"); // 0.05 BWAEZI
+
+    // Ensure SCW holds enough BWAEZI to cover both mints
+    await assertBWBalance(provider, bwAmtUSDC + bwAmtWETH);
+
+    // Approvals via AA: NPM and Paymaster
+    await ensureAllowanceViaAA(aa, provider, BWAEZI, SCW, NPM,       ethers.MaxUint256);
+    await ensureAllowanceViaAA(aa, provider, BWAEZI, SCW, PAYMASTER, ethers.MaxUint256);
+
+    // Mint BWAEZI/USDC (fee 500), BWAEZI-only
+    const mUSDC = await buildMint(provider, POOL_BW_USDC, BWAEZI, USDC, 500, bwAmtUSDC, 0n);
+    console.log(`USDC pair token0=${mUSDC.token0}, token1=${mUSDC.token1}, amount0=${mUSDC.amount0Desired.toString()}, amount1=${mUSDC.amount1Desired.toString()}`);
+    await mintViaAA(aa, provider, mUSDC);
+
+    // Mint BWAEZI/WETH (fee 3000), BWAEZI-only
+    const mWETH = await buildMint(provider, POOL_BW_WETH, BWAEZI, WETH, 3000, bwAmtWETH, 0n);
+    console.log(`WETH pair token0=${mWETH.token0}, token1=${mWETH.token1}, amount0=${mWETH.amount0Desired.toString()}, amount1=${mWETH.amount1Desired.toString()}`);
+    await mintViaAA(aa, provider, mWETH);
+
+    console.log("✅ BOTH POOLS SEEDED ASYMMETRICALLY VIA AA — GENESIS READY");
+  } catch (e) {
+    console.error("❌ Failed:", e?.reason || e?.message || e);
+  }
+})();
+
+// Keep Render happy
+const app = express();
+app.get("/", (_, res) => res.send("AA mint worker running"));
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
