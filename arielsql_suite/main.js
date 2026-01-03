@@ -1,5 +1,5 @@
 // main.js — Remaining pending approvals for SCW on new BWAEZI token
-// Removes confirmed approvals and fixes invalid addresses
+// Removes confirmed approvals
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -20,11 +20,9 @@ const TOKENS = {
   BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'
 };
 
-// Remaining pending approvals (confirmed ones removed)
+// Only keep addresses that are still pending.
+// Replace any "..." placeholders with full valid addresses.
 const PENDING = {
-  BWAEZI_AGGROV5:  { token: 'BWAEZI', spender: '0x1111111254fb6c44bac0bed2854e76f90643097d' }, // 1inch Aggregation Router V5
-  BWAEZI_COWSWAP:  { token: 'BWAEZI', spender: '0x9008D19f58AAbD9eD0D60971565AA8510560ab41' }, // CoW Protocol settlement
-  BWAEZI_EXTRA1:   { token: 'BWAEZI', spender: '0x60ECf16cBE291cc47...' }, // replace with actual address
   BWAEZI_EXTRA2:   { token: 'BWAEZI', spender: '0x9181ca603cee93c79ec3e4f5e62e5babe60bf28b' },
   BWAEZI_EXTRA3:   { token: 'BWAEZI', spender: '0x12f3c40759d89b3fe6753588a06f641e941fe028' },
   BWAEZI_EXTRA4:   { token: 'BWAEZI', spender: '0x675ea9ccf99a956ab65cbd6181e18e399dbc1161' },
