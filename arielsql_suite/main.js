@@ -1,12 +1,11 @@
-// main.js — Bulk approvals for SCW on new BWAEZI token
-// Uses the same Paymaster AA pattern that was successful
+// main.js — Remaining pending approvals for SCW on new BWAEZI token
+// Removes confirmed approvals and fixes invalid addresses
 
 import express from 'express';
 import { ethers } from 'ethers';
 import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
 
 const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-// Bundler URL with your Pimlico key hardcoded
 const BUNDLER     = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb';
 const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
 
@@ -16,21 +15,16 @@ const RPC_URLS = [
   'https://eth.llamarpc.com'
 ];
 
-// Tokens
 const TOKENS = {
   USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2' // new BWAEZI
+  BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'
 };
 
-// All pending approvals for BWAEZI (12 spenders)
+// Remaining pending approvals (confirmed ones removed)
 const PENDING = {
-  BWAEZI_NPM:      { token: 'BWAEZI', spender: '0xc36442b4a4522e871399cd717abdd847ab11fe88' }, // Uniswap V3 Positions NFT
-  BWAEZI_ROUTERV3: { token: 'BWAEZI', spender: '0xE592427A0AEce92De3Edee1F18E0157C05861564' }, // Uniswap V3 Router
-  BWAEZI_ROUTERV2: { token: 'BWAEZI', spender: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D' }, // Uniswap V2 Router
-  BWAEZI_SUSHI:    { token: 'BWAEZI', spender: '0xd9e1d7ce0e8ec1e9d3a799bfa00793f26aa53f3f' }, // SushiSwap Router
-  BWAEZI_AGGROV5:  { token: 'BWAEZI', spender: '0xDEF1C0dE00000000000000000000000000000000' }, // Aggregation Router V5
-  BWAEZI_DEFI:     { token: 'BWAEZI', spender: '0xDEf1C0dE00000000000000000000000000000000' }, // Another DeFi Router
-  BWAEZI_EXTRA1:   { token: 'BWAEZI', spender: '0x60ECf16cBE291cc47...' }, // from your list
+  BWAEZI_AGGROV5:  { token: 'BWAEZI', spender: '0x1111111254fb6c44bac0bed2854e76f90643097d' }, // 1inch Aggregation Router V5
+  BWAEZI_COWSWAP:  { token: 'BWAEZI', spender: '0x9008D19f58AAbD9eD0D60971565AA8510560ab41' }, // CoW Protocol settlement
+  BWAEZI_EXTRA1:   { token: 'BWAEZI', spender: '0x60ECf16cBE291cc47...' }, // replace with actual address
   BWAEZI_EXTRA2:   { token: 'BWAEZI', spender: '0x9181ca603cee93c79ec3e4f5e62e5babe60bf28b' },
   BWAEZI_EXTRA3:   { token: 'BWAEZI', spender: '0x12f3c40759d89b3fe6753588a06f641e941fe028' },
   BWAEZI_EXTRA4:   { token: 'BWAEZI', spender: '0x675ea9ccf99a956ab65cbd6181e18e399dbc1161' },
@@ -103,10 +97,10 @@ async function approvePending(aa) {
 
 (async () => {
   try {
-    console.log(`[FINAL] Running bulk approvals on SCW ${SCW}`);
+    console.log(`[FINAL] Running remaining approvals on SCW ${SCW}`);
     const { aa } = await init();
     await approvePending(aa);
-    console.log('✅ All BWAEZI approvals complete — SCW ready for minting/liquidity');
+    console.log('✅ Remaining BWAEZI approvals complete — SCW ready for minting/liquidity');
   } catch (e) {
     console.error('❌ Failed:', e);
   }
@@ -114,6 +108,6 @@ async function approvePending(aa) {
 
 // Keep Render happy
 const app = express();
-app.get('/', (req, res) => res.send('Bulk approval worker running'));
+app.get('/', (req, res) => res.send('Approval worker running'));
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
