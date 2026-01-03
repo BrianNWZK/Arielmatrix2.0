@@ -1,5 +1,5 @@
 // main.js — Single-sided out-of-range mint & seed (BWAEZI-only above price)
-// Direct EOA → SCW.execute — works with approvals
+// Direct EOA → SCW.execute — same as pool creation (direct signer)
 
 import { ethers } from "ethers";
 
@@ -27,21 +27,18 @@ async function getCurrentTick(provider, poolAddr) {
   return Number(tick);
 }
 
-async function buildSingleSidedMintData(provider, poolAddr, tokenA, tokenB, amountA) {
+async function buildMintData(provider, poolAddr, tokenA, tokenB, amountA) {
   const currentTick = await getCurrentTick(provider, poolAddr);
-  const spacing = poolAddr === POOL_BW_USDC ? 10 : 60;
+  const feeTier = poolAddr === POOL_BW_USDC ? 500 : 3000;
+  const spacing = feeTier === 500 ? 10 : 60;
 
-  // Out-of-range above current price (BWAEZI-only sell wall)
-  const tickLower = currentTick + Math.ceil(10000 / spacing) * spacing; // far above
-  const tickUpper = tickLower + (100 * spacing); // wide range
+  // Out-of-range above current tick (BWAEZI-only sell wall)
+  const tickLower = currentTick + spacing * 10; // 10 spacings above
+  const tickUpper = tickLower + spacing * 100; // wide range
 
   const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
   const amount0Desired = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : 0n;
   const amount1Desired = token0.toLowerCase() === tokenA.toLowerCase() ? 0n : amountA;
-
-  const feeTier = poolAddr === POOL_BW_USDC ? 500 : 3000;
-
-  console.log(`Pool ${poolAddr}: currentTick=${currentTick} lower=${tickLower} upper=${tickUpper}`);
 
   const params = [
     token0, token1, feeTier,
@@ -68,8 +65,11 @@ async function mintViaSCW(wallet, mintData, poolAddr) {
 
   console.log(`Mint tx for ${poolAddr}: ${tx.hash}`);
   const rc = await tx.wait();
-  if (rc.status === 1) console.log("✅ Mint succeeded");
-  else console.log("❌ Mint reverted");
+  if (rc.status === 1) {
+    console.log("✅ Mint succeeded");
+  } else {
+    console.log("❌ Mint reverted");
+  }
 }
 
 async function main() {
@@ -81,17 +81,17 @@ async function main() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`ETH: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH\n`);
 
-  const seedAmount = ethers.parseEther("1"); // Use more for depth (e.g., 1 BWAEZI per pool)
+  const seedAmount = ethers.parseEther("0.05");
 
-  // 1. BWAEZI/USDC — single-sided above price
-  const usdcMintData = await buildSingleSidedMintData(provider, POOL_BW_USDC, BWAEZI, USDC, seedAmount);
+  // 1. BWAEZI/USDC
+  const usdcMintData = await buildMintData(provider, POOL_BW_USDC, BWAEZI, USDC, seedAmount);
   await mintViaSCW(wallet, usdcMintData, POOL_BW_USDC);
 
-  // 2. BWAEZI/WETH — single-sided above price
-  const wethMintData = await buildSingleSidedMintData(provider, POOL_BW_WETH, BWAEZI, WETH, seedAmount);
+  // 2. BWAEZI/WETH
+  const wethMintData = await buildMintData(provider, POOL_BW_WETH, BWAEZI, WETH, seedAmount);
   await mintViaSCW(wallet, wethMintData, POOL_BW_WETH);
 
-  console.log("🎯 POOLS SEEDED SINGLE-SIDED (OUT-OF-RANGE) — GENESIS READY");
+  console.log("🎯 BOTH POOLS SEEDED — GENESIS COMPLETE");
 }
 
 main().catch(e => console.error("Fatal:", e.message || e));
