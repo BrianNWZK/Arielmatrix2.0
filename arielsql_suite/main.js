@@ -1,111 +1,147 @@
-// main.js — Remaining pending approvals for SCW on new BWAEZI token
-// Removes confirmed approvals
+// main.js — Asymmetric mint & seed only
+// Direct EOA → SCW.execute — correct ABI for SimpleAccount
 
-import express from 'express';
-import { ethers } from 'ethers';
-import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
+import { ethers } from "ethers";
 
-const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER     = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb';
-const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
+const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const RPC_URLS = [
-  'https://ethereum-rpc.publicnode.com',
-  'https://rpc.ankr.com/eth',
-  'https://eth.llamarpc.com'
+const NPM  = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
+const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
+const USDC   = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH   = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const SCW    = ethers.getAddress("0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
+
+// Pools
+const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562");
+const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa");
+
+// ABIs
+const scwAbi  = ["function execute(address dest, uint256 value, bytes calldata data) external"];
+const poolAbi = ["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"];
+const npmAbi  = ["function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256,uint128,uint256,uint256)"];
+const erc20Abi = [
+  "function balanceOf(address) view returns (uint256)",
+  "function allowance(address,address) view returns (uint256)"
 ];
 
-const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'
-};
-
-// Only keep addresses that are still pending.
-// Replace any "..." placeholders with full valid addresses.
-const PENDING = {
-  BWAEZI_EXTRA2:   { token: 'BWAEZI', spender: '0x9181ca603cee93c79ec3e4f5e62e5babe60bf28b' },
-  BWAEZI_EXTRA3:   { token: 'BWAEZI', spender: '0x12f3c40759d89b3fe6753588a06f641e941fe028' },
-  BWAEZI_EXTRA4:   { token: 'BWAEZI', spender: '0x675ea9ccf99a956ab65cbd6181e18e399dbc1161' },
-  BWAEZI_EXTRA5:   { token: 'BWAEZI', spender: '0xbe2b8ae078fded245cc9f8be32499a48a6d77f1a' },
-  BWAEZI_EXTRA6:   { token: 'BWAEZI', spender: '0xe4980a4ea5803f882b524b1beedd112f2afc0dae' }
-};
-
-const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
-
-async function init() {
-  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
-  await mgr.init();
-  const provider = mgr.getProvider();
-
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
-  }
-  const signer = new ethers.Wallet(pk, provider);
-
-  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  aa.paymasterMode = 'NONE';
-  await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
+function getTickSpacingForPool(poolAddr) {
+  // 500 → spacing 10; 3000 → spacing 60
+  return poolAddr === POOL_BW_USDC ? 10 : 60;
+}
+function getFeeTierForPool(poolAddr) {
+  return poolAddr === POOL_BW_USDC ? 500 : 3000;
 }
 
-async function getBundlerGas(provider) {
-  try {
-    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
-    let maxFeePerGas = BigInt(res.maxFeePerGas);
-    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n;
-    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
-    maxFeePerGas = (maxFeePerGas * 12n) / 10n;
-    return { maxFeePerGas, maxPriorityFeePerGas };
-  } catch {
-    const fd = await provider.getFeeData();
-    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
-    const tip  = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
-    const TIP_FLOOR = 50_000_000n;
-    return {
-      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
-      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
-    };
-  }
+async function getTickAndSpacing(provider, poolAddr) {
+  const pool = new ethers.Contract(poolAddr, poolAbi, provider);
+  const slot0 = await pool.slot0();
+  const [, tick] = slot0; // array destructure: [sqrtPriceX96, tick, ...]
+  const spacing = getTickSpacingForPool(poolAddr);
+  return { tick: Number(tick), spacing };
 }
 
-async function approvePending(aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
+async function buildMintData(provider, poolAddr, tokenA, tokenB, amountA, amountB) {
+  const { tick, spacing } = await getTickAndSpacing(provider, poolAddr);
 
-    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
+  const width = 120;
+  const lowerAligned = Math.floor((tick - width) / spacing) * spacing;
+  let upperAligned   = Math.ceil((tick + width) / spacing) * spacing;
+  if (upperAligned <= lowerAligned) upperAligned = lowerAligned + spacing;
 
-    const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 400000n,
-      verificationGasLimit: 700000n,
-      preVerificationGas: 80000n,
-      maxFeePerGas,
-      maxPriorityFeePerGas
-    });
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 5);
+  const [token0, token1] =
+    tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
 
-    console.log(`[APPROVAL] ${token} → ${spender}: ${hash}`);
+  const amount0 = token0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
+  const amount1 = token0.toLowerCase() === tokenA.toLowerCase() ? amountB : amountA;
+
+  const feeTier = getFeeTierForPool(poolAddr);
+
+  console.log(`Ticks: current=${tick} lower=${lowerAligned} upper=${upperAligned} spacing=${spacing}`);
+  console.log(`Amounts: amount0=${amount0.toString()} amount1=${amount1.toString()} fee=${feeTier}`);
+
+  const params = [
+    token0,
+    token1,
+    feeTier,
+    lowerAligned,
+    upperAligned,
+    amount0,
+    amount1,
+    0n,
+    0n,
+    SCW,
+    Math.floor(Date.now() / 1000) + 1800
+  ];
+
+  const npmIface = new ethers.Interface(npmAbi);
+  return npmIface.encodeFunctionData("mint", [params]);
+}
+
+async function mintViaSCW(wallet, mintData, poolAddr) {
+  const scwIface = new ethers.Interface(scwAbi);
+  const execData = scwIface.encodeFunctionData("execute", [NPM, 0n, mintData]);
+
+  console.log(`Calldata length: ${execData.length}`);
+
+  const tx = await wallet.sendTransaction({
+    to: SCW,
+    data: execData,
+    gasLimit: 600000
+  });
+
+  console.log(`Mint tx for ${poolAddr}: ${tx.hash}`);
+  const rc = await tx.wait();
+  if (rc.status === 1) {
+    console.log("✅ Mint succeeded");
+  } else {
+    console.log("❌ Mint reverted");
   }
 }
 
-(async () => {
-  try {
-    console.log(`[FINAL] Running remaining approvals on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePending(aa);
-    console.log('✅ Remaining BWAEZI approvals complete — SCW ready for minting/liquidity');
-  } catch (e) {
-    console.error('❌ Failed:', e);
-  }
-})();
+async function assertSCWReady(provider) {
+  const bw = new ethers.Contract(BWAEZI, erc20Abi, provider);
+  const bal = await bw.balanceOf(SCW);
+  const allow = await bw.allowance(SCW, NPM);
+  console.log(`SCW BWAEZI balance=${bal.toString()} allowance to NPM=${allow.toString()}`);
+  if (bal === 0n) throw new Error("SCW BWAEZI balance is zero");
+  if (allow === 0n) throw new Error("SCW allowance to NPM is zero");
+}
 
-// Keep Render happy
-const app = express();
-app.get('/', (req, res) => res.send('Approval worker running'));
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+async function main() {
+  if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
+
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
+
+  console.log(`EOA: ${wallet.address}`);
+  console.log(`ETH: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH\n`);
+
+  await assertSCWReady(provider);
+
+  // 1) BWAEZI/USDC — BWAEZI only
+  const usdcMintData = await buildMintData(
+    provider,
+    POOL_BW_USDC,
+    BWAEZI,
+    USDC,
+    ethers.parseEther("0.05"),
+    0n
+  );
+  await mintViaSCW(wallet, usdcMintData, POOL_BW_USDC);
+
+  // 2) BWAEZI/WETH — BWAEZI only
+  const wethMintData = await buildMintData(
+    provider,
+    POOL_BW_WETH,
+    BWAEZI,
+    WETH,
+    ethers.parseEther("0.05"),
+    0n
+  );
+  await mintViaSCW(wallet, wethMintData, POOL_BW_WETH);
+
+  console.log("🎯 BOTH POOLS SEEDED — GENESIS COMPLETE");
+}
+
+main().catch(e => console.error("Fatal:", e.message || e));
