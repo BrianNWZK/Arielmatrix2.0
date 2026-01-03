@@ -6,7 +6,8 @@ import { ethers } from 'ethers';
 import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
 
 const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER     = 'https://api.pimlico.io/v2/1/rpc?apikey=' + process.env.PIMLICO_KEY;
+// Bundler URL with your Pimlico key hardcoded
+const BUNDLER     = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb';
 const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
 
 const RPC_URLS = [
