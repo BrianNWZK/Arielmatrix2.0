@@ -1,24 +1,25 @@
-// main.js — Asymmetric mint & seed only
+// main.js — Asymmetric mint & seed only (BWAEZI/USDC + BWAEZI/WETH)
 // Direct EOA → SCW.execute — correct ABI for SimpleAccount
+// Safe slot0 destructuring, tick alignment, and pool/init/allowance checks
 
 import { ethers } from "ethers";
 
-const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const NPM  = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
+const NPM    = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
 const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
 const USDC   = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 const WETH   = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const SCW    = ethers.getAddress("0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
 
 // Pools
-const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562");
-const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa");
+const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // fee 500
+const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // fee 3000
 
 // ABIs
 const scwAbi  = ["function execute(address dest, uint256 value, bytes calldata data) external"];
-const poolAbi = ["function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)"];
+const poolAbi = ["function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint8,bool)"];
 const npmAbi  = ["function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256,uint128,uint256,uint256)"];
 const erc20Abi = [
   "function balanceOf(address) view returns (uint256)",
@@ -36,7 +37,10 @@ function getFeeTierForPool(poolAddr) {
 async function getTickAndSpacing(provider, poolAddr) {
   const pool = new ethers.Contract(poolAddr, poolAbi, provider);
   const slot0 = await pool.slot0();
-  const [, tick] = slot0; // array destructure: [sqrtPriceX96, tick, ...]
+  const [sqrtPriceX96, tick] = slot0; // array destructuring
+  if (sqrtPriceX96 === 0n) {
+    throw new Error(`Pool ${poolAddr} not initialized (sqrtPriceX96=0)`);
+  }
   const spacing = getTickSpacingForPool(poolAddr);
   return { tick: Number(tick), spacing };
 }
@@ -45,9 +49,12 @@ async function buildMintData(provider, poolAddr, tokenA, tokenB, amountA, amount
   const { tick, spacing } = await getTickAndSpacing(provider, poolAddr);
 
   const width = 120;
-  const lowerAligned = Math.floor((tick - width) / spacing) * spacing;
-  let upperAligned   = Math.ceil((tick + width) / spacing) * spacing;
-  if (upperAligned <= lowerAligned) upperAligned = lowerAligned + spacing;
+  const lowerRaw = tick - width;
+  const upperRaw = tick + width;
+
+  const tickLower = Math.floor(lowerRaw / spacing) * spacing;
+  let tickUpper   = Math.ceil(upperRaw / spacing) * spacing;
+  if (tickUpper <= tickLower) tickUpper = tickLower + spacing;
 
   const [token0, token1] =
     tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
@@ -57,21 +64,21 @@ async function buildMintData(provider, poolAddr, tokenA, tokenB, amountA, amount
 
   const feeTier = getFeeTierForPool(poolAddr);
 
-  console.log(`Ticks: current=${tick} lower=${lowerAligned} upper=${upperAligned} spacing=${spacing}`);
+  console.log(`Ticks: current=${tick} lower=${tickLower} upper=${tickUpper} spacing=${spacing}`);
   console.log(`Amounts: amount0=${amount0.toString()} amount1=${amount1.toString()} fee=${feeTier}`);
 
   const params = [
     token0,
     token1,
     feeTier,
-    lowerAligned,
-    upperAligned,
+    tickLower,
+    tickUpper,
     amount0,
     amount1,
-    0n,
-    0n,
-    SCW,
-    Math.floor(Date.now() / 1000) + 1800
+    0n, // amount0Min
+    0n, // amount1Min
+    SCW, // recipient (SCW owns the position NFT)
+    Math.floor(Date.now() / 1000) + 1800 // 30 min deadline
   ];
 
   const npmIface = new ethers.Interface(npmAbi);
