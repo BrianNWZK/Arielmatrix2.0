@@ -66,13 +66,13 @@ const ENHANCED_CONFIG = {
     return addrStrict(v);
   })(),
 
-  BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x9bE921e5eFacd53bc4EEbCfdc4494D257cFab5da'),
+  BWAEZI_ADDRESS: addrStrict(process.env.BWAEZI_ADDRESS || '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'),
   USDC_ADDRESS: addrStrict(process.env.USDC_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
   WETH_ADDRESS: addrStrict(process.env.WETH_ADDRESS || '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
 
   PAYMASTER: {
     MODE: (process.env.PAYMASTER_MODE || 'ONCHAIN').toUpperCase(), // NONE | API | ONCHAIN | PASSTHROUGH
-    ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || '0x60ECf16c79fa205DDE0c3cEC66BfE35BE291cc47'),
+    ADDRESS: addrStrict(process.env.PAYMASTER_ADDRESS || '0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9'),
     API_URL: process.env.PAYMASTER_API_URL || '',
     SIGNER_KEY: process.env.PAYMASTER_SIGNER_KEY || ''
   },
