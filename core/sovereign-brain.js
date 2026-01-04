@@ -1,5 +1,5 @@
 /**
- * core/sovereign-brain-v15.13.js
+ * core/sovereign-brain-v15.14.js
  *
  * SOVEREIGN FINALITY ENGINE v15.13 — Adaptive Living Systems
  * Unified v13.9 + v14.0 + v14.1 + v15.10 + v15.11 + v15.12 capabilities with unstoppable genesis bootstrap
