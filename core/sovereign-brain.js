@@ -79,9 +79,9 @@ function nowTs(){ return Date.now(); }
    ========================================================================= */
 
 const LIVE = {
-  VERSION: 'v15.13',
+  VERSION: 'v15.14',
 
-   NETWORK: AA_CONFIG.NETWORK,
+  NETWORK: AA_CONFIG.NETWORK,
 
   // EntryPoint v0.7.0 (newer version — optional for advanced features)
   ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
@@ -704,11 +704,15 @@ class DexAdapterRegistry {
   }
 
   async getBestRoute(tokenIn, tokenOut, amountIn){
-    const bestQuote = await this.getBestQuote(tokenIn, tokenOut, amountIn);
-    if (!bestQuote?.best) return { best:null, routes:[], lastErrors: this.getLastErrors() };
-    const score = await this.health.scoreAdapter(bestQuote.best.dex, tokenIn, tokenOut);
-    return { best: { ...bestQuote.best, adapter: bestQuote.best.dex, health: score.health }, routes: bestQuote.all, lastErrors: this.getLastErrors() };
-  }
+  const bestQuote = await this.getBestQuote(tokenIn, tokenOut, amountIn);
+  if (!bestQuote?.best) return { best:null, routes:[], lastErrors: this.getLastErrors() };
+  const score = await this.health.scoreAdapter(bestQuote.best.dex, tokenIn, tokenOut);
+  return {
+    best: { ...bestQuote.best, adapter: bestQuote.best.dex, health: score.health },
+    routes: bestQuote.all,
+    lastErrors: this.getLastErrors()
+  };
+}
 
   async buildSplitExec(tokenIn, tokenOut, amountIn, recipient){
     const routes = await this.getBestQuote(tokenIn, tokenOut, amountIn);
@@ -834,7 +838,6 @@ function pegSizedAmounts(usdcFloat, pegUSD = LIVE.PEG.TARGET_USD) {
   return { usdcAmt, bwAmt };
 }
 
-function nowTs() { return Date.now(); }
 
 
 /* === Gas safeguards (lean AA sender) ==================================== */
@@ -916,56 +919,37 @@ async function _aaPreflightProbe(core) {
 
 /* === Market data and path evaluation =================================== */
 
-async function _getBalances(core) {
-  const usdcC = new ethers.Contract(LIVE.TOKENS.USDC, ['function balanceOf(address) view returns (uint256)'], core.provider);
-  const bwzCC = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], core.provider);
-  const wethC = new ethers.Contract(LIVE.TOKENS.WETH, ['function balanceOf(address) view returns (uint256)'], core.provider);
-  let usdc = 0n, bwz = 0n, weth = 0n;
-  try { usdc = await usdcC.balanceOf(LIVE.SCW_ADDRESS); } catch {}
-  try { bwz  = await bwzCC.balanceOf(LIVE.SCW_ADDRESS); } catch {}
-  try { weth = await wethC.balanceOf(LIVE.SCW_ADDRESS); } catch {}
-  return { usdc, bwz, weth };
-}
-
-async function _getPoolTick(core, poolAddr) {
-  const slotIface = new ethers.Interface(['function slot0() view returns (uint160,int24,uint16,uint16,uint16,uint8,bool)']);
-  const pool = new ethers.Contract(poolAddr, slotIface.fragments, core.provider);
-  try {
-    const [, tick] = await pool.slot0();
-    return Number(tick);
-  } catch {
-    return null;
-  }
-}
-
-function _pegDeviationUSD(midPriceUSD) {
-  const peg = Number(LIVE.PEG.TARGET_USD || 1);
-  if (!Number.isFinite(midPriceUSD) || peg <= 0) return 0;
-  return (midPriceUSD - peg) / peg; // positive: above peg; negative: below peg
-}
-
 async function _quotePath(core, tokenIn, tokenOut, amountIn, opts = {}) {
   const adapter = core.dex.getAdapter('UNISWAP_V3');
+
   // Try direct first
   let best = null;
   try {
-    const direct = await adapter.quote(tokenIn, tokenOut, amountIn, {
-      feeHint: (tokenIn === LIVE.TOKENS.USDC && tokenOut === LIVE.TOKENS.BWAEZI) ? FEE_USDC
-             : (tokenIn === LIVE.TOKENS.WETH && tokenOut === LIVE.TOKENS.BWAEZI) ? FEE_WETH
-             : undefined
-    });
+    const direct = await adapter.getQuote(tokenIn, tokenOut, amountIn);
     if (direct?.amountOut && direct.amountOut > 0n) {
-      best = { path: [tokenIn, tokenOut], router: direct.router, calldata: direct.calldata, amountOut: direct.amountOut, hops: 1 };
+      const built = await adapter.buildSwapCalldata({
+        tokenIn,
+        tokenOut,
+        amountIn,
+        amountOutMin: 0n,
+        recipient: LIVE.SCW_ADDRESS,
+        fee: (tokenIn === LIVE.TOKENS.USDC && tokenOut === LIVE.TOKENS.BWAEZI) ? FEE_USDC
+            : (tokenIn === LIVE.TOKENS.WETH && tokenOut === LIVE.TOKENS.BWAEZI) ? FEE_WETH
+            : LIVE.PEG.FEE_TIER_DEFAULT
+      });
+      best = { path: [tokenIn, tokenOut], router: built.router, calldata: built.calldata, amountOut: direct.amountOut, hops: 1 };
     }
   } catch {}
+
   // Multihop via WETH or USDC
   const intermediates = [LIVE.TOKENS.WETH, LIVE.TOKENS.USDC].filter(x => x !== tokenIn && x !== tokenOut);
   for (const mid of intermediates) {
     try {
-      const hop1 = await adapter.quote(tokenIn, mid, amountIn);
+      const hop1 = await adapter.getQuote(tokenIn, mid, amountIn);
       if (!hop1?.amountOut || hop1.amountOut <= 0n) continue;
-      const hop2 = await adapter.quote(mid, tokenOut, hop1.amountOut);
+      const hop2 = await adapter.getQuote(mid, tokenOut, hop1.amountOut);
       if (!hop2?.amountOut || hop2.amountOut <= 0n) continue;
+
       const mh = await adapter._v3PathCalldata(tokenIn, tokenOut, amountIn, LIVE.SCW_ADDRESS);
       if (mh?.router && mh?.calldata) {
         const candidate = { path: [tokenIn, mid, tokenOut], router: mh.router, calldata: mh.calldata, amountOut: hop2.amountOut, hops: 2 };
@@ -973,7 +957,9 @@ async function _quotePath(core, tokenIn, tokenOut, amountIn, opts = {}) {
       }
     } catch {}
   }
+
   if (!best) return null;
+
   // Slippage guard
   const slipBps = Number(opts.maxSlippageBps ?? 150); // 1.5%
   const minOut = (best.amountOut * BigInt(10_000 - slipBps)) / 10_000n;
@@ -2126,35 +2112,71 @@ class MEVRecaptureEngine {
   }
 }
 
+
 /* =========================================================================
    Adaptive Range Maker (patched: SCW mints via userOps) — tuple array encoding
+   Note: Approval calls removed; unlimited approvals confirmed and redundant.
    ========================================================================= */
 
 class AdaptiveRangeMaker {
   constructor(provider, signer, dexRegistry, entropy, core){
-    this.provider=provider; this.signer=signer; this.dexRegistry=dexRegistry; this.entropy=entropy; this.core=core;
+    this.provider = provider;
+    this.signer = signer;
+    this.dexRegistry = dexRegistry;
+    this.entropy = entropy;
+    this.core = core;
+
     this.npm = LIVE.DEXES.UNISWAP_V3.positionManager;
+
     // Uniswap V3 NPM mint signature (ethers v6): positional tuple encoding required
     this.npmIface = new ethers.Interface([
       'function mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256)) returns (uint256,uint128,uint256,uint256)'
     ]);
+
     this.scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-    this.running=new Map(); this.lastAdjust=0;
+    this.running = new Map();
+    this.lastAdjust = 0;
   }
 
-  async startStreamingMint({ token0, token1, tickLower, tickUpper, total0, total1, steps=LIVE.MAKER.MAX_STREAM_STEPS, label='maker_stream' }){
-    const id=`stream_${nowTs()}_${randomUUID().slice(0,8)}`;
-    const c0 = total0>0n ? total0/BigInt(steps) : 0n;
-    const c1 = total1>0n ? total1/BigInt(steps) : 0n;
-    this.running.set(id,{ token0, token1, tickLower, tickUpper, chunk0:c0, chunk1:c1, steps, done:0, label, positions:[] });
+  async startStreamingMint({
+    token0,
+    token1,
+    tickLower,
+    tickUpper,
+    total0,
+    total1,
+    steps = LIVE.MAKER.MAX_STREAM_STEPS,
+    label = 'maker_stream'
+  }){
+    const id = `stream_${nowTs()}_${randomUUID().slice(0,8)}`;
+
+    const c0 = total0 > 0n ? total0 / BigInt(steps) : 0n;
+    const c1 = total1 > 0n ? total1 / BigInt(steps) : 0n;
+
+    this.running.set(id, {
+      token0,
+      token1,
+      tickLower,
+      tickUpper,
+      chunk0: c0,
+      chunk1: c1,
+      steps,
+      done: 0,
+      label,
+      positions: []
+    });
 
     (async()=>{
       while(true){
-        const st=this.running.get(id); if(!st) break;
-        if(st.done>=st.steps){ this.running.delete(id); break; }
+        const st = this.running.get(id);
+        if(!st) break;
+        if(st.done >= st.steps){
+          this.running.delete(id);
+          break;
+        }
 
-        const coh=Math.max(0.2, (this.entropy.lastEntropy?.coherence ?? 0.6));
-        const delayMs=Math.floor(8000*(1.2-coh));
+        const coh = Math.max(0.2, (this.entropy.lastEntropy?.coherence ?? 0.6));
+        const delayMs = Math.floor(8000 * (1.2 - coh));
 
         try{
           // Ethers v6 requires positional array for tuple components
@@ -2169,7 +2191,7 @@ class AdaptiveRangeMaker {
             0,                              // uint256 amount0Min
             0,                              // uint256 amount1Min
             LIVE.SCW_ADDRESS,               // address recipient
-            Math.floor(nowTs()/1000)+1200   // uint256 deadline
+            Math.floor(nowTs()/1000) + 1200 // uint256 deadline
           ];
 
           const mintData = this.npmIface.encodeFunctionData('mint', [paramsArray]);
@@ -2188,26 +2210,26 @@ class AdaptiveRangeMaker {
 
         st.done++;
         this.running.set(id, st);
-        await new Promise(r=>setTimeout(r, delayMs));
+        await new Promise(r => setTimeout(r, delayMs));
       }
     })();
 
-    return { streamId:id };
+    return { streamId: id };
   }
 
   async periodicAdjustRange(bwaeziAddr){
-    const now=nowTs();
-    if(now-this.lastAdjust<LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS) return null;
-    this.lastAdjust=now;
+    const now = nowTs();
+    if(now - this.lastAdjust < LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS) return null;
+    this.lastAdjust = now;
 
-    const factory=new ethers.Contract(
+    const factory = new ethers.Contract(
       LIVE.DEXES.UNISWAP_V3.factory,
       ['function getPool(address,address,uint24) view returns (address)'],
       this.provider
     );
 
-    const pool=await factory.getPool(bwaeziAddr, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
-    if(!pool || pool===ethers.ZeroAddress) return { adjusted:false, reason:'no_pool' };
+    const pool = await factory.getPool(bwaeziAddr, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
+    if(!pool || pool === ethers.ZeroAddress) return { adjusted:false, reason:'no_pool' };
 
     const slot0 = await (new ethers.Contract(
       pool,
@@ -2215,30 +2237,37 @@ class AdaptiveRangeMaker {
       this.provider
     )).slot0();
 
-    const tick=Number(slot0[1]);
-    const coh=Math.max(0.2, this.entropy.lastEntropy?.coherence ?? 0.6);
-    const width=Math.floor(600*(coh<LIVE.MAKER.ENTROPY_COHERENCE_MIN?1.5:0.8));
-    const tl=tick-width, tu=tick+width;
+    const tick = Number(slot0[1]);
+    const coh = Math.max(0.2, this.entropy.lastEntropy?.coherence ?? 0.6);
+    const width = Math.floor(600 * (coh < LIVE.MAKER.ENTROPY_COHERENCE_MIN ? 1.5 : 0.8));
+    const tl = tick - width, tu = tick + width;
 
-    const total0=LIVE.MAKER.STREAM_CHUNK_BWAEZI*4n;
-    const total1=LIVE.MAKER.STREAM_CHUNK_USDC*4n;
+    const total0 = LIVE.MAKER.STREAM_CHUNK_BWAEZI * 4n;
+    const total1 = LIVE.MAKER.STREAM_CHUNK_USDC * 4n;
 
-    const stream=await this.startStreamingMint({
-      token0:LIVE.TOKENS.BWAEZI,
-      token1:LIVE.TOKENS.USDC,
-      tickLower:tl,
-      tickUpper:tu,
+    const stream = await this.startStreamingMint({
+      token0: LIVE.TOKENS.BWAEZI,
+      token1: LIVE.TOKENS.USDC,
+      tickLower: tl,
+      tickUpper: tu,
       total0,
       total1,
-      steps:4,
-      label:'periodic_adjust'
+      steps: 4,
+      label: 'periodic_adjust'
     });
 
-    return { adjusted:true, tick, tickLower:tl, tickUpper:tu, coherence:coh, streamId:stream.streamId };
+    return {
+      adjusted: true,
+      tick,
+      tickLower: tl,
+      tickUpper: tu,
+      coherence: coh,
+      streamId: stream.streamId
+    };
   }
 
   listStreams(){
-    return Array.from(this.running.entries()).map(([id,st])=> ({ id, ...st }));
+    return Array.from(this.running.entries()).map(([id, st]) => ({ id, ...st }));
   }
 }
 
