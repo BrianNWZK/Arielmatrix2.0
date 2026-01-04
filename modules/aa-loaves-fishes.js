@@ -45,11 +45,16 @@ const ENHANCED_CONFIG = {
     chainId: Number(process.env.NETWORK_CHAIN_ID || 1)
   },
 
-  ENTRY_POINTS: {
-    V07: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
-    // Some legacy helpers use V06 interior; keep aliases guarded by env if needed
-    V06: addrStrict(process.env.ENTRY_POINT_ADDRESS_V06 || process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
-  },
+  const ENTRY_POINTS = {
+  // Current mainnet standard (v0.6.0) — used by Pimlico and your txs
+  V06: addrStrict(process.env.ENTRY_POINT_V06 || process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
+
+  // Newer v0.7.0 (deployed, used on some chains/L2s, optional for future features)
+  V07: addrStrict(process.env.ENTRY_POINT_V07 || '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
+
+  // Default to v0.6 (safe/compatible with your SCW and bundlers)
+  DEFAULT: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
+};
 
   UNISWAP: {
     FACTORY_ADDRESS: addrStrict(process.env.FACTORY_ADDRESS || '0x1F98431c8aD98523631AE4a59f267346ea31F984'),
