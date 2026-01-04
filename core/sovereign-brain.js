@@ -1,5 +1,5 @@
 /**
- * core/sovereign-brain-v15.14.js
+ * core/sovereign-brain-v15.13.js
  *
  * SOVEREIGN FINALITY ENGINE v15.13 — Adaptive Living Systems
  * Unified v13.9 + v14.0 + v14.1 + v15.10 + v15.11 + v15.12 capabilities with unstoppable genesis bootstrap
@@ -2519,7 +2519,7 @@ async function bootstrap_v15() {
     console.warn('bootstrap_v15 already called — skipping duplicate bootstrap');
     return globalThis.__SOVEREIGN_V15_CORE || null;
   }
-  console.log('🚀 SOVEREIGN FINALITY ENGINE v15.13 — BOOTSTRAPPING');
+  console.log('🚀 SOVEREIGN FINALITY ENGINE v15.14 — BOOTSTRAPPING');
 
   // Initialize chain registry
   await chainRegistry.init();
@@ -2535,7 +2535,7 @@ async function bootstrap_v15() {
   const api = new APIServerV15(core, process.env.PORT ? Number(process.env.PORT) : 8081);
   await api.start();
 
-  console.log('✅ v15.13 operational');
+  console.log('✅ v15.14 operational');
   globalThis.__SOVEREIGN_V15_BOOTSTRAPPED = true;
   globalThis.__SOVEREIGN_V15_CORE = core;
   return core;
