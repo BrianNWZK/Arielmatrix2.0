@@ -20,6 +20,9 @@
 // - Pre-simulation of mint calldata before userOp to catch upfront issues
 // - Precise logging: required vs actual EntryPoint prefund
 // - WEB_CONCURRENCY default = 1 (soft hint; no operational impact)
+//
+// Confirmed mainnet runtime: Pimlico bundlers executing via EntryPoint v0.6.0.
+// This build aligns AA to EP v0.6 for health checks, deposits, and userOp submission.
 
 import { ethers } from 'ethers';
 import fetch from 'node-fetch';
@@ -45,16 +48,19 @@ const ENHANCED_CONFIG = {
     chainId: Number(process.env.NETWORK_CHAIN_ID || 1)
   },
 
-  const ENTRY_POINTS = {
-  // Current mainnet standard (v0.6.0) — used by Pimlico and your txs
-  V06: addrStrict(process.env.ENTRY_POINT_V06 || process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
+  // CORRECTED: ENTRY_POINTS must be a property of ENHANCED_CONFIG (not "const" inside the object)
+  ENTRY_POINTS: {
+    // Current mainnet standard (v0.6.0) — used by Pimlico and your txs
+    V06: addrStrict(process.env.ENTRY_POINT_V06 || process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
-  // Newer v0.7.0 (deployed, used on some chains/L2s, optional for future features)
-  V07: addrStrict(process.env.ENTRY_POINT_V07 || '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
+    // Newer v0.7.0 (deployed, used on some chains/L2s, optional for future features)
+    V07: addrStrict(process.env.ENTRY_POINT_V07 || '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
 
-  // Default to v0.6 (safe/compatible with your SCW and bundlers)
-  DEFAULT: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
-};
+    // Default to v0.6 (safe/compatible with your SCW and bundlers)
+    DEFAULT: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
+  },
+
+
 
   UNISWAP: {
     FACTORY_ADDRESS: addrStrict(process.env.FACTORY_ADDRESS || '0x1F98431c8aD98523631AE4a59f267346ea31F984'),
@@ -155,6 +161,7 @@ async function pickHealthyBundler(rotation = ENHANCED_CONFIG.BUNDLER.ROTATION) {
    EntryPoint helpers
    ========================================================================= */
 
+// v0.6 ABI-compatible functions used by Pimlico mainnet bundlers
 const ENTRYPOINT_ABI = [
   'function depositTo(address account) payable',
   'function addStake(uint32 unstakeDelaySec) payable',
@@ -163,13 +170,13 @@ const ENTRYPOINT_ABI = [
 ];
 
 function getEntryPoint(provider) {
-  // Always prefer V07; legacy V06 kept for historical calls
-  return new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, provider);
+  // Mainnet alignment: use EntryPoint v0.6
+  return new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, provider);
 }
 
 // NEW: deposit to a specific account (SCW or paymaster), not always PM
 async function depositToEntryPointFor(signer, targetAddress, amountWei) {
-  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, signer);
+  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, signer);
   const tx = await ep.depositTo(ethers.getAddress(targetAddress), { value: amountWei });
   const rec = await tx.wait();
   return rec.transactionHash;
@@ -177,14 +184,14 @@ async function depositToEntryPointFor(signer, targetAddress, amountWei) {
 
 // Legacy (kept for compatibility; targets PM)
 async function depositToEntryPoint(signer, amountWei) {
-  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, signer);
+  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, signer);
   const tx = await ep.depositTo(ENHANCED_CONFIG.PAYMASTER.ADDRESS, { value: amountWei });
   const rec = await tx.wait();
   return rec.transactionHash;
 }
 
 async function addStakeToEntryPoint(signer, delaySec, amountWei) {
-  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V07, ENTRYPOINT_ABI, signer);
+  const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, signer);
   const tx = await ep.addStake(delaySec, { value: amountWei });
   const rec = await tx.wait();
   return rec.transactionHash;
@@ -300,7 +307,7 @@ class BundlerClient {
   async healthCheck() {
     try {
       const eps = await this.supportedEntryPoints();
-      const ok = Array.isArray(eps) && eps.some((addr) => ethers.getAddress(addr) === ethers.getAddress(ENHANCED_CONFIG.ENTRY_POINTS.V07));
+      const ok = Array.isArray(eps) && eps.some((addr) => ethers.getAddress(addr) === ethers.getAddress(ENHANCED_CONFIG.ENTRY_POINTS.V06));
       return { ok, supported: eps || [] };
     } catch (e) { return { ok: false, error: e.message }; }
   }
@@ -324,7 +331,7 @@ class ExternalAPIPaymaster {
       preVerificationGas: userOp.preVerificationGas.toString(),
       maxFeePerGas: userOp.maxFeePerGas.toString(),
       maxPriorityFeePerGas: userOp.maxPriorityFeePerGas.toString(),
-      entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+      entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V06,
       chainId: ENHANCED_CONFIG.NETWORK.chainId
     };
     const res = await fetch(this.apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -351,7 +358,7 @@ class OnChainVerifyingPaymaster {
     );
     const enc = ethers.AbiCoder.defaultAbiCoder().encode(
       ['bytes32','address','uint256'],
-      [ethers.keccak256(packed), ENHANCED_CONFIG.ENTRY_POINTS.V07, ENHANCED_CONFIG.NETWORK.chainId]
+      [ethers.keccak256(packed), ENHANCED_CONFIG.ENTRY_POINTS.V06, ENHANCED_CONFIG.NETWORK.chainId]
     );
     const userOpHash = ethers.keccak256(enc);
     const signature = await this.signer.signMessage(ethers.getBytes(userOpHash));
@@ -432,7 +439,7 @@ async function fetchExternalFees(provider) {
 
 /* =========================================================================
    🔥 NEW: Genesis Gas Optimizer (Live Data Adaptation + env overrides)
-   — UPDATED with Fix 2: Bundler-aware minimum gas probing and profiles
+   — UPDATED with bundler-aware minimum gas probing and profiles
    ========================================================================= */
 
 class GenesisGasOptimizer {
@@ -465,7 +472,7 @@ class GenesisGasOptimizer {
         paymasterAndData: '0x',
         signature: '0x'
       };
-      const est = await this.bundler.estimateUserOperationGas(dummyOp, ENHANCED_CONFIG.ENTRY_POINTS.V07);
+      const est = await this.bundler.estimateUserOperationGas(dummyOp, ENHANCED_CONFIG.ENTRY_POINTS.V06);
       return {
         minPreVerificationGas: BigInt(est.preVerificationGas || 45000),
         minVerificationGas: BigInt(est.verificationGasLimit || 100000)
@@ -494,7 +501,7 @@ class GenesisGasOptimizer {
     if (capMaxTip && fees.maxPriorityFeePerGas > capMaxTip) fees.maxPriorityFeePerGas = capMaxTip;
     if (fees.maxFeePerGas < fees.maxPriorityFeePerGas) fees.maxFeePerGas = fees.maxPriorityFeePerGas;
 
-    // Bundler minimum requirements (Fix 2)
+    // Bundler minimum requirements
     const bundlerMins = await this.getBundlerMinimumGas();
 
     // Operation-specific, bundler-aware profiles
@@ -543,7 +550,7 @@ class GenesisGasOptimizer {
 
   async adjustForBundler(userOp, bundler) {
     try {
-      const est = await bundler.estimateUserOperationGas(userOp, ENHANCED_CONFIG.ENTRY_POINTS.V07);
+      const est = await bundler.estimateUserOperationGas(userOp, ENHANCED_CONFIG.ENTRY_POINTS.V06);
       const toBig = (v, d) => (typeof v === 'string' ? BigInt(v) : BigInt(v ?? d));
 
       const estCall = toBig(est.callGasLimit, userOp.callGasLimit);
@@ -667,7 +674,7 @@ class DepositBalancer {
    ========================================================================= */
 
 class EnterpriseAASDK {
-  constructor(signer, entryPoint = ENHANCED_CONFIG.ENTRY_POINTS.V07) {
+  constructor(signer, entryPoint = ENHANCED_CONFIG.ENTRY_POINTS.V06) {
     if (!signer || !signer.address) throw new Error('EnterpriseAASDK: Valid signer required');
     this.signer = signer;
     this.entryPoint = entryPoint;
@@ -1204,7 +1211,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
           console.log(`📝 Transaction: ${rec.transactionHash}`);
           const newDeposit = await ep.getDeposit(scwAddress);
           return {
-            entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+            entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V06,
             depositTarget: scwAddress,
             scwDeposit: newDeposit,
             mode: 'NONE',
@@ -1220,7 +1227,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
       // After 3 failures, indicate fallback to paymaster for later calls
       console.warn('SCW deposit top-up failed 3 times — fallback to paymaster for subsequent userOps.');
       return {
-        entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+        entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V06,
         depositTarget: scwAddress,
         scwDeposit,
         mode: 'NONE',
@@ -1230,7 +1237,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
 
     console.log(`✅ SCW deposit sufficient: ${ethers.formatEther(scwDeposit)} ETH`);
     return {
-      entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+      entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V06,
       depositTarget: scwAddress,
       scwDeposit,
       mode: 'NONE',
@@ -1286,7 +1293,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
   }
 
   return {
-    entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V07,
+    entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V06,
     depositTarget,
     paymasterDeposit: deposit,
     scwDeposit,
