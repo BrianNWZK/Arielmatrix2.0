@@ -83,9 +83,6 @@ const LIVE = {
 
   NETWORK: AA_CONFIG.NETWORK,
 
-  // EntryPoint v0.7.0 (newer version — optional for advanced features)
-  ENTRY_POINT_V07: addrStrict(AA_CONFIG.ENTRY_POINTS?.V07 || '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
-
   // EntryPoint v0.6.0 (current mainnet standard — used by Pimlico and your active txs)
   ENTRY_POINT_V06: addrStrict(AA_CONFIG.ENTRY_POINTS?.V06 || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
 
@@ -94,6 +91,7 @@ const LIVE = {
 
   SCW_ADDRESS: addrStrict(AA_CONFIG.SCW_ADDRESS),
   PAYMASTER_ADDRESS: addrStrict(AA_CONFIG.PAYMASTER?.ADDRESS || '0x76e81CB971BDd0d8D51995CA458A1eAfb6B29FB9'),
+
 
   EOA_OWNER_ADDRESS: addrStrict(AA_CONFIG.EOA_OWNER || '0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA'),
   ACCOUNT_FACTORY: addrStrict(AA_CONFIG.ACCOUNT_FACTORY || '0x9406Cc6185a346906296840746125a0E449764545'),
@@ -1085,7 +1083,6 @@ async function validateGenesisGasRequirements(core) {
 }
 
 
-// Replace _aaPreflightProbe(core) with:
 async function _aaPreflightProbe(core) {
   if (!core?.mev || !core?.aa) return;
 
@@ -1800,6 +1797,7 @@ class SubscriptionManager {
     const entry = { addr: ethers.getAddress(address), abi, event: eventName, handler, iface };
     this.listeners.push(entry);
 
+    // WebSocket path
     if (this.online && this.wsProvider) {
       const contract = new ethers.Contract(entry.addr, abi, this.wsProvider);
       contract.on(eventName, (...args) => handler(...args));
@@ -1826,11 +1824,16 @@ class SubscriptionManager {
           fromBlock = toBlock + 1;
         } catch (e) {
           console.warn(`[submgr] getLogs error for ${eventName}: ${e.message}`);
+          // On error, rebase from recent tip to avoid filter expiry issues
+          try {
+            const latest = await this.httpProvider.getBlockNumber();
+            fromBlock = Math.max(0, latest - 6);
+          } catch { /* keep existing fromBlock */ }
         }
         await new Promise(r => setTimeout(r, 3000));
       }
     };
-    (async()=>{ await poll(); })();
+    (async () => { await poll(); })();
   }
 
   removeAll() {
@@ -1840,6 +1843,7 @@ class SubscriptionManager {
     this.listeners = [];
   }
 }
+
 
 
 
@@ -2338,12 +2342,13 @@ class MevExecutorAA {
   constructor(aa, scw){ this.aa=aa; this.scw=scw; }
   async sendUserOp(calldata, opts={}){
     const userOp = await this.aa.createUserOp(calldata, {
-      callGasLimit: opts.callGasLimit || 850_000n,
-      verificationGasLimit: opts.verificationGasLimit || 650_000n,
-      preVerificationGas: opts.preVerificationGas || 100_000n,
+      // no rigid caps; let bundler estimate and lift
+      callGasLimit: opts.callGasLimit,
+      verificationGasLimit: opts.verificationGasLimit,
+      preVerificationGas: opts.preVerificationGas,
       maxFeePerGas: opts.maxFeePerGas,
       maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      // Honor sponsorship/deposit mode
+      // Honor sponsorship/deposit mode; default to deposit-funded when requested
       paymasterAndData: opts.paymasterAndData,
       allowNoPaymaster: opts.allowNoPaymaster === true
     });
