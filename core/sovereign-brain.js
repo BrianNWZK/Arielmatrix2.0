@@ -649,101 +649,183 @@ class DexAdapterRegistry {
     this.lastErrors = new Map();
   }
 
-  getAdapter(name) { const a = this.adapters[name]; if (!a) throw new Error(`Adapter ${name} not found`); return a; }
-  getAllAdapters() { return Object.entries(this.adapters).map(([name, adapter]) => ({ name, config: adapter.config, type: adapter.type })); }
+  getAdapter(name) {
+    const a = this.adapters[name];
+    if (!a) throw new Error(`Adapter ${name} not found`);
+    return a;
+  }
+
+  getAllAdapters() {
+    return Object.entries(this.adapters).map(([name, adapter]) => ({
+      name,
+      config: adapter.config,
+      type: adapter.type
+    }));
+  }
 
   _updateScore(name, ok, latencyMs, liquidity, errorMsg = null) {
-    const prev = this.scores.get(name) || { okCount: 0, failCount: 0, avgLatency: null, avgLiquidity: 0, score: 50 };
+    const prev =
+      this.scores.get(name) ||
+      { okCount: 0, failCount: 0, avgLatency: null, avgLiquidity: 0, score: 50 };
+
     if (ok) prev.okCount++; else prev.failCount++;
-    if (latencyMs != null) prev.avgLatency = prev.avgLatency == null ? latencyMs : Math.round(prev.avgLatency * 0.7 + latencyMs * 0.3);
-    if (liquidity != null) { const lnum = Number(liquidity || '0'); prev.avgLiquidity = Math.round(prev.avgLiquidity * 0.7 + lnum * 0.3); }
+
+    if (latencyMs != null) {
+      prev.avgLatency =
+        prev.avgLatency == null
+          ? latencyMs
+          : Math.round(prev.avgLatency * 0.7 + latencyMs * 0.3);
+    }
+
+    if (liquidity != null) {
+      const lnum = Number(liquidity || '0');
+      prev.avgLiquidity = Math.round(prev.avgLiquidity * 0.7 + lnum * 0.3);
+    }
+
     const successRate = prev.okCount / Math.max(1, prev.okCount + prev.failCount);
-    const latencyScore = prev.avgLatency ? Math.max(0, 1 - prev.avgLatency / (LIVE.RISK.INFRA.MAX_PROVIDER_LATENCY_MS || 1000)) : 0.5;
-    const score = Math.round(100 * (0.5 * successRate + 0.3 * latencyScore + 0.2 * Math.min(1, prev.avgLiquidity / 1e9)));
+    const latencyScore = prev.avgLatency
+      ? Math.max(0, 1 - prev.avgLatency / (LIVE.RISK.INFRA.MAX_PROVIDER_LATENCY_MS || 1000))
+      : 0.5;
+
+    const score = Math.round(
+      100 * (0.5 * successRate + 0.3 * latencyScore + 0.2 * Math.min(1, prev.avgLiquidity / 1e9))
+    );
+
     prev.score = score;
     this.scores.set(name, prev);
+
     if (errorMsg) this.lastErrors.set(name, { at: nowTs(), error: String(errorMsg) });
   }
 
   async getBestQuote(tokenIn, tokenOut, amountIn) {
     const key = `q_${tokenIn}_${tokenOut}_${amountIn}`;
-    const cached = this.cache.get(key); if (cached && nowTs() - cached.ts < 1000) return cached.result;
+    const cached = this.cache.get(key);
+    if (cached && nowTs() - cached.ts < 1000) return cached.result;
+
     const quotes = [];
-    await Promise.allSettled(Object.entries(this.adapters).map(async ([name, adapter]) => {
-      try {
-        const q = await adapter.getQuote(tokenIn, tokenOut, amountIn);
-        if (q && q.amountOut > 0n) { quotes.push({ dex: name, ...q, adapter }); this._updateScore(name, true, q.latencyMs, q.liquidity); }
-        else this._updateScore(name, false, null, null, 'no quote or amountOut=0');
-      } catch (err) { this._updateScore(name, false, null, null, err?.message || 'quote exception'); }
-    }));
+    await Promise.allSettled(
+      Object.entries(this.adapters).map(async ([name, adapter]) => {
+        try {
+          const q = await adapter.getQuote(tokenIn, tokenOut, amountIn);
+          if (q && q.amountOut > 0n) {
+            quotes.push({ dex: name, ...q, adapter });
+            this._updateScore(name, true, q.latencyMs, q.liquidity);
+          } else {
+            this._updateScore(name, false, null, null, 'no quote or amountOut=0');
+          }
+        } catch (err) {
+          this._updateScore(name, false, null, null, err?.message || 'quote exception');
+        }
+      })
+    );
+
     quotes.sort((a, b) => {
       const sa = this.scores.get(a.dex)?.score || 50;
       const sb = this.scores.get(b.dex)?.score || 50;
       if (sa !== sb) return sb - sa;
       return Number(b.amountOut - a.amountOut);
     });
-    const result = { best: quotes[0] || null, secondBest: quotes[1] || quotes[0] || null, all: quotes, scores: Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })), lastErrors: Array.from(this.lastErrors.entries()).map(([dex, e]) => ({ dex, ...e })) };
+
+    const result = {
+      best: quotes[0] || null,
+      secondBest: quotes[1] || quotes[0] || null,
+      all: quotes,
+      scores: Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })),
+      lastErrors: Array.from(this.lastErrors.entries()).map(([dex, e]) => ({ dex, ...e }))
+    };
+
     this.cache.set(key, { result, ts: nowTs() });
     return result;
   }
 
-  getScores() { return Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s })); }
-  getLastErrors() { return Array.from(this.lastErrors.entries()).map(([dex, e]) => ({ dex, ...e })); }
+  getScores() {
+    return Array.from(this.scores.entries()).map(([dex, s]) => ({ dex, ...s }));
+  }
 
-  async healthCheck(tokenA = LIVE.TOKENS.WETH, tokenB = LIVE.TOKENS.USDC, amount = ethers.parseEther('0.01')) {
+  getLastErrors() {
+    return Array.from(this.lastErrors.entries()).map(([dex, e]) => ({ dex, ...e }));
+  }
+
+  async healthCheck(
+    tokenA = LIVE.TOKENS.WETH,
+    tokenB = LIVE.TOKENS.USDC,
+    amount = ethers.parseEther('0.01')
+  ) {
     const checks = [];
     for (const [name, adapter] of Object.entries(this.adapters)) {
       try {
         const q = await adapter.getQuote(tokenA, tokenB, amount);
-        checks.push({ name, ok: !!q, latencyMs: q?.latencyMs || null, liquidity: q?.liquidity || '0', score: (this.scores.get(name)?.score || null), lastError: this.lastErrors.get(name)?.error || null });
+        checks.push({
+          name,
+          ok: !!q,
+          latencyMs: q?.latencyMs || null,
+          liquidity: q?.liquidity || '0',
+          score: this.scores.get(name)?.score || null,
+          lastError: this.lastErrors.get(name)?.error || null
+        });
       } catch (err) {
-        checks.push({ name, ok: false, latencyMs: null, liquidity: '0', score: (this.scores.get(name)?.score || null), lastError: err?.message || 'adapter error' });
+        checks.push({
+          name,
+          ok: false,
+          latencyMs: null,
+          liquidity: '0',
+          score: this.scores.get(name)?.score || null,
+          lastError: err?.message || 'adapter error'
+        });
       }
     }
     return { count: checks.length, checks, timestamp: nowTs() };
   }
 
- async getBestRoute(tokenIn, tokenOut, amountIn){
-  const bestQuote = await this.getBestQuote(tokenIn, tokenOut, amountIn);
-  if (!bestQuote?.best) return { best:null, routes:[], lastErrors: this.getLastErrors() };
-  const score = await this.health.scoreAdapter(bestQuote.best.dex, tokenIn, tokenOut);
-  return {
-    best: { ...bestQuote.best, dex: bestQuote.best.dex, adapter: bestQuote.best.adapter, health: score.health },
-    routes: bestQuote.all,
-    lastErrors: this.getLastErrors()
-  };
-}
+  async getBestRoute(tokenIn, tokenOut, amountIn) {
+    const bestQuote = await this.getBestQuote(tokenIn, tokenOut, amountIn);
+    if (!bestQuote?.best) {
+      return { best: null, routes: [], lastErrors: this.getLastErrors() };
+    }
 
-  // Score health using the dex name
-  const score = await this.health.scoreAdapter(
-    bestQuote.best.dex,
-    tokenIn,
-    tokenOut
-  );
+    const score = await this.health.scoreAdapter(bestQuote.best.dex, tokenIn, tokenOut);
 
-  return {
-    // Preserve adapter object, add dex name separately
-    best: {
-      ...bestQuote.best,
-      dex: bestQuote.best.dex,
-      adapter: bestQuote.best.adapter,   // keep adapter instance
-      health: score.health
-    },
-    routes: bestQuote.all,
-    lastErrors: this.getLastErrors()
-  };
-}
+    return {
+      best: {
+        ...bestQuote.best,
+        dex: bestQuote.best.dex,
+        adapter: bestQuote.best.adapter,
+        health: score.health
+      },
+      routes: bestQuote.all,
+      lastErrors: this.getLastErrors()
+    };
+  }
 
-  async buildSplitExec(tokenIn, tokenOut, amountIn, recipient){
+  async buildSplitExec(tokenIn, tokenOut, amountIn, recipient) {
     const routes = await this.getBestQuote(tokenIn, tokenOut, amountIn);
     const selected = routes?.best;
     if (!selected) return null;
+
     const slipGuard = 0.02;
-    const minOut = BigInt(Math.floor(Number(selected.amountOut)*(1-slipGuard)));
-    const tx = await selected.adapter.buildSwapCalldata({ tokenIn, tokenOut, amountIn, amountOutMin: minOut, recipient, fee: selected.fee || LIVE.PEG.FEE_TIER_DEFAULT });
-    return { router: tx.router, calldata: tx.calldata, routes: routes.all, minOut, selectedDex: selected.dex, selectedType: selected.adapter?.type || 'unknown' };
+    const minOut = BigInt(Math.floor(Number(selected.amountOut) * (1 - slipGuard)));
+
+    const tx = await selected.adapter.buildSwapCalldata({
+      tokenIn,
+      tokenOut,
+      amountIn,
+      amountOutMin: minOut,
+      recipient,
+      fee: selected.fee || LIVE.PEG.FEE_TIER_DEFAULT
+    });
+
+    return {
+      router: tx.router,
+      calldata: tx.calldata,
+      routes: routes.all,
+      minOut,
+      selectedDex: selected.dex,
+      selectedType: selected.adapter?.type || 'unknown'
+    };
   }
 }
+
+
 
 /* =========================================================================
    Ensure V3 Pool at Peg
