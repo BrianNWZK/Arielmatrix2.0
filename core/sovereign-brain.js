@@ -703,16 +703,16 @@ class DexAdapterRegistry {
     return { count: checks.length, checks, timestamp: nowTs() };
   }
 
-  async getBestRoute(tokenIn, tokenOut, amountIn) {
+ async getBestRoute(tokenIn, tokenOut, amountIn){
   const bestQuote = await this.getBestQuote(tokenIn, tokenOut, amountIn);
-
-  if (!bestQuote?.best) {
-    return {
-      best: null,
-      routes: [],
-      lastErrors: this.getLastErrors()
-    };
-  }
+  if (!bestQuote?.best) return { best:null, routes:[], lastErrors: this.getLastErrors() };
+  const score = await this.health.scoreAdapter(bestQuote.best.dex, tokenIn, tokenOut);
+  return {
+    best: { ...bestQuote.best, dex: bestQuote.best.dex, adapter: bestQuote.best.adapter, health: score.health },
+    routes: bestQuote.all,
+    lastErrors: this.getLastErrors()
+  };
+}
 
   // Score health using the dex name
   const score = await this.health.scoreAdapter(
@@ -1002,35 +1002,43 @@ async function validateGenesisGasRequirements(core) {
   };
 }
 
+
+// Replace _aaPreflightProbe(core) with:
 async function _aaPreflightProbe(core) {
-  if (!core?.mev) return;
-  const req = core._genesisGasRequirements || {
-    minPreVerificationGas: 55_000n,
-    minVerificationGas: 120_000n,
-    recommendedBufferPct: 25n
-  };
-  const bufMul = (100n + BigInt(req.recommendedBufferPct)) / 100n;
-  const preVerificationGas = req.minPreVerificationGas * bufMul;
-  const verificationGasLimit = req.minVerificationGas * bufMul;
-  const callGasLimit = 160_000n;
+  if (!core?.mev || !core?.aa) return;
+
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const calldata = scwIface.encodeFunctionData('execute', [LIVE.SCW_ADDRESS, 0n, '0x']);
+
+  const desc = 'preflight_noop_genesis';
+  const opts = { description: desc, allowNoPaymaster: true };
+
+  // Try via Enhanced path if available
+  try {
+    // Prefer genesis-aware caps
+    const genesisCaps = await core.aa.genesisOptimizer?.getGenesisCaps('default');
+    if (genesisCaps) {
+      opts.callGasLimit = genesisCaps.callGasLimit;
+      opts.verificationGasLimit = genesisCaps.verificationGasLimit;
+      opts.preVerificationGas = genesisCaps.preVerificationGas;
+      opts.maxFeePerGas = genesisCaps.maxFeePerGas;
+      opts.maxPriorityFeePerGas = genesisCaps.maxPriorityFeePerGas;
+    }
+  } catch {}
+
+  // Attempt with backoff and deposit auto-rebalance integrated in Enhanced executor
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await core.mev.sendUserOp(calldata, {
-        description: 'preflight_noop_genesis',
-        allowNoPaymaster: true,
-        callGasLimit,
-        verificationGasLimit,
-        preVerificationGas
-      });
-      return;
+      await core.mev.sendUserOp(calldata, opts);
+      return true;
     } catch (err) {
-      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      console.warn(`AA preflight attempt ${attempt+1} failed: ${err?.message || err}`);
+      await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
     }
   }
   throw new Error('AA preflight failed after retries');
 }
+
 
 
 /* === Market data and path evaluation =================================== */
@@ -1487,67 +1495,85 @@ class StrategyEngine {
     this.lastPegEnforcement=0;
   }
 
-  // Let SponsorGuard derive lean deposit-fitting caps; no fixed fees or PM hints
-  async _dynamicCaps(opts = {}) {
-    return {
-      callGasLimit: opts.callGasLimit ?? undefined,
-      verificationGasLimit: opts.verificationGasLimit ?? undefined,
-      preVerificationGas: opts.preVerificationGas ?? undefined,
-      allowNoPaymaster: true
-    };
-  }
 
-  async execSwap(tokenIn, tokenOut, amountIn){
-    const built = await this.dex.buildSplitExec(tokenIn, tokenOut, amountIn, LIVE.SCW_ADDRESS);
-    if (!built) throw new Error('No route available');
-    console.log(`[execSwap] router=${built.router} dex=${built.selectedDex} type=${built.selectedType} calldataLen=${built.calldata?.length || 0}`);
+// Let SponsorGuard derive lean deposit-fitting caps; no fixed fees or PM hints
+async _dynamicCaps(opts = {}) {
+  return {
+    callGasLimit: opts.callGasLimit ?? undefined,
+    verificationGasLimit: opts.verificationGasLimit ?? undefined,
+    preVerificationGas: opts.preVerificationGas ?? undefined,
+    maxFeePerGas: opts.maxFeePerGas ?? undefined,
+    maxPriorityFeePerGas: opts.maxPriorityFeePerGas ?? undefined,
+    allowNoPaymaster: true
+  };
+}
 
-    const iface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-    const calldata = iface.encodeFunctionData('execute',[built.router, 0n, built.calldata]);
-    const caps = await this._dynamicCaps();
-    const userOpRes = await this.mev.sendUserOp(calldata, { description:`swap_exec_${built.selectedDex}`, ...caps });
-    return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
-  }
+async execSwap(tokenIn, tokenOut, amountIn){
+  const built = await this.dex.buildSplitExec(tokenIn, tokenOut, amountIn, LIVE.SCW_ADDRESS);
+  if (!built) throw new Error('No route available');
+  console.log(`[execSwap] router=${built.router} dex=${built.selectedDex} type=${built.selectedType} calldataLen=${built.calldata?.length || 0}`);
 
-  async opportunisticRebalance(buyBWAEZI=true, usdNotional=25000){
-    const elemental='WATER';
-    const feeTier = mapElementToFeeTier(elemental);
-    const route = chooseRoute(elemental);
-    const adapter=this.dex.getAdapter(route);
+  const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const calldata = iface.encodeFunctionData('execute',[built.router, 0n, built.calldata]);
+  const caps = await this._dynamicCaps();
+  const userOpRes = await this.mev.sendUserOp(calldata, { description:`swap_exec_${built.selectedDex}`, ...caps });
+  return { txHash: userOpRes.txHash, minOut: built.minOut, routes: built.routes };
+}
 
-    const amountInUSDC=ethers.parseUnits(String(usdNotional),6);
-    const q=await adapter.getQuote(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, amountInUSDC);
-    const entropyState = this.entropy?.lastEntropy || { coherence:0.6 };
-    const slip=this.entropy ? this.entropy.slippageGuard(0.003, entropyState.coherence, 0.0) : 0.003;
-    const amountOutMin = q?.amountOut ? BigInt(Math.floor(Number(q.amountOut)*(1-slip))) : 0n;
+async opportunisticRebalance(buyBWAEZI=true, usdNotional=25000){
+  const elemental = 'WATER';
+  const feeTier = mapElementToFeeTier(elemental);
+  const route = chooseRoute(elemental);
+  const adapter = this.dex.getAdapter(route);
 
-    const tx = await adapter.buildSwapCalldata({
-      tokenIn: buyBWAEZI? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI,
-      tokenOut: buyBWAEZI? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC,
-      amountIn: amountInUSDC, amountOutMin, recipient:LIVE.SCW_ADDRESS, fee:feeTier
-    });
-    const scwIface=new ethers.Interface(['function execute(address,uint256,bytes)']);
-    const exec=scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
+  const amountInUSDC = ethers.parseUnits(String(usdNotional),6);
+  const q = await adapter.getQuote(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, amountInUSDC);
+  const entropyState = this.entropy?.lastEntropy || { coherence:0.6 };
+  const slip = this.entropy ? this.entropy.slippageGuard(0.003, entropyState.coherence, 0.0) : 0.003;
+  const amountOutMin = q?.amountOut ? BigInt(Math.floor(Number(q.amountOut)*(1-slip))) : 0n;
 
-    const composite=this.oracle ? await this.oracle.compositeUSD(LIVE.TOKENS.BWAEZI) : { priceUSD: LIVE.PEG.TARGET_USD, confidence:0.5 };
-    const packet = {
-      mode:'rebalance', entropy: entropyState,
-      neuro: { activation:0.7, plasticity:0.8, attentionFocus:0.6 },
-      gravity: { curvature:0.15 }, elemental,
-      feeTier, tickWidth: Math.floor(600 * Math.max(0.2, entropyState.coherence)), route,
-      usdNotional, slip,
-      compositePriceUSD: composite.priceUSD,
-      confidence: composite.confidence,
-      ts: nowTs()
-    };
+  const tx = await adapter.buildSwapCalldata({
+    tokenIn: buyBWAEZI ? LIVE.TOKENS.USDC : LIVE.TOKENS.BWAEZI,
+    tokenOut: buyBWAEZI ? LIVE.TOKENS.BWAEZI : LIVE.TOKENS.USDC,
+    amountIn: amountInUSDC,
+    amountOutMin,
+    recipient: LIVE.SCW_ADDRESS,
+    fee: feeTier
+  });
+  const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+  const exec = scwIface.encodeFunctionData('execute',[tx.router, 0n, tx.calldata]);
 
-    const caps = await this._dynamicCaps();
-    const result=await this.mev.sendUserOp(exec, { description:'rebalance_bwaezi', ...caps });
-    const rec = await this.verifier.record({ txHash: result.txHash, action:'rebalance', tokenIn: LIVE.TOKENS.USDC, tokenOut: LIVE.TOKENS.BWAEZI, notionalUSD: usdNotional, evExAnte: { evUSD: usdNotional, gasUSD: 0, slipUSD: usdNotional*slip } });
-    return { txHash:result.txHash, decisionPacket:packet, record: rec };
-  }
+  const composite = this.oracle ? await this.oracle.compositeUSD(LIVE.TOKENS.BWAEZI) : { priceUSD: LIVE.PEG.TARGET_USD, confidence:0.5 };
+  const packet = {
+    mode:'rebalance',
+    entropy: entropyState,
+    neuro: { activation:0.7, plasticity:0.8, attentionFocus:0.6 },
+    gravity: { curvature:0.15 },
+    elemental,
+    feeTier,
+    tickWidth: Math.floor(600 * Math.max(0.2, entropyState.coherence)),
+    route,
+    usdNotional,
+    slip,
+    compositePriceUSD: composite.priceUSD,
+    confidence: composite.confidence,
+    ts: nowTs()
+  };
 
-  async watchPeg() {
+  const caps = await this._dynamicCaps();
+  const result = await this.mev.sendUserOp(exec, { description:'rebalance_bwaezi', ...caps });
+  const rec = await this.verifier.record({
+    txHash: result.txHash,
+    action:'rebalance',
+    tokenIn: LIVE.TOKENS.USDC,
+    tokenOut: LIVE.TOKENS.BWAEZI,
+    notionalUSD: usdNotional,
+    evExAnte: { evUSD: usdNotional, gasUSD: 0, slipUSD: usdNotional*slip }
+  });
+  return { txHash:result.txHash, decisionPacket:packet, record: rec };
+}
+
+async watchPeg() {
   const factory = new ethers.Contract(
     LIVE.DEXES.UNISWAP_V3.factory,
     ['function getPool(address,address,uint24) view returns (address)'],
@@ -1572,6 +1598,35 @@ class StrategyEngine {
   const token1 = await poolC.token1();
 
   // Safe decimals fetch with defaults
+  const decIface = ['function decimals() view returns (uint8)'];
+  let d0 = 18, d1 = 18;
+  try { d0 = await (new ethers.Contract(token0, decIface, this.provider)).decimals(); } catch {}
+  try { d1 = await (new ethers.Contract(token1, decIface, this.provider)).decimals(); } catch {}
+
+  const bwaeziIsToken0 = token0.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase();
+
+  poolC.removeAllListeners('Swap');
+  poolC.on('Swap', async () => {
+    try {
+      const [, tick] = await poolC.slot0();
+      const p10 = Math.pow(1.0001, Number(tick)) * Math.pow(10, d0) / Math.pow(10, d1);
+      const priceUSD = bwaeziIsToken0 ? (1 / p10) : p10;
+      const deviationPct = ((priceUSD - LIVE.PEG.TARGET_USD)/LIVE.PEG.TARGET_USD)*100;
+      if (Math.abs(deviationPct) >= LIVE.PEG.DEVIATION_THRESHOLD_PCT) {
+        await this.enforcePegIfNeeded();
+      }
+    } catch (err) {
+      console.error('watchPeg Swap handler error:', err.message);
+    }
+  });
+
+  return true;
+}
+
+
+
+
+   // Safe decimals fetch with defaults
   const decIface = ['function decimals() view returns (uint8)'];
   let d0 = 18, d1 = 18;
   try { d0 = await (new ethers.Contract(token0, decIface, this.provider)).decimals(); } catch {}
@@ -1654,6 +1709,85 @@ class StrategyEngine {
     };
   }
 } // <-- properly closes StrategyEngine class
+
+
+/* =========================================================================
+   Subscription manager (WS-first, HTTP fallback)
+   ========================================================================= */
+
+class SubscriptionManager {
+  constructor(httpProvider, wsUrl = process.env.WS_RPC_URL || '') {
+    this.httpProvider = httpProvider;
+    this.wsUrl = wsUrl;
+    this.wsProvider = null;
+    this.online = false;
+    this.listeners = []; // { addr, abi, event, handler, iface }
+  }
+
+  async init() {
+    // Try WebSocket provider first
+    if (this.wsUrl) {
+      try {
+        const network = ethers.Network.from({ name: LIVE.NETWORK.name, chainId: LIVE.NETWORK.chainId });
+        this.wsProvider = new ethers.WebSocketProvider(this.wsUrl, network);
+        await this.wsProvider._detectNetwork();
+        this.online = true;
+        console.log('🛰️ WS subscriptions enabled');
+      } catch (e) {
+        console.warn('WS provider unavailable, falling back to HTTP polling:', e.message);
+        this.wsProvider = null;
+        this.online = false;
+      }
+    }
+  }
+
+  attachContractEvent(address, abi, eventName, handler) {
+    const iface = new ethers.Interface(abi);
+    const entry = { addr: ethers.getAddress(address), abi, event: eventName, handler, iface };
+    this.listeners.push(entry);
+
+    if (this.online && this.wsProvider) {
+      const contract = new ethers.Contract(entry.addr, abi, this.wsProvider);
+      contract.on(eventName, (...args) => handler(...args));
+      return;
+    }
+
+    // HTTP fallback: periodic getLogs polling
+    const topic = entry.iface.getEvent(eventName).topicHash;
+    const poll = async () => {
+      let fromBlock = await this.httpProvider.getBlockNumber();
+      while (true) {
+        try {
+          const toBlock = await this.httpProvider.getBlockNumber();
+          const logs = await this.httpProvider.getLogs({
+            address: entry.addr,
+            fromBlock: Math.max(0, fromBlock - 4),  // small overlap to avoid misses
+            toBlock,
+            topics: [topic]
+          });
+          for (const log of logs) {
+            const decoded = entry.iface.decodeEventLog(eventName, log.data, log.topics);
+            handler(...decoded, log);
+          }
+          fromBlock = toBlock + 1;
+        } catch (e) {
+          console.warn(`[submgr] getLogs error for ${eventName}: ${e.message}`);
+        }
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    };
+    (async()=>{ await poll(); })();
+  }
+
+  removeAll() {
+    if (this.wsProvider) {
+      try { this.wsProvider.removeAllListeners(); } catch {}
+    }
+    this.listeners = [];
+  }
+}
+
+
 
 /* =========================================================================
    Entropy
@@ -2487,6 +2621,7 @@ class AdaptiveRangeMaker {
 
 
 
+
 /* =========================================================================
    API server v15.13
    ========================================================================= */
@@ -2580,9 +2715,8 @@ async start(){
 
 
 
-
 /* =========================================================================
-   Production sovereign core v15.13 (full live wiring)
+   Production sovereign core v15.14 (full live wiring)
    ========================================================================= */
 
 class ProductionSovereignCore extends EventEmitter {
@@ -2602,6 +2736,8 @@ class ProductionSovereignCore extends EventEmitter {
     this.health = new HealthGuard();
 
     this.wss=null; this.clients=new Set();
+    this.subs=null; // Subscription manager (WS-first, HTTP fallback)
+
     this.stats = {
       startTs: nowTs(), tradesExecuted:0, lastProfitUSD:0, anchors:0, projectedDaily:0,
       pegActions:0, amplificationsTriggered:0, streamsActive:0, perceptionsAnchored:0
@@ -2628,7 +2764,21 @@ class ProductionSovereignCore extends EventEmitter {
     this.aa = new EnterpriseAASDK(this.signer, LIVE.ENTRY_POINT);
     await this.aa.initialize(this.provider, LIVE.SCW_ADDRESS, bundler);
 
-    try { await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS); } catch(e){ console.warn('Bootstrap AA path skipped:', e.message); }
+    // Initialize resilient subscription manager (WebSocket-first, HTTP polling fallback)
+    try {
+      this.subs = new SubscriptionManager(this.provider, process.env.WS_RPC_URL || '');
+      await this.subs.init();
+    } catch (e) {
+      console.warn('Subscription manager init failed (will rely on HTTP polling):', e.message);
+      this.subs = new SubscriptionManager(this.provider, '');
+    }
+
+    // Mode-aware deposit bootstrap with non-fatal failure handling
+    try {
+      await bootstrapSCWForPaymasterEnhanced(this.aa, this.provider, this.signer, LIVE.SCW_ADDRESS);
+    } catch(e){
+      console.warn('Bootstrap AA path skipped:', e.message);
+    }
 
     this.dex = new DexAdapterRegistry(this.provider);
     this.oracle = new OracleAggregator(this.provider, this.dex);
@@ -2651,10 +2801,30 @@ class ProductionSovereignCore extends EventEmitter {
     // Maker patched to SCW mints; pass core
     this.maker = new AdaptiveRangeMaker(this.provider, this.signer, this.dex, this.entropy, this);
 
+    // Start peg watcher (uses StrategyEngine; SubscriptionManager is available via this.core.subs)
     await this.strategy.watchPeg();
 
-    await runGenesisMicroseed(this);
+    // Genesis next-phase routed swaps orchestration — skip if pools already exist
+    try {
+      const factory = new ethers.Contract(
+        LIVE.DEXES.UNISWAP_V3.factory,
+        ['function getPool(address,address,uint24) view returns (address)'],
+        this.provider
+      );
+      const usdcPool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC, LIVE.PEG.FEE_TIER_DEFAULT);
+      const wethPool = await factory.getPool(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.WETH, LIVE.PEG.FEE_TIER_DEFAULT);
 
+      if (usdcPool && usdcPool !== ethers.ZeroAddress && wethPool && wethPool !== ethers.ZeroAddress) {
+        console.log('✅ Genesis pools already exist — skipping bootstrap');
+      } else {
+        await runGenesisMicroseed(this);
+      }
+    } catch (e) {
+      console.warn('Genesis bootstrap check failed; attempting routed microseed:', e.message);
+      try { await runGenesisMicroseed(this); } catch (err) { console.warn('Routed microseed failed:', err.message); }
+    }
+
+    // Adaptive range maintenance loop
     this.loops.push(setInterval(async () => {
       try {
         const adj = await this.maker.periodicAdjustRange(LIVE.TOKENS.BWAEZI);
@@ -2665,6 +2835,7 @@ class ProductionSovereignCore extends EventEmitter {
       } catch (e) { console.warn('maker adjust error:', e.message); }
     }, LIVE.MAKER.RANGE_ADJUST_INTERVAL_MS));
 
+    // Policy governor decision loop
     this.loops.push(setInterval(async () => {
       try {
         const r = await this.governor.run(this);
@@ -2691,6 +2862,7 @@ class ProductionSovereignCore extends EventEmitter {
       } catch(e){ console.warn('decision loop error:', e.message); }
     }, 15_000));
 
+    // Reflexive amplifier loop
     this.loops.push(setInterval(async () => {
       try {
         const result = await this.amplifier.checkAndTrigger(this.recapture);
@@ -2710,9 +2882,9 @@ class ProductionSovereignCore extends EventEmitter {
     }, 20_000));
 
     this.startWS();
-    this.status='SOVEREIGN_LIVE_V15.13';
+    this.status=`SOVEREIGN_LIVE_${LIVE.VERSION}`;
     globalThis.__SOVEREIGN_V15_LIVE = true;
-    console.log('✅ SOVEREIGN FINALITY ENGINE v15.13 — ONLINE');
+    console.log(`✅ SOVEREIGN FINALITY ENGINE ${LIVE.VERSION} — ONLINE`);
     console.log(`   Policy Hash: ${this.policyHash}`);
   }
 
@@ -2756,6 +2928,7 @@ class ProductionSovereignCore extends EventEmitter {
     };
   }
 }
+
 
 
 
