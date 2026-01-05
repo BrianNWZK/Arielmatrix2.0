@@ -48,19 +48,11 @@ const ENHANCED_CONFIG = {
     chainId: Number(process.env.NETWORK_CHAIN_ID || 1)
   },
 
-  // CORRECTED: ENTRY_POINTS must be a property of ENHANCED_CONFIG (not "const" inside the object)
+  // CORRECTED: V06-only EntryPoint (remove V07 entirely)
   ENTRY_POINTS: {
-    // Current mainnet standard (v0.6.0) — used by Pimlico and your txs
     V06: addrStrict(process.env.ENTRY_POINT_V06 || process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'),
-
-    // Newer v0.7.0 (deployed, used on some chains/L2s, optional for future features)
-    V07: addrStrict(process.env.ENTRY_POINT_V07 || '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
-
-    // Default to v0.6 (safe/compatible with your SCW and bundlers)
     DEFAULT: addrStrict(process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789')
   },
-
-
 
   UNISWAP: {
     FACTORY_ADDRESS: addrStrict(process.env.FACTORY_ADDRESS || '0x1F98431c8aD98523631AE4a59f267346ea31F984'),
@@ -127,9 +119,9 @@ const ENHANCED_CONFIG = {
     MAX_FEE_GWEI: Number(process.env.GENESIS_MAX_FEE_GWEI || 0),             // 0 means no explicit cap
     MAX_TIP_GWEI: Number(process.env.GENESIS_MAX_TIP_GWEI || 0),
     // External gas oracle options (optional)
-    GAS_ORACLE_URL: process.env.GAS_ORACLE_URL || '',                        // custom endpoint that returns { maxFeePerGasWei, maxPriorityFeePerGasWei }
-    ETHERSCAN_API_KEY: process.env.ETHERSCAN_API_KEY || '',                  // when present, uses Etherscan gas oracle
-    USE_PIMLICO_FEE: process.env.USE_PIMLICO_FEE === 'true'                  // when true, query Pimlico RPC feeData and add +10%
+    GAS_ORACLE_URL: process.env.GAS_ORACLE_URL || '',
+    ETHERSCAN_API_KEY: process.env.ETHERSCAN_API_KEY || '',
+    USE_PIMLICO_FEE: process.env.USE_PIMLICO_FEE === 'true'
   },
 
   // CLEAN MODE: always deployment-free
@@ -169,12 +161,12 @@ const ENTRYPOINT_ABI = [
   'function getNonce(address sender, uint192 key) view returns (uint256)'
 ];
 
-function getEntryPoint(provider) {
-  // Mainnet alignment: use EntryPoint v0.6
-  return new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, provider);
+function getEntryPoint(providerOrSigner) {
+  // Accept provider or signer; v0.6 only
+  return new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, providerOrSigner);
 }
 
-// NEW: deposit to a specific account (SCW or paymaster), not always PM
+// NEW: deposit to a specific account (SCW or paymaster), signer write path
 async function depositToEntryPointFor(signer, targetAddress, amountWei) {
   const ep = new ethers.Contract(ENHANCED_CONFIG.ENTRY_POINTS.V06, ENTRYPOINT_ABI, signer);
   const tx = await ep.depositTo(ethers.getAddress(targetAddress), { value: amountWei });
@@ -581,15 +573,15 @@ class DepositBalancer {
     this.signer = signer;
     this.scwAddress = scwAddress;
     this.paymasterAddress = paymasterAddress;
-    this.ep = getEntryPoint(signer.provider);
+    this.epReader = getEntryPoint(signer.provider); // reader
     this._topupFailures = 0;
   }
 
   async rebalanceForGenesis() {
     const balances = {
       eoa: await this.signer.provider.getBalance(this.signer.address),
-      scwDeposit: await this.ep.getDeposit(this.scwAddress),
-      pmDeposit: await this.ep.getDeposit(this.paymasterAddress)
+      scwDeposit: await this.epReader.getDeposit(this.scwAddress),
+      pmDeposit: await this.epReader.getDeposit(this.paymasterAddress)
     };
 
     console.log('💰 Current Balances:', {
@@ -600,7 +592,7 @@ class DepositBalancer {
 
     const mode = (ENHANCED_CONFIG.PAYMASTER.MODE || 'NONE').toUpperCase();
 
-    // Prefer SCW deposit in NONE mode
+    // Prefer SCW deposit in NONE mode — signer write path via helper
     if (mode === 'NONE') {
       if (balances.scwDeposit < ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT &&
           balances.eoa > ethers.parseEther('0.002')) {
@@ -610,13 +602,9 @@ class DepositBalancer {
         console.log(`🔄 Transferring ${ethers.formatEther(transferAmount)} ETH to SCW deposit (required=${ethers.formatEther(needed)}, actual=${ethers.formatEther(balances.scwDeposit)})`);
 
         try {
-          const tx = await this.ep.depositTo(this.scwAddress, {
-            value: transferAmount,
-            gasLimit: 100000
-          });
-          const rec = await tx.wait();
+          const txHash = await depositToEntryPointFor(this.signer, this.scwAddress, transferAmount);
           this._topupFailures = 0;
-          return { rebalanced: true, txHash: rec.transactionHash, target: 'SCW', fallbackToPaymaster: false };
+          return { rebalanced: true, txHash, target: 'SCW', fallbackToPaymaster: false };
         } catch (e) {
           this._topupFailures++;
           console.warn(`SCW top-up failed [${this._topupFailures}]: ${e.message}`);
@@ -629,7 +617,7 @@ class DepositBalancer {
       return { rebalanced: false, reason: 'balances_optimal', fallbackToPaymaster: false };
     }
 
-    // Paymaster mode: ensure both have minimum
+    // Paymaster mode: ensure both have minimum — signer write path
     const needs = [];
     if (balances.scwDeposit < ethers.parseEther('0.0005')) {
       needs.push({ target: this.scwAddress, amount: ethers.parseEther('0.0005') - balances.scwDeposit });
@@ -647,11 +635,7 @@ class DepositBalancer {
           const proportion = (need.amount * available) / totalNeeded;
           if (proportion > 0) {
             console.log(`🔄 Transferring ${ethers.formatEther(proportion)} ETH to ${need.target} (required=${ethers.formatEther(need.amount)})`);
-            const tx = await this.ep.depositTo(need.target, {
-              value: proportion,
-              gasLimit: 100000
-            });
-            await tx.wait();
+            await depositToEntryPointFor(this.signer, need.target, proportion);
           }
         }
         this._topupFailures = 0;
@@ -834,7 +818,7 @@ class EnterpriseAASDK {
       nonce,
       initCode: '0x',
       callData,
-      // UPDATED: Slightly higher preVerificationGas to avoid underestimation issues
+      // UPDATED defaults; bundler will lift if needed
       callGasLimit: opts.callGasLimit ?? 250_000n,
       verificationGasLimit: opts.verificationGasLimit ?? 180_000n,
       preVerificationGas: opts.preVerificationGas ?? 55_000n,
@@ -1172,10 +1156,10 @@ function _computeRequiredDeposit({ callGasLimit, verificationGasLimit, preVerifi
 }
 
 async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress) {
-  const ep = getEntryPoint(provider);
+  const epRead = getEntryPoint(provider);
   const mode = (ENHANCED_CONFIG.PAYMASTER.MODE || 'NONE').toUpperCase();
 
-  const scwDeposit = await ep.getDeposit(scwAddress);
+  const scwDeposit = await epRead.getDeposit(scwAddress);
 
   if (mode === 'NONE') {
     console.log(`🎯 NONE mode detected - prioritizing SCW deposit`);
@@ -1202,14 +1186,10 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
       let attempts = 0;
       while (attempts < 3) {
         try {
-          const tx = await ep.depositTo(scwAddress, {
-            value: topup,
-            gasLimit: 100000
-          });
-          const rec = await tx.wait();
+          const txh = await depositToEntryPointFor(signer, scwAddress, topup);
           console.log(`✅ SCW deposit topped up to ${ethers.formatEther(ENHANCED_CONFIG.GENESIS.MIN_SCW_DEPOSIT)} ETH`);
-          console.log(`📝 Transaction: ${rec.transactionHash}`);
-          const newDeposit = await ep.getDeposit(scwAddress);
+          console.log(`📝 Transaction: ${txh}`);
+          const newDeposit = await epRead.getDeposit(scwAddress);
           return {
             entryPoint: ENHANCED_CONFIG.ENTRY_POINTS.V06,
             depositTarget: scwAddress,
@@ -1248,7 +1228,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
   // Paymaster mode logic
   const depositTarget = ENHANCED_CONFIG.PAYMASTER.ADDRESS;
   let deposit = 0n;
-  try { deposit = await ep.getDeposit(depositTarget); } catch {}
+  try { deposit = await epRead.getDeposit(depositTarget); } catch {}
 
   const AUTO_PM_DEPOSIT = process.env.AUTO_PM_DEPOSIT === 'true';
   const AUTO_PM_STAKE = process.env.AUTO_PM_STAKE === 'true';
@@ -1270,7 +1250,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
     try {
       const txh = await depositToEntryPointFor(signer, depositTarget, delta);
       console.log(`[AA TOPUP] tx=${txh}`);
-      try { deposit = await ep.getDeposit(depositTarget); } catch {}
+      try { deposit = await epRead.getDeposit(depositTarget); } catch {}
     } catch (e) {
       console.warn(`[AA TOPUP] depositToEntryPointFor failed: ${e.message}`);
     }
@@ -1278,7 +1258,7 @@ async function bootstrapSCWForPaymasterEnhanced(aa, provider, signer, scwAddress
     const top = ethers.parseEther(process.env.AUTO_PM_DEPOSIT_WEI || '0.002');
     const txh = await depositToEntryPointFor(signer, depositTarget, top);
     console.log(`[AA TOPUP] tiny top-up=${ethers.formatEther(top)} tx=${txh}`);
-    try { deposit = await ep.getDeposit(depositTarget); } catch {}
+    try { deposit = await epRead.getDeposit(depositTarget); } catch {}
   }
 
   if (AUTO_PM_STAKE && mode !== 'NONE') {
