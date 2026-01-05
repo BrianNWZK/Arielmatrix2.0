@@ -1086,15 +1086,29 @@ async function validateGenesisGasRequirements(core) {
 async function _aaPreflightProbe(core) {
   if (!core?.mev || !core?.aa) return;
 
+  // 1) Try deposit auto-top-up for NONE mode before preflight
+  try {
+    const balancer = core.mev?.depositBalancer;
+    if (balancer) {
+      const rebalance = await balancer.rebalanceForGenesis();
+      if (rebalance.rebalanced) {
+        console.log(`✅ Preflight deposit top-up: ${rebalance.txHash}`);
+        await new Promise(r => setTimeout(r, 1200));
+      }
+    }
+  } catch (e) {
+    console.warn(`Preflight deposit rebalance skipped: ${e.message}`);
+  }
+
+  // 2) Build a minimal SCW.execute noop
   const scwIface = new ethers.Interface(['function execute(address,uint256,bytes)']);
   const calldata = scwIface.encodeFunctionData('execute', [LIVE.SCW_ADDRESS, 0n, '0x']);
 
   const desc = 'preflight_noop_genesis';
   const opts = { description: desc, allowNoPaymaster: true };
 
-  // Try via Enhanced path if available
+  // 3) Use genesis-aware caps if available
   try {
-    // Prefer genesis-aware caps
     const genesisCaps = await core.aa.genesisOptimizer?.getGenesisCaps('default');
     if (genesisCaps) {
       opts.callGasLimit = genesisCaps.callGasLimit;
@@ -1105,19 +1119,24 @@ async function _aaPreflightProbe(core) {
     }
   } catch {}
 
-  // Attempt with backoff and deposit auto-rebalance integrated in Enhanced executor
+  // 4) Attempt; do not block if AA21 occurs — log and return false
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await core.mev.sendUserOp(calldata, opts);
       return true;
     } catch (err) {
-      console.warn(`AA preflight attempt ${attempt+1} failed: ${err?.message || err}`);
+      const msg = err?.message || String(err);
+      console.warn(`AA preflight attempt ${attempt + 1} failed: ${msg}`);
+      // If AA21 or simulation error, just continue and don’t block the next phase
+      if (msg.includes("AA21") || msg.toLowerCase().includes("prefund")) {
+        return false;
+      }
       await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
     }
   }
-  throw new Error('AA preflight failed after retries');
+  // Soft failure: don’t throw — allow orchestration to proceed
+  return false;
 }
-
 
 
 /* === Market data and path evaluation =================================== */
@@ -1762,6 +1781,7 @@ class StrategyEngine {
 
 
 
+
 /* =========================================================================
    Subscription manager (WS-first, HTTP fallback)
    ========================================================================= */
@@ -1776,19 +1796,17 @@ class SubscriptionManager {
   }
 
   async init() {
-    // Try WebSocket provider first
-    if (this.wsUrl) {
-      try {
-        const network = ethers.Network.from({ name: LIVE.NETWORK.name, chainId: LIVE.NETWORK.chainId });
-        this.wsProvider = new ethers.WebSocketProvider(this.wsUrl, network);
-        await this.wsProvider._detectNetwork();
-        this.online = true;
-        console.log('🛰️ WS subscriptions enabled');
-      } catch (e) {
-        console.warn('WS provider unavailable, falling back to HTTP polling:', e.message);
-        this.wsProvider = null;
-        this.online = false;
-      }
+    if (!this.wsUrl) { this.wsProvider = null; this.online = false; return; }
+    try {
+      const network = ethers.Network.from({ name: LIVE.NETWORK.name, chainId: LIVE.NETWORK.chainId });
+      this.wsProvider = new ethers.WebSocketProvider(this.wsUrl, network);
+      await this.wsProvider._detectNetwork();
+      this.online = true;
+      console.log('🛰️ WS subscriptions enabled');
+    } catch (e) {
+      console.warn('WS provider unavailable, falling back to HTTP polling:', e.message);
+      this.wsProvider = null;
+      this.online = false;
     }
   }
 
@@ -1797,34 +1815,35 @@ class SubscriptionManager {
     const entry = { addr: ethers.getAddress(address), abi, event: eventName, handler, iface };
     this.listeners.push(entry);
 
-    // WebSocket path
     if (this.online && this.wsProvider) {
       const contract = new ethers.Contract(entry.addr, abi, this.wsProvider);
       contract.on(eventName, (...args) => handler(...args));
       return;
     }
 
-    // HTTP fallback: periodic getLogs polling
+    // HTTP polling with rebase on errors; NO filter APIs
     const topic = entry.iface.getEvent(eventName).topicHash;
+    let fromBlockSeeded = false;
+    let fromBlock = 0;
+
     const poll = async () => {
-      let fromBlock = await this.httpProvider.getBlockNumber();
       while (true) {
         try {
-          const toBlock = await this.httpProvider.getBlockNumber();
+          const latest = await this.httpProvider.getBlockNumber();
+          if (!fromBlockSeeded) { fromBlock = Math.max(0, latest - 6); fromBlockSeeded = true; }
           const logs = await this.httpProvider.getLogs({
             address: entry.addr,
-            fromBlock: Math.max(0, fromBlock - 4),  // small overlap to avoid misses
-            toBlock,
+            fromBlock: Math.max(0, fromBlock - 2),
+            toBlock: latest,
             topics: [topic]
           });
           for (const log of logs) {
             const decoded = entry.iface.decodeEventLog(eventName, log.data, log.topics);
             handler(...decoded, log);
           }
-          fromBlock = toBlock + 1;
+          fromBlock = latest + 1;
         } catch (e) {
-          console.warn(`[submgr] getLogs error for ${eventName}: ${e.message}`);
-          // On error, rebase from recent tip to avoid filter expiry issues
+          // Rebase to recent tip on any provider/filter error
           try {
             const latest = await this.httpProvider.getBlockNumber();
             fromBlock = Math.max(0, latest - 6);
@@ -1843,7 +1862,6 @@ class SubscriptionManager {
     this.listeners = [];
   }
 }
-
 
 
 
@@ -2338,25 +2356,51 @@ class PolicyGovernor {
    Mev Executor (AA live)
    ========================================================================= */
 
+
 class MevExecutorAA {
   constructor(aa, scw){ this.aa=aa; this.scw=scw; }
-  async sendUserOp(calldata, opts={}){
-    const userOp = await this.aa.createUserOp(calldata, {
-      // no rigid caps; let bundler estimate and lift
-      callGasLimit: opts.callGasLimit,
-      verificationGasLimit: opts.verificationGasLimit,
-      preVerificationGas: opts.preVerificationGas,
-      maxFeePerGas: opts.maxFeePerGas,
-      maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
-      // Honor sponsorship/deposit mode; default to deposit-funded when requested
-      paymasterAndData: opts.paymasterAndData,
-      allowNoPaymaster: opts.allowNoPaymaster === true
-    });
-    const signed = await this.aa.signUserOp(userOp);
-    const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
-    return { txHash, ts: nowTs(), meta: { desc: opts.description || 'scw.execute' } };
+
+  async sendUserOp(calldata, opts={}) {
+    // First try deposit-funded
+    try {
+      const userOp = await this.aa.createUserOp(calldata, {
+        callGasLimit: opts.callGasLimit,
+        verificationGasLimit: opts.verificationGasLimit,
+        preVerificationGas: opts.preVerificationGas,
+        maxFeePerGas: opts.maxFeePerGas,
+        maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
+        paymasterAndData: opts.paymasterAndData,
+        allowNoPaymaster: true
+      });
+      const signed = await this.aa.signUserOp(userOp);
+      const txHash = await this.aa.sendUserOpWithBackoff(signed, 5);
+      return { txHash, ts: nowTs(), meta: { desc: opts.description || 'scw.execute' } };
+    } catch (e) {
+      const msg = e?.message || String(e);
+      // If AA21 prefund issue and paymaster is allowed, retry with sponsorship
+      const pmAllowed = (this.aa.paymasterMode !== 'NONE') && (opts.forcePaymaster === true || opts.paymasterAndData || true);
+      if (msg.includes("AA21") && pmAllowed) {
+        console.warn('AA21 detected — retrying with paymaster sponsorship');
+        const userOpPM = await this.aa.createUserOp(calldata, {
+          callGasLimit: opts.callGasLimit,
+          verificationGasLimit: opts.verificationGasLimit,
+          preVerificationGas: opts.preVerificationGas,
+          maxFeePerGas: opts.maxFeePerGas,
+          maxPriorityFeePerGas: opts.maxPriorityFeePerGas,
+          paymasterAndData: await this.aa.getPaymasterData(calldata),
+          allowNoPaymaster: false
+        });
+        const signedPM = await this.aa.signUserOp(userOpPM);
+        const txHashPM = await this.aa.sendUserOpWithBackoff(signedPM, 5);
+        return { txHash: txHashPM, ts: nowTs(), meta: { desc: (opts.description || 'scw.execute') + '_pm' } };
+      }
+      throw e;
+    }
   }
 }
+
+
+
 
 /* =========================================================================
    MEV recapture engine — aligned with MevExecutorAA SponsorGuard (AA31-safe)
