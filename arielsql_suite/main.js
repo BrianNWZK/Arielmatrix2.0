@@ -1,20 +1,10 @@
-### Updated end-to-end repair script (ethers v6, SCW.execute, Uniswap V3)
-
-```js
 // repair-and-warmup.js
-// Purpose:
-// 1) Enumerate all Uniswap V3 positions held by SCW
-// 2) Safely withdraw (decreaseLiquidity + collect) without swaps or price impact
-// 3) Re-mint tiny, in-range BWAEZI/USDC liquidity centered at live tick
-// 4) Microseed swaps to wake routing and non-zero pricing (USDC→BWAEZI, USDC→WETH, WETH→BWAEZI)
-//
-// Notes:
-// - Ethers v6 positional tuples ONLY (no named keys).
-// - Use ethers.MaxUint256 for collect’s amount0Max/amount1Max.
-// - Guard against null/undefined by using 0n, not null.
-// - All calls forwarded via SCW.execute.
-// - Align ranges to pool tick spacing; amounts deliberately tiny.
-// - Requires: PRIVATE_KEY (EOA), SCW_ADDRESS, RPC_URL (optional).
+// Ethers v6, pure ESM. No markdown headers.
+// Flow:
+// 1) Enumerate Uniswap V3 positions held by SCW
+// 2) Decrease liquidity (if >0) and collect fees/owed
+// 3) Mint tiny in-range BWAEZI/USDC centered at live tick
+// 4) Microseed swaps (USDC→BWAEZI, USDC→WETH, WETH→BWAEZI) via SCW.execute
 //
 // Env:
 //   PRIVATE_KEY=0x...             // EOA controlling SCW.execute
@@ -85,6 +75,7 @@ function feeSpacing(fee) {
   if (fee === 10000) return 200;
   return 10;
 }
+const UINT128_MAX = BigInt("0xffffffffffffffffffffffffffffffff");
 
 // Core exec via SCW
 async function scwExecute(wallet, to, data, label) {
@@ -137,12 +128,12 @@ async function withdrawPosition(wallet, provider, tokenId) {
     console.log(`Position #${tokenId} already at 0 liquidity; skipping decreaseLiquidity`);
   }
 
-  // collect owed (use MaxUint256 — contract clamps appropriately)
+  // collect owed (use uint128 max — contract clamps appropriately)
   const collectTuple = [
     BigInt(tokenId),
     SCW,
-    ethers.toBigInt(ethers.MaxUint256), // amount0Max (uint128 on-chain; MaxUint256 ok)
-    ethers.toBigInt(ethers.MaxUint256)  // amount1Max
+    UINT128_MAX,
+    UINT128_MAX
   ];
   const collectData = npm.encodeFunctionData("collect", [collectTuple]);
   await scwExecute(wallet, NPM, collectData, `collect #${tokenId}`);
@@ -151,16 +142,17 @@ async function withdrawPosition(wallet, provider, tokenId) {
 // Re-mint tiny in-range centered at live tick (BWAEZI/USDC, fee=500)
 async function mintTinyInRange(wallet, provider) {
   const pool = new ethers.Contract(POOL_BW_USDC, poolViewAbi, provider);
-  const factory = new ethers.Contract(FACTORY, factoryAbi, provider);
   const npm = new ethers.Interface(npmAbi);
 
   const slot0 = await pool.slot0();
   const tick = Number(slot0[1]);
 
-  const spacing = await pool.tickSpacing().catch(async () => {
-    // Fallback: derive by fee
-    return feeSpacing(500);
-  });
+  let spacing;
+  try {
+    spacing = await pool.tickSpacing();
+  } catch {
+    spacing = feeSpacing(500);
+  }
   const s = Number(spacing);
 
   const width = 6 * s; // ±6 spacing units around current tick
@@ -212,7 +204,7 @@ async function microseedSwaps(wallet) {
     await scwExecute(wallet, ROUTER, data, "swap USDC->BWAEZI 5 USDC");
   }
 
-  // 2) USDC -> WETH (2 USDC) using canonical 0.05% pool
+  // 2) USDC -> WETH (2 USDC) using 0.05% pool
   {
     const amountIn = ethers.parseUnits("2", 6);
     const call = [
@@ -275,17 +267,13 @@ async function main() {
   console.log("✅ Repair + warm-up flow complete");
 }
 
-main().catch(e => console.error("Fatal:", e.message));
-```
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(e => console.error("Fatal:", e.message));
+}
 
----
-
-### What changed and why
-
-- Fixed BigNumberish errors by using 0n for all numeric tuple fields and ethers.MaxUint256 for collect’s amount caps.
-- Strict positional tuple encoding for decreaseLiquidity, collect, mint, and exactInputSingle.
-- Guards for zero-liquidity positions: skip decreaseLiquidity when already zero, but still run collect.
-- Tick-aligned tiny mint centered around live pool tick with spacing-aware snapping.
-- Three microseed swaps at tiny notional to wake quoter/explorers without moving price meaningfully.
-
-If you want this split into two files (withdraw-only and re-mint+swaps), say the word and I’ll separate them cleanly.
+export {
+  listPositions,
+  withdrawPosition,
+  mintTinyInRange,
+  microseedSwaps
+};
