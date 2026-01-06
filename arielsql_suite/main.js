@@ -1,14 +1,17 @@
 // repair-and-warmup.js
 // Ethers v6 — Uniswap V3 position clean-up, tiny re-mint, microseed swaps
-// Resumes from a specific tokenId (defaults to 1166147), skips already-known errors inline.
+// Resumes from a specific tokenId (defaults to 1166159), skips already-known errors inline.
+// Includes a simple HTTP server for port binding (set PORT or use default 8080).
 
 import { ethers } from "ethers";
+import http from "http";
 
 // Env
 const RPC_URL         = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY     = process.env.PRIVATE_KEY;
 const SCW             = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
 const TOKEN_ID_START  = Number(process.env.TOKEN_ID_START || 1166147);
+const PORT            = Number(process.env.PORT || 8080);
 
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
@@ -111,7 +114,6 @@ async function withdrawPosition(wallet, provider, tokenId) {
       await scwExecute(wallet, NPM, decData, `decreaseLiquidity #${tokenId}`);
     } catch (e) {
       const msg = e?.message || String(e);
-      // Handle mempool duplicate “already known”
       if (msg.includes("already known")) {
         console.warn(`decreaseLiquidity already known for #${tokenId}; proceeding to collect`);
       } else {
@@ -135,7 +137,7 @@ async function withdrawPosition(wallet, provider, tokenId) {
   } catch (e) {
     const msg = e?.message || String(e);
     console.warn(`collect failed for #${tokenId}: ${msg}`);
-    // Optional short retry for transient mempool/network hiccups
+    // Optional short retry for transient hiccups
     try {
       await new Promise(r => setTimeout(r, 1500));
       await scwExecute(wallet, NPM, collectData, `collect(retry) #${tokenId}`);
@@ -269,6 +271,20 @@ async function main() {
   }
 
   console.log("✅ Repair + warm-up flow complete");
+
+  // Simple keep-alive HTTP server for port binding
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      ok: true,
+      status: "repair-and-warmup",
+      tokenIdStart: TOKEN_ID_START,
+      ts: Date.now()
+    }));
+  });
+  server.listen(PORT, () => {
+    console.log(`🌐 Keep-alive server listening on port ${PORT}`);
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
