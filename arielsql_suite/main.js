@@ -1,5 +1,5 @@
 // main.js
-// Locate, list, and drain BWAEZI/USDC fee-500 positions held by SCW
+// Locate, list, and drain only BWAEZI/USDC fee-500 positions with BWAEZI > 0.1
 // Ethers v6 — one-time script with HTTP server
 
 import { ethers } from "ethers";
@@ -62,12 +62,19 @@ async function inspectAndDrain(wallet, provider, tokenId) {
   const token1 = ethers.getAddress(pos[3]);
   const fee    = Number(pos[4]);
   const liq    = BigInt(pos[7]);
+  const owed0  = BigInt(pos[10]);
+  const owed1  = BigInt(pos[11]);
 
-  console.log(`Position #${tokenId} pair=[${token0},${token1}] fee=${fee} liquidity=${liq}`);
+  // Determine which side is BWAEZI
+  let bwaeziAmount = 0;
+  if (token0 === BWAEZI) bwaeziAmount = Number(ethers.formatEther(owed0));
+  if (token1 === BWAEZI) bwaeziAmount = Number(ethers.formatEther(owed1));
 
-  // Only drain BWAEZI/USDC fee-500
+  console.log(`Position #${tokenId} pair=[${token0},${token1}] fee=${fee} liquidity=${liq} BWAEZI owed=${bwaeziAmount}`);
+
+  // Only drain BWAEZI/USDC fee-500 positions with BWAEZI > 0.05
   const pairMatch = (token0 === BWAEZI && token1 === USDC) || (token0 === USDC && token1 === BWAEZI);
-  if (!pairMatch || fee !== 500) return;
+  if (!pairMatch || fee !== 500 || bwaeziAmount <= 0.1) return;
 
   if (liq > 0n) {
     const decTuple = [BigInt(tokenId), liq, 0n, 0n, BigInt(nowTs()+1200)];
