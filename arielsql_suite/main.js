@@ -10,7 +10,7 @@ import http from "http";
 const RPC_URL         = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY     = process.env.PRIVATE_KEY;
 const SCW             = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
-const TOKEN_ID_START  = Number(process.env.TOKEN_ID_START || 0);
+const TOKEN_ID_START  = Number(process.env.TOKEN_ID_START || 1166155);
 const PORT            = Number(process.env.PORT || 8080);
 
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
