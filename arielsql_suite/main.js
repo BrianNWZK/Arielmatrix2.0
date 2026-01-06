@@ -4,29 +4,36 @@
 // B) For each position: decreaseLiquidity(100%), then collect() to SCW (no swaps)
 // C) Re-mint tiny in-range BWAEZI+USDC
 // D) Microseed: 5 USDC → BWAEZI; 2 USDC → WETH; tiny WETH → BWAEZI
+//
+// Maintains all capabilities, adds address normalization, allowance checks, and pool tick alignment.
 
 import { ethers } from "ethers";
 
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
-const PRIVATE_KEY = process.env.PRIVATE_KEY;       // EOA signer
-const SCW         = ethers.getAddress(process.env.SCW_ADDRESS);
+const PRIVATE_KEY = process.env.PRIVATE_KEY;       // EOA signer for SCW.execute relays
+const SCW_RAW     = process.env.SCW_ADDRESS;
 
 // Core contracts (mainnet)
 const NPM    = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"; // Uniswap V3 Position Manager
 const ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564"; // Uniswap V3 Router
 const FACTORY= "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
+// Tokens
 const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
 const USDC   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const WETH   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+// Pools (plain strings)
+const POOL_BW_USDC = "0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"; // fee 500, spacing 10
+const POOL_BW_WETH = "0x142C3dce0a5605Fb385fAe7760302fab761022aa"; // fee 3000, spacing 60
 
 // Fee tiers
 const FEE_USDC = 500;
 const FEE_WETH = 3000;
 
 // ABIs
-const scwAbi  = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
-const npmAbi  = [
+const scwAbi   = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
+const npmAbi   = [
   "function balanceOf(address) view returns (uint256)",
   "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
   "function positions(uint256 tokenId) view returns (uint96 nonce,address operator,address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint128 liquidity,uint256 feeGrowthInside0LastX128,uint256 feeGrowthInside1LastX128,uint128 tokensOwed0,uint128 tokensOwed1)",
@@ -39,25 +46,41 @@ const routerAbi = [
 ];
 const factoryAbi = ["function getPool(address,address,uint24) view returns (address)"];
 const poolAbi    = ["function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint8,bool)"];
+const erc20Abi   = [
+  "function approve(address spender,uint256 amount) returns (bool)",
+  "function allowance(address owner,address spender) view returns (uint256)",
+  "function decimals() view returns (uint8)"
+];
 
 // Helpers
+function norm(a) { return ethers.getAddress(a); }
+const SCW = (() => {
+  if (!SCW_RAW || !SCW_RAW.startsWith("0x") || SCW_RAW.length !== 42) throw new Error("Missing or invalid SCW_ADDRESS");
+  return norm(SCW_RAW);
+})();
+
 function sortLex(a, b) { return a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a]; }
 function spacingForFee(fee) { if (fee===500) return 10; if (fee===3000) return 60; throw new Error(`Unsupported fee ${fee}`); }
-function alignTick(tick, spacing) {
-  const lower = Math.floor((tick - spacing * 6) / spacing) * spacing;
-  const upper = Math.ceil((tick + spacing * 6) / spacing) * spacing;
-  return { lower, upper: upper <= lower ? lower + spacing : upper };
+
+function alignTick(tick, spacing, pad = 6) {
+  const lower = Math.floor((tick - spacing * pad) / spacing) * spacing;
+  const upperAligned = Math.ceil((tick + spacing * pad) / spacing) * spacing;
+  const upper = upperAligned <= lower ? lower + spacing : upperAligned;
+  return { lower, upper };
 }
+
 async function getPool(provider, tokenA, tokenB, fee) {
   const f = new ethers.Contract(FACTORY, factoryAbi, provider);
   const [t0, t1] = sortLex(tokenA, tokenB);
   return await f.getPool(t0, t1, fee);
 }
-async function getTick(provider, pool) {
-  const p = new ethers.Contract(pool, poolAbi, provider);
+
+async function getTick(provider, poolAddr) {
+  const p = new ethers.Contract(poolAddr, poolAbi, provider);
   const [, tick] = await p.slot0();
   return Number(tick);
 }
+
 function buildExactInputSingleCalldata({ tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum=0n, sqrtPriceLimitX96=0n }) {
   const iface = new ethers.Interface(routerAbi);
   const params = [
@@ -67,14 +90,15 @@ function buildExactInputSingleCalldata({ tokenIn, tokenOut, fee, recipient, amou
   ];
   return iface.encodeFunctionData("exactInputSingle", [params]);
 }
-async function buildMintCalldata(provider, tokenA, tokenB, fee, amountA, amountB, recipient) {
+
+async function buildMintCalldata(provider, tokenA, tokenB, fee, amountA, amountB, recipient, poolAddrHint = null) {
   const npmIface = new ethers.Interface(npmAbi);
   const [t0, t1] = sortLex(tokenA, tokenB);
-  const pool = await getPool(provider, tokenA, tokenB, fee);
+  const pool = poolAddrHint || await getPool(provider, tokenA, tokenB, fee);
   if (!pool || pool === ethers.ZeroAddress) throw new Error("Pool not found");
   const tick = await getTick(provider, pool);
   const spacing = spacingForFee(fee);
-  const { lower, upper } = alignTick(tick, spacing);
+  const { lower, upper } = alignTick(tick, spacing, 6);
 
   const amount0Desired = t0.toLowerCase() === tokenA.toLowerCase() ? amountA : amountB;
   const amount1Desired = t0.toLowerCase() === tokenA.toLowerCase() ? amountB : amountA;
@@ -89,16 +113,44 @@ async function buildMintCalldata(provider, tokenA, tokenB, fee, amountA, amountB
   return npmIface.encodeFunctionData("mint", [params]);
 }
 
+async function ensureAllowance(provider, wallet, owner, token, spender, minAmount) {
+  const c = new ethers.Contract(token, erc20Abi, provider);
+  const allowance = await c.allowance(owner, spender);
+  if (allowance >= minAmount) return false;
+
+  const approveIface = new ethers.Interface(erc20Abi);
+  const data = approveIface.encodeFunctionData("approve", [norm(spender), ethers.MaxUint256]);
+
+  const scwIface = new ethers.Interface(scwAbi);
+  const exec = scwIface.encodeFunctionData("execute", [norm(token), 0n, data]);
+
+  const tx = await wallet.sendTransaction({ to: owner, data: exec, gasLimit: 200000 });
+  await tx.wait();
+  return true;
+}
+
+async function mintViaSCW(wallet, mintData, label) {
+  const scwIface = new ethers.Interface(scwAbi);
+  const execData = scwIface.encodeFunctionData("execute", [norm(NPM), 0n, mintData]);
+  console.log(`Calldata length: ${execData.length}`);
+  const tx = await wallet.sendTransaction({ to: SCW, data: execData, gasLimit: 800000 });
+  console.log(`Mint tx (${label}): ${tx.hash}`);
+  const rc = await tx.wait();
+  if (rc.status === 1) console.log(`✅ Mint (${label}) succeeded`); else console.log(`❌ Mint (${label}) reverted`);
+}
+
+// Main
 async function main() {
   if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
-  if (!SCW) throw new Error("Missing SCW_ADDRESS");
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
-  const scwIface = new ethers.Interface(scwAbi);
-  const npm      = new ethers.Contract(NPM, npmAbi, provider);
 
   console.log(`EOA: ${wallet.address}`);
+  console.log(`ETH: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
+
+  const npm = new ethers.Contract(NPM, npmAbi, provider);
+  const scwIface = new ethers.Interface(scwAbi);
 
   // A) Enumerate SCW positions
   const count = await npm.balanceOf(SCW);
@@ -109,7 +161,7 @@ async function main() {
   }
   console.log(`Found ${tokenIds.length} positions`);
 
-  // B) For each position: read, then decreaseLiquidity(100%), collect() to SCW
+  // B) Decrease liquidity 100% and collect to SCW
   for (const tokenId of tokenIds) {
     const pos = await npm.positions(tokenId);
     const token0 = pos.token0;
@@ -119,33 +171,19 @@ async function main() {
 
     console.log(`Position #${tokenId} fee=${fee} liq=${liquidity} range=[${pos.tickLower},${pos.tickUpper}]`);
 
-    if (liquidity === 0n) {
-      // Still collect owed fees/tokens if any
-      const collectData = new ethers.Interface(npmAbi).encodeFunctionData("collect", [[
+    if (liquidity > 0n) {
+      const decData = new ethers.Interface(npmAbi).encodeFunctionData("decreaseLiquidity", [[
         tokenId,
-        SCW,
-        ethers.MaxUint128,
-        ethers.MaxUint128
+        liquidity,
+        0n,
+        0n,
+        Math.floor(Date.now()/1000)+900
       ]]);
-      const execCollect = scwIface.encodeFunctionData("execute", [NPM, 0n, collectData]);
-      await wallet.sendTransaction({ to: SCW, data: execCollect, gasLimit: 300000 });
-      console.log(`✅ Collected owed tokens for #${tokenId}`);
-      continue;
+      const execDec = scwIface.encodeFunctionData("execute", [NPM, 0n, decData]);
+      await wallet.sendTransaction({ to: SCW, data: execDec, gasLimit: 500000 }).then(r => r.wait());
+      console.log(`✅ Decreased liquidity for #${tokenId}`);
     }
 
-    // decreaseLiquidity: 100% with min=0 (no swaps), just returns underlying to collectible state
-    const decData = new ethers.Interface(npmAbi).encodeFunctionData("decreaseLiquidity", [[
-      tokenId,
-      liquidity,
-      0n,
-      0n,
-      Math.floor(Date.now()/1000)+900
-    ]]);
-    const execDec = scwIface.encodeFunctionData("execute", [NPM, 0n, decData]);
-    await wallet.sendTransaction({ to: SCW, data: execDec, gasLimit: 500000 });
-    console.log(`✅ Decreased liquidity for #${tokenId}`);
-
-    // collect to SCW (amount0Max/amount1Max = MaxUint128)
     const collectData = new ethers.Interface(npmAbi).encodeFunctionData("collect", [[
       tokenId,
       SCW,
@@ -153,47 +191,71 @@ async function main() {
       ethers.MaxUint128
     ]]);
     const execCollect = scwIface.encodeFunctionData("execute", [NPM, 0n, collectData]);
-    await wallet.sendTransaction({ to: SCW, data: execCollect, gasLimit: 500000 });
+    await wallet.sendTransaction({ to: SCW, data: execCollect, gasLimit: 500000 }).then(r => r.wait());
     console.log(`✅ Collected tokens for #${tokenId}`);
   }
 
-  // C) Re-mint tiny in-range BWAEZI+USDC (use whatever USDC remains; BWAEZI is abundant)
-  const mintBW = ethers.parseEther("0.001");
-  // If SCW USDC is ~9.62, we can use 6 for re-mint, leaving buffer for swaps
-  const mintUS = ethers.parseUnits("6", 6);
+  // C) Re-mint tiny in-range BWAEZI+USDC (align to current pool tick)
+  const mintBW    = ethers.parseEther("0.001");
+  const mintUS    = ethers.parseUnits("6", 6);
 
-  const mintData = await buildMintCalldata(provider, BWAEZI, USDC, FEE_USDC, mintBW, mintUS, SCW);
-  const execMint = scwIface.encodeFunctionData("execute", [NPM, 0n, mintData]);
-  await wallet.sendTransaction({ to: SCW, data: execMint, gasLimit: 800000 });
+  // Ensure SCW approvals to NPM
+  await ensureAllowance(provider, wallet, SCW, BWAEZI, NPM, mintBW);
+  await ensureAllowance(provider, wallet, SCW, USDC,   NPM, mintUS);
+
+  // Build mint against known pool tick alignment
+  const currentTickUSDC = await getTick(provider, POOL_BW_USDC);
+  const spacingUSDC     = spacingForFee(FEE_USDC);
+  const { lower: tlUS, upper: tuUS } = alignTick(currentTickUSDC, spacingUSDC, 6);
+
+  const [t0US, t1US] = sortLex(BWAEZI, USDC);
+  const amount0DesiredUS = t0US.toLowerCase() === BWAEZI.toLowerCase() ? mintBW : mintUS;
+  const amount1DesiredUS = t0US.toLowerCase() === BWAEZI.toLowerCase() ? mintUS : mintBW;
+
+  const npmIface = new ethers.Interface(npmAbi);
+  const mintParamsUS = [
+    t0US, t1US, FEE_USDC, tlUS, tuUS,
+    amount0DesiredUS, amount1DesiredUS,
+    0n, 0n,
+    SCW,
+    Math.floor(Date.now()/1000)+1800
+  ];
+  const mintDataUS = npmIface.encodeFunctionData("mint", [mintParamsUS]);
+
+  await mintViaSCW(wallet, mintDataUS, "tiny in-range BWAEZI+USDC");
   console.log("✅ Re-minted tiny in-range BWAEZI+USDC");
 
   // D) Microseed swaps to restore routing and path health
+  // Ensure SCW approvals to Router (USDC, WETH, BWAEZI)
+  await ensureAllowance(provider, wallet, SCW, USDC,  ROUTER, ethers.parseUnits("5", 6));
+  await ensureAllowance(provider, wallet, SCW, WETH,  ROUTER, ethers.parseEther("0.001"));
+  await ensureAllowance(provider, wallet, SCW, BWAEZI,ROUTER, ethers.parseEther("0.001"));
 
-  // 1) 5 USDC → BWAEZI
+  // 1) 5 USDC → BWAEZI (direct 0.05% pool)
   const swap1 = buildExactInputSingleCalldata({
     tokenIn: USDC, tokenOut: BWAEZI, fee: FEE_USDC, recipient: SCW,
     amountIn: ethers.parseUnits("5", 6)
   });
   const execSwap1 = scwIface.encodeFunctionData("execute", [ROUTER, 0n, swap1]);
-  await wallet.sendTransaction({ to: SCW, data: execSwap1, gasLimit: 500000 });
+  await wallet.sendTransaction({ to: SCW, data: execSwap1, gasLimit: 500000 }).then(r => r.wait());
   console.log("✅ Microseed: 5 USDC → BWAEZI");
 
-  // 2) 2 USDC → WETH
+  // 2) 2 USDC → WETH (use USDC/WETH 0.05%)
   const swap2 = buildExactInputSingleCalldata({
     tokenIn: USDC, tokenOut: WETH, fee: FEE_USDC, recipient: SCW,
     amountIn: ethers.parseUnits("2", 6)
   });
   const execSwap2 = scwIface.encodeFunctionData("execute", [ROUTER, 0n, swap2]);
-  await wallet.sendTransaction({ to: SCW, data: execSwap2, gasLimit: 500000 });
+  await wallet.sendTransaction({ to: SCW, data: execSwap2, gasLimit: 500000 }).then(r => r.wait());
   console.log("✅ Seed: 2 USDC → WETH");
 
-  // 3) tiny WETH → BWAEZI (e.g., 0.0005)
+  // 3) tiny WETH → BWAEZI (0.3% pool)
   const swap3 = buildExactInputSingleCalldata({
     tokenIn: WETH, tokenOut: BWAEZI, fee: FEE_WETH, recipient: SCW,
     amountIn: ethers.parseEther("0.0005")
   });
   const execSwap3 = scwIface.encodeFunctionData("execute", [ROUTER, 0n, swap3]);
-  await wallet.sendTransaction({ to: SCW, data: execSwap3, gasLimit: 500000 });
+  await wallet.sendTransaction({ to: SCW, data: execSwap3, gasLimit: 500000 }).then(r => r.wait());
   console.log("✅ Tiny: WETH → BWAEZI");
 
   console.log("🎯 Done: BWAEZI returned to SCW, tiny re-peg established, paths warmed");
