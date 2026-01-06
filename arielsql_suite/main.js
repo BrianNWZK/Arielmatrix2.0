@@ -36,32 +36,32 @@ async function scwExecute(wallet, to, data, label) {
   return rc.status === 1;
 }
 
-async function drainPosition(wallet, provider, tokenId) {
+async function drain1167465(wallet, provider) {
   const npmRead  = new ethers.Contract(NPM, npmAbi, provider);
   const npmIface = new ethers.Interface(npmAbi);
-  const pos      = await npmRead.positions(tokenId);
+  const pos      = await npmRead.positions(1167465);
 
   const liq   = BigInt(pos[7]);
   const owed0 = BigInt(pos[10]);
   const owed1 = BigInt(pos[11]);
 
-  console.log(`Position #${tokenId} liquidity=${liq} owed0=${owed0} owed1=${owed1}`);
+  console.log(`Position #1167465 liquidity=${liq} owed0=${owed0} owed1=${owed1}`);
 
+  // 1) decreaseLiquidity with full liquidity
   if (liq > 0n) {
-    const decTuple = [BigInt(tokenId), liq, 0n, 0n, BigInt(nowTs()+1200)];
+    const decTuple = [1167465n, liq, 0n, 0n, BigInt(nowTs()+1200)];
     const decData  = npmIface.encodeFunctionData("decreaseLiquidity", [decTuple]);
-    try { await scwExecute(wallet, NPM, decData, `decreaseLiquidity #${tokenId}`); }
+    try { await scwExecute(wallet, NPM, decData, "decreaseLiquidity #1167465"); }
     catch (e) { console.warn(`decreaseLiquidity error: ${e?.message||e}`); }
+  } else {
+    console.log("No liquidity left in #1167465");
   }
 
-  const collectTuple = [BigInt(tokenId), SCW, UINT128_MAX, UINT128_MAX];
+  // 2) collect immediately after
+  const collectTuple = [1167465n, SCW, UINT128_MAX, UINT128_MAX];
   const collectData  = npmIface.encodeFunctionData("collect", [collectTuple]);
-  try { await scwExecute(wallet, NPM, collectData, `collect #${tokenId}`); }
+  try { await scwExecute(wallet, NPM, collectData, "collect #1167465"); }
   catch (e) { console.warn(`collect error: ${e?.message||e}`); }
-
-  await new Promise(r => setTimeout(r, 1500));
-  try { await scwExecute(wallet, NPM, collectData, `collect(retry) #${tokenId}`); }
-  catch (e) { console.warn(`collect(retry) error: ${e?.message||e}`); }
 }
 
 async function main() {
@@ -71,8 +71,7 @@ async function main() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`ETH: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
 
-  // Drain only position #1167465
-  await drainPosition(wallet, provider, 1167465);
+  await drain1167465(wallet, provider);
 
   console.log("✅ Drain of #1167465 complete");
 
