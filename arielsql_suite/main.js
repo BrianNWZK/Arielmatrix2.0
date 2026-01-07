@@ -1,6 +1,7 @@
 // main.js
 // Genesis seeding script with HTTP server for deployment health (no approvals, ERC-4337 UserOperation via Pimlico)
 // Fixed: aligned full-range ticks + paymasterAndData = "0x" (no sponsorship for simplicity)
+// Ensured single-run deployment: seeding executes exactly once at server start, then process exits with no retries.
 
 import express from "express";
 import { ethers } from "ethers";
@@ -15,7 +16,7 @@ const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 const SCW = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
-const PORT = process.env.PORT || 10000;
+const PORT = Number(process.env.PORT || 10000);
 
 // ===== Pools & Tokens =====
 const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // fee 500
@@ -69,25 +70,25 @@ async function submitUserOp(wallet, provider, callData) {
 
   const userOp = {
     sender: SCW,
-    nonce: "0x" + BigInt(nonce).toString(16), // hex-encode nonce per ERC-4337 spec
+    nonce: "0x" + BigInt(nonce).toString(16), // hex-encoded per ERC-4337 spec
     initCode: "0x",
     callData: callData,
-    callGasLimit: "0x" + (800000n).toString(16), // increased for safety
+    callGasLimit: "0x" + (800000n).toString(16),
     verificationGasLimit: "0x" + (300000n).toString(16),
     preVerificationGas: "0x" + (80000n).toString(16),
     maxFeePerGas: "0x" + (ethers.parseUnits("80", "gwei").toString(16)),
     maxPriorityFeePerGas: "0x" + (ethers.parseUnits("5", "gwei").toString(16)),
-    paymasterAndData: "0x", // no paymaster — ensure SCW can pay verification gas (bundler may sponsor)
+    paymasterAndData: "0x", // no sponsorship/paymaster
     signature: "0x"
   };
 
-  // Compute opHash and sign
+  // Compute userOpHash and sign
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   const packed = abiCoder.encode(
     ["address","uint256","bytes32","bytes32","uint256","uint256","uint256","uint256","uint256","bytes32"],
     [
       userOp.sender,
-      BigInt(userOp.nonce), // BigInt from hex string is fine
+      BigInt(userOp.nonce),
       ethers.keccak256(userOp.initCode),
       ethers.keccak256(userOp.callData),
       BigInt(userOp.callGasLimit),
@@ -139,7 +140,7 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 90000, intervalMs = 
     });
     const json = await res.json();
     if (json.result) {
-      console.log(`UserOp success: ${json.result.success ? 'YES' : 'NO'} in block ${json.result.receipt.blockNumber}`);
+      console.log(`UserOp success: ${json.result.success ? "YES" : "NO"} in block ${json.result.receipt.blockNumber}`);
       if (!json.result.success) console.log("Failure receipt:", json.result.receipt);
       return json.result;
     }
@@ -246,32 +247,36 @@ async function mintTinyBWWETH(wallet, provider) {
   await waitForUserOpReceipt(userOpHash);
 }
 
-// ===== Seeding runner =====
-async function runSeeding() {
+// ===== Seeding runner (single-run guard) =====
+let hasRun = false;
+async function runSeedingOnce() {
+  if (hasRun) {
+    console.log("Seeding already executed. Skipping.");
+    return;
+  }
+  hasRun = true;
+
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
   console.log(`EOA: ${wallet.address}`);
   console.log(`SCW: ${SCW}`);
 
-  try {
-    await mintTinyBWUSDC(wallet, provider);
-    await mintTinyBWWETH(wallet, provider);
-    console.log("✅ Genesis seeding complete");
-  } catch (e) {
-    console.error("Fatal error during seeding:", e.message || e);
-    throw e;
-  }
+  await mintTinyBWUSDC(wallet, provider);
+  await mintTinyBWWETH(wallet, provider);
+  console.log("✅ Genesis seeding complete");
 }
 
 // ===== Server =====
 const app = express();
-app.get("/", (req, res) => res.send("BWAEZI seeding via ERC-4337…"));
+app.get("/", (_req, res) => res.send("BWAEZI seeding via ERC-4337…"));
+
 app.listen(PORT, async () => {
   console.log(`Server bound on port ${PORT}`);
   try {
-    await runSeeding();
-    process.exit(0);
-  } catch {
+    await runSeedingOnce();
+    process.exit(0); // exit immediately after single deployment
+  } catch (e) {
+    console.error("Fatal error during seeding:", e?.message || e);
     process.exit(1);
   }
 });
