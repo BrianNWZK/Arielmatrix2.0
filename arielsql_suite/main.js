@@ -1,5 +1,5 @@
 // main.js
-// Check initialization and price of BWAEZI/USDC and BWAEZI/WETH pools
+// One-shot: initialize BWAEZI/USDC and BWAEZI/WETH pools with peg prices
 
 import { ethers } from "ethers";
 
@@ -7,6 +7,8 @@ import { ethers } from "ethers";
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
+
+const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
 
 // ===== Pools =====
 const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // fee 500
@@ -18,56 +20,51 @@ const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
 const WETH   = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
 // ===== ABIs =====
-const poolAbi = [
-  "function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint8,bool)",
-  "function token0() view returns (address)",
-  "function token1() view returns (address)"
-];
-const erc20Abi = ["function decimals() view returns (uint8)"];
+const scwAbi  = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
+const poolAbi = ["function initialize(uint160 sqrtPriceX96)"];
 
 // ===== Helpers =====
-function sqrtPriceX96ToPrice(sqrtPriceX96, decimals0, decimals1) {
-  // price = (sqrtPriceX96^2 / 2^192) * (10^decimals0 / 10^decimals1)
-  const numerator = BigInt(sqrtPriceX96) * BigInt(sqrtPriceX96);
-  const denominator = BigInt(2) ** BigInt(192);
-  const ratio = Number(numerator) / Number(denominator);
-  return ratio * (10 ** decimals0) / (10 ** decimals1);
+function encodeInitialize(sqrtPriceX96) {
+  const iface = new ethers.Interface(poolAbi);
+  return iface.encodeFunctionData("initialize", [sqrtPriceX96]);
 }
 
-async function checkPool(provider, poolAddr, label) {
-  const pool = new ethers.Contract(poolAddr, poolAbi, provider);
-  try {
-    const slot0 = await pool.slot0();
-    const token0 = await pool.token0();
-    const token1 = await pool.token1();
-
-    const dec0 = await new ethers.Contract(token0, erc20Abi, provider).decimals();
-    const dec1 = await new ethers.Contract(token1, erc20Abi, provider).decimals();
-
-    const sqrtPriceX96 = slot0[0];
-    const tick = slot0[1];
-
-    const price = sqrtPriceX96ToPrice(sqrtPriceX96, dec0, dec1);
-
-    console.log(`Pool ${label} initialized:`);
-    console.log(`  token0=${token0}, token1=${token1}`);
-    console.log(`  sqrtPriceX96=${sqrtPriceX96.toString()}`);
-    console.log(`  tick=${tick}`);
-    console.log(`  price(token1 per token0) ≈ ${price}`);
-  } catch (e) {
-    console.log(`Pool ${label} not initialized (slot0 call reverted).`);
-  }
+// Compute sqrtPriceX96 from price (token1 per token0)
+function priceToSqrtPriceX96(price, decimals0, decimals1) {
+  // price = token1/token0
+  const ratio = price * (10 ** decimals0) / (10 ** decimals1);
+  const sqrtRatio = Math.sqrt(ratio);
+  return BigInt(Math.floor(sqrtRatio * 2 ** 96));
 }
 
 // ===== Main =====
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
+  const scwIface = new ethers.Interface(scwAbi);
 
   console.log(`EOA: ${wallet.address}`);
+  console.log(`SCW: ${SCW}`);
 
-  await checkPool(provider, POOL_BW_USDC, "BWAEZI/USDC");
-  await checkPool(provider, POOL_BW_WETH, "BWAEZI/WETH");
+  // Initialize BWAEZI/USDC at peg: 1 bwzC = 100 USDC
+  const sqrtPriceUSDC = priceToSqrtPriceX96(100, 18, 6); // bwzC has 18 decimals, USDC has 6
+  const initUSDC = encodeInitialize(sqrtPriceUSDC);
+  const execUSDC = scwIface.encodeFunctionData("execute", [POOL_BW_USDC, 0n, initUSDC]);
+  console.log("Initializing BWAEZI/USDC pool...");
+  const tx1 = await wallet.sendTransaction({ to: SCW, data: execUSDC, gasLimit: 300000 });
+  await tx1.wait();
+  console.log("BWAEZI/USDC initialized:", tx1.hash);
+
+  // Initialize BWAEZI/WETH at peg: 1 bwzC = 0.03 WETH
+  const sqrtPriceWETH = priceToSqrtPriceX96(0.03, 18, 18); // both bwzC and WETH have 18 decimals
+  const initWETH = encodeInitialize(sqrtPriceWETH);
+  const execWETH = scwIface.encodeFunctionData("execute", [POOL_BW_WETH, 0n, initWETH]);
+  console.log("Initializing BWAEZI/WETH pool...");
+  const tx2 = await wallet.sendTransaction({ to: SCW, data: execWETH, gasLimit: 300000 });
+  await tx2.wait();
+  console.log("BWAEZI/WETH initialized:", tx2.hash);
+
+  console.log("✅ Both pools initialized at peg prices");
 }
 
 main().catch(e => {
