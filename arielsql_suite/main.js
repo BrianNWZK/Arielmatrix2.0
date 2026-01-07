@@ -2,6 +2,7 @@
 // ERC-4337 seeding via SCW.execute -> Uniswap V3 NonfungiblePositionManager
 // Fix: derive token0/token1 + fee from the target pool to avoid AA23 reverts.
 // Streamlined: no approvals/balance checks/paymaster. Single-run. Bundler gas estimation.
+// Adjustment: always use a tight band around the current tick (no full-range) to avoid zero-liquidity/revert edges.
 
 import express from "express";
 import { ethers } from "ethers";
@@ -61,11 +62,6 @@ function tightBandAroundTick(currentTick, spacing, bandSpans = 2) {
   lower = Math.max(lower, minAligned);
   upper = Math.min(upper, maxAligned);
   if (upper <= lower) upper = lower + spacing;
-  return { lower, upper };
-}
-function fullRangeAligned(spacing) {
-  const lower = Math.ceil(MIN_TICK / spacing) * spacing;
-  const upper = Math.floor(MAX_TICK / spacing) * spacing;
   return { lower, upper };
 }
 function nowDeadline(secs = 1200) {
@@ -153,12 +149,13 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 90000, intervalMs = 
   throw new Error("UserOp timeout — check Pimlico dashboard for details");
 }
 
-// ===== Mint from pool config =====
+// ===== Mint from pool config (always tight band) =====
 async function mintFromPool(wallet, provider, poolAddr, nominalA, nominalB) {
   const pool = new ethers.Contract(poolAddr, poolAbi, provider);
 
   // Read live pool config
-  const [ , tick ] = await pool.slot0().catch(() => [0n, 0]);
+  const [, tickRaw] = await pool.slot0().catch(() => [0n, 0n]);
+  const tick = Number(tickRaw);
   const token0 = await pool.token0();
   const token1 = await pool.token1();
   const fee = Number(await pool.fee());
@@ -166,8 +163,7 @@ async function mintFromPool(wallet, provider, poolAddr, nominalA, nominalB) {
   console.log(`Pool ${poolAddr} tick=${tick} token0=${token0} token1=${token1} fee=${fee}`);
 
   const spacing = spacingForFee(fee);
-  const { lower: tickLower, upper: tickUpper } =
-    Math.abs(Number(tick)) > 200000 ? fullRangeAligned(spacing) : tightBandAroundTick(Number(tick), spacing, 2);
+  const { lower: tickLower, upper: tickUpper } = tightBandAroundTick(tick, spacing, 2);
 
   // Map nominal amounts into amount0Desired/amount1Desired according to token0/token1
   // nominalA corresponds to BWAEZI; nominalB corresponds to USDC/WETH depending on pool
@@ -210,7 +206,7 @@ async function runSeedingOnce() {
   console.log(`SCW: ${SCW}`);
 
   // Nominal amounts for BWAEZI vs USDC/WETH
-  const nominalBW  = ethers.parseUnits("0.05", 18);
+  const nominalBW   = ethers.parseUnits("0.05", 18);
   const nominalUSDC = ethers.parseUnits("5", 6);
   const nominalWETH = ethers.parseUnits("0.001", 18);
 
