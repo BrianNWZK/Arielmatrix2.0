@@ -1,5 +1,5 @@
 // main.js
-// Genesis seeding script with HTTP server for deployment health
+// Genesis seeding script with HTTP server for deployment health (no approvals)
 
 import express from "express";
 import { ethers } from "ethers";
@@ -11,7 +11,6 @@ const NPM = ethers.getAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"); // 
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
-
 const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
 const PORT        = process.env.PORT || 10000;
 
@@ -28,19 +27,10 @@ const poolAbi = [
   "function token0() view returns (address)",
   "function token1() view returns (address)"
 ];
-
 const scwAbi = [
   "function execute(address to,uint256 value,bytes data) returns (bytes)"
 ];
-
-const erc20Abi = [
-  "function approve(address spender,uint256 value) returns (bool)",
-  "function allowance(address owner,address spender) view returns (uint256)",
-  "function balanceOf(address account) view returns (uint256)",
-  "function decimals() view returns (uint8)"
-];
-
-// Named tuple ABI for ethers v6; we will still pass array (most robust)
+// Named tuple ABI; we will pass positional array (works in ethers v6)
 const npmAbi = [
   "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)"
 ];
@@ -61,56 +51,11 @@ function nowDeadline(secs = 1200) {
 }
 function encodeMint(paramsArray) {
   const iface = new ethers.Interface(npmAbi);
-  return iface.encodeFunctionData("mint", [paramsArray]); // positional array
-}
-function encodeApprove(token, spender, amount) {
-  const iface = new ethers.Interface(erc20Abi);
-  return iface.encodeFunctionData("approve", [spender, amount]);
+  return iface.encodeFunctionData("mint", [paramsArray]); // positional array in correct order
 }
 function scwEncodeExecute(to, value, data) {
   const iface = new ethers.Interface(scwAbi);
   return iface.encodeFunctionData("execute", [to, value, data]);
-}
-
-// ===== Preflight approvals from SCW to NPM =====
-async function ensureScwApprovals(wallet, provider) {
-  const usdc = new ethers.Contract(USDC, erc20Abi, provider);
-  const bw   = new ethers.Contract(BWAEZI, erc20Abi, provider);
-
-  // Query existing allowances
-  const [allowUSDC, allowBW] = await Promise.all([
-    usdc.allowance(SCW, NPM),
-    bw.allowance(SCW, NPM)
-  ]);
-
-  const needUSDC = allowUSDC < ethers.parseUnits("5", 6);      // approve enough for bootstrap
-  const needBW   = allowBW   < ethers.parseUnits("1", 18);     // approve enough for bootstrap
-
-  if (!needUSDC && !needBW) {
-    console.log("SCW approvals already sufficient");
-    return;
-  }
-
-  // Build batched approvals via SCW.execute (two calls sent sequentially)
-  if (needUSDC) {
-    const approveData = encodeApprove(USDC, NPM, ethers.MaxUint256);
-    const execData = scwEncodeExecute(USDC, 0n, approveData);
-    console.log("Approving USDC from SCW to NPM...");
-    const tx = await wallet.sendTransaction({ to: SCW, data: execData, gasLimit: 250000 });
-    const rc = await tx.wait();
-    console.log("USDC approve status:", rc.status, tx.hash);
-    if (rc.status !== 1) throw new Error("USDC approve reverted");
-  }
-
-  if (needBW) {
-    const approveData = encodeApprove(BWAEZI, NPM, ethers.MaxUint256);
-    const execData = scwEncodeExecute(BWAEZI, 0n, approveData);
-    console.log("Approving BWAEZI from SCW to NPM...");
-    const tx = await wallet.sendTransaction({ to: SCW, data: execData, gasLimit: 250000 });
-    const rc = await tx.wait();
-    console.log("BWAEZI approve status:", rc.status, tx.hash);
-    if (rc.status !== 1) throw new Error("BWAEZI approve reverted");
-  }
 }
 
 // ===== Mint Tiny BW/USDC =====
@@ -142,19 +87,19 @@ async function mintTinyBWUSDC(wallet, provider) {
   const amountUSDC = ethers.parseUnits("1", 6);
   const amountBW   = ethers.parseUnits("0.01", 18);
 
-  // Positional array in correct order
+  // Positional array in correct order (token0=BWAEZI, token1=USDC)
   const paramsArray = [
     BWAEZI,           // token0
     USDC,             // token1
     500,              // fee
-    tickLower,
-    tickUpper,
+    tickLower,        // tickLower
+    tickUpper,        // tickUpper
     amountBW,         // amount0Desired (bwzC)
     amountUSDC,       // amount1Desired (USDC)
     0n,               // amount0Min
     0n,               // amount1Min
     SCW,              // recipient
-    nowDeadline()
+    nowDeadline()     // deadline
   ];
 
   const mintData = encodeMint(paramsArray);
@@ -164,7 +109,7 @@ async function mintTinyBWUSDC(wallet, provider) {
   if (!execMint || execMint.length < 10) throw new Error("SCW execute encoding failed");
 
   console.log(`Minting BWAEZI/USDC full-range: ${ethers.formatEther(amountBW)} bwzC + ${ethers.formatUnits(amountUSDC,6)} USDC`);
-  console.log(`execMint length: ${execMint.length} bytes hex`);
+  console.log(`execMint hex length: ${execMint.length}`);
 
   const tx = await wallet.sendTransaction({ to: SCW, data: execMint, gasLimit: 900000 });
   const rc = await tx.wait();
@@ -200,18 +145,19 @@ async function mintTinyBWWETH(wallet, provider) {
   const amountBW   = ethers.parseUnits("0.01", 18);
   const amountWETH = ethers.parseUnits("0.0003", 18); // ~0.03 WETH per bwzC
 
+  // Positional array in correct order (token0=BWAEZI, token1=WETH)
   const paramsArray = [
     BWAEZI,           // token0
     WETH,             // token1
     3000,             // fee
-    tickLower,
-    tickUpper,
+    tickLower,        // tickLower
+    tickUpper,        // tickUpper
     amountBW,         // amount0Desired (bwzC)
     amountWETH,       // amount1Desired (WETH)
-    0n,
-    0n,
-    SCW,
-    nowDeadline()
+    0n,               // amount0Min
+    0n,               // amount1Min
+    SCW,              // recipient
+    nowDeadline()     // deadline
   ];
 
   const mintData = encodeMint(paramsArray);
@@ -221,7 +167,7 @@ async function mintTinyBWWETH(wallet, provider) {
   if (!execMint || execMint.length < 10) throw new Error("SCW execute encoding failed");
 
   console.log(`Minting BWAEZI/WETH: ${ethers.formatEther(amountBW)} bwzC + ${ethers.formatEther(amountWETH)} WETH`);
-  console.log(`execMint length: ${execMint.length} bytes hex`);
+  console.log(`execMint hex length: ${execMint.length}`);
 
   const tx = await wallet.sendTransaction({ to: SCW, data: execMint, gasLimit: 900000 });
   const rc = await tx.wait();
@@ -237,15 +183,8 @@ async function runSeeding() {
   console.log(`SCW: ${SCW}`);
 
   try {
-    // 1) Ensure approvals from SCW to NPM
-    await ensureScwApprovals(wallet, provider);
-
-    // 2) Mint USDC pool
     await mintTinyBWUSDC(wallet, provider);
-
-    // 3) Mint WETH pool
     await mintTinyBWWETH(wallet, provider);
-
     console.log("✅ Genesis seeding complete");
   } catch (e) {
     console.error("Fatal error during seeding:", e.message || e);
