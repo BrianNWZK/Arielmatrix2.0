@@ -2,6 +2,7 @@
 // Genesis seeding script with HTTP server for deployment health (no approvals, ERC-4337 UserOperation via Pimlico)
 // Fixed: aligned full-range ticks + paymasterAndData = "0x" (no sponsorship for simplicity)
 // Ensured single-run deployment: seeding executes exactly once at server start, then process exits with no retries.
+// Bundler-driven gas estimation: all gas fields set to "0x0" to remove caps/minimums.
 
 import express from "express";
 import { ethers } from "ethers";
@@ -73,11 +74,12 @@ async function submitUserOp(wallet, provider, callData) {
     nonce: "0x" + BigInt(nonce).toString(16), // hex-encoded per ERC-4337 spec
     initCode: "0x",
     callData: callData,
-    callGasLimit: "0x" + (800000n).toString(16),
-    verificationGasLimit: "0x" + (300000n).toString(16),
-    preVerificationGas: "0x" + (80000n).toString(16),
-    maxFeePerGas: "0x" + (ethers.parseUnits("80", "gwei").toString(16)),
-    maxPriorityFeePerGas: "0x" + (ethers.parseUnits("5", "gwei").toString(16)),
+    // Let bundler estimate and fill gas dynamically (no caps/minimums)
+    callGasLimit: "0x0",
+    verificationGasLimit: "0x0",
+    preVerificationGas: "0x0",
+    maxFeePerGas: "0x0",
+    maxPriorityFeePerGas: "0x0",
     paymasterAndData: "0x", // no sponsorship/paymaster
     signature: "0x"
   };
