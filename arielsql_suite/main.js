@@ -1,5 +1,6 @@
 // main.js
 // Genesis seeding script with HTTP server for deployment health
+
 import express from "express";
 import { ethers } from "ethers";
 
@@ -7,18 +8,19 @@ import { ethers } from "ethers";
 const NPM = ethers.getAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"); // NonfungiblePositionManager
 
 // ===== Env =====
-const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
-const SCW = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
-const PORT = process.env.PORT || 3000;
+
+const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2");
+const PORT        = process.env.PORT || 10000;
 
 // ===== Pools & Tokens =====
 const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // fee 500
 const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // fee 3000
 const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
-const USDC = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-const WETH = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+const WETH   = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
 // ===== ABIs =====
 const poolAbi = [
@@ -27,11 +29,20 @@ const poolAbi = [
   "function token1() view returns (address)"
 ];
 
-const scwAbi = ["function execute(address to,uint256 value,bytes data) returns (bytes)"];
+const scwAbi = [
+  "function execute(address to,uint256 value,bytes data) returns (bytes)"
+];
 
-// Correct positional ABI for mint (ethers v6 requires array for unnamed tuple)
+const erc20Abi = [
+  "function approve(address spender,uint256 value) returns (bool)",
+  "function allowance(address owner,address spender) view returns (uint256)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function decimals() view returns (uint8)"
+];
+
+// Named tuple ABI for ethers v6; we will still pass array (most robust)
 const npmAbi = [
-  "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline) params) returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)"
+  "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)"
 ];
 
 // ===== Helpers =====
@@ -40,25 +51,72 @@ function spacingForFee(fee) {
   if (fee === 3000) return 60;
   return 1;
 }
-
 function alignTickAround(tick, spacing, spans = 12) {
   const lower = Math.floor((tick - spans * spacing) / spacing) * spacing;
   const upper = Math.floor((tick + spans * spacing) / spacing) * spacing + spacing; // ensure upper > lower
   return { lower, upper };
 }
-
 function nowDeadline(secs = 1200) {
   return Math.floor(Date.now() / 1000) + secs;
 }
-
 function encodeMint(paramsArray) {
   const iface = new ethers.Interface(npmAbi);
-  return iface.encodeFunctionData("mint", [paramsArray]); // pass as array
+  return iface.encodeFunctionData("mint", [paramsArray]); // positional array
+}
+function encodeApprove(token, spender, amount) {
+  const iface = new ethers.Interface(erc20Abi);
+  return iface.encodeFunctionData("approve", [spender, amount]);
+}
+function scwEncodeExecute(to, value, data) {
+  const iface = new ethers.Interface(scwAbi);
+  return iface.encodeFunctionData("execute", [to, value, data]);
+}
+
+// ===== Preflight approvals from SCW to NPM =====
+async function ensureScwApprovals(wallet, provider) {
+  const usdc = new ethers.Contract(USDC, erc20Abi, provider);
+  const bw   = new ethers.Contract(BWAEZI, erc20Abi, provider);
+
+  // Query existing allowances
+  const [allowUSDC, allowBW] = await Promise.all([
+    usdc.allowance(SCW, NPM),
+    bw.allowance(SCW, NPM)
+  ]);
+
+  const needUSDC = allowUSDC < ethers.parseUnits("5", 6);      // approve enough for bootstrap
+  const needBW   = allowBW   < ethers.parseUnits("1", 18);     // approve enough for bootstrap
+
+  if (!needUSDC && !needBW) {
+    console.log("SCW approvals already sufficient");
+    return;
+  }
+
+  // Build batched approvals via SCW.execute (two calls sent sequentially)
+  if (needUSDC) {
+    const approveData = encodeApprove(USDC, NPM, ethers.MaxUint256);
+    const execData = scwEncodeExecute(USDC, 0n, approveData);
+    console.log("Approving USDC from SCW to NPM...");
+    const tx = await wallet.sendTransaction({ to: SCW, data: execData, gasLimit: 250000 });
+    const rc = await tx.wait();
+    console.log("USDC approve status:", rc.status, tx.hash);
+    if (rc.status !== 1) throw new Error("USDC approve reverted");
+  }
+
+  if (needBW) {
+    const approveData = encodeApprove(BWAEZI, NPM, ethers.MaxUint256);
+    const execData = scwEncodeExecute(BWAEZI, 0n, approveData);
+    console.log("Approving BWAEZI from SCW to NPM...");
+    const tx = await wallet.sendTransaction({ to: SCW, data: execData, gasLimit: 250000 });
+    const rc = await tx.wait();
+    console.log("BWAEZI approve status:", rc.status, tx.hash);
+    if (rc.status !== 1) throw new Error("BWAEZI approve reverted");
+  }
 }
 
 // ===== Mint Tiny BW/USDC =====
 async function mintTinyBWUSDC(wallet, provider) {
   const pool = new ethers.Contract(POOL_BW_USDC, poolAbi, provider);
+
   let currentTick = 0;
   try {
     const [, tick] = await pool.slot0();
@@ -80,11 +138,11 @@ async function mintTinyBWUSDC(wallet, provider) {
     tickUpper = upper;
   }
 
-  // Desired: ~1 USDC worth + 0.01 bwzC (will force peg on empty pool)
+  // Safe amounts: 1 USDC + 0.01 bwzC
   const amountUSDC = ethers.parseUnits("1", 6);
-  const amountBW = ethers.parseUnits("0.01", 18);
+  const amountBW   = ethers.parseUnits("0.01", 18);
 
-  // IMPORTANT: token0 = BWAEZI, token1 = USDC in your pool → amount0Desired = bwzC, amount1Desired = USDC
+  // Positional array in correct order
   const paramsArray = [
     BWAEZI,           // token0
     USDC,             // token1
@@ -100,24 +158,24 @@ async function mintTinyBWUSDC(wallet, provider) {
   ];
 
   const mintData = encodeMint(paramsArray);
+  if (!mintData || mintData.length < 10) throw new Error("mintData encoding failed");
 
-  const scwIface = new ethers.Interface(scwAbi);
-  const execMint = scwIface.encodeFunctionData("execute", [NPM, 0n, mintData]); // ← NPM, not pool!
+  const execMint = scwEncodeExecute(NPM, 0n, mintData);
+  if (!execMint || execMint.length < 10) throw new Error("SCW execute encoding failed");
 
   console.log(`Minting BWAEZI/USDC full-range: ${ethers.formatEther(amountBW)} bwzC + ${ethers.formatUnits(amountUSDC,6)} USDC`);
+  console.log(`execMint length: ${execMint.length} bytes hex`);
 
-  const tx = await wallet.sendTransaction({
-    to: SCW,
-    data: execMint,
-    gasLimit: 900000
-  });
+  const tx = await wallet.sendTransaction({ to: SCW, data: execMint, gasLimit: 900000 });
   const rc = await tx.wait();
   console.log("BWAEZI/USDC mint tx:", tx.hash, "status:", rc.status);
+  if (rc.status !== 1) throw new Error("BW/USDC mint reverted");
 }
 
-// ===== Mint Tiny BW/WETH (similar fix) =====
+// ===== Mint Tiny BW/WETH =====
 async function mintTinyBWWETH(wallet, provider) {
   const pool = new ethers.Contract(POOL_BW_WETH, poolAbi, provider);
+
   let currentTick = 0;
   try {
     const [, tick] = await pool.slot0();
@@ -139,50 +197,55 @@ async function mintTinyBWWETH(wallet, provider) {
     tickUpper = upper;
   }
 
-  const amountBW = ethers.parseUnits("0.01", 18);
-  const amountWETH = ethers.parseUnits("0.0003", 18); // ~peg
+  const amountBW   = ethers.parseUnits("0.01", 18);
+  const amountWETH = ethers.parseUnits("0.0003", 18); // ~0.03 WETH per bwzC
 
-  // Adjust ordering if needed — check your actual pool token0/token1
   const paramsArray = [
-    BWAEZI, amountBW, WETH, amountWETH, // assuming token0=BWAEZI
-    3000,
+    BWAEZI,           // token0
+    WETH,             // token1
+    3000,             // fee
     tickLower,
     tickUpper,
-    amountBW,    // amount0Desired
-    amountWETH,  // amount1Desired
+    amountBW,         // amount0Desired (bwzC)
+    amountWETH,       // amount1Desired (WETH)
     0n,
     0n,
     SCW,
     nowDeadline()
   ];
 
-  // If your BW/WETH pool has WETH as token0, swap the amounts accordingly
-
   const mintData = encodeMint(paramsArray);
-  const scwIface = new ethers.Interface(scwAbi);
-  const execMint = scwIface.encodeFunctionData("execute", [NPM, 0n, mintData]);
+  if (!mintData || mintData.length < 10) throw new Error("mintData encoding failed");
+
+  const execMint = scwEncodeExecute(NPM, 0n, mintData);
+  if (!execMint || execMint.length < 10) throw new Error("SCW execute encoding failed");
 
   console.log(`Minting BWAEZI/WETH: ${ethers.formatEther(amountBW)} bwzC + ${ethers.formatEther(amountWETH)} WETH`);
+  console.log(`execMint length: ${execMint.length} bytes hex`);
 
-  const tx = await wallet.sendTransaction({
-    to: SCW,
-    data: execMint,
-    gasLimit: 900000
-  });
+  const tx = await wallet.sendTransaction({ to: SCW, data: execMint, gasLimit: 900000 });
   const rc = await tx.wait();
   console.log("BWAEZI/WETH mint tx:", tx.hash, "status:", rc.status);
+  if (rc.status !== 1) throw new Error("BW/WETH mint reverted");
 }
 
-// ===== Main =====
+// ===== Seeding runner =====
 async function runSeeding() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+  const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
   console.log(`EOA: ${wallet.address}`);
   console.log(`SCW: ${SCW}`);
 
   try {
+    // 1) Ensure approvals from SCW to NPM
+    await ensureScwApprovals(wallet, provider);
+
+    // 2) Mint USDC pool
     await mintTinyBWUSDC(wallet, provider);
+
+    // 3) Mint WETH pool
     await mintTinyBWWETH(wallet, provider);
+
     console.log("✅ Genesis seeding complete");
   } catch (e) {
     console.error("Fatal error during seeding:", e.message || e);
