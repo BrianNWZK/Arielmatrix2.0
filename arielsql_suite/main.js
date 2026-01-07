@@ -1,8 +1,9 @@
 // main.js
-// Genesis seeding script with HTTP server for deployment health (no approvals, ERC-4337 UserOperation via Pimlico)
+// Genesis seeding script with HTTP server for deployment health (ERC-4337 UserOperation via Pimlico)
 // Fixed: aligned full-range ticks + paymasterAndData = "0x" (no sponsorship for simplicity)
 // Ensured single-run deployment: seeding executes exactly once at server start, then process exits with no retries.
 // Bundler-driven gas estimation: all gas fields set to "0x0" to remove caps/minimums.
+// Added ERC20 approvals from SCW to Uniswap V3 NonfungiblePositionManager before minting to prevent reverts.
 
 import express from "express";
 import { ethers } from "ethers";
@@ -34,6 +35,10 @@ const scwAbi = ["function execute(address to,uint256 value,bytes data) returns (
 const npmAbi = [
   "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)"
 ];
+const erc20Abi = [
+  "function approve(address spender,uint256 amount) returns (bool)",
+  "function allowance(address owner,address spender) view returns (uint256)"
+];
 
 // ===== Helpers =====
 function spacingForFee(fee) {
@@ -57,6 +62,10 @@ function scwEncodeExecute(to, value, data) {
   const iface = new ethers.Interface(scwAbi);
   return iface.encodeFunctionData("execute", [to, value, data]);
 }
+function encodeApprove(token, spender, amount) {
+  const iface = new ethers.Interface(erc20Abi);
+  return iface.encodeFunctionData("approve", [spender, amount]);
+}
 
 // ===== ERC-4337 UserOperation submission =====
 async function getNonce(provider, sender) {
@@ -71,16 +80,16 @@ async function submitUserOp(wallet, provider, callData) {
 
   const userOp = {
     sender: SCW,
-    nonce: "0x" + BigInt(nonce).toString(16), // hex-encoded per ERC-4337 spec
+    nonce: "0x" + BigInt(nonce).toString(16),
     initCode: "0x",
-    callData: callData,
+    callData,
     // Let bundler estimate and fill gas dynamically (no caps/minimums)
     callGasLimit: "0x0",
     verificationGasLimit: "0x0",
     preVerificationGas: "0x0",
     maxFeePerGas: "0x0",
     maxPriorityFeePerGas: "0x0",
-    paymasterAndData: "0x", // no sponsorship/paymaster
+    paymasterAndData: "0x",
     signature: "0x"
   };
 
@@ -151,6 +160,21 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 90000, intervalMs = 
   throw new Error("UserOp timeout — check Pimlico dashboard for details");
 }
 
+// ===== Approvals =====
+async function ensureApproval(wallet, provider, tokenAddr, spenderAddr, approveAmount = ethers.MaxUint256) {
+  const token = new ethers.Contract(tokenAddr, erc20Abi, provider);
+  const allowance = await token.allowance(SCW, spenderAddr).catch(() => 0n);
+  if (allowance && allowance !== undefined && allowance > 0n) {
+    console.log(`Allowance already set for ${spenderAddr} on token ${tokenAddr}: ${allowance.toString()}`);
+    return;
+  }
+  const approveData = encodeApprove(tokenAddr, spenderAddr, approveAmount);
+  const execApprove = scwEncodeExecute(tokenAddr, 0n, approveData);
+  console.log(`Approving ${spenderAddr} to spend ${tokenAddr} (amount: ${approveAmount === ethers.MaxUint256 ? "MAX" : approveAmount.toString()})`);
+  const userOpHash = await submitUserOp(wallet, provider, execApprove);
+  await waitForUserOpReceipt(userOpHash);
+}
+
 // ===== Mint Tiny BW/USDC =====
 async function mintTinyBWUSDC(wallet, provider) {
   const pool = new ethers.Contract(POOL_BW_USDC, poolAbi, provider);
@@ -167,8 +191,8 @@ async function mintTinyBWUSDC(wallet, provider) {
   let tickLower, tickUpper;
   if (Math.abs(currentTick) > 200000) {
     console.warn("Extreme tick — using aligned full-range bootstrap");
-    tickLower = Math.floor(-887272 / spacing) * spacing; // -887270
-    tickUpper = Math.ceil(887272 / spacing) * spacing;   // 887280
+    tickLower = Math.floor(-887272 / spacing) * spacing; // -887280 aligned
+    tickUpper = Math.ceil(887272 / spacing) * spacing;   // 887280 aligned
   } else {
     const { lower, upper } = alignTickAround(currentTick, spacing);
     tickLower = lower;
@@ -177,6 +201,10 @@ async function mintTinyBWUSDC(wallet, provider) {
 
   const amountUSDC = ethers.parseUnits("1", 6);
   const amountBW   = ethers.parseUnits("0.01", 18);
+
+  // Ensure approvals (SCW -> NPM)
+  await ensureApproval(wallet, provider, BWAEZI, NPM);
+  await ensureApproval(wallet, provider, USDC, NPM);
 
   const paramsArray = [
     BWAEZI,
@@ -226,6 +254,10 @@ async function mintTinyBWWETH(wallet, provider) {
 
   const amountBW   = ethers.parseUnits("0.01", 18);
   const amountWETH = ethers.parseUnits("0.0003", 18);
+
+  // Ensure approvals (SCW -> NPM)
+  await ensureApproval(wallet, provider, BWAEZI, NPM);
+  await ensureApproval(wallet, provider, WETH, NPM);
 
   const paramsArray = [
     BWAEZI,
