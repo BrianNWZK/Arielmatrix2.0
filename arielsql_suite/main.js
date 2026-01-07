@@ -21,8 +21,8 @@ const PORT = process.env.PORT || 10000;
 const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // fee 500
 const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // fee 3000
 const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
-const USDC = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-const WETH = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+const WETH   = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
 // ===== ABIs =====
 const poolAbi = [
@@ -62,13 +62,14 @@ async function getNonce(provider, sender) {
   const ep = new ethers.Contract(ENTRY_POINT, epAbi, provider);
   return await ep.getNonce(sender, 0);
 }
+
 async function submitUserOp(wallet, provider, callData) {
-  const chainId = (await provider.getNetwork()).chainId;
+  const { chainId } = await provider.getNetwork();
   const nonce = await getNonce(provider, SCW);
 
   const userOp = {
     sender: SCW,
-    nonce: nonce.toString(),
+    nonce: "0x" + BigInt(nonce).toString(16), // hex-encode nonce per ERC-4337 spec
     initCode: "0x",
     callData: callData,
     callGasLimit: "0x" + (800000n).toString(16), // increased for safety
@@ -76,16 +77,17 @@ async function submitUserOp(wallet, provider, callData) {
     preVerificationGas: "0x" + (80000n).toString(16),
     maxFeePerGas: "0x" + (ethers.parseUnits("80", "gwei").toString(16)),
     maxPriorityFeePerGas: "0x" + (ethers.parseUnits("5", "gwei").toString(16)),
-    paymasterAndData: "0x", // no paymaster — ensure SCW or EOA can pay gas
+    paymasterAndData: "0x", // no paymaster — ensure SCW can pay verification gas (bundler may sponsor)
     signature: "0x"
   };
 
+  // Compute opHash and sign
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   const packed = abiCoder.encode(
     ["address","uint256","bytes32","bytes32","uint256","uint256","uint256","uint256","uint256","bytes32"],
     [
       userOp.sender,
-      userOp.nonce,
+      BigInt(userOp.nonce), // BigInt from hex string is fine
       ethers.keccak256(userOp.initCode),
       ethers.keccak256(userOp.callData),
       BigInt(userOp.callGasLimit),
@@ -96,14 +98,13 @@ async function submitUserOp(wallet, provider, callData) {
       ethers.keccak256(userOp.paymasterAndData)
     ]
   );
-
   const opHash = ethers.solidityPackedKeccak256(
     ["bytes32","address","uint256"],
     [ethers.keccak256(packed), ENTRY_POINT, chainId]
   );
-
   userOp.signature = await wallet.signMessage(ethers.getBytes(opHash));
 
+  // Submit to Pimlico bundler
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
@@ -139,7 +140,7 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 90000, intervalMs = 
     const json = await res.json();
     if (json.result) {
       console.log(`UserOp success: ${json.result.success ? 'YES' : 'NO'} in block ${json.result.receipt.blockNumber}`);
-      if (!json.result.success) console.log("Failure reason:", json.result.receipt);
+      if (!json.result.success) console.log("Failure receipt:", json.result.receipt);
       return json.result;
     }
     await new Promise(r => setTimeout(r, intervalMs));
@@ -155,7 +156,7 @@ async function mintTinyBWUSDC(wallet, provider) {
     const [, tick] = await pool.slot0();
     currentTick = Number(tick);
     console.log(`Current BWAEZI/USDC tick: ${currentTick}`);
-  } catch (e) {
+  } catch {
     console.warn("slot0 unavailable — using tick=0");
   }
 
@@ -172,7 +173,7 @@ async function mintTinyBWUSDC(wallet, provider) {
   }
 
   const amountUSDC = ethers.parseUnits("1", 6);
-  const amountBW = ethers.parseUnits("0.01", 18);
+  const amountBW   = ethers.parseUnits("0.01", 18);
 
   const paramsArray = [
     BWAEZI,
@@ -192,21 +193,19 @@ async function mintTinyBWUSDC(wallet, provider) {
   const execMint = scwEncodeExecute(NPM, 0n, mintData);
 
   console.log(`Minting BWAEZI/USDC: ${ethers.formatEther(amountBW)} bwzC + ${ethers.formatUnits(amountUSDC,6)} USDC [${tickLower}, ${tickUpper}]`);
-
   const userOpHash = await submitUserOp(wallet, provider, execMint);
   await waitForUserOpReceipt(userOpHash);
 }
 
-// ===== Mint Tiny BW/WETH (similar) =====
+// ===== Mint Tiny BW/WETH =====
 async function mintTinyBWWETH(wallet, provider) {
-  // ... (same structure as above, with spacing=60 for fee 3000)
   const pool = new ethers.Contract(POOL_BW_WETH, poolAbi, provider);
   let currentTick = 0;
   try {
     const [, tick] = await pool.slot0();
     currentTick = Number(tick);
     console.log(`Current BWAEZI/WETH tick: ${currentTick}`);
-  } catch (e) {
+  } catch {
     console.warn("slot0 unavailable — using tick=0");
   }
 
@@ -222,7 +221,7 @@ async function mintTinyBWWETH(wallet, provider) {
     tickUpper = upper;
   }
 
-  const amountBW = ethers.parseUnits("0.01", 18);
+  const amountBW   = ethers.parseUnits("0.01", 18);
   const amountWETH = ethers.parseUnits("0.0003", 18);
 
   const paramsArray = [
@@ -243,7 +242,6 @@ async function mintTinyBWWETH(wallet, provider) {
   const execMint = scwEncodeExecute(NPM, 0n, mintData);
 
   console.log(`Minting BWAEZI/WETH: ${ethers.formatEther(amountBW)} bwzC + ${ethers.formatEther(amountWETH)} WETH [${tickLower}, ${tickUpper}]`);
-
   const userOpHash = await submitUserOp(wallet, provider, execMint);
   await waitForUserOpReceipt(userOpHash);
 }
