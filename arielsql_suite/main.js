@@ -1,11 +1,10 @@
 // main.js
-// Genesis seeding script with HTTP server for deployment health (ERC-4337 UserOperation via Pimlico)
-// Streamlined for deployment:
-// - Bundler-driven gas estimation (all gas fields "0x0")
-// - Proper token ordering for Uniswap V3 (token0 < token1)
-// - Valid tick bounds aligned to fee spacing
-// - Single-run deployment: executes once then exits without retries
-// - No approvals or balance checks (you confirmed conditions are met)
+// Genesis seeding via ERC-4337 (Pimlico) with SCW execute
+// Streamlined:
+// - Explicit non-zero gas (from network fee data) to avoid AA23 sim quirks
+// - Proper token ordering (token0 < token1)
+// - Tighter tick ranges to prevent zero-liquidity mints
+// - Single-run, no approvals/balance checks
 
 import express from "express";
 import { ethers } from "ethers";
@@ -48,13 +47,18 @@ function spacingForFee(fee) {
   if (fee === 3000) return 60;
   return 1;
 }
-function clampAndAlignTicksAround(currentTick, spacing, spans = 12) {
-  const lowerProposed = Math.floor((currentTick - spans * spacing) / spacing) * spacing;
-  const upperProposed = Math.floor((currentTick + spans * spacing) / spacing) * spacing + spacing;
+function clampAlign(value, spacing) {
+  return Math.floor(value / spacing) * spacing;
+}
+function tightBandAroundTick(currentTick, spacing, bandSpans = 2) {
+  // Concentrated range: +/- (bandSpans * spacing), aligned and clamped to global bounds
+  let lower = clampAlign(currentTick - bandSpans * spacing, spacing);
+  let upper = clampAlign(currentTick + bandSpans * spacing, spacing) + spacing;
   const minAligned = Math.ceil(MIN_TICK / spacing) * spacing;
   const maxAligned = Math.floor(MAX_TICK / spacing) * spacing;
-  const lower = Math.max(lowerProposed, minAligned);
-  const upper = Math.min(upperProposed, maxAligned);
+  lower = Math.max(lower, minAligned);
+  upper = Math.min(upper, maxAligned);
+  if (upper <= lower) upper = lower + spacing; // ensure valid width
   return { lower, upper };
 }
 function fullRangeAligned(spacing) {
@@ -78,13 +82,10 @@ function sortTokens(a, b) {
     ? { token0: a, token1: b, isSorted: true }
     : { token0: b, token1: a, isSorted: false };
 }
-function buildMintParams({
-  tokenA, tokenB, fee, tickLower, tickUpper, amountA, amountB, recipient
-}) {
+function buildMintParams({ tokenA, tokenB, fee, tickLower, tickUpper, amountA, amountB, recipient }) {
   const { token0, token1, isSorted } = sortTokens(tokenA, tokenB);
   const amount0Desired = isSorted ? amountA : amountB;
   const amount1Desired = isSorted ? amountB : amountA;
-
   return [
     token0,
     token1,
@@ -110,21 +111,26 @@ async function getNonce(provider, sender) {
 async function submitUserOp(wallet, provider, callData) {
   const { chainId } = await provider.getNetwork();
   const nonce = await getNonce(provider, SCW);
+  const feeData = await provider.getFeeData();
+  const maxFee = feeData.maxFeePerGas ?? ethers.parseUnits("80", "gwei");
+  const maxPriority = feeData.maxPriorityFeePerGas ?? ethers.parseUnits("3", "gwei");
 
   const userOp = {
     sender: SCW,
     nonce: "0x" + BigInt(nonce).toString(16),
     initCode: "0x",
     callData,
-    callGasLimit: "0x0",
-    verificationGasLimit: "0x0",
-    preVerificationGas: "0x0",
-    maxFeePerGas: "0x0",
-    maxPriorityFeePerGas: "0x0",
+    // Use explicit non-zero gas to satisfy validation/simulation
+    callGasLimit: "0x" + (900000n).toString(16),
+    verificationGasLimit: "0x" + (350000n).toString(16),
+    preVerificationGas: "0x" + (110000n).toString(16),
+    maxFeePerGas: "0x" + maxFee.toString(16),
+    maxPriorityFeePerGas: "0x" + maxPriority.toString(16),
     paymasterAndData: "0x",
     signature: "0x"
   };
 
+  // Sign userOpHash per ERC-4337
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   const packed = abiCoder.encode(
     ["address","uint256","bytes32","bytes32","uint256","uint256","uint256","uint256","uint256","bytes32"],
@@ -190,7 +196,7 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 90000, intervalMs = 
   throw new Error("UserOp timeout — check Pimlico dashboard for details");
 }
 
-// ===== Mint Tiny BW/USDC =====
+// ===== Mint Tiny BW/USDC (concentrated range) =====
 async function mintTinyBWUSDC(wallet, provider) {
   const pool = new ethers.Contract(POOL_BW_USDC, poolAbi, provider);
   let currentTick = 0;
@@ -202,17 +208,13 @@ async function mintTinyBWUSDC(wallet, provider) {
     console.warn("slot0 unavailable — using tick=0");
   }
 
-  const spacing = spacingForFee(500); // 10
-  let tickLower, tickUpper;
-  if (Math.abs(currentTick) > 200000) {
-    console.warn("Extreme tick — using aligned full-range bootstrap");
-    ({ lower: tickLower, upper: tickUpper } = fullRangeAligned(spacing));
-  } else {
-    ({ lower: tickLower, upper: tickUpper } = clampAndAlignTicksAround(currentTick, spacing));
-  }
+  const spacing = spacingForFee(500);
+  const { lower: tickLower, upper: tickUpper } =
+    Math.abs(currentTick) > 200000 ? fullRangeAligned(spacing) : tightBandAroundTick(currentTick, spacing, 2);
 
-  const amountBW   = ethers.parseUnits("0.01", 18);
-  const amountUSDC = ethers.parseUnits("1", 6);
+  // Slightly larger amounts to avoid zero-liquidity revert
+  const amountBW   = ethers.parseUnits("0.05", 18);
+  const amountUSDC = ethers.parseUnits("5", 6);
 
   const paramsArray = buildMintParams({
     tokenA: BWAEZI,
@@ -233,7 +235,7 @@ async function mintTinyBWUSDC(wallet, provider) {
   await waitForUserOpReceipt(userOpHash);
 }
 
-// ===== Mint Tiny BW/WETH =====
+// ===== Mint Tiny BW/WETH (concentrated range) =====
 async function mintTinyBWWETH(wallet, provider) {
   const pool = new ethers.Contract(POOL_BW_WETH, poolAbi, provider);
   let currentTick = 0;
@@ -245,17 +247,12 @@ async function mintTinyBWWETH(wallet, provider) {
     console.warn("slot0 unavailable — using tick=0");
   }
 
-  const spacing = spacingForFee(3000); // 60
-  let tickLower, tickUpper;
-  if (Math.abs(currentTick) > 200000) {
-    console.warn("Extreme tick — using aligned full-range bootstrap");
-    ({ lower: tickLower, upper: tickUpper } = fullRangeAligned(spacing));
-  } else {
-    ({ lower: tickLower, upper: tickUpper } = clampAndAlignTicksAround(currentTick, spacing));
-  }
+  const spacing = spacingForFee(3000);
+  const { lower: tickLower, upper: tickUpper } =
+    Math.abs(currentTick) > 200000 ? fullRangeAligned(spacing) : tightBandAroundTick(currentTick, spacing, 2);
 
-  const amountBW   = ethers.parseUnits("0.01", 18);
-  const amountWETH = ethers.parseUnits("0.0003", 18);
+  const amountBW   = ethers.parseUnits("0.05", 18);
+  const amountWETH = ethers.parseUnits("0.001", 18);
 
   const paramsArray = buildMintParams({
     tokenA: BWAEZI,
@@ -276,13 +273,10 @@ async function mintTinyBWWETH(wallet, provider) {
   await waitForUserOpReceipt(userOpHash);
 }
 
-// ===== Seeding runner (single-run guard) =====
+// ===== Seeding runner (single-run) =====
 let hasRun = false;
 async function runSeedingOnce() {
-  if (hasRun) {
-    console.log("Seeding already executed. Skipping.");
-    return;
-  }
+  if (hasRun) return;
   hasRun = true;
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -290,14 +284,9 @@ async function runSeedingOnce() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`SCW: ${SCW}`);
 
-  try {
-    await mintTinyBWUSDC(wallet, provider);
-    await mintTinyBWWETH(wallet, provider);
-    console.log("✅ Genesis seeding complete");
-  } catch (e) {
-    console.error("Fatal error during seeding:", e?.message || e);
-    throw e;
-  }
+  await mintTinyBWUSDC(wallet, provider);
+  await mintTinyBWWETH(wallet, provider);
+  console.log("✅ Genesis seeding complete");
 }
 
 // ===== Server =====
@@ -308,8 +297,9 @@ app.listen(PORT, async () => {
   console.log(`Server bound on port ${PORT}`);
   try {
     await runSeedingOnce();
-    process.exit(0); // exit immediately after single deployment
-  } catch {
+    process.exit(0);
+  } catch (e) {
+    console.error("Fatal error during seeding:", e?.message || e);
     process.exit(1);
   }
 });
