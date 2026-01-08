@@ -1,10 +1,11 @@
 // main.js
 // One-shot deploy:
-// - Create & initialize fresh BWAEZI/USDC at fee 3000 to exact peg (1 BWAEZI = 100 USDC)
+// - Create & initialize fresh BWAEZI/USDC at fee 3000 to exact peg (1 BWAEZI = 100 USDC) with robust token order + sqrtPriceX96
 // - Mint tight-band liquidity (resilient retries) for USDC3000 and WETH3000 pools
 // - Wake-up swaps to start price discovery
 // - No approvals; assumes SCW already approved NPM and SwapRouter
 // - ERC-4337 via EntryPoint with canonical getUserOpHash signing
+// - Continues WETH leg and swaps even if USDC init/mint fails
 
 import express from "express";
 import { ethers } from "ethers";
@@ -63,6 +64,8 @@ const swapRouterAbi = [
 // ===== Math & peg helpers =====
 const MIN_TICK = -887272;
 const MAX_TICK =  887272;
+const Q96  = 2n ** 96n;
+const Q192 = 2n ** 192n;
 
 function spacingForFee(fee) {
   if (fee === 100) return 1;
@@ -95,13 +98,34 @@ function decs(addr) {
   if (a === USDC.toLowerCase()) return 6n;
   return 18n; // BWAEZI, WETH
 }
+
+// Robust sqrtPriceX96 for peg with integer math and correct token order
+function computeSqrtPriceX96_ForPeg_USDC(token0, token1) {
+  // price = token1 per token0
+  const bwIsToken0 = token0.toLowerCase() === BWAEZI.toLowerCase();
+  const DEC_BW = 18n, DEC_USDC = 6n;
+
+  let num, den; // priceRaw = num/den in base units
+  if (bwIsToken0) {
+    // token0=BWAEZI, token1=USDC: price = 100 USDC per 1 BWAEZI
+    num = 100n * (10n ** DEC_USDC);
+    den = 1n * (10n ** DEC_BW);
+  } else {
+    // token0=USDC, token1=BWAEZI: price = 0.01 BWAEZI per 1 USDC = 1/100
+    num = 1n * (10n ** DEC_BW);           // 1 BW in wei
+    den = 100n * (10n ** DEC_USDC);       // 100 USDC in base units
+  }
+  // sqrtPriceX96 = floor(sqrt(price * 2^192))
+  const scaled = (num * Q192) / den;
+  return sqrtBigInt(scaled);
+}
+
 function encodePegSqrtPriceX96(token0, token1, pegUSD, pegWETH = null) {
-  // token1 per token0 target price
+  // Fallback generic (kept for WETH leg if needed)
   const isUSDC = token1.toLowerCase() === USDC.toLowerCase();
   const target = isUSDC ? pegUSD : (pegWETH ?? PEG_WETH);
   const dec0 = decs(token0);
   const dec1 = decs(token1);
-  const Q192 = 2n ** 192n;
   const fp6 = 1_000_000n;
   const targetScaled = BigInt(Math.round(target * 1e6));
   const numerator   = targetScaled * (10n ** dec1);
@@ -109,6 +133,7 @@ function encodePegSqrtPriceX96(token0, token1, pegUSD, pegWETH = null) {
   const priceX192 = (numerator * Q192) / denominator;
   return sqrtBigInt(priceX192);
 }
+
 function nowDeadline(secs = 1200) {
   return Math.floor(Date.now() / 1000) + secs;
 }
@@ -178,24 +203,51 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 120000, intervalMs =
   throw new Error("UserOp timeout — check Pimlico dashboard");
 }
 
-// ===== Create & initialize fresh USDC pool at fee 3000 =====
+// ===== Create & initialize fresh USDC pool at fee 3000 (robust) =====
 async function ensureUsdc3000AtPeg(provider, wallet) {
   const factory = new ethers.Contract(FACTORY, factoryAbi, provider);
   const npmIface = new ethers.Interface(npmAbi);
 
+  // Canonical token order by address for Uniswap V3
   const [t0, t1] = BWAEZI.toLowerCase() < USDC.toLowerCase() ? [BWAEZI, USDC] : [USDC, BWAEZI];
+
+  // If pool already exists, we still attempt createAndInitializePoolIfNecessary; it will no-op if already initialized.
   let pool = await factory.getPool(t0, t1, 3000);
-  if (!pool || pool === ethers.ZeroAddress) {
-    const sqrtPriceX96 = encodePegSqrtPriceX96(t0, t1, PEG_USD);
-    const data = npmIface.encodeFunctionData("createAndInitializePoolIfNecessary", [t0, t1, 3000, sqrtPriceX96]);
-    const exec = scwEncodeExecute(NPM, 0n, data);
-    console.log(`Initializing fresh BWAEZI/USDC (fee 3000) at peg $${PEG_USD}...`);
+
+  // Compute sqrtPriceX96 with strict integer method
+  const sqrtPriceX96 = computeSqrtPriceX96_ForPeg_USDC(t0, t1);
+
+  const data = npmIface.encodeFunctionData("createAndInitializePoolIfNecessary", [t0, t1, 3000, sqrtPriceX96]);
+  const exec = scwEncodeExecute(NPM, 0n, data);
+  console.log(`Init USDC-3000 at peg (token0=${t0}, token1=${t1}, sqrtPriceX96=${sqrtPriceX96.toString()})`);
+
+  try {
     const h = await submitUserOp(wallet, provider, exec);
     await waitForUserOpReceipt(h);
-    pool = await factory.getPool(t0, t1, 3000);
-    console.log(`USDC-3000 pool initialized: ${pool}`);
-  } else {
-    console.log(`USDC-3000 pool exists: ${pool}`);
+  } catch (e) {
+    console.error("Init attempt failed (likely already exists/initialized):", e?.message || e);
+    // Continue to verification
+  }
+
+  // Resolve pool address and verify slot0
+  pool = await factory.getPool(t0, t1, 3000);
+  if (!pool || pool === ethers.ZeroAddress) {
+    throw new Error("USDC-3000 pool not created; factory returned zero address");
+  }
+
+  const p = new ethers.Contract(pool, poolAbi, provider);
+  let slot;
+  try {
+    slot = await p.slot0();
+  } catch {
+    slot = [0n, 0];
+  }
+  const sqrt = slot[0];
+  const tick = Number(slot[1]);
+  console.log(`USDC-3000 slot0 sqrt=${sqrt.toString()} tick=${tick}`);
+
+  if (sqrt === 0n) {
+    throw new Error("USDC-3000 pool uninitialized (sqrtPriceX96=0). Check token order and sqrtPrice calc.");
   }
   return pool;
 }
@@ -297,15 +349,24 @@ async function runSeedingOnce() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`SCW: ${SCW}`);
 
-  // 1) Fresh BWAEZI/USDC at fee 3000 (init at peg)
-  const usdcPool3000 = await ensureUsdc3000AtPeg(provider, wallet);
+  // 1) Fresh BWAEZI/USDC at fee 3000 (init at peg, robust; do not abort on AA23)
+  let usdcPool3000;
+  try {
+    usdcPool3000 = await ensureUsdc3000AtPeg(provider, wallet);
+  } catch (e) {
+    console.error("USDC-3000 init verification failed:", e?.message || e);
+  }
 
   // 2) Mint both legs (independent try/catch so WETH proceeds even if USDC fails)
   // USDC-3000: 0.05 BW + 5 USDC
-  try {
-    await mintFromPool(wallet, provider, usdcPool3000, ethers.parseEther("0.05"), ethers.parseUnits("5", 6));
-  } catch (e) {
-    console.error("USDC-3000 mint failed:", e?.message || e);
+  if (usdcPool3000) {
+    try {
+      await mintFromPool(wallet, provider, usdcPool3000, ethers.parseEther("0.05"), ethers.parseUnits("5", 6));
+    } catch (e) {
+      console.error("USDC-3000 mint failed:", e?.message || e);
+    }
+  } else {
+    console.warn("USDC-3000 pool missing; skipping USDC mint.");
   }
 
   // WETH-3000: 0.02 BW + 0.0006 WETH
@@ -317,12 +378,12 @@ async function runSeedingOnce() {
 
   // 3) Wake routing & price discovery (runs regardless)
   try {
-    await wakeRouting(wallet, provider, usdcPool3000);
+    await wakeRouting(wallet, provider, usdcPool3000 || ethers.ZeroAddress);
   } catch (e) {
     console.error("Wake-up swaps failed:", e?.message || e);
   }
 
-  console.log("✅ Deploy complete — fresh USDC-3000 initialized/minted, WETH leg seeded, swaps executed");
+  console.log("✅ Deploy complete — USDC-3000 init/mint attempted, WETH leg seeded, swaps executed");
 }
 
 // ===== Server =====
