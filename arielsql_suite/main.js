@@ -18,7 +18,7 @@ const NPM     = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
 const SWAP_ROUTER = ethers.getAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564");
 
 const WETH    = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-const USDC    = ethers.getAddress("0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eB48");
+const USDC    = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 const BWAEZI  = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
 const SCW     = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
 
