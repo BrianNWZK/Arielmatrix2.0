@@ -3,6 +3,8 @@
 // Fix: derive token0/token1 + fee from the target pool to avoid AA23 reverts.
 // Streamlined: no approvals/balance checks/paymaster. Single-run. Bundler gas estimation.
 // Adjustment: always use a tight band around the current tick (no full-range) to avoid zero-liquidity/revert edges.
+// Resilience: retry mints with wider bands and reduced amounts if simulation reverts.
+// Peg-aware: size amounts to SCW balances and 1 BWAEZI = 100 USDC = 0.03 WETH.
 
 import express from "express";
 import { ethers } from "ethers";
@@ -10,7 +12,13 @@ import { ethers } from "ethers";
 // ===== Constants =====
 const NPM = ethers.getAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88");
 const ENTRY_POINT = ethers.getAddress("0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789");
-const BUNDLER_RPC_URL = "https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb";
+const BUNDLER_RPC_URL = process.env.BUNDLER_RPC_URL || "https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb";
+
+const SWAP_ROUTER = ethers.getAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564");
+
+const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
+const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+const WETH   = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
 // ===== Env =====
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
@@ -20,8 +28,8 @@ const SCW = ethers.getAddress(process.env.SCW_ADDRESS || "0x59bE70F1c57470D7773C
 const PORT = Number(process.env.PORT || 10000);
 
 // ===== Pools =====
-const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // BWAEZI/USDC
-const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // BWAEZI/WETH
+const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // BWAEZI/USDC (fee 500)
+const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // BWAEZI/WETH (fee 3000)
 
 // ===== ABIs =====
 const poolAbi = [
@@ -37,6 +45,9 @@ const npmAbi = [
 const entryPointAbi = [
   "function getNonce(address sender, uint192 key) view returns (uint256)",
   "function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)) view returns (bytes32)"
+];
+const swapRouterAbi = [
+  "function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 deadline,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)"
 ];
 
 // ===== Tick bounds =====
@@ -75,6 +86,11 @@ function scwEncodeExecute(to, value, data) {
   const iface = new ethers.Interface(scwAbi);
   return iface.encodeFunctionData("execute", [to, value, data]);
 }
+function encodeExactInputSingle({ tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum = 0n, sqrtPriceLimitX96 = 0n }) {
+  const iface = new ethers.Interface(swapRouterAbi);
+  const params = { tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96 };
+  return iface.encodeFunctionData("exactInputSingle", [params]);
+}
 
 // ===== ERC-4337 helpers =====
 async function getNonce(provider, sender) {
@@ -88,7 +104,6 @@ async function getUserOpHash(provider, userOp) {
 async function submitUserOp(wallet, provider, callData) {
   const nonce = await getNonce(provider, SCW);
 
-  // Bundler will estimate gas
   let userOp = {
     sender: SCW,
     nonce: "0x" + BigInt(nonce).toString(16),
@@ -103,7 +118,6 @@ async function submitUserOp(wallet, provider, callData) {
     signature: "0x"
   };
 
-  // Sign canonical hash from EntryPoint
   const userOpHash = await getUserOpHash(provider, userOp);
   userOp.signature = await wallet.signMessage(ethers.getBytes(userOpHash));
 
@@ -149,11 +163,10 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 90000, intervalMs = 
   throw new Error("UserOp timeout — check Pimlico dashboard for details");
 }
 
-// ===== Mint from pool config (always tight band) =====
+// ===== Resilient mint from pool config (tight band, retries) =====
 async function mintFromPool(wallet, provider, poolAddr, nominalA, nominalB) {
   const pool = new ethers.Contract(poolAddr, poolAbi, provider);
 
-  // Read live pool config
   const [, tickRaw] = await pool.slot0().catch(() => [0n, 0n]);
   const tick = Number(tickRaw);
   const token0 = await pool.token0();
@@ -163,35 +176,102 @@ async function mintFromPool(wallet, provider, poolAddr, nominalA, nominalB) {
   console.log(`Pool ${poolAddr} tick=${tick} token0=${token0} token1=${token1} fee=${fee}`);
 
   const spacing = spacingForFee(fee);
-  const { lower: tickLower, upper: tickUpper } = tightBandAroundTick(tick, spacing, 2);
 
-  // Map nominal amounts into amount0Desired/amount1Desired according to token0/token1
-  // nominalA corresponds to BWAEZI; nominalB corresponds to USDC/WETH depending on pool
-  const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
   const isBWToken0 = token0.toLowerCase() === BWAEZI.toLowerCase();
-  const amount0Desired = isBWToken0 ? nominalA : nominalB;
-  const amount1Desired = isBWToken0 ? nominalB : nominalA;
+  let amount0Desired = isBWToken0 ? nominalA : nominalB;
+  let amount1Desired = isBWToken0 ? nominalB : nominalA;
 
-  const paramsArray = [
-    token0,
-    token1,
-    fee,
-    tickLower,
-    tickUpper,
-    amount0Desired,
-    amount1Desired,
-    0n,
-    0n,
-    SCW,
-    nowDeadline()
-  ];
+  const tiny = 1n;
+  if (amount0Desired === 0n) amount0Desired = tiny;
+  if (amount1Desired === 0n) amount1Desired = tiny;
 
-  const mintData = encodeMint(paramsArray);
-  const execMint = scwEncodeExecute(NPM, 0n, mintData);
+  for (const spans of [2, 3, 4]) {
+    const { lower: tickLower, upper: tickUpper } = tightBandAroundTick(tick, spacing, spans);
 
-  console.log(`Minting via NPM: amount0=${amount0Desired.toString()} amount1=${amount1Desired.toString()} [${tickLower}, ${tickUpper}] fee=${fee}`);
-  const userOpHash = await submitUserOp(wallet, provider, execMint);
-  await waitForUserOpReceipt(userOpHash);
+    const paramsArray = [
+      token0,
+      token1,
+      fee,
+      tickLower,
+      tickUpper,
+      amount0Desired,
+      amount1Desired,
+      0n,
+      0n,
+      SCW,
+      nowDeadline()
+    ];
+
+    const mintData = encodeMint(paramsArray);
+    const execMint = scwEncodeExecute(NPM, 0n, mintData);
+
+    console.log(`Minting via NPM: amount0=${amount0Desired.toString()} amount1=${amount1Desired.toString()} [${tickLower}, ${tickUpper}] fee=${fee} spans=${spans}`);
+    try {
+      const userOpHash = await submitUserOp(wallet, provider, execMint);
+      const rc = await waitForUserOpReceipt(userOpHash);
+      if (rc.success) return;
+      amount0Desired = amount0Desired > tiny ? amount0Desired / 2n : amount0Desired;
+      amount1Desired = amount1Desired > tiny ? amount1Desired / 2n : amount1Desired;
+    } catch (e) {
+      console.warn(`Mint attempt spans=${spans} failed: ${e?.message || e}`);
+      amount0Desired = amount0Desired > tiny ? amount0Desired / 2n : amount0Desired;
+      amount1Desired = amount1Desired > tiny ? amount1Desired / 2n : amount1Desired;
+      continue;
+    }
+  }
+
+  throw new Error("Mint failed after retries");
+}
+
+// ===== Wake-up swaps for price discovery =====
+async function wakeRouting(wallet, provider) {
+  // USDC -> BWAEZI small (keep well within balance)
+  {
+    const data = encodeExactInputSingle({
+      tokenIn: USDC,
+      tokenOut: BWAEZI,
+      fee: 500,
+      recipient: SCW,
+      deadline: nowDeadline(900),
+      amountIn: ethers.parseUnits("2", 6),
+      amountOutMinimum: 0n
+    });
+    const exec = scwEncodeExecute(SWAP_ROUTER, 0n, data);
+    console.log("Swap: USDC -> BWAEZI (2 USDC)");
+    const h = await submitUserOp(wallet, provider, exec);
+    await waitForUserOpReceipt(h);
+  }
+
+  // USDC -> WETH then WETH -> BWAEZI tiny
+  {
+    const data1 = encodeExactInputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      fee: 500, // adjust if your USDC/WETH pool uses 3000
+      recipient: SCW,
+      deadline: nowDeadline(900),
+      amountIn: ethers.parseUnits("2", 6),
+      amountOutMinimum: 0n
+    });
+    const exec1 = scwEncodeExecute(SWAP_ROUTER, 0n, data1);
+    console.log("Swap: USDC -> WETH (2 USDC)");
+    const h1 = await submitUserOp(wallet, provider, exec1);
+    await waitForUserOpReceipt(h1);
+
+    const data2 = encodeExactInputSingle({
+      tokenIn: WETH,
+      tokenOut: BWAEZI,
+      fee: 3000,
+      recipient: SCW,
+      deadline: nowDeadline(900),
+      amountIn: ethers.parseEther("0.0005"),
+      amountOutMinimum: 0n
+    });
+    const exec2 = scwEncodeExecute(SWAP_ROUTER, 0n, data2);
+    console.log("Swap: WETH -> BWAEZI (0.0005 WETH)");
+    const h2 = await submitUserOp(wallet, provider, exec2);
+    await waitForUserOpReceipt(h2);
+  }
 }
 
 // ===== Seeding runner (single-run) =====
@@ -205,13 +285,19 @@ async function runSeedingOnce() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`SCW: ${SCW}`);
 
-  // Nominal amounts for BWAEZI vs USDC/WETH
-  const nominalBW   = ethers.parseUnits("0.05", 18);
-  const nominalUSDC = ethers.parseUnits("5", 6);
-  const nominalWETH = ethers.parseUnits("0.001", 18);
+  // Peg-aware nominal amounts respecting balances:
+  // USDC pool: 0.05 BW ($5) + 5 USDC (fits 6.61 balance)
+  const nominalBW_USDC = ethers.parseEther("0.05");
+  const nominalUSDC    = ethers.parseUnits("5", 6);
+  await mintFromPool(wallet, provider, POOL_BW_USDC, nominalBW_USDC, nominalUSDC);
 
-  await mintFromPool(wallet, provider, POOL_BW_USDC, nominalBW, nominalUSDC);
-  await mintFromPool(wallet, provider, POOL_BW_WETH, nominalBW, nominalWETH);
+  // WETH pool: 0.02 BW + 0.0006 WETH (fits 0.00091668 balance)
+  const nominalBW_WETH = ethers.parseEther("0.02");
+  const nominalWETH    = ethers.parseEther("0.0006");
+  await mintFromPool(wallet, provider, POOL_BW_WETH, nominalBW_WETH, nominalWETH);
+
+  // Wake routing and price discovery
+  await wakeRouting(wallet, provider);
 
   console.log("✅ Genesis seeding complete");
 }
