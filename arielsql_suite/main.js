@@ -1,8 +1,8 @@
 // main.js
 // One-shot deploy:
-// - Path A: Initialize BWAEZI/USDC at peg (1 BWAEZI = 100 USDC) via NPM.createAndInitializePoolIfNecessary
-// - Mint tight-band positions (resilient retries) for USDC and WETH pools
-// - Wake-up swaps for price discovery on both legs
+// - Create & initialize fresh BWAEZI/USDC at fee 3000 to exact peg (1 BWAEZI = 100 USDC)
+// - Mint tight-band liquidity (resilient retries) for USDC3000 and WETH3000 pools
+// - Wake-up swaps to start price discovery
 // - No approvals; assumes SCW already approved NPM and SwapRouter
 // - ERC-4337 via EntryPoint with canonical getUserOpHash signing
 
@@ -19,13 +19,12 @@ const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
 const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
 const WETH   = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-// Known pools
-const POOL_BW_USDC = ethers.getAddress("0xe09e69Cf5d9f1BA67477b9720FAB7eb7883B4562"); // Fee 500 (0.05%)
+// Existing WETH pool (fee 3000)
 const POOL_BW_WETH = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // Fee 3000 (0.3%)
 
 // Pegs
-const PEG_USD   = 100;     // 1 BWAEZI = 100 USDC
-const PEG_WETH  = 0.03;    // 1 BWAEZI = 0.03 WETH
+const PEG_USD   = 100;   // 1 BWAEZI = 100 USDC
+const PEG_WETH  = 0.03;  // 1 BWAEZI = 0.03 WETH
 
 // Runtime
 const RPC_URL         = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
@@ -43,7 +42,8 @@ const poolAbi = [
   "function fee() view returns (uint24)"
 ];
 const factoryAbi = [
-  "function getPool(address,address,uint24) view returns (address)"
+  "function getPool(address,address,uint24) view returns (address)",
+  "function createPool(address,address,uint24) returns (address)"
 ];
 const npmAbi = [
   "function createAndInitializePoolIfNecessary(address token0,address token1,uint24 fee,uint160 sqrtPriceX96) returns (address pool)",
@@ -96,8 +96,7 @@ function decs(addr) {
   return 18n; // BWAEZI, WETH
 }
 function encodePegSqrtPriceX96(token0, token1, pegUSD, pegWETH = null) {
-  // If token1 is USDC: price token1 per token0 = pegUSD
-  // If token1 is WETH: price token1 per token0 = pegWETH
+  // token1 per token0 target price
   const isUSDC = token1.toLowerCase() === USDC.toLowerCase();
   const target = isUSDC ? pegUSD : (pegWETH ?? PEG_WETH);
   const dec0 = decs(token0);
@@ -179,25 +178,24 @@ async function waitForUserOpReceipt(userOpHash, timeoutMs = 120000, intervalMs =
   throw new Error("UserOp timeout — check Pimlico dashboard");
 }
 
-// ===== Path A: initialize USDC pool at peg =====
-async function initUsdcPoolAtPegIfNeeded(provider, wallet, fee = 500) {
-  // Sort tokens
-  const [t0, t1] = BWAEZI.toLowerCase() < USDC.toLowerCase() ? [BWAEZI, USDC] : [USDC, BWAEZI];
+// ===== Create & initialize fresh USDC pool at fee 3000 =====
+async function ensureUsdc3000AtPeg(provider, wallet) {
   const factory = new ethers.Contract(FACTORY, factoryAbi, provider);
   const npmIface = new ethers.Interface(npmAbi);
 
-  let pool = await factory.getPool(t0, t1, fee);
+  const [t0, t1] = BWAEZI.toLowerCase() < USDC.toLowerCase() ? [BWAEZI, USDC] : [USDC, BWAEZI];
+  let pool = await factory.getPool(t0, t1, 3000);
   if (!pool || pool === ethers.ZeroAddress) {
     const sqrtPriceX96 = encodePegSqrtPriceX96(t0, t1, PEG_USD);
-    const data = npmIface.encodeFunctionData("createAndInitializePoolIfNecessary", [t0, t1, fee, sqrtPriceX96]);
+    const data = npmIface.encodeFunctionData("createAndInitializePoolIfNecessary", [t0, t1, 3000, sqrtPriceX96]);
     const exec = scwEncodeExecute(NPM, 0n, data);
-    console.log(`Initializing BWAEZI/USDC at peg $${PEG_USD} (fee ${fee})...`);
+    console.log(`Initializing fresh BWAEZI/USDC (fee 3000) at peg $${PEG_USD}...`);
     const h = await submitUserOp(wallet, provider, exec);
     await waitForUserOpReceipt(h);
-    pool = await factory.getPool(t0, t1, fee);
-    console.log(`USDC pool initialized: ${pool}`);
+    pool = await factory.getPool(t0, t1, 3000);
+    console.log(`USDC-3000 pool initialized: ${pool}`);
   } else {
-    console.log(`USDC pool exists: ${pool}`);
+    console.log(`USDC-3000 pool exists: ${pool}`);
   }
   return pool;
 }
@@ -251,29 +249,29 @@ async function mintFromPool(wallet, provider, poolAddr, nominalA, nominalB) {
 }
 
 // ===== Wake-up swaps =====
-async function wakeRouting(wallet, provider) {
-  // USDC -> BWAEZI (2 USDC)
+async function wakeRouting(wallet, provider, usdcPoolAddr) {
+  // USDC -> BWAEZI small (2 USDC) on fee 3000 fresh pool
   {
     const data = encodeExactInputSingle({
-      tokenIn: USDC, tokenOut: BWAEZI, fee: 500,
+      tokenIn: USDC, tokenOut: BWAEZI, fee: 3000,
       recipient: SCW, deadline: nowDeadline(900),
       amountIn: ethers.parseUnits("2", 6), amountOutMinimum: 0n
     });
     const exec = scwEncodeExecute(SWAP_ROUTER, 0n, data);
-    console.log("Swap: USDC -> BWAEZI (2 USDC)");
+    console.log("Swap: USDC -> BWAEZI (2 USDC, fee 3000)");
     const h = await submitUserOp(wallet, provider, exec);
     await waitForUserOpReceipt(h);
   }
 
-  // USDC -> WETH (2 USDC), then WETH -> BWAEZI (0.0005 WETH)
+  // USDC -> WETH (2 USDC, fee 500 by default), then WETH -> BWAEZI (0.0005 WETH, fee 3000)
   {
     const data1 = encodeExactInputSingle({
-      tokenIn: USDC, tokenOut: WETH, fee: 500, // adjust to 3000 if needed
+      tokenIn: USDC, tokenOut: WETH, fee: 500, // change to 3000 if your USDC/WETH is 3000
       recipient: SCW, deadline: nowDeadline(900),
       amountIn: ethers.parseUnits("2", 6), amountOutMinimum: 0n
     });
     const exec1 = scwEncodeExecute(SWAP_ROUTER, 0n, data1);
-    console.log("Swap: USDC -> WETH (2 USDC)");
+    console.log("Swap: USDC -> WETH (2 USDC, fee 500)");
     const h1 = await submitUserOp(wallet, provider, exec1);
     await waitForUserOpReceipt(h1);
 
@@ -283,7 +281,7 @@ async function wakeRouting(wallet, provider) {
       amountIn: ethers.parseEther("0.0005"), amountOutMinimum: 0n
     });
     const exec2 = scwEncodeExecute(SWAP_ROUTER, 0n, data2);
-    console.log("Swap: WETH -> BWAEZI (0.0005 WETH)");
+    console.log("Swap: WETH -> BWAEZI (0.0005 WETH, fee 3000)");
     const h2 = await submitUserOp(wallet, provider, exec2);
     await waitForUserOpReceipt(h2);
   }
@@ -299,25 +297,37 @@ async function runSeedingOnce() {
   console.log(`EOA: ${wallet.address}`);
   console.log(`SCW: ${SCW}`);
 
-  // 1) Path A: initialize BWAEZI/USDC at peg (safe no-op if already present)
-  await initUsdcPoolAtPegIfNeeded(provider, wallet, 500);
+  // 1) Fresh BWAEZI/USDC at fee 3000 (init at peg)
+  const usdcPool3000 = await ensureUsdc3000AtPeg(provider, wallet);
 
-  // 2) Mint peg-aware amounts
-  // USDC pool: 0.05 BW + 5 USDC (fits SCW balance)
-  await mintFromPool(wallet, provider, POOL_BW_USDC, ethers.parseEther("0.05"), ethers.parseUnits("5", 6));
+  // 2) Mint both legs (independent try/catch so WETH proceeds even if USDC fails)
+  // USDC-3000: 0.05 BW + 5 USDC
+  try {
+    await mintFromPool(wallet, provider, usdcPool3000, ethers.parseEther("0.05"), ethers.parseUnits("5", 6));
+  } catch (e) {
+    console.error("USDC-3000 mint failed:", e?.message || e);
+  }
 
-  // WETH pool: 0.02 BW + 0.0006 WETH (fits SCW balance, matches 0.03 WETH/BW peg)
-  await mintFromPool(wallet, provider, POOL_BW_WETH, ethers.parseEther("0.02"), ethers.parseEther("0.0006"));
+  // WETH-3000: 0.02 BW + 0.0006 WETH
+  try {
+    await mintFromPool(wallet, provider, POOL_BW_WETH, ethers.parseEther("0.02"), ethers.parseEther("0.0006"));
+  } catch (e) {
+    console.error("WETH-3000 mint failed:", e?.message || e);
+  }
 
-  // 3) Wake routing & price discovery
-  await wakeRouting(wallet, provider);
+  // 3) Wake routing & price discovery (runs regardless)
+  try {
+    await wakeRouting(wallet, provider, usdcPool3000);
+  } catch (e) {
+    console.error("Wake-up swaps failed:", e?.message || e);
+  }
 
-  console.log("✅ Deploy complete — pools initialized/minted, swaps executed");
+  console.log("✅ Deploy complete — fresh USDC-3000 initialized/minted, WETH leg seeded, swaps executed");
 }
 
 // ===== Server =====
 const app = express();
-app.get("/", (_req, res) => res.send("BWAEZI quick deploy (Path A + WETH seeding) via ERC-4337…"));
+app.get("/", (_req, res) => res.send("BWAEZI quick deploy (fresh USDC-3000 + WETH seeding) via ERC-4337…"));
 
 app.listen(PORT, async () => {
   console.log(`Server bound on port ${PORT}`);
