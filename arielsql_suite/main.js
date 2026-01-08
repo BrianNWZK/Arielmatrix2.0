@@ -1,37 +1,36 @@
 // main.js
-// Goal: Create BWAEZI/USDC (fee 3000) and BWAEZI/WETH (fee 3000) Uniswap V3 pools (if missing),
-// initialize each at the exact peg, and mint tight-band liquidity via SCW.
-// Pattern mirrors your WETH/BWAEZI script: EOA signer calls Factory.createPool and Pool.initialize;
-// SCW executes NonfungiblePositionManager.mint. No approvals needed (SCW already has allowances).
-// Adds optional wake-up swaps via SCW to kick price discovery.
+// Goal: Use existing BWAEZI/USDC (fee 3000) pool (already created, initialized, and seeded),
+// update with the new pool address for swaps, and focus on seeding BWAEZI/WETH (fee 3000) with
+// robust minting via SCW (approvals, balance-fit, STF fallback). Then run wake-up swaps via SCW.
+//
+// Pattern mirrors your WETH/BWAEZI script: EOA signer calls SCW.execute(NPM.mint).
+// No factory/create/init for USDC pool (removed per instruction). USDC pool address is fixed.
+// Adds explicit approvals, balance checks, and STF fallback for the WETH leg.
 
-// Env and libs
 import { ethers } from "ethers";
 
+// Env
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
 // Addresses
-const FACTORY = ethers.getAddress("0x1f98431c8ad98523631ae4a59f267346ea31f984");
-const NPM     = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
+const NPM         = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
 const SWAP_ROUTER = ethers.getAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564");
 
-const WETH    = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-const USDC    = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-const BWAEZI  = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
-const SCW     = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
+const WETH   = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
+const SCW    = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
 
-const FEE_TIER_USDC = 3000; // 0.3% for BWAEZI/USDC (fresh clean pool)
-const FEE_TIER_WETH = 3000; // 0.3% for BWAEZI/WETH (existing)
+// Pools
+const USDC_POOL_3000 = ethers.getAddress("0x261c64d4d96EBfa14398B52D93C9d063E3a619f8"); // new BWAEZI/USDC fee 3000 (created & seeded)
+const WETH_POOL_3000 = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // BWAEZI/WETH fee 3000
 
-// ABIs (pattern-aligned)
-const factoryAbi = [
-  "function getPool(address,address,uint24) view returns (address)",
-  "function createPool(address,address,uint24) returns (address)"
-];
+const FEE_TIER_WETH = 3000; // 0.3%
+
+// ABIs
 const poolAbi = [
-  "function initialize(uint160 sqrtPriceX96)",
   "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool)"
 ];
 const scwAbi = [
@@ -40,11 +39,16 @@ const scwAbi = [
 const npmAbi = [
   "function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline))"
 ];
+const erc20Abi = [
+  "function allowance(address owner,address spender) view returns (uint256)",
+  "function approve(address spender,uint256 amount) returns (bool)",
+  "function balanceOf(address owner) view returns (uint256)"
+];
 const swapRouterAbi = [
   "function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 deadline,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)"
 ];
 
-// Tick spacing helpers
+// Tick helpers
 function getTickSpacing(feeTier) {
   switch (feeTier) {
     case 100: return 1;
@@ -59,67 +63,19 @@ function nearestUsableTick(tick, spacing) {
   return q * spacing;
 }
 
-// Integer sqrt
-function sqrtBigInt(n) {
-  if (n <= 0n) return 0n;
-  let x = n, y = (x + 1n) >> 1n;
-  while (y < x) { x = y; y = (x + n / x) >> 1n; }
-  return x;
-}
+// Approvals via SCW
+async function ensureApprovalViaSCW(signer, token, spender, minAmount) {
+  const t = new ethers.Contract(token, erc20Abi, signer);
+  const allowance = await t.allowance(SCW, spender);
+  if (allowance >= minAmount) return;
 
-// Compute sqrtPriceX96 from peg: price = token1 per token0 (uses correct decimals)
-function computeSqrtPriceX96(token0, token1, priceToken1PerToken0, dec0, dec1) {
-  // priceRaw = (price * 10^dec1) / 10^dec0
-  // sqrtPriceX96 = floor( sqrt(priceRaw) * 2^96 ) = floor( sqrt(price * 2^192 * 10^dec1 / 10^dec0) )
-  const Q192 = 2n ** 192n;
-
-  // Represent price as rational with 6-decimal fixed point to avoid float errors
-  const fp = 1_000_000n;
-  const priceScaled = BigInt(Math.round(priceToken1PerToken0 * 1e6)); // integer
-  const numerator   = priceScaled * (10n ** BigInt(dec1)) * Q192;
-  const denominator = fp * (10n ** BigInt(dec0));
-  const scaled      = numerator / denominator;
-  return sqrtBigInt(scaled);
-}
-
-// Ensure pool (create+initialize) following the WETH/BW pattern
-async function ensurePoolAtPeg(provider, signer, tokenA, tokenB, feeTier, pegPriceToken1PerToken0) {
-  const factory = new ethers.Contract(FACTORY, factoryAbi, signer);
-
-  // Canonical order: token0 = lower address
-  const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
-
-  // Decimals (USDC=6, others assumed 18)
-  const dec = (addr) => addr.toLowerCase() === USDC.toLowerCase() ? 6 : 18;
-  const dec0 = dec(token0);
-  const dec1 = dec(token1);
-
-  let pool = await factory.getPool(token0, token1, feeTier);
-  if (pool !== ethers.ZeroAddress) {
-    console.log(`Pool exists: ${token0} / ${token1} fee ${feeTier} -> ${pool}`);
-    return { pool, token0, token1 };
-  }
-
-  console.log(`Creating pool ${token0} / ${token1} fee ${feeTier}...`);
-  const tx = await factory.createPool(token0, token1, feeTier);
-  console.log(`Create tx: ${tx.hash}`);
+  const iface = new ethers.Interface(erc20Abi);
+  const data = iface.encodeFunctionData("approve", [spender, ethers.MaxUint256]);
+  const scw = new ethers.Contract(SCW, scwAbi, signer);
+  const tx = await scw.execute(token, 0n, data);
+  console.log(`SCW approve ${token} -> ${spender} tx: ${tx.hash}`);
   await tx.wait();
-
-  pool = await factory.getPool(token0, token1, feeTier);
-  console.log(`✅ Pool created: ${pool}`);
-
-  // Compute sqrtPriceX96 at peg for token1 per token0
-  const sqrtPriceX96 = computeSqrtPriceX96(token0, token1, pegPriceToken1PerToken0, dec0, dec1);
-
-  // Initialize via pool.initialize (EOA signer, per your pattern)
-  const poolCtr = new ethers.Contract(pool, poolAbi, signer);
-  console.log(`Initializing price with sqrtPriceX96=${sqrtPriceX96.toString()}`);
-  const txInit = await poolCtr.initialize(sqrtPriceX96);
-  console.log(`Init tx: ${txInit.hash}`);
-  await txInit.wait();
-  console.log("✅ Pool initialized");
-
-  return { pool, token0, token1 };
+  console.log(`✅ Approved ${token} for ${spender}`);
 }
 
 // Build SCW.execute for NPM.mint with tight band
@@ -129,22 +85,17 @@ async function buildMintViaSCW(provider, pool, token0, token1, feeTier, desiredT
   const tick = Number(slot0.tick);
   const spacing = getTickSpacing(feeTier);
 
-  // Tight range around current tick (±120 ticks, aligned)
   const halfWidth = 120;
   const lowerAligned = nearestUsableTick(tick - halfWidth, spacing);
   const upperAlignedRaw = nearestUsableTick(tick + halfWidth, spacing);
   const upperAligned = upperAlignedRaw === lowerAligned ? lowerAligned + spacing : upperAlignedRaw;
 
-  const tickLower = BigInt(lowerAligned);
-  const tickUpper = BigInt(upperAligned);
-
-  // Params for NPM.mint
   const params = {
     token0,
     token1,
     fee: feeTier,
-    tickLower,
-    tickUpper,
+    tickLower: BigInt(lowerAligned),
+    tickUpper: BigInt(upperAligned),
     amount0Desired: desiredToken0,
     amount1Desired: desiredToken1,
     amount0Min: 0,
@@ -159,7 +110,7 @@ async function buildMintViaSCW(provider, pool, token0, token1, feeTier, desiredT
   return { mintData, tick, spacing, lowerAligned, upperAligned };
 }
 
-// Optional wake-up swaps via SCW
+// Wake-up swaps via SCW (uses the fixed USDC pool address context)
 async function wakeUpSwapsViaSCW(signer) {
   const scw = new ethers.Contract(SCW, scwAbi, signer);
   const routerIface = new ethers.Interface(swapRouterAbi);
@@ -225,56 +176,78 @@ async function main() {
   console.log(`Signer: ${signer.address}`);
   console.log(`ETH: ${ethers.formatEther(await provider.getBalance(signer.address))} ETH`);
 
-  // 1) Ensure BWAEZI/USDC (fee 3000) pool exists and is initialized at exact peg: 1 BW = 100 USDC
-  // price token1 (USDC) per token0 (BWAEZI) = 100
-  const { pool: usdcPool, token0: usdcT0, token1: usdcT1 } =
-    await ensurePoolAtPeg(provider, signer, BWAEZI, USDC, FEE_TIER_USDC, 100);
-
-  // 2) Ensure BWAEZI/WETH (fee 3000) pool exists and is initialized at peg: 1 BW = 0.03 WETH
-  // price token1 (WETH) per token0 (BWAEZI) = 0.03
-  const { pool: wethPool, token0: wethT0, token1: wethT1 } =
-    await ensurePoolAtPeg(provider, signer, BWAEZI, WETH, FEE_TIER_WETH, 0.03);
-
-  // 3) Build SCW mint for USDC-3000: peg-aware amounts (fits SCW balances: ~5 USDC available)
+  // USDC/BWAEZI pool is already created/initialized/seeded. Log its tick for visibility.
   {
-    const bwAmt   = ethers.parseEther("0.05");      // ~ $5 BW
-    const usdcAmt = ethers.parseUnits("5", 6);      // 5 USDC
-    const amount0Desired = usdcT0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : usdcAmt;
-    const amount1Desired = usdcT1.toLowerCase() === USDC.toLowerCase()   ? usdcAmt : bwAmt;
-
-    const { mintData, tick, spacing, lowerAligned, upperAligned } =
-      await buildMintViaSCW(provider, usdcPool, usdcT0, usdcT1, FEE_TIER_USDC, amount0Desired, amount1Desired);
-
-    console.log(`Mint BWAEZI/USDC via SCW — pool=${usdcPool}, range [${lowerAligned}, ${upperAligned}] (tick: ${tick}, spacing: ${spacing})`);
-    const scw = new ethers.Contract(SCW, scwAbi, signer);
-    const tx = await scw.execute(NPM, 0n, mintData);
-    console.log(`SCW execute (USDC-3000 mint) tx: ${tx.hash}`);
-    const rc = await tx.wait();
-    console.log(`✅ BWAEZI/USDC seeded via SCW — block ${rc.blockNumber}`);
+    const p = new ethers.Contract(USDC_POOL_3000, poolAbi, provider);
+    try {
+      const slot0 = await p.slot0();
+      console.log(`USDC-3000 pool=${USDC_POOL_3000} tick=${Number(slot0[1])}`);
+    } catch {
+      console.log(`USDC-3000 pool=${USDC_POOL_3000} slot0 unavailable`);
+    }
   }
 
-  // 4) Build SCW mint for WETH-3000: peg-aware amounts (fits SCW balances: ~0.0009 WETH)
+  // WETH leg: approvals, balance-fit, STF fallback mint via SCW
   {
-    const bwAmt   = ethers.parseEther("0.02");        // ~0.0006 WETH at peg
-    const wethAmt = ethers.parseEther("0.0006");      // fits balance
+    const tWETH = new ethers.Contract(WETH, erc20Abi, provider);
+    const tBW   = new ethers.Contract(BWAEZI, erc20Abi, provider);
+    const balW  = await tWETH.balanceOf(SCW);
+    const balBW = await tBW.balanceOf(SCW);
+
+    let bwAmt   = ethers.parseEther("0.02");     // target BW
+    let wethAmt = ethers.parseEther("0.0006");   // target WETH
+
+    // Fit to balances
+    if (balBW < bwAmt) bwAmt = balBW;
+    if (balW  < wethAmt) wethAmt = balW * 9n / 10n; // keep 10% margin
+
+    // Ensure approvals
+    await ensureApprovalViaSCW(signer, BWAEZI, NPM, bwAmt);
+    await ensureApprovalViaSCW(signer, WETH,   NPM, wethAmt);
+
+    // Determine token order for WETH pool
+    const [wethT0, wethT1] = BWAEZI.toLowerCase() < WETH.toLowerCase() ? [BWAEZI, WETH] : [WETH, BWAEZI];
+
+    // Build two-sided mint
     const amount0Desired = wethT0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : wethAmt;
     const amount1Desired = wethT1.toLowerCase() === WETH.toLowerCase()   ? wethAmt : bwAmt;
 
-    const { mintData, tick, spacing, lowerAligned, upperAligned } =
-      await buildMintViaSCW(provider, wethPool, wethT0, wethT1, FEE_TIER_WETH, amount0Desired, amount1Desired);
+    try {
+      const { mintData, tick, spacing, lowerAligned, upperAligned } =
+        await buildMintViaSCW(provider, WETH_POOL_3000, wethT0, wethT1, FEE_TIER_WETH, amount0Desired, amount1Desired);
 
-    console.log(`Mint BWAEZI/WETH via SCW — pool=${wethPool}, range [${lowerAligned}, ${upperAligned}] (tick: ${tick}, spacing: ${spacing})`);
-    const scw = new ethers.Contract(SCW, scwAbi, signer);
-    const tx = await scw.execute(NPM, 0n, mintData);
-    console.log(`SCW execute (WETH-3000 mint) tx: ${tx.hash}`);
-    const rc = await tx.wait();
-    console.log(`✅ BWAEZI/WETH seeded via SCW — block ${rc.blockNumber}`);
+      console.log(`Mint BWAEZI/WETH via SCW — pool=${WETH_POOL_3000}, range [${lowerAligned}, ${upperAligned}] (tick: ${tick}, spacing: ${spacing})`);
+      const scw = new ethers.Contract(SCW, scwAbi, signer);
+      const tx = await scw.execute(NPM, 0n, mintData);
+      console.log(`SCW execute (WETH-3000 mint) tx: ${tx.hash}`);
+      const rc = await tx.wait();
+      console.log(`✅ BWAEZI/WETH seeded via SCW — block ${rc.blockNumber}`);
+    } catch (e) {
+      const msg = String(e?.reason || e?.message || "");
+      if (msg.includes("STF") || msg.includes("transfer") || msg.includes("safeTransferFrom")) {
+        console.warn("STF on WETH mint — retrying one-sided BWAEZI-only mint");
+
+        const oneSide0 = wethT0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : 0n;
+        const oneSide1 = wethT1.toLowerCase() === WETH.toLowerCase()   ? 0n     : bwAmt;
+
+        const { mintData } =
+          await buildMintViaSCW(provider, WETH_POOL_3000, wethT0, wethT1, FEE_TIER_WETH, oneSide0, oneSide1);
+
+        const scw = new ethers.Contract(SCW, scwAbi, signer);
+        const tx = await scw.execute(NPM, 0n, mintData);
+        console.log(`SCW execute (WETH-3000 BW-only mint) tx: ${tx.hash}`);
+        const rc = await tx.wait();
+        console.log(`✅ BWAEZI/WETH BW-only seeded via SCW — block ${rc.blockNumber}`);
+      } else {
+        throw e;
+      }
+    }
   }
 
-  // 5) Optional: wake-up swaps to kick routing (small, safe)
+  // Wake-up swaps using the fixed USDC pool address context
   await wakeUpSwapsViaSCW(signer);
 
-  console.log("✅ Deploy complete — pools ensured, initialized at peg, mints executed via SCW, wake-up swaps done.");
+  console.log("✅ Deploy complete — USDC pool fixed address used for swaps, WETH leg seeded with robust flow, wake-up swaps done.");
 }
 
 main().catch(err => {
