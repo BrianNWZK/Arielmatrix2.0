@@ -1,11 +1,9 @@
 // main.js
 // Goal: Use existing BWAEZI/USDC (fee 3000) pool (already created, initialized, and seeded),
-// update with the new pool address for swaps, and focus on seeding BWAEZI/WETH (fee 3000) with
-// robust minting via SCW (balance-fit, STF fallback). Then run wake-up swaps via SCW.
-//
-// Pattern mirrors your WETH/BWAEZI script: EOA signer calls SCW.execute(NPM.mint).
-// No factory/create/init for USDC pool (removed per instruction). USDC pool address is fixed.
-// Approvals have been confirmed on-chain (unlimited), so ALL approval calls are removed.
+// focus on robust seeding of BWAEZI/WETH (fee 3000) via SCW with balance-fitting and STF fallback.
+// Then perform wake-up swaps via SCW using the USDC pool.
+// All unlimited approvals are confirmed on-chain — NO approval code included.
+// Execution order preserved.
 
 import { ethers } from "ethers";
 
@@ -15,8 +13,8 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
 // Addresses
-const NPM         = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88");
-const SWAP_ROUTER = ethers.getAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564");
+const NPM         = ethers.getAddress("0xc36442b4a4522e871399cd717abdd847ab11fe88"); // Uniswap V3 Positions NFT Manager
+const SWAP_ROUTER = ethers.getAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564"); // Uniswap V3 SwapRouter (v1, still widely used)
 
 const WETH   = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
@@ -24,10 +22,10 @@ const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2");
 const SCW    = ethers.getAddress("0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2");
 
 // Pools
-const USDC_POOL_3000 = ethers.getAddress("0x261c64d4d96EBfa14398B52D93C9d063E3a619f8"); // BWAEZI/USDC fee 3000 (created & seeded)
+const USDC_POOL_3000 = ethers.getAddress("0x261c64d4d96EBfa14398B52D93C9d063E3a619f8"); // BWAEZI/USDC fee 3000
 const WETH_POOL_3000 = ethers.getAddress("0x142C3dce0a5605Fb385fAe7760302fab761022aa"); // BWAEZI/WETH fee 3000
 
-const FEE_TIER_WETH = 3000; // 0.3%
+const FEE_TIER_WETH = 3000;
 
 // ABIs
 const poolAbi = [
@@ -61,7 +59,7 @@ function nearestUsableTick(tick, spacing) {
   return q * spacing;
 }
 
-// Build SCW.execute for NPM.mint with tight band (ethers v6 positional tuple encoding)
+// Build mint calldata
 async function buildMintViaSCW(provider, pool, token0, token1, feeTier, desiredToken0, desiredToken1) {
   const poolCtr = new ethers.Contract(pool, poolAbi, provider);
   const slot0 = await poolCtr.slot0();
@@ -73,86 +71,88 @@ async function buildMintViaSCW(provider, pool, token0, token1, feeTier, desiredT
   const upperAlignedRaw = nearestUsableTick(tick + halfWidth, spacing);
   const upperAligned = upperAlignedRaw === lowerAligned ? lowerAligned + spacing : upperAlignedRaw;
 
-  const tickLower = BigInt(lowerAligned);
-  const tickUpper = BigInt(upperAligned);
-
-  // Ethers v6: positional array for tuple components
   const paramsArray = [
-    token0,           // address token0 (sorted)
-    token1,           // address token1 (sorted)
-    feeTier,          // uint24 fee
-    tickLower,        // int24 tickLower
-    tickUpper,        // int24 tickUpper
-    desiredToken0,    // uint256 amount0Desired (aligned to sorted order)
-    desiredToken1,    // uint256 amount1Desired (aligned to sorted order)
-    0n,               // uint256 amount0Min
-    0n,               // uint256 amount1Min
-    SCW,              // address recipient
-    BigInt(Math.floor(Date.now() / 1000) + 1800) // uint256 deadline
+    token0, token1, feeTier,
+    BigInt(lowerAligned), BigInt(upperAligned),
+    desiredToken0, desiredToken1,
+    0n, 0n, SCW,
+    BigInt(Math.floor(Date.now() / 1000) + 1800)
   ];
 
   const iface = new ethers.Interface(npmAbi);
   const mintData = iface.encodeFunctionData("mint", [paramsArray]);
 
-  return { mintData, tick, spacing, lowerAligned, upperAligned };
+  return { mintData, tick, lowerAligned, upperAligned };
 }
 
-// Wake-up swaps via SCW (uses the fixed USDC pool address context)
-async function wakeUpSwapsViaSCW(signer) {
+// Wake-up swaps (robust, balance-fit, skips on zero)
+async function wakeUpSwapsViaSCW(signer, provider) {
   const scw = new ethers.Contract(SCW, scwAbi, signer);
   const routerIface = new ethers.Interface(swapRouterAbi);
+  const tUSDC = new ethers.Contract(USDC, erc20Abi, provider);
+  const tWETH = new ethers.Contract(WETH, erc20Abi, provider);
 
-  // USDC -> BWAEZI (fee 3000) small swap
-  {
-    const params = {
-      tokenIn: USDC,
-      tokenOut: BWAEZI,
-      fee: 3000,
-      recipient: SCW,
-      deadline: Math.floor(Date.now() / 1000) + 900,
-      amountIn: ethers.parseUnits("2", 6),
-      amountOutMinimum: 0n,
-      sqrtPriceLimitX96: 0n
-    };
-    const data = routerIface.encodeFunctionData("exactInputSingle", [params]);
-    const tx = await scw.execute(SWAP_ROUTER, 0n, data);
-    console.log(`SCW swap USDC->BW (2 USDC) tx: ${tx.hash}`);
-    await tx.wait();
-    console.log("✅ Wake-up USDC->BW swap done");
+  // USDC -> BWAEZI
+  try {
+    const balUSDC = await tUSDC.balanceOf(SCW);
+    let amountIn = ethers.parseUnits("2", 6);
+    if (balUSDC < amountIn) amountIn = balUSDC * 9n / 10n;
+    console.log(`[SWAP] USDC balance=${ethers.formatUnits(balUSDC, 6)}; planned=${ethers.formatUnits(amountIn, 6)}`);
+    if (amountIn > 0n) {
+      const params = {
+        tokenIn: USDC, tokenOut: BWAEZI, fee: 3000, recipient: SCW,
+        deadline: Math.floor(Date.now() / 1000) + 900, amountIn, amountOutMinimum: 0n, sqrtPriceLimitX96: 0n
+      };
+      const data = routerIface.encodeFunctionData("exactInputSingle", [params]);
+      const tx = await scw.execute(SWAP_ROUTER, 0n, data);
+      console.log(`SCW swap USDC->BW tx: ${tx.hash}`);
+      await tx.wait();
+      console.log("✅ Wake-up USDC->BW swap done");
+    } else {
+      console.warn("Skipping USDC->BW: zero balance");
+    }
+  } catch (e) {
+    console.warn(`USDC->BW failed: ${e?.reason || e?.message || e}`);
   }
 
-  // USDC -> WETH (fee 500) then WETH -> BWAEZI (fee 3000)
-  {
-    const params1 = {
-      tokenIn: USDC,
-      tokenOut: WETH,
-      fee: 500, // change to 3000 if your USDC/WETH tier is 3000
-      recipient: SCW,
-      deadline: Math.floor(Date.now() / 1000) + 900,
-      amountIn: ethers.parseUnits("2", 6),
-      amountOutMinimum: 0n,
-      sqrtPriceLimitX96: 0n
-    };
-    const data1 = routerIface.encodeFunctionData("exactInputSingle", [params1]);
-    const tx1 = await scw.execute(SWAP_ROUTER, 0n, data1);
-    console.log(`SCW swap USDC->WETH (2 USDC) tx: ${tx1.hash}`);
-    await tx1.wait();
+  // USDC -> WETH -> BWAEZI
+  try {
+    const balUSDC2 = await tUSDC.balanceOf(SCW);
+    let amountInUSDC = ethers.parseUnits("2", 6);
+    if (balUSDC2 < amountInUSDC) amountInUSDC = balUSDC2 * 9n / 10n;
+    console.log(`[SWAP] USDC balance (leg2)=${ethers.formatUnits(balUSDC2, 6)}; planned=${ethers.formatUnits(amountInUSDC, 6)}`);
+    if (amountInUSDC > 0n) {
+      const params1 = {
+        tokenIn: USDC, tokenOut: WETH, fee: 500, recipient: SCW,
+        deadline: Math.floor(Date.now() / 1000) + 900, amountIn: amountInUSDC, amountOutMinimum: 0n, sqrtPriceLimitX96: 0n
+      };
+      const data1 = routerIface.encodeFunctionData("exactInputSingle", [params1]);
+      const tx1 = await scw.execute(SWAP_ROUTER, 0n, data1);
+      console.log(`SCW swap USDC->WETH tx: ${tx1.hash}`);
+      await tx1.wait();
 
-    const params2 = {
-      tokenIn: WETH,
-      tokenOut: BWAEZI,
-      fee: 3000,
-      recipient: SCW,
-      deadline: Math.floor(Date.now() / 1000) + 900,
-      amountIn: ethers.parseEther("0.0005"),
-      amountOutMinimum: 0n,
-      sqrtPriceLimitX96: 0n
-    };
-    const data2 = routerIface.encodeFunctionData("exactInputSingle", [params2]);
-    const tx2 = await scw.execute(SWAP_ROUTER, 0n, data2);
-    console.log(`SCW swap WETH->BW (0.0005 WETH) tx: ${tx2.hash}`);
-    await tx2.wait();
-    console.log("✅ Wake-up WETH->BW swap done");
+      const balWETH = await tWETH.balanceOf(SCW);
+      let amountInWETH = ethers.parseEther("0.0005");
+      if (balWETH < amountInWETH) amountInWETH = balWETH * 9n / 10n;
+      console.log(`[SWAP] WETH balance=${ethers.formatEther(balWETH)}; planned=${ethers.formatEther(amountInWETH)}`);
+      if (amountInWETH > 0n) {
+        const params2 = {
+          tokenIn: WETH, tokenOut: BWAEZI, fee: 3000, recipient: SCW,
+          deadline: Math.floor(Date.now() / 1000) + 900, amountIn: amountInWETH, amountOutMinimum: 0n, sqrtPriceLimitX96: 0n
+        };
+        const data2 = routerIface.encodeFunctionData("exactInputSingle", [params2]);
+        const tx2 = await scw.execute(SWAP_ROUTER, 0n, data2);
+        console.log(`SCW swap WETH->BW tx: ${tx2.hash}`);
+        await tx2.wait();
+        console.log("✅ Wake-up WETH->BW swap done");
+      } else {
+        console.warn("Skipping WETH->BW: zero balance after USDC swap");
+      }
+    } else {
+      console.warn("Skipping USDC->WETH leg: zero balance");
+    }
+  } catch (e) {
+    console.warn(`WETH leg failed: ${e?.reason || e?.message || e}`);
   }
 }
 
@@ -163,74 +163,75 @@ async function main() {
   console.log(`Signer: ${signer.address}`);
   console.log(`ETH: ${ethers.formatEther(await provider.getBalance(signer.address))} ETH`);
 
-  // USDC/BWAEZI pool — log its tick for visibility
+  // Log USDC pool tick
   {
     const p = new ethers.Contract(USDC_POOL_3000, poolAbi, provider);
     try {
       const slot0 = await p.slot0();
-      console.log(`USDC-3000 pool=${USDC_POOL_3000} tick=${Number(slot0[1])}`);
+      console.log(`USDC-3000 pool=${USDC_POOL_3000} tick=${Number(slot0.tick)}`);
     } catch {
-      console.log(`USDC-3000 pool=${USDC_POOL_3000} slot0 unavailable`);
+      console.log(`USDC-3000 pool slot0 unavailable`);
     }
   }
 
-  // WETH leg: balance-fit, STF fallback mint via SCW (no approvals)
+  // WETH/BWAEZI mint with balance-fit + STF fallback (no approvals needed)
   {
     const tWETH = new ethers.Contract(WETH, erc20Abi, provider);
     const tBW   = new ethers.Contract(BWAEZI, erc20Abi, provider);
-    const balW  = await tWETH.balanceOf(SCW);
-    const balBW = await tBW.balanceOf(SCW);
+    let balW    = await tWETH.balanceOf(SCW);
+    let balBW   = await tBW.balanceOf(SCW);
 
-    let bwAmt   = ethers.parseEther("0.02");     // target BW
-    let wethAmt = ethers.parseEther("0.0006");   // target WETH
+    let targetBW   = ethers.parseEther("0.02");
+    let targetWETH = ethers.parseEther("0.0006");
 
-    // Fit to balances
-    if (balBW < bwAmt) bwAmt = balBW;
-    if (balW  < wethAmt) wethAmt = balW * 9n / 10n; // keep 10% margin
+    let bwAmt   = balBW < targetBW ? balBW * 9n / 10n : targetBW;
+    let wethAmt = balW < targetWETH ? balW * 9n / 10n : targetWETH;
 
-    // Determine token order for WETH pool (sorted addresses)
-    const [wethT0, wethT1] = BWAEZI.toLowerCase() < WETH.toLowerCase() ? [BWAEZI, WETH] : [WETH, BWAEZI];
+    if (bwAmt === 0n && wethAmt === 0n) {
+      console.warn("Skipping mint: zero balances for both tokens");
+    } else {
+      const [token0, token1] = BWAEZI.toLowerCase() < WETH.toLowerCase() ? [BWAEZI, WETH] : [WETH, BWAEZI];
+      const amount0Desired = token0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt : wethAmt;
+      const amount1Desired = token1.toLowerCase() === WETH.toLowerCase() ? wethAmt : bwAmt;
 
-    // Map desired amounts to sorted order
-    const amount0Desired = wethT0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : wethAmt;
-    const amount1Desired = wethT1.toLowerCase() === WETH.toLowerCase()   ? wethAmt : bwAmt;
+      try {
+        const { mintData, tick, lowerAligned, upperAligned } = 
+          await buildMintViaSCW(provider, WETH_POOL_3000, token0, token1, FEE_TIER_WETH, amount0Desired, amount1Desired);
 
-    try {
-      const { mintData, tick, spacing, lowerAligned, upperAligned } =
-        await buildMintViaSCW(provider, WETH_POOL_3000, wethT0, wethT1, FEE_TIER_WETH, amount0Desired, amount1Desired);
-
-      console.log(`Mint BWAEZI/WETH via SCW — pool=${WETH_POOL_3000}, range [${lowerAligned}, ${upperAligned}] (tick: ${tick}, spacing: ${spacing})`);
-      const scw = new ethers.Contract(SCW, scwAbi, signer);
-      const tx = await scw.execute(NPM, 0n, mintData);
-      console.log(`SCW execute (WETH-3000 mint) tx: ${tx.hash}`);
-      const rc = await tx.wait();
-      console.log(`✅ BWAEZI/WETH seeded via SCW — block ${rc.blockNumber}`);
-    } catch (e) {
-      const msg = String(e?.reason || e?.message || "");
-      if (msg.includes("STF") || msg.includes("transfer") || msg.includes("safeTransferFrom")) {
-        console.warn("STF on WETH mint — retrying one-sided BWAEZI-only mint");
-
-        const oneSide0 = wethT0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt  : 0n;
-        const oneSide1 = wethT1.toLowerCase() === WETH.toLowerCase()   ? 0n     : bwAmt;
-
-        const { mintData } =
-          await buildMintViaSCW(provider, WETH_POOL_3000, wethT0, wethT1, FEE_TIER_WETH, oneSide0, oneSide1);
-
+        console.log(`Minting BWAEZI/WETH range [${lowerAligned}, ${upperAligned}] (current tick ${tick})`);
         const scw = new ethers.Contract(SCW, scwAbi, signer);
         const tx = await scw.execute(NPM, 0n, mintData);
-        console.log(`SCW execute (WETH-3000 BW-only mint) tx: ${tx.hash}`);
-        const rc = await tx.wait();
-        console.log(`✅ BWAEZI/WETH BW-only seeded via SCW — block ${rc.blockNumber}`);
-      } else {
-        throw e;
+        console.log(`SCW mint tx: ${tx.hash}`);
+        await tx.wait();
+        console.log("✅ BWAEZI/WETH seeded (dual-sided)");
+      } catch (e) {
+        const msg = String(e?.reason || e?.message || e);
+        if (msg.includes("STF") || msg.includes("transfer") || msg.includes("safeTransferFrom")) {
+          console.warn("STF detected – falling back to BWAEZI-only mint");
+          const oneSide0 = token0.toLowerCase() === BWAEZI.toLowerCase() ? bwAmt : 0n;
+          const oneSide1 = token1.toLowerCase() === WETH.toLowerCase() ? 0n : bwAmt;
+          if (oneSide0 > 0n || oneSide1 > 0n) {
+            const { mintData } = 
+              await buildMintViaSCW(provider, WETH_POOL_3000, token0, token1, FEE_TIER_WETH, oneSide0, oneSide1);
+            const scw = new ethers.Contract(SCW, scwAbi, signer);
+            const tx = await scw.execute(NPM, 0n, mintData);
+            console.log(`SCW BW-only mint tx: ${tx.hash}`);
+            await tx.wait();
+            console.log("✅ BWAEZI/WETH seeded (BW-only fallback)");
+          } else {
+            console.warn("No BWAEZI balance for one-sided mint");
+          }
+        } else {
+          throw e;
+        }
       }
     }
   }
 
-  // Wake-up swaps using the fixed USDC pool address context
-  await wakeUpSwapsViaSCW(signer);
+  // Wake-up swaps
+  await wakeUpSwapsViaSCW(signer, provider);
 
-  console.log("✅ Deploy complete — USDC pool fixed address used for swaps, WETH leg seeded (no approvals in code), wake-up swaps done.");
+  console.log("✅ Script complete — all approvals confirmed on-chain, no approval calls in code");
 }
 
 main().catch(err => {
