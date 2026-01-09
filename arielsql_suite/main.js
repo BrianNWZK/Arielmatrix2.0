@@ -1,5 +1,6 @@
 // main.js — Remaining pending approvals for SCW on new BWAEZI token
 // Focused only on cross-chain arbitrage scaffolding (Wormhole/LayerZero)
+// Gas caps removed — dynamic determination by bundler/provider
 
 import express from 'express';
 import { ethers } from 'ethers';
@@ -21,10 +22,9 @@ const TOKENS = {
 };
 
 // Pending approvals: only bridge contracts for cross-chain arb
-// Replace with the actual deployed bridge contract addresses for Wormhole/LayerZero
 const PENDING = {
-  BWAEZI_WORMHOLE: { token: 'BWAEZI', spender: '0x98f3c9e6E3fAce36bAAd05FE09d375Ef1464288B' }, // Wormhole TokenBridge (Ethereum)
-  BWAEZI_LAYERZERO: { token: 'BWAEZI', spender: '0x3c2269811836af69497E5F486A85D7316753cf62' } // LayerZero OFT endpoint (Ethereum)
+  BWAEZI_WORMHOLE: { token: 'BWAEZI', spender: '0x98f3c9e6E3fAce36bAAd05FE09d375Ef1464288B' }, // Wormhole TokenBridge
+  BWAEZI_LAYERZERO: { token: 'BWAEZI', spender: '0x3c2269811836af69497E5F486A85D7316753cf62' } // LayerZero endpoint
 };
 
 const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
@@ -52,17 +52,16 @@ async function getBundlerGas(provider) {
     const res = await provider.send('pimlico_getUserOperationGasPrice', []);
     let maxFeePerGas = BigInt(res.maxFeePerGas);
     let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n;
+    const TIP_FLOOR = 50_000_000n; // 50 gwei
     if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
-    maxFeePerGas = (maxFeePerGas * 12n) / 10n;
     return { maxFeePerGas, maxPriorityFeePerGas };
   } catch {
     const fd = await provider.getFeeData();
-    const base = fd.maxFeePerGas ?? ethers.parseUnits('35', 'gwei');
-    const tip  = fd.maxPriorityFeePerGas ?? ethers.parseUnits('3', 'gwei');
+    const base = fd.maxFeePerGas ?? ethers.parseUnits('30', 'gwei');
+    const tip  = fd.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
     const TIP_FLOOR = 50_000_000n;
     return {
-      maxFeePerGas: BigInt(base.toString()) * 12n / 10n,
+      maxFeePerGas: BigInt(base.toString()),
       maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
     };
   }
@@ -76,13 +75,12 @@ async function approvePending(aa) {
 
     const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
 
+    // Let bundler/provider dynamically determine gas limits — no static caps
     const userOp = await aa.createUserOp(callData, {
-      callGasLimit: 400000n,
-      verificationGasLimit: 700000n,
-      preVerificationGas: 80000n,
       maxFeePerGas,
       maxPriorityFeePerGas
     });
+
     const signed = await aa.signUserOp(userOp);
     const hash = await aa.sendUserOpWithBackoff(signed, 5);
 
