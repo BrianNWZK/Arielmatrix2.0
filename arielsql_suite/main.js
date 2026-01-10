@@ -1,28 +1,65 @@
-// main.js - Flash Loan Arbitrage Receiver Deployer with Multi-RPC Fallback
+// main.js - Flash Loan Arbitrage Receiver Deployer (ES Module)
 // January 2026 - Ethereum Mainnet
 // Features: 3000 fee tier + Chainlink oracle slippage protection + 0.2% profit min + emergency withdraw
-// Uses multiple RPC endpoints with round‑robin fallback
+// Uses multiple RPC endpoints with fallback
 
-require('dotenv').config();
-const { ethers } = require("ethers");
-const http = require('http');
-const url = require('url');
+import dotenv from "dotenv";
+import { ethers } from "ethers";
+import http from "http";
+import url from "url";
+
+dotenv.config();
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("PRIVATE_KEY missing in .env");
 
 // Multiple RPC endpoints
 const RPC_URLS = [
-  'https://ethereum-rpc.publicnode.com',
-  'https://rpc.ankr.com/eth',
-  'https://eth.llamarpc.com'
+  "https://ethereum-rpc.publicnode.com",
+  "https://rpc.ankr.com/eth",
+  "https://eth.llamarpc.com"
 ];
 
 const PORT = process.env.PORT || 10000; // Render requires this
 
-// ── Pre-compiled ABI + Bytecode (unchanged from your patched contract) ──
-const ABI = [ /* ... keep ABI from your file ... */ ];
-const BYTECODE = "0x6080..."; // keep full bytecode from your file
+// ── Pre-compiled ABI + Bytecode from patched contract ──
+const ABI = [
+  {
+    "inputs": [
+      { "internalType": "address", "name": "_aavePool", "type": "address" }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  { "inputs": [], "name": "AAVE_POOL", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "CHAINLINK_ETH_USD", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "MAX_SLIPPAGE_BPS", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "MIN_PROFIT_BPS", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "SUSHI_ROUTER", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "UNI_FEE_TIER", "outputs": [{ "internalType": "uint24", "name": "", "type": "uint24" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "UNI_ROUTER", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "USDC", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [], "name": "WETH", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" },
+  { "inputs": [{ "internalType": "address", "name": "token", "type": "address" }], "name": "emergencyWithdraw", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "asset", "type": "address" },
+      { "internalType": "uint256", "name": "amount", "type": "uint256" },
+      { "internalType": "uint256", "name": "premium", "type": "uint256" },
+      { "internalType": "address", "name": "initiator", "type": "address" },
+      { "internalType": "bytes", "name": "", "type": "bytes" }
+    ],
+    "name": "executeOperation",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  { "inputs": [{ "internalType": "uint256", "name": "amount", "type": "uint256" }], "name": "executeFlashLoan", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
+  { "inputs": [], "name": "owner", "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }
+];
+
+// Full bytecode string from your file
+const BYTECODE = "0x60806040523480156200001157600080fd5b5060405162003b9638038062003b96833981810160405281019062..." // paste full hex from your file
 
 // ── Helper: pick first healthy RPC ──
 async function getHealthyProvider() {
@@ -95,13 +132,15 @@ async function deployContract() {
 // ── Render Health Server ────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url);
-  if (parsed.pathname === '/health' || parsed.pathname === '/') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ 
-      status: 'alive', 
-      time: new Date().toISOString(),
-      version: 'patched-3000-tier-oracle-safety-emergency'
-    }));
+  if (parsed.pathname === "/health" || parsed.pathname === "/") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: "alive",
+        time: new Date().toISOString(),
+        version: "patched-3000-tier-oracle-safety-emergency"
+      })
+    );
   } else {
     res.writeHead(404);
     res.end();
@@ -109,10 +148,4 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Health server running on port ${PORT}`);
-  // Kick off deployment once server is up
-  deployContract().catch(err => {
-    console.error("Fatal deploy error:", err.message || err);
-    process.exit(1);
-  });
-});
+  console.log(`Health server running
