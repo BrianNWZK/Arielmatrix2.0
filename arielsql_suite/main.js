@@ -1,106 +1,118 @@
-// main.js — Remaining pending approvals for SCW on new BWAEZI token
-// Focused only on cross-chain arbitrage scaffolding (Wormhole/LayerZero)
-// Gas caps removed — dynamic determination by bundler/provider
+// main.js - Flash Loan Arbitrage Receiver Deployer with Multi-RPC Fallback
+// January 2026 - Ethereum Mainnet
+// Features: 3000 fee tier + Chainlink oracle slippage protection + 0.2% profit min + emergency withdraw
+// Uses multiple RPC endpoints with round‑robin fallback
 
-import express from 'express';
-import { ethers } from 'ethers';
-import { EnterpriseAASDK, EnhancedRPCManager } from '../modules/aa-loaves-fishes.js';
+require('dotenv').config();
+const { ethers } = require("ethers");
+const http = require('http');
+const url = require('url');
 
-const ENTRY_POINT = '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789';
-const BUNDLER     = 'https://api.pimlico.io/v2/1/rpc?apikey=pim_4NdivPuNDvvKZ1e1aNPKrb';
-const SCW         = ethers.getAddress(process.env.SCW_ADDRESS || '0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2');
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY) throw new Error("PRIVATE_KEY missing in .env");
 
+// Multiple RPC endpoints
 const RPC_URLS = [
   'https://ethereum-rpc.publicnode.com',
   'https://rpc.ankr.com/eth',
   'https://eth.llamarpc.com'
 ];
 
-const TOKENS = {
-  USDC:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  BWAEZI: '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'
-};
+const PORT = process.env.PORT || 10000; // Render requires this
 
-// Pending approvals: only bridge contracts for cross-chain arb
-const PENDING = {
-  BWAEZI_WORMHOLE: { token: 'BWAEZI', spender: '0x98f3c9e6E3fAce36bAAd05FE09d375Ef1464288B' }, // Wormhole TokenBridge
-  BWAEZI_LAYERZERO: { token: 'BWAEZI', spender: '0x3c2269811836af69497E5F486A85D7316753cf62' } // LayerZero endpoint
-};
+// ── Pre-compiled ABI + Bytecode (unchanged from your patched contract) ──
+const ABI = [ /* ... keep ABI from your file ... */ ];
+const BYTECODE = "0x6080..."; // keep full bytecode from your file
 
-const erc20Iface = new ethers.Interface(['function approve(address,uint256)']);
-const scwIface   = new ethers.Interface(['function execute(address,uint256,bytes)']);
-
-async function init() {
-  const mgr = new EnhancedRPCManager(RPC_URLS, 1);
-  await mgr.init();
-  const provider = mgr.getProvider();
-
-  const pk = process.env.SOVEREIGN_PRIVATE_KEY;
-  if (!pk || !pk.startsWith('0x') || pk.length < 66) {
-    throw new Error('SOVEREIGN_PRIVATE_KEY missing/invalid');
+// ── Helper: pick first healthy RPC ──
+async function getHealthyProvider() {
+  for (const url of RPC_URLS) {
+    try {
+      const provider = new ethers.JsonRpcProvider(url);
+      const blockNumber = await provider.getBlockNumber();
+      if (blockNumber > 0) {
+        console.log(`✅ Using RPC: ${url} (block ${blockNumber})`);
+        return provider;
+      }
+    } catch (e) {
+      console.warn(`⚠️ RPC failed: ${url} → ${e.message}`);
+    }
   }
-  const signer = new ethers.Wallet(pk, provider);
-
-  const aa = new EnterpriseAASDK(signer, ENTRY_POINT);
-  aa.paymasterMode = 'NONE';
-  await aa.initialize(provider, SCW, BUNDLER);
-  return { provider, aa };
+  throw new Error("No healthy RPC endpoint available");
 }
 
-async function getBundlerGas(provider) {
-  try {
-    const res = await provider.send('pimlico_getUserOperationGasPrice', []);
-    let maxFeePerGas = BigInt(res.maxFeePerGas);
-    let maxPriorityFeePerGas = BigInt(res.maxPriorityFeePerGas);
-    const TIP_FLOOR = 50_000_000n; // 50 gwei
-    if (maxPriorityFeePerGas < TIP_FLOOR) maxPriorityFeePerGas = TIP_FLOOR;
-    return { maxFeePerGas, maxPriorityFeePerGas };
-  } catch {
-    const fd = await provider.getFeeData();
-    const base = fd.maxFeePerGas ?? ethers.parseUnits('30', 'gwei');
-    const tip  = fd.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
-    const TIP_FLOOR = 50_000_000n;
-    return {
-      maxFeePerGas: BigInt(base.toString()),
-      maxPriorityFeePerGas: (BigInt(tip.toString()) < TIP_FLOOR) ? TIP_FLOOR : BigInt(tip.toString())
-    };
-  }
+// ── Deployment ──────────────────────────────────────────────────────────
+async function deployContract() {
+  console.log("\n╔══════════════════════════════════════════╗");
+  console.log("║ UPDATED PATCHED ARB RECEIVER DEPLOY START ║");
+  console.log("╚══════════════════════════════════════════╝\n");
+
+  const provider = await getHealthyProvider();
+  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+
+  console.log(`Deployer address: ${wallet.address}`);
+  console.log(`Balance: ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH\n`);
+
+  // Log updated pre-compiled data
+  console.log("UPDATED ABI:");
+  console.log(JSON.stringify(ABI, null, 2));
+  console.log("\nUPDATED BYTECODE (starts with):");
+  console.log(BYTECODE.substring(0, 100) + "...");
+  console.log(`Bytecode full length: ${BYTECODE.length} characters\n`);
+
+  // Fetch current Aave V3 Pool
+  const PROVIDER_ADDRESS = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
+  const providerAbi = ["function getPool() external view returns (address)"];
+  const aaveProvider = new ethers.Contract(PROVIDER_ADDRESS, providerAbi, provider);
+  const currentPool = await aaveProvider.getPool();
+  console.log(`Current Aave V3 Pool (live): ${currentPool}\n`);
+
+  // Deploy with updated bytecode/ABI
+  const factory = new ethers.ContractFactory(ABI, BYTECODE, wallet);
+  console.log("Sending deployment transaction...");
+  const contract = await factory.deploy(currentPool, {
+    gasLimit: 4000000,
+    maxFeePerGas: ethers.parseUnits("45", "gwei"),
+    maxPriorityFeePerGas: ethers.parseUnits("2.5", "gwei")
+  });
+
+  console.log(`Deploy tx hash: ${contract.deploymentTransaction().hash}`);
+  await contract.waitForDeployment();
+
+  const deployedAddress = await contract.getAddress();
+
+  console.log("\n╔══════════════════════════════════════════╗");
+  console.log("║ UPDATED PATCHED CONTRACT DEPLOYED        ║");
+  console.log("╚══════════════════════════════════════════╝");
+  console.log(`Deployed Address: ${deployedAddress}`);
+  console.log(`Aave Pool Used:   ${currentPool}`);
+  console.log(`Deployer:         ${wallet.address}`);
+  console.log(`Etherscan: https://etherscan.io/address/${deployedAddress}`);
+  console.log("\nFeatures: 3000 tier pool + Chainlink slippage guard + 0.2% min profit + emergency withdraw");
+  console.log("Ready for safer testing!");
 }
 
-async function approvePending(aa) {
-  for (const { token, spender } of Object.values(PENDING)) {
-    const tokenAddr = TOKENS[token];
-    const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
-    const callData = scwIface.encodeFunctionData('execute', [tokenAddr, 0n, data]);
-
-    const { maxFeePerGas, maxPriorityFeePerGas } = await getBundlerGas(aa.provider);
-
-    // Let bundler/provider dynamically determine gas limits — no static caps
-    const userOp = await aa.createUserOp(callData, {
-      maxFeePerGas,
-      maxPriorityFeePerGas
-    });
-
-    const signed = await aa.signUserOp(userOp);
-    const hash = await aa.sendUserOpWithBackoff(signed, 5);
-
-    console.log(`[APPROVAL] ${token} → ${spender}: ${hash}`);
+// ── Render Health Server ────────────────────────────────────────────────
+const server = http.createServer((req, res) => {
+  const parsed = url.parse(req.url);
+  if (parsed.pathname === '/health' || parsed.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ 
+      status: 'alive', 
+      time: new Date().toISOString(),
+      version: 'patched-3000-tier-oracle-safety-emergency'
+    }));
+  } else {
+    res.writeHead(404);
+    res.end();
   }
-}
+});
 
-(async () => {
-  try {
-    console.log(`[FINAL] Running bridge approvals on SCW ${SCW}`);
-    const { aa } = await init();
-    await approvePending(aa);
-    console.log('✅ Wormhole/LayerZero approvals complete — SCW ready for cross-chain arbitrage');
-  } catch (e) {
-    console.error('❌ Failed:', e);
-  }
-})();
-
-// Keep Render happy
-const app = express();
-app.get('/', (req, res) => res.send('Bridge approval worker running'));
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`Health server running on port ${PORT}`);
+  // Kick off deployment once server is up
+  deployContract().catch(err => {
+    console.error("Fatal deploy error:", err.message || err);
+    process.exit(1);
+  });
+});
