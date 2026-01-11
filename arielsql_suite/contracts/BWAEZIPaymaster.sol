@@ -171,6 +171,7 @@ contract BWAEZIPaymaster {
 
     // --- Internal quoting ---
     function _quoteBWForWETH(uint256 wethOut) internal returns (uint256 bwInWithMargin) {
+        // Try quoter; fallback to conservative 20% buffer
         (bool ok, bytes memory data) = quoter.call(
             abi.encodeWithSelector(
                 IQuoterV2.quoteExactOutputSingle.selector,
@@ -181,12 +182,13 @@ contract BWAEZIPaymaster {
         if (ok && data.length >= 32) {
             (bwIn,,,) = abi.decode(data, (uint256, uint160, uint32, uint256));
         } else {
+            // Fallback: assume 1:1 and add 20%
             bwIn = wethOut * 120 / 100;
         }
         bwInWithMargin = bwIn * (10000 + marginBps) / 10000;
     }
 
-    // --- Sponsorship ---
+    // --- Sponsorship (validation) ---
     function validatePaymasterUserOp(
         address sender,
         uint256 requiredPreFund,
@@ -196,12 +198,15 @@ contract BWAEZIPaymaster {
         require(!paused, "paused");
         require(sender == scw, "only SCW");
 
+        // Require BWAEZI allowance from SCW to paymaster
         uint256 allowance = IERC20(bwaezi).allowance(sender, address(this));
         require(allowance > 0, "no allowance");
 
+        // Compute a conservative maxCost (preFund + fees)
         uint256 maxCost = requiredPreFund + (maxFeePerGas + maxPriorityFeePerGas);
         emit Sponsored(sender, maxCost);
 
+        // Bind context to sender + allowance snapshot + block number
         bytes32 ctx = keccak256(abi.encode(sender, allowance, block.number));
         validContexts[ctx] = true;
         emit ContextBound(ctx, sender);
@@ -209,24 +214,28 @@ contract BWAEZIPaymaster {
         return (abi.encode(ctx, sender), 0);
     }
 
-    // --- Settlement ---
+    // --- Settlement (postOp) ---
     function postOp(bytes calldata context, uint256 actualGasCostWei) external onlyEntryPoint {
         require(!paused, "paused");
 
         (bytes32 ctx, address sender) = abi.decode(context, (bytes32, address));
         require(sender == scw, "only SCW");
         require(validContexts[ctx], "invalid context");
-        validContexts[ctx] = false;
+        validContexts[ctx] = false; // consume once
 
+        // Charge BWAEZI from SCW
         uint256 bwCharge = _quoteBWForWETH(actualGasCostWei);
         IERC20(bwaezi).safeTransferFrom(sender, address(this), bwCharge);
         emit Charged(sender, bwCharge);
 
+        // Convert a portion of BWAEZI -> WETH if pool is usable
         uint256 bwBal = IERC20(bwaezi).balanceOf(address(this));
         if (bwBal > 0) {
+            // Approve router
             IERC20(bwaezi).safeApprove(uniswapRouter, bwBal);
 
-            uint256 targetWethOut = actualGasCostWei;
+            // Use quoter to estimate WETH out; set minOut with slippage guard
+            uint256 targetWethOut = actualGasCostWei; // aim to cover gas in WETH terms
             uint256 bwNeeded = _quoteBWForWETH(targetWethOut);
             if (bwNeeded > bwBal) bwNeeded = bwBal;
 
@@ -237,4 +246,40 @@ contract BWAEZIPaymaster {
                 recipient: address(this),
                 deadline: block.timestamp + 600,
                 amountIn: bwNeeded,
-               
+                amountOutMinimum: targetWethOut * (10000 - maxSlippageBps) / 10000,
+                sqrtPriceLimitX96: 0
+            });
+
+            (bool ok, bytes memory data) = uniswapRouter.call(
+                abi.encodeWithSelector(ISwapRouterV3.exactInputSingle.selector, p)
+            );
+            if (ok && data.length >= 32) {
+                uint256 wethOut = abi.decode(data, (uint256));
+                emit Converted(bwNeeded, wethOut);
+
+                // Top-up EntryPoint deposit if below target
+                uint256 dep = IEntryPoint(entryPoint).balanceOf(address(this));
+                if (dep < targetDepositWei) {
+                    // unwrap WETH -> ETH
+                    IWETH(weth).withdraw(wethOut);
+                    IEntryPoint(entryPoint).depositTo{value: wethOut}(address(this));
+                    emit DepositTopped(wethOut, IEntryPoint(entryPoint).balanceOf(address(this)));
+                }
+            }
+        }
+    }
+
+    // --- Treasury ---
+    function withdrawBWAEZI(uint256 amount) external onlyOwner {
+        IERC20(bwaezi).safeTransfer(owner, amount);
+    }
+
+    function withdrawWETH(uint256 amount) external onlyOwner {
+        IWETH(weth).transfer(owner, amount);
+    }
+
+    function emergencyPause() external onlyOwner {
+        paused = true;
+        emit Paused(true);
+    }
+}
