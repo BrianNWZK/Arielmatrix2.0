@@ -26,6 +26,7 @@ const SCW            = "0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2"; // Your SCW
 
 // --- Compile contract ---
 function compile() {
+  console.log("🔨 Compiling BWAEZIPaymaster...");
   const source = fs.readFileSync(contractPath, "utf8");
   const input = {
     language: "Solidity",
@@ -36,6 +37,13 @@ function compile() {
     }
   };
   const output = JSON.parse(solc.compile(JSON.stringify(input)));
+  if (output.errors) {
+    const errors = output.errors.filter(e => e.severity === "error");
+    if (errors.length > 0) {
+      errors.forEach(err => console.error(err.formattedMessage));
+      throw new Error("Compilation failed");
+    }
+  }
   const contract = output.contracts["BWAEZIPaymaster.sol"].BWAEZIPaymaster;
   return { abi: contract.abi, bytecode: "0x" + contract.evm.bytecode.object };
 }
@@ -66,7 +74,7 @@ async function main() {
   const addr = await paymaster.getAddress();
   console.log("✅ Paymaster deployed at:", addr);
 
-  // Approve BWAEZI once
+  // Approve BWAEZI once from SCW/deployer wallet
   const tokenAbi = ["function approve(address spender, uint256 amount) returns (bool)"];
   const token = new ethers.Contract(BWAEZI, tokenAbi, wallet);
   const tx = await token.approve(addr, ethers.MaxUint256);
