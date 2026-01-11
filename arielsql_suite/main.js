@@ -14,7 +14,7 @@ const PRIVATE_KEY = process.env.SOVEREIGN_PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing SOVEREIGN_PRIVATE_KEY");
 
 // Contract source
-const contractPath = path.resolve("contracts", "BWAEZIPaymaster.sol");
+const contractPath = path.resolve("arielsql_suite", "contracts", "BWAEZIPaymaster.sol");
 
 // Constructor args
 const ENTRYPOINT     = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"; // EntryPoint v0.6
