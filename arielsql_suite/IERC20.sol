@@ -1,6 +1,5 @@
-// arielsql_suite/IERC20.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.24;
 
 interface IERC20 {
     event Transfer(address indexed from, address indexed to, uint256 value);
