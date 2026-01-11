@@ -79,6 +79,9 @@ contract BWAEZIPaymaster {
     uint256 public targetDepositWei;   // e.g., 0.3 ETH
     bool    public paused;
 
+    // Context replay protection
+    mapping(bytes32 => bool) public validContexts;
+
     // Events
     event Sponsored(address indexed sender, uint256 maxCost);
     event Charged(address indexed sender, uint256 bwCharged);
@@ -88,9 +91,15 @@ contract BWAEZIPaymaster {
     event SCWSet(address indexed scw);
     event Paused(bool status);
     event ConfigUpdated();
+    event ContextBound(bytes32 ctx, address sender);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    modifier onlyEntryPoint() {
+        require(msg.sender == entryPoint, "only EntryPoint");
         _;
     }
 
@@ -180,15 +189,16 @@ contract BWAEZIPaymaster {
     }
 
     // --- Sponsorship (validation) ---
-    // Minimal validation: sponsor only SCW, require allowance, enforce paused
+    // EntryPoint-only, SCW-only, context binding to allowance snapshot
     function validatePaymasterUserOp(
         address sender,
         uint256 requiredPreFund,
         uint256 maxFeePerGas,
         uint256 maxPriorityFeePerGas
-    ) external returns (bytes memory context, uint256 validationData) {
+    ) external onlyEntryPoint returns (bytes memory context, uint256 validationData) {
         require(!paused, "paused");
         require(sender == scw, "only SCW");
+
         // Require BWAEZI allowance from SCW to paymaster
         uint256 allowance = IERC20(bwaezi).allowance(sender, address(this));
         require(allowance > 0, "no allowance");
@@ -197,19 +207,26 @@ contract BWAEZIPaymaster {
         uint256 maxCost = requiredPreFund + (maxFeePerGas + maxPriorityFeePerGas);
         emit Sponsored(sender, maxCost);
 
-        // Context encodes sender
-        return (abi.encode(sender), 0);
+        // Bind context to sender + allowance snapshot + block number
+        bytes32 ctx = keccak256(abi.encode(sender, allowance, block.number));
+        validContexts[ctx] = true;
+        emit ContextBound(ctx, sender);
+
+        return (abi.encode(ctx, sender), 0);
     }
 
     // --- Settlement (postOp) ---
-    // Charge BWAEZI equal to actualGasCost plus margin, then optionally convert to WETH and top-up deposit
+    // EntryPoint-only, SCW-only, context verification, charge BWAEZI, convert and top-up deposit
     function postOp(
         bytes calldata context,
         uint256 actualGasCostWei
-    ) external {
+    ) external onlyEntryPoint {
         require(!paused, "paused");
-        address sender = abi.decode(context, (address));
+
+        (bytes32 ctx, address sender) = abi.decode(context, (bytes32, address));
         require(sender == scw, "only SCW");
+        require(validContexts[ctx], "invalid context");
+        validContexts[ctx] = false; // consume once
 
         // Charge BWAEZI from SCW
         uint256 bwCharge = _quoteBWForWETH(actualGasCostWei);
