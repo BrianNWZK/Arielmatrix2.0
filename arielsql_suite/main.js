@@ -12,11 +12,8 @@ if (!PRIVATE_KEY) throw new Error("Missing SOVEREIGN_PRIVATE_KEY");
 const SCW_ADDRESS   = process.env.SCW_ADDRESS; // your Smart Contract Wallet
 const BWAEZI        = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"; // BWAEZI token
 
-// Hardcode your two deployed paymasters
-const PAYMASTERS = [
-  "0x4e073AAA36Cd51fD37298F87E3Fce8437a08DD71",
-  "0x79a515d5a085d2B86AFf104eC9C8C2152C9549C0"
-];
+// Only Balancer Vault approval
+const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
 
 // --- ABI fragments ---
 const tokenIface = new ethers.Interface([
@@ -33,20 +30,17 @@ async function main() {
   const wallet   = new ethers.Wallet(PRIVATE_KEY, provider);
 
   console.log("SCW:", SCW_ADDRESS);
-  console.log("Paymasters:", PAYMASTERS);
+  console.log("Approving Balancer Vault:", BALANCER_VAULT);
 
   const scw = new ethers.Contract(SCW_ADDRESS, scwIface, wallet);
 
-  for (const pm of PAYMASTERS) {
-    console.log(`Approving paymaster ${pm}...`);
-    const approveData = tokenIface.encodeFunctionData("approve", [pm, ethers.MaxUint256]);
-    const tx = await scw.execute(BWAEZI, 0, approveData);
-    console.log("TX sent:", tx.hash);
-    await tx.wait();
-    console.log(`✅ Approved paymaster ${pm}`);
-  }
+  const approveData = tokenIface.encodeFunctionData("approve", [BALANCER_VAULT, ethers.MaxUint256]);
+  const tx = await scw.execute(BWAEZI, 0, approveData);
+  console.log("TX sent:", tx.hash);
+  await tx.wait();
+  console.log(`✅ Approved Balancer Vault ${BALANCER_VAULT}`);
 
-  console.log("🎉 All paymasters approved. Exiting.");
+  console.log("🎉 Balancer approval completed. Exiting.");
 }
 
 main().catch(e => {
