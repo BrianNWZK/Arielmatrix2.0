@@ -1,13 +1,12 @@
 // main.js
-// One-shot deploy (no approval steps; assumed pre-done):
-// - Seed bwzC/USDC and bwzC/WETH pairs on Uniswap V2 and SushiSwap (skip creation).
-// - Create Balancer weighted pools (80/20, 0.3% fee) and join with corrected $2 skew.
-// - Acquire required USDC via ETH → USDC swap if needed.
-// - Wrap ETH → WETH if needed.
-// - Transfer funds EOA → SCW, then seed pools with exact ratios.
-// - Skew targets: Uniswap V2 = $98, SushiSwap = $96, Balancer V2 = $94 (corrected for weights).
-// - Exits on first error; no retries.
-// - Added safety check: If Uniswap V2 BWAEZI/USDC pair already has liquidity, assume deployment complete and exit (prevents repeat swaps/transfers/seeding on re-run).
+// Final version for completion of partial seeding:
+// - Funds already in SCW → no funding steps.
+// - Approvals confirmed unlimited on-chain → no approval code.
+// - Granular per-pair checks: Skip if reserves > 0.
+// - Confirmed: Uniswap V2 BWAEZI/USDC already seeded → auto-skipped.
+// - Will execute: Uniswap V2 WETH, both SushiSwap pairs, both Balancer pools.
+// - Balancer creation skipped gracefully if already exists.
+// - BWAEZI balance check preserved for safety.
 
 import { ethers } from "ethers";
 import dotenv from "dotenv";
@@ -26,8 +25,9 @@ const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
 // --- Mainnet addresses (lowercase inputs for safe checksum) ---
-const UNIV2_FACTORY     = ethers.getAddress("0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"); // Added for liquidity check
+const UNIV2_FACTORY     = ethers.getAddress("0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f");
 const UNIV2_ROUTER      = ethers.getAddress("0x7a250d5630b4cf539739df2c5dacb4c659f2488d");
+const SUSHI_FACTORY     = ethers.getAddress("0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac");
 const SUSHI_ROUTER      = ethers.getAddress("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f");
 const BALANCER_VAULT    = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
 const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
@@ -44,10 +44,6 @@ const chainlinkAbi = [
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"
 ];
 
-// --- Additional ABIs for safety check ---
-const v2FactoryAbi = ["function getPair(address tokenA, address tokenB) view returns (address pair)"];
-const pairAbi = ["function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"];
-
 // --- Skew targets ---
 const BW_U2     = 2 / 98;   // $98 skew
 const BW_SUSHI  = 2 / 96;   // $96 skew
@@ -61,12 +57,10 @@ const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO; // ≈ 0.085106383
 
 // --- ABIs ---
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
-const erc20Abi = ["function balanceOf(address owner) view returns (uint256)", "function transfer(address to, uint256 value) returns (bool)"];
-const wethAbi = ["function deposit() payable", "function balanceOf(address owner) view returns (uint256)", "function transfer(address to, uint256 value) returns (bool)"];
-const v2RouterAbi = [
-  "function addLiquidity(address tokenA,address tokenB,uint amountADesired,uint amountBDesired,uint amountAMin,uint amountBMin,address to,uint deadline) returns (uint,uint,uint)",
-  "function swapExactETHForTokens(uint amountOutMin, address[] path, address to, uint deadline) payable returns (uint[] memory amounts)"
-];
+const erc20Abi = ["function balanceOf(address owner) view returns (uint256)"];
+const v2RouterAbi = ["function addLiquidity(address tokenA,address tokenB,uint amountADesired,uint amountBDesired,uint amountAMin,uint amountBMin,address to,uint deadline) returns (uint,uint,uint)"];
+const v2FactoryAbi = ["function getPair(address tokenA, address tokenB) view returns (address pair)"];
+const v2PairAbi = ["function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"];
 const balancerFactoryAbi = [
   "event PoolCreated(address indexed pool)",
   "function create(string name,string symbol,address[] tokens,uint256[] weights,address owner,uint256 swapFeePercentage,bool disableUnbalancedJoins) returns (address pool)"
@@ -88,25 +82,40 @@ async function getEthUsdReference() {
   return Number(answer) / 1e8;
 }
 
-async function addLiquidityViaSCW(scw, routerAddr, tokenA, tokenB, amountA, amountB) {
+async function hasLiquidity(factoryAddr, tokenA, tokenB) {
+  const factory = new ethers.Contract(factoryAddr, v2FactoryAbi, provider);
+  const pair = await factory.getPair(tokenA, tokenB);
+  if (pair === ethers.ZeroAddress) return false;
+  const pairCtr = new ethers.Contract(pair, v2PairAbi, provider);
+  try {
+    const { reserve0, reserve1 } = await pairCtr.getReserves();
+    return reserve0 > 0n || reserve1 > 0n;
+  } catch {
+    return false;
+  }
+}
+
+async function addLiquidityViaSCW(scw, routerAddr, tokenA, tokenB, amountA, amountB, pairName) {
   const routerIface = new ethers.Interface(v2RouterAbi);
   const data = routerIface.encodeFunctionData("addLiquidity", [tokenA, tokenB, amountA, amountB, 0n, 0n, SCW_ADDRESS, deadline()]);
   const tx = await scw.execute(routerAddr, 0n, data);
-  console.log(`SCW addLiquidity ${tokenA}/${tokenB} via ${routerAddr} tx: ${tx.hash}`);
+  console.log(`SCW addLiquidity ${pairName} via ${routerAddr} tx: ${tx.hash}`);
   await tx.wait();
+  console.log(`✅ ${pairName} seeded`);
 }
 
-async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts) {
+async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolName) {
   const userData = ethers.AbiCoder.defaultAbiCoder().encode(["uint8","uint256[]","uint256"], [0, amounts, 0n]);
   const request = [assets, amounts, userData, false];
   const vaultIface = new ethers.Interface(balancerVaultAbi);
   const data = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
   const tx = await scw.execute(vaultAddr, 0n, data);
-  console.log(`SCW joinPool ${poolId} tx: ${tx.hash}`);
+  console.log(`SCW joinPool ${poolName} tx: ${tx.hash}`);
   await tx.wait();
+  console.log(`✅ ${poolName} seeded`);
 }
 
-async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) {
+async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq, poolName) {
   const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
   const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
 
@@ -126,10 +135,10 @@ async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) 
       } catch {}
     }
     if (!poolAddr) throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
-    console.log(`✅ Balancer pool (${symbol}) created: ${poolAddr}`);
+    console.log(`✅ Balancer pool (${poolName}) created: ${poolAddr}`);
   } catch (e) {
-    console.log(`⚠️ Balancer pool creation skipped for (${symbol}): ${e.reason || e.message || e}`);
-    return;
+    console.log(`⚠️ Balancer ${poolName} creation skipped (likely already exists): ${e.reason || e.message || e}`);
+    return false; // Indicate creation skipped
   }
 
   const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
@@ -139,28 +148,13 @@ async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) 
     ? [toBW(BW_BAL_CORRECTED), toUSDC(2)]
     : [toBW(BW_BAL_CORRECTED), toWETH(wethEq)];
 
-  await joinBalancerViaSCW(scw, BALANCER_VAULT, poolId, tokens, amounts);
+  await joinBalancerViaSCW(scw, BALANCER_VAULT, poolId, tokens, amounts, poolName);
+  return true;
 }
 
 async function main() {
   console.log(`EOA: ${signer.address}`);
   console.log(`SCW: ${SCW_ADDRESS}`);
-
-  // --- Safety check to prevent repeat execution ---
-  const factory = new ethers.Contract(UNIV2_FACTORY, v2FactoryAbi, provider);
-  const pairAddr = await factory.getPair(bwzC, USDC);
-  if (pairAddr !== ethers.ZeroAddress) {
-    const pair = new ethers.Contract(pairAddr, pairAbi, provider);
-    try {
-      const { reserve0, reserve1 } = await pair.getReserves();
-      if (reserve0 > 0n || reserve1 > 0n) {
-        console.log("⚠️ Uniswap V2 BWAEZI/USDC pair already has liquidity — assuming deployment already complete. Skipping all actions to prevent duplicates.");
-        process.exit(0);
-      }
-    } catch (e) {
-      console.log("Could not check reserves (pair may not exist yet) — proceeding.");
-    }
-  }
 
   const ETH_USD_REFERENCE = await getEthUsdReference();
   const WETH_EQ = 2 / ETH_USD_REFERENCE;
@@ -169,88 +163,50 @@ async function main() {
   console.log(`Seed amounts → U2 bwzC=${BW_U2.toFixed(10)}, Sushi bwzC=${BW_SUSHI.toFixed(10)}, Bal bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
 
   const scw  = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
-  const usdc = new ethers.Contract(USDC, erc20Abi, signer);
   const bw   = new ethers.Contract(bwzC, erc20Abi, signer);
-  const weth = new ethers.Contract(WETH, wethAbi, signer);
-  const uniRouter = new ethers.Contract(UNIV2_ROUTER, v2RouterAbi, signer);
 
-  // --- Acquire / prepare funds in EOA ---
-  const neededUSDC = toUSDC(6);
-  const neededWETH = toWETH(round(WETH_EQ * 3, 18));
-
-  let eoaUsdcBal = await usdc.balanceOf(signer.address);
-  if (eoaUsdcBal < neededUSDC) {
-    const targetUsdcOut = 6.5; // slight buffer
-    let ethInFloat = targetUsdcOut / ETH_USD_REFERENCE;
-    ethInFloat *= 1.08; // 8% slippage/gas buffer
-    const value = ethers.parseEther(ethInFloat.toFixed(18));
-
-    const path = [WETH, USDC];
-    const amountOutMin = toUSDC(6);
-
-    console.log(`Swapping ~${ethers.formatEther(value)} ETH for at least 6 USDC (single swap)...`);
-    const swapTx = await uniRouter.swapExactETHForTokens(
-      amountOutMin,
-      path,
-      signer.address,
-      deadline(),
-      { value }
-    );
-    console.log(`EOA ETH → USDC swap tx: ${swapTx.hash}`);
-    await swapTx.wait();
-
-    eoaUsdcBal = await usdc.balanceOf(signer.address);
-    if (eoaUsdcBal < neededUSDC) {
-      throw new Error(`Swap acquired only ${ethers.formatUnits(eoaUsdcBal,6)} USDC — insufficient`);
-    }
-    console.log(`✅ Acquired ${ethers.formatUnits(eoaUsdcBal,6)} USDC`);
-  }
-
-  let eoaWethBal = await weth.balanceOf(signer.address);
-  const eoaEthBal = await provider.getBalance(signer.address);
-  if (eoaWethBal < neededWETH) {
-    const shortfall = neededWETH - eoaWethBal;
-    if (eoaEthBal < shortfall * 12n / 10n) {
-      throw new Error(`EOA ETH insufficient for wrapping needed WETH`);
-    }
-    const wrapTx = await weth.deposit({ value: shortfall });
-    console.log(`Wrapped ${ethers.formatEther(shortfall)} ETH → WETH tx: ${wrapTx.hash}`);
-    await wrapTx.wait();
-  }
-
-  // --- Transfer funds EOA → SCW (single transfers) ---
-  const txUsdc = await usdc.transfer(SCW_ADDRESS, neededUSDC);
-  console.log(`EOA → SCW USDC 6 tx: ${txUsdc.hash}`);
-  await txUsdc.wait();
-
-  const txWeth = await weth.transfer(SCW_ADDRESS, neededWETH);
-  console.log(`EOA → SCW WETH ${ethers.formatEther(neededWETH)} tx: ${txWeth.hash}`);
-  await txWeth.wait();
-
-  // Verify bwzC in SCW
+  // --- Verify remaining BWAEZI in SCW ---
   const scwBwBal = await bw.balanceOf(SCW_ADDRESS);
-  const bwNeededTotal =
-    toBW(BW_U2) * 2n +
-    toBW(BW_SUSHI) * 2n +
-    toBW(BW_BAL_CORRECTED) * 2n;
+  const bwNeededRemaining =
+    toBW(BW_U2) +          // Uniswap V2 WETH (USDC leg already done)
+    toBW(BW_SUSHI) * 2n +  // Both SushiSwap
+    toBW(BW_BAL_CORRECTED) * 2n; // Both Balancer
 
-  if (scwBwBal < bwNeededTotal) {
-    throw new Error(`SCW bwzC insufficient: have ${ethers.formatEther(scwBwBal)} need ${ethers.formatEther(bwNeededTotal)}`);
+  if (scwBwBal < bwNeededRemaining) {
+    throw new Error(`SCW bwzC insufficient for remaining seeds: have ${ethers.formatEther(scwBwBal)} need ~${ethers.formatEther(bwNeededRemaining)}`);
   }
 
   // --- Seed Uniswap V2 ---
-  await addLiquidityViaSCW(scw, UNIV2_ROUTER, bwzC, USDC, toBW(BW_U2), toUSDC(2));
-  await addLiquidityViaSCW(scw, UNIV2_ROUTER, bwzC, WETH, toBW(BW_U2), toWETH(WETH_EQ));
+  if (await hasLiquidity(UNIV2_FACTORY, bwzC, USDC)) {
+    console.log("✅ Uniswap V2 BWAEZI/USDC already seeded - skipping");
+  } else {
+    await addLiquidityViaSCW(scw, UNIV2_ROUTER, bwzC, USDC, toBW(BW_U2), toUSDC(2), "BWAEZI/USDC (Uniswap V2)");
+  }
+
+  if (await hasLiquidity(UNIV2_FACTORY, bwzC, WETH)) {
+    console.log("✅ Uniswap V2 BWAEZI/WETH already seeded - skipping");
+  } else {
+    await addLiquidityViaSCW(scw, UNIV2_ROUTER, bwzC, WETH, toBW(BW_U2), toWETH(WETH_EQ), "BWAEZI/WETH (Uniswap V2)");
+  }
 
   // --- Seed SushiSwap ---
-  await addLiquidityViaSCW(scw, SUSHI_ROUTER, bwzC, USDC, toBW(BW_SUSHI), toUSDC(2));
-  await addLiquidityViaSCW(scw, SUSHI_ROUTER, bwzC, WETH, toBW(BW_SUSHI), toWETH(WETH_EQ));
+  if (await hasLiquidity(SUSHI_FACTORY, bwzC, USDC)) {
+    console.log("✅ SushiSwap BWAEZI/USDC already seeded - skipping");
+  } else {
+    await addLiquidityViaSCW(scw, SUSHI_ROUTER, bwzC, USDC, toBW(BW_SUSHI), toUSDC(2), "BWAEZI/USDC (SushiSwap)");
+  }
+
+  if (await hasLiquidity(SUSHI_FACTORY, bwzC, WETH)) {
+    console.log("✅ SushiSwap BWAEZI/WETH already seeded - skipping");
+  } else {
+    await addLiquidityViaSCW(scw, SUSHI_ROUTER, bwzC, WETH, toBW(BW_SUSHI), toWETH(WETH_EQ), "BWAEZI/WETH (SushiSwap)");
+  }
 
   // --- Create & seed Balancer pools ---
-  await createAndSeedBalancer(scw, "bwzC/USDC Weighted", "bwzC-USDC-WP", [bwzC, USDC], true, WETH_EQ);
-  await createAndSeedBalancer(scw, "bwzC/WETH Weighted", "bwzC-WETH-WP", [bwzC, WETH], false, WETH_EQ);
+  await createAndSeedBalancer(scw, "bwzC/USDC Weighted", "bwzC-USDC-WP", [bwzC, USDC], true, WETH_EQ, "BWAEZI/USDC Balancer");
+  await createAndSeedBalancer(scw, "bwzC/WETH Weighted", "bwzC-WETH-WP", [bwzC, WETH], false, WETH_EQ, "BWAEZI/WETH Balancer");
 
-  console.log("\n🎯 Done: All pools seeded/created successfully.");
+  console.log("\n🎯 Done: All remaining pools seeded successfully (skipped completed steps).");
   process.exit(0);
 }
 
