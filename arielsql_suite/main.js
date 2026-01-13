@@ -2,9 +2,12 @@
 // One-shot deploy (no approval steps; assumed pre-done):
 // - Seed bwzC/USDC and bwzC/WETH pairs on Uniswap V2 and SushiSwap (skip creation).
 // - Create Balancer weighted pools (80/20, 0.3% fee) and join with corrected $2 skew.
+// - Acquire required USDC via ETH → USDC swap if needed.
+// - Wrap ETH → WETH if needed.
 // - Transfer funds EOA → SCW, then seed pools with exact ratios.
 // - Skew targets: Uniswap V2 = $98, SushiSwap = $96, Balancer V2 = $94 (corrected for weights).
 // - Exits on first error; no retries.
+// - Added safety check: If Uniswap V2 BWAEZI/USDC pair already has liquidity, assume deployment complete and exit (prevents repeat swaps/transfers/seeding on re-run).
 
 import { ethers } from "ethers";
 import dotenv from "dotenv";
@@ -22,7 +25,8 @@ if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// --- Mainnet addresses (provided in lowercase to avoid ethers v6 checksum strict errors) ---
+// --- Mainnet addresses (lowercase inputs for safe checksum) ---
+const UNIV2_FACTORY     = ethers.getAddress("0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"); // Added for liquidity check
 const UNIV2_ROUTER      = ethers.getAddress("0x7a250d5630b4cf539739df2c5dacb4c659f2488d");
 const SUSHI_ROUTER      = ethers.getAddress("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f");
 const BALANCER_VAULT    = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
@@ -33,12 +37,16 @@ const bwzC = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2"); //
 const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // 6 decimals
 const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"); // 18 decimals
 
-// --- Chainlink ETH/USD feed (lowercase) ---
+// --- Chainlink ETH/USD feed ---
 const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 const chainlinkAbi = [
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"
 ];
+
+// --- Additional ABIs for safety check ---
+const v2FactoryAbi = ["function getPair(address tokenA, address tokenB) view returns (address pair)"];
+const pairAbi = ["function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"];
 
 // --- Skew targets ---
 const BW_U2     = 2 / 98;   // $98 skew
@@ -55,7 +63,10 @@ const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO; // ≈ 0.085106383
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 const erc20Abi = ["function balanceOf(address owner) view returns (uint256)", "function transfer(address to, uint256 value) returns (bool)"];
 const wethAbi = ["function deposit() payable", "function balanceOf(address owner) view returns (uint256)", "function transfer(address to, uint256 value) returns (bool)"];
-const v2RouterAbi = ["function addLiquidity(address tokenA,address tokenB,uint amountADesired,uint amountBDesired,uint amountAMin,uint amountBMin,address to,uint deadline) returns (uint,uint,uint)"];
+const v2RouterAbi = [
+  "function addLiquidity(address tokenA,address tokenB,uint amountADesired,uint amountBDesired,uint amountAMin,uint amountBMin,address to,uint deadline) returns (uint,uint,uint)",
+  "function swapExactETHForTokens(uint amountOutMin, address[] path, address to, uint deadline) payable returns (uint[] memory amounts)"
+];
 const balancerFactoryAbi = [
   "event PoolCreated(address indexed pool)",
   "function create(string name,string symbol,address[] tokens,uint256[] weights,address owner,uint256 swapFeePercentage,bool disableUnbalancedJoins) returns (address pool)"
@@ -135,6 +146,22 @@ async function main() {
   console.log(`EOA: ${signer.address}`);
   console.log(`SCW: ${SCW_ADDRESS}`);
 
+  // --- Safety check to prevent repeat execution ---
+  const factory = new ethers.Contract(UNIV2_FACTORY, v2FactoryAbi, provider);
+  const pairAddr = await factory.getPair(bwzC, USDC);
+  if (pairAddr !== ethers.ZeroAddress) {
+    const pair = new ethers.Contract(pairAddr, pairAbi, provider);
+    try {
+      const { reserve0, reserve1 } = await pair.getReserves();
+      if (reserve0 > 0n || reserve1 > 0n) {
+        console.log("⚠️ Uniswap V2 BWAEZI/USDC pair already has liquidity — assuming deployment already complete. Skipping all actions to prevent duplicates.");
+        process.exit(0);
+      }
+    } catch (e) {
+      console.log("Could not check reserves (pair may not exist yet) — proceeding.");
+    }
+  }
+
   const ETH_USD_REFERENCE = await getEthUsdReference();
   const WETH_EQ = 2 / ETH_USD_REFERENCE;
 
@@ -145,28 +172,53 @@ async function main() {
   const usdc = new ethers.Contract(USDC, erc20Abi, signer);
   const bw   = new ethers.Contract(bwzC, erc20Abi, signer);
   const weth = new ethers.Contract(WETH, wethAbi, signer);
+  const uniRouter = new ethers.Contract(UNIV2_ROUTER, v2RouterAbi, signer);
 
-  // --- Transfer funds EOA → SCW ---
+  // --- Acquire / prepare funds in EOA ---
   const neededUSDC = toUSDC(6);
   const neededWETH = toWETH(round(WETH_EQ * 3, 18));
 
-  const eoaUsdcBal = await usdc.balanceOf(signer.address);
-  const eoaWethBal = await weth.balanceOf(signer.address);
-  const eoaEthBal  = await provider.getBalance(signer.address);
-
+  let eoaUsdcBal = await usdc.balanceOf(signer.address);
   if (eoaUsdcBal < neededUSDC) {
-    throw new Error(`EOA USDC insufficient: have ${ethers.formatUnits(eoaUsdcBal,6)} need 6`);
+    const targetUsdcOut = 6.5; // slight buffer
+    let ethInFloat = targetUsdcOut / ETH_USD_REFERENCE;
+    ethInFloat *= 1.08; // 8% slippage/gas buffer
+    const value = ethers.parseEther(ethInFloat.toFixed(18));
+
+    const path = [WETH, USDC];
+    const amountOutMin = toUSDC(6);
+
+    console.log(`Swapping ~${ethers.formatEther(value)} ETH for at least 6 USDC (single swap)...`);
+    const swapTx = await uniRouter.swapExactETHForTokens(
+      amountOutMin,
+      path,
+      signer.address,
+      deadline(),
+      { value }
+    );
+    console.log(`EOA ETH → USDC swap tx: ${swapTx.hash}`);
+    await swapTx.wait();
+
+    eoaUsdcBal = await usdc.balanceOf(signer.address);
+    if (eoaUsdcBal < neededUSDC) {
+      throw new Error(`Swap acquired only ${ethers.formatUnits(eoaUsdcBal,6)} USDC — insufficient`);
+    }
+    console.log(`✅ Acquired ${ethers.formatUnits(eoaUsdcBal,6)} USDC`);
   }
+
+  let eoaWethBal = await weth.balanceOf(signer.address);
+  const eoaEthBal = await provider.getBalance(signer.address);
   if (eoaWethBal < neededWETH) {
     const shortfall = neededWETH - eoaWethBal;
-    if (eoaEthBal < shortfall) {
-      throw new Error(`EOA ETH insufficient to wrap: need ${ethers.formatEther(shortfall)} ETH`);
+    if (eoaEthBal < shortfall * 12n / 10n) {
+      throw new Error(`EOA ETH insufficient for wrapping needed WETH`);
     }
     const wrapTx = await weth.deposit({ value: shortfall });
-    console.log(`Wrapped ETH → WETH ${ethers.formatEther(shortfall)} tx: ${wrapTx.hash}`);
+    console.log(`Wrapped ${ethers.formatEther(shortfall)} ETH → WETH tx: ${wrapTx.hash}`);
     await wrapTx.wait();
   }
 
+  // --- Transfer funds EOA → SCW (single transfers) ---
   const txUsdc = await usdc.transfer(SCW_ADDRESS, neededUSDC);
   console.log(`EOA → SCW USDC 6 tx: ${txUsdc.hash}`);
   await txUsdc.wait();
