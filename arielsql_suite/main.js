@@ -1,6 +1,6 @@
 // main.js
 // One-shot deploy (no approval steps; assumed pre-done):
-// - Create BWAEZI/USDC and BWAEZI/WETH pairs on Uniswap V2 and SushiSwap.
+// - Create bwzC/USDC and bwzC/WETH pairs on Uniswap V2 and SushiSwap.
 // - Create Balancer weighted pools (80/20, 0.3% fee) and join with corrected $2 skew.
 // - Transfer funds EOA → SCW, then seed pools with exact ratios.
 // - Skew targets: Uniswap V2 = $98, SushiSwap = $96, Balancer V2 = $94 (corrected for weights).
@@ -33,9 +33,9 @@ const SUSHI_ROUTER      = ethers.getAddress("0xd9e1cE17f2641f24Ae83637ab66a2cca9
 const BALANCER_VAULT    = ethers.getAddress("0xBA12222222228d8Ba445958a75a0704d566BF2C8");
 
 // --- Tokens ---
-const BWAEZI = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"); // 18d
-const USDC   = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // 6d
-const WETH   = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // 18d
+const bwzC  = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"); // 18d
+const USDC  = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // 6d
+const WETH  = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // 18d
 
 // --- Chainlink ETH/USD feed ---
 const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"); // Mainnet ETH/USD
@@ -132,11 +132,10 @@ async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) 
       }
     } catch {}
   }
-  
   if (!poolAddr) throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
   console.log(`✅ Balancer pool (${symbol}) created: ${poolAddr}`);
 
-  const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
+    const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
   const poolId = await pool.getPoolId();
 
   const amounts = isUSDC
@@ -155,18 +154,18 @@ async function main() {
   const WETH_EQ = 2 / ETH_USD_REFERENCE;
 
   console.log(`ETH/USD ref (Chainlink): $${ETH_USD_REFERENCE}`);
-  console.log(`Seed amounts → U2 BW=${BW_U2.toFixed(10)}, Sushi BW=${BW_SUSHI.toFixed(10)}, Bal BW(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
+  console.log(`Seed amounts → U2 bwzC=${BW_U2.toFixed(10)}, Sushi bwzC=${BW_SUSHI.toFixed(10)}, Bal bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
 
   const scw  = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
   const usdc = new ethers.Contract(USDC, erc20Abi, signer);
-  const bw   = new ethers.Contract(BWAEZI, erc20Abi, signer);
+  const bw   = new ethers.Contract(bwzC, erc20Abi, signer);
   const weth = new ethers.Contract(WETH, wethAbi, signer);
 
   // --- Ensure pairs exist on Uniswap V2 & Sushi ---
-  await ensurePair(UNIV2_FACTORY, "Uniswap V2", BWAEZI, USDC);
-  await ensurePair(UNIV2_FACTORY, "Uniswap V2", BWAEZI, WETH);
-  await ensurePair(SUSHI_V2_FACTORY, "SushiSwap", BWAEZI, USDC);
-  await ensurePair(SUSHI_V2_FACTORY, "SushiSwap", BWAEZI, WETH);
+  await ensurePair(UNIV2_FACTORY, "Uniswap V2", bwzC, USDC);
+  await ensurePair(UNIV2_FACTORY, "Uniswap V2", bwzC, WETH);
+  await ensurePair(SUSHI_V2_FACTORY, "SushiSwap", bwzC, USDC);
+  await ensurePair(SUSHI_V2_FACTORY, "SushiSwap", bwzC, WETH);
 
   // --- Transfer funds EOA → SCW ---
   const neededUSDC = toUSDC(6);              // $2 each for U2-USDC, Sushi-USDC, Bal-USDC
@@ -198,28 +197,28 @@ async function main() {
   console.log(`EOA → SCW WETH ${ethers.formatEther(neededWETH)} tx: ${txWeth.hash}`);
   await txWeth.wait();
 
-  // Verify BWAEZI availability in SCW
+  // Verify bwzC availability in SCW
   const scwBwBal = await bw.balanceOf(SCW_ADDRESS);
   const bwNeededTotal =
-    toBW(BW_U2) + toBW(BW_U2) +         // Uniswap V2: BW/USDC + BW/WETH
-    toBW(BW_SUSHI) + toBW(BW_SUSHI) +   // SushiSwap: BW/USDC + BW/WETH
-    toBW(BW_BAL_CORRECTED) + toBW(BW_BAL_CORRECTED); // Balancer: BW/USDC + BW/WETH
+    toBW(BW_U2) + toBW(BW_U2) +         // Uniswap V2: bwzC/USDC + bwzC/WETH
+    toBW(BW_SUSHI) + toBW(BW_SUSHI) +   // SushiSwap: bwzC/USDC + bwzC/WETH
+    toBW(BW_BAL_CORRECTED) + toBW(BW_BAL_CORRECTED); // Balancer: bwzC/USDC + bwzC/WETH
 
   if (scwBwBal < bwNeededTotal) {
-    throw new Error(`SCW BWAEZI insufficient: have ${ethers.formatEther(scwBwBal)} need ${ethers.formatEther(bwNeededTotal)}`);
+    throw new Error(`SCW bwzC insufficient: have ${ethers.formatEther(scwBwBal)} need ${ethers.formatEther(bwNeededTotal)}`);
   }
 
   // --- Seed Uniswap V2 ---
-  await addLiquidityViaSCW(scw, UNIV2_ROUTER, BWAEZI, USDC, toBW(BW_U2), toUSDC(2));       // $98 skew
-  await addLiquidityViaSCW(scw, UNIV2_ROUTER, BWAEZI, WETH, toBW(BW_U2), toWETH(WETH_EQ)); // $2 eq WETH
+  await addLiquidityViaSCW(scw, UNIV2_ROUTER, bwzC, USDC, toBW(BW_U2), toUSDC(2));       // $98 skew
+  await addLiquidityViaSCW(scw, UNIV2_ROUTER, bwzC, WETH, toBW(BW_U2), toWETH(WETH_EQ)); // $2 eq WETH
 
   // --- Seed SushiSwap ---
-  await addLiquidityViaSCW(scw, SUSHI_ROUTER, BWAEZI, USDC, toBW(BW_SUSHI), toUSDC(2));    // $96 skew
-  await addLiquidityViaSCW(scw, SUSHI_ROUTER, BWAEZI, WETH, toBW(BW_SUSHI), toWETH(WETH_EQ));
+  await addLiquidityViaSCW(scw, SUSHI_ROUTER, bwzC, USDC, toBW(BW_SUSHI), toUSDC(2));    // $96 skew
+  await addLiquidityViaSCW(scw, SUSHI_ROUTER, bwzC, WETH, toBW(BW_SUSHI), toWETH(WETH_EQ));
 
   // --- Create Balancer pools (80/20, 0.3% fee) and join with corrected $2 seed ---
-  await createAndSeedBalancer(scw, "BWAEZI/USDC Weighted", "BWZ-USDC-WP", [BWAEZI, USDC], true, WETH_EQ);
-  await createAndSeedBalancer(scw, "BWAEZI/WETH Weighted", "BWZ-WETH-WP", [BWAEZI, WETH], false, WETH_EQ);
+  await createAndSeedBalancer(scw, "bwzC/USDC Weighted", "bwzC-USDC-WP", [bwzC, USDC], true, WETH_EQ);
+  await createAndSeedBalancer(scw, "bwzC/WETH Weighted", "bwzC-WETH-WP", [bwzC, WETH], false, WETH_EQ);
 
   console.log("\n🎯 Done: All pools created and seeded with exact $2 skew amounts (Balancer corrected for 80/20). Exiting.");
   process.exit(0);
@@ -229,3 +228,4 @@ main().catch((err) => {
   console.error("Fatal:", err.reason || err.message || err);
   process.exit(1);
 });
+
