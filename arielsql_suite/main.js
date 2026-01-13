@@ -132,8 +132,8 @@ async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) 
       }
     } catch {}
   }
+  
   if (!poolAddr) throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
-  console.log(`✅ Balancer pool (${symbol})
   console.log(`✅ Balancer pool (${symbol}) created: ${poolAddr}`);
 
   const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
