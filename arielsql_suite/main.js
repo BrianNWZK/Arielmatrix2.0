@@ -22,20 +22,19 @@ if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// --- Mainnet addresses (checksummed) ---
-const UNIV2_ROUTER      = ethers.getAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
-const SUSHI_ROUTER      = ethers.getAddress("0xd9e1cE17f2641f24Ae83637ab66a2cca9C378B9F");
-const BALANCER_VAULT    = ethers.getAddress("0xBA12222222228d8Ba445958a75a0704d566BF2C8");
-const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8E9aA87E45E92bAD84D5f8dD5b93b1736d4BfB3E");
+// --- Mainnet addresses (provided in lowercase to avoid ethers v6 checksum strict errors) ---
+const UNIV2_ROUTER      = ethers.getAddress("0x7a250d5630b4cf539739df2c5dacb4c659f2488d");
+const SUSHI_ROUTER      = ethers.getAddress("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f");
+const BALANCER_VAULT    = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
 
-// --- Tokens (checksummed) ---
-const bwzC = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"); // 18 decimals
-const USDC = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // 6 decimals
-// Fixed: correct WETH address (was missing one 'a' → caused ethers v6 to misinterpret as ENS name)
-const WETH = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // 18 decimals
+// --- Tokens (lowercase inputs) ---
+const bwzC = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2"); // 18 decimals
+const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // 6 decimals
+const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"); // 18 decimals
 
-// --- Chainlink ETH/USD feed (checksummed) ---
-const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419");
+// --- Chainlink ETH/USD feed (lowercase) ---
+const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 const chainlinkAbi = [
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"
