@@ -15,11 +15,12 @@ dotenvExpand.expand(dotenv.config());
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
-const WEIGHTED_POOL_FACTORY = process.env.WEIGHTED_POOL_FACTORY;
+
+// --- Hardcoded Balancer WeightedPoolFactory (Ethereum mainnet) ---
+const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8E9aa87E45e92bad84D5F8DD5b9431736D4BfB3E");
 
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
-if (!WEIGHTED_POOL_FACTORY) throw new Error("Missing WEIGHTED_POOL_FACTORY");
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
@@ -132,6 +133,7 @@ async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) 
     } catch {}
   }
   if (!poolAddr) throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
+  console.log(`✅ Balancer pool (${symbol})
   console.log(`✅ Balancer pool (${symbol}) created: ${poolAddr}`);
 
   const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
@@ -167,10 +169,8 @@ async function main() {
   await ensurePair(SUSHI_V2_FACTORY, "SushiSwap", BWAEZI, WETH);
 
   // --- Transfer funds EOA → SCW ---
-  // USDC: $2 for U2-USDC, Sushi-USDC, Bal-USDC = 6 USDC total
-  // WETH: $2 eq for U2-WETH, Sushi-WETH, Bal-WETH = 3 × WETH_EQ
-  const neededUSDC = toUSDC(6);
-  const neededWETH = toWETH(WETH_EQ * 3);
+  const neededUSDC = toUSDC(6);              // $2 each for U2-USDC, Sushi-USDC, Bal-USDC
+  const neededWETH = toWETH(WETH_EQ * 3);    // $2 eq each for U2-WETH, Sushi-WETH, Bal-WETH
 
   const eoaUsdcBal = await usdc.balanceOf(signer.address);
   const eoaWethBal = await weth.balanceOf(signer.address);
@@ -203,7 +203,7 @@ async function main() {
   const bwNeededTotal =
     toBW(BW_U2) + toBW(BW_U2) +         // Uniswap V2: BW/USDC + BW/WETH
     toBW(BW_SUSHI) + toBW(BW_SUSHI) +   // SushiSwap: BW/USDC + BW/WETH
-    toBW(BW_BAL_CORRECTED) + toBW(BW_BAL_CORRECTED); // Balancer: BW/USDC + BW/WETH (corrected for 80/20)
+    toBW(BW_BAL_CORRECTED) + toBW(BW_BAL_CORRECTED); // Balancer: BW/USDC + BW/WETH
 
   if (scwBwBal < bwNeededTotal) {
     throw new Error(`SCW BWAEZI insufficient: have ${ethers.formatEther(scwBwBal)} need ${ethers.formatEther(bwNeededTotal)}`);
