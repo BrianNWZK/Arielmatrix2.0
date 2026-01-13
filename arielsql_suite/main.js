@@ -16,31 +16,27 @@ const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com"
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
 
-// --- Hardcoded Balancer WeightedPoolFactory (Ethereum mainnet) ---
-// lowercase safe
-const WEIGHTED_POOL_FACTORY = "0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e";
-
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// --- Mainnet addresses ---
+// --- Mainnet addresses (lowercase literals to avoid checksum errors) ---
 const UNIV2_FACTORY     = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f";
 const UNIV2_ROUTER      = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
 const SUSHI_V2_FACTORY  = "0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac";
 const SUSHI_ROUTER      = "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f";
 const BALANCER_VAULT    = "0xba12222222228d8ba445958a75a0704d566bf2c8";
-
+const WEIGHTED_POOL_FACTORY = "0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e";
 
 // --- Tokens ---
-const bwzC  = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"); // 18d
-const USDC  = ethers.getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // 6d
-const WETH  = ethers.getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"); // 18d
+const bwzC  = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2"; // 18d
+const USDC  = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"; // 6d
+const WETH  = "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2"; // 18d
 
 // --- Chainlink ETH/USD feed ---
-const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"); // Mainnet ETH/USD
+const CHAINLINK_ETHUSD = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"; // Mainnet ETH/USD
 
 const chainlinkAbi = [
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"
@@ -55,7 +51,7 @@ const TARGET_BAL_USDC = 94;
 const WEIGHT_BW = 0.8;
 const WEIGHT_PAIRED = 0.2;
 const EFFECTIVE_RATIO = TARGET_BAL_USDC * (WEIGHT_PAIRED / WEIGHT_BW); // 23.5
-const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO; // ≈ 0.0851 BW
+const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO; // ≈ 0.085106383
 
 // --- ABIs ---
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
@@ -70,10 +66,11 @@ const balancerFactoryAbi = [
 const balancerVaultAbi = ["function joinPool(bytes32 poolId,address sender,address recipient,(address[],uint256[],bytes,bool) request)"];
 const balancerPoolAbi = ["function getPoolId() view returns (bytes32)"];
 
-// --- Helpers ---
-const toBW   = (x) => ethers.parseEther(x.toString());
-const toUSDC = (x) => ethers.parseUnits(x.toString(), 6);
-const toWETH = (x) => ethers.parseEther(x.toString());
+// --- Helpers (safe rounding to avoid numeric faults) ---
+const round = (x, d) => Number(Number(x).toFixed(d));
+const toBW   = (x) => ethers.parseUnits(round(x, 18).toString(), 18);
+const toUSDC = (x) => ethers.parseUnits(round(x, 6).toString(), 6);
+const toWETH = (x) => ethers.parseUnits(round(x, 18).toString(), 18);
 const deadline = () => BigInt(Math.floor(Date.now() / 1000) + 900);
 
 async function getEthUsdReference() {
@@ -86,9 +83,9 @@ async function getEthUsdReference() {
 async function ensurePair(factoryAddr, dexName, tokenA, tokenB) {
   const factory = new ethers.Contract(factoryAddr, v2FactoryAbi, signer);
   let pair = await factory.getPair(tokenA, tokenB);
-  if (pair !== ethers.ZeroAddress) {
+  if (pair && pair !== ethers.ZeroAddress) {
     console.log(`${dexName} pair exists: ${pair}`);
-    return pair;
+    return pair; // do not attempt to create again
   }
   console.log(`Creating ${dexName} pair ${tokenA}/${tokenB}...`);
   const tx = await factory.createPair(tokenA, tokenB);
@@ -118,26 +115,32 @@ async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts) {
 
 async function createAndSeedBalancer(scw, name, symbol, tokens, isUSDC, wethEq) {
   const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
-  const weights = [ethers.parseEther("0.8"), ethers.parseEther("0.2")];
-  const txCreate = await balFactory.create(name, symbol, tokens, weights, SCW_ADDRESS, ethers.parseUnits("0.003", 18), false);
-  const rc = await txCreate.wait();
+  const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
 
-  // Decode PoolCreated event safely
-  const eventIface = new ethers.Interface(balancerFactoryAbi);
   let poolAddr;
-  for (const log of rc.logs) {
-    try {
-      const parsed = eventIface.parseLog(log);
-      if (parsed?.name === "PoolCreated") {
-        poolAddr = parsed.args.pool;
-        break;
-      }
-    } catch {}
-  }
-  if (!poolAddr) throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
-  console.log(`✅ Balancer pool (${symbol}) created: ${poolAddr}`);
+  try {
+    const txCreate = await balFactory.create(name, symbol, tokens, weights, SCW_ADDRESS, ethers.parseUnits("0.003", 18), false);
+    const rc = await txCreate.wait();
 
-    const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
+    // Decode PoolCreated event safely
+    const eventIface = new ethers.Interface(balancerFactoryAbi);
+    for (const log of rc.logs) {
+      try {
+        const parsed = eventIface.parseLog(log);
+                if (parsed?.name === "PoolCreated") {
+          poolAddr = parsed.args.pool;
+          break;
+        }
+      } catch {}
+    }
+    if (!poolAddr) throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
+    console.log(`✅ Balancer pool (${symbol}) created: ${poolAddr}`);
+  } catch (e) {
+    console.log(`⚠️ Balancer pool creation skipped for (${symbol}): ${e.reason || e.message}`);
+    return; // Skip seeding if creation failed/reverted
+  }
+
+  const pool = new ethers.Contract(poolAddr, balancerPoolAbi, signer);
   const poolId = await pool.getPoolId();
 
   const amounts = isUSDC
@@ -170,8 +173,8 @@ async function main() {
   await ensurePair(SUSHI_V2_FACTORY, "SushiSwap", bwzC, WETH);
 
   // --- Transfer funds EOA → SCW ---
-  const neededUSDC = toUSDC(6);              // $2 each for U2-USDC, Sushi-USDC, Bal-USDC
-  const neededWETH = toWETH(WETH_EQ * 3);    // $2 eq each for U2-WETH, Sushi-WETH, Bal-WETH
+  const neededUSDC = toUSDC(6);                     // $2 each for U2-USDC, Sushi-USDC, Bal-USDC
+  const neededWETH = toWETH(round(WETH_EQ * 3, 18)); // $2 eq each for U2-WETH, Sushi-WETH, Bal-WETH
 
   const eoaUsdcBal = await usdc.balanceOf(signer.address);
   const eoaWethBal = await weth.balanceOf(signer.address);
@@ -230,4 +233,3 @@ main().catch((err) => {
   console.error("Fatal:", err.reason || err.message || err);
   process.exit(1);
 });
-
