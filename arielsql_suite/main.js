@@ -22,19 +22,19 @@ if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// --- Mainnet addresses ---
-const UNIV2_ROUTER      = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
-const SUSHI_ROUTER      = "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f";
-const BALANCER_VAULT    = "0xba12222222228d8ba445958a75a0704d566bf2c8";
-const WEIGHTED_POOL_FACTORY = "0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e";
+// --- Mainnet addresses (checksummed via ethers.getAddress) ---
+const UNIV2_ROUTER      = ethers.getAddress("0x7a250d5630b4cf539739df2c5dacb4c659f2488d");
+const SUSHI_ROUTER      = ethers.getAddress("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f");
+const BALANCER_VAULT    = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
 
-// --- Tokens ---
-const bwzC = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2"; // 18 decimals
-const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"; // 6 decimals
-const WETH = "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2"; // 18 decimals
+// --- Tokens (checksummed) ---
+const bwzC = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2"); // 18 decimals
+const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // 6 decimals
+const WETH = ethers.getAddress("0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2"); // 18 decimals
 
-// --- Chainlink ETH/USD feed ---
-const CHAINLINK_ETHUSD = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419";
+// --- Chainlink ETH/USD feed (checksummed) ---
+const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 const chainlinkAbi = [
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"
@@ -86,7 +86,8 @@ async function addLiquidityViaSCW(scw, routerAddr, tokenA, tokenB, amountA, amou
 }
 
 async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts) {
-  const userData = ethers.AbiCoder.default.encode(["uint8","uint256[]","uint256"], [0, amounts, 0n]);
+  // Fixed for ethers v6: use defaultAbiCoder()
+  const userData = ethers.AbiCoder.defaultAbiCoder().encode(["uint8","uint256[]","uint256"], [0, amounts, 0n]);
   const request = [assets, amounts, userData, false];
   const vaultIface = new ethers.Interface(balancerVaultAbi);
   const data = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
@@ -139,7 +140,7 @@ async function main() {
   const WETH_EQ = 2 / ETH_USD_REFERENCE;
 
   console.log(`ETH/USD ref (Chainlink): $${ETH_USD_REFERENCE}`);
-   console.log(`Seed amounts → U2 bwzC=${BW_U2.toFixed(10)}, Sushi bwzC=${BW_SUSHI.toFixed(10)}, Bal bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
+  console.log(`Seed amounts → U2 bwzC=${BW_U2.toFixed(10)}, Sushi bwzC=${BW_SUSHI.toFixed(10)}, Bal bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
 
   const scw  = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
   const usdc = new ethers.Contract(USDC, erc20Abi, signer);
