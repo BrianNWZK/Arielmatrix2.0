@@ -31,9 +31,10 @@ const BALANCER_VAULT    = "0xba12222222228d8ba445958a75a0704d566bf2c8";
 const WEIGHTED_POOL_FACTORY = "0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e";
 
 // --- Tokens ---
-const bwzC  = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2"; // 18d
-const USDC  = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"; // 6d
-const WETH  = "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2"; // 18d
+const bwzC = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2"; // 18 decimals
+const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"; // 6 decimals
+const WETH = "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2"; // 18 decimals
+
 
 // --- Chainlink ETH/USD feed ---
 const CHAINLINK_ETHUSD = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"; // Mainnet ETH/USD
