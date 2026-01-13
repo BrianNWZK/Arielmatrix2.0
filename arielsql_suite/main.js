@@ -17,7 +17,8 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
 
 // --- Hardcoded Balancer WeightedPoolFactory (Ethereum mainnet) ---
-const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8E9aa87E45e92bad84D5F8DD5b9431736D4BfB3E");
+// lowercase safe
+const WEIGHTED_POOL_FACTORY = "0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e";
 
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
