@@ -27,11 +27,12 @@ const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
 // --- Mainnet addresses ---
-const UNIV2_FACTORY     = ethers.getAddress("0x5C69bEe701ef814a2B6a3EDd4B1652CB9cc5aA6f");
-const UNIV2_ROUTER      = ethers.getAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
-const SUSHI_V2_FACTORY  = ethers.getAddress("0xC0AEe478e3658e2610c5F7A4A2E1777Ce9e4f2Ac");
-const SUSHI_ROUTER      = ethers.getAddress("0xd9e1cE17f2641f24Ae83637ab66a2cca9C378B9F");
-const BALANCER_VAULT    = ethers.getAddress("0xBA12222222228d8Ba445958a75a0704d566BF2C8");
+const UNIV2_FACTORY     = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f";
+const UNIV2_ROUTER      = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
+const SUSHI_V2_FACTORY  = "0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac";
+const SUSHI_ROUTER      = "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f";
+const BALANCER_VAULT    = "0xba12222222228d8ba445958a75a0704d566bf2c8";
+
 
 // --- Tokens ---
 const bwzC  = ethers.getAddress("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"); // 18d
