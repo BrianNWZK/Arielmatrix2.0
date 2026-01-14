@@ -12,14 +12,12 @@ if (!PRIVATE_KEY) throw new Error("Missing SOVEREIGN_PRIVATE_KEY");
 const SCW_ADDRESS = process.env.SCW_ADDRESS; // your Smart Contract Wallet
 
 // --- Tokens ---
-const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"; // 18 decimals
-const USDC   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // 6 decimals
-const WETH   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // 18 decimals
+const BWAEZI = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2"); // 18 decimals
+const USDC   = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // 6 decimals
+const WETH   = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"); // 18 decimals
 
-// --- Routers / Vault ---
-const UNIV2_ROUTER   = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
-const SUSHI_ROUTER   = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
-const BALANCER_VAULT = "0xba12222222228d8Ba445958a75a0704d566bf2C8";
+// --- Balancer Vault ---
+const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
 
 // --- ABI fragments ---
 const tokenAbi = [
@@ -52,23 +50,14 @@ async function main() {
   const scw      = new ethers.Contract(SCW_ADDRESS, scwAbi, wallet);
 
   console.log("SCW:", SCW_ADDRESS);
-
-  // Approvals for Uniswap V2 Router
-  await ensureApproval(scw, BWAEZI, UNIV2_ROUTER, "BWAEZI (Uniswap V2)");
-  await ensureApproval(scw, USDC,   UNIV2_ROUTER, "USDC (Uniswap V2)");
-  await ensureApproval(scw, WETH,   UNIV2_ROUTER, "WETH (Uniswap V2)");
-
-  // Approvals for SushiSwap Router
-  await ensureApproval(scw, BWAEZI, SUSHI_ROUTER, "BWAEZI (SushiSwap)");
-  await ensureApproval(scw, USDC,   SUSHI_ROUTER, "USDC (SushiSwap)");
-  await ensureApproval(scw, WETH,   SUSHI_ROUTER, "WETH (SushiSwap)");
+  console.log("Balancer Vault:", BALANCER_VAULT);
 
   // Approvals for Balancer Vault
   await ensureApproval(scw, BWAEZI, BALANCER_VAULT, "BWAEZI (Balancer)");
   await ensureApproval(scw, USDC,   BALANCER_VAULT, "USDC (Balancer)");
   await ensureApproval(scw, WETH,   BALANCER_VAULT, "WETH (Balancer)");
 
-  console.log("🎉 Approval scan complete. Exiting.");
+  console.log("🎉 Balancer approvals complete. Exiting.");
 }
 
 main().catch(e => {
