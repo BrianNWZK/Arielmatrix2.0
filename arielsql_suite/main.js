@@ -78,7 +78,8 @@ const deadline = () => BigInt(Math.floor(Date.now() / 1000) + 900);
 async function getEthUsdReference() {
   const feed = new ethers.Contract(CHAINLINK_ETHUSD, chainlinkAbi, provider);
   const [, answer] = await feed.latestRoundData();
-  if (answer <= 0) throw new Error("Invalid Chainlink ETH/USD price");
+  if (answer <= 0n) throw new Error("Invalid Chainlink ETH/USD price");
+  // Chainlink price is 8 decimals; convert BigInt to Number safely for small values
   return Number(answer) / 1e8;
 }
 
