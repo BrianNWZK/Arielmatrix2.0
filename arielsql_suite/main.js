@@ -1,4 +1,4 @@
-// main.js - Balancer pool creator/seeder with Express server for Render
+// main.js - Deterministic Balancer pool creator/seeder with Express server for Render
 import { ethers } from "ethers";
 import express from "express";
 import dotenv from "dotenv";
@@ -32,7 +32,6 @@ const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c
 
 // ABIs
 const balancerFactoryAbi = [
-  "event PoolCreated(address indexed pool)",
   "function create(string,string,address[],uint256[],address,uint256,bool) external returns (address)"
 ];
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
@@ -56,56 +55,25 @@ const toBW = (x) => ethers.parseUnits(round(x, 18).toString(), 18);
 const toUSDC = (x) => ethers.parseUnits(round(x, 6).toString(), 6);
 const toWETH = (x) => ethers.parseUnits(round(x, 18).toString(), 18);
 
-const withTimeout = (promise, ms = 120000) => Promise.race([
-  promise,
-  new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms))
-]);
-
 async function getEthUsdReference() {
   const chainlinkAbi = ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"];
   const feed = new ethers.Contract(CHAINLINK_ETHUSD, chainlinkAbi, provider);
-  const [, answer] = await withTimeout(feed.latestRoundData());
+  const [, answer] = await feed.latestRoundData();
   if (answer <= 0n) throw new Error("Invalid Chainlink ETH/USD price");
   return Number(answer) / 1e8;
 }
 
 async function ensureApproval(tokenAddr, spender, label) {
   const token = new ethers.Contract(tokenAddr, erc20Abi, signer);
-  const allowance = await withTimeout(token.allowance(SCW_ADDRESS, spender));
+  const allowance = await token.allowance(SCW_ADDRESS, spender);
   if (allowance > 0n) {
     console.log(`✅ ${label} already approved for ${spender}`);
     return;
   }
   console.log(`⚠️ Approving ${label} for ${spender}`);
-  const tx = await withTimeout(token.approve(spender, ethers.MaxUint256), 60000);
-  await withTimeout(tx.wait());
+  const tx = await token.approve(spender, ethers.MaxUint256);
+  await tx.wait();
   console.log(`✅ ${label} approved`);
-}
-
-async function createWeightedPool(name, symbol, tokens, timeoutMs = 120000) {
-  const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
-  const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
-
-  const txPromise = balFactory.create(name, symbol, tokens, weights, CREATOR_EOA, ethers.parseUnits("0.003", 18), false);
-  const tx = await withTimeout(txPromise, timeoutMs);
-  
-  const receipt = await withTimeout(tx.wait(), 120000);
-  const poolCreatedEvent = receipt.logs.find(log => {
-    try {
-      return balFactory.interface.parseLog(log).name === "PoolCreated";
-    } catch {
-      return false;
-    }
-  });
-
-  if (!poolCreatedEvent) throw new Error("PoolCreated event not found");
-
-  const poolAddr = balFactory.interface.parseLog(poolCreatedEvent).args.pool;
-  console.log(`✅ Pool created: ${poolAddr}`);
-
-  const pool = new ethers.Contract(poolAddr, balancerPoolAbi, provider);
-  const poolId = await withTimeout(pool.getPoolId());
-  return { poolAddr, poolId };
 }
 
 async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolName) {
@@ -117,10 +85,51 @@ async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolN
   const vaultIface = new ethers.Interface(balancerVaultAbi);
   const data = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
   
-  const tx = await withTimeout(scw.execute(vaultAddr, 0n, data));
-  console.log(`${poolName} tx: ${tx.hash}`);
-  await withTimeout(tx.wait());
+  const tx = await scw.execute(vaultAddr, 0n, data);
+  console.log(`${poolName} joinPool tx: ${tx.hash}`);
+  await tx.wait();
   console.log(`✅ ${poolName} seeded`);
+}
+
+// Deterministic pool creation + seeding
+async function createWeightedPool(scw, name, symbol, tokens, isUSDC, wethEq) {
+  const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
+  const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
+
+  // Predict pool address deterministically
+  const predictedAddr = await balFactory.create.staticCall(
+    name, symbol, tokens, weights, CREATOR_EOA,
+    ethers.parseUnits("0.003", 18), false
+  );
+  console.log(`Predicted pool address: ${predictedAddr}`);
+
+  // Try to get poolId — if fails, create
+  let poolId;
+  try {
+    const pool = new ethers.Contract(predictedAddr, balancerPoolAbi, provider);
+    poolId = await pool.getPoolId();
+    console.log(`✅ Pool already exists: ${predictedAddr}, poolId=${poolId}`);
+  } catch {
+    console.log(`⚠️ Pool not found, creating...`);
+    const tx = await balFactory.create(
+      name, symbol, tokens, weights, CREATOR_EOA,
+      ethers.parseUnits("0.003", 18), false
+    );
+    console.log(`Create tx: ${tx.hash}`);
+    await tx.wait();
+
+    const pool = new ethers.Contract(predictedAddr, balancerPoolAbi, provider);
+    poolId = await pool.getPoolId();
+    console.log(`✅ Pool created: ${predictedAddr}, poolId=${poolId}`);
+  }
+
+  // Seed via Vault
+  const amounts = isUSDC
+    ? [toBW(BW_BAL_CORRECTED), toUSDC(2)]
+    : [toBW(BW_BAL_CORRECTED), toWETH(wethEq)];
+
+  await joinBalancerViaSCW(scw, BALANCER_VAULT, poolId, tokens, amounts, symbol);
+  return { poolAddr: predictedAddr, poolId };
 }
 
 // Endpoint to create pools
@@ -133,15 +142,8 @@ app.post('/create-pools', async (req, res) => {
 
     const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
 
-    // BWAEZI/USDC pool
-    const usdcTokens = [bwzC, USDC];
-    const usdcPool = await createWeightedPool("bwzC/USDC Weighted", "bwzC-USDC-WP", usdcTokens);
-    await joinBalancerViaSCW(scw, BALANCER_VAULT, usdcPool.poolId, usdcTokens, [toBW(BW_BAL_CORRECTED), toUSDC(2)], "BWAEZI/USDC");
-
-    // BWAEZI/WETH pool
-    const wethTokens = [bwzC, WETH];
-    const wethPool = await createWeightedPool("bwzC/WETH Weighted", "bwzC-WETH-WP", wethTokens);
-    await joinBalancerViaSCW(scw, BALANCER_VAULT, wethPool.poolId, wethTokens, [toBW(BW_BAL_CORRECTED), toWETH(WETH_EQ)], "BWAEZI/WETH");
+    const usdcPool = await createWeightedPool(scw, "bwzC/USDC Weighted", "bwzC-USDC-WP", [bwzC, USDC], true, WETH_EQ);
+    const wethPool = await createWeightedPool(scw, "bwzC/WETH Weighted", "bwzC-WETH-WP", [bwzC, WETH], false, WETH_EQ);
 
     res.json({ success: true, pools: [usdcPool, wethPool] });
   } catch (error) {
@@ -154,8 +156,11 @@ app.post('/create-pools', async (req, res) => {
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // Startup
-const server = app.listen(PORT, async () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  if (process.env.NODE_ENV !== 'production') {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    console.log("🤖
+});
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => process.exit(0));
+});
