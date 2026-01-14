@@ -155,12 +155,10 @@ app.post('/create-pools', async (req, res) => {
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// Startup
-const server = app.listen(PORT, () => {
+// Startup with auto-run
+const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
-});
-
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => process.exit(0));
-});
+  try {
+    await new Promise(resolve => setTimeout(resolve, 5000)); // wait for sync
+    console.log("🤖 Auto-running pool creation...");
+    const res = await
