@@ -45,7 +45,6 @@ const erc20Abi = [
   "function approve(address spender, uint256 amount) returns (bool)"
 ];
 const balancerFactoryAbi = [
-  "event PoolCreated(address indexed pool)",
   "function create(string,string,address[],uint256[],address,uint256,bool) returns (address)"
 ];
 const balancerVaultAbi = [
@@ -96,67 +95,27 @@ async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolN
   console.log(`✅ ${poolName} seeded`);
 }
 
-// --- Detect existing pool created by your EOA ---
-async function findPoolByCreator(tokens) {
-  const iface = new ethers.Interface(balancerFactoryAbi);
-  const topic = iface.getEvent("PoolCreated").topicHash;
-  const current = await provider.getBlockNumber();
-  const vault = new ethers.Contract(BALANCER_VAULT, balancerVaultAbi, provider);
-
-  // Scan in 50k block chunks
-  let fromBlock = current - 200000;
-  while (fromBlock < current) {
-    const toBlock = Math.min(fromBlock + 50000, current);
-    const logs = await provider.getLogs({
-      address: WEIGHTED_POOL_FACTORY,
-      topics: [topic],
-      fromBlock,
-      toBlock
-    });
-    for (const log of logs) {
-      const parsed = iface.parseLog(log);
-      const poolAddr = parsed.args.pool;
-      // Only consider pools created by your EOA
-      if (log.address.toLowerCase() === WEIGHTED_POOL_FACTORY.toLowerCase() && log.transactionHash) {
-        const tx = await provider.getTransaction(log.transactionHash);
-        if (tx.from.toLowerCase() === CREATOR_EOA.toLowerCase()) {
-          const pool = new ethers.Contract(poolAddr, balancerPoolAbi, provider);
-          const poolId = await pool.getPoolId();
-          const { tokens: poolTokens } = await vault.getPoolTokens(poolId);
-          const sa = tokens.map(ethers.getAddress).sort();
-          const sb = poolTokens.map(ethers.getAddress).sort();
-          if (sa.length === sb.length && sa.every((v, i) => v === sb[i])) {
-            return { poolAddr, poolId };
-          }
-        }
-      }
-    }
-    fromBlock = toBlock + 1;
-  }
-  return null;
-}
-
 async function createWeightedPool(name, symbol, tokens) {
   const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
   const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
+
+  // Predict pool address deterministically
+  const predictedAddr = await balFactory.create.staticCall(
+    name, symbol, tokens, weights, SCW_ADDRESS,
+    ethers.parseUnits("0.003", 18), false
+  );
+  console.log(`Predicted pool address: ${predictedAddr}`);
+
+  // Send actual tx
   const tx = await balFactory.create(
     name, symbol, tokens, weights, SCW_ADDRESS,
     ethers.parseUnits("0.003", 18), false
   );
-  const rc = await tx.wait();
-  const eventIface = new ethers.Interface(balancerFactoryAbi);
-  for (const log of rc.logs) {
-    try {
-      const parsed = eventIface.parseLog(log);
-      if (parsed?.name === "PoolCreated") {
-        const poolAddr = parsed.args.pool;
-        const pool = new ethers.Contract(poolAddr, balancerPoolAbi, provider);
-        const poolId = await pool.getPoolId();
-        return { poolAddr, poolId };
-      }
-    } catch {}
-  }
-  throw new Error(`Failed to obtain Balancer pool address for ${symbol}`);
+  await tx.wait();
+
+  const pool = new ethers.Contract(predictedAddr, balancerPoolAbi, provider);
+  const poolId = await pool.getPoolId();
+  return { poolAddr: predictedAddr, poolId };
 }
 
 async function main() {
@@ -167,24 +126,22 @@ async function main() {
   const WETH_EQ = 2 / ETH_USD_REFERENCE;
 
   console.log(`ETH/USD ref (Chainlink): $${ETH_USD_REFERENCE}`);
-    console.log(`Balancer seed amounts → bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
+  console.log(`Balancer seed amounts → bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
 
   const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
 
   // --- BWAEZI/USDC Weighted ---
   {
     const tokens = [bwzC, USDC];
-    let poolMeta = await findPoolByCreator(tokens);
-    if (poolMeta) {
-      console.log(`✅ Found existing BWAEZI/USDC pool created by ${CREATOR_EOA}`);
-      console.log(`- Address: ${poolMeta.poolAddr}`);
-      console.log(`- PoolId: ${poolMeta.poolId}`);
-    } else {
-      console.log(`⚠️ No existing BWAEZI/USDC pool found — creating`);
+    let poolMeta;
+    try {
       poolMeta = await createWeightedPool("bwzC/USDC Weighted", "bwzC-USDC-WP", tokens);
-      console.log(`✅ Created BWAEZI/USDC pool`);
+      console.log(`✅ BWAEZI/USDC pool ready`);
       console.log(`- Address: ${poolMeta.poolAddr}`);
       console.log(`- PoolId: ${poolMeta.poolId}`);
+    } catch (err) {
+      console.log(`❌ Failed to create/find BWAEZI/USDC pool: ${err.message}`);
+      return;
     }
     const amounts = [toBW(BW_BAL_CORRECTED), toUSDC(2)];
     await joinBalancerViaSCW(scw, BALANCER_VAULT, poolMeta.poolId, tokens, amounts, "BWAEZI/USDC Balancer");
@@ -193,27 +150,24 @@ async function main() {
   // --- BWAEZI/WETH Weighted ---
   {
     const tokens = [bwzC, WETH];
-    let poolMeta = await findPoolByCreator(tokens);
-    if (poolMeta) {
-      console.log(`✅ Found existing BWAEZI/WETH pool created by ${CREATOR_EOA}`);
-      console.log(`- Address: ${poolMeta.poolAddr}`);
-      console.log(`- PoolId: ${poolMeta.poolId}`);
-    } else {
-      console.log(`⚠️ No existing BWAEZI/WETH pool found — creating`);
+    let poolMeta;
+    try {
       poolMeta = await createWeightedPool("bwzC/WETH Weighted", "bwzC-WETH-WP", tokens);
-      console.log(`✅ Created BWAEZI/WETH pool`);
+      console.log(`✅ BWAEZI/WETH pool ready`);
       console.log(`- Address: ${poolMeta.poolAddr}`);
       console.log(`- PoolId: ${poolMeta.poolId}`);
+    } catch (err) {
+      console.log(`❌ Failed to create/find BWAEZI/WETH pool: ${err.message}`);
+      return;
     }
     const amounts = [toBW(BW_BAL_CORRECTED), toWETH(WETH_EQ)];
     await joinBalancerViaSCW(scw, BALANCER_VAULT, poolMeta.poolId, tokens, amounts, "BWAEZI/WETH Balancer");
   }
 
-  console.log("\n🎯 Done: Balancer pools detected/created and seeded.");
+  console.log("\n🎯 Done: Balancer pools created/detected and seeded.");
   process.exit(0);
 }
 
 main().catch((err) => {
-  console.error("Non-fatal:", err.reason || err.message || err);
-  process.exit(0);
-});
+  console.error("Non-fatal:", err.reason || err.message
+
