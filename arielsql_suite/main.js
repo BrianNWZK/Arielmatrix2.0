@@ -31,8 +31,12 @@ const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 // ABIs
-const balancerFactoryAbi = [
-  "function create(string,string,address[],uint256[],address,uint256,bool) external returns (address)"
+// One ABI for staticCall (returns address), one for runtime tx (no return)
+const balancerFactoryAbiStatic = [
+  "function create(string,string,address[],uint256[],address,uint256,bool) view returns (address)"
+];
+const balancerFactoryAbiTx = [
+  "function create(string,string,address[],uint256[],address,uint256,bool) external"
 ];
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 const erc20Abi = [
@@ -93,11 +97,12 @@ async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolN
 
 // Deterministic pool creation + seeding
 async function createWeightedPool(scw, name, symbol, tokens, isUSDC, wethEq) {
-  const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
+  const balFactoryStatic = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbiStatic, signer);
+  const balFactoryTx = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbiTx, signer);
   const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
 
   // Predict pool address deterministically
-  const predictedAddr = await balFactory.create.staticCall(
+  const predictedAddr = await balFactoryStatic.create(
     name, symbol, tokens, weights, CREATOR_EOA,
     ethers.parseUnits("0.003", 18), false
   );
@@ -111,7 +116,7 @@ async function createWeightedPool(scw, name, symbol, tokens, isUSDC, wethEq) {
     console.log(`✅ Pool already exists: ${predictedAddr}, poolId=${poolId}`);
   } catch {
     console.log(`⚠️ Pool not found, creating...`);
-    const tx = await balFactory.create(
+    const tx = await balFactoryTx.create(
       name, symbol, tokens, weights, CREATOR_EOA,
       ethers.parseUnits("0.003", 18), false
     );
@@ -159,7 +164,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().
 const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   try {
-    await new Promise(resolve => setTimeout(resolve, 5000)); // wait for sync
+       await new Promise(resolve => setTimeout(resolve, 5000)); // wait for sync
     console.log("🤖 Auto-running pool creation...");
     const res = await fetch(`http://localhost:${PORT}/create-pools`, { method: 'POST' });
     const json = await res.json();
@@ -169,4 +174,7 @@ const server = app.listen(PORT, async () => {
   }
 });
 
-process.on('SIGTERM', () => { console.log('SIGTERM received, shutting down gracefully'); server.close(() => process.exit(0)); });
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => process.exit(0));
+});
