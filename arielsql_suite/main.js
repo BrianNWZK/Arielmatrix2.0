@@ -169,5 +169,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Non-fatal:", err.reason || err.message
+  console.error("Non-fatal:", err.reason || err.message || err);
+  process.exit(0);
+});
 
