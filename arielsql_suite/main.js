@@ -99,23 +99,32 @@ async function createWeightedPool(name, symbol, tokens) {
   const balFactory = new ethers.Contract(WEIGHTED_POOL_FACTORY, balancerFactoryAbi, signer);
   const weights = [ethers.parseUnits("0.8", 18), ethers.parseUnits("0.2", 18)];
 
-  // Predict pool address deterministically
-  const predictedAddr = await balFactory.create.staticCall(
-    name, symbol, tokens, weights, SCW_ADDRESS,
-    ethers.parseUnits("0.003", 18), false
-  );
-  console.log(`Predicted pool address: ${predictedAddr}`);
+  try {
+    // Predict pool address deterministically
+    const predictedAddr = await balFactory.create.staticCall(
+      name, symbol, tokens, weights, SCW_ADDRESS,
+      ethers.parseUnits("0.003", 18), false
+    );
+    console.log(`Predicted pool address: ${predictedAddr}`);
 
-  // Send actual tx
-  const tx = await balFactory.create(
-    name, symbol, tokens, weights, SCW_ADDRESS,
-    ethers.parseUnits("0.003", 18), false
-  );
-  await tx.wait();
+    // Send actual tx
+    const tx = await balFactory.create(
+      name, symbol, tokens, weights, SCW_ADDRESS,
+      ethers.parseUnits("0.003", 18), false
+    );
+    await tx.wait();
 
-  const pool = new ethers.Contract(predictedAddr, balancerPoolAbi, provider);
-  const poolId = await pool.getPoolId();
-  return { poolAddr: predictedAddr, poolId };
+    const pool = new ethers.Contract(predictedAddr, balancerPoolAbi, provider);
+    const poolId = await pool.getPoolId();
+    return { poolAddr: predictedAddr, poolId };
+
+  } catch (err) {
+    console.error(`Error creating pool: ${err.message}`);
+    if (err.data) {
+      console.error(`Error ${err.data}`);
+    }
+    throw err; // Re-throw to handle it upstream
+  }
 }
 
 async function main() {
@@ -172,4 +181,3 @@ main().catch((err) => {
   console.error("Non-fatal:", err.reason || err.message || err);
   process.exit(0);
 });
-
