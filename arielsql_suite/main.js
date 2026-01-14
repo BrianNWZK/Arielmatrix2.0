@@ -31,7 +31,6 @@ const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 // ABIs
-// One ABI for staticCall (returns address), one for runtime tx (no return)
 const balancerFactoryAbiStatic = [
   "function create(string,string,address[],uint256[],address,uint256,bool) view returns (address)"
 ];
@@ -76,8 +75,8 @@ async function ensureApproval(tokenAddr, spender, label) {
   }
   console.log(`⚠️ Approving ${label} for ${spender}`);
   const tx = await token.approve(spender, ethers.MaxUint256);
-  await tx.wait();
-  console.log(`✅ ${label} approved`);
+  const receipt = await tx.wait();
+  console.log(`✅ ${label} approved at block ${receipt.blockNumber}`);
 }
 
 async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolName) {
@@ -91,8 +90,8 @@ async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolN
   
   const tx = await scw.execute(vaultAddr, 0n, data);
   console.log(`${poolName} joinPool tx: ${tx.hash}`);
-  await tx.wait();
-  console.log(`✅ ${poolName} seeded`);
+  const receipt = await tx.wait();
+  console.log(`✅ ${poolName} seeded at block ${receipt.blockNumber}`);
 }
 
 // Deterministic pool creation + seeding
@@ -121,11 +120,12 @@ async function createWeightedPool(scw, name, symbol, tokens, isUSDC, wethEq) {
       ethers.parseUnits("0.003", 18), false
     );
     console.log(`Create tx: ${tx.hash}`);
-    await tx.wait();
+    const receipt = await tx.wait();
+    console.log(`✅ Pool created at block ${receipt.blockNumber}`);
 
     const pool = new ethers.Contract(predictedAddr, balancerPoolAbi, provider);
     poolId = await pool.getPoolId();
-    console.log(`✅ Pool created: ${predictedAddr}, poolId=${poolId}`);
+    console.log(`PoolId fetched: ${poolId}`);
   }
 
   // Seed via Vault
@@ -164,7 +164,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().
 const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   try {
-       await new Promise(resolve => setTimeout(resolve, 5000)); // wait for sync
+    await new Promise(resolve => setTimeout(resolve, 5000)); // wait for sync
     console.log("🤖 Auto-running pool creation...");
     const res = await fetch(`http://localhost:${PORT}/create-pools`, { method: 'POST' });
     const json = await res.json();
