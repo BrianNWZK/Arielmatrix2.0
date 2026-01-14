@@ -161,4 +161,12 @@ const server = app.listen(PORT, async () => {
   try {
     await new Promise(resolve => setTimeout(resolve, 5000)); // wait for sync
     console.log("🤖 Auto-running pool creation...");
-    const res = await
+    const res = await fetch(`http://localhost:${PORT}/create-pools`, { method: 'POST' });
+    const json = await res.json();
+    console.log("Auto-run result:", json);
+  } catch (err) {
+    console.error("Auto-run failed:", err.message || err);
+  }
+});
+
+process.on('SIGTERM', () => { console.log('SIGTERM received, shutting down gracefully'); server.close(() => process.exit(0)); });
