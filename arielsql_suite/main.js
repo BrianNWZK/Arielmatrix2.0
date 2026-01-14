@@ -1,5 +1,5 @@
 // main.js
-// Balancer-only: detect existing pools, print address/ID, create if missing, then joinPool seed
+// Balancer-only: detect pools created by your EOA, print address/ID, create if missing, then joinPool seed
 
 import { ethers } from "ethers";
 import dotenv from "dotenv";
@@ -10,6 +10,7 @@ dotenvExpand.expand(dotenv.config());
 const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
+const CREATOR_EOA = ethers.getAddress("0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"); // your EOA
 
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS");
@@ -40,7 +41,6 @@ const BW_BAL_CORRECTED  = 2 / EFFECTIVE_RATIO;
 // --- ABIs ---
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 const erc20Abi = [
-  "function balanceOf(address owner) view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)"
 ];
@@ -68,85 +68,72 @@ async function getEthUsdReference() {
 }
 
 async function ensureApproval(tokenAddr, spender, label) {
-  try {
-    const token = new ethers.Contract(tokenAddr, erc20Abi, signer);
-    const allowance = await token.allowance(SCW_ADDRESS, spender);
-    if (allowance > 0n) {
-      console.log(`✅ ${label} already approved for ${spender}`);
-      return true;
-    }
-    console.log(`⚠️ ${label} not approved — sending approval`);
-    const tx = await token.approve(spender, ethers.MaxUint256);
-    await tx.wait();
-    console.log(`✅ ${label} approved for ${spender}`);
-    return true;
-  } catch (err) {
-    console.log(`❌ Approval failed for ${label}: ${err.reason || err.message}`);
-    return false;
+  const token = new ethers.Contract(tokenAddr, erc20Abi, signer);
+  const allowance = await token.allowance(SCW_ADDRESS, spender);
+  if (allowance > 0n) {
+    console.log(`✅ ${label} already approved for ${spender}`);
+    return;
   }
+  console.log(`⚠️ ${label} not approved — sending approval`);
+  const tx = await token.approve(spender, ethers.MaxUint256);
+  await tx.wait();
+  console.log(`✅ ${label} approved for ${spender}`);
 }
 
 async function joinBalancerViaSCW(scw, vaultAddr, poolId, assets, amounts, poolName) {
-  try {
-    for (let i = 0; i < assets.length; i++) {
-      await ensureApproval(assets[i], vaultAddr, `${poolName} asset${i}`);
-    }
-    const userData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint8","uint256[]","uint256"], [0, amounts, 0n]
-    );
-    const request = [assets, amounts, userData, false];
-    const vaultIface = new ethers.Interface(balancerVaultAbi);
-    const data = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
-    const tx = await scw.execute(vaultAddr, 0n, data);
-    console.log(`SCW joinPool ${poolName} tx: ${tx.hash}`);
-    await tx.wait();
-    console.log(`✅ ${poolName} seeded`);
-  } catch (err) {
-    console.log(`❌ Skipping Balancer ${poolName} — ${err.reason || err.message}`);
+  for (let i = 0; i < assets.length; i++) {
+    await ensureApproval(assets[i], vaultAddr, `${poolName} asset${i}`);
   }
+  const userData = ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint8","uint256[]","uint256"], [0, amounts, 0n]
+  );
+  const request = [assets, amounts, userData, false];
+  const vaultIface = new ethers.Interface(balancerVaultAbi);
+  const data = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
+  const tx = await scw.execute(vaultAddr, 0n, data);
+  console.log(`SCW joinPool ${poolName} tx: ${tx.hash}`);
+  await tx.wait();
+  console.log(`✅ ${poolName} seeded`);
 }
 
-// Compare token sets ignoring order
-function sameTokenSet(a, b) {
-  const sa = a.map(ethers.getAddress).sort();
-  const sb = b.map(ethers.getAddress).sort();
-  return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
-}
+// --- Detect existing pool created by your EOA ---
+async function findPoolByCreator(tokens) {
+  const iface = new ethers.Interface(balancerFactoryAbi);
+  const topic = iface.getEvent("PoolCreated").topicHash;
+  const current = await provider.getBlockNumber();
+  const vault = new ethers.Contract(BALANCER_VAULT, balancerVaultAbi, provider);
 
-// Scan factory logs to find existing weighted pools that match our token set
-async function findExistingWeightedPool(tokens, fromBlocksBack = 250_000) {
-  try {
-    const iface = new ethers.Interface(balancerFactoryAbi);
-    const topic = iface.getEvent("PoolCreated").topicHash;
-    const current = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, current - fromBlocksBack);
-
+  // Scan in 50k block chunks
+  let fromBlock = current - 200000;
+  while (fromBlock < current) {
+    const toBlock = Math.min(fromBlock + 50000, current);
     const logs = await provider.getLogs({
       address: WEIGHTED_POOL_FACTORY,
       topics: [topic],
       fromBlock,
-      toBlock: current
+      toBlock
     });
-
-    const vault = new ethers.Contract(BALANCER_VAULT, balancerVaultAbi, provider);
-
     for (const log of logs) {
-      try {
-        const parsed = iface.parseLog(log);
-        const poolAddr = parsed.args.pool;
-        const pool = new ethers.Contract(poolAddr, balancerPoolAbi, provider);
-        const poolId = await pool.getPoolId();
-        const { tokens: poolTokens } = await vault.getPoolTokens(poolId);
-        if (sameTokenSet(poolTokens, tokens)) {
-          return { poolAddr, poolId };
+      const parsed = iface.parseLog(log);
+      const poolAddr = parsed.args.pool;
+      // Only consider pools created by your EOA
+      if (log.address.toLowerCase() === WEIGHTED_POOL_FACTORY.toLowerCase() && log.transactionHash) {
+        const tx = await provider.getTransaction(log.transactionHash);
+        if (tx.from.toLowerCase() === CREATOR_EOA.toLowerCase()) {
+          const pool = new ethers.Contract(poolAddr, balancerPoolAbi, provider);
+          const poolId = await pool.getPoolId();
+          const { tokens: poolTokens } = await vault.getPoolTokens(poolId);
+          const sa = tokens.map(ethers.getAddress).sort();
+          const sb = poolTokens.map(ethers.getAddress).sort();
+          if (sa.length === sb.length && sa.every((v, i) => v === sb[i])) {
+            return { poolAddr, poolId };
+          }
         }
-      } catch {}
+      }
     }
-    return null;
-  } catch (err) {
-    console.log(`⚠️ Pool scan failed: ${err.reason || err.message}`);
-    return null;
+    fromBlock = toBlock + 1;
   }
+  return null;
 }
 
 async function createWeightedPool(name, symbol, tokens) {
@@ -157,7 +144,6 @@ async function createWeightedPool(name, symbol, tokens) {
     ethers.parseUnits("0.003", 18), false
   );
   const rc = await tx.wait();
-
   const eventIface = new ethers.Interface(balancerFactoryAbi);
   for (const log of rc.logs) {
     try {
@@ -181,16 +167,16 @@ async function main() {
   const WETH_EQ = 2 / ETH_USD_REFERENCE;
 
   console.log(`ETH/USD ref (Chainlink): $${ETH_USD_REFERENCE}`);
-  console.log(`Balancer seed amounts → bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
+    console.log(`Balancer seed amounts → bwzC(corrected)=${BW_BAL_CORRECTED.toFixed(10)}, WETH(eq $2)=${WETH_EQ.toFixed(8)}`);
 
   const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
 
   // --- BWAEZI/USDC Weighted ---
   {
     const tokens = [bwzC, USDC];
-    let poolMeta = await findExistingWeightedPool(tokens);
+    let poolMeta = await findPoolByCreator(tokens);
     if (poolMeta) {
-      console.log(`✅ Found existing BWAEZI/USDC pool`);
+      console.log(`✅ Found existing BWAEZI/USDC pool created by ${CREATOR_EOA}`);
       console.log(`- Address: ${poolMeta.poolAddr}`);
       console.log(`- PoolId: ${poolMeta.poolId}`);
     } else {
@@ -207,9 +193,9 @@ async function main() {
   // --- BWAEZI/WETH Weighted ---
   {
     const tokens = [bwzC, WETH];
-    let poolMeta = await findExistingWeightedPool(tokens);
+    let poolMeta = await findPoolByCreator(tokens);
     if (poolMeta) {
-      console.log(`✅ Found existing BWAEZI/WETH pool`);
+      console.log(`✅ Found existing BWAEZI/WETH pool created by ${CREATOR_EOA}`);
       console.log(`- Address: ${poolMeta.poolAddr}`);
       console.log(`- PoolId: ${poolMeta.poolId}`);
     } else {
