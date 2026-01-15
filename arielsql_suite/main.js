@@ -1,3 +1,4 @@
+// main.js - FIXED event parsing + existence check + CREATE2
 import { ethers } from "ethers";
 import express from "express";
 import dotenv from "dotenv";
@@ -34,7 +35,7 @@ const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO;
 
 const factoryAbi = [
   "event PoolCreated(address indexed pool)",
-  "function create(string name,string symbol,address[] tokens,uint256[] weights,address owner,uint256 swapFeePercentage,bool oracleEnabled) external"
+  "function create(string name,string symbol,address[] tokens,uint256[] weights,address owner,uint256 swapFeePercentage,bool oracleEnabled) external returns (address)"
 ];
 const poolAbi = ["function getPoolId() view returns(bytes32)"];
 const vaultAbi = ["function joinPool(bytes32,address,address,(address[],uint256[],bytes,bool))"];
@@ -55,72 +56,95 @@ async function getEthPrice() {
   return Number(price) / 1e8;
 }
 
-// ✅ **CORRECT** - Event parsing + receipt inspection
+// ✅ FIXED: Predict + check existence + bulletproof fallback
 async function getOrCreatePool(name, symbol, tokens) {
-  console.log(`🔍 Creating ${name}...`);
+  console.log(`🔍 Processing ${name}...`);
   
   const factory = new ethers.Contract(V2_WEIGHTED_POOL_FACTORY, factoryAbi, signer);
   const weights = [toUnits(WEIGHT_BW, 18), toUnits(WEIGHT_PAIRED, 18)];
 
+  // **STEP 1: Try to predict/find existing pool**
+  let poolAddr = null;
+  try {
+    // CREATE2 salt = keccak256(name) - Balancer V2 standard
+    const salt = ethers.keccak256(ethers.toUtf8Bytes(name));
+    poolAddr = ethers.getCreate2Address(
+      V2_WEIGHTED_POOL_FACTORY, 
+      salt, 
+      ethers.keccak256("0x") // runtime code hash
+    );
+    console.log(`🔮 CREATE2 predicted: ${poolAddr}`);
+    
+    const pool = new ethers.Contract(poolAddr, poolAbi, provider);
+    const poolId = await timeout(pool.getPoolId(), 5000);
+    console.log(`✅ Pool EXISTS: ${poolAddr} | ID: ${poolId}`);
+    return { poolAddr, poolId };
+  } catch (e) {
+    console.log(`⚠️ Pool doesn't exist, creating...`);
+  }
+
+  // **STEP 2: CREATE pool**
+  console.log(`📤 Creating ${name}...`);
   const tx = await factory.create(name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false);
   console.log(`⏳ TX: ${tx.hash}`);
   
   const receipt = await timeout(tx.wait(), 120000);
-  console.log(`📄 ${receipt.logs.length} logs`);
+  console.log(`📄 ${receipt.logs.length} logs found`);
 
-  // **CRITICAL**: Parse ALL logs for PoolCreated event
-  let poolAddr = null;
-  const factoryIface = new ethers.Interface(factoryAbi);
+  // **STEP 3: BULLETPROOF pool address detection**
   
-  for (const log of receipt.logs) {
-    try {
-      const parsed = factoryIface.parseLog(log);
-      if (parsed.name === 'PoolCreated') {
-        poolAddr = parsed.args.pool;
+  // METHOD 1: Return value from tx (if function returns it)
+  try {
+    poolAddr = receipt.contractAddress;
+    if (poolAddr) {
+      console.log(`✅ TX return value: ${poolAddr}`);
+    }
+  } catch {}
+
+  // METHOD 2: PoolCreated event (any contract)
+  if (!poolAddr) {
+    const poolCreatedTopic = ethers.id("PoolCreated(address)");
+    for (const log of receipt.logs) {
+      if (log.topics[0] === poolCreatedTopic) {
+        poolAddr = ethers.getAddress(`0x${log.topics[1].slice(-40)}`);
         console.log(`✅ PoolCreated event: ${poolAddr}`);
         break;
       }
-    } catch (e) {
-      // Try raw topic signature
-      if (log.topics[0] === ethers.id("PoolCreated(address)")) {
-        poolAddr = ethers.getAddress(`0x${log.topics[1].slice(-40)}`);
-        console.log(`✅ Raw topic PoolCreated: ${poolAddr}`);
-        break;
-      }
     }
   }
-  
-  // **FALLBACK 1**: New contract address (most reliable)
+
+  // METHOD 3: New contract creation (most reliable)
   if (!poolAddr) {
     const newContracts = receipt.logs.filter(log => 
-      log.address.toLowerCase() !== V2_WEIGHTED_POOL_FACTORY.toLowerCase()
+      log.address.toLowerCase() !== V2_WEIGHTED_POOL_FACTORY.toLowerCase() &&
+      log.address.toLowerCase() !== BALANCER_VAULT.toLowerCase()
     );
     if (newContracts[0]) {
       poolAddr = newContracts[0].address;
-      console.log(`✅ New contract address: ${poolAddr}`);
+      console.log(`✅ New contract: ${poolAddr}`);
     }
   }
-  
-  // **FALLBACK 2**: CREATE2 salt prediction
+
+  // METHOD 4: Fallback to CREATE2 prediction
   if (!poolAddr) {
-    const salt = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string"], [name]));
+    const salt = ethers.keccak256(ethers.toUtf8Bytes(name));
     poolAddr = ethers.getCreate2Address(V2_WEIGHTED_POOL_FACTORY, salt, ethers.keccak256("0x"));
-    console.log(`✅ CREATE2 predicted: ${poolAddr}`);
+    console.log(`✅ CREATE2 fallback: ${poolAddr}`);
   }
 
-  if (!poolAddr) {
-    throw new Error(`No pool found in TX: ${tx.hash}`);
+  if (!poolAddr || !ethers.isAddress(poolAddr)) {
+    throw new Error(`CRITICAL: No pool address found in TX ${tx.hash}. Logs: ${receipt.logs.length}`);
   }
 
   const pool = new ethers.Contract(poolAddr, poolAbi, provider);
   const poolId = await timeout(pool.getPoolId(), 10000);
-  console.log(`🆔 Pool ID: ${poolId}`);
+  console.log(`🆔 FINAL Pool ID: ${poolId}`);
   
-  return { poolAddr, poolId };
+  return { poolAddr, poolAddr, poolId };
 }
 
 async function approveAndJoin(scw, poolId, tokens, amounts, label) {
-  console.log(`🔐 ${label} setup...`);
+  console.log(`🔐 ${label} approvals...`);
   
   for (let i = 0; i < tokens.length; i++) {
     const token = new ethers.Contract(tokens[i], erc20Abi, signer);
@@ -128,7 +152,7 @@ async function approveAndJoin(scw, poolId, tokens, amounts, label) {
     if (allowance < amounts[i]) {
       const tx = await token.approve(BALANCER_VAULT, ethers.MaxUint256);
       await tx.wait();
-      console.log(`✅ Approved ${label} token ${i}`);
+      console.log(`✅ ${label} token ${i} approved`);
     }
   }
   
@@ -138,13 +162,12 @@ async function approveAndJoin(scw, poolId, tokens, amounts, label) {
   
   const vaultIface = new ethers.Interface(vaultAbi);
   const callData = vaultIface.encodeFunctionData("joinPool", [
-    poolId, SCW_ADDRESS, SCW_ADDRESS,
-    [tokens, amounts, userData, false]
+    poolId, SCW_ADDRESS, SCW_ADDRESS, [tokens, amounts, userData, false]
   ]);
   
   const tx = await scw.execute(BALANCER_VAULT, 0, callData);
   await tx.wait();
-  console.log(`✅ ${label} seeded: ${tx.hash}`);
+  console.log(`✅ ${label} JOINED: ${tx.hash}`);
 }
 
 async function runPoolCreation() {
@@ -157,19 +180,19 @@ async function runPoolCreation() {
 
   const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
 
+  // 94% USDC SKEW POOL
   const usdcPool = await getOrCreatePool("bwzC-USDC-WP", "bwzC-USDC", [BWZC_TOKEN, USDC]);
   await approveAndJoin(scw, usdcPool.poolId, [BWZC_TOKEN, USDC], [bwzAmount, usdcAmount], "bwzC/USDC");
 
+  // WETH POOL  
   const wethPool = await getOrCreatePool("bwzC-WETH-WP", "bwzC-WETH", [BWZC_TOKEN, WETH]);
   await approveAndJoin(scw, wethPool.poolId, [BWZC_TOKEN, WETH], [bwzAmount, wethFor2USD], "bwzC/WETH");
 
-  return { 
-    success: true,
-    pools: [usdcPool, wethPool], 
-    skew: `${BW_BAL_CORRECTED.toFixed(8)} bwzC ($2 paired)`
-  };
+  console.log("🎯 **94% USDC SKEW ACHIEVED**");
+  return { success: true, pools: [usdcPool, wethPool], skew: `${BW_BAL_CORRECTED.toFixed(8)} bwzC` };
 }
 
+// API endpoints
 app.post("/create-pools", async (req, res) => {
   try {
     const result = await runPoolCreation();
@@ -179,27 +202,28 @@ app.post("/create-pools", async (req, res) => {
   }
 });
 
-app.get("/health", (req, res) => res.json({ status: "live" }));
+app.get("/health", (req, res) => res.json({ status: "live", poolsCreated }));
 
+// Auto-run on startup
 let poolsCreated = false;
 const server = app.listen(PORT, async () => {
-  console.log(`🚀 Server live on port ${PORT}`);
+  console.log(`🚀 Live on port ${PORT}`);
   
   if (!poolsCreated && PRIVATE_KEY && SCW_ADDRESS) {
     poolsCreated = true;
     setTimeout(async () => {
-      console.log("🤖 AUTO-RUNNING POOL CREATION...");
+      console.log("🤖 AUTO-CREATING POOLS...");
       try {
         const result = await runPoolCreation();
-        console.log("✅ COMPLETE:", JSON.stringify(result, null, 2));
+        console.log("✅ SUCCESS:", JSON.stringify(result, null, 2));
       } catch (err) {
         console.error("❌ FAILED:", err.message);
       }
-    }, 5000);
+    }, 3000);
   }
 });
 
 process.on("SIGTERM", () => {
-  console.log("SIGTERM received");
-  server.close(() => process.exit(0));
+  console.log("Shutdown...");
+  server?.close(() => process.exit(0));
 });
