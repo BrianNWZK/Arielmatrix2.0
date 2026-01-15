@@ -3,7 +3,7 @@
 // One-shot execution with auto-run on startup
 // Targeted peg: ~$94 BWAEZI price in Balancer pools (organic arbitrage vs Uniswap $96–$100 pools)
 // 80/20 weights (BWAEZI heavy) + $2 paired value → higher BW amount for lower effective price
-// Fixed: Correct 2-token factory ABI/params + event parsing + SCW approvals + sorted assets + INIT join
+// Fixed: All addresses normalized with ethers.getAddress() to prevent checksum errors
 
 import express from "express";
 import { ethers } from "ethers";
@@ -24,13 +24,13 @@ app.use(express.json());
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// ===== Balancer Constants =====
-const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
-const WEIGHTED_POOL_FACTORY = "0x8E9aa87E45e92bad84D5F8Dd5b9431736D4BFb3E"; // Verified 2-token WeightedPoolFactory
-const BWZC_TOKEN = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
-const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-const CHAINLINK_ETHUSD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
+// ===== Balancer Constants (checksum-normalized) =====
+const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e"); // normalized lowercase input
+const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eaDE15EC884FA0CdC2");
+const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 // ===== Peg & Weight Config =====
 const TARGET_BWAEZI_PRICE = 94; // Desired effective peg in Balancer pools ($94)
