@@ -1,4 +1,3 @@
-// main.js - FIXED callStatic + fallback detection
 import { ethers } from "ethers";
 import express from "express";
 import dotenv from "dotenv";
@@ -20,7 +19,6 @@ app.use(express.json());
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// ✅ CORRECT CHECKSUMMED ADDRESSES
 const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
 const V2_WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
 const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2");
@@ -35,8 +33,8 @@ const EFFECTIVE_RATIO = TARGET_BAL_USDC * (WEIGHT_PAIRED / WEIGHT_BW);
 const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO;
 
 const factoryAbi = [
-  "function create(string name,string symbol,address[] tokens,uint256[] weights,address owner,uint256 swapFeePercentage,bool oracleEnabled) external returns (address)",
-  "event PoolCreated(address indexed pool)"
+  "event PoolCreated(address indexed pool)",
+  "function create(string name,string symbol,address[] tokens,uint256[] weights,address owner,uint256 swapFeePercentage,bool oracleEnabled) external"
 ];
 const poolAbi = ["function getPoolId() view returns(bytes32)"];
 const vaultAbi = ["function joinPool(bytes32,address,address,(address[],uint256[],bytes,bool))"];
@@ -57,61 +55,68 @@ async function getEthPrice() {
   return Number(price) / 1e8;
 }
 
-// ✅ FIXED: Robust deterministic pool creation
+// ✅ **CORRECT** - Event parsing + receipt inspection
 async function getOrCreatePool(name, symbol, tokens) {
+  console.log(`🔍 Creating ${name}...`);
+  
   const factory = new ethers.Contract(V2_WEIGHTED_POOL_FACTORY, factoryAbi, signer);
   const weights = [toUnits(WEIGHT_BW, 18), toUnits(WEIGHT_PAIRED, 18)];
 
-  console.log(`🔍 Processing ${name}...`);
+  const tx = await factory.create(name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false);
+  console.log(`⏳ TX: ${tx.hash}`);
   
-  let predictedAddr, poolId;
+  const receipt = await timeout(tx.wait(), 120000);
+  console.log(`📄 ${receipt.logs.length} logs`);
+
+  // **CRITICAL**: Parse ALL logs for PoolCreated event
+  let poolAddr = null;
+  const factoryIface = new ethers.Interface(factoryAbi);
   
-  // **METHOD 1: Try callStatic FIRST** (predicts CREATE2 address)
-  try {
-    predictedAddr = await timeout(factory.create.staticCall(
-      name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false
-    ), 30000);
-    console.log(`✅ Predicted: ${predictedAddr}`);
-    
-    // Verify pool exists at predicted address
-    const pool = new ethers.Contract(predictedAddr, poolAbi, provider);
-    poolId = await timeout(pool.getPoolId(), 10000);
-    console.log(`✅ Pool exists: ${predictedAddr}, ID: ${poolId}`);
-    return { poolAddr: predictedAddr, poolId };
-    
-  } catch (staticError) {
-    console.log(`⚠️ callStatic failed: ${staticError.message.slice(0, 100)}`);
-  }
-  
-  // **METHOD 2: Create + get return value**
-  try {
-    console.log(`📤 Creating pool...`);
-    const tx = await factory.create(name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false);
-    console.log(`⏳ TX: ${tx.hash}`);
-    
-    const receipt = await timeout(tx.wait(), 120000);
-    
-    // **CRITICAL**: Factory RETURNS pool address directly
-    predictedAddr = receipt.logs[0]?.address || tx.value; 
-    if (!predictedAddr) {
-      // Fallback: first non-factory log address
-      const creationLogs = receipt.logs.filter(log => 
-        log.address.toLowerCase() !== V2_WEIGHTED_POOL_FACTORY.toLowerCase()
-      );
-      predictedAddr = creationLogs[0]?.address;
+  for (const log of receipt.logs) {
+    try {
+      const parsed = factoryIface.parseLog(log);
+      if (parsed.name === 'PoolCreated') {
+        poolAddr = parsed.args.pool;
+        console.log(`✅ PoolCreated event: ${poolAddr}`);
+        break;
+      }
+    } catch (e) {
+      // Try raw topic signature
+      if (log.topics[0] === ethers.id("PoolCreated(address)")) {
+        poolAddr = ethers.getAddress(`0x${log.topics[1].slice(-40)}`);
+        console.log(`✅ Raw topic PoolCreated: ${poolAddr}`);
+        break;
+      }
     }
-    
-    console.log(`✅ Created: ${predictedAddr}`);
-    
-    const pool = new ethers.Contract(predictedAddr, poolAbi, provider);
-    poolId = await timeout(pool.getPoolId(), 10000);
-    console.log(`🆔 Pool ID: ${poolId}`);
-    return { poolAddr: predictedAddr, poolId };
-    
-  } catch (createError) {
-    console.error(`❌ Create failed: ${createError.message}`);
-    throw createError;
   }
+  
+  // **FALLBACK 1**: New contract address (most reliable)
+  if (!poolAddr) {
+    const newContracts = receipt.logs.filter(log => 
+      log.address.toLowerCase() !== V2_WEIGHTED_POOL_FACTORY.toLowerCase()
+    );
+    if (newContracts[0]) {
+      poolAddr = newContracts[0].address;
+      console.log(`✅ New contract address: ${poolAddr}`);
+    }
+  }
+  
+  // **FALLBACK 2**: CREATE2 salt prediction
+  if (!poolAddr) {
+    const salt = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string"], [name]));
+    poolAddr = ethers.getCreate2Address(V2_WEIGHTED_POOL_FACTORY, salt, ethers.keccak256("0x"));
+    console.log(`✅ CREATE2 predicted: ${poolAddr}`);
+  }
+
+  if (!poolAddr) {
+    throw new Error(`No pool found in TX: ${tx.hash}`);
+  }
+
+  const pool = new ethers.Contract(poolAddr, poolAbi, provider);
+  const poolId = await timeout(pool.getPoolId(), 10000);
+  console.log(`🆔 Pool ID: ${poolId}`);
+  
+  return { poolAddr, poolId };
 }
 
 async function approveAndJoin(scw, poolId, tokens, amounts, label) {
@@ -152,15 +157,12 @@ async function runPoolCreation() {
 
   const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
 
-  // USDC Pool (94% balance skew target)
   const usdcPool = await getOrCreatePool("bwzC-USDC-WP", "bwzC-USDC", [BWZC_TOKEN, USDC]);
   await approveAndJoin(scw, usdcPool.poolId, [BWZC_TOKEN, USDC], [bwzAmount, usdcAmount], "bwzC/USDC");
 
-  // WETH Pool
   const wethPool = await getOrCreatePool("bwzC-WETH-WP", "bwzC-WETH", [BWZC_TOKEN, WETH]);
   await approveAndJoin(scw, wethPool.poolId, [BWZC_TOKEN, WETH], [bwzAmount, wethFor2USD], "bwzC/WETH");
 
-  console.log("🎯 94% USDC SKEW TARGET ACHIEVED");
   return { 
     success: true,
     pools: [usdcPool, wethPool], 
