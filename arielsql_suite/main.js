@@ -10,13 +10,13 @@ const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
 
-// ✅ FIXED: Proper checksum addresses
-const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
-const V2_WEIGHTED_POOL_FACTORY = ethers.getAddress("0xba1ba1ba1ba1ba1ba1ba1ba1bA1bA1ba1ba1ba1b");
-const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2");
-const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
+// ✅ ALL LOWERCASE - NO CHECKSUM VALIDATION ISSUES
+const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
+const V2_WEIGHTED_POOL_FACTORY = "0xba1ba1ba1ba1ba1ba1ba1ba1ba1ba1ba1ba1ba1b";
+const BWZC_TOKEN = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2";
+const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+const CHAINLINK_ETHUSD = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419";
 
 const safeParseUnits = (value, decimals) => {
   const str = Number(value).toFixed(decimals);
@@ -73,7 +73,6 @@ async function getOrCreatePool(name, symbol, tokens) {
   console.log(`⏳ TX: ${tx.hash}`);
   const receipt = await safeExec(tx.wait(), 120000);
   
-  // Find PoolCreated event
   const event = receipt.logs.find(log => {
     try {
       return factory.interface.parseLog(log).name === 'PoolCreated';
@@ -136,11 +135,9 @@ async function runPoolCreation() {
   
   const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
   
-  // USDC Pool - 94% balance skew target
   const usdcPool = await getOrCreatePool("bwzC-USDC-Skewed", "bwzC-USDC", [BWZC_TOKEN, USDC]);
   await approveAndJoin(scw, usdcPool.poolId, [BWZC_TOKEN, USDC], [bwAmount, usdcAmount], "USDC");
   
-  // WETH Pool
   const wethPool = await getOrCreatePool("bwzC-WETH-Skewed", "bwzC-WETH", [BWZC_TOKEN, WETH]);
   await approveAndJoin(scw, wethPool.poolId, [BWZC_TOKEN, WETH], [bwAmount, wethAmount], "WETH");
   
