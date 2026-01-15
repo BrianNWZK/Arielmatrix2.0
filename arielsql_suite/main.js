@@ -10,7 +10,14 @@ const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
 
-// ✅ FIXED: Safe decimal handling
+// ✅ FIXED: Proper checksum addresses
+const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const V2_WEIGHTED_POOL_FACTORY = ethers.getAddress("0xba1ba1ba1ba1ba1ba1ba1ba1bA1bA1ba1ba1ba1b");
+const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2");
+const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
+
 const safeParseUnits = (value, decimals) => {
   const str = Number(value).toFixed(decimals);
   return ethers.parseUnits(str, decimals);
@@ -25,14 +32,6 @@ app.use(express.json());
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
-
-// ✅ CORRECT V2 ADDRESSES
-const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
-const V2_WEIGHTED_POOL_FACTORY = "0xBA1BA1ba1ba1Ba1bA1Ba1Ba1bA1bA1Ba1BA1ba1b";
-const bwzC = "0x54D1C2889B08cAd0932266eadE15eC884Fa0CdC2";
-const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-const CHAINLINK_ETHUSD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 
 const TARGET_BAL_USDC = 94;
 const WEIGHT_BW = 0.8;
@@ -54,14 +53,12 @@ async function safeExec(promise, timeout = 60000) {
   return Promise.race([promise, new Promise((_,r) => setTimeout(() => r(new Error(`timeout ${timeout}ms`)), timeout))]);
 }
 
-// ✅ FIXED: Safe ETH price + WETH calculation
 async function getEthPrice() {
   const feed = new ethers.Contract(CHAINLINK_ETHUSD, chainlinkAbi, provider);
   const [,price] = await safeExec(feed.latestRoundData());
   return Number(price) / 1e8;
 }
 
-// ✅ FIXED: Robust pool creation with V2 factory
 async function getOrCreatePool(name, symbol, tokens) {
   console.log(`🔍 Creating ${name}...`);
   
@@ -76,7 +73,7 @@ async function getOrCreatePool(name, symbol, tokens) {
   console.log(`⏳ TX: ${tx.hash}`);
   const receipt = await safeExec(tx.wait(), 120000);
   
-  // Find PoolCreated event (robust parsing)
+  // Find PoolCreated event
   const event = receipt.logs.find(log => {
     try {
       return factory.interface.parseLog(log).name === 'PoolCreated';
@@ -86,7 +83,7 @@ async function getOrCreatePool(name, symbol, tokens) {
   });
   
   if (!event) {
-    throw new Error("No PoolCreated event - check tx: " + tx.hash);
+    throw new Error(`No PoolCreated event in tx: ${tx.hash}`);
   }
   
   const { args: { pool: poolAddr } } = factory.interface.parseLog(event);
@@ -94,7 +91,7 @@ async function getOrCreatePool(name, symbol, tokens) {
   
   const pool = new ethers.Contract(poolAddr, poolAbi, provider);
   const poolId = await safeExec(pool.getPoolId());
-  console.log(`🆔 ID: ${poolId}`);
+  console.log(`🆔 Pool ID: ${poolId}`);
   
   return { poolAddr, poolId };
 }
@@ -102,7 +99,6 @@ async function getOrCreatePool(name, symbol, tokens) {
 async function approveAndJoin(scw, poolId, tokens, amounts, label) {
   console.log(`🔐 ${label} approve/join...`);
   
-  // Bulk approve
   for (let i = 0; i < tokens.length; i++) {
     const token = new ethers.Contract(tokens[i], erc20Abi, signer);
     const allowance = await token.allowance(SCW_ADDRESS, BALANCER_VAULT);
@@ -113,7 +109,6 @@ async function approveAndJoin(scw, poolId, tokens, amounts, label) {
     }
   }
   
-  // JoinPool via SCW
   const userData = ethers.AbiCoder.defaultAbiCoder().encode(
     ["uint256","uint256[]","uint256"], [0, amounts, 0]
   );
@@ -133,7 +128,6 @@ async function runPoolCreation() {
   const ethPrice = await getEthPrice();
   const weth2USD = 2 / ethPrice;
   
-  // ✅ FIXED: Safe unit conversion
   const bwAmount = safeParseUnits(BW_BAL_CORRECTED, 18);
   const usdcAmount = safeParseUnits(2, 6);
   const wethAmount = safeParseUnits(weth2USD, 18);
@@ -142,13 +136,13 @@ async function runPoolCreation() {
   
   const scw = new ethers.Contract(SCW_ADDRESS, scwAbi, signer);
   
-  // USDC Pool (94% target balance)
-  const usdcPool = await getOrCreatePool("bwzC-USDC-Skewed", "bwzC-USDC", [bwzC, USDC]);
-  await approveAndJoin(scw, usdcPool.poolId, [bwzC, USDC], [bwAmount, usdcAmount], "USDC");
+  // USDC Pool - 94% balance skew target
+  const usdcPool = await getOrCreatePool("bwzC-USDC-Skewed", "bwzC-USDC", [BWZC_TOKEN, USDC]);
+  await approveAndJoin(scw, usdcPool.poolId, [BWZC_TOKEN, USDC], [bwAmount, usdcAmount], "USDC");
   
   // WETH Pool
-  const wethPool = await getOrCreatePool("bwzC-WETH-Skewed", "bwzC-WETH", [bwzC, WETH]);
-  await approveAndJoin(scw, wethPool.poolId, [bwzC, WETH], [bwAmount, wethAmount], "WETH");
+  const wethPool = await getOrCreatePool("bwzC-WETH-Skewed", "bwzC-WETH", [BWZC_TOKEN, WETH]);
+  await approveAndJoin(scw, wethPool.poolId, [BWZC_TOKEN, WETH], [bwAmount, wethAmount], "WETH");
   
   return { 
     success: true, 
@@ -157,7 +151,6 @@ async function runPoolCreation() {
   };
 }
 
-// API endpoints
 app.get('/health', (req, res) => res.json({ status: 'live', time: new Date().toISOString() }));
 app.post('/run', async (req, res) => {
   try {
@@ -168,7 +161,6 @@ app.post('/run', async (req, res) => {
   }
 });
 
-// Auto-run on startup
 let poolsCreated = false;
 const server = app.listen(PORT, async () => {
   console.log(`🚀 Live on port ${PORT}`);
