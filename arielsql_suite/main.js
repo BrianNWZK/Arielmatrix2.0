@@ -1,4 +1,4 @@
-// main.js - Deterministic Balancer pool creator/seeder with Express server for Render
+// main.js - Balancer pool creator/seeder with Express server for Render
 import { ethers } from "ethers";
 import express from "express";
 import dotenv from "dotenv";
@@ -68,33 +68,28 @@ async function getOrCreatePool(name, symbol, tokens) {
   const factory = new ethers.Contract(WEIGHTED_POOL_FACTORY, factoryAbi, signer);
   const weights = [toUnits(0.8, 18), toUnits(0.2, 18)];
 
-  try {
-    console.log(`🔍 Creating/checking ${name} pool...`);
-    const tx = await factory.create(name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false);
-    console.log(`⏳ Create tx sent: ${tx.hash}`);
-    const receipt = await timeout(tx.wait(), 120000);
+  console.log(`🔍 Creating/checking ${name} pool...`);
+  const tx = await factory.create(name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false);
+  console.log(`⏳ Create tx sent: ${tx.hash}`);
+  const receipt = await timeout(tx.wait(), 120000);
 
-    // Parse PoolCreated event
-    const eventLog = receipt.logs.find(log => {
-      try {
-        const parsed = factory.interface.parseLog(log);
-        return parsed?.name === "PoolCreated";
-      } catch {}
-      return false;
-    });
+  // Parse PoolCreated event
+  const eventLog = receipt.logs.find(log => {
+    try {
+      const parsed = factory.interface.parseLog(log);
+      return parsed?.name === "PoolCreated";
+    } catch {}
+    return false;
+  });
 
-    if (!eventLog) throw new Error("No PoolCreated event found");
-    const parsedEvent = factory.interface.parseLog(eventLog);
-    const poolAddr = parsedEvent.args.pool;
-    console.log(`✅ Pool created/detected: ${poolAddr}`);
+  if (!eventLog) throw new Error("No PoolCreated event found");
+  const parsedEvent = factory.interface.parseLog(eventLog);
+  const poolAddr = parsedEvent.args.pool;
+  console.log(`✅ Pool created/detected: ${poolAddr}`);
 
-    const pool = new ethers.Contract(poolAddr, poolAbi, provider);
-    const poolId = await timeout(pool.getPoolId(), 10000);
-    return { poolAddr, poolId };
-  } catch (err) {
-    console.error(`❌ ${name} failed:`, err.shortMessage || err.message);
-    throw err;
-  }
+  const pool = new ethers.Contract(poolAddr, poolAbi, provider);
+  const poolId = await timeout(pool.getPoolId(), 10000);
+  return { poolAddr, poolId };
 }
 
 async function approveAndJoin(scw, poolId, tokens, amounts, label) {
@@ -123,24 +118,31 @@ async function approveAndJoin(scw, poolId, tokens, amounts, label) {
   console.log(`✅ ${label} seeded: ${tx.hash}`);
 }
 
+// Shared pool creation logic
+async function runPoolCreation() {
+  const ethPrice = await getEthPrice();
+  const wethFor2USD = toUnits(2 / ethPrice, 18);
+  const bwzAmount = toUnits(BW_BAL_CORRECTED, 18);
+  const usdcAmount = toUnits(2, 6);
+
+  console.log(`ETH: $${ethPrice}, BW: ${ethers.formatUnits(bwzAmount, 18)}, WETH($2): ${ethers.formatEther(wethFor2USD)}`);
+
+  const scw = new ethers.Contract(SCW_ADDRESS, ["function execute(address,uint256,bytes)"], signer);
+
+  const usdcPool = await getOrCreatePool("bwzC-USDC-WP", "bwzC-USDC", [bwzC, USDC]);
+  await approveAndJoin(scw, usdcPool.poolId, [bwzC, USDC], [bwzAmount, usdcAmount], "bwzC/USDC");
+
+  const wethPool = await getOrCreatePool("bwzC-WETH-WP", "bwzC-WETH", [bwzC, WETH]);
+  await approveAndJoin(scw, wethPool.poolId, [bwzC, WETH], [bwzAmount, wethFor2USD], "bwzC/WETH");
+
+  return { pools: [usdcPool, wethPool], skew: `${BW_BAL_CORRECTED.toFixed(6)} bwzC` };
+}
+
+// Express endpoints
 app.post("/create-pools", async (req, res) => {
   try {
-    const ethPrice = await getEthPrice();
-    const wethFor2USD = toUnits(2 / ethPrice, 18);
-    const bwzAmount = toUnits(BW_BAL_CORRECTED, 18);
-    const usdcAmount = toUnits(2, 6);
-
-    console.log(`ETH: $${ethPrice}, BW: ${ethers.formatUnits(bwzAmount, 18)}, WETH($2): ${ethers.formatEther(wethFor2USD)}`);
-
-    const scw = new ethers.Contract(SCW_ADDRESS, ["function execute(address,uint256,bytes)"], signer);
-
-    const usdcPool = await getOrCreatePool("bwzC-USDC-WP", "bwzC-USDC", [bwzC, USDC]);
-    await approveAndJoin(scw, usdcPool.poolId, [bwzC, USDC], [bwzAmount, usdcAmount], "bwzC/USDC");
-
-    const wethPool = await getOrCreatePool("bwzC-WETH-WP", "bwzC-WETH", [bwzC, WETH]);
-    await approveAndJoin(scw, wethPool.poolId, [bwzC, WETH], [bwzAmount, wethFor2USD], "bwzC/WETH");
-
-    res.json({ success: true, pools: [usdcPool, wethPool], skew: `${BW_BAL_CORRECTED.toFixed(6)} bwzC` });
+    const result = await runPoolCreation();
+    res.json({ success: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -148,17 +150,27 @@ app.post("/create-pools", async (req, res) => {
 
 app.get("/health", (req, res) => res.json({ status: "live" }));
 
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Live on ${PORT}`);
-  setTimeout(() => {
-    fetch(`http://localhost:${PORT}/create-pools`)
-      .then(r => r.json())
-      .then(console.log)
-      .catch(console.error);
-  }, 3000);
+// Startup with direct auto-run
+let poolsCreated = false;
+const server = app.listen(PORT, async () => {
+  console.log(`🚀 Server live on port ${PORT}`);
+  if (!poolsCreated && PRIVATE_KEY && SCW_ADDRESS) {
+    poolsCreated = true;
+    try {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Sync delay
+      console.log("🤖 Auto-running pool creation...");
+      const result = await runPoolCreation();
+      console.log("✅ Auto-run complete:", JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error("❌ Auto-run failed:", err.message, err.stack);
+    }
+  }
 });
 
 process.on("SIGTERM", () => {
   console.log("SIGTERM received, shutting down gracefully");
-  server.close(() => process.exit(0));
+  server.close(() => {
+    console.log("Server closed");
+    process.exit(0);
+  });
 });
