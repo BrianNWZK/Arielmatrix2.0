@@ -1,3 +1,4 @@
+// main.js - Deterministic Balancer pool creator/seeder with Express server for Render
 import { ethers } from "ethers";
 import express from "express";
 import dotenv from "dotenv";
@@ -34,14 +35,19 @@ const WEIGHT_PAIRED = 0.2;
 const EFFECTIVE_RATIO = TARGET_BAL_USDC * (WEIGHT_PAIRED / WEIGHT_BW);
 const BW_BAL_CORRECTED = 2 / EFFECTIVE_RATIO; // ~0.0851 bwzC for skew
 
-// ABIs - FIXED: Event-only parsing, no return decoding
+// ABIs - corrected
 const factoryAbi = [
   "event PoolCreated(address indexed pool)",
-  "function create(string name, string symbol, address[] tokens, uint256[] weights, address owner, uint256 swapFeePercentage, bool oracleEnabled) external returns (address)"
+  "function create(string name, string symbol, address[] tokens, uint256[] weights, address owner, uint256 swapFeePercentage, bool oracleEnabled) external"
 ];
 const poolAbi = ["function getPoolId() view returns (bytes32)"];
-const vaultAbi = ["function joinPool(bytes32 poolId, address sender, address recipient, tuple(address[] assets, uint256[] maxAmountsIn, bytes userData, bool fromInternalBalance) external payable)"];
-const erc20Abi = ["function approve(address spender, uint256 amount) returns (bool)", "function allowance(address owner, address spender) view returns (uint256)"];
+const vaultAbi = [
+  "function joinPool(bytes32 poolId, address sender, address recipient, (address[] assets, uint256[] maxAmountsIn, bytes userData, bool fromInternalBalance) request) external payable"
+];
+const erc20Abi = [
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)"
+];
 const chainlinkAbi = ["function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)"];
 
 const round = (x, d) => Number(Number(x).toFixed(d));
@@ -57,34 +63,31 @@ async function getEthPrice() {
   return Number(price) / 1e8;
 }
 
-// FIXED: Detect/create via salt-based CREATE2 + event
+// Detect/create via event parsing
 async function getOrCreatePool(name, symbol, tokens) {
   const factory = new ethers.Contract(WEIGHTED_POOL_FACTORY, factoryAbi, signer);
   const weights = [toUnits(0.8, 18), toUnits(0.2, 18)];
-  const salt = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string"], [name])); // Deterministic salt
-  
-  // Try existing pool first
+
   try {
-    console.log(`🔍 Checking existing ${name} pool...`);
-    // Predict CREATE2 address (factory handles salt internally via name/symbol)
+    console.log(`🔍 Creating/checking ${name} pool...`);
     const tx = await factory.create(name, symbol, tokens, weights, SCW_ADDRESS, toUnits(0.003, 18), false);
     console.log(`⏳ Create tx sent: ${tx.hash}`);
     const receipt = await timeout(tx.wait(), 120000);
-    
-    // Parse PoolCreated event - NO RETURN DECODE
-    const event = receipt.logs.find(log => {
+
+    // Parse PoolCreated event
+    const eventLog = receipt.logs.find(log => {
       try {
         const parsed = factory.interface.parseLog(log);
-        return parsed?.name === 'PoolCreated';
+        return parsed?.name === "PoolCreated";
       } catch {}
       return false;
     });
-    
-    if (!event) throw new Error('No PoolCreated event');
-    
-    const [, poolAddr] = factory.interface.parseLog(event).args;
+
+    if (!eventLog) throw new Error("No PoolCreated event found");
+    const parsedEvent = factory.interface.parseLog(eventLog);
+    const poolAddr = parsedEvent.args.pool;
     console.log(`✅ Pool created/detected: ${poolAddr}`);
-    
+
     const pool = new ethers.Contract(poolAddr, poolAbi, provider);
     const poolId = await timeout(pool.getPoolId(), 10000);
     return { poolAddr, poolId };
@@ -96,8 +99,7 @@ async function getOrCreatePool(name, symbol, tokens) {
 
 async function approveAndJoin(scw, poolId, tokens, amounts, label) {
   const vault = new ethers.Contract(BALANCER_VAULT, vaultAbi, signer);
-  
-  // Bulk approve
+
   for (let i = 0; i < tokens.length; i++) {
     const token = new ethers.Contract(tokens[i], erc20Abi, signer);
     const allow = await token.allowance(SCW_ADDRESS, BALANCER_VAULT);
@@ -107,52 +109,56 @@ async function approveAndJoin(scw, poolId, tokens, amounts, label) {
       console.log(`✅ Approved ${label} token ${i}`);
     }
   }
-  
-  // JoinPool via SCW
+
   const userData = ethers.AbiCoder.defaultAbiCoder().encode(
-    ['uint256', 'uint256[]', 'uint256'], [0, amounts, 0] // Exact join kind
+    ["uint256", "uint256[]", "uint256"], [0, amounts, 0]
   );
-  const callData = vault.interface.encodeFunctionData('joinPool', [
+  const callData = vault.interface.encodeFunctionData("joinPool", [
     poolId, SCW_ADDRESS, SCW_ADDRESS,
     { assets: tokens, maxAmountsIn: amounts, userData, fromInternalBalance: false }
   ]);
-  
+
   const tx = await scw.execute(BALANCER_VAULT, 0, callData);
   await tx.wait();
   console.log(`✅ ${label} seeded: ${tx.hash}`);
 }
 
-app.post('/create-pools', async (req, res) => {
+app.post("/create-pools", async (req, res) => {
   try {
     const ethPrice = await getEthPrice();
     const wethFor2USD = toUnits(2 / ethPrice, 18);
     const bwzAmount = toUnits(BW_BAL_CORRECTED, 18);
     const usdcAmount = toUnits(2, 6);
-    
-    console.log(`ETH: $${ethPrice}, BW: ${ethers.formatUnits(bwzAmount,18)}, WETH($2): ${ethers.formatEther(wethFor2USD)}`);
-    
-    const scw = new ethers.Contract(SCW_ADDRESS, ['function execute(address,uint256,bytes)'], signer);
-    
-    // USDC pool (94% bal skew)
-    const usdcPool = await getOrCreatePool('bwzC-USDC-WP', 'bwzC-USDC', [bwzC, USDC]);
-    await approveAndJoin(scw, usdcPool.poolId, [bwzC, USDC], [bwzAmount, usdcAmount], 'bwzC/USDC');
-    
-    // WETH pool
-    const wethPool = await getOrCreatePool('bwzC-WETH-WP', 'bwzC-WETH', [bwzC, WETH]);
-    await approveAndJoin(scw, wethPool.poolId, [bwzC, WETH], [bwzAmount, wethFor2USD], 'bwzC/WETH');
-    
+
+    console.log(`ETH: $${ethPrice}, BW: ${ethers.formatUnits(bwzAmount, 18)}, WETH($2): ${ethers.formatEther(wethFor2USD)}`);
+
+    const scw = new ethers.Contract(SCW_ADDRESS, ["function execute(address,uint256,bytes)"], signer);
+
+    const usdcPool = await getOrCreatePool("bwzC-USDC-WP", "bwzC-USDC", [bwzC, USDC]);
+    await approveAndJoin(scw, usdcPool.poolId, [bwzC, USDC], [bwzAmount, usdcAmount], "bwzC/USDC");
+
+    const wethPool = await getOrCreatePool("bwzC-WETH-WP", "bwzC-WETH", [bwzC, WETH]);
+    await approveAndJoin(scw, wethPool.poolId, [bwzC, WETH], [bwzAmount, wethFor2USD], "bwzC/WETH");
+
     res.json({ success: true, pools: [usdcPool, wethPool], skew: `${BW_BAL_CORRECTED.toFixed(6)} bwzC` });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.get('/health', (req, res) => res.json({ status: 'live' }));
+app.get("/health", (req, res) => res.json({ status: "live" }));
 
 const server = app.listen(PORT, () => {
   console.log(`🚀 Live on ${PORT}`);
-  // Trigger once
   setTimeout(() => {
-    fetch(`http://localhost:${PORT}/create-pools`).then(r => r.json()).then(console.log).catch(console.error);
+    fetch(`http://localhost:${PORT}/create-pools`)
+      .then(r => r.json())
+      .then(console.log)
+      .catch(console.error);
   }, 3000);
+});
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down gracefully");
+  server.close(() => process.exit(0));
 });
