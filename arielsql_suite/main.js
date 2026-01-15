@@ -1,15 +1,25 @@
+// main.js
+// Balancer V2 Weighted Pool (2-token) genesis seeding script
+// One-shot execution with auto-run on startup
+// Targeted peg: ~$94 BWAEZI price in Balancer pools (organic arbitrage vs Uniswap $96–$100 pools)
+// 80/20 weights (BWAEZI heavy) + $2 paired value → higher BW amount for lower effective price
+// Updated: All addresses checksum-normalized with getAddress()
+// Updated: Approvals already done → skipped
+// Updated: Both USDC + WETH pools
+// Updated: SCW execute for joinPool (tokens in SCW)
+// Updated: Sorted assets, correct INIT kind=0
+// Idempotent: Catches revert on duplicate create
+
 import express from "express";
 import { ethers } from "ethers";
 import dotenv from "dotenv";
 import dotenvExpand from "dotenv-expand";
-
 dotenvExpand.expand(dotenv.config());
 
 const PORT = Number(process.env.PORT || 10000);
 const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const SCW_ADDRESS = process.env.SCW_ADDRESS;
-
 if (!PRIVATE_KEY || !SCW_ADDRESS) throw new Error("Missing keys");
 
 const app = express();
@@ -18,122 +28,165 @@ app.use(express.json());
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
-const WEIGHTED_POOL2_FACTORY = "0x8e9aa87E45e92bad84D5F8Dd5b9431736D4BFb3E"; // 2-token factory
-const BWZC_TOKEN = "0x54D1C2889B08caD0932266EaDE15Ec884FA0CdC2";
-const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+// ===== Balancer Constants (checksum-normalized) =====
+const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const WEIGHTED_POOL2_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
+const BWZC_TOKEN = ethers.getAddress("0x54D1C2889B08caD0932266EaDE15Ec884FA0CdC2");
+const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
-// 94 USD skew math
-const TARGET_PEG = 94;
+// ===== Peg & Weight Config =====
+const TARGET_BWAEZI_PRICE = 94;
+const PAIRED_VALUE_USD = 2;
 const WEIGHT_BW = 0.8;
-const WEIGHT_USDC = 0.2;
-const USDC_AMOUNT = ethers.parseUnits("2", 6);
-const BW_AMOUNT = ethers.parseEther((2 / (TARGET_PEG * WEIGHT_USDC / WEIGHT_BW)).toFixed(18));
+const WEIGHT_PAIRED = 0.2;
+const SWAP_FEE = 0.003;
 
-// ✅ CORRECT 2-TOKEN ABI
+// Calculate BW amount for $94 peg with skew
+const EFFECTIVE_RATIO = TARGET_BWAEZI_PRICE * (WEIGHT_PAIRED / WEIGHT_BW);
+const BW_AMOUNT_BASE = PAIRED_VALUE_USD / EFFECTIVE_RATIO;
+
+// ===== ABIs =====
+const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 const factoryAbi = [
   "event PoolCreated(address indexed pool)",
-  "function create(string name,string symbol,address token0,address token1,uint256 normalizedWeight0,uint256 normalizedWeight1,uint256 swapFeePercentage,address owner) external returns(address)"
+  "function create(string name, string symbol, address token0, address token1, uint256 normalizedWeight0, uint256 normalizedWeight1, uint256 swapFeePercentage, address owner) external returns (address pool)"
 ];
+const vaultAbi = [
+  "function joinPool(bytes32 poolId, address sender, address recipient, (address[] assets, uint256[] maxAmountsIn, bytes userData, bool fromInternalBalance) request)"
+];
+const poolAbi = ["function getPoolId() view returns (bytes32)"];
 
-const erc20Abi = ["function approve(address,uint256) external returns(bool)"];
-const poolAbi = ["function getPoolId() view returns(bytes32)"];
-
-async function createPool() {
-  console.log("🔍 Creating bwzC-USDC-94...");
-  
-  // BWZC < USDC (alphabetical)
-  const token0 = BWZC_TOKEN;
-  const token1 = USDC;
-  
-  const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, signer);
-  
-  const tx = await factory.create(
-    "bwzC-USDC-94skew",
-    "bwzC-USDC",
-    token0, token1,
-    ethers.parseEther(WEIGHT_BW.toFixed(18)),   // 80%
-    ethers.parseEther(WEIGHT_USDC.toFixed(18)), // 20%
-    ethers.parseEther("0.003"),                 // 0.3%
-    SCW_ADDRESS
-  );
-  
-  console.log(`⏳ TX: https://etherscan.io/tx/${tx.hash}`);
-  const receipt = await tx.wait();
-  console.log(`📄 Logs: ${receipt.logs.length}`);
-  
-  // Parse PoolCreated event
-  const iface = new ethers.Interface(factoryAbi);
-  const log = receipt.logs.find(l => l.topics[0] === iface.getEvent("PoolCreated").topicHash);
-  
-  if (!log) {
-    console.log("RAW LOGS:", receipt.logs.map(l => l.address.slice(0,10)));
-    throw new Error("No PoolCreated event");
-  }
-  
-  const poolAddr = iface.parseLog(log).args.pool;
-  console.log(`✅ Pool: ${poolAddr}`);
-  
-  const pool = new ethers.Contract(poolAddr, poolAbi, provider);
-  const poolId = await pool.getPoolId();
-  console.log(`🆔 ID: ${poolId}`);
-  
-  return { poolAddr, poolId };
-}
-
-async function seedPool(poolId) {
-  console.log("🌱 Seeding pool...");
-  
-  // Approve tokens
-  const bwToken = new ethers.Contract(BWZC_TOKEN, erc20Abi, signer);
-  await (await bwToken.approve(BALANCER_VAULT, ethers.MaxUint256)).wait();
-  
-  const usdcToken = new ethers.Contract(USDC, erc20Abi, signer);
-  await (await usdcToken.approve(BALANCER_VAULT, ethers.MaxUint256)).wait();
-  
-  console.log(`💰 BW: ${ethers.formatEther(BW_AMOUNT)} | USDC: ${ethers.formatUnits(USDC_AMOUNT, 6)}`);
-  
-  // Direct Vault join (no SCW complexity)
-  const vaultAbi = ["function joinPool(bytes32 poolId,address sender,address recipient,(address[] assets,uint256[] maxAmountsIn,bytes userData,bool fromInternalBalance))"];
-  const vaultIface = new ethers.Interface(vaultAbi);
-  
-  const userData = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "uint256[]"], 
-    [1n, [BW_AMOUNT, USDC_AMOUNT]] // INIT join kind=1
-  );
-  
-  const joinData = vaultIface.encodeFunctionData("joinPool", [
-    poolId,
-    signer.address,
-    signer.address,
-    [[BWZC_TOKEN, USDC], [BW_AMOUNT, USDC_AMOUNT], userData, false]
-  ]);
-  
-  const tx = await signer.sendTransaction({
-    to: BALANCER_VAULT,
-    data: joinData,
-    gasLimit: 800000
-  });
-  
-  await tx.wait();
-  console.log(`✅ Seeded: https://etherscan.io/tx/${tx.hash}`);
-}
-
-async function run() {
+// ===== Helpers =====
+async function getEthPrice() {
   try {
-    const pool = await createPool();
-    await seedPool(pool.poolId);
-    console.log("🎯 94% USDC SKEW COMPLETE");
-  } catch (error) {
-    console.error("❌ FAILED:", error.message);
+    const feed = new ethers.Contract(CHAINLINK_ETHUSD, ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"], provider);
+    const [, price] = await feed.latestRoundData();
+    return Number(price) / 1e8;
+  } catch {
+    return 3300;
   }
 }
 
+function sortTokens(t0, t1) {
+  return t0.toLowerCase() < t1.toLowerCase() ? [t0, t1] : [t1, t0];
+}
+
+// ===== Create Pool (idempotent) =====
+async function createWeightedPool(name, symbol, tokenA, tokenB) {
+  console.log(`Creating ${name} (if not exists)...`);
+
+  const [token0, token1] = sortTokens(tokenA, tokenB);
+  const weight0 = token0 === BWZC_TOKEN ? WEIGHT_BW : WEIGHT_PAIRED;
+  const weight1 = token0 === BWZC_TOKEN ? WEIGHT_PAIRED : WEIGHT_BW;
+
+  const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, signer);
+
+  let tx;
+  try {
+    tx = await factory.create(
+      name,
+      symbol,
+      token0,
+      token1,
+      ethers.parseUnits(weight0.toString(), 18),
+      ethers.parseUnits(weight1.toString(), 18),
+      ethers.parseUnits(SWAP_FEE.toString(), 18),
+      SCW_ADDRESS
+    );
+    console.log(`TX: https://etherscan.io/tx/${tx.hash}`);
+    const receipt = await tx.wait();
+
+    const eventTopic = ethers.id("PoolCreated(address)");
+    const log = receipt.logs.find(l => l.topics[0] === eventTopic);
+    if (!log) throw new Error("No PoolCreated event");
+
+    const poolAddr = ethers.getAddress("0x" + log.topics[1].slice(-40));
+    console.log(`Pool created: ${poolAddr}`);
+
+    const pool = new ethers.Contract(poolAddr, poolAbi, provider);
+    const poolId = await pool.getPoolId();
+    console.log(`Pool ID: ${poolId}`);
+
+    return { poolAddr, poolId };
+  } catch (err) {
+    if (err.message.includes("revert")) {
+      console.log(`${name} already exists — skipping`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+// ===== Seed Pool (INIT join) =====
+async function seedWeightedPool(poolId, tokenA, tokenB, amountA, amountB, label) {
+  if (!poolId) {
+    console.log(`Skipping seeding ${label} (pool exists)`);
+    return;
+  }
+
+  console.log(`Seeding ${label}...`);
+
+  const [asset0, asset1] = sortTokens(tokenA, tokenB);
+  const amounts = asset0 === tokenA ? [amountA, amountB] : [amountB, amountA];
+
+  const vaultIface = new ethers.Interface(vaultAbi);
+  const userData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256", "uint256[]"], [0n, amounts]); // INIT = 0
+
+  const request = [[asset0, asset1], amounts, userData, false];
+
+  const joinData = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
+
+  const execData = new ethers.Interface(scwAbi).encodeFunctionData("execute", [BALANCER_VAULT, 0n, joinData]);
+
+  const tx = await signer.sendTransaction({ to: SCW_ADDRESS, data: execData, gasLimit: 1500000 });
+  await tx.wait();
+  console.log(`Seeded: https://etherscan.io/tx/${tx.hash}`);
+}
+
+// ===== Main Seeding =====
+async function runSeeding() {
+  const ethPrice = await getEthPrice();
+
+  const usdcAmount = ethers.parseUnits(PAIRED_VALUE_USD.toString(), 6);
+  const wethAmount = ethers.parseUnits((PAIRED_VALUE_USD / ethPrice).toFixed(18), 18);
+  const bwAmount = ethers.parseUnits(BW_AMOUNT_BASE.toFixed(18), 18);
+
+  console.log(`ETH price: $${ethPrice.toFixed(0)}`);
+  console.log(`Paired value: $${PAIRED_VALUE_USD} → USDC: ${PAIRED_VALUE_USD} | WETH: ${ethers.formatEther(wethAmount)}`);
+  console.log(`BWAEZI amount (for ~$94 peg with 80/20 skew): ${ethers.formatEther(bwAmount)}`);
+
+  // USDC Pool
+  const usdcPool = await createWeightedPool("bwzC-USDC-94", "bwzC-USDC94", BWZC_TOKEN, USDC);
+  await seedWeightedPool(usdcPool?.poolId, BWZC_TOKEN, USDC, bwAmount, usdcAmount, "USDC pool (~$94 peg)");
+
+  // WETH Pool
+  const wethPool = await createWeightedPool("bwzC-WETH-94", "bwzC-WETH94", BWZC_TOKEN, WETH);
+  await seedWeightedPool(wethPool?.poolId, BWZC_TOKEN, WETH, bwAmount, wethAmount, "WETH pool (~$94 peg)");
+
+  console.log("Both Balancer pools ready at ~$94 peg — arbitrage live!");
+}
+
+// ===== One-shot Auto-Run =====
+let hasRun = false;
 app.get("/health", (_, res) => res.json({ status: "live" }));
 
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Live on port ${PORT}`);
-  
-  // Auto-run
-  setTimeout(run, 2000);
+  console.log(`Live on port ${PORT}`);
+
+  if (!hasRun) {
+    hasRun = true;
+    setTimeout(async () => {
+      console.log("AUTO-RUN: Creating/seeding Balancer 80/20 pools @ ~$94 peg");
+      try {
+        await runSeeding();
+        console.log("SUCCESS — arbitrage pools live");
+        process.exit(0);
+      } catch (e) {
+        console.error("FAILED:", e.message || e);
+        process.exit(1);
+      }
+    }, 3000);
+  }
 });
