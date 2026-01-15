@@ -1,9 +1,8 @@
 // main.js
 // Balancer V2 Weighted Pool (2-token) genesis seeding script
 // One-shot execution with auto-run on startup
-// Targeted peg: ~$94 BWAEZI price in Balancer pools (organic arbitrage vs Uniswap $96–$100 pools)
-// 80/20 weights (BWAEZI heavy) + $2 paired value → higher BW amount for lower effective price
-// Fixed: All addresses wrapped in ethers.getAddress() to normalize checksums and prevent ethers v6 errors
+// Targeted peg: ~$94 BWAEZI price in Balancer pools
+// 80/20 weights (BWAEZI heavy) + $2 paired value
 
 import express from "express";
 import { ethers } from "ethers";
@@ -24,22 +23,22 @@ app.use(express.json());
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// ===== Balancer Constants (checksum-normalized via getAddress) =====
+// ===== Balancer Constants (normalized via getAddress) =====
 const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
 const WEIGHTED_POOL_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
-const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eaDE15EC884FA0CdC2");
+// ✅ Use lowercase or correct checksum here:
+const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2");
 const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
 // ===== Peg & Weight Config =====
-const TARGET_BWAEZI_PRICE = 94; // Desired effective peg in Balancer pools ($94)
-const PAIRED_VALUE_USD = 2; // $2 worth of paired token at current price
-const WEIGHT_BW = 0.8; // 80% BWAEZI
-const WEIGHT_PAIRED = 0.2; // 20% paired
-const SWAP_FEE = 0.003; // 0.3%
+const TARGET_BWAEZI_PRICE = 94;
+const PAIRED_VALUE_USD = 2;
+const WEIGHT_BW = 0.8;
+const WEIGHT_PAIRED = 0.2;
+const SWAP_FEE = 0.003;
 
-// Calculate BW amount for $94 peg with skew
 const EFFECTIVE_RATIO = TARGET_BWAEZI_PRICE * (WEIGHT_PAIRED / WEIGHT_BW);
 const BW_AMOUNT_BASE = PAIRED_VALUE_USD / EFFECTIVE_RATIO;
 
@@ -51,10 +50,10 @@ const erc20Abi = [
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 const factoryAbi = [
   "event PoolCreated(address indexed pool)",
-  "function create(string name, string symbol, address token0, address token1, uint256 weight0, uint256 weight1, uint256 swapFeePercentage, address owner) external returns (address pool)"
+  "function create(string name,string symbol,address token0,address token1,uint256 weight0,uint256 weight1,uint256 swapFeePercentage,address owner) external returns (address pool)"
 ];
 const vaultAbi = [
-  "function joinPool(bytes32 poolId, address sender, address recipient, (address[] assets, uint256[] maxAmountsIn, bytes userData, bool fromInternalBalance) request)"
+  "function joinPool(bytes32 poolId,address sender,address recipient,(address[] assets,uint256[] maxAmountsIn,bytes userData,bool fromInternalBalance) request)"
 ];
 const poolAbi = ["function getPoolId() view returns (bytes32)"];
 
@@ -89,13 +88,11 @@ function sortTokens(t0, t1) {
 // ===== Create Pool =====
 async function createWeightedPool(name, symbol, tokenA, tokenB) {
   console.log(`Creating ${name}...`);
-
   const [token0, token1] = sortTokens(tokenA, tokenB);
   const weight0 = token0 === BWZC_TOKEN ? WEIGHT_BW : WEIGHT_PAIRED;
   const weight1 = token0 === BWZC_TOKEN ? WEIGHT_PAIRED : WEIGHT_BW;
 
   const factory = new ethers.Contract(WEIGHTED_POOL_FACTORY, factoryAbi, signer);
-
   const tx = await factory.create(
     name,
     symbol,
@@ -104,9 +101,8 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
     ethers.parseUnits(weight0.toString(), 18),
     ethers.parseUnits(weight1.toString(), 18),
     ethers.parseUnits(SWAP_FEE.toString(), 18),
-    SCW_ADDRESS // owner
+    SCW_ADDRESS
   );
-
   console.log(`TX: https://etherscan.io/tx/${tx.hash}`);
   const receipt = await tx.wait();
 
@@ -120,14 +116,12 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
   const pool = new ethers.Contract(poolAddr, poolAbi, provider);
   const poolId = await pool.getPoolId();
   console.log(`Pool ID: ${poolId}`);
-
   return { poolAddr, poolId };
 }
 
-// ===== Seed Pool (INIT join) =====
+// ===== Seed Pool =====
 async function seedWeightedPool(poolId, tokenA, tokenB, amountA, amountB, label) {
   console.log(`Seeding ${label}...`);
-
   await approveFromScw(tokenA, BALANCER_VAULT);
   await approveFromScw(tokenB, BALANCER_VAULT);
 
@@ -135,12 +129,9 @@ async function seedWeightedPool(poolId, tokenA, tokenB, amountA, amountB, label)
   const amounts = asset0 === tokenA ? [amountA, amountB] : [amountB, amountA];
 
   const vaultIface = new ethers.Interface(vaultAbi);
-  const userData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256", "uint256[]"], [0n, amounts]); // INIT
-
+  const userData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256", "uint256[]"], [0n, amounts]);
   const request = [[asset0, asset1], amounts, userData, false];
-
   const joinData = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
-
   const execData = new ethers.Interface(scwAbi).encodeFunctionData("execute", [BALANCER_VAULT, 0n, joinData]);
 
   const tx = await signer.sendTransaction({ to: SCW_ADDRESS, data: execData, gasLimit: 1200000 });
@@ -157,8 +148,7 @@ async function runSeeding() {
   const bwAmount = ethers.parseUnits(BW_AMOUNT_BASE.toFixed(18), 18);
 
   console.log(`ETH price: $${ethPrice.toFixed(0)}`);
-  console.log(`Paired value: $${PAIRED_VALUE_USD} → USDC: ${PAIRED_VALUE_USD} | WETH: ${ethers.formatEther(wethAmount)}`);
-  console.log(`BWAEZI amount (for ~$94 peg with 80/20 skew): ${ethers.formatEther(bwAmount)}`);
+  console.log(`BWAEZI amount: ${ethers.formatEther(bwAmount)}`);
 
   // USDC Pool
   const usdcPool = await createWeightedPool("bwzC-USDC-94", "bwzC-USDC94", BWZC_TOKEN, USDC);
@@ -170,6 +160,7 @@ async function runSeeding() {
 
   console.log("Both Balancer pools created + seeded at ~$94 BWAEZI peg for organic arbitrage vs higher Uniswap pools");
 }
+
 
 // ===== One-shot Auto-Run =====
 let hasRun = false;
@@ -192,4 +183,9 @@ const server = app.listen(PORT, () => {
       }
     }, 3000);
   }
+});
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received");
+  server.close(() => process.exit(0));
 });
