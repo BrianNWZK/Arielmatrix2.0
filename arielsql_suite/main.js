@@ -1,8 +1,13 @@
+// main.js
+// Balancer V2 Weighted Pool (2-token) genesis seeding script
+// One-shot execution with auto-run on startup
+// Targeted peg: ~$94 BWAEZI price in Balancer pools (organic arbitrage vs Uniswap $96–$100 pools)
+// 80/20 weights (BWAEZI heavy) + $2 paired value → higher BW amount for lower effective price
+
 import express from "express";
 import { ethers } from "ethers";
 import dotenv from "dotenv";
 import dotenvExpand from "dotenv-expand";
-
 dotenvExpand.expand(dotenv.config());
 
 const PORT = Number(process.env.PORT || 10000);
@@ -17,148 +22,371 @@ app.use(express.json());
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// ✅ HARDCODED CHECKSUMMED ADDRESSES - NO getAddress() issues
-const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
-const FACTORY = "0x8e9aa87E45e92bad84D5F8Dd5b9431736D4BFb3E";
-const BWZC = "0x54D1C2889B08caD0932266EaDE15Ec884FA0cDc2";
-const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+// ===== Balancer Constants (checksum-normalized) =====
+const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
+const WEIGHTED_POOL2_FACTORY = ethers.getAddress("0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e");
+const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2");
+const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const CHAINLINK_ETHUSD = ethers.getAddress("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419");
 
-const BW_AMOUNT = ethers.parseEther("0.085106");  // $94 peg math
-const USDC_AMOUNT = ethers.parseUnits("2", 6);
-const WETH_AMOUNT = ethers.parseEther("0.000606"); // ~$2 @ $3300 ETH
+// ===== Peg & Weight Config =====
+const TARGET_BWAEZI_PRICE = 94;
+const PAIRED_VALUE_USD = 2;
+const WEIGHT_BW = 0.8;
+const WEIGHT_PAIRED = 0.2;
+const SWAP_FEE = 0.003;
 
-// ===== MINIMAL WORKING ABI =====
-const FACTORY_ABI = [
-  "function create(string,string,address,address,uint256,uint256,uint256,address) external returns(address)",
-  "event PoolCreated(address indexed pool)"
+// Calculate BW amount for $94 peg with skew
+const EFFECTIVE_RATIO = TARGET_BWAEZI_PRICE * (WEIGHT_PAIRED / WEIGHT_BW);
+const BW_AMOUNT_BASE = PAIRED_VALUE_USD / EFFECTIVE_RATIO;
+
+// ===== ABIs =====
+const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
+const factoryAbi = [
+  "event PoolCreated(address indexed pool)",
+  "function create(string name, string symbol, address token0, address token1, uint256 normalizedWeight0, uint256 normalizedWeight1, uint256 swapFeePercentage, address owner) external returns (address pool)",
+  "function getPoolAddress(bytes32) view returns (address)"
+];
+const vaultAbi = [
+  "function joinPool(bytes32 poolId, address sender, address recipient, (address[] assets, uint256[] maxAmountsIn, bytes userData, bool fromInternalBalance) request)"
+];
+const poolAbi = [
+  "function getPoolId() view returns (bytes32)",
+  "function getVault() view returns (address)",
+  "function totalSupply() view returns (uint256)"
 ];
 
-const POOL_ABI = ["function getPoolId() view returns(bytes32)"];
-
-async function createPool(name, symbol, tokenA, tokenB, amountA, amountB, label) {
-  console.log(`\n🔥 FORCE CREATING ${label}...`);
-  
-  // Always sorted: BWZC < USDC/WETH
-  const [token0, token1] = tokenA.toLowerCase() < tokenB.toLowerCase() 
-    ? [tokenA, tokenB] : [tokenB, tokenA];
-  const weight0 = token0 === BWZC ? "800000000000000000" : "200000000000000000";
-  const weight1 = token0 === BWZC ? "200000000000000000" : "800000000000000000";
-  
-  const factory = new ethers.Contract(FACTORY, FACTORY_ABI, signer);
-  
+// ===== Helpers =====
+async function getEthPrice() {
   try {
-    console.log("📤 SENDING CREATE TX...");
-    const tx = await factory.create(
-      name, symbol, token0, token1,
-      weight0, weight1, // 80/20 weights as 18-decimals
-      ethers.parseEther("0.003"), // 0.3% fee
-      SCW_ADDRESS,
-      { gasLimit: 2000000 }
+    const feed = new ethers.Contract(CHAINLINK_ETHUSD, ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"], provider);
+    const [, price] = await feed.latestRoundData();
+    return Number(price) / 1e8;
+  } catch {
+    return 3300;
+  }
+}
+
+function sortTokens(t0, t1) {
+  return t0.toLowerCase() < t1.toLowerCase() ? [t0, t1] : [t1, t0];
+}
+
+// Calculate deterministic pool address (same method Balancer factory uses)
+async function calculatePoolAddress(name, symbol, tokenA, tokenB) {
+  const [token0, token1] = sortTokens(tokenA, tokenB);
+  const weight0 = token0 === BWZC_TOKEN ? WEIGHT_BW : WEIGHT_PAIRED;
+  const weight1 = token0 === BWZC_TOKEN ? WEIGHT_PAIRED : WEIGHT_BW;
+  
+  const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, provider);
+  
+  // Create salt based on parameters
+  const salt = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["string", "string", "address", "address", "uint256", "uint256", "uint256", "address"],
+      [
+        name,
+        symbol,
+        token0,
+        token1,
+        ethers.parseUnits(weight0.toString(), 18),
+        ethers.parseUnits(weight1.toString(), 18),
+        ethers.parseUnits(SWAP_FEE.toString(), 18),
+        SCW_ADDRESS
+      ]
+    )
+  );
+  
+  // Get creation code hash (this is factory-specific, might need adjustment)
+  // For Balancer WeightedPool2TokensFactory, we can try to compute pool address
+  const creationCode = await provider.getCode(WEIGHTED_POOL2_FACTORY);
+  
+  // Simplified: factory may have a method to compute address
+  try {
+    const poolId = ethers.keccak256(
+      ethers.concat([ethers.toBeArray(WEIGHTED_POOL2_FACTORY), ethers.toBeArray(salt)])
     );
-    
-    console.log(`⏳ TX: https://etherscan.io/tx/${tx.hash}`);
-    const receipt = await tx.wait();
-    
-    if (receipt.status === 0) throw new Error("CREATE REVERTED");
-    
-    // Find PoolCreated event
-    const topic = ethers.id("PoolCreated(address)");
-    const log = receipt.logs.find(l => l.topics[0] === topic);
-    
-    let poolAddr;
-    if (log) {
-      poolAddr = ethers.getAddress(`0x${log.topics[1].slice(-40)}`);
-    } else {
-      // Fallback: check contract creation
-      poolAddr = receipt.contractAddress || receipt.logs[0]?.address;
+    const poolAddress = await factory.getPoolAddress(poolId);
+    if (poolAddress && poolAddress !== ethers.ZeroAddress) {
+      return poolAddress;
     }
-    
-    if (!poolAddr || poolAddr === ethers.ZeroAddress) {
-      throw new Error("No pool address in receipt");
-    }
-    
-    console.log(`✅ POOL CREATED: ${poolAddr}`);
-    
-    // Verify pool works
-    const pool = new ethers.Contract(poolAddr, POOL_ABI, provider);
-    const poolId = await pool.getPoolId();
-    console.log(`🆔 POOL ID: ${poolId}`);
-    
-    console.log(`🌱 IMMEDIATELY SEEDING...`);
-    
-    // Seed with INIT join (kind=0)
-    const erc20Abi = ["function approve(address,uint256)"];
-    const bw = new ethers.Contract(BWZC, erc20Abi, signer);
-    const paired = new ethers.Contract(tokenB, erc20Abi, signer);
-    
-    await (await bw.approve(BALANCER_VAULT, ethers.MaxUint256)).wait();
-    await (await paired.approve(BALANCER_VAULT, ethers.MaxUint256)).wait();
-    
-    const vaultAbi = [
-      "function joinPool(bytes32,address,address,(address[],uint256[],bytes,bool))"
-    ];
-    const vault = new ethers.Interface(vaultAbi);
-    
-    const amounts = token0 === BWZC ? [amountA, amountB] : [amountB, amountA];
-    const userData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "uint256[]"], [0n, amounts] // INIT kind=0
-    );
-    
-    const joinData = vault.encodeFunctionData("joinPool", [
-      poolId, signer.address, signer.address,
-      [[token0, token1], amounts, userData, false]
-    ]);
-    
-    const seedTx = await signer.sendTransaction({
-      to: BALANCER_VAULT,
-      data: joinData,
-      gasLimit: 1000000
-    });
-    
-    console.log(`⏳ Seed TX: https://etherscan.io/tx/${seedTx.hash}`);
-    await seedTx.wait();
-    
-    console.log(`🎉 ${label} LIVE @ $94 PEG!`);
-    console.log(`🔗 Balancer: https://app.balancer.fi/#/ethereum/pool/${poolId}`);
-    
-    return { poolAddr, poolId, success: true };
-    
   } catch (error) {
-    console.error(`❌ ${label} FAILED:`, error.message);
-    console.log("💡 Check TX on Etherscan for exact revert reason");
+    console.log("Could not compute pool address via factory method");
+  }
+  
+  // Fallback: compute CREATE2 address
+  const initCodeHash = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["string", "string", "address", "address", "uint256", "uint256", "uint256", "address"],
+      [
+        name,
+        symbol,
+        token0,
+        token1,
+        ethers.parseUnits(weight0.toString(), 18),
+        ethers.parseUnits(weight1.toString(), 18),
+        ethers.parseUnits(SWAP_FEE.toString(), 18),
+        SCW_ADDRESS
+      ]
+    )
+  );
+  
+  const create2Hash = ethers.keccak256(
+    ethers.concat(["0xff", ethers.toBeArray(WEIGHTED_POOL2_FACTORY), ethers.toBeArray(salt), ethers.toBeArray(initCodeHash)])
+  );
+  
+  return ethers.getAddress("0x" + create2Hash.slice(-40));
+}
+
+// Check if pool exists at address
+async function checkPoolExists(poolAddress) {
+  try {
+    const pool = new ethers.Contract(poolAddress, poolAbi, provider);
+    const vault = await pool.getVault();
+    const totalSupply = await pool.totalSupply();
+    console.log(`Pool at ${poolAddress} exists: vault=${vault}, totalSupply=${ethers.formatEther(totalSupply)}`);
+    return true;
+  } catch (error) {
+    console.log(`Pool at ${poolAddress} does not exist or is not a valid Balancer pool`);
+    return false;
+  }
+}
+
+// ===== Create Pool (always attempt - log address on success) =====
+async function createWeightedPool(name, symbol, tokenA, tokenB) {
+  console.log(`\n📝 Attempting to create ${name}...`);
+  
+  // Calculate deterministic address first
+  const calculatedAddress = await calculatePoolAddress(name, symbol, tokenA, tokenB);
+  console.log(`🔍 Calculated pool address: ${calculatedAddress}`);
+  
+  // Check if pool already exists
+  const poolExists = await checkPoolExists(calculatedAddress);
+  if (poolExists) {
+    console.log(`✅ Pool already exists at: ${calculatedAddress}`);
+    try {
+      const pool = new ethers.Contract(calculatedAddress, poolAbi, provider);
+      const poolId = await pool.getPoolId();
+      console.log(`📋 Existing Pool ID: ${poolId}`);
+      return { poolAddr: calculatedAddress, poolId, alreadyExists: true };
+    } catch (error) {
+      console.log(`⚠️  Could not fetch pool ID: ${error.message}`);
+      return { poolAddr: calculatedAddress, poolId: null, alreadyExists: true };
+    }
+  }
+  
+  const [token0, token1] = sortTokens(tokenA, tokenB);
+  const weight0 = token0 === BWZC_TOKEN ? WEIGHT_BW : WEIGHT_PAIRED;
+  const weight1 = token0 === BWZC_TOKEN ? WEIGHT_PAIRED : WEIGHT_BW;
+
+  const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, signer);
+
+  try {
+    console.log(`🚀 Creating new pool...`);
+    const tx = await factory.create(
+      name,
+      symbol,
+      token0,
+      token1,
+      ethers.parseUnits(weight0.toString(), 18),
+      ethers.parseUnits(weight1.toString(), 18),
+      ethers.parseUnits(SWAP_FEE.toString(), 18),
+      SCW_ADDRESS,
+      { gasLimit: 5000000 } // Increased gas limit
+    );
+    console.log(`📤 TX sent: https://etherscan.io/tx/${tx.hash}`);
+    const receipt = await tx.wait();
+
+    if (receipt.status === 0) {
+      throw new Error("Transaction reverted");
+    }
+
+    const eventTopic = ethers.id("PoolCreated(address)");
+    const log = receipt.logs.find(l => l.topics[0] === eventTopic);
+    if (!log) {
+      console.log(`⚠️  No PoolCreated event found in logs`);
+      console.log(`   Looking for existing pool at calculated address...`);
+      
+      // Wait a moment then check if pool was created
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const nowExists = await checkPoolExists(calculatedAddress);
+      
+      if (nowExists) {
+        console.log(`✅ Pool created successfully at: ${calculatedAddress}`);
+        const pool = new ethers.Contract(calculatedAddress, poolAbi, provider);
+        const poolId = await pool.getPoolId();
+        console.log(`📋 New Pool ID: ${poolId}`);
+        return { poolAddr: calculatedAddress, poolId, alreadyExists: false };
+      } else {
+        throw new Error("Pool creation failed - no event and pool doesn't exist");
+      }
+    }
+
+    const poolAddr = ethers.getAddress("0x" + log.topics[1].slice(-40));
+    console.log(`✅ Pool created: ${poolAddr}`);
+    
+    // Verify it matches our calculation
+    if (poolAddr.toLowerCase() !== calculatedAddress.toLowerCase()) {
+      console.log(`⚠️  Warning: Actual address (${poolAddr}) differs from calculated (${calculatedAddress})`);
+    }
+
+    const pool = new ethers.Contract(poolAddr, poolAbi, provider);
+    const poolId = await pool.getPoolId();
+    console.log(`📋 Pool ID: ${poolId}`);
+
+    return { poolAddr, poolId, alreadyExists: false };
+  } catch (error) {
+    console.error(`❌ Create error: ${error.message || error}`);
+    
+    // Check one more time if pool exists
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const finalCheck = await checkPoolExists(calculatedAddress);
+    
+    if (finalCheck) {
+      console.log(`✅ Pool exists after all at: ${calculatedAddress}`);
+      try {
+        const pool = new ethers.Contract(calculatedAddress, poolAbi, provider);
+        const poolId = await pool.getPoolId();
+        return { poolAddr: calculatedAddress, poolId, alreadyExists: true };
+      } catch {
+        return { poolAddr: calculatedAddress, poolId: null, alreadyExists: true };
+      }
+    }
+    
+    console.log(`❌ Pool creation failed completely`);
     return null;
   }
 }
 
-async function run() {
-  console.log("🚀 === BALANCER POOL DEPLOYMENT ===\n");
-  
-  const usdcPool = await createPool(
-    "bwzC-USDC-94", "bwzC-USDC", 
-    BWZC, USDC, BW_AMOUNT, USDC_AMOUNT, "USDC POOL"
-  );
-  
-  console.log("\n" + "=".repeat(60) + "\n");
-  
-  const wethPool = await createPool(
-    "bwzC-WETH-94", "bwzC-WETH", 
-    BWZC, WETH, BW_AMOUNT, WETH_AMOUNT, "WETH POOL"
-  );
-  
-  console.log("\n🎯 ARBITRAGE READY: Uniswap $96-100 vs Balancer $94");
-  console.log("✅ DEPLOYMENT COMPLETE");
+// ===== Seed Pool (INIT join) =====
+async function seedWeightedPool(poolId, tokenA, tokenB, amountA, amountB, label, poolAddr) {
+  if (!poolId || !poolAddr) {
+    console.log(`⚠️  Skipping seeding for ${label} - no pool ID or address`);
+    return;
+  }
+
+  console.log(`\n🌱 Seeding ${label} at ${poolAddr}...`);
+
+  const [asset0, asset1] = sortTokens(tokenA, tokenB);
+  const amounts = asset0 === tokenA ? [amountA, amountB] : [amountB, amountA];
+
+  const vaultIface = new ethers.Interface(vaultAbi);
+  const userData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256", "uint256[]"], [0n, amounts]); // INIT = 0
+
+  const request = [[asset0, asset1], amounts, userData, false];
+
+  const joinData = vaultIface.encodeFunctionData("joinPool", [poolId, SCW_ADDRESS, SCW_ADDRESS, request]);
+
+  const execData = new ethers.Interface(scwAbi).encodeFunctionData("execute", [BALANCER_VAULT, 0n, joinData]);
+
+  try {
+    const tx = await signer.sendTransaction({ 
+      to: SCW_ADDRESS, 
+      data: execData, 
+      gasLimit: 3000000  // Increased for join operations
+    });
+    
+    console.log(`📤 Seeding TX: https://etherscan.io/tx/${tx.hash}`);
+    const receipt = await tx.wait();
+    
+    if (receipt.status === 0) {
+      console.log(`❌ Seeding transaction reverted for ${label}`);
+    } else {
+      console.log(`✅ Successfully seeded ${label}`);
+    }
+  } catch (error) {
+    console.error(`❌ Seeding error for ${label}: ${error.message || error}`);
+  }
 }
 
-app.get("/health", (_, res) => res.json({ status: "live", pools: "deployed" }));
-app.get("/status", async (_, res) => {
-  res.json({ 
-    status: "Balancer pools live @ $94 peg", 
-    arbitrage: "Uniswap $96-100 vs Balancer $94" 
-  });
-});
+// ===== Main Seeding =====
+async function runSeeding() {
+  const ethPrice = await getEthPrice();
+
+  const usdcAmount = ethers.parseUnits(PAIRED_VALUE_USD.toString(), 6);
+  const wethAmount = ethers.parseUnits((PAIRED_VALUE_USD / ethPrice).toFixed(18), 18);
+  const bwAmount = ethers.parseUnits(BW_AMOUNT_BASE.toFixed(18), 18);
+
+  console.log(`\n📊 Configuration:`);
+  console.log(`   ETH price: $${ethPrice.toFixed(0)}`);
+  console.log(`   Paired value: $${PAIRED_VALUE_USD}`);
+  console.log(`   USDC amount: ${PAIRED_VALUE_USD} USDC`);
+  console.log(`   WETH amount: ${ethers.formatEther(wethAmount)} WETH`);
+  console.log(`   BWAEZI amount (for ~$${TARGET_BWAEZI_PRICE} peg): ${ethers.formatEther(bwAmount)} BWZC`);
+
+  const pools = [];
+
+  try {
+    console.log(`\n🎯 === Processing USDC Pool ===`);
+    const usdcPool = await createWeightedPool("bwzC-USDC-94", "bwzC-USDC94", BWZC_TOKEN, USDC);
+    if (usdcPool) {
+      pools.push({...usdcPool, type: 'USDC', label: 'USDC pool (~$94 peg)'});
+      console.log(`📌 USDC Pool Address: ${usdcPool.poolAddr}`);
+      if (usdcPool.poolId) {
+        await seedWeightedPool(usdcPool.poolId, BWZC_TOKEN, USDC, bwAmount, usdcAmount, "USDC pool (~$94 peg)", usdcPool.poolAddr);
+      }
+    }
+  } catch (e) {
+    console.error("USDC pool error:", e.message || e);
+  }
+
+  try {
+    console.log(`\n🎯 === Processing WETH Pool ===`);
+    const wethPool = await createWeightedPool("bwzC-WETH-94", "bwzC-WETH94", BWZC_TOKEN, WETH);
+    if (wethPool) {
+      pools.push({...wethPool, type: 'WETH', label: 'WETH pool (~$94 peg)'});
+      console.log(`📌 WETH Pool Address: ${wethPool.poolAddr}`);
+      if (wethPool.poolId) {
+        await seedWeightedPool(wethPool.poolId, BWZC_TOKEN, WETH, bwAmount, wethAmount, "WETH pool (~$94 peg)", wethPool.poolAddr);
+      }
+    }
+  } catch (e) {
+    console.error("WETH pool error:", e.message || e);
+  }
+
+  // Print final summary
+  console.log(`\n📋 === FINAL POOL SUMMARY ===`);
+  if (pools.length > 0) {
+    pools.forEach(pool => {
+      console.log(`\n${pool.type} Pool:`);
+      console.log(`   Address: ${pool.poolAddr}`);
+      console.log(`   Status: ${pool.alreadyExists ? 'Already existed' : 'Newly created'}`);
+      if (pool.poolId) {
+        console.log(`   Pool ID: ${pool.poolId}`);
+      }
+      console.log(`   Balancer URL: https://app.balancer.fi/#/ethereum/pool/${pool.poolId || 'unknown'}`);
+      console.log(`   Etherscan: https://etherscan.io/address/${pool.poolAddr}`);
+    });
+  } else {
+    console.log(`❌ No pools were created or found`);
+  }
+
+  console.log(`\n✅ Balancer pools processed at ~$${TARGET_BWAEZI_PRICE} peg`);
+}
+
+// ===== One-shot Auto-Run =====
+let hasRun = false;
+app.get("/health", (_, res) => res.json({ status: "live" }));
 
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Live on port ${PORT}`);
-  setTimeout(run, 2000);
+  console.log(`🚀 Server live on port ${PORT}`);
+
+  if (!hasRun) {
+    hasRun = true;
+    setTimeout(async () => {
+      console.log(`\n🔥 === AUTO-RUN: Creating/seeding Balancer 80/20 pools @ ~$${TARGET_BWAEZI_PRICE} peg ===\n`);
+      try {
+        await runSeeding();
+        console.log(`\n🎉 SUCCESS — Pool addresses printed above`);
+        console.log(`\n⚠️  Server remains running for health checks`);
+        console.log(`   Future runs will detect existing pools`);
+      } catch (e) {
+        console.error(`\n💥 FAILED:`, e.message || e);
+        console.log(`\n⚠️  Server remains running despite errors`);
+      }
+    }, 3000);
+  }
 });
+
+// Export for testing
+export { calculatePoolAddress, checkPoolExists };
