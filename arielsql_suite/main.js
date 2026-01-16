@@ -21,9 +21,8 @@ const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
 // ===== Balancer Constants =====
 const BALANCER_VAULT = ethers.getAddress("0xba12222222228d8ba445958a75a0704d566bf2c8");
-// Correct factory addresses for Balancer V2
-const WEIGHTED_POOL2_FACTORY = ethers.getAddress("0xa5bf2ddf098bb0ef6d120c98217dd6b141c74ee0"); // Mainnet WeightedPool2TokensFactory
-// Alternative: "0x0f3e0c4218b7b0108a3643cfe9d3ec0d4f57c54e" (WeightedPoolFactory)
+// Try the correct factory address - Based on Balancer docs
+const WEIGHTED_POOL2_FACTORY = ethers.getAddress("0x0f3e0c4218b7b0108a3643cfe9d3ec0d4f57c54e"); // WeightedPoolFactory
 const BWZC_TOKEN = ethers.getAddress("0x54d1c2889b08cad0932266eade15ec884fa0cdc2");
 const USDC = ethers.getAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 const WETH = ethers.getAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
@@ -38,10 +37,10 @@ const SWAP_FEE = 0.003; // 0.3%
 // ===== ABIs =====
 const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 
-// Balancer WeightedPool2TokensFactory ABI (from verified contract)
+// Correct ABI for Balancer WeightedPoolFactory from verified contract
 const factoryAbi = [
   "event PoolCreated(address indexed pool)",
-  "function create(string name, string symbol, address tokenX, address tokenY, uint256 weightX, uint256 weightY, uint256 swapFeePercentage, address owner) returns (address)",
+  "function create(string name, string symbol, address[] tokens, uint256[] normalizedWeights, address[] rateProviders, uint256 swapFeePercentage, address owner) returns (address)",
   "function getVault() view returns (address)"
 ];
 
@@ -90,20 +89,30 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
 
   const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, signer);
   
+  // Prepare parameters for the actual factory method
+  const tokens = [token0, token1];
+  const normalizedWeights = [
+    ethers.parseUnits(weight0.toString(), 18),
+    ethers.parseUnits(weight1.toString(), 18)
+  ];
+  const rateProviders = [ethers.ZeroAddress, ethers.ZeroAddress]; // Default rate providers
+  const swapFeePercentage = ethers.parseUnits(SWAP_FEE.toString(), 18);
+  
   // Encode the transaction manually to see what's being sent
   const factoryInterface = new ethers.Interface(factoryAbi);
   const encodedData = factoryInterface.encodeFunctionData("create", [
     name,
     symbol,
-    token0,
-    token1,
-    ethers.parseUnits(weight0.toString(), 18),
-    ethers.parseUnits(weight1.toString(), 18),
-    ethers.parseUnits(SWAP_FEE.toString(), 18),
+    tokens,
+    normalizedWeights,
+    rateProviders,
+    swapFeePercentage,
     SCW_ADDRESS
   ]);
   
   console.log(`   Encoded data length: ${encodedData.length}`);
+  console.log(`   Normalized weights: ${normalizedWeights}`);
+  console.log(`   Rate providers: ${rateProviders}`);
   
   // Simulate the transaction
   console.log("🧪 Simulating transaction...");
@@ -116,6 +125,8 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
     } catch (e) {
       console.log("⚠️  Simulation returned data but couldn't decode:", simulation);
     }
+  } else if (simulation === "0x") {
+    console.log("⚠️  Simulation returned empty result (0x)");
   }
   
   // Actually create
@@ -123,11 +134,16 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
     console.log("🚀 Sending creation transaction...");
     
     // Send transaction directly with higher gas
-    const tx = await signer.sendTransaction({
-      to: WEIGHTED_POOL2_FACTORY,
-      data: encodedData,
-      gasLimit: 3000000
-    });
+    const tx = await factory.create(
+      name,
+      symbol,
+      tokens,
+      normalizedWeights,
+      rateProviders,
+      swapFeePercentage,
+      SCW_ADDRESS,
+      { gasLimit: 5000000 }
+    );
     
     console.log(`📤 TX sent: https://etherscan.io/tx/${tx.hash}`);
     console.log("⏳ Waiting for confirmation...");
@@ -146,19 +162,12 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
     console.log(`   Effective gas price: ${ethers.formatUnits(receipt.gasPrice, 9)} gwei`);
     console.log(`   Logs: ${receipt.logs.length}`);
     
-    // Check if any contract was created
-    if (receipt.logs.length === 0) {
-      console.log("⚠️  No logs emitted. This is unusual for a pool creation.");
-      return null;
-    }
-    
     // Look for PoolCreated event
     const eventTopic = ethers.id("PoolCreated(address)");
     console.log(`🔍 Looking for PoolCreated event (topic: ${eventTopic})...`);
     
     for (let i = 0; i < receipt.logs.length; i++) {
       const log = receipt.logs[i];
-      console.log(`   Log ${i}: address=${log.address}, topics=${log.topics.length}`);
       
       if (log.topics[0] === eventTopic && log.topics.length >= 2) {
         const poolAddress = ethers.getAddress("0x" + log.topics[1].slice(-40));
@@ -187,22 +196,19 @@ async function createWeightedPool(name, symbol, tokenA, tokenB) {
     }
     
     console.log("⚠️  No PoolCreated event found in logs");
-    console.log("Available events:");
-    for (let i = 0; i < receipt.logs.length; i++) {
-      const log = receipt.logs[i];
-      console.log(`   [${i}] From: ${log.address}, Topics: ${JSON.stringify(log.topics)}`);
+    if (receipt.logs.length > 0) {
+      console.log("Available events:");
+      for (let i = 0; i < receipt.logs.length; i++) {
+        const log = receipt.logs[i];
+        console.log(`   [${i}] From: ${log.address}, Topics: ${JSON.stringify(log.topics)}`);
+      }
     }
     
     return null;
     
   } catch (error) {
     console.error(`💥 Creation error: ${error.message}`);
-    if (error.transaction) {
-      console.log("Failed transaction:", error.transaction);
-    }
-    if (error.receipt) {
-      console.log("Receipt:", error.receipt);
-    }
+    console.error("Error details:", error);
     return null;
   }
 }
@@ -278,71 +284,32 @@ async function checkFactoryStatus() {
   console.log("\n🔍 Checking factory status...");
   
   try {
-    const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, provider);
-    
     // Check factory code
     const code = await provider.getCode(WEIGHTED_POOL2_FACTORY);
+    console.log(`   Factory address: ${WEIGHTED_POOL2_FACTORY}`);
     console.log(`   Factory code exists: ${code !== "0x"} (${code.length} bytes)`);
     
     if (code === "0x") {
       console.log("❌ Factory contract doesn't exist at this address!");
-      console.log("   Trying alternative factory addresses...");
-      
-      // Try alternative factory addresses
-      const alternativeFactories = [
-        "0x0f3e0c4218b7b0108a3643cfe9d3ec0d4f57c54e", // WeightedPoolFactory
-        "0x8e9aa87e45e92bad84d5f8dd5b9431736d4bfb3e", // Original address (might be wrong)
-      ];
-      
-      for (const altFactory of alternativeFactories) {
-        const altCode = await provider.getCode(altFactory);
-        console.log(`   ${altFactory}: ${altCode !== "0x"} (${altCode.length} bytes)`);
-      }
-      
       return false;
     }
     
+    // Try to create factory contract and call a method
+    const factory = new ethers.Contract(WEIGHTED_POOL2_FACTORY, factoryAbi, provider);
+    
     // Check vault
-    const vault = await factory.getVault();
-    console.log(`   Factory vault: ${vault}`);
-    console.log(`   Matches expected: ${vault === BALANCER_VAULT}`);
+    try {
+      const vault = await factory.getVault();
+      console.log(`   Factory vault: ${vault}`);
+      console.log(`   Matches expected: ${vault === BALANCER_VAULT}`);
+    } catch (error) {
+      console.log(`   Could not call getVault(): ${error.message}`);
+    }
     
     return true;
   } catch (error) {
     console.log(`   Factory check error: ${error.message}`);
     return false;
-  }
-}
-
-async function checkTokenAllowances() {
-  console.log("\n🔍 Checking token allowances...");
-  
-  const erc20Abi = [
-    "function balanceOf(address) view returns (uint256)",
-    "function allowance(address, address) view returns (uint256)"
-  ];
-  
-  const tokens = [
-    { address: BWZC_TOKEN, name: "BWZC" },
-    { address: USDC, name: "USDC" },
-    { address: WETH, name: "WETH" }
-  ];
-  
-  const signerAddress = await signer.getAddress();
-  
-  for (const token of tokens) {
-    try {
-      const contract = new ethers.Contract(token.address, erc20Abi, provider);
-      const balance = await contract.balanceOf(signerAddress);
-      const allowance = await contract.allowance(signerAddress, BALANCER_VAULT);
-      
-      console.log(`   ${token.name}:`);
-      console.log(`     Balance: ${ethers.formatEther(balance)}`);
-      console.log(`     Allowance to Vault: ${ethers.formatEther(allowance)}`);
-      console.log(`     Has allowance: ${allowance > 0n}`);
-    } catch (error) {
-      console.log(`   ${token.name} check error: ${error.message}`);
-    }
   }
 }
 
@@ -359,14 +326,7 @@ async function runSeeding() {
   console.log(`   USDC: ${USDC}`);
   console.log(`   WETH: ${WETH}`);
   
-  const factoryOk = await checkFactoryStatus();
-  if (!factoryOk) {
-    console.log("\n⚠️  Factory check failed, but continuing anyway...");
-    console.log("   The transaction might still work if the address is correct.");
-  }
-  
-  // Check allowances
-  await checkTokenAllowances();
+  await checkFactoryStatus();
   
   // Calculate amounts
   const EFFECTIVE_RATIO = TARGET_BWAEZI_PRICE * (WEIGHT_PAIRED / WEIGHT_BW);
