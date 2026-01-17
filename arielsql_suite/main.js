@@ -1,40 +1,83 @@
-// RECOVER ALL FUNDS FROM BUGGED POOLS
+// main.js - FULL RECOVERY + ethers FIXED
+import express from "express";
+import { ethers } from "ethers";  // ← ADD THIS LINE
+import dotenv from "dotenv";
+import dotenvExpand from "dotenv-expand";
+
+dotenvExpand.expand(dotenv.config());
+
+const PORT = Number(process.env.PORT || 10000);
+const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const SCW_ADDRESS = process.env.SCW_ADDRESS;
+
+if (!PRIVATE_KEY || !SCW_ADDRESS) throw new Error("Missing keys");
+
+const app = express();
+app.use(express.json());
+
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+const signer = new ethers.Wallet(PRIVATE_KEY, provider);
+
+// ===== CONSTANTS =====
+const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
+const BWZC_TOKEN = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2";
+const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+// ===== YOUR POOLS (from BPT tokens) =====
+const POOLS = [
+  {
+    poolId: "0xaaed510c03df5a4c9d8d660fe477e01acdc9c5610002000000000000000006fe",
+    bptAddr: "0xAaEd510C03df5A4c9D8D660fe477E01AcDC9c561",
+    label: "USDC/BWZC",
+    pairedToken: USDC
+  },
+  {
+    poolId: "0x76ee58af556857605516aafa10c3bbd31abbb0990002000000000000000006ff",
+    bptAddr: "0x76EE58AF556857605516aAFA10C3bBD31AbBB099", 
+    label: "WETH/BWZC",
+    pairedToken: WETH
+  }
+];
+
+// ===== ABIs =====
+const scwAbi = ["function execute(address to,uint256 value,bytes data) returns(bytes)"];
+const bptAbi = ["function approve(address,uint256) returns(bool)", "function balanceOf(address) view returns(uint256)"];
+const vaultAbi = [
+  "function exitPool(bytes32 poolId,address sender,address recipient,(address[] assets,uint256[] minAmountsOut,bytes userData,bool toInternalBalance) request)"
+];
+
+// ===== RECOVER FUNDS =====
 async function recoverFunds() {
-  console.log("🔄 RECOVERING ALL FUNDS...");
-  
-  // YOUR POOL DETAILS
-  const POOLS = [
-    {
-      poolId: "0xaaed510c03df5a4c9d8d660fe477e01acdc9c5610002000000000000000006fe",
-      bptAddr: "0xAaEd510C03df5A4c9D8D660fe477E01AcDC9c561",
-      label: "USDC pool",
-      bptBalance: ethers.parseEther("0.32004106")
-    },
-    {
-      poolId: "0x76ee58af556857605516aafa10c3bbd31abbb0990002000000000000000006ff", 
-      bptAddr: "0x76EE58AF556857605516aAFA10C3bBD31AbBB099",
-      label: "WETH pool", 
-      bptBalance: ethers.parseEther("0.06334135")
-    }
-  ];
-  
-  // APPROVE BPT TO VAULT
-  const bptAbi = ["function approve(address,uint256) returns(bool)"];
+  console.log("🔄 RECOVERING ALL FUNDS FROM BUGGED POOLS...");
   
   for (const pool of POOLS) {
     console.log(`\n💸 WITHDRAWING ${pool.label}...`);
     
-    // 1. Approve BPT
-    const bpt = new ethers.Contract(pool.bptAddr, bptAbi, signer);
-    const approveTx = await bpt.approve(BALANCER_VAULT, pool.bptBalance);
-    console.log(`BPT approve: https://etherscan.io/tx/${approveTx.hash}`);
+    // 1. Get BPT balance
+    const bpt = new ethers.Contract(pool.bptAddr, bptAbi, provider);
+    const bptBalance = await bpt.balanceOf(SCW_ADDRESS);
+    console.log(`   BPT Balance: ${ethers.formatEther(bptBalance)}`);
+    
+    if (bptBalance === 0n) {
+      console.log(`   ❌ No BPT found - skipping`);
+      continue;
+    }
+    
+    // 2. Approve BPT to Vault (via EOA first)
+    const bptSigner = new ethers.Contract(pool.bptAddr, bptAbi, signer);
+    const approveTx = await bptSigner.approve(BALANCER_VAULT, bptBalance);
+    console.log(`   BPT Approve TX: https://etherscan.io/tx/${approveTx.hash}`);
     await approveTx.wait();
     
-    // 2. EXIT POOL (send ALL BPT back → get tokens)
+    // 3. Execute exitPool via SCW
     const vaultIface = new ethers.Interface(vaultAbi);
+    const assets = [BWZC_TOKEN, pool.pairedToken];
+    
     const userData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "uint256", "uint256[]"], 
-      [1n, pool.bptBalance, [0n, 0n]] // EXACT = 1, all BPT, min 0 tokens
+      ["uint256", "uint256", "uint256[]"],
+      [1n, bptBalance, [0n, 0n]] // EXACT exit, all BPT, minAmountsOut=0
     );
     
     const exitData = vaultIface.encodeFunctionData("exitPool", [
@@ -42,32 +85,79 @@ async function recoverFunds() {
       SCW_ADDRESS,
       SCW_ADDRESS,
       {
-        assets: [BWZC_TOKEN, pool.label.includes("USDC") ? USDC : WETH],
+        assets,
         minAmountsOut: [0n, 0n],
         userData,
         toInternalBalance: false
       }
     ]);
     
-    const execData = new ethers.Interface(scwAbi).encodeFunctionData("execute", [BALANCER_VAULT, 0n, exitData]);
+    const execData = new ethers.Interface(scwAbi).encodeFunctionData(
+      "execute", [BALANCER_VAULT, 0n, exitData]
+    );
     
     const withdrawTx = await signer.sendTransaction({
       to: SCW_ADDRESS,
       data: execData,
-      gasLimit: 2000000
+      gasLimit: 2500000
     });
     
-    console.log(`WITHDRAW TX: https://etherscan.io/tx/${withdrawTx.hash}`);
-    await withdrawTx.wait();
-    console.log(`✅ ${pool.label} FUNDS BACK!`);
+    console.log(`   WITHDRAW TX: https://etherscan.io/tx/${withdrawTx.hash}`);
+    const receipt = await withdrawTx.wait();
+    
+    if (receipt.status === 1) {
+      console.log(`   ✅ ${pool.label} FUNDS RECOVERED!`);
+    } else {
+      console.log(`   ❌ ${pool.label} withdraw failed`);
+    }
   }
   
-  console.log("\n🎉 ALL FUNDS RECOVERED!");
-  console.log("Your SCW now has:");
-  console.log("- BWZC back (minus tiny fee)")
-  console.log("- WETH back (minus tiny fee)") 
-  console.log("- USDC: still 0 (was 2 wei)")
+  console.log("\n🎉 RECOVERY COMPLETE!");
+  console.log("✅ Check SCW balances: BWZC + WETH returned");
 }
 
-// RUN THIS FIRST
-await recoverFunds();
+// ===== MAIN EXECUTION =====
+async function main() {
+  console.log("🚀 BALANCER POOL FUND RECOVERY");
+  await recoverFunds();
+  console.log("\n✅ READY FOR NEW V3 POOLS!");
+}
+
+// ===== SERVER =====
+let hasRun = false;
+
+app.get("/health", (_, res) => res.json({ status: "live", ran: hasRun }));
+
+app.get("/recover", async (_, res) => {
+  if (hasRun) return res.json({ error: "Already ran" });
+  try {
+    await main();
+    hasRun = true;
+    res.json({ success: true, message: "Funds recovered!" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/check-bpt", async (_, res) => {
+  const balances = {};
+  for (const pool of POOLS) {
+    const bpt = new ethers.Contract(pool.bptAddr, bptAbi, provider);
+    balances[pool.label] = ethers.formatEther(await bpt.balanceOf(SCW_ADDRESS));
+  }
+  res.json(balances);
+});
+
+const server = app.listen(PORT, async () => {
+  console.log(`🚀 Recovery server @ port ${PORT}`);
+  console.log("Endpoints:");
+  console.log("  GET /recover  → Recover ALL funds");
+  console.log("  GET /check-bpt → Check BPT balances");
+  console.log("  GET /health   → Status");
+  
+  // Auto-run recovery
+  setTimeout(async () => {
+    console.log("\n⏱️  Auto-recovering funds in 3s...");
+    await main();
+  }, 3000);
+});
