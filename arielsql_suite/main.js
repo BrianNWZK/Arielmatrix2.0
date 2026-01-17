@@ -1,4 +1,4 @@
-// main.js - WETH RECOVERY ONLY (SYNTAX FIXED)
+// main.js - WETH RECOVERY (CHECKSUM FIXED)
 import express from "express";
 import { ethers } from "ethers";
 import dotenv from "dotenv";
@@ -19,16 +19,16 @@ app.use(express.json());
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
-// ===== WETH POOL ONLY =====
+// ===== WETH POOL - ALL LOWERCASE ADDRESSES =====
 const WETH_POOL = {
   poolId: "0x76ee58af556857605516aafa10c3bbd31abbb0990002000000000000000006ff",
-  bptAddr: "0x76EE58AF556857605516aAFA10C3bBD31AbBB099",
+  bptAddr: "0x76ee58af556857605516aafa10c3bbd31abbb099",
   label: "WETH/BWZC"
 };
 
 const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
 const BWZC_TOKEN = "0x54d1c2889b08cad0932266eade15ec884fa0cdc2";
-const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+const WETH_TOKEN = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 
 // ===== ABIs =====
 const scwAbi = ["function execute(address to,uint256 value,bytes data) returns(bytes)"];
@@ -40,7 +40,7 @@ const vaultAbi = [
   "function exitPool(bytes32 poolId,address sender,address recipient,(address[] assets,uint256[] minAmountsOut,bytes userData,bool toInternalBalance) request)"
 ];
 
-// ===== WETH RECOVERY ONLY =====
+// ===== WETH RECOVERY =====
 async function recoverWETH() {
   console.log("Recovering WETH from WETH/BWZC pool...");
   
@@ -54,7 +54,7 @@ async function recoverWETH() {
     return;
   }
   
-  // 2. SCW approves BPT to Vault (CRITICAL)
+  // 2. SCW approves BPT to Vault
   console.log("1. SCW approves BPT...");
   const approveBptData = new ethers.Interface(bptAbi).encodeFunctionData("approve", [BALANCER_VAULT, bptBalance]);
   const scwApproveData = new ethers.Interface(scwAbi).encodeFunctionData("execute", [WETH_POOL.bptAddr, 0n, approveBptData]);
@@ -70,7 +70,7 @@ async function recoverWETH() {
   // 3. SCW exitPool
   console.log("2. SCW exits WETH pool...");
   const vaultIface = new ethers.Interface(vaultAbi);
-  const assets = [BWZC_TOKEN, WETH];
+  const assets = [BWZC_TOKEN, WETH_TOKEN];
   
   const userData = ethers.AbiCoder.defaultAbiCoder().encode(
     ["uint256", "uint256", "uint256[]"],
@@ -101,8 +101,8 @@ async function recoverWETH() {
   const receipt = await withdrawTx.wait();
   
   if (receipt.status === 1) {
-    console.log("WETH + BWZC RECOVERED from WETH pool!");
-    console.log("Check SCW balances for WETH + BWZC");
+    console.log("SUCCESS: WETH + BWZC RECOVERED!");
+    console.log("Check SCW for: ~0.000607 WETH + ~0.085 BWZC");
   } else {
     console.log("WETH recovery failed");
   }
@@ -120,7 +120,7 @@ app.get("/recover-weth", async (_, res) => {
     hasRun = true;
     res.json({ success: true, message: "WETH recovered!" });
   } catch (e) {
-    console.error("WETH recovery error:", e);
+    console.error("Error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -142,13 +142,16 @@ app.get("/reset", (_, res) => {
 
 const server = app.listen(PORT, async () => {
   console.log("WETH Recovery server @ port " + PORT);
-  console.log("Endpoints:");
-  console.log("  GET /recover-weth  - Recover WETH pool");
-  console.log("  GET /check-weth-bpt - Check WETH BPT");
-  console.log("  GET /reset         - Reset");
+  console.log("GET /recover-weth - Recover WETH pool");
+  console.log("GET /check-weth-bpt - Check WETH BPT");
+  console.log("GET /reset - Reset");
   
   setTimeout(async () => {
     console.log("Auto-recovering WETH in 3s...");
-    await recoverWETH();
+    try {
+      await recoverWETH();
+    } catch (e) {
+      console.error("Auto-recovery failed:", e.message);
+    }
   }, 3000);
 });
