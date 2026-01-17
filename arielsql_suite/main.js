@@ -1,4 +1,4 @@
-// main.js - FIXED WITH CORRECT ASSET ORDER
+// main.js - FIXED DIRECTION ISSUE
 import express from "express";
 import { ethers } from "ethers";
 import dotenv from "dotenv";
@@ -32,16 +32,14 @@ const POOLS = [
     bptAddr: "0xAaEd510C03df5A4c9D8D660fe477E01AcDC9c561",
     label: "USDC/BWZC",
     pairedToken: USDC,
-    // Based on pool ID: assets should be in ascending order
-    assets: [BWZC_TOKEN, USDC].sort() // BWZC < USDC
+    assets: [BWZC_TOKEN, USDC] // BWZC < USDC
   },
   {
     poolId: "0x76ee58af556857605516aafa10c3bbd31abbb0990002000000000000000006ff",
     bptAddr: "0x76EE58AF556857605516aAFA10C3bBD31AbBB099", 
     label: "WETH/BWZC",
     pairedToken: WETH,
-    // WETH address is LOWER than BWZC, so WETH comes first
-    assets: [WETH, BWZC_TOKEN] // WETH < BWZC (0xc02aaa... < 0x54d1c2...)
+    assets: [WETH, BWZC_TOKEN] // WETH < BWZC
   }
 ];
 
@@ -50,8 +48,7 @@ const scwAbi = ["function execute(address to,uint256 value,bytes data) returns(b
 const bptAbi = [
   "function approve(address,uint256) returns(bool)", 
   "function balanceOf(address) view returns(uint256)",
-  "function allowance(address owner, address spender) view returns(uint256)",
-  "function decimals() view returns(uint8)"
+  "function allowance(address owner, address spender) view returns(uint256)"
 ];
 const vaultAbi = [
   "function exitPool(bytes32 poolId,address sender,address recipient,(address[] assets,uint256[] minAmountsOut,bytes userData,bool toInternalBalance) request)"
@@ -66,15 +63,33 @@ function getChecksumAddress(address) {
   }
 }
 
-// ===== Get Pool Tokens from Balancer Vault =====
-async function getPoolTokens(poolId) {
-  const vaultAbiExtended = [
-    ...vaultAbi,
-    "function getPoolTokens(bytes32 poolId) view returns(address[] tokens,uint256[] balances,uint256 lastChangeBlock)"
-  ];
-  const vault = new ethers.Contract(BALANCER_VAULT, vaultAbiExtended, provider);
-  const [tokens] = await vault.getPoolTokens(poolId);
-  return tokens;
+// ===== CHECK ALLOWANCE =====
+async function checkAndApprove(bptAddress, scwAddress, vaultAddress, bptBalance) {
+  const bpt = new ethers.Contract(bptAddress, bptAbi, provider);
+  const currentAllowance = await bpt.allowance(scwAddress, vaultAddress);
+  
+  if (currentAllowance >= bptBalance) {
+    console.log(`   ✅ Already approved (allowance: ${ethers.formatEther(currentAllowance)})`);
+    return true;
+  }
+  
+  console.log(`   Current allowance: ${ethers.formatEther(currentAllowance)}`);
+  console.log(`   Needs approval for: ${ethers.formatEther(bptBalance)}`);
+  
+  const bptSigner = new ethers.Contract(bptAddress, bptAbi, signer);
+  const approveTx = await bptSigner.approve(vaultAddress, bptBalance);
+  console.log(`   BPT Approve TX: https://etherscan.io/tx/${approveTx.hash}`);
+  const receipt = await approveTx.wait();
+  
+  if (receipt.status === 1) {
+    console.log(`   ✅ Approval confirmed`);
+    // Wait for state update
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    return true;
+  } else {
+    console.log(`   ❌ Approval failed`);
+    return false;
+  }
 }
 
 // ===== RECOVER FUNDS =====
@@ -89,9 +104,10 @@ async function recoverFunds() {
       const bptAddress = getChecksumAddress(pool.bptAddr);
       const scwAddress = getChecksumAddress(SCW_ADDRESS);
       const vaultAddress = getChecksumAddress(BALANCER_VAULT);
+      const eoaAddress = await signer.getAddress();
       
       // 1. Get BPT balance
-      const bpt = new ethers.Contract(bptAddress, bptAbi, provider);
+      const bpt = new ethers.Contract(bptAddress, bptAbi.slice(0, 2), provider);
       const bptBalance = await bpt.balanceOf(scwAddress);
       console.log(`   BPT Balance: ${ethers.formatEther(bptBalance)}`);
       
@@ -100,204 +116,166 @@ async function recoverFunds() {
         continue;
       }
       
-      // 2. Get actual pool tokens from Balancer
-      console.log(`   Fetching pool tokens...`);
-      const poolTokens = await getPoolTokens(pool.poolId);
-      console.log(`   Pool tokens: ${poolTokens}`);
-      
-      // 3. Check if approval is needed
-      console.log(`   Checking allowance...`);
-      const currentAllowance = await bpt.allowance(scwAddress, vaultAddress);
-      console.log(`   Current allowance: ${ethers.formatEther(currentAllowance)}`);
-      
-      if (currentAllowance < bptBalance) {
-        console.log(`   Needs approval for: ${ethers.formatEther(bptBalance)}`);
-        
-        // Approve BPT to Vault (via EOA)
-        const bptSigner = new ethers.Contract(bptAddress, bptAbi, signer);
-        const approveTx = await bptSigner.approve(vaultAddress, bptBalance);
-        console.log(`   BPT Approve TX: https://etherscan.io/tx/${approveTx.hash}`);
-        const approveReceipt = await approveTx.wait();
-        
-        if (approveReceipt.status !== 1) {
-          console.log(`   ❌ Approval failed for ${pool.label}`);
-          continue;
-        }
-        console.log(`   ✅ Approval confirmed`);
-        
-        // Wait for confirmation
-        await new Promise(resolve => setTimeout(resolve, 10000));
-      } else {
-        console.log(`   ✅ Already approved (allowance: ${ethers.formatEther(currentAllowance)})`);
+      // 2. Check and approve if needed
+      const approved = await checkAndApprove(bptAddress, scwAddress, vaultAddress, bptBalance);
+      if (!approved) {
+        console.log(`   ❌ Skipping due to approval failure`);
+        continue;
       }
       
-      // 4. Execute exitPool via SCW
+      // 3. Execute exitPool via SCW - IMPORTANT: recipient should be SCW to receive tokens
       const vaultIface = new ethers.Interface(vaultAbi);
       
-      // Use the actual pool tokens from Balancer
-      const assets = poolTokens;
-      console.log(`   Assets for exit: ${assets}`);
+      // Use correct asset order for this pool
+      const assets = pool.assets;
+      console.log(`   Assets: ${assets.map(addr => addr.substring(0, 10) + '...')}`);
       
-      // Encode userData for EXACT_BPT_IN_FOR_TOKENS_OUT
-      // uint256 exitKind, uint256 bptAmountIn, uint256[] memory amountsOut
       const userData = ethers.AbiCoder.defaultAbiCoder().encode(
         ["uint256", "uint256", "uint256[]"],
-        [1n, bptBalance, Array(assets.length).fill(0n)] // EXACT_BPT_IN_FOR_TOKENS_OUT
+        [1n, bptBalance, [0n, 0n]] // EXACT_BPT_IN_FOR_TOKENS_OUT
       );
       
-      const exitData = vaultIface.encodeFunctionData("exitPool", [
+      // Try BOTH approaches
+      
+      // APPROACH 1: Direct to SCW (this worked for USDC)
+      console.log(`   Trying Approach 1: SCW as recipient...`);
+      const exitData1 = vaultIface.encodeFunctionData("exitPool", [
         pool.poolId,
-        scwAddress, // sender
-        scwAddress, // recipient
+        scwAddress,     // sender = SCW (has BPT)
+        scwAddress,     // recipient = SCW (should receive tokens)
         {
           assets,
-          minAmountsOut: Array(assets.length).fill(0n),
+          minAmountsOut: [0n, 0n],
           userData,
           toInternalBalance: false
         }
       ]);
       
       const scwIface = new ethers.Interface(scwAbi);
-      const execData = scwIface.encodeFunctionData("execute", [
+      const execData1 = scwIface.encodeFunctionData("execute", [
         vaultAddress, 
         0n, 
-        exitData
+        exitData1
       ]);
       
-      // Simulate the transaction first
-      console.log(`   Simulating transaction...`);
+      // Try simulation
       try {
-        const simResult = await provider.call({
-          from: await signer.getAddress(),
+        console.log(`   Simulating Approach 1...`);
+        const simResult1 = await provider.call({
+          from: eoaAddress,
           to: scwAddress,
-          data: execData
+          data: execData1
         });
-        console.log(`   ✅ Simulation successful: ${simResult}`);
-      } catch (simError) {
-        console.log(`   ❌ Simulation failed: ${simError.shortMessage || simError.message}`);
-        if (simError.data) {
-          console.log(`   Error data: ${simError.data}`);
-          // Try to decode the error
-          try {
-            const errorIface = new ethers.Interface(["function Error(string)"]);
-            const decoded = errorIface.decodeFunctionData("Error", simError.data);
-            console.log(`   Decoded error: ${decoded}`);
-          } catch (e) {
-            // Couldn't decode
-          }
+        console.log(`   ✅ Simulation passed: ${simResult1.substring(0, 50)}...`);
+        
+        const tx1 = await signer.sendTransaction({
+          to: scwAddress,
+          data: execData1,
+          gasLimit: 3500000,
+        });
+        
+        console.log(`   WITHDRAW TX: https://etherscan.io/tx/${tx1.hash}`);
+        const receipt1 = await tx1.wait();
+        
+        if (receipt1.status === 1) {
+          console.log(`   ✅ ${pool.label} FUNDS RECOVERED to SCW!`);
+          console.log(`   Gas used: ${receipt1.gasUsed.toString()}`);
+          continue; // Success, move to next pool
+        } else {
+          console.log(`   ❌ Approach 1 failed, status: ${receipt1.status}`);
         }
-        console.log(`   Will try alternative approach...`);
-        
-        // Try alternative: Use recipient as EOA instead of SCW
-        console.log(`   Trying with recipient as EOA...`);
-        const exitDataDirect = vaultIface.encodeFunctionData("exitPool", [
-          pool.poolId,
-          scwAddress, // sender
-          await signer.getAddress(), // recipient (EOA instead of SCW)
-          {
-            assets,
-            minAmountsOut: Array(assets.length).fill(0n),
-            userData,
-            toInternalBalance: false
-          }
-        ]);
-        
-        const execDataDirect = scwIface.encodeFunctionData("execute", [
-          vaultAddress, 
-          0n, 
-          exitDataDirect
-        ]);
-        
-        // Try simulation with EOA as recipient
-        try {
-          const simResult2 = await provider.call({
-            from: await signer.getAddress(),
-            to: scwAddress,
-            data: execDataDirect
-          });
-          console.log(`   ✅ Simulation with EOA recipient successful: ${simResult2}`);
-          
-          // Use the direct approach
-          const withdrawTx = await signer.sendTransaction({
-            to: scwAddress,
-            data: execDataDirect,
-            gasLimit: 3000000,
-          });
-          
-          console.log(`   WITHDRAW TX (EOA recipient): https://etherscan.io/tx/${withdrawTx.hash}`);
-          const receipt = await withdrawTx.wait();
-          
-          if (receipt.status === 1) {
-            console.log(`   ✅ ${pool.label} FUNDS RECOVERED to EOA!`);
-            console.log(`   Gas used: ${receipt.gasUsed.toString()}`);
-            continue;
-          }
-        } catch (simError2) {
-          console.log(`   ❌ Alternative simulation also failed: ${simError2.message}`);
-        }
-        
-        continue;
+      } catch (error) {
+        console.log(`   ❌ Approach 1 simulation/execution failed: ${error.shortMessage || error.message}`);
       }
       
-      // If simulation passed, send transaction
-      const withdrawTx = await signer.sendTransaction({
-        to: scwAddress,
-        data: execData,
-        gasLimit: 3000000,
-      });
-      
-      console.log(`   WITHDRAW TX: https://etherscan.io/tx/${withdrawTx.hash}`);
-      const receipt = await withdrawTx.wait();
-      
-      if (receipt.status === 1) {
-        console.log(`   ✅ ${pool.label} FUNDS RECOVERED!`);
-        console.log(`   Gas used: ${receipt.gasUsed.toString()}`);
-      } else {
-        console.log(`   ❌ ${pool.label} withdraw failed`);
-        console.log(`   Receipt status: ${receipt.status}`);
-        if (receipt.logs.length > 0) {
-          console.log(`   Logs:`, receipt.logs);
+      // APPROACH 2: Try recipient as EOA (maybe SCW has issues)
+      console.log(`   Trying Approach 2: EOA as recipient...`);
+      const exitData2 = vaultIface.encodeFunctionData("exitPool", [
+        pool.poolId,
+        scwAddress,     // sender = SCW (has BPT)
+        eoaAddress,     // recipient = EOA (receive tokens directly)
+        {
+          assets,
+          minAmountsOut: [0n, 0n],
+          userData,
+          toInternalBalance: false
         }
+      ]);
+      
+      const execData2 = scwIface.encodeFunctionData("execute", [
+        vaultAddress, 
+        0n, 
+        exitData2
+      ]);
+      
+      try {
+        console.log(`   Simulating Approach 2...`);
+        await provider.call({
+          from: eoaAddress,
+          to: scwAddress,
+          data: execData2
+        });
+        console.log(`   ✅ Simulation passed`);
+        
+        const tx2 = await signer.sendTransaction({
+          to: scwAddress,
+          data: execData2,
+          gasLimit: 3500000,
+        });
+        
+        console.log(`   WITHDRAW TX (EOA): https://etherscan.io/tx/${tx2.hash}`);
+        const receipt2 = await tx2.wait();
+        
+        if (receipt2.status === 1) {
+          console.log(`   ✅ ${pool.label} FUNDS RECOVERED to EOA!`);
+          console.log(`   Gas used: ${receipt2.gasUsed.toString()}`);
+          continue; // Success
+        } else {
+          console.log(`   ❌ Approach 2 failed, status: ${receipt2.status}`);
+        }
+      } catch (error) {
+        console.log(`   ❌ Approach 2 failed: ${error.shortMessage || error.message}`);
       }
       
-      // Add delay between pool withdrawals
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Wait between attempts
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
     } catch (error) {
       console.error(`   ❌ Error with ${pool.label}:`);
-      console.error(`   Message: ${error.message}`);
-      if (error.shortMessage) console.error(`   Short: ${error.shortMessage}`);
-      if (error.receipt) console.error(`   Receipt status: ${error.receipt.status}`);
-      console.log(`   Continuing...`);
+      console.error(`   ${error.message}`);
+      if (error.shortMessage) console.error(`   ${error.shortMessage}`);
+      console.log(`   Continuing to next pool...`);
     }
   }
   
   console.log("\n🎉 RECOVERY ATTEMPT COMPLETE!");
-  console.log("✅ Check balances for recovered funds");
+  console.log("✅ Check token balances");
 }
 
-// ===== CHECK BALANCES =====
-async function checkBalances() {
+// ===== CHECK TOKEN BALANCES =====
+async function checkTokenBalances() {
   console.log("\n📊 CHECKING TOKEN BALANCES...");
   
   const tokenAbi = ["function balanceOf(address) view returns(uint256)"];
+  const scwAddress = getChecksumAddress(SCW_ADDRESS);
+  const eoaAddress = await signer.getAddress();
   
   const addresses = [
-    { address: await signer.getAddress(), name: "EOA" },
-    { address: SCW_ADDRESS, name: "SCW" }
+    { address: scwAddress, name: "SCW" },
+    { address: eoaAddress, name: "EOA" }
   ];
   
   const tokens = [
-    { address: BWZC_TOKEN, name: "BWZC", decimals: 18 },
-    { address: WETH, name: "WETH", decimals: 18 },
+    { address: BWZC_TOKEN, name: "BWZC" },
+    { address: WETH, name: "WETH" },
     { address: USDC, name: "USDC", decimals: 6 }
   ];
   
   for (const addr of addresses) {
-    console.log(`\n   ${addr.name} (${addr.address}):`);
+    console.log(`\n   ${addr.name} (${addr.address.substring(0, 10)}...):`);
     for (const token of tokens) {
       const tokenContract = new ethers.Contract(token.address, tokenAbi, provider);
-      const balance = await tokenContract.balanceOf(getChecksumAddress(addr.address));
+      const balance = await tokenContract.balanceOf(addr.address);
       const formatted = token.decimals === 6 
         ? ethers.formatUnits(balance, 6)
         : ethers.formatEther(balance);
@@ -306,14 +284,32 @@ async function checkBalances() {
   }
 }
 
+// ===== CHECK SPECIFIC BPT =====
+async function checkSpecificBPT(poolIndex) {
+  const pool = POOLS[poolIndex];
+  const bptAddress = getChecksumAddress(pool.bptAddr);
+  const scwAddress = getChecksumAddress(SCW_ADDRESS);
+  const bpt = new ethers.Contract(bptAddress, bptAbi.slice(0, 2), provider);
+  const balance = await bpt.balanceOf(scwAddress);
+  return { pool: pool.label, balance: ethers.formatEther(balance) };
+}
+
 // ===== MAIN EXECUTION =====
 async function main() {
   console.log("🚀 BALANCER POOL FUND RECOVERY");
   console.log(`SCW Address: ${SCW_ADDRESS}`);
-  console.log(`Signer Address: ${await signer.getAddress()}`);
+  console.log(`EOA Address: ${await signer.getAddress()}`);
+  
+  // Check initial BPT balances
+  console.log("\n📊 INITIAL BPT BALANCES:");
+  for (let i = 0; i < POOLS.length; i++) {
+    const result = await checkSpecificBPT(i);
+    console.log(`   ${result.pool}: ${result.balance} BPT`);
+  }
+  
   await recoverFunds();
-  await checkBalances();
-  console.log("\n✅ PROCESS COMPLETED!");
+  await checkTokenBalances();
+  console.log("\n✅ RECOVERY COMPLETE!");
 }
 
 // ===== SERVER =====
@@ -323,7 +319,8 @@ app.get("/health", (_, res) => res.json({
   status: "live", 
   ran: hasRun,
   signer: signer.address,
-  scw: SCW_ADDRESS
+  scw: SCW_ADDRESS,
+  note: "WETH/BWZC BPT was already withdrawn but tokens went to wrong place"
 }));
 
 app.get("/recover", async (_, res) => {
@@ -333,7 +330,8 @@ app.get("/recover", async (_, res) => {
     res.json({ 
       success: true, 
       message: "Recovery started in background...",
-      note: "Check server logs for progress"
+      note: "Trying different approaches to fix direction issue",
+      checkUrl: "/check-token-balances"
     });
     
     // Run in background
@@ -351,35 +349,12 @@ app.get("/recover", async (_, res) => {
   }
 });
 
-app.get("/check-pool-tokens", async (_, res) => {
-  try {
-    const poolTokens = {};
-    for (const pool of POOLS) {
-      const tokens = await getPoolTokens(pool.poolId);
-      poolTokens[pool.label] = {
-        poolId: pool.poolId,
-        tokens: tokens
-      };
-    }
-    res.json(poolTokens);
-  } catch (e) {
-    console.error("Check pool tokens error:", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 app.get("/check-bpt", async (_, res) => {
   try {
     const balances = {};
-    for (const pool of POOLS) {
-      const bptAddress = getChecksumAddress(pool.bptAddr);
-      const scwAddress = getChecksumAddress(SCW_ADDRESS);
-      const bpt = new ethers.Contract(bptAddress, bptAbi, provider);
-      const balance = await bpt.balanceOf(scwAddress);
-      balances[pool.label] = {
-        raw: balance.toString(),
-        formatted: ethers.formatEther(balance)
-      };
+    for (let i = 0; i < POOLS.length; i++) {
+      const result = await checkSpecificBPT(i);
+      balances[result.pool] = result.balance;
     }
     res.json(balances);
   } catch (e) {
@@ -391,25 +366,28 @@ app.get("/check-bpt", async (_, res) => {
 app.get("/check-token-balances", async (_, res) => {
   try {
     const tokenAbi = ["function balanceOf(address) view returns(uint256)"];
-    const balances = {};
+    const scwAddress = getChecksumAddress(SCW_ADDRESS);
+    const eoaAddress = await signer.getAddress();
     
     const addresses = [
-      { address: await signer.getAddress(), name: "EOA" },
-      { address: SCW_ADDRESS, name: "SCW" }
+      { address: scwAddress, name: "scw" },
+      { address: eoaAddress, name: "eoa" }
     ];
     
     const tokens = [
-      { address: BWZC_TOKEN, name: "BWZC", decimals: 18 },
-      { address: WETH, name: "WETH", decimals: 18 },
-      { address: USDC, name: "USDC", decimals: 6 }
+      { address: BWZC_TOKEN, name: "bwzc" },
+      { address: WETH, name: "weth" },
+      { address: USDC, name: "usdc", decimals: 6 }
     ];
     
+    const result = {};
+    
     for (const addr of addresses) {
-      balances[addr.name] = {};
+      result[addr.name] = {};
       for (const token of tokens) {
         const tokenContract = new ethers.Contract(token.address, tokenAbi, provider);
-        const balance = await tokenContract.balanceOf(getChecksumAddress(addr.address));
-        balances[addr.name][token.name] = {
+        const balance = await tokenContract.balanceOf(addr.address);
+        result[addr.name][token.name] = {
           raw: balance.toString(),
           formatted: token.decimals === 6 
             ? ethers.formatUnits(balance, 6)
@@ -418,9 +396,41 @@ app.get("/check-token-balances", async (_, res) => {
       }
     }
     
-    res.json(balances);
+    res.json(result);
   } catch (e) {
     console.error("Check token balances error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/debug-tx/:hash", async (req, res) => {
+  try {
+    const hash = req.params.hash;
+    const receipt = await provider.getTransactionReceipt(hash);
+    
+    // Decode logs if any
+    const logs = [];
+    if (receipt.logs) {
+      for (const log of receipt.logs) {
+        logs.push({
+          address: log.address,
+          data: log.data,
+          topics: log.topics
+        });
+      }
+    }
+    
+    res.json({
+      hash: hash,
+      status: receipt.status,
+      from: receipt.from,
+      to: receipt.to,
+      gasUsed: receipt.gasUsed.toString(),
+      logs: logs,
+      raw: receipt
+    });
+  } catch (e) {
+    console.error("Debug TX error:", e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -433,52 +443,50 @@ app.get("/reset", (_, res) => {
 const server = app.listen(PORT, async () => {
   console.log(`🚀 Recovery server @ port ${PORT}`);
   console.log("Endpoints:");
-  console.log("  GET /recover               → Recover ALL funds");
-  console.log("  GET /check-pool-tokens     → Get actual pool tokens from Balancer");
-  console.log("  GET /check-bpt             → Check BPT balances");
-  console.log("  GET /check-token-balances  → Check token balances");
-  console.log("  GET /health                → Status");
-  console.log("  GET /reset                 → Reset recovery flag");
+  console.log("  GET /recover              → Recover funds (tries 2 approaches)");
+  console.log("  GET /check-bpt            → Check BPT balances");
+  console.log("  GET /check-token-balances → Check token balances for SCW & EOA");
+  console.log("  GET /debug-tx/:hash       → Debug transaction");
+  console.log("  GET /health               → Status");
+  console.log("  GET /reset                → Reset recovery flag");
+  console.log(`\nIMPORTANT: Previous WETH/BWZC withdrawal sent tokens TO Balancer instead of FROM Balancer`);
+  console.log(`We need to fix the direction.`);
   console.log(`\nSigner: ${signer.address}`);
   console.log(`SCW: ${SCW_ADDRESS}`);
   
   // Check initial state
   setTimeout(async () => {
-    console.log("\n📊 Initial State:");
+    console.log("\n📊 Checking initial state...");
     
-    // Check pool tokens
-    console.log(`\n🔍 Pool Tokens:`);
-    for (const pool of POOLS) {
-      try {
-        const tokens = await getPoolTokens(pool.poolId);
-        console.log(`   ${pool.label}: ${tokens}`);
-      } catch (e) {
-        console.log(`   ${pool.label}: Error - ${e.message}`);
-      }
+    const bptChecks = [];
+    for (let i = 0; i < POOLS.length; i++) {
+      bptChecks.push(await checkSpecificBPT(i));
     }
     
-    // Check BPT balances
-    console.log(`\n📊 BPT Balances:`);
-    for (const pool of POOLS) {
-      const bptAddress = getChecksumAddress(pool.bptAddr);
-      const scwAddress = getChecksumAddress(SCW_ADDRESS);
-      const bpt = new ethers.Contract(bptAddress, bptAbi, provider);
-      const balance = await bpt.balanceOf(scwAddress);
-      console.log(`   ${pool.label}: ${ethers.formatEther(balance)} BPT`);
-    }
+    console.log(`\nBPT Balances:`);
+    bptChecks.forEach(check => {
+      console.log(`   ${check.pool}: ${check.balance} BPT`);
+    });
     
-    // Auto-run recovery
-    setTimeout(async () => {
-      console.log("\n⏱️  Auto-recovering funds in 5s...");
+    // Check if WETH/BWZC still has BPT
+    const wethBwzcBPT = bptChecks.find(c => c.pool === "WETH/BWZC");
+    if (wethBwzcBPT && wethBwzcBPT.balance !== "0.0") {
+      console.log(`\n⏱️  Auto-recovering WETH/BWZC in 3s...`);
       setTimeout(async () => {
         try {
-          console.log("\n🚀 Starting auto-recovery...");
+          console.log("\n🚀 Starting recovery...");
           await main();
         } catch (e) {
           console.error("Auto-recovery failed:", e.message);
         }
-      }, 5000);
-    }, 2000);
+      }, 3000);
+    } else {
+      console.log(`\n✅ No BPT to recover`);
+      console.log(`   Checking token balances...`);
+      setTimeout(async () => {
+        await checkTokenBalances();
+      }, 1000);
+    }
   }, 1000);
 });
 
