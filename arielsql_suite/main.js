@@ -1,6 +1,6 @@
 // main.js - FULL RECOVERY + ethers FIXED
 import express from "express";
-import { ethers } from "ethers";  // ← ADD THIS LINE
+import { ethers } from "ethers";
 import dotenv from "dotenv";
 import dotenvExpand from "dotenv-expand";
 
@@ -48,6 +48,16 @@ const vaultAbi = [
   "function exitPool(bytes32 poolId,address sender,address recipient,(address[] assets,uint256[] minAmountsOut,bytes userData,bool toInternalBalance) request)"
 ];
 
+// ===== Helper function to get checksum address =====
+function getChecksumAddress(address) {
+  try {
+    return ethers.getAddress(address);
+  } catch (e) {
+    // If checksum fails, convert to lowercase first then get checksum
+    return ethers.getAddress(address.toLowerCase());
+  }
+}
+
 // ===== RECOVER FUNDS =====
 async function recoverFunds() {
   console.log("🔄 RECOVERING ALL FUNDS FROM BUGGED POOLS...");
@@ -55,9 +65,14 @@ async function recoverFunds() {
   for (const pool of POOLS) {
     console.log(`\n💸 WITHDRAWING ${pool.label}...`);
     
+    // Get checksum addresses
+    const bptAddress = getChecksumAddress(pool.bptAddr);
+    const scwAddress = getChecksumAddress(SCW_ADDRESS);
+    const vaultAddress = getChecksumAddress(BALANCER_VAULT);
+    
     // 1. Get BPT balance
-    const bpt = new ethers.Contract(pool.bptAddr, bptAbi, provider);
-    const bptBalance = await bpt.balanceOf(SCW_ADDRESS);
+    const bpt = new ethers.Contract(bptAddress, bptAbi, provider);
+    const bptBalance = await bpt.balanceOf(scwAddress);
     console.log(`   BPT Balance: ${ethers.formatEther(bptBalance)}`);
     
     if (bptBalance === 0n) {
@@ -66,8 +81,8 @@ async function recoverFunds() {
     }
     
     // 2. Approve BPT to Vault (via EOA first)
-    const bptSigner = new ethers.Contract(pool.bptAddr, bptAbi, signer);
-    const approveTx = await bptSigner.approve(BALANCER_VAULT, bptBalance);
+    const bptSigner = new ethers.Contract(bptAddress, bptAbi, signer);
+    const approveTx = await bptSigner.approve(vaultAddress, bptBalance);
     console.log(`   BPT Approve TX: https://etherscan.io/tx/${approveTx.hash}`);
     await approveTx.wait();
     
@@ -82,8 +97,8 @@ async function recoverFunds() {
     
     const exitData = vaultIface.encodeFunctionData("exitPool", [
       pool.poolId,
-      SCW_ADDRESS,
-      SCW_ADDRESS,
+      scwAddress,
+      scwAddress,
       {
         assets,
         minAmountsOut: [0n, 0n],
@@ -93,11 +108,11 @@ async function recoverFunds() {
     ]);
     
     const execData = new ethers.Interface(scwAbi).encodeFunctionData(
-      "execute", [BALANCER_VAULT, 0n, exitData]
+      "execute", [vaultAddress, 0n, exitData]
     );
     
     const withdrawTx = await signer.sendTransaction({
-      to: SCW_ADDRESS,
+      to: scwAddress,
       data: execData,
       gasLimit: 2500000
     });
@@ -135,17 +150,30 @@ app.get("/recover", async (_, res) => {
     hasRun = true;
     res.json({ success: true, message: "Funds recovered!" });
   } catch (e) {
+    console.error("Recovery error:", e);
     res.status(500).json({ error: e.message });
   }
 });
 
 app.get("/check-bpt", async (_, res) => {
-  const balances = {};
-  for (const pool of POOLS) {
-    const bpt = new ethers.Contract(pool.bptAddr, bptAbi, provider);
-    balances[pool.label] = ethers.formatEther(await bpt.balanceOf(SCW_ADDRESS));
+  try {
+    const balances = {};
+    for (const pool of POOLS) {
+      const bptAddress = getChecksumAddress(pool.bptAddr);
+      const scwAddress = getChecksumAddress(SCW_ADDRESS);
+      const bpt = new ethers.Contract(bptAddress, bptAbi, provider);
+      balances[pool.label] = ethers.formatEther(await bpt.balanceOf(scwAddress));
+    }
+    res.json(balances);
+  } catch (e) {
+    console.error("Check BPT error:", e);
+    res.status(500).json({ error: e.message });
   }
-  res.json(balances);
+});
+
+app.get("/reset", (_, res) => {
+  hasRun = false;
+  res.json({ success: true, message: "Reset complete" });
 });
 
 const server = app.listen(PORT, async () => {
@@ -154,10 +182,20 @@ const server = app.listen(PORT, async () => {
   console.log("  GET /recover  → Recover ALL funds");
   console.log("  GET /check-bpt → Check BPT balances");
   console.log("  GET /health   → Status");
+  console.log("  GET /reset    → Reset recovery flag");
   
   // Auto-run recovery
   setTimeout(async () => {
     console.log("\n⏱️  Auto-recovering funds in 3s...");
-    await main();
+    try {
+      await main();
+    } catch (e) {
+      console.error("Auto-recovery failed:", e);
+    }
   }, 3000);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error:', error);
 });
