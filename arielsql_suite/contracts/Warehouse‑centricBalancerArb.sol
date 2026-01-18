@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /*
-  Warehouse‑centric arbitrage engine (MEV v16‑3) with:
+  MEV v17 — Warehouse‑centric arbitrage engine
   - Balancer Vault flash loans (USDC, WETH) for buy legs.
   - SCW warehouse inventory for sell legs (BWAEZI).
   - Adaptive sizing (loan sizing, safe caps, reinvest ratio).
@@ -10,11 +10,12 @@ pragma solidity ^0.8.24;
   - Live ETH/USD via Chainlink for WETH normalization.
   - Paymaster-aware top-ups (BW->WETH->ETH) when EntryPoint deposit is low.
   - Multi‑venue routing: Uniswap V3 (primary), Uniswap V2, SushiSwap, Balancer pools (addresses wired).
-  - Parallel bundle orchestration: multiple bundle configs staged and executed independently (off‑chain submitters can send 2–4 private bundles in parallel).
-  - Safe Balancer pool address usage (explicit constants; event decoding handled off‑chain).
+  - Parallel bundle orchestration: stage multiple bundle configs and kick them independently—submit 2–4 private bundles per block via off-chain private relays.
+  - Privacy-first: no external bundler dependencies; SCW wired directly to paymaster/EntryPoint.
+  - Modification hooks: enable/disable modules, add/replace strategy handlers, and guardrails.
 
   Notes:
-  - On-chain parallelism is limited by EVM; “parallel bundles” are achieved by preparing multiple independent bundle configs and submitting them as separate private transactions concurrently via off-chain relays.
+  - “Parallel bundles” are achieved off-chain by submitting separate private transactions concurrently; on-chain execution is sequential per transaction.
   - This contract exposes per-bundle kick functions and a batched kick that emits distinct bundle IDs for off-chain parallel submission.
 */
 
@@ -173,6 +174,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     uint256 public nextBundleId;
     mapping(uint256 => BundleConfig) public bundles;
 
+    /* Module toggles and hooks */
+    mapping(bytes32 => bool) public moduleEnabled; // e.g., keccak256("REINVEST"), "PAYMASTER_TOPUP"
+    mapping(bytes32 => address) public strategyHandler; // optional external strategy handler contracts
+
     /* Events */
     event OwnerChanged(address indexed newOwner);
     event Paused(bool status);
@@ -183,6 +188,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     event PaymasterTopped(uint256 ethAdded, uint256 newBalance);
     event BundleStaged(uint256 bundleId, BundleConfig cfg);
     event BundleCancelled(uint256 bundleId);
+    event ModuleToggled(bytes32 module, bool enabled);
+    event StrategyHandlerSet(bytes32 key, address handler);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
@@ -275,6 +282,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         IERC20(bwaezi).approve(sushiRouter, type(uint256).max);
         IERC20(usdc).approve(sushiRouter, type(uint256).max);
         IERC20(weth).approve(sushiRouter, type(uint256).max);
+
+        // Default modules enabled
+        moduleEnabled[keccak256("REINVEST")] = true;
+        moduleEnabled[keccak256("PAYMASTER_TOPUP")] = true;
     }
 
     /* ---------------- Admin ---------------- */
@@ -325,6 +336,17 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         rMax    = _rMax;
         lambda_ = _lambda;
         emit AdaptiveParamsUpdated();
+    }
+
+    /* ---------------- Module toggles and strategy hooks ---------------- */
+    function toggleModule(bytes32 key, bool enabled) external onlyOwner {
+        moduleEnabled[key] = enabled;
+        emit ModuleToggled(key, enabled);
+    }
+
+    function setStrategyHandler(bytes32 key, address handler) external onlyOwner {
+        strategyHandler[key] = handler;
+        emit StrategyHandlerSet(key, handler);
     }
 
     /* ---------------- Live ETH/USD ---------------- */
@@ -382,10 +404,17 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     }
 
     /* ---------------- Public kick: initiate single bundle cycle ---------------- */
-    function kickBundle(uint256 bundleId) external onlyOwner {
+    function kickBundle(uint256 bundleId) public onlyOwner {
         require(!paused, "paused");
         BundleConfig memory cfg = bundles[bundleId];
         require(cfg.active, "bundle inactive");
+
+        // Optional external strategy handler override
+        address handler = strategyHandler[keccak256("KICK")];
+        if (handler != address(0)) {
+            (bool ok,) = handler.delegatecall(abi.encodeWithSignature("onKick(uint256)", bundleId));
+            require(ok, "handler kick fail");
+        }
 
         // Compute loan size (USD 1e18) and per-leg safe caps
         uint256 L1e18   = _loanSize(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
@@ -435,8 +464,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     /* ---------------- Batched kick: emit multiple bundles for parallel off-chain submission ---------------- */
     function kickBundles(uint256[] calldata bundleIds) external onlyOwner {
         require(!paused, "paused");
-        // This function emits events and performs per-bundle flash loans sequentially in-chain.
-        // Off-chain, submitters can call kickBundle(bundleId) in separate private transactions concurrently.
         for (uint256 i = 0; i < bundleIds.length; i++) {
             kickBundle(bundleIds[i]);
         }
@@ -529,13 +556,15 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         }
 
         // Paymaster draw if needed (BW->WETH->ETH)
-        _maybeTopEntryPoint(ethUsd1e18);
+        if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) {
+            _maybeTopEntryPoint(ethUsd1e18);
+        }
 
         cycleCount += 1;
         emit CycleExecuted(bundleId, usdcIn, wethIn, bwToSell, usdcProfit, 0);
 
         // Reinvestment drip at checkpoint
-        if (cycleCount % checkpointPeriod == 0) {
+        if (moduleEnabled[keccak256("REINVEST")] && (cycleCount % checkpointPeriod == 0)) {
             _reinvestDrip(usdcUSD1e18, wethUSD1e18, ethUsd1e18, spreadFromQuotes());
         }
     }
@@ -571,7 +600,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         }
     }
 
-    /* ---------------- Quoting helpers continued ---------------- */
     function _max3(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {
         return a > b ? (a > c ? a : c) : (b > c ? b : c);
     }
@@ -635,7 +663,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     function _reinvestDrip(
         uint256 usdcUSD1e18,
         uint256 wethUSD1e18,
-        uint256 ethUsd1e18,
+        uint256 /* ethUsd1e18 */,
         uint256 spread1e18
     ) internal {
         uint256 r = _reinvestRatio(spread1e18);
