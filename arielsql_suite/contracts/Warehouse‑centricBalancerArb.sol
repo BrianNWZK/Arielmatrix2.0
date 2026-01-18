@@ -461,63 +461,151 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
 
-    /* ---------------- Batched kick: emit multiple bundles for parallel off-chain submission ---------------- */
-    function kickBundles(uint256[] calldata bundleIds) external onlyOwner {
-        require(!paused, "paused");
-        for (uint256 i = 0; i < bundleIds.length; i++) {
-            kickBundle(bundleIds[i]);
+
+
+/* ---------------- Secure kick functions - permanent fix (restricted + private submission safe) ---------------- */
+event BundleKicked(uint256 indexed bundleId);
+event BatchedKick(uint256 count);
+
+function kickBundle(uint256 bundleId) external onlyOwner {
+    require(!paused, "paused");
+
+    // Encode userData with bundleId + any params you need (adapt from your config)
+    bytes memory userData = abi.encode(bundleId);
+
+    // Dual flash loan - use your adaptive sizing (replace with your real computation)
+    address[] memory tokens = new address[](2);
+    tokens[0] = usdc;
+    tokens[1] = weth;
+
+    uint256[] memory amounts = new uint256[](2);
+    amounts[0] = _computeUsdcLoanSize(bundleId);  // Your existing adaptive USDC size
+    amounts[1] = _computeWethLoanSize(bundleId);  // Your existing adaptive WETH size
+
+    require(amounts[0] > 0 || amounts[1] > 0, "zero loan");
+
+    IBalancerVault(vault).flashLoan(IFlashLoanRecipient(address(this)), tokens, amounts, userData);
+
+    emit BundleKicked(bundleId);
+}
+
+function kickBundles(uint256[] calldata bundleIds) external onlyOwner {
+    require(!paused, "paused");
+    require(bundleIds.length <= 4, "batch too large");  // Safe gas limit for sequential on-chain
+
+    for (uint256 i = 0; i < bundleIds.length; i++) {
+        kickBundle(bundleIds[i]);
+    }
+
+    emit BatchedKick(bundleIds.length);
+}
+
+/* ---------------- Flash loan callback - upgraded with SCW as full internal counterparty ---------------- */
+function receiveFlashLoan(
+    address[] calldata tokens,
+    uint256[] calldata amounts,
+    uint256[] calldata fees,
+    bytes calldata userData
+) external override {
+    require(msg.sender == vault, "only vault");
+    require(tokens.length == 2 && amounts.length == 2 && fees.length == 2, "bad len");
+    require(tokens[0] == usdc && tokens[1] == weth, "bad assets");
+
+    (uint256 bundleId, uint16 bwSellExtraBps, uint256 ethUsd1e18, uint256 deadline, uint256 usdcUSD1e18, uint256 wethUSD1e18) =
+        abi.decode(userData, (uint256, uint16, uint256, uint256, uint256, uint256));
+    require(block.timestamp <= deadline, "deadline");
+
+    uint256 usdcIn = amounts[0];
+    uint256 wethIn = amounts[1];
+    uint256 usdcFee = fees[0];
+    uint256 wethFee = fees[1];
+
+    // Internal bid/ask prices (adapt your spread/oracle logic)
+    uint256 bid1e18 = _getInternalBidPrice1e18();   // Slightly below avg pool
+    uint256 ask1e18 = _getInternalAskPrice1e18();   // Slightly above avg pool
+
+    // === BUY LEG: stables → BWAEZI (primary: direct from SCW, zero slippage) ===
+    uint256 totalBwBought = 0;
+
+    // Compute needed BW at bid price
+    uint256 neededBwUsdc = usdcIn * 1e12 / bid1e18;   // adjust decimals
+    uint256 neededBwWeth = wethIn * ethUsd1e18 / bid1e18;
+    uint256 totalNeededBw = neededBwUsdc + neededBwWeth;
+
+    uint256 scwBwBal = IERC20(bwaezi).balanceOf(scw);
+
+    if (scwBwBal >= totalNeededBw) {
+        // Full direct: SCW supplies BWAEZI
+        IERC20(bwaezi).safeTransferFrom(scw, address(this), totalNeededBw);
+        totalBwBought = totalNeededBw;
+
+        emit InternalBuyLeg(totalNeededBw, usdcIn, wethIn);
+    } else {
+        // Partial direct + fallback to best pool buys
+        if (scwBwBal > 0) {
+            IERC20(bwaezi).safeTransferFrom(scw, address(this), scwBwBal);
+            totalBwBought += scwBwBal;
+        }
+
+        // Fallback: original best-of pool buys for remaining
+        uint256 remainingUsdc = usdcIn;
+        uint256 remainingWeth = wethIn;
+
+        if (remainingUsdc > 0) {
+            uint256 usdcBwOutV3 = _quoteExactInputV3(usdc, bwaezi, remainingUsdc, bwUsdcFee);
+            uint256 usdcBwOutV2 = _quoteExactInputV2(uniV2Router, usdc, bwaezi, remainingUsdc);
+            uint256 usdcBwOutSu = _quoteExactInputV2(sushiRouter, usdc, bwaezi, remainingUsdc);
+
+            uint256 usdcBwOut = _max3(usdcBwOutV3, usdcBwOutV2, usdcBwOutSu);
+            uint256 usdcMinOut = usdcBwOut * (10000 - epsilonBps) / 10000;
+
+            totalBwBought += _swapBestIn(usdc, bwaezi, remainingUsdc, usdcMinOut, bwUsdcFee);
+        }
+
+        if (remainingWeth > 0) {
+            uint256 wethBwOutV3 = _quoteExactInputV3(weth, bwaezi, remainingWeth, bwWethFee);
+            uint256 wethBwOutV2 = _quoteExactInputV2(uniV2Router, weth, bwaezi, remainingWeth);
+            uint256 wethBwOutSu = _quoteExactInputV2(sushiRouter, weth, bwaezi, remainingWeth);
+
+            uint256 wethBwOut = _max3(wethBwOutV3, wethBwOutV2, wethBwOutSu);
+            uint256 wethMinOut = wethBwOut * (10000 - epsilonBps) / 10000;
+
+            totalBwBought += _swapBestIn(weth, bwaezi, remainingWeth, wethMinOut, bwWethFee);
         }
     }
 
-    /* ---------------- Flash loan callback ---------------- */
-    function receiveFlashLoan(
-        address[] calldata tokens,
-        uint256[] calldata amounts,
-        uint256[] calldata fees,
-        bytes calldata userData
-    ) external override {
-        require(msg.sender == vault, "only vault");
-        require(tokens.length == 2 && amounts.length == 2 && fees.length == 2, "bad len");
-        require(tokens[0] == usdc && tokens[1] == weth, "bad assets");
+    // === SELL LEG: BWAEZI → stables (primary: direct to SCW) ===
+    uint256 extraBW = totalBwBought * bwSellExtraBps / 10000;
+    uint256 bwToSell = totalBwBought + extraBW;
 
-        (uint256 bundleId, uint16 bwSellExtraBps, uint256 ethUsd1e18, uint256 deadline, uint256 usdcUSD1e18, uint256 wethUSD1e18) =
-            abi.decode(userData, (uint256, uint16, uint256, uint256, uint256, uint256));
-        require(block.timestamp <= deadline, "deadline");
+    // Direct: SCW accepts BWAEZI at ask price (profit stays as residuals)
+    IERC20(bwaezi).safeTransfer(scw, bwToSell);
 
-        uint256 usdcIn  = amounts[0];
-        uint256 wethIn  = amounts[1];
-        uint256 usdcFee = fees[0];
-        uint256 wethFee = fees[1];
+    emit InternalSellLeg(bwToSell, bwToSell * ask1e18 / 1e18);  // accounting value
 
-        // Approvals (best-effort; already set in constructor)
-        IERC20(usdc).approve(uniV3Router, type(uint256).max);
-        IERC20(weth).approve(uniV3Router, type(uint256).max);
-        IERC20(bwaezi).approve(uniV3Router, type(uint256).max);
+    // Optional fallback sell to pools if better (rare in self-skew)
 
-        // BUY-LOW legs: USDC->BW, WETH->BW using best-of venues (V3 primary, fallback V2/Sushi)
-        uint256 eps = epsilonBps; // bps
+    // === Repay flash loans ===
+    IERC20(usdc).safeTransfer(vault, usdcIn + usdcFee);
+    IERC20(weth).safeTransfer(vault, wethIn + wethFee);
 
-        // USDC -> BW
-        uint256 usdcBwOutV3 = _quoteExactInputV3(usdc, bwaezi, usdcIn, bwUsdcFee);
-        uint256 usdcBwOutV2 = _quoteExactInputV2(uniV2Router, usdc, bwaezi, usdcIn);
-        uint256 usdcBwOutSu = _quoteExactInputV2(sushiRouter, usdc, bwaezi, usdcIn);
+    // Accrue residuals (profit) to SCW
+    uint256 residualUsdc = IERC20(usdc).balanceOf(address(this));
+    uint256 residualWeth = IERC20(weth).balanceOf(address(this));
+    if (residualUsdc > 0) IERC20(usdc).safeTransfer(scw, residualUsdc);
+    if (residualWeth > 0) IERC20(weth).safeTransfer(scw, residualWeth);
 
-        uint256 usdcBwOut = _max3(usdcBwOutV3, usdcBwOutV2, usdcBwOutSu);
-        uint256 usdcMinOut = usdcBwOut * (10000 - eps) / 10000;
+    // Your original post-cycle logic
+    _maybeTopEntryPoint(ethUsd1e18);
 
-        uint256 bwFromUSDC = _swapBestIn(usdc, bwaezi, usdcIn, usdcMinOut, bwUsdcFee);
+    cycleCount += 1;
+    emit CycleExecuted(bundleId, usdcIn, wethIn, bwToSell, residualUsdc, residualWeth);
 
-        // WETH -> BW
-        uint256 wethBwOutV3 = _quoteExactInputV3(weth, bwaezi, wethIn, bwWethFee);
-        uint256 wethBwOutV2 = _quoteExactInputV2(uniV2Router, weth, bwaezi, wethIn);
-        uint256 wethBwOutSu = _quoteExactInputV2(sushiRouter, weth, bwaezi, wethIn);
+    if (cycleCount % checkpointPeriod == 0) {
+        _reinvestDrip(usdcUSD1e18, wethUSD1e18, ethUsd1e18, spreadFromQuotes());
+    }
+}
 
-        uint256 wethBwOut = _max3(wethBwOutV3, wethBwOutV2, wethBwOutSu);
-        uint256 wethMinOut = wethBwOut * (10000 - eps) / 10000;
-
-        uint256 bwFromWETH = _swapBestIn(weth, bwaezi, wethIn, wethMinOut, bwWethFee);
-
-        uint256 bwBought = bwFromUSDC + bwFromWETH;
 
         // SELL-HIGH leg: use SCW inventory to sell at priciest venue (BW->USDC)
         uint256 scwAllowance = IERC20(bwaezi).allowance(scw, address(this));
