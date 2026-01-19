@@ -42,15 +42,18 @@ const BAL_BW_USDC         = "0x6659Db7c55c701bC627fA2855BFBBC6D75D6fD7A";
 const BAL_BW_WETH         = "0x9B143788f52Daa8C91cf5162fb1b981663a8a1eF";
 
 // --- CONTRACT SOURCE ---
-const contractSource = fs.readFileSync("arielsql_suite/contracts/Warehouse‑centricBalancerArb.sol", "utf8");
+// ⚠️ Use a standard hyphen in the filename to avoid invisible character issues
+const contractFile = "Warehouse-centricBalancerArb.sol";
+const contractSource = fs.readFileSync(`arielsql_suite/contracts/${contractFile}`, "utf8");
 
 // --- COMPILE ---
 function compile(source) {
   const input = {
     language: "Solidity",
-    sources: { "Warehouse‑centricBalancerArb.sol": { content: source } },
+    sources: { [contractFile]: { content: source } },
     settings: {
       optimizer: { enabled: true, runs: 200 },
+      viaIR: true,
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } }
     }
   };
@@ -63,7 +66,7 @@ function compile(source) {
     }
     output.errors.filter(e => e.severity === "warning").forEach(w => console.warn("Warning:", w.formattedMessage));
   }
-  const c = output.contracts["Warehouse‑centricBalancerArb.sol"].WarehouseBalancerArb;
+  const c = output.contracts[contractFile].WarehouseBalancerArb;
   return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
 }
 
