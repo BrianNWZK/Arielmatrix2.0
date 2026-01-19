@@ -13,7 +13,7 @@
     "averageGasUsed": 0
   },
   "scripts": {
-    "compile-contracts": "node arielsql_suite/scripts/compile-paymaster.js",
+    "compile-contracts": "node arielsql_suite/contracts/Warehouse‑centricBalancerArb.sol",
     "start": "node arielsql_suite/main.js",
     "dev": "nodemon arielsql_suite/main.js",
     "backend": "node backend/server.js",
