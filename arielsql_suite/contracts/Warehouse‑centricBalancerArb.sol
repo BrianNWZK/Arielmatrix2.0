@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+
 /*
   MEV v17 — WarehouseBalancerArb (final production)
   - Strict access control (owner or SCW) and private-submission-safe design
@@ -15,6 +16,7 @@ pragma solidity ^0.8.24;
   - Eight pools wired via constructor
   - Reinvestment drip + paymaster top-up
 */
+
 
 interface IERC20 {
     function allowance(address owner, address spender) external view returns (uint256);
