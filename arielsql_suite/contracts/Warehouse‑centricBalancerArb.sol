@@ -138,13 +138,20 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
     /* --- Custom Errors --- */
     error NotAuthorized();
-    error Paused();
+    error ContractPaused();   // renamed from Paused() to avoid clash
     error InactiveBundle();
     error StalePrice();
     error Reentrancy();
     error BadSignature();
     error ZeroLoan();
     error BadPool();
+
+    /* --- Events --- */
+    event OwnerChanged(address indexed newOwner);
+    event PausedStatus(bool status);  // renamed event
+    event ConfigUpdated();
+    event AdaptiveParamsUpdated();
+    // ... other events remain unchanged
 
     /* --- Ownership & access --- */
     address public owner;
@@ -172,7 +179,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     address public immutable uniV2Router;
     address public immutable sushiRouter;
     address public immutable quoter;
-    address public immutable entryPoint;
+    IEntryPoint public immutable entryPoint;   // fixed: typed as interface
     address public immutable chainlinkEthUsd;
 
     /* --- Pools (addresses) --- */
