@@ -1,9 +1,8 @@
 // main.js
 // Compile + deploy WarehouseBalancerArb (MEV v17/v18)
-// - Checksummed addresses (EIP-55)
+// - Lowercase -> checksummed normalization (ethers v6 safe)
 // - Dynamic Balancer poolId fetching
-// - viaIR enabled to avoid "stack too deep"
-// - Clear constructor arg order (22 args)
+// - viaIR enabled
 
 import fs from "fs";
 import path from "path";
@@ -19,40 +18,41 @@ const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
-// --- Addresses (raw) ---
+// --- RAW ADDRESSES (ALL LOWERCASE) ---
 const RAW = {
   // Core
-  SCW:              "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2",
-  BALANCER_VAULT:   "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
-  BWAEZI:           "0x54D1C2889B08CAD0932266EAde15eC884fA0CdC2", // corrected checksum
-  USDC:             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-  WETH:             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  scw:              "0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2",
+  balancer_vault:   "0xba12222222228d8ba445958a75a0704d566bf2c8",
+  bwaezi:           "0x54d1c2889b08cad0932266eade15ec884fa0cdc2",
+  usdc:             "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+  weth:             "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 
   // Routers & infra
-  UNIV3_ROUTER:     "0xE592427A0AEce92De3Edee1F18E0157C05861564",
-  UNIV2_ROUTER:     "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-  SUSHI_ROUTER:     "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F",
-  QUOTER_V2:        "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6",
-  ENTRYPOINT:       "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
-  CHAINLINK_ETHUSD: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+  univ3_router:     "0xe592427a0aece92de3edee1f18e0157c05861564",
+  univ2_router:     "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+  sushi_router:     "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",
+  quoter_v2:        "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6",
+  entrypoint:       "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
+  chainlink_ethusd: "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
 
   // Pools (addresses)
-  UNIV3_BW_USDC:    "0x261c64D4D96EbFA14398B52d93C9D063E3A619F8",
-  UNIV3_BW_WETH:    "0x142C3dCE0A5605Fb385fae7760302fAB761022AA",
-  UNIV2_BW_USDC:    "0xb3911905F8A6160Ef89391442F85ecA7C397859C",
-  UNIV2_BW_WETH:    "0x6Df6F882ED69918349F75Fe397B37e62C04515B6",
-  SUSHI_BW_USDC:    "0x9d2F8F9A2E3C240dECbbE23e9B3521E6ca2489D1",
-  SUSHI_BW_WETH:    "0xE9E62C8Cc585C21Fb05Fd82Fb68E0129711869F9",
-  BAL_BW_USDC:      "0x6659Db7c55C701bC627FA2855BFBBC6D75D6fD7A",
-  BAL_BW_WETH:      "0x9B143788F52Daa8C91cf5162Fb1B981663A8A1eF",
+  univ3_bw_usdc:    "0x261c64d4d96ebfa14398b52d93c9d063e3a619f8",
+  univ3_bw_weth:    "0x142c3dce0a5605fb385fae7760302fab761022aa",
+  univ2_bw_usdc:    "0xb3911905f8a6160ef89391442f85eca7c397859c",
+  univ2_bw_weth:    "0x6df6f882ed69918349f75fe397b37e62c04515b6",
+  sushi_bw_usdc:    "0x9d2f8f9a2e3c240decbbe23e9b3521e6ca2489d1",
+  sushi_bw_weth:    "0xe9e62c8cc585c21fb05fd82fb68e0129711869f9",
+  bal_bw_usdc:      "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
+  bal_bw_weth:      "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef",
 
   // Position manager
-  POSITION_MANAGER: "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
+  position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88"
 };
 
 // --- Helpers ---
 function checksum(addr) {
-  return ethers.getAddress(addr);
+  // Force lowercase first to avoid ethers v6 mixed-case rejection
+  return ethers.getAddress(addr.toLowerCase());
 }
 
 function findContractFile() {
@@ -104,7 +104,6 @@ function compile(source, fileName) {
   };
 }
 
-// --- Fetch Balancer poolIds from pool addresses ---
 async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) {
   const poolAbi = ["function getPoolId() external view returns (bytes32)"];
   const usdcPool = new ethers.Contract(balPoolAddrUSDC, poolAbi, provider);
@@ -118,25 +117,42 @@ async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) 
 async function main() {
   console.log("=== Compile + Deploy WarehouseBalancerArb ===");
 
-  // Contract file
   const { baseDir, file, fullPath } = findContractFile();
   console.log("Source file:", fullPath);
   const source = fs.readFileSync(fullPath, "utf8");
 
-  // Compile
   const { abi, bytecode, deployedSize } = compile(source, file);
   console.log(`Deployed bytecode size: ${deployedSize} bytes`);
 
-  // Provider & wallet
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
   console.log("Deployer:", wallet.address);
   console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
 
-  // Checksummed addresses
-  const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k, checksum(v)]));
+  // Normalize all addresses (lowercase -> checksum)
+  const A = {
+    SCW:              checksum(RAW.scw),
+    BALANCER_VAULT:   checksum(RAW.balancer_vault),
+    BWAEZI:           checksum(RAW.bwaezi),
+    USDC:             checksum(RAW.usdc),
+    WETH:             checksum(RAW.weth),
+    UNIV3_ROUTER:     checksum(RAW.univ3_router),
+    UNIV2_ROUTER:     checksum(RAW.univ2_router),
+    SUSHI_ROUTER:     checksum(RAW.sushi_router),
+    QUOTER_V2:        checksum(RAW.quoter_v2),
+    ENTRYPOINT:       checksum(RAW.entrypoint),
+    CHAINLINK_ETHUSD: checksum(RAW.chainlink_ethusd),
+    UNIV3_BW_USDC:    checksum(RAW.univ3_bw_usdc),
+    UNIV3_BW_WETH:    checksum(RAW.univ3_bw_weth),
+    UNIV2_BW_USDC:    checksum(RAW.univ2_bw_usdc),
+    UNIV2_BW_WETH:    checksum(RAW.univ2_bw_weth),
+    SUSHI_BW_USDC:    checksum(RAW.sushi_bw_usdc),
+    SUSHI_BW_WETH:    checksum(RAW.sushi_bw_weth),
+    BAL_BW_USDC:      checksum(RAW.bal_bw_usdc),
+    BAL_BW_WETH:      checksum(RAW.bal_bw_weth),
+    POSITION_MANAGER: checksum(RAW.position_manager)
+  };
 
-  // Dynamic Balancer poolIds
   console.log("Fetching Balancer pool IDs...");
   const { usdcId: BAL_BW_USDC_ID, wethId: BAL_BW_WETH_ID } = await fetchBalancerPoolIds(
     provider,
@@ -146,7 +162,6 @@ async function main() {
   console.log("BAL_BW_USDC_ID:", BAL_BW_USDC_ID);
   console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
 
-  // Constructor args (22 total)
   const args = [
     A.SCW,
     A.BALANCER_VAULT,
@@ -172,16 +187,15 @@ async function main() {
     A.POSITION_MANAGER
   ];
 
-  // Deploy
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
 
-  // Optional: estimate gas to catch constructor reverts early
+  // Optional preflight: estimate gas (may revert if constructor checks fail)
   try {
     const txReq = await factory.getDeployTransaction(...args);
     const est = await provider.estimateGas(txReq);
     console.log("Estimated gas:", est.toString());
   } catch (e) {
-    console.warn("Gas estimation failed (may still deploy if inputs are valid):", e.message);
+    console.warn("Gas estimation failed (constructor may revert or balance low):", e.message);
   }
 
   const contract = await factory.deploy(...args);
@@ -191,7 +205,6 @@ async function main() {
   const addr = await contract.getAddress();
   console.log("✅ Deployed at:", addr);
 
-  // Persist deployment info
   const info = {
     address: addr,
     tx: contract.deploymentTransaction().hash,
