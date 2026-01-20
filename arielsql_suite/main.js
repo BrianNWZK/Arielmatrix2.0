@@ -1,5 +1,5 @@
 // main.js
-// Standalone compile + deploy for WarehouseBalancerArb (MEV v17)
+// Standalone compile + deploy for WarehouseBalancerArb (MEV v17/v18 compatible)
 // Requires: npm i ethers solc dotenv dotenv-expand
 // Usage: node main.js
 
@@ -17,7 +17,7 @@ const RPC_URL     = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com"
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
-// === Exact addresses from your logs ===
+// === Exact addresses from your logs (update as needed) ===
 
 // Core wiring
 const SCW                 = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2"; // Smart Contract Wallet
@@ -32,7 +32,7 @@ const QUOTER_V2           = "0xb27308f9F90d607463bb33eA1BeBb41C27CE5AB6";
 const ENTRYPOINT          = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789";
 const CHAINLINK_ETHUSD    = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419";
 
-// Pools wiring (from your logs)
+// Pools wiring
 const UNIV3_BW_USDC       = "0x261c64d4d96EBfa14398B52D93C9d063E3a619f8";
 const UNIV3_BW_WETH       = "0x142C3dce0a5605Fb385fAe7760302fab761022aa";
 const UNIV2_BW_USDC       = "0xb3911905f8a6160eF89391442f85ecA7c397859c";
@@ -41,6 +41,14 @@ const SUSHI_BW_USDC       = "0x9d2f8F9A2E3C240dECbbE23e9B3521E6ca2489D1";
 const SUSHI_BW_WETH       = "0xE9E62C8Cc585C21Fb05fd82Fb68e0129711869f9";
 const BAL_BW_USDC         = "0x6659Db7c55c701bC627fA2855BFBBC6D75D6fD7A";
 const BAL_BW_WETH         = "0x9B143788f52Daa8C91cf5162fb1b981663a8a1eF";
+
+// Balancer pool IDs (bytes32) — REQUIRED by constructor
+// Replace with the actual pool IDs for your Balancer pools.
+const BAL_BW_USDC_ID      = "0x0000000000000000000000006659db7c55c701bc627fa2855bfbbc6d75d6fd7a00020000000000000000000000";
+const BAL_BW_WETH_ID      = "0x0000000000000000000000009b143788f52daa8c91cf5162fb1b981663a8a1ef00020000000000000000000000";
+
+// Uniswap V3 NonfungiblePositionManager — REQUIRED by constructor
+const POSITION_MANAGER    = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
 
 // --- CONTRACT SOURCE PATH (robust to non-ASCII hyphen) ---
 const baseDir = "arielsql_suite/scripts";
@@ -71,8 +79,9 @@ function compile(source) {
     language: "Solidity",
     sources: { [contractFile]: { content: source } },
     settings: {
-      optimizer: { enabled: true, runs: 200 },
-      viaIR: true,
+      optimizer: { enabled: true, runs: 500 }, // moderate runs to balance size/gas
+      // viaIR can bloat bytecode; disable unless you need it.
+      viaIR: false,
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } }
     }
   };
@@ -114,6 +123,11 @@ async function main() {
 
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
 
+  // IMPORTANT: v17/v18 constructor expects 22 arguments:
+  // SCW, BALANCER_VAULT, BWAEZI, USDC, WETH,
+  // UNIV3_ROUTER, UNIV2_ROUTER, SUSHI_ROUTER, QUOTER_V2, ENTRYPOINT, CHAINLINK_ETHUSD,
+  // UNIV3_BW_USDC, UNIV3_BW_WETH, UNIV2_BW_USDC, UNIV2_BW_WETH, SUSHI_BW_USDC, SUSHI_BW_WETH,
+  // BAL_BW_USDC, BAL_BW_WETH, BAL_BW_USDC_ID, BAL_BW_WETH_ID, POSITION_MANAGER
   const contract = await factory.deploy(
     SCW,
     BALANCER_VAULT,
@@ -133,7 +147,10 @@ async function main() {
     SUSHI_BW_USDC,
     SUSHI_BW_WETH,
     BAL_BW_USDC,
-    BAL_BW_WETH
+    BAL_BW_WETH,
+    BAL_BW_USDC_ID,
+    BAL_BW_WETH_ID,
+    POSITION_MANAGER
   );
 
   console.log("TX:", contract.deploymentTransaction().hash);
