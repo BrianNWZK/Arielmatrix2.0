@@ -4,6 +4,7 @@
 // Usage: node main.js
 
 import fs from "fs";
+import path from "path";
 import solc from "solc";
 import dotenv from "dotenv";
 import dotenvExpand from "dotenv-expand";
@@ -41,10 +42,28 @@ const SUSHI_BW_WETH       = "0xE9E62C8Cc585C21Fb05fd82Fb68e0129711869f9";
 const BAL_BW_USDC         = "0x6659Db7c55c701bC627fA2855BFBBC6D75D6fD7A";
 const BAL_BW_WETH         = "0x9B143788f52Daa8C91cf5162fb1b981663a8a1eF";
 
-// --- CONTRACT SOURCE ---
-// ⚠️ Use a standard hyphen in the filename to avoid invisible character issues
-const contractFile = "Warehouse-centricBalancerArb.sol";
-const contractSource = fs.readFileSync(`arielsql_suite/contracts/${contractFile}`, "utf8");
+// --- CONTRACT SOURCE PATH (robust to non-ASCII hyphen) ---
+const baseDir = "arielsql_suite/scripts";
+
+// The filename in the system uses a non-standard hyphen. We’ll locate it dynamically.
+function findContractFile() {
+  const files = fs.readdirSync(baseDir);
+  const target = files.find(f =>
+    f.endsWith(".sol") &&
+    f.toLowerCase().includes("warehouse") &&
+    f.toLowerCase().includes("centricbalancerarb")
+  );
+  if (!target) {
+    throw new Error(
+      `Solidity file not found in ${baseDir}. Ensure the file exists (e.g., Warehouse‑centricBalancerArb.sol).`
+    );
+  }
+  return target;
+}
+
+const contractFile = findContractFile();
+const contractPath = path.join(baseDir, contractFile);
+const contractSource = fs.readFileSync(contractPath, "utf8");
 
 // --- COMPILE ---
 function compile(source) {
@@ -64,15 +83,27 @@ function compile(source) {
       errs.forEach(e => console.error(e.formattedMessage));
       throw new Error("Compilation failed");
     }
-    output.errors.filter(e => e.severity === "warning").forEach(w => console.warn("Warning:", w.formattedMessage));
+    output.errors
+      .filter(e => e.severity === "warning")
+      .forEach(w => console.warn("Warning:", w.formattedMessage));
   }
-  const c = output.contracts[contractFile].WarehouseBalancerArb;
-  return { abi: c.abi, bytecode: "0x" + c.evm.bytecode.object };
+
+  // The contract name must match the Solidity source (WarehouseBalancerArb)
+  const compiled = output.contracts[contractFile]?.WarehouseBalancerArb;
+  if (!compiled) {
+    const available = Object.keys(output.contracts[contractFile] || {});
+    throw new Error(
+      `Contract "WarehouseBalancerArb" not found in ${contractFile}. Found: ${available.join(", ")}`
+    );
+  }
+  return { abi: compiled.abi, bytecode: "0x" + compiled.evm.bytecode.object };
 }
 
 // --- DEPLOY ---
 async function main() {
   console.log("=== Compile + Deploy WarehouseBalancerArb (MEV v17) ===");
+  console.log("Source file:", contractPath);
+
   const { abi, bytecode } = compile(contractSource);
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
