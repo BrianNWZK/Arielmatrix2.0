@@ -81,7 +81,7 @@ function compile(source) {
     settings: {
       optimizer: { enabled: true, runs: 500 }, // moderate runs to balance size/gas
       // viaIR can bloat bytecode; disable unless you need it.
-      viaIR: false,
+      viaIR: true,
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } }
     }
   };
