@@ -1,8 +1,6 @@
 // main.js
 // Compile + deploy WarehouseBalancerArb (MEV v17/v18)
-// - Lowercase -> checksummed normalization (ethers v6 safe)
-// - Dynamic Balancer poolId fetching
-// - viaIR enabled
+// Usage: node main.js
 
 import fs from "fs";
 import path from "path";
@@ -18,24 +16,19 @@ const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
-// --- RAW ADDRESSES (ALL LOWERCASE) ---
+// --- RAW ADDRESSES (all lowercase) ---
 const RAW = {
-  // Core
   scw:              "0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2",
   balancer_vault:   "0xba12222222228d8ba445958a75a0704d566bf2c8",
   bwaezi:           "0x54d1c2889b08cad0932266eade15ec884fa0cdc2",
   usdc:             "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
   weth:             "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-
-  // Routers & infra
   univ3_router:     "0xe592427a0aece92de3edee1f18e0157c05861564",
   univ2_router:     "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
   sushi_router:     "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",
   quoter_v2:        "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6",
   entrypoint:       "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
   chainlink_ethusd: "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
-
-  // Pools (addresses)
   univ3_bw_usdc:    "0x261c64d4d96ebfa14398b52d93c9d063e3a619f8",
   univ3_bw_weth:    "0x142c3dce0a5605fb385fae7760302fab761022aa",
   univ2_bw_usdc:    "0xb3911905f8a6160ef89391442f85eca7c397859c",
@@ -44,14 +37,11 @@ const RAW = {
   sushi_bw_weth:    "0xe9e62c8cc585c21fb05fd82fb68e0129711869f9",
   bal_bw_usdc:      "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
   bal_bw_weth:      "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef",
-
-  // Position manager
   position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88"
 };
 
 // --- Helpers ---
 function checksum(addr) {
-  // Force lowercase first to avoid ethers v6 mixed-case rejection
   return ethers.getAddress(addr.toLowerCase());
 }
 
@@ -62,13 +52,9 @@ function findContractFile() {
     f =>
       f.endsWith(".sol") &&
       f.toLowerCase().includes("warehouse") &&
-      (f.toLowerCase().includes("centricbalancerarb") ||
-       f.toLowerCase().includes("balancerarb"))
+      f.toLowerCase().includes("balancerarb")
   );
-  if (!target) {
-    const allSol = files.filter(f => f.endsWith(".sol"));
-    throw new Error(`Solidity file not found in ${baseDir}. Found: ${allSol.join(", ")}`);
-  }
+  if (!target) throw new Error(`Solidity file not found in ${baseDir}.`);
   return { baseDir, file: target, fullPath: path.join(baseDir, target) };
 }
 
@@ -77,7 +63,7 @@ function compile(source, fileName) {
     language: "Solidity",
     sources: { [fileName]: { content: source } },
     settings: {
-      optimizer: { enabled: true, runs: 200 },
+      optimizer: { enabled: true, runs: 1 }, // minimize bytecode size
       viaIR: true,
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
@@ -85,18 +71,14 @@ function compile(source, fileName) {
   const output = JSON.parse(solc.compile(JSON.stringify(input)));
   if (output.errors) {
     const errs = output.errors.filter(e => e.severity === "error");
-    const warns = output.errors.filter(e => e.severity === "warning");
     if (errs.length) {
       errs.forEach(e => console.error(e.formattedMessage));
       throw new Error("Compilation failed");
     }
-    warns.forEach(w => console.warn("Warning:", w.formattedMessage));
+    output.errors.filter(e => e.severity === "warning").forEach(w => console.warn("Warning:", w.formattedMessage));
   }
   const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
-  if (!compiled) {
-    const available = Object.keys(output.contracts[fileName] || {});
-    throw new Error(`Contract WarehouseBalancerArb not found. Available: ${available.join(", ")}`);
-  }
+  if (!compiled) throw new Error("Contract WarehouseBalancerArb not found.");
   return {
     abi: compiled.abi,
     bytecode: "0x" + compiled.evm.bytecode.object,
@@ -129,30 +111,10 @@ async function main() {
   console.log("Deployer:", wallet.address);
   console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
 
-  // Normalize all addresses (lowercase -> checksum)
-  const A = {
-    SCW:              checksum(RAW.scw),
-    BALANCER_VAULT:   checksum(RAW.balancer_vault),
-    BWAEZI:           checksum(RAW.bwaezi),
-    USDC:             checksum(RAW.usdc),
-    WETH:             checksum(RAW.weth),
-    UNIV3_ROUTER:     checksum(RAW.univ3_router),
-    UNIV2_ROUTER:     checksum(RAW.univ2_router),
-    SUSHI_ROUTER:     checksum(RAW.sushi_router),
-    QUOTER_V2:        checksum(RAW.quoter_v2),
-    ENTRYPOINT:       checksum(RAW.entrypoint),
-    CHAINLINK_ETHUSD: checksum(RAW.chainlink_ethusd),
-    UNIV3_BW_USDC:    checksum(RAW.univ3_bw_usdc),
-    UNIV3_BW_WETH:    checksum(RAW.univ3_bw_weth),
-    UNIV2_BW_USDC:    checksum(RAW.univ2_bw_usdc),
-    UNIV2_BW_WETH:    checksum(RAW.univ2_bw_weth),
-    SUSHI_BW_USDC:    checksum(RAW.sushi_bw_usdc),
-    SUSHI_BW_WETH:    checksum(RAW.sushi_bw_weth),
-    BAL_BW_USDC:      checksum(RAW.bal_bw_usdc),
-    BAL_BW_WETH:      checksum(RAW.bal_bw_weth),
-    POSITION_MANAGER: checksum(RAW.position_manager)
-  };
+  // Normalize addresses
+  const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
 
+  // Fetch Balancer pool IDs
   console.log("Fetching Balancer pool IDs...");
   const { usdcId: BAL_BW_USDC_ID, wethId: BAL_BW_WETH_ID } = await fetchBalancerPoolIds(
     provider,
@@ -189,13 +151,12 @@ async function main() {
 
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
 
-  // Optional preflight: estimate gas (may revert if constructor checks fail)
   try {
     const txReq = await factory.getDeployTransaction(...args);
     const est = await provider.estimateGas(txReq);
     console.log("Estimated gas:", est.toString());
   } catch (e) {
-    console.warn("Gas estimation failed (constructor may revert or balance low):", e.message);
+    console.warn("Gas estimation failed:", e.message);
   }
 
   const contract = await factory.deploy(...args);
@@ -205,7 +166,7 @@ async function main() {
   const addr = await contract.getAddress();
   console.log("✅ Deployed at:", addr);
 
-  const info = {
+    const info = {
     address: addr,
     tx: contract.deploymentTransaction().hash,
     deployer: wallet.address,
@@ -213,11 +174,17 @@ async function main() {
     network: await provider.getNetwork(),
     timestamp: new Date().toISOString()
   };
+
   fs.writeFileSync("deployment-info.json", JSON.stringify(info, null, 2));
   console.log("Saved deployment-info.json");
 }
 
+// --- Run ---
 main().catch(err => {
   console.error("❌ Deployment failed:", err.message);
+  console.error("Troubleshooting tips:");
+  console.error("1. Ensure deployer wallet has sufficient ETH for gas");
+  console.error("2. Verify all constructor arguments are valid addresses and pool IDs");
+  console.error("3. Contract size warnings may require optimizer runs=1 or splitting into libraries");
   process.exit(1);
 });
