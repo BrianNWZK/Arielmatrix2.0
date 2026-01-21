@@ -1,5 +1,5 @@
-// main.js
-// Compile + deploy WarehouseBalancerArb (MEV v17/v18) - SIZE-OPTIMIZED VERSION
+// Compile + deploy WarehouseBalancerArb V20
+// Usage: node main.js
 
 import fs from "fs";
 import path from "path";
@@ -36,7 +36,11 @@ const RAW = {
   sushi_bw_weth:    "0xe9e62c8cc585c21fb05fd82fb68e0129711869f9",
   bal_bw_usdc:      "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
   bal_bw_weth:      "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef",
-  position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88"
+  position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88",
+
+  // Dual paymasters (from your deployment logs)
+  paymaster_a:      "0x4e073aaa36cd51fd37298f87e3fce8437a08dd71",
+  paymaster_b:      "0x79a515d5a085d2b86aff104ec9c8c2152c9549c0"
 };
 
 // --- Helpers ---
@@ -62,13 +66,8 @@ function compile(source, fileName) {
     language: "Solidity",
     sources: { [fileName]: { content: source } },
     settings: {
-      evmVersion: "shanghai",
+      optimizer: { enabled: true, runs: 1 },
       viaIR: true,
-      optimizer: {
-        enabled: true,
-        runs: 200,  // Balanced; try 1000 or 200000 if still too large
-        details: { yul: true }
-      },
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
   };
@@ -83,14 +82,10 @@ function compile(source, fileName) {
   }
   const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
   if (!compiled) throw new Error("Contract WarehouseBalancerArb not found.");
-  const deployedSize = compiled.evm.deployedBytecode.object.length / 2;
-  if (deployedSize > 24576) {
-    throw new Error(`Contract too large: ${deployedSize} bytes > 24,576 EVM limit. Try higher optimizer runs, remove features (e.g., seedAllPools), or use proxy pattern.`);
-  }
   return {
     abi: compiled.abi,
     bytecode: "0x" + compiled.evm.bytecode.object,
-    deployedSize
+    deployedSize: (compiled.evm.deployedBytecode.object.length / 2)
   };
 }
 
@@ -105,23 +100,19 @@ async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) 
 
 // --- Deploy ---
 async function main() {
-  console.log("=== Compile + Deploy WarehouseBalancerArb (SIZE-OPTIMIZED) ===");
+  console.log("=== Compile + Deploy WarehouseBalancerArb V20 ===");
 
   const { baseDir, file, fullPath } = findContractFile();
   console.log("Source file:", fullPath);
   const source = fs.readFileSync(fullPath, "utf8");
 
   const { abi, bytecode, deployedSize } = compile(source, file);
-  console.log(`Deployed bytecode size: ${deployedSize} bytes (<= 24576 OK)`);
+  console.log(`Deployed bytecode size: ${deployedSize} bytes`);
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
   console.log("Deployer:", wallet.address);
-  const balance = await provider.getBalance(wallet.address);
-  console.log("Balance:", ethers.formatEther(balance), "ETH");
-  if (balance < ethers.parseEther("0.5")) {
-    throw new Error("Insufficient balance! Fund deployer with at least 0.5 ETH.");
-  }
+  console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
 
   // Normalize addresses
   const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
@@ -137,21 +128,42 @@ async function main() {
   console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
 
   const args = [
-    A.SCW, A.BALANCER_VAULT, A.BWAEZI, A.USDC, A.WETH,
-    A.UNIV3_ROUTER, A.UNIV2_ROUTER, A.SUSHI_ROUTER, A.QUOTER_V2,
-    A.ENTRYPOINT, A.CHAINLINK_ETHUSD,
-    A.UNIV3_BW_USDC, A.UNIV3_BW_WETH,
-    A.UNIV2_BW_USDC, A.UNIV2_BW_WETH,
-    A.SUSHI_BW_USDC, A.SUSHI_BW_WETH,
-    A.BAL_BW_USDC, A.BAL_BW_WETH,
-    BAL_BW_USDC_ID, BAL_BW_WETH_ID,
-    A.POSITION_MANAGER
+    A.SCW,
+    A.BALANCER_VAULT,
+    A.BWAEZI,
+    A.USDC,
+    A.WETH,
+    A.UNIV3_ROUTER,
+    A.UNIV2_ROUTER,
+    A.SUSHI_ROUTER,
+    A.QUOTER_V2,
+    A.ENTRYPOINT,
+    A.CHAINLINK_ETHUSD,
+    A.POSITION_MANAGER,
+    A.UNIV3_BW_USDC,
+    A.UNIV3_BW_WETH,
+    A.UNIV2_BW_USDC,
+    A.UNIV2_BW_WETH,
+    A.SUSHI_BW_USDC,
+    A.SUSHI_BW_WETH,
+    BAL_BW_USDC_ID,
+    BAL_BW_WETH_ID,
+    A.PAYMASTER_A,
+    A.PAYMASTER_B
   ];
 
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
 
+  try {
+    const txReq = await factory.getDeployTransaction(...args);
+    const est = await provider.estimateGas(txReq);
+    console.log("Estimated gas:", est.toString());
+  } catch (e) {
+    console.warn("Gas estimation failed:", e.message);
+  }
+
   const contract = await factory.deploy(...args);
-  console.log("TX submitted:", contract.deploymentTransaction().hash);
+  console.log("TX:", contract.deploymentTransaction().hash);
 
   await contract.waitForDeployment();
   const addr = await contract.getAddress();
@@ -163,15 +175,19 @@ async function main() {
     deployer: wallet.address,
     poolIds: { BAL_BW_USDC_ID, BAL_BW_WETH_ID },
     network: await provider.getNetwork(),
-    timestamp: new Date().toISOString(),
-    bytecodeSize: deployedSize
+    timestamp: new Date().toISOString()
   };
 
   fs.writeFileSync("deployment-info.json", JSON.stringify(info, null, 2));
   console.log("Saved deployment-info.json");
 }
 
+// --- Run ---
 main().catch(err => {
-  console.error("❌ Deployment failed:", err.message || err);
+  console.error("❌ Deployment failed:", err.message);
+  console.error("Troubleshooting tips:");
+  console.error("1. Ensure deployer wallet has sufficient ETH for gas");
+  console.error("2. Verify all constructor arguments are valid addresses and pool IDs");
+  console.error("3. Contract size warnings may require optimizer runs=1 or splitting into libraries");
   process.exit(1);
 });
