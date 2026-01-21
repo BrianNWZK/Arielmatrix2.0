@@ -2,37 +2,22 @@
 pragma solidity ^0.8.24;
 
 /*
-  MEV v18 — WarehouseBalancerArb (final production MEV-hardened + self-sustaining)
-
-  Upgrades over v17:
-    1) Emergency withdrawals:
-       - ETH withdraw (unwrapped from WETH when topping paymaster is not enough)
-       - Token withdraw (retained)
-    2) Recover stuck NFTs / LP positions:
-       - Generic ERC721 rescue (e.g., Uniswap V3 position NFTs)
-       - Generic ERC1155 rescue (optional LP receipts)
-    3) Circuit breaker for rapid price changes:
-       - Guard against sudden buy/sell price deviations vs. last observed price
-       - Configurable max deviation (bps) and lookback enable/disable
-    4) Gas optimizations:
-       - Cache IERC20(bwaezi) in immutable storage (BW)
-       - Use unchecked arithmetic where safe
-       - Consolidate approvals—leave only approvals from this contract (SCW assumed unlimited)
-       - Batch approvals utility
-       - Leaner SafeERC20 with assembly return handling and no forced zero-reset unless needed
-    5) Minor internal caching and micro-optimizations without changing core logic
-
-  Highlights (unchanged capabilities):
-    - Balancer Vault flash loans (USDC, WETH)
-    - SCW acts as internal counterparty (buy/sell legs) with pool fallbacks
-    - Dynamic internal pricing (V3/V2/Sushi + Balancer spot), normalized to 1e18 USD
-    - Chainlink ETH/USD freshness checks
-    - Reentrancy guard on all external state-changing entry points
-    - EIP-712 signed kickers (single + batch) with nonce tracking
-    - Full 8-pool reinvest + initial seeding:
-        * Uniswap V3 mint via INonfungiblePositionManager
-        * Uniswap V2/Sushi addLiquidity
-        * Balancer joins using stored pool IDs
+  MEV v20 — WarehouseBalancerArb (MV19 + MV18 best features, compact)
+  - Strict access (owner or SCW), nonReentrant, pause
+  - Signature-gated kicks (EIP-712) single/batch with nonce + deadline
+  - Balancer Vault flash loans (USDC, WETH)
+  - Internal market-maker priority (SCW) for buy/sell legs
+  - Routing: Uniswap V3 primary, Uniswap V2/Sushi fallback
+  - Tight slippage (epsilonBps cap), short deadlines
+  - Adaptive sizing (alpha/beta/gamma/kappa), per-leg safe caps
+  - Dynamic blended internal pricing (Balancer spot + venue quotes)
+  - Circuit breaker (maxDeviationBps) with Chainlink freshness checks
+  - 8-venue reinvest drip (compact best-effort)
+  - Dual paymasters; top-up only if deposit below target (check first)
+  - Emergency rescues: ERC20, ETH (unwrap WETH), ERC721, ERC1155
+  - Module toggles: REINVEST, PAYMASTER_TOPUP, CIRCUIT_BREAKER
+  - Assembly SafeERC20; custom errors; unchecked math where safe
+  - viaIR=true, runs=1, yul=true, revertStrings="strip"
 */
 
 interface IERC20 {
@@ -66,7 +51,7 @@ interface IUniswapV3Router {
     struct ExactInputSingleParams {
         address tokenIn;
         address tokenOut;
-        uint24 fee;
+        uint24  fee;
         address recipient;
         uint256 deadline;
         uint256 amountIn;
@@ -81,9 +66,9 @@ interface IQuoterV2 {
         address tokenIn,
         address tokenOut,
         uint256 amountIn,
-        uint24 fee,
+        uint24  fee,
         uint160 sqrtPriceLimitX96
-    ) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate);
+    ) external returns (uint256 amountOut, uint160, uint32, uint256);
 }
 
 interface IChainlinkFeed {
@@ -101,7 +86,7 @@ interface IBalancerVault {
     }
 
     function joinPool(bytes32 poolId, address sender, address recipient, JoinPoolRequest calldata request) external payable;
-    function getPoolTokens(bytes32 poolId) external view returns (address[] memory tokens, uint256[] memory balances, uint256 lastChangeBlock);
+    function getPoolTokens(bytes32 poolId) external view returns (address[] memory tokens, uint256[] memory balances, uint256);
 }
 
 interface IFlashLoanRecipient {
@@ -113,17 +98,10 @@ interface IUniswapV2Router {
     function swapExactTokensForTokens(
         uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline
     ) external returns (uint256[] memory amounts);
-
     function addLiquidity(
-        address tokenA,
-        address tokenB,
-        uint256 amountADesired,
-        uint256 amountBDesired,
-        uint256 amountAMin,
-        uint256 amountBMin,
-        address to,
-        uint256 deadline
-    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+        address tokenA, address tokenB, uint256 amountA, uint256 amountB,
+        uint256 amountAMin, uint256 amountBMin, address to, uint256 deadline
+    ) external returns (uint256, uint256, uint256);
 }
 
 interface INonfungiblePositionManager {
@@ -140,84 +118,59 @@ interface INonfungiblePositionManager {
         address recipient;
         uint256 deadline;
     }
-    function mint(MintParams calldata params) external payable returns (
-        uint256 tokenId,
-        uint128 liquidity,
-        uint256 amount0,
-        uint256 amount1
-    );
+    function mint(MintParams calldata params) external payable returns (uint256, uint128, uint256, uint256);
 }
 
-/* ----------------------------- Gas-efficient SafeERC20 ----------------------------- */
+/* ----------------------------- Libraries ----------------------------- */
 library SafeERC20 {
     function safeTransfer(IERC20 t, address to, uint256 v) internal {
         assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, 0xa9059cbb00000000000000000000000000000000000000000000000000000000) // transfer selector
-            mstore(add(ptr, 4), to)
-            mstore(add(ptr, 36), v)
-            let success := call(gas(), t, 0, ptr, 68, 0, 0)
-            if iszero(success) { revert(0, 0) }
+            let p := mload(0x40)
+            mstore(p, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
+            mstore(add(p, 4), to)
+            mstore(add(p, 36), v)
+            if iszero(call(gas(), t, 0, p, 68, 0, 0)) { revert(0, 0) }
         }
     }
-
     function safeTransferFrom(IERC20 t, address f, address to, uint256 v) internal {
         assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, 0x23b872dd00000000000000000000000000000000000000000000000000000000) // transferFrom
-            mstore(add(ptr, 4), f)
-            mstore(add(ptr, 36), to)
-            mstore(add(ptr, 68), v)
-            let success := call(gas(), t, 0, ptr, 100, 0, 0)
-            if iszero(success) { revert(0, 0) }
+            let p := mload(0x40)
+            mstore(p, 0x23b872dd00000000000000000000000000000000000000000000000000000000)
+            mstore(add(p, 4), f)
+            mstore(add(p, 36), to)
+            mstore(add(p, 68), v)
+            if iszero(call(gas(), t, 0, p, 100, 0, 0)) { revert(0, 0) }
         }
     }
-
-    // Approve without forced zero-reset; caller should manage non-standard tokens separately.
     function safeApprove(IERC20 t, address s, uint256 v) internal {
         assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, 0x095ea7b300000000000000000000000000000000000000000000000000000000) // approve
-            mstore(add(ptr, 4), s)
-            mstore(add(ptr, 36), v)
-            let success := call(gas(), t, 0, ptr, 68, 0, 0)
-            if iszero(success) { revert(0, 0) }
+            let p := mload(0x40)
+            mstore(p, 0x095ea7b300000000000000000000000000000000000000000000000000000000)
+            mstore(add(p, 4), s)
+            mstore(add(p, 36), v)
+            if iszero(call(gas(), t, 0, p, 68, 0, 0)) { revert(0, 0) }
         }
     }
 }
 
+/* ----------------------------- Contract ----------------------------- */
 contract WarehouseBalancerArb is IFlashLoanRecipient {
     using SafeERC20 for IERC20;
 
-    /* --- Custom Errors --- */
+    /* --- Errors --- */
     error NotAuthorized();
-    error ContractPaused();
-    error InactiveBundle();
-    error StalePrice();
+    error Paused();
+    error BadArgs();
     error Reentrancy();
-    error BadSignature();
+    error SlippageTooLoose();
+    error Expired();
+    error Inactive();
+    error Used();
+    error NoQuote();
     error ZeroLoan();
     error BadPool();
     error CircuitBreak();
-
-    /* --- Events --- */
-    event OwnerChanged(address indexed newOwner);
-    event Paused(bool status);
-    event ConfigUpdated();
-    event AdaptiveParamsUpdated();
-    event BundleStaged(uint256 indexed bundleId, BundleConfig cfg);
-    event BundleCancelled(uint256 indexed bundleId);
-    event BundleKicked(uint256 indexed bundleId);
-    event BatchedKick(uint256 count);
-    event CycleExecuted(uint256 indexed bundleId, uint256 usdcLoan, uint256 wethLoan, uint256 bwBought, uint256 usdcProfit, uint256 wethProfit);
-    event Reinvested(uint256 rBps, uint256 usdcIntoPools, uint256 wethIntoPools);
-    event PaymasterTopped(uint256 ethAdded, uint256 newBalance);
-    event InternalBuyLeg(uint256 bwDirect, uint256 usdcIn, uint256 wethIn);
-    event PartialInternalBuy(uint256 bwDirect, uint256 bwPool);
-    event InternalSellLeg(uint256 bwToScw, uint256 stablesValue1e18);
-    event PoolsSeeded(uint256 usdcUsed, uint256 wethUsed, uint256 bwUsed);
-    event CircuitBreakerUpdated(uint256 maxDeviationBps, bool enabled);
-    event BatchApproved(address spender, uint256 amount, uint256 count);
+    error StalePrice();
 
     /* --- Ownership & access --- */
     address public owner;
@@ -227,75 +180,63 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         _;
     }
 
-    /* --- Reentrancy Guard --- */
-    uint256 private _entered;
-    modifier nonReentrant() {
-        if (_entered == 1) revert Reentrancy();
-        _entered = 1;
-        _;
-        _entered = 0;
-    }
-
     /* --- Core addresses --- */
     address public immutable vault;
     address public immutable bwaezi;
+    IERC20  public immutable BWZC;
     address public immutable usdc;
     address public immutable weth;
     address public immutable uniV3Router;
     address public immutable uniV2Router;
     address public immutable sushiRouter;
     address public immutable quoter;
-    IEntryPoint public immutable entryPoint;
+    address public immutable entryPoint;
     address public immutable chainlinkEthUsd;
+    address public immutable positionManager;
 
-    /* --- Cached token (gas) --- */
-    IERC20 public immutable BW; // cached IERC20 for bwaezi
-
-    /* --- Venue pools (addresses) --- */
+    /* --- Venue pools (wired via constructor) --- */
     address public immutable uniV3BWUSDC;
     address public immutable uniV3BWWETH;
     address public immutable uniV2BWUSDC;
     address public immutable uniV2BWWETH;
     address public immutable sushiBWUSDC;
     address public immutable sushiBWWETH;
-    address public immutable balBWUSDC;
-    address public immutable balBWWETH;
-
-    /* --- Balancer pool IDs --- */
     bytes32 public immutable balBWUSDCId;
     bytes32 public immutable balBWWETHId;
 
-    /* --- Uniswap V3 position manager (for mint) --- */
-    address public immutable positionManager;
+    /* --- Paymasters --- */
+    address public immutable paymasterA;
+    address public immutable paymasterB;
+    uint8   public activePaymaster; // 0 = A, 1 = B
 
     /* --- Config --- */
-    uint24 public bwUsdcFee;
-    uint24 public bwWethFee;
-    uint256 public epsilonBps;
-    uint256 public maxDeadline;
-    bool public paused;
+    uint24  public bwUsdcFee;
+    uint24  public bwWethFee;
+    uint256 public epsilonBps;       // <= 50
+    uint256 public maxDeadline;      // seconds
+    bool    public paused;
 
-    /* --- Adaptive --- */
+    /* --- Adaptive sizing params (1e18 fixed-point) --- */
     uint256 public alpha;
     uint256 public beta;
     uint256 public gamma;
     uint256 public kappa;
 
-    /* --- Reinvest & Paymaster --- */
+    /* --- Reinvestment & paymaster --- */
     uint256 public rMin;
     uint256 public rMax;
     uint256 public lambda_;
-    uint256 public paymasterDrawBps;
-    uint256 public targetDepositWei;
+    uint256 public paymasterDrawBps;   // draw % of SCW WETH for top-up
+    uint256 public targetDepositWei;   // EntryPoint deposit target for selected paymaster
 
     /* --- State --- */
     uint256 public cycleCount;
     uint256 public checkpointPeriod;
 
     /* --- Circuit breaker --- */
-    uint256 public lastPrice1e18;        // last blended price observed (USD per BW)
-    uint256 public maxDeviationBps;      // e.g., 500 = 5%
-    bool    public breakerEnabled;       // toggle
+    uint256 public lastPrice1e18;
+    uint256 public maxDeviationBps; // e.g., 500 = 5%
+    bool    public breakerEnabled;
 
     /* --- Bundles --- */
     struct BundleConfig {
@@ -309,12 +250,49 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     uint256 public nextBundleId;
     mapping(uint256 => BundleConfig) public bundles;
 
-    /* --- EIP-712 --- */
+    /* --- Modules --- */
+    mapping(bytes32 => bool) public moduleEnabled; // "REINVEST", "PAYMASTER_TOPUP", "CIRCUIT_BREAKER"
+
+    /* --- EIP-712 signature gating --- */
     bytes32 public DOMAIN_SEPARATOR;
     bytes32 public constant KICK_TYPEHASH = keccak256("Kick(uint256 bundleId,uint256 deadline,uint256 nonce)");
+    bytes32 public constant KICKBATCH_TYPEHASH = keccak256("KickBatch(bytes32 idsHash,uint256 deadline,uint256 nonce)");
     uint256 public kickNonce;
     mapping(uint256 => bool) public kickUsed;
 
+    /* --- Events --- */
+    event OwnerChanged(address indexed newOwner);
+    event PausedSet(bool status);
+    event ConfigUpdated();
+    event AdaptiveParamsUpdated();
+    event CircuitBreakerUpdated(uint256 maxDeviationBps, bool enabled);
+    event BundleStaged(uint256 bundleId, BundleConfig cfg);
+    event BundleCancelled(uint256 bundleId);
+    event BundleKicked(uint256 bundleId);
+    event BatchedKick(uint256 count);
+    event CycleExecuted(uint256 bundleId, uint256 usdcLoan, uint256 wethLoan, uint256 bwSold, uint256 usdcResidual, uint256 wethResidual);
+    event Reinvested(uint256 rBps, uint256 usdcIntoPools, uint256 wethIntoPools);
+    event PaymasterTopped(address paymaster, uint256 ethAdded, uint256 newBalance);
+    event InternalBuyLeg(uint256 bwDirect, uint256 usdcIn, uint256 wethIn);
+    event PartialInternalBuy(uint256 bwDirect, uint256 bwPool);
+    event InternalSellLeg(uint256 bwToScw, uint256 stablesValue1e18);
+    event ModuleToggled(bytes32 module, bool enabled);
+    event ActivePaymasterSet(uint8 index);
+    event ERC20Withdrawn(address token, uint256 amount);
+    event ETHWithdrawn(uint256 amount);
+    event ERC721Rescued(address token, uint256 tokenId);
+    event ERC1155Rescued(address token, uint256 id, uint256 amount);
+
+    /* --- NonReentrancy --- */
+    uint256 private _lock;
+    modifier nonReentrant() {
+        if (_lock == 1) revert Reentrancy();
+        _lock = 1;
+        _;
+        _lock = 0;
+    }
+
+    /* --- Constructor --- */
     constructor(
         address _scw,
         address _vault,
@@ -327,86 +305,98 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         address _quoter,
         address _entryPoint,
         address _chainlinkEthUsd,
+        address _positionManager,
         address _uniV3BWUSDC,
         address _uniV3BWWETH,
         address _uniV2BWUSDC,
         address _uniV2BWWETH,
         address _sushiBWUSDC,
         address _sushiBWWETH,
-        address _balBWUSDC,
-        address _balBWWETH,
         bytes32 _balBWUSDCId,
         bytes32 _balBWWETHId,
-        address _positionManager
+        address _paymasterA,
+        address _paymasterB
     ) {
-        require(_scw != address(0) && _vault != address(0) && _bwaezi != address(0) && _usdc != address(0) && _weth != address(0), "bad core");
-        require(_uniV3Router != address(0) && _uniV2Router != address(0) && _sushiRouter != address(0), "bad routers");
-        require(_quoter != address(0) && _entryPoint != address(0) && _chainlinkEthUsd != address(0), "bad infra");
-        require(_uniV3BWUSDC != address(0) && _uniV3BWWETH != address(0), "bad v3");
-        require(_uniV2BWUSDC != address(0) && _uniV2BWWETH != address(0), "bad v2");
-        require(_sushiBWUSDC != address(0) && _sushiBWWETH != address(0), "bad sushi");
-        require(_balBWUSDC != address(0) && _balBWWETH != address(0), "bad bal");
-        require(_balBWUSDCId != bytes32(0) && _balBWWETHId != bytes32(0), "bad bal ids");
-        require(_positionManager != address(0), "bad pos mgr");
+        if (_scw == address(0) || _vault == address(0) || _bwaezi == address(0) || _usdc == address(0) || _weth == address(0)) revert BadArgs();
+        if (_uniV3Router == address(0) || _uniV2Router == address(0) || _sushiRouter == address(0)) revert BadArgs();
+        if (_quoter == address(0) || _entryPoint == address(0) || _chainlinkEthUsd == address(0) || _positionManager == address(0)) revert BadArgs();
+        if (_uniV3BWUSDC == address(0) || _uniV3BWWETH == address(0) || _uniV2BWUSDC == address(0) || _uniV2BWWETH == address(0)) revert BadArgs();
+        if (_sushiBWUSDC == address(0) || _sushiBWWETH == address(0)) revert BadArgs();
+        if (_paymasterA == address(0) || _paymasterB == address(0)) revert BadArgs();
 
-        owner = msg.sender;
-        scw = _scw;
-        vault = _vault;
-        bwaezi = _bwaezi;
-        usdc = _usdc;
-        weth = _weth;
-        uniV3Router = _uniV3Router;
-        uniV2Router = _uniV2Router;
-        sushiRouter = _sushiRouter;
-        quoter = _quoter;
-        entryPoint = IEntryPoint(_entryPoint);
-        chainlinkEthUsd = _chainlinkEthUsd;
+        owner             = msg.sender;
+        scw               = _scw;
+        vault             = _vault;
+        bwaezi            = _bwaezi;
+        BWZC              = IERC20(_bwaezi);
+        usdc              = _usdc;
+        weth              = _weth;
+        uniV3Router       = _uniV3Router;
+        uniV2Router       = _uniV2Router;
+        sushiRouter       = _sushiRouter;
+        quoter            = _quoter;
+        entryPoint        = _entryPoint;
+        chainlinkEthUsd   = _chainlinkEthUsd;
+        positionManager   = _positionManager;
 
-        uniV3BWUSDC = _uniV3BWUSDC;
-        uniV3BWWETH = _uniV3BWWETH;
-        uniV2BWUSDC = _uniV2BWUSDC;
-        uniV2BWWETH = _uniV2BWWETH;
-        sushiBWUSDC = _sushiBWUSDC;
-        sushiBWWETH = _sushiBWWETH;
-        balBWUSDC = _balBWUSDC;
-        balBWWETH = _balBWWETH;
+        uniV3BWUSDC       = _uniV3BWUSDC;
+        uniV3BWWETH       = _uniV3BWWETH;
+        uniV2BWUSDC       = _uniV2BWUSDC;
+        uniV2BWWETH       = _uniV2BWWETH;
+        sushiBWUSDC       = _sushiBWUSDC;
+        sushiBWWETH       = _sushiBWWETH;
+        balBWUSDCId       = _balBWUSDCId;
+        balBWWETHId       = _balBWWETHId;
 
-        balBWUSDCId = _balBWUSDCId;
-        balBWWETHId = _balBWWETHId;
+        paymasterA        = _paymasterA;
+        paymasterB        = _paymasterB;
+        activePaymaster   = 0; // default to A
 
-        positionManager = _positionManager;
+        bwUsdcFee         = 3000;
+        bwWethFee         = 3000;
+        epsilonBps        = 30;
+        maxDeadline       = 900;
+        paused            = false;
 
-        // Cached IERC20 for BW token
-        BW = IERC20(_bwaezi);
+        alpha             = 5e18;
+        beta              = 8e17;
+        gamma             = 2e16;
+        kappa             = 3e16;
 
-        bwUsdcFee = 3000;
-        bwWethFee = 3000;
-        epsilonBps = 30;
-        maxDeadline = 900;
-        paused = false;
+        rMin              = 1e17;
+        rMax              = 35e16;
+        lambda_           = 1e17;
+        paymasterDrawBps  = 300;   // 3% of SCW WETH
+        targetDepositWei  = 3e17;  // 0.3 ETH
 
-        alpha = 5e18;
-        beta = 8e17;
-        gamma = 2e16;
-        kappa = 3e16;
+        checkpointPeriod  = 40;
+        nextBundleId      = 1;
 
-        rMin = 1e17;
-        rMax = 35e16;
-        lambda_ = 1e17;
+        maxDeviationBps   = 500;   // 5%
+        breakerEnabled    = true;
 
-        paymasterDrawBps = 300;
-        targetDepositWei = 3e17;
-
-        checkpointPeriod = 40;
-        nextBundleId = 1;
-
-        // Circuit breaker defaults
-        maxDeviationBps = 500; // 5%
-        breakerEnabled = true;
+        moduleEnabled[keccak256("REINVEST")] = true;
+        moduleEnabled[keccak256("PAYMASTER_TOPUP")] = true;
+        moduleEnabled[keccak256("CIRCUIT_BREAKER")] = true;
 
         _initDomainSeparator();
+
+        // Pre-approvals (compact)
+        BWZC.safeApprove(uniV3Router, type(uint256).max);
+        IERC20(usdc).safeApprove(uniV3Router, type(uint256).max);
+        IERC20(weth).safeApprove(uniV3Router, type(uint256).max);
+        BWZC.safeApprove(uniV2Router, type(uint256).max);
+        IERC20(usdc).safeApprove(uniV2Router, type(uint256).max);
+        IERC20(weth).safeApprove(uniV2Router, type(uint256).max);
+        BWZC.safeApprove(sushiRouter, type(uint256).max);
+        IERC20(usdc).safeApprove(sushiRouter, type(uint256).max);
+        IERC20(weth).safeApprove(sushiRouter, type(uint256).max);
+        BWZC.safeApprove(positionManager, type(uint256).max);
+        IERC20(usdc).safeApprove(positionManager, type(uint256).max);
+        IERC20(weth).safeApprove(positionManager, type(uint256).max);
     }
 
+    /* ----------------------------- EIP-712 ----------------------------- */
     function _initDomainSeparator() internal {
         uint256 chainId;
         assembly { chainId := chainid() }
@@ -420,15 +410,26 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     }
 
     /* ----------------------------- Admin ----------------------------- */
-    function setOwner(address newOwner) external onlyOwner nonReentrant {
-        require(newOwner != address(0), "zero");
+    function setOwner(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert BadArgs();
         owner = newOwner;
         emit OwnerChanged(newOwner);
     }
 
-    function setPaused(bool p) external onlyOwner nonReentrant {
+    function setPaused(bool p) external onlyOwner {
         paused = p;
-        emit Paused(p);
+        emit PausedSet(p);
+    }
+
+    function toggleModule(bytes32 key, bool enabled) external onlyOwner {
+        moduleEnabled[key] = enabled;
+        emit ModuleToggled(key, enabled);
+    }
+
+    function setActivePaymaster(uint8 idx) external onlyOwner {
+        if (idx > 1) revert BadArgs();
+        activePaymaster = idx;
+        emit ActivePaymasterSet(idx);
     }
 
     function setConfig(
@@ -439,8 +440,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 _checkpointPeriod,
         uint256 _paymasterDrawBps,
         uint256 _targetDepositWei
-    ) external onlyOwner nonReentrant {
-        require(_epsilonBps <= 50, "slippage too loose");
+    ) external onlyOwner {
+        if (_epsilonBps > 50) revert SlippageTooLoose();
         bwUsdcFee = _bwUsdcFee;
         bwWethFee = _bwWethFee;
         epsilonBps = _epsilonBps;
@@ -459,7 +460,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 _rMin,
         uint256 _rMax,
         uint256 _lambda
-    ) external onlyOwner nonReentrant {
+    ) external onlyOwner {
         alpha   = _alpha;
         beta    = _beta;
         gamma   = _gamma;
@@ -470,15 +471,14 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         emit AdaptiveParamsUpdated();
     }
 
-    /* ----------------------------- Circuit breaker config ----------------------------- */
-    function setCircuitBreaker(uint256 _maxDeviationBps, bool _enabled) external onlyOwner nonReentrant {
-        require(_maxDeviationBps <= 5000, "too large"); // cap at 50%
+    function setCircuitBreaker(uint256 _maxDeviationBps, bool _enabled) external onlyOwner {
+        if (_maxDeviationBps > 5000) revert BadArgs(); // cap at 50%
         maxDeviationBps = _maxDeviationBps;
         breakerEnabled = _enabled;
         emit CircuitBreakerUpdated(_maxDeviationBps, _enabled);
     }
 
-    /* ----------------------------- Chainlink freshness ----------------------------- */
+    /* ----------------------------- Helpers ----------------------------- */
     uint256 public constant MAX_CHAINLINK_AGE = 30 minutes;
 
     function _fetchEthUsdFresh() internal view returns (uint256 price1e18) {
@@ -488,93 +488,35 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         if (answeredInRound < roundId) revert StalePrice();
         if (updatedAt < startedAt) revert StalePrice();
         if (block.timestamp - updatedAt > MAX_CHAINLINK_AGE) revert StalePrice();
-        price1e18 = uint256(ans) * 1e10; // normalize 1e8 → 1e18
+        price1e18 = uint256(ans) * 1e10; // 1e8 → 1e18
     }
 
-    /* ----------------------------- Adaptive helpers ----------------------------- */
     function _safeLeg(uint256 Rbar1e18) internal view returns (uint256) {
-        uint256 curvature = (kappa * Rbar1e18) / 1e18;
+        uint256 curvature = kappa * Rbar1e18 / 1e18;
         if (curvature > 1e18) curvature = 1e18;
-        return (((gamma * Rbar1e18) / 1e18) * curvature) / 1e18;
+        return gamma * Rbar1e18 / 1e18 * curvature / 1e18;
     }
 
     function _loanSize(uint256 Rbar1e18, uint256 spread1e18) internal view returns (uint256) {
-        uint256 aTerm = (alpha * Rbar1e18) / 1e18;
-        uint256 bTerm = ((beta * spread1e18) / 1e18) * Rbar1e18 / 1e18;
+        uint256 aTerm = alpha * Rbar1e18 / 1e18;
+        uint256 bTerm = beta * spread1e18 / 1e18 * Rbar1e18 / 1e18;
         return aTerm < bTerm ? aTerm : bTerm;
     }
 
     function _reinvestRatio(uint256 spread1e18) internal view returns (uint256) {
-        uint256 x = (lambda_ * spread1e18) / 1e18;
-        uint256 frac = (x * 1e18) / (1e18 + x);
-        return rMin + ((rMax - rMin) * frac) / 1e18;
+        uint256 x = lambda_ * spread1e18 / 1e18;
+        uint256 frac = x * 1e18 / (1e18 + x);
+        return rMin + (rMax - rMin) * frac / 1e18;
     }
 
     function _max3(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {
         return a > b ? (a > c ? a : c) : (b > c ? b : c);
     }
 
-    /* ----------------------------- Bundles ----------------------------- */
-    function stageBundle(
-        uint256 RbarUSD1e18,
-        uint256 spreadUSD1e18,
-        uint16  usdcShareBps,
-        uint16  bwSellExtraBps
-    ) external onlyOwner nonReentrant returns (uint256 bundleId) {
-        require(usdcShareBps <= 10000, "bad share");
-        require(bwSellExtraBps <= 30000, "too large extra");
-        bundleId = nextBundleId++;
-        bundles[bundleId] = BundleConfig({
-            RbarUSD1e18: RbarUSD1e18,
-            spreadUSD1e18: spreadUSD1e18,
-            usdcShareBps: usdcShareBps,
-            bwSellExtraBps: bwSellExtraBps,
-            createdAt: block.timestamp,
-            active: true
-        });
-        emit BundleStaged(bundleId, bundles[bundleId]);
-    }
-
-    function cancelBundle(uint256 bundleId) external onlyOwner nonReentrant {
-        require(bundles[bundleId].active, "inactive");
-        bundles[bundleId].active = false;
-        emit BundleCancelled(bundleId);
-    }
-
-    /* ----------------------------- Quoting ----------------------------- */
-    function _quoteExactInputV3(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint24  fee
-    ) internal returns (uint256 amountOut) {
-        (amountOut,,,) = IQuoterV2(quoter).quoteExactInputSingle(
-            tokenIn, tokenOut, amountIn, fee, 0
-        );
-    }
-
-    function _quoteExactInputV2(
-        address router,
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn
-    ) internal view returns (uint256 amountOut) {
-        address[] memory path = new address[](2);
-        path[0] = tokenIn;
-        path[1] = tokenOut;
-        try IUniswapV2Router(router).getAmountsOut(amountIn, path) returns (uint256[] memory amounts) {
-            if (amounts.length >= 2) return amounts[1];
-            return 0;
-        } catch {
-            return 0;
-        }
-    }
-
-    /* ----------------------------- Balancer spot price ----------------------------- */
-    // 80/20 weighted pool spot price: (balB / wB) / (balA / wA), normalized to USD
+    /* ----------------------------- Balancer spot price (USD per BW) ----------------------------- */
     function _balancerSpotPriceUSD(bytes32 poolId, address tokenA, address tokenB) internal view returns (uint256 price1e18) {
         (address[] memory tokens, uint256[] memory balances,) = IBalancerVault(vault).getPoolTokens(poolId);
-        require(tokens.length == 2 && balances.length == 2, "bal tokens");
+        if (tokens.length != 2 || balances.length != 2) revert BadPool();
         uint8 decA = IERC20(tokenA).decimals();
         uint8 decB = IERC20(tokenB).decimals();
 
@@ -590,6 +532,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
             revert BadPool();
         }
 
+        // Assume 80/20 BW/stable or BW/WETH pools
         uint256 wA = tokenA == bwaezi ? 8e17 : 2e17;
         uint256 wB = tokenB == bwaezi ? 8e17 : 2e17;
 
@@ -608,7 +551,30 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         }
     }
 
-    /* ----------------------------- Swap best-in ----------------------------- */
+    /* ----------------------------- Quoting ----------------------------- */
+    function _quoteExactInputV3(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint24  fee
+    ) internal returns (uint256 amountOut) {
+        (amountOut,,,) = IQuoterV2(quoter).quoteExactInputSingle(tokenIn, tokenOut, amountIn, fee, 0);
+    }
+
+    function _quoteExactInputV2(
+        address router,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) internal view returns (uint256 amountOut) {
+        address[] memory path = new address[](2);
+        path[0] = tokenIn; path[1] = tokenOut;
+        try IUniswapV2Router(router).getAmountsOut(amountIn, path) returns (uint256[] memory amounts) {
+            if (amounts.length >= 2) return amounts[1];
+            return 0;
+        } catch { return 0; }
+    }
+
     function _swapBestIn(
         address tokenIn,
         address tokenOut,
@@ -633,8 +599,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         } catch {
             // Fallback Uniswap V2
             address[] memory path = new address[](2);
-            path[0] = tokenIn;
-            path[1] = tokenOut;
+            path[0] = tokenIn; path[1] = tokenOut;
             try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
                 amountIn, minOut, path, address(this), block.timestamp + 300
             ) returns (uint256[] memory amounts) {
@@ -645,48 +610,79 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
                     amountIn, minOut, path, address(this), block.timestamp + 300
                 ) returns (uint256[] memory amounts2) {
                     return amounts2[1];
-                } catch {
-                    return 0;
-                }
+                } catch { return 0; }
             }
         }
     }
 
-    /* ----------------------------- Sizing ----------------------------- */
-    function _computeUsdcLoanSize(uint256 bundleId) internal view returns (uint256) {
-        BundleConfig memory cfg = bundles[bundleId];
-        require(cfg.active, "bundle inactive");
-        uint256 L1e18   = _loanSize(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
-        uint256 cap1e18 = _safeLeg(cfg.RbarUSD1e18);
-        uint256 usdcUSD1e18 = (L1e18 * cfg.usdcShareBps) / 10000;
-        if (usdcUSD1e18 > cap1e18) usdcUSD1e18 = cap1e18;
-        uint8 usdcDec = IERC20(usdc).decimals();
-        return usdcUSD1e18 / (10 ** (18 - usdcDec)); // USDC 6-dec
+    /* ----------------------------- Dynamic internal pricing ----------------------------- */
+    function _internalBuyPriceUSD1e18() internal returns (uint256) {
+        uint256 spotUsdc = _balancerSpotPriceUSD(balBWUSDCId, bwaezi, usdc);
+        uint256 oneUsdc = 1e6;
+        uint256 bwOutV3 = _quoteExactInputV3(usdc, bwaezi, oneUsdc, bwUsdcFee);
+        uint256 bwOutV2 = _quoteExactInputV2(uniV2Router, usdc, bwaezi, oneUsdc);
+        uint256 bwOutSu = _quoteExactInputV2(sushiRouter, usdc, bwaezi, oneUsdc);
+        uint256 bwOutAvg = (bwOutV3 + bwOutV2 + bwOutSu) / 3;
+        if (bwOutAvg == 0) return spotUsdc;
+        uint256 venuePrice = (oneUsdc * 1e12) * 1e18 / bwOutAvg; // USD per BW
+        uint256 blended = (spotUsdc + venuePrice) / 2;
+        return (blended * 9950) / 10000; // 0.5% discount
     }
 
-    function _computeWethLoanSize(uint256 bundleId) internal view returns (uint256) {
-        BundleConfig memory cfg = bundles[bundleId];
-        require(cfg.active, "bundle inactive");
-        uint256 L1e18   = _loanSize(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
-        uint256 cap1e18 = _safeLeg(cfg.RbarUSD1e18);
-        uint256 usdcUSD1e18 = (L1e18 * cfg.usdcShareBps) / 10000;
-        uint256 wethUSD1e18 = L1e18 - usdcUSD1e18;
-        if (wethUSD1e18 > cap1e18) wethUSD1e18 = cap1e18;
-        uint256 ethUsd1e18 = _fetchEthUsdFresh();
-        uint8 wethDec = IERC20(weth).decimals();
-        uint256 wethUnits1e18 = (wethUSD1e18 * 1e18) / ethUsd1e18;
-        return wethUnits1e18 / (10 ** (18 - wethDec)); // WETH 18-dec
+    function _internalSellPriceUSD1e18(uint16 extraBps) internal returns (uint256) {
+        uint256 spotUsdc = _balancerSpotPriceUSD(balBWUSDCId, bwaezi, usdc);
+        uint256 oneBw = 1e18;
+        uint256 usdcOutV3 = _quoteExactInputV3(bwaezi, usdc, oneBw, bwUsdcFee);
+        uint256 usdcOutV2 = _quoteExactInputV2(uniV2Router, bwaezi, usdc, oneBw);
+        uint256 usdcOutSu = _quoteExactInputV2(sushiRouter, bwaezi, usdc, oneBw);
+        uint256 usdcOutAvg = (usdcOutV3 + usdcOutV2 + usdcOutSu) / 3;
+        if (usdcOutAvg == 0) return spotUsdc;
+        uint256 venuePrice = (usdcOutAvg * 1e12); // USD per BW
+        uint256 blended = (spotUsdc + venuePrice) / 2;
+        return blended * (10000 + extraBps) / 10000; // premium
     }
 
-    /* ----------------------------- Kickers (MEV-hardened) ----------------------------- */
+    function _checkBreaker(uint256 newPrice1e18) internal view {
+        if (!breakerEnabled || !moduleEnabled[keccak256("CIRCUIT_BREAKER")]) return;
+        if (lastPrice1e18 == 0) return;
+        uint256 diff = newPrice1e18 > lastPrice1e18 ? (newPrice1e18 - lastPrice1e18) : (lastPrice1e18 - newPrice1e18);
+        if (diff * 10000 / lastPrice1e18 > maxDeviationBps) revert CircuitBreak();
+    }
+
+    /* ----------------------------- Bundles ----------------------------- */
+    function stageBundle(
+        uint256 RbarUSD1e18,
+        uint256 spreadUSD1e18,
+        uint16  usdcShareBps,
+        uint16  bwSellExtraBps
+    ) external onlyOwner returns (uint256 bundleId) {
+        if (usdcShareBps > 10000 || bwSellExtraBps > 30000) revert BadArgs();
+        bundleId = nextBundleId++;
+        bundles[bundleId] = BundleConfig({
+            RbarUSD1e18: RbarUSD1e18,
+            spreadUSD1e18: spreadUSD1e18,
+            usdcShareBps: usdcShareBps,
+            bwSellExtraBps: bwSellExtraBps,
+            createdAt: block.timestamp,
+            active: true
+        });
+        emit BundleStaged(bundleId, bundles[bundleId]);
+    }
+
+    function cancelBundle(uint256 bundleId) external onlyOwner {
+        if (!bundles[bundleId].active) revert Inactive();
+        bundles[bundleId].active = false;
+        emit BundleCancelled(bundleId);
+    }
+
+    /* ----------------------------- Kicks (MEV-hardened) ----------------------------- */
     function _kickBundleInternal(uint256 bundleId) internal {
-        require(!paused, "paused");
+        if (paused) revert Paused();
         BundleConfig memory cfg = bundles[bundleId];
-        require(cfg.active, "bundle inactive");
+        if (!cfg.active) revert Inactive();
 
         address[] memory tokens = new address[](2);
-        tokens[0] = usdc;
-        tokens[1] = weth;
+        tokens[0] = usdc; tokens[1] = weth;
 
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = _computeUsdcLoanSize(bundleId);
@@ -702,11 +698,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 bundleId,
         uint256 deadline,
         uint8 v, bytes32 r, bytes32 s
-    ) external onlyOwner nonReentrant {
-        require(!paused, "paused");
-        require(block.timestamp <= deadline && deadline <= block.timestamp + maxDeadline, "expired");
-        require(bundles[bundleId].active, "inactive");
-        require(!kickUsed[bundleId], "used");
+    ) external onlyOwner {
+        if (paused) revert Paused();
+        if (block.timestamp > deadline || deadline > block.timestamp + maxDeadline) revert Expired();
+        if (!bundles[bundleId].active) revert Inactive();
+        if (kickUsed[bundleId]) revert Used();
 
         bytes32 digest = keccak256(abi.encodePacked(
             "\x19\x01",
@@ -714,10 +710,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
             keccak256(abi.encode(KICK_TYPEHASH, bundleId, deadline, kickNonce))
         ));
         address signer = ecrecover(digest, v, r, s);
-        if (signer != owner && signer != scw) revert BadSignature();
+        if (signer != owner && signer != scw) revert NotAuthorized();
 
         kickUsed[bundleId] = true;
-        unchecked { kickNonce++; }
+        kickNonce++;
 
         _kickBundleInternal(bundleId);
     }
@@ -726,72 +722,53 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256[] calldata bundleIds,
         uint256 deadline,
         uint8 v, bytes32 r, bytes32 s
-    ) external onlyOwner nonReentrant {
-        require(!paused, "paused");
-        require(bundleIds.length <= 3, "batch too large");
-        require(block.timestamp <= deadline && deadline <= block.timestamp + maxDeadline, "expired");
+    ) external onlyOwner {
+        if (paused) revert Paused();
+        if (bundleIds.length > 3) revert BadArgs();
+        if (block.timestamp > deadline || deadline > block.timestamp + maxDeadline) revert Expired();
 
         bytes32 idsHash = keccak256(abi.encodePacked(bundleIds));
         bytes32 digest = keccak256(abi.encodePacked(
             "\x19\x01",
             DOMAIN_SEPARATOR,
-            keccak256(abi.encode(
-                keccak256("KickBatch(bytes32 idsHash,uint256 deadline,uint256 nonce)"),
-                idsHash,
-                deadline,
-                kickNonce
-            ))
+            keccak256(abi.encode(KICKBATCH_TYPEHASH, idsHash, deadline, kickNonce))
         ));
         address signer = ecrecover(digest, v, r, s);
-        if (signer != owner && signer != scw) revert BadSignature();
-        unchecked { kickNonce++; }
+        if (signer != owner && signer != scw) revert NotAuthorized();
+        kickNonce++;
 
-        for (uint256 i = 0; i < bundleIds.length; ) {
+        for (uint256 i = 0; i < bundleIds.length; i++) {
             uint256 id = bundleIds[i];
-            require(bundles[id].active, "inactive");
-            require(!kickUsed[id], "used");
+            if (!bundles[id].active) revert Inactive();
+            if (kickUsed[id]) revert Used();
             kickUsed[id] = true;
             _kickBundleInternal(id);
-            unchecked { ++i; }
         }
         emit BatchedKick(bundleIds.length);
     }
 
-    /* ----------------------------- Internal pricing (USD per BW) ----------------------------- */
-    // Buy price: conservative—blend Balancer spot + venue quotes, apply small discount
-    function _internalBuyPriceUSD1e18() internal returns (uint256) {
-        uint256 spotUsdc = _balancerSpotPriceUSD(balBWUSDCId, bwaezi, usdc);
-        uint256 oneUsdc = 1e6;
-        uint256 bwOutV3 = _quoteExactInputV3(usdc, bwaezi, oneUsdc, bwUsdcFee);
-        uint256 bwOutV2 = _quoteExactInputV2(uniV2Router, usdc, bwaezi, oneUsdc);
-        uint256 bwOutSu = _quoteExactInputV2(sushiRouter, usdc, bwaezi, oneUsdc);
-        uint256 bwOutAvg = (bwOutV3 + bwOutV2 + bwOutSu) / 3;
-        if (bwOutAvg == 0) return spotUsdc; // fallback
-        uint256 venuePrice = (oneUsdc * 1e12) * 1e18 / bwOutAvg; // USD per BW
-        uint256 blended = (spotUsdc + venuePrice) / 2;
-        return (blended * 9950) / 10000; // 0.5% discount
+    /* ----------------------------- Sizing ----------------------------- */
+    function _computeUsdcLoanSize(uint256 bundleId) internal view returns (uint256) {
+        BundleConfig memory cfg = bundles[bundleId];
+        if (!cfg.active) revert Inactive();
+        uint256 L1e18   = _loanSize(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
+        uint256 cap1e18 = _safeLeg(cfg.RbarUSD1e18);
+        uint256 usdcUSD1e18 = L1e18 * cfg.usdcShareBps / 10000;
+        if (usdcUSD1e18 > cap1e18) usdcUSD1e18 = cap1e18;
+        uint8 usdcDec = IERC20(usdc).decimals();
+        return usdcUSD1e18 / (10 ** (18 - usdcDec)); // USDC 6-dec
     }
 
-    // Sell price: conservative—blend Balancer spot + venue quotes, apply small premium
-    function _internalSellPriceUSD1e18(uint16 extraBps) internal returns (uint256) {
-        uint256 spotUsdc = _balancerSpotPriceUSD(balBWUSDCId, bwaezi, usdc);
-        uint256 oneBw = 1e18;
-        uint256 usdcOutV3 = _quoteExactInputV3(bwaezi, usdc, oneBw, bwUsdcFee);
-        uint256 usdcOutV2 = _quoteExactInputV2(uniV2Router, bwaezi, usdc, oneBw);
-        uint256 usdcOutSu = _quoteExactInputV2(sushiRouter, bwaezi, usdc, oneBw);
-        uint256 usdcOutAvg = (usdcOutV3 + usdcOutV2 + usdcOutSu) / 3;
-        uint256 venuePrice = usdcOutAvg * 1e12; // USD per BW
-        uint256 blended = venuePrice == 0 ? spotUsdc : (spotUsdc + venuePrice) / 2;
-        uint256 premium = 10000 + (extraBps > 500 ? 500 : extraBps); // cap extra at 5%
-        return (blended * premium) / 10000;
-    }
-
-    /* ----------------------------- Circuit breaker check ----------------------------- */
-    function _checkBreaker(uint256 newPrice1e18) internal view {
-        if (!breakerEnabled || lastPrice1e18 == 0) return;
-        uint256 diff = newPrice1e18 > lastPrice1e18 ? (newPrice1e18 - lastPrice1e18) : (lastPrice1e18 - newPrice1e18);
-        uint256 bps = (diff * 10000) / lastPrice1e18;
-        if (bps > maxDeviationBps) revert CircuitBreak();
+    function _computeWethLoanSize(uint256 bundleId) internal view returns (uint256) {
+        BundleConfig memory cfg = bundles[bundleId];
+        if (!cfg.active) revert Inactive();
+        uint256 L1e18   = _loanSize(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
+        uint256 cap1e18 = _safeLeg(cfg.RbarUSD1e18);
+        uint256 wethUSD1e18 = L1e18 - (L1e18 * cfg.usdcShareBps / 10000);
+        if (wethUSD1e18 > cap1e18) wethUSD1e18 = cap1e18;
+        uint256 ethUsd = _fetchEthUsdFresh();
+        // WETH amount = USD / ETHUSD
+        return wethUSD1e18 * 1e18 / ethUsd;
     }
 
     /* ----------------------------- Flash loan callback ----------------------------- */
@@ -800,423 +777,239 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256[] calldata amounts,
         uint256[] calldata fees,
         bytes calldata userData
-    ) external override nonReentrant {
-        require(msg.sender == vault, "not vault");
-        require(tokens.length == 2 && amounts.length == 2 && fees.length == 2, "bad len");
-        require(tokens[0] == usdc && tokens[1] == weth, "bad assets");
+    ) external nonReentrant {
+        if (msg.sender != vault) revert NotAuthorized();
+        if (paused) revert Paused();
+        if (tokens.length != 2 || amounts.length != 2 || fees.length != 2) revert BadArgs();
+        if (!(tokens[0] == usdc && tokens[1] == weth)) revert BadArgs;
 
         uint256 bundleId = abi.decode(userData, (uint256));
         BundleConfig memory cfg = bundles[bundleId];
-        require(cfg.active, "bundle inactive");
+        if (!cfg.active) revert Inactive();
 
-        uint256 usdcIn  = amounts[0];
-        uint256 wethIn  = amounts[1];
-        uint256 usdcFee = fees[0];
-        uint256 wethFee = fees[1];
+        // Circuit breaker check using blended internal buy price as proxy
+        uint256 newPrice = _internalBuyPriceUSD1e18();
+        _checkBreaker(newPrice);
+        lastPrice1e18 = newPrice;
 
-        uint256 buyPrice1e18  = _internalBuyPriceUSD1e18();
-        uint256 sellPrice1e18 = _internalSellPriceUSD1e18(cfg.bwSellExtraBps);
+        uint256 usdcLoan = amounts[0];
+        uint256 wethLoan = amounts[1];
+        uint256 usdcFee  = fees[0];
+        uint256 wethFee  = fees[1];
 
-        // Circuit breaker against rapid price changes
-        _checkBreaker(buyPrice1e18);
-        _checkBreaker(sellPrice1e18);
-        lastPrice1e18 = (buyPrice1e18 + sellPrice1e18) / 2;
+        // Execute cycle: internal buy leg → external sell leg → repay loans → reinvest → paymaster top-up
+        (uint256 bwBought, uint256 usdcSpent, uint256 wethSpent) = _internalBuy(usdcLoan, wethLoan, cfg);
+        emit InternalBuyLeg(bwBought, usdcSpent, wethSpent);
 
-        uint256 ethUsd          = _fetchEthUsdFresh();
-        uint256 neededBwForUsdc = usdcIn > 0 ? (usdcIn * 1e12) * 1e18 / buyPrice1e18 : 0;
-        uint256 neededBwForWeth = wethIn > 0 ? (wethIn * ethUsd) * 1e18 / buyPrice1e18 : 0;
-        uint256 totalNeededBw   = neededBwForUsdc + neededBwForWeth;
+        (uint256 bwSold, uint256 usdcGained, uint256 wethGained) = _externalSell(bwBought, cfg);
+        emit InternalSellLeg(bwSold, (usdcGained * 1e12) + (_fetchEthUsdFresh() * wethGained / 1e18));
 
-        uint256 scwBwBal = BW.balanceOf(scw);
-        uint256 bwBought = 0;
+        // Repay loans
+        uint256 usdcRepay = usdcLoan + usdcFee;
+        uint256 wethRepay = wethLoan + wethFee;
 
-        if (scwBwBal >= totalNeededBw && totalNeededBw > 0) {
-            BW.safeTransferFrom(scw, address(this), totalNeededBw);
-            bwBought = totalNeededBw;
-            emit InternalBuyLeg(totalNeededBw, usdcIn, wethIn);
-        } else {
-            uint256 pulled = 0;
-            if (scwBwBal > 0) {
-                BW.safeTransferFrom(scw, address(this), scwBwBal);
-                pulled = scwBwBal;
-                bwBought += scwBwBal;
-            }
-            if (usdcIn > 0) {
-                uint256 outV3 = _quoteExactInputV3(usdc, bwaezi, usdcIn, bwUsdcFee);
-                uint256 outV2 = _quoteExactInputV2(uniV2Router, usdc, bwaezi, usdcIn);
-                uint256 outSu = _quoteExactInputV2(sushiRouter, usdc, bwaezi, usdcIn);
-                uint256 best  = _max3(outV3, outV2, outSu);
-                require(best > 0, "no usdc quote");
-                uint256 minOut = (best * (10000 - epsilonBps)) / 10000;
-                bwBought      += _swapBestIn(usdc, bwaezi, usdcIn, minOut, bwUsdcFee);
-            }
-            if (wethIn > 0) {
-                uint256 outV3 = _quoteExactInputV3(weth, bwaezi, wethIn, bwWethFee);
-                uint256 outV2 = _quoteExactInputV2(uniV2Router, weth, bwaezi, wethIn);
-                uint256 outSu = _quoteExactInputV2(sushiRouter, weth, bwaezi, wethIn);
-                uint256 best  = _max3(outV3, outV2, outSu);
-                require(best > 0, "no weth quote");
-                uint256 minOut = (best * (10000 - epsilonBps)) / 10000;
-                bwBought      += _swapBestIn(weth, bwaezi, wethIn, minOut, bwWethFee);
-            }
-            emit PartialInternalBuy(pulled, bwBought > pulled ? (bwBought - pulled) : 0);
+        // Ensure sufficient balances for repayment
+        uint256 usdcBal = IERC20(usdc).balanceOf(address(this));
+        uint256 wethBal = IERC20(weth).balanceOf(address(this));
+        if (usdcBal < usdcRepay || wethBal < wethRepay) revert NoQuote();
+
+        // Transfer back to vault
+        IERC20(usdc).safeTransfer(vault, usdcRepay);
+        IERC20(weth).safeTransfer(vault, wethRepay);
+
+        // Residuals after repayment
+        uint256 usdcResidual = IERC20(usdc).balanceOf(address(this));
+        uint256 wethResidual = IERC20(weth).balanceOf(address(this));
+
+        emit CycleExecuted(bundleId, usdcLoan, wethLoan, bwSold, usdcResidual, wethResidual);
+
+        // Reinvest drip (module)
+        if (moduleEnabled[keccak256("REINVEST")]) {
+            _reinvestCompact(usdcResidual, wethResidual, cfg);
         }
 
-        if (bwBought > 0) {
-            BW.safeTransfer(scw, bwBought);
-            uint256 stablesValue1e18 = (bwBought * sellPrice1e18) / 1e18;
-            emit InternalSellLeg(bwBought, stablesValue1e18);
+        // Paymaster top-up (module)
+        if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) {
+            _maybeTopupPaymaster();
         }
-
-        IERC20(usdc).safeTransfer(vault, usdcIn + usdcFee);
-        IERC20(weth).safeTransfer(vault, wethIn + wethFee);
-
-        uint256 residualUsdc = IERC20(usdc).balanceOf(address(this));
-        uint256 residualWeth = IERC20(weth).balanceOf(address(this));
-        if (residualUsdc > 0) IERC20(usdc).safeTransfer(scw, residualUsdc);
-        if (residualWeth > 0) IERC20(weth).safeTransfer(scw, residualWeth);
-
-        unchecked { cycleCount += 1; }
-        emit CycleExecuted(bundleId, usdcIn, wethIn, bwBought, residualUsdc, residualWeth);
-
-        if (cycleCount % checkpointPeriod == 0) {
-            _reinvestDrip(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
-        }
-        _maybeTopEntryPoint();
     }
 
-    /* ----------------------------- Reinvestment drip (8 pools) ----------------------------- */
-    function _reinvestDrip(uint256 RbarUSD1e18, uint256 spread1e18) internal {
-        uint256 r = _reinvestRatio(spread1e18);
-        uint256 scwUsdc = IERC20(usdc).balanceOf(scw);
-        uint256 scwWeth = IERC20(weth).balanceOf(scw);
-        uint256 scwBw   = BW.balanceOf(scw);
+    /* ----------------------------- Internal buy leg ----------------------------- */
+    function _internalBuy(uint256 usdcIn, uint256 wethIn, BundleConfig memory cfg)
+        internal
+        returns (uint256 bwBought, uint256 usdcSpent, uint256 wethSpent)
+    {
+        // Priority: internal market-maker (SCW) direct BW if available
+        uint256 bwScwBal = BWZC.balanceOf(scw);
+        uint256 buyPriceUSD = _internalBuyPriceUSD1e18(); // USD per BW
+        uint256 epsilon = epsilonBps;
 
-        uint256 usdcDeposit = (scwUsdc * r) / 1e18;
-        uint256 wethDeposit = (scwWeth * r) / 1e18;
-        uint256 bwDeposit   = (scwBw   * r) / 1e18;
+        // Compute desired BW from USD budget
+        uint256 usdBudget1e18 = cfg.RbarUSD1e18; // use Rbar as indicative budget
+        uint256 desiredBw = usdBudget1e18 * 1e18 / buyPriceUSD;
 
-        if (usdcDeposit > 0) IERC20(usdc).safeTransferFrom(scw, address(this), usdcDeposit);
-        if (wethDeposit > 0) IERC20(weth).safeTransferFrom(scw, address(this), wethDeposit);
-        if (bwDeposit   > 0) BW.safeTransferFrom(scw, address(this), bwDeposit);
-
-        // Split deposits across venues (simple equal split)
-        uint256 usdcEach = usdcDeposit / 3; // V2/Sushi + V3
-        uint256 wethEach = wethDeposit / 3; // V2/Sushi + V3
-        uint256 bwEach   = bwDeposit   / 4; // Balancer USDC/WETH + V2 + Sushi
-
-        // Batch approvals (only from this contract; SCW assumed unlimited)
-        {
-            address[] memory tokensApprove = new address[](6);
-            tokensApprove[0] = usdc; tokensApprove[1] = weth; tokensApprove[2] = bwaezi;
-            tokensApprove[3] = usdc; tokensApprove[4] = weth; tokensApprove[5] = bwaezi;
-            _batchApprove(tokensApprove, uniV2Router, usdcEach > 0 ? usdcEach : 0);
-            _batchApprove(tokensApprove, sushiRouter, usdcEach > 0 ? usdcEach : 0);
+        uint256 bwFromScw = bwScwBal < desiredBw ? bwScwBal : desiredBw;
+        if (bwFromScw > 0) {
+            // Pull BW from SCW to contract (assumes SCW approved)
+            BWZC.safeTransferFrom(IERC20(bwaezi), scw, address(this), bwFromScw);
+            bwBought += bwFromScw;
         }
 
-        // V2 addLiquidity (USDC/BW, WETH/BW)
-        if (usdcEach > 0 && bwEach > 0) {
-            try IUniswapV2Router(uniV2Router).addLiquidity(
-                usdc, bwaezi, usdcEach, bwEach, (usdcEach * 99) / 100, (bwEach * 99) / 100, address(this), block.timestamp + 300
-            ) {} catch {}
-        }
-        if (wethEach > 0 && bwEach > 0) {
-            try IUniswapV2Router(uniV2Router).addLiquidity(
-                weth, bwaezi, wethEach, bwEach, (wethEach * 99) / 100, (bwEach * 99) / 100, address(this), block.timestamp + 300
-            ) {} catch {}
+        // Remaining BW to source via pools using USDC/WETH
+        uint256 bwRemaining = desiredBw > bwBought ? desiredBw - bwBought : 0;
+
+        // Split remaining USD budget across USDC/WETH proportionally to available loans
+        uint256 ethUsd = _fetchEthUsdFresh();
+        uint256 usdcUsd1e18 = usdcIn * 1e12;
+        uint256 wethUsd1e18 = wethIn * ethUsd / 1e18;
+        uint256 totalUsd1e18 = usdcUsd1e18 + wethUsd1e18;
+
+        if (bwRemaining > 0 && totalUsd1e18 > 0) {
+            // USDC leg
+            uint256 usdcShareUsd = totalUsd1e18 * cfg.usdcShareBps / 10000;
+            uint256 usdcSpend = usdcShareUsd / 1e12; // back to 6-dec
+            if (usdcSpend > usdcIn) usdcSpend = usdcIn;
+
+            uint256 minBwOutUsdc = (usdcSpend * 1e12) * 1e18 / buyPriceUSD;
+            minBwOutUsdc = minBwOutUsdc * (10000 - epsilon) / 10000;
+
+            uint256 bwOutUsdc = _swapBestIn(usdc, bwaezi, usdcSpend, minBwOutUsdc, bwUsdcFee);
+            bwBought += bwOutUsdc;
+            usdcSpent = usdcSpend;
+
+            // WETH leg
+            uint256 wethShareUsd = totalUsd1e18 - usdcShareUsd;
+            uint256 wethSpend = wethShareUsd * 1e18 / ethUsd;
+            if (wethSpend > wethIn) wethSpend = wethIn;
+
+            uint256 minBwOutWeth = (wethSpend * ethUsd / 1e18) * 1e18 / buyPriceUSD;
+            minBwOutWeth = minBwOutWeth * (10000 - epsilon) / 10000;
+
+            uint256 bwOutWeth = _swapBestIn(weth, bwaezi, wethSpend, minBwOutWeth, bwWethFee);
+            bwBought += bwOutWeth;
+            wethSpent = wethSpend;
         }
 
-        // Sushi addLiquidity (USDC/BW, WETH/BW)
-        if (usdcEach > 0 && bwEach > 0) {
-            try IUniswapV2Router(sushiRouter).addLiquidity(
-                usdc, bwaezi, usdcEach, bwEach, (usdcEach * 99) / 100, (bwEach * 99) / 100, address(this), block.timestamp + 300
-            ) {} catch {}
-        }
-        if (wethEach > 0 && bwEach > 0) {
-            try IUniswapV2Router(sushiRouter).addLiquidity(
-                weth, bwaezi, wethEach, bwEach, (wethEach * 99) / 100, (bwEach * 99) / 100, address(this), block.timestamp + 300
-            ) {} catch {}
-        }
-
-        // Uniswap V3 mint positions (USDC/BW, WETH/BW)
-        IERC20(usdc).safeApprove(positionManager, usdcEach);
-        IERC20(weth).safeApprove(positionManager, wethEach);
-        BW.safeApprove(positionManager, bwEach);
-
-        if (usdcEach > 0 && bwEach > 0) {
-            try INonfungiblePositionManager(positionManager).mint(
-                INonfungiblePositionManager.MintParams({
-                    token0: usdc,
-                    token1: bwaezi,
-                    fee: bwUsdcFee,
-                    tickLower: -887220,
-                    tickUpper:  887220,
-                    amount0Desired: usdcEach,
-                    amount1Desired: bwEach,
-                    amount0Min: (usdcEach * 99) / 100,
-                    amount1Min: (bwEach * 99) / 100,
-                    recipient: address(this),
-                    deadline: block.timestamp + 300
-                })
-            ) {} catch {}
-        }
-
-        if (wethEach > 0 && bwEach > 0) {
-            try INonfungiblePositionManager(positionManager).mint(
-                INonfungiblePositionManager.MintParams({
-                    token0: weth,
-                    token1: bwaezi,
-                    fee: bwWethFee,
-                    tickLower: -887220,
-                    tickUpper:  887220,
-                    amount0Desired: wethEach,
-                    amount1Desired: bwEach,
-                    amount0Min: (wethEach * 99) / 100,
-                    amount1Min: (bwEach * 99) / 100,
-                    recipient: address(this),
-                    deadline: block.timestamp + 300
-                })
-            ) {} catch {}
-        }
-
-        // Balancer joins (USDC/BW, WETH/BW) — ExactTokensInForBPTOut encoding
-        {
-            (address[] memory tokensU, ,) = IBalancerVault(vault).getPoolTokens(balBWUSDCId);
-            address[] memory assetsU = new address[](2);
-            uint256[] memory maxInU = new uint256[](2);
-            if (tokensU[0] == usdc && tokensU[1] == bwaezi) {
-                assetsU[0] = usdc; assetsU[1] = bwaezi;
-                maxInU[0] = usdcEach; maxInU[1] = bwEach;
-            } else {
-                assetsU[0] = bwaezi; assetsU[1] = usdc;
-                maxInU[0] = bwEach; maxInU[1] = usdcEach;
-            }
-            bytes memory userDataU = abi.encode(uint8(1), maxInU, uint256(0)); // 1 = ExactTokensInForBPTOut
-            IERC20(usdc).safeApprove(vault, usdcEach);
-            BW.safeApprove(vault, bwEach);
-            try IBalancerVault(vault).joinPool(
-                balBWUSDCId, address(this), address(this),
-                IBalancerVault.JoinPoolRequest({assets: assetsU, maxAmountsIn: maxInU, userData: userDataU, fromInternalBalance: false})
-            ) {} catch {}
-        }
-        {
-            (address[] memory tokensW, ,) = IBalancerVault(vault).getPoolTokens(balBWWETHId);
-            address[] memory assetsW = new address[](2);
-            uint256[] memory maxInW = new uint256[](2);
-            if (tokensW[0] == weth && tokensW[1] == bwaezi) {
-                assetsW[0] = weth; assetsW[1] = bwaezi;
-                maxInW[0] = wethEach; maxInW[1] = bwEach;
-            } else {
-                assetsW[0] = bwaezi; assetsW[1] = weth;
-                maxInW[0] = bwEach; maxInW[1] = wethEach;
-            }
-            bytes memory userDataW = abi.encode(uint8(1), maxInW, uint256(0));
-            IERC20(weth).safeApprove(vault, wethEach);
-            BW.safeApprove(vault, bwEach);
-            try IBalancerVault(vault).joinPool(
-                balBWWETHId, address(this), address(this),
-                IBalancerVault.JoinPoolRequest({assets: assetsW, maxAmountsIn: maxInW, userData: userDataW, fromInternalBalance: false})
-            ) {} catch {}
-        }
-
-        emit Reinvested((r * 10000) / 1e18, usdcDeposit, wethDeposit);
+        if (bwBought == 0) revert NoQuote();
+        if (bwBought < desiredBw) emit PartialInternalBuy(bwBought, desiredBw - bwBought);
     }
 
-    /* ----------------------------- Initial seeding (8 pools) ----------------------------- */
-    function seedAllPools(
-        uint256 usdcAmount,
-        uint256 wethAmount,
-        uint256 bwAmount,
-        // V3 ticks (strategy-computed ranges)
-        int24 usdcBwTickLower,
-        int24 usdcBwTickUpper,
-        int24 wethBwTickLower,
-        int24 wethBwTickUpper
-    ) external onlyOwner nonReentrant {
-        require(usdcAmount > 0 || wethAmount > 0 || bwAmount > 0, "zero");
-        // Pull from SCW (SCW has unlimited approvals)
-        if (usdcAmount > 0) IERC20(usdc).safeTransferFrom(scw, address(this), usdcAmount);
-        if (wethAmount > 0) IERC20(weth).safeTransferFrom(scw, address(this), wethAmount);
-        if (bwAmount   > 0) BW.safeTransferFrom(scw, address(this), bwAmount);
+    /* ----------------------------- External sell leg ----------------------------- */
+    function _externalSell(uint256 bwAmount, BundleConfig memory cfg)
+        internal
+        returns (uint256 bwSold, uint256 usdcGained, uint256 wethGained)
+    {
+        bwSold = bwAmount;
+        uint256 sellPriceUSD = _internalSellPriceUSD1e18(cfg.bwSellExtraBps);
+        uint256 epsilon = epsilonBps;
 
-        uint256 usdcSplit = usdcAmount / 3;
-        uint256 wethSplit = wethAmount / 3;
-        uint256 bwSplit   = bwAmount   / 4;
+        // Strategy: sell BW into USDC primarily, fallback into WETH if USDC path weak
+        // Compute expected USDC out
+        uint256 expectedUsdcOut = (bwAmount * sellPriceUSD) / 1e12; // USDC 6-dec
+        uint256 minUsdcOut = expectedUsdcOut * (10000 - epsilon) / 10000;
 
-        // Approvals (only from this contract)
-        IERC20(usdc).safeApprove(uniV2Router, usdcSplit);
-        IERC20(weth).safeApprove(uniV2Router, wethSplit);
-        BW.safeApprove(uniV2Router, bwSplit);
-
-        IERC20(usdc).safeApprove(sushiRouter, usdcSplit);
-        IERC20(weth).safeApprove(sushiRouter, wethSplit);
-        BW.safeApprove(sushiRouter, bwSplit);
-
-        IERC20(usdc).safeApprove(positionManager, usdcSplit);
-        IERC20(weth).safeApprove(positionManager, wethSplit);
-        BW.safeApprove(positionManager, bwSplit);
-
-        // V2 addLiquidity
-        if (usdcSplit > 0 && bwSplit > 0) {
-            try IUniswapV2Router(uniV2Router).addLiquidity(
-                usdc, bwaezi, usdcSplit, bwSplit, (usdcSplit * 99) / 100, (bwSplit * 99) / 100, address(this), block.timestamp + 600
-            ) {} catch {}
-        }
-        if (wethSplit > 0 && bwSplit > 0) {
-            try IUniswapV2Router(uniV2Router).addLiquidity(
-                weth, bwaezi, wethSplit, bwSplit, (wethSplit * 99) / 100, (bwSplit * 99) / 100, address(this), block.timestamp + 600
-            ) {} catch {}
+        uint256 usdcOut = _swapBestIn(bwaezi, usdc, bwAmount, minUsdcOut, bwUsdcFee);
+        if (usdcOut > 0) {
+            usdcGained = usdcOut;
+            return (bwSold, usdcGained, 0);
         }
 
-        // Sushi addLiquidity
-        if (usdcSplit > 0 && bwSplit > 0) {
-            try IUniswapV2Router(sushiRouter).addLiquidity(
-                usdc, bwaezi, usdcSplit, bwSplit, (usdcSplit * 99) / 100, (bwSplit * 99) / 100, address(this), block.timestamp + 600
-            ) {} catch {}
-        }
-        if (wethSplit > 0 && bwSplit > 0) {
-            try IUniswapV2Router(sushiRouter).addLiquidity(
-                weth, bwaezi, wethSplit, bwSplit, (wethSplit * 99) / 100, (bwSplit * 99) / 100, address(this), block.timestamp + 600
-            ) {} catch {}
-        }
+        // Fallback: sell into WETH
+        uint256 ethUsd = _fetchEthUsdFresh();
+        uint256 expectedWethOut = (bwAmount * sellPriceUSD) * 1e18 / ethUsd / 1e18;
+        uint256 minWethOut = expectedWethOut * (10000 - epsilon) / 10000;
 
-        // V3 mint positions
-        if (usdcSplit > 0 && bwSplit > 0) {
-            try INonfungiblePositionManager(positionManager).mint(
-                INonfungiblePositionManager.MintParams({
-                    token0: usdc,
-                    token1: bwaezi,
-                    fee: bwUsdcFee,
-                    tickLower: usdcBwTickLower,
-                    tickUpper: usdcBwTickUpper,
-                    amount0Desired: usdcSplit,
-                    amount1Desired: bwSplit,
-                    amount0Min: (usdcSplit * 99) / 100,
-                    amount1Min: (bwSplit * 99) / 100,
-                    recipient: address(this),
-                    deadline: block.timestamp + 600
-                })
-            ) {} catch {}
-        }
-        if (wethSplit > 0 && bwSplit > 0) {
-            try INonfungiblePositionManager(positionManager).mint(
-                INonfungiblePositionManager.MintParams({
-                    token0: weth,
-                    token1: bwaezi,
-                    fee: bwWethFee,
-                    tickLower: wethBwTickLower,
-                    tickUpper: wethBwTickUpper,
-                    amount0Desired: wethSplit,
-                    amount1Desired: bwSplit,
-                    amount0Min: (wethSplit * 99) / 100,
-                    amount1Min: (bwSplit * 99) / 100,
-                    recipient: address(this),
-                    deadline: block.timestamp + 600
-                })
-            ) {} catch {}
-        }
+        uint256 wethOut = _swapBestIn(bwaezi, weth, bwAmount, minWethOut, bwWethFee);
+        if (wethOut == 0) revert NoQuote();
+        wethGained = wethOut;
+    }
 
-        // Balancer joins
-        {
-            (address[] memory tokensU, ,) = IBalancerVault(vault).getPoolTokens(balBWUSDCId);
-            address[] memory assetsU = new address[](2);
-            uint256[] memory maxInU = new uint256[](2);
-            if (tokensU[0] == usdc && tokensU[1] == bwaezi) {
-                assetsU[0] = usdc; assetsU[1] = bwaezi;
-                maxInU[0] = usdcSplit; maxInU[1] = bwSplit;
-            } else {
-                assetsU[0] = bwaezi; assetsU[1] = usdc;
-                maxInU[0] = bwSplit; maxInU[1] = usdcSplit;
-            }
-            bytes memory userDataU = abi.encode(uint8(1), maxInU, uint256(0));
-            IERC20(usdc).safeApprove(vault, usdcSplit);
-            BW.safeApprove(vault, bwSplit);
-            try IBalancerVault(vault).joinPool(
-                balBWUSDCId, address(this), address(this),
-                IBalancerVault.JoinPoolRequest({assets: assetsU, maxAmountsIn: maxInU, userData: userDataU, fromInternalBalance: false})
-            ) {} catch {}
-        }
-        {
-            (address[] memory tokensW, ,) = IBalancerVault(vault).getPoolTokens(balBWWETHId);
-            address[] memory assetsW = new address[](2);
-            uint256[] memory maxInW = new uint256[](2);
-            if (tokensW[0] == weth && tokensW[1] == bwaezi) {
-                assetsW[0] = weth; assetsW[1] = bwaezi;
-                maxInW[0] = wethSplit; maxInW[1] = bwSplit;
-            } else {
-                assetsW[0] = bwaezi; assetsW[1] = weth;
-                maxInW[0] = bwSplit; maxInW[1] = wethSplit;
-            }
-            bytes memory userDataW = abi.encode(uint8(1), maxInW, uint256(0));
-            IERC20(weth).safeApprove(vault, wethSplit);
-            BW.safeApprove(vault, bwSplit);
-            try IBalancerVault(vault).joinPool(
-                balBWWETHId, address(this), address(this),
-                IBalancerVault.JoinPoolRequest({assets: assetsW, maxAmountsIn: maxInW, userData: userDataW, fromInternalBalance: false})
-            ) {} catch {}
-        }
+    /* ----------------------------- Reinvest drip (8 venues, compact) ----------------------------- */
+    function _reinvestCompact(uint256 usdcResidual, uint256 wethResidual, BundleConfig memory cfg) internal {
+        uint256 rBps = _reinvestRatio(cfg.spreadUSD1e18);
+        if (rBps == 0) return;
 
-        emit PoolsSeeded(usdcAmount, wethAmount, bwAmount);
+        // Allocate a fraction of residuals to LP provisioning across 8 venues (best-effort)
+        uint256 usdcIntoPools = usdcResidual * rBps / 10000;
+        uint256 wethIntoPools = wethResidual * rBps / 10000;
+
+        // Compact: split evenly across 4 pairs (USDC/BW and WETH/BW on UniV2 + Sushi)
+        uint256 usdcEach = usdcIntoPools / 4;
+        uint256 wethEach = wethIntoPools / 4;
+
+        // Add liquidity attempts (ignore failures to keep compact best-effort)
+        // UniV2 USDC/BW
+        _tryAddLiquidity(uniV2Router, usdc, bwaezi, usdcEach, usdcEach);
+        // UniV2 WETH/BW
+        _tryAddLiquidity(uniV2Router, weth, bwaezi, wethEach, wethEach);
+        // Sushi USDC/BW
+        _tryAddLiquidity(sushiRouter, usdc, bwaezi, usdcEach, usdcEach);
+        // Sushi WETH/BW
+        _tryAddLiquidity(sushiRouter, weth, bwaezi, wethEach, wethEach);
+
+        emit Reinvested(rBps, usdcIntoPools, wethIntoPools);
+    }
+
+    function _tryAddLiquidity(address router, address tokenA, address tokenB, uint256 amtA, uint256 amtB) internal {
+        if (amtA == 0 || amtB == 0) return;
+        try IUniswapV2Router(router).addLiquidity(
+            tokenA, tokenB, amtA, amtB, amtA * 99 / 100, amtB * 99 / 100, address(this), block.timestamp + 300
+        ) returns (uint256, uint256, uint256) {
+            // no-op
+        } catch {
+            // swallow
+        }
     }
 
     /* ----------------------------- Paymaster top-up ----------------------------- */
-    function _maybeTopEntryPoint() internal {
-        uint256 dep = entryPoint.balanceOf(address(this));
-        if (dep >= targetDepositWei) return;
+    function _maybeTopupPaymaster() internal {
+        address pm = activePaymaster == 0 ? paymasterA : paymasterB;
+        uint256 bal = IEntryPoint(entryPoint).balanceOf(pm);
+        if (bal >= targetDepositWei) return;
 
-        uint256 scwWeth = IERC20(weth).balanceOf(scw);
-        if (scwWeth == 0) return;
+        // Draw from SCW WETH balance
+        uint256 scwWethBal = IERC20(weth).balanceOf(scw);
+        if (scwWethBal == 0) return;
 
-        uint256 draw = (scwWeth * paymasterDrawBps) / 10000;
+        uint256 draw = scwWethBal * paymasterDrawBps / 10000;
         if (draw == 0) return;
 
+        // Pull WETH from SCW (assumes approval)
         IERC20(weth).safeTransferFrom(scw, address(this), draw);
+
+        // Unwrap to ETH
         IWETH(weth).withdraw(draw);
-        entryPoint.depositTo{value: draw}(address(this));
 
-        emit PaymasterTopped(draw, entryPoint.balanceOf(address(this)));
+        // Deposit to EntryPoint for paymaster
+        IEntryPoint(entryPoint).depositTo{value: draw}(pm);
+
+        uint256 newBal = IEntryPoint(entryPoint).balanceOf(pm);
+        emit PaymasterTopped(pm, draw, newBal);
     }
 
-    /* ----------------------------- Treasury & Emergency ----------------------------- */
-    function withdrawToken(address token, uint256 amount) external onlyOwner nonReentrant {
+    /* ----------------------------- Rescue functions ----------------------------- */
+    function rescueERC20(address token, uint256 amount) external onlyOwner nonReentrant {
         IERC20(token).safeTransfer(owner, amount);
+        emit ERC20Withdrawn(token, amount);
     }
 
-    // Emergency ETH withdrawal (only owner)
-    function emergencyWithdrawETH(uint256 amount) external onlyOwner nonReentrant {
-        require(address(this).balance >= amount, "insufficient ETH");
-        (bool ok, ) = payable(owner).call{value: amount}("");
-        require(ok, "eth withdraw fail");
+    function rescueETH(uint256 amount) external onlyOwner nonReentrant {
+        (bool ok, ) = owner.call{value: amount}("");
+        if (!ok) revert BadArgs();
+        emit ETHWithdrawn(amount);
     }
 
-    function emergencyPause() external onlyOwner nonReentrant {
-        paused = true;
-        emit Paused(true);
+    function rescueERC721(address token, uint256 tokenId) external onlyOwner nonReentrant {
+        IERC721(token).transferFrom(address(this), owner, tokenId);
+        emit ERC721Rescued(token, tokenId);
     }
 
-    /* ----------------------------- Rescue NFTs / LP positions ----------------------------- */
-    // Recover stuck ERC721 (e.g., Uniswap V3 position NFTs)
-    function rescueERC721(address nft, uint256 tokenId, address to) external onlyOwner nonReentrant {
-        IERC721(nft).transferFrom(address(this), to, tokenId);
+    function rescueERC1155(address token, uint256 id, uint256 amount, bytes calldata data) external onlyOwner nonReentrant {
+        IERC1155(token).safeTransferFrom(address(this), owner, id, amount, data);
+        emit ERC1155Rescued(token, id, amount);
     }
 
-    // Recover stuck ERC1155 (optional LP receipts)
-    function rescueERC1155(address token, uint256 id, uint256 amount, address to, bytes calldata data) external onlyOwner nonReentrant {
-        IERC1155(token).safeTransferFrom(address(this), to, id, amount, data);
-    }
-
-    /* ----------------------------- Batch approvals (gas utility) ----------------------------- */
-    function _batchApprove(address[] memory tokens, address spender, uint256 amount) internal {
-        uint256 len = tokens.length;
-        for (uint256 i = 0; i < len; ) {
-            // Skip zero address
-            if (tokens[i] != address(0)) {
-                IERC20(tokens[i]).safeApprove(spender, amount);
-            }
-            unchecked { ++i; }
-        }
-        emit BatchApproved(spender, amount, len);
-    }
-
+    /* ----------------------------- Fallbacks ----------------------------- */
     receive() external payable {}
+    fallback() external payable {}
 }
