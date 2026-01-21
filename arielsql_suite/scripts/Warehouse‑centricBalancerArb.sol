@@ -655,9 +655,9 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 spreadUSD1e18,
         uint16  usdcShareBps,
         uint16  bwSellExtraBps
-    ) external onlyOwner returns (uint256 bundleId) {
+    ) external onlyOwner {
         if (usdcShareBps > 10000 || bwSellExtraBps > 30000) revert BadArgs();
-        bundleId = nextBundleId++;
+        uint256 bundleId = nextBundleId++;
         bundles[bundleId] = BundleConfig({
             RbarUSD1e18: RbarUSD1e18,
             spreadUSD1e18: spreadUSD1e18,
@@ -764,11 +764,25 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         if (!cfg.active) revert Inactive();
         uint256 L1e18   = _loanSize(cfg.RbarUSD1e18, cfg.spreadUSD1e18);
         uint256 cap1e18 = _safeLeg(cfg.RbarUSD1e18);
-        uint256 wethUSD1e18 = L1e18 - (L1e18 * cfg.usdcShareBps / 10000);
+        uint256 usdcUSD1e18 = L1e18 * cfg.usdcShareBps / 10000;
+        uint256 wethUSD1e18 = L1e18 - usdcUSD1e18;
         if (wethUSD1e18 > cap1e18) wethUSD1e18 = cap1e18;
-        uint256 ethUsd = _fetchEthUsdFresh();
-        // WETH amount = USD / ETHUSD
-        return wethUSD1e18 * 1e18 / ethUsd;
+        uint256 ethUsd1e18 = _fetchEthUsdFresh();
+        uint8 wethDec = IERC20(weth).decimals();
+        uint256 wethUnits1e18 = wethUSD1e18 * 1e18 / ethUsd1e18;
+        return wethUnits1e18 / (10 ** (18 - wethDec)); // WETH 18-dec
+    }
+
+    /* ----------------------------- Spread inference ----------------------------- */
+    function _spreadFromQuotes() internal returns (uint256 spread1e18) {
+        uint256 oneUsdc = 1e6; // USDC 6 dec
+        uint256 bwOut = _quoteExactInputV3(usdc, bwaezi, oneUsdc, bwUsdcFee);
+        uint256 usdcBack = _quoteExactInputV3(bwaezi, usdc, bwOut, bwUsdcFee);
+        if (usdcBack > oneUsdc) {
+            spread1e18 = (usdcBack - oneUsdc) * 1e12;
+        } else {
+            spread1e18 = (oneUsdc - usdcBack) * 1e12;
+        }
     }
 
     /* ----------------------------- Flash loan callback ----------------------------- */
@@ -777,239 +791,243 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256[] calldata amounts,
         uint256[] calldata fees,
         bytes calldata userData
-    ) external nonReentrant {
-        if (msg.sender != vault) revert NotAuthorized();
-        if (paused) revert Paused();
+    ) external override nonReentrant {
+        if (msg.sender != vault) revert BadArgs();
         if (tokens.length != 2 || amounts.length != 2 || fees.length != 2) revert BadArgs();
-        if (!(tokens[0] == usdc && tokens[1] == weth)) revert BadArgs;
+        if (!(tokens[0] == usdc && tokens[1] == weth)) revert BadArgs();
 
         uint256 bundleId = abi.decode(userData, (uint256));
         BundleConfig memory cfg = bundles[bundleId];
         if (!cfg.active) revert Inactive();
+        if (paused) revert Paused();
 
-        // Circuit breaker check using blended internal buy price as proxy
-        uint256 newPrice = _internalBuyPriceUSD1e18();
-        _checkBreaker(newPrice);
-        lastPrice1e18 = newPrice;
+        uint256 usdcIn  = amounts[0];
+        uint256 wethIn  = amounts[1];
+        uint256 usdcFee = fees[0];
+        uint256 wethFee = fees[1];
 
-        uint256 usdcLoan = amounts[0];
-        uint256 wethLoan = amounts[1];
-        uint256 usdcFee  = fees[0];
-        uint256 wethFee  = fees[1];
+        // Circuit breaker check using blended buy price
+        uint256 buyPrice1e18  = _internalBuyPriceUSD1e18();
+        _checkBreaker(buyPrice1e18);
+        lastPrice1e18 = buyPrice1e18;
 
-        // Execute cycle: internal buy leg → external sell leg → repay loans → reinvest → paymaster top-up
-        (uint256 bwBought, uint256 usdcSpent, uint256 wethSpent) = _internalBuy(usdcLoan, wethLoan, cfg);
-        emit InternalBuyLeg(bwBought, usdcSpent, wethSpent);
+        // Compute BW needed for direct internal buy
+        uint256 neededBwForUsdc = usdcIn > 0 ? (usdcIn * 1e12) * 1e18 / buyPrice1e18 : 0; // USDC 6→1e18
+        uint256 ethUsd          = _fetchEthUsdFresh();
+        uint256 neededBwForWeth = wethIn > 0 ? (wethIn * ethUsd) * 1e18 / buyPrice1e18 : 0;
+        uint256 totalNeededBw   = neededBwForUsdc + neededBwForWeth;
 
-        (uint256 bwSold, uint256 usdcGained, uint256 wethGained) = _externalSell(bwBought, cfg);
-        emit InternalSellLeg(bwSold, (usdcGained * 1e12) + (_fetchEthUsdFresh() * wethGained / 1e18));
+        uint256 scwBwBal = BWZC.balanceOf(scw);
+        uint256 bwBought = 0;
 
-        // Repay loans
-        uint256 usdcRepay = usdcLoan + usdcFee;
-        uint256 wethRepay = wethLoan + wethFee;
+        if (scwBwBal >= totalNeededBw && totalNeededBw > 0) {
+            BWZC.safeTransferFrom(scw, address(this), totalNeededBw);
+            bwBought = totalNeededBw;
+            emit InternalBuyLeg(totalNeededBw, usdcIn, wethIn);
+        } else {
+            uint256 pulled = 0;
+            if (scwBwBal > 0) {
+                BWZC.safeTransferFrom(scw, address(this), scwBwBal);
+                pulled = scwBwBal;
+                bwBought += scwBwBal;
+            }
 
-        // Ensure sufficient balances for repayment
-        uint256 usdcBal = IERC20(usdc).balanceOf(address(this));
-        uint256 wethBal = IERC20(weth).balanceOf(address(this));
-        if (usdcBal < usdcRepay || wethBal < wethRepay) revert NoQuote();
+            // Fallback to pools for remaining legs
+            uint256 eps = epsilonBps;
 
-        // Transfer back to vault
-        IERC20(usdc).safeTransfer(vault, usdcRepay);
-        IERC20(weth).safeTransfer(vault, wethRepay);
-
-        // Residuals after repayment
-        uint256 usdcResidual = IERC20(usdc).balanceOf(address(this));
-        uint256 wethResidual = IERC20(weth).balanceOf(address(this));
-
-        emit CycleExecuted(bundleId, usdcLoan, wethLoan, bwSold, usdcResidual, wethResidual);
-
-        // Reinvest drip (module)
-        if (moduleEnabled[keccak256("REINVEST")]) {
-            _reinvestCompact(usdcResidual, wethResidual, cfg);
+            if (usdcIn > 0) {
+                uint256 outV3 = _quoteExactInputV3(usdc, bwaezi, usdcIn, bwUsdcFee);
+                uint256 outV2 = _quoteExactInputV2(uniV2Router, usdc, bwaezi, usdcIn);
+                uint256 outSu = _quoteExactInputV2(sushiRouter, usdc, bwaezi, usdcIn);
+                uint256 best  = _max3(outV3, outV2, outSu);
+                if (best == 0) revert NoQuote();
+                uint256 minOut = best * (10000 - eps) / 10000;
+                bwBought      += _swapBestIn(usdc, bwaezi, usdcIn, minOut, bwUsdcFee);
+            }
+            if (wethIn > 0) {
+                uint256 outV3 = _quoteExactInputV3(weth, bwaezi, wethIn, bwWethFee);
+                uint256 outV2 = _quoteExactInputV2(uniV2Router, weth, bwaezi, wethIn);
+                uint256 outSu = _quoteExactInputV2(sushiRouter, weth, bwaezi, wethIn);
+                uint256 best  = _max3(outV3, outV2, outSu);
+                if (best == 0) revert NoQuote();
+                uint256 minOut = best * (10000 - eps) / 10000;
+                bwBought      += _swapBestIn(weth, bwaezi, wethIn, minOut, bwWethFee);
+            }
+            emit PartialInternalBuy(pulled, bwBought > pulled ? (bwBought - pulled) : 0);
         }
 
-        // Paymaster top-up (module)
+        // SELL leg: direct to SCW (SCW buys back BWAEZI at internal ask)
+        if (bwBought > 0) {
+            uint256 sellPrice1e18 = _internalSellPriceUSD1e18(cfg.bwSellExtraBps);
+            BWZC.safeTransfer(scw, bwBought);
+            uint256 stablesValue1e18 = (bwBought * sellPrice1e18) / 1e18;
+            emit InternalSellLeg(bwBought, stablesValue1e18);
+        }
+
+        // Repay flash loans
+        IERC20(usdc).safeTransfer(vault, usdcIn + usdcFee);
+        IERC20(weth).safeTransfer(vault, wethIn + wethFee);
+
+        // Residuals accrue to SCW
+        uint256 residualUsdc = IERC20(usdc).balanceOf(address(this));
+        uint256 residualWeth = IERC20(weth).balanceOf(address(this));
+        if (residualUsdc > 0) IERC20(usdc).safeTransfer(scw, residualUsdc);
+        if (residualWeth > 0) IERC20(weth).safeTransfer(scw, residualWeth);
+
+        cycleCount += 1;
+        emit CycleExecuted(bundleId, usdcIn, wethIn, bwBought, residualUsdc, residualWeth);
+
+        // Reinvest drip at checkpoint
+        if (moduleEnabled[keccak256("REINVEST")] && (cycleCount % checkpointPeriod == 0)) {
+            _reinvestDrip();
+        }
+
+        // Paymaster draw if needed
         if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) {
-            _maybeTopupPaymaster();
+            _maybeTopEntryPoint();
         }
     }
 
-    /* ----------------------------- Internal buy leg ----------------------------- */
-    function _internalBuy(uint256 usdcIn, uint256 wethIn, BundleConfig memory cfg)
-        internal
-        returns (uint256 bwBought, uint256 usdcSpent, uint256 wethSpent)
-    {
-        // Priority: internal market-maker (SCW) direct BW if available
-        uint256 bwScwBal = BWZC.balanceOf(scw);
-        uint256 buyPriceUSD = _internalBuyPriceUSD1e18(); // USD per BW
-        uint256 epsilon = epsilonBps;
-
-        // Compute desired BW from USD budget
-        uint256 usdBudget1e18 = cfg.RbarUSD1e18; // use Rbar as indicative budget
-        uint256 desiredBw = usdBudget1e18 * 1e18 / buyPriceUSD;
-
-        uint256 bwFromScw = bwScwBal < desiredBw ? bwScwBal : desiredBw;
-        if (bwFromScw > 0) {
-            // Pull BW from SCW to contract (assumes SCW approved)
-            BWZC.safeTransferFrom(IERC20(bwaezi), scw, address(this), bwFromScw);
-            bwBought += bwFromScw;
-        }
-
-        // Remaining BW to source via pools using USDC/WETH
-        uint256 bwRemaining = desiredBw > bwBought ? desiredBw - bwBought : 0;
-
-        // Split remaining USD budget across USDC/WETH proportionally to available loans
-        uint256 ethUsd = _fetchEthUsdFresh();
-        uint256 usdcUsd1e18 = usdcIn * 1e12;
-        uint256 wethUsd1e18 = wethIn * ethUsd / 1e18;
-        uint256 totalUsd1e18 = usdcUsd1e18 + wethUsd1e18;
-
-        if (bwRemaining > 0 && totalUsd1e18 > 0) {
-            // USDC leg
-            uint256 usdcShareUsd = totalUsd1e18 * cfg.usdcShareBps / 10000;
-            uint256 usdcSpend = usdcShareUsd / 1e12; // back to 6-dec
-            if (usdcSpend > usdcIn) usdcSpend = usdcIn;
-
-            uint256 minBwOutUsdc = (usdcSpend * 1e12) * 1e18 / buyPriceUSD;
-            minBwOutUsdc = minBwOutUsdc * (10000 - epsilon) / 10000;
-
-            uint256 bwOutUsdc = _swapBestIn(usdc, bwaezi, usdcSpend, minBwOutUsdc, bwUsdcFee);
-            bwBought += bwOutUsdc;
-            usdcSpent = usdcSpend;
-
-            // WETH leg
-            uint256 wethShareUsd = totalUsd1e18 - usdcShareUsd;
-            uint256 wethSpend = wethShareUsd * 1e18 / ethUsd;
-            if (wethSpend > wethIn) wethSpend = wethIn;
-
-            uint256 minBwOutWeth = (wethSpend * ethUsd / 1e18) * 1e18 / buyPriceUSD;
-            minBwOutWeth = minBwOutWeth * (10000 - epsilon) / 10000;
-
-            uint256 bwOutWeth = _swapBestIn(weth, bwaezi, wethSpend, minBwOutWeth, bwWethFee);
-            bwBought += bwOutWeth;
-            wethSpent = wethSpend;
-        }
-
-        if (bwBought == 0) revert NoQuote();
-        if (bwBought < desiredBw) emit PartialInternalBuy(bwBought, desiredBw - bwBought);
+    /* ----------------------------- Reinvest drip (compact best-effort) ----------------------------- */
+    function _v2Add(address router, address a, address b, uint256 amtA, uint256 amtB) internal {
+        IERC20(a).safeApprove(router, amtA);
+        IERC20(b).safeApprove(router, amtB);
+        try IUniswapV2Router(router).addLiquidity(a, b, amtA, amtB, amtA * 99 / 100, amtB * 99 / 100, address(this), block.timestamp + 600) {} catch {}
     }
 
-    /* ----------------------------- External sell leg ----------------------------- */
-    function _externalSell(uint256 bwAmount, BundleConfig memory cfg)
-        internal
-        returns (uint256 bwSold, uint256 usdcGained, uint256 wethGained)
-    {
-        bwSold = bwAmount;
-        uint256 sellPriceUSD = _internalSellPriceUSD1e18(cfg.bwSellExtraBps);
-        uint256 epsilon = epsilonBps;
+    function _v3Mint(address t0, address t1, uint24 fee, int24 lower, int24 upper, uint256 amt0, uint256 amt1) internal {
+        IERC20(t0).safeApprove(positionManager, amt0);
+        IERC20(t1).safeApprove(positionManager, amt1);
+        try INonfungiblePositionManager(positionManager).mint(
+            INonfungiblePositionManager.MintParams({
+                token0: t0,
+                token1: t1,
+                fee: fee,
+                tickLower: lower,
+                tickUpper: upper,
+                amount0Desired: amt0,
+                amount1Desired: amt1,
+                amount0Min: amt0 * 99 / 100,
+                amount1Min: amt1 * 99 / 100,
+                recipient: address(this),
+                deadline: block.timestamp + 600
+            })
+        ) {} catch {}
+    }
 
-        // Strategy: sell BW into USDC primarily, fallback into WETH if USDC path weak
-        // Compute expected USDC out
-        uint256 expectedUsdcOut = (bwAmount * sellPriceUSD) / 1e12; // USDC 6-dec
-        uint256 minUsdcOut = expectedUsdcOut * (10000 - epsilon) / 10000;
+    function _balJoin(bytes32 poolId, address a, address b, uint256 amtA, uint256 amtB) internal {
+        (address[] memory tokens, ,) = IBalancerVault(vault).getPoolTokens(poolId);
+        address[] memory assets = new address[](2);
+        uint256[] memory maxIn = new uint256[](2);
+        if (tokens[0] == a) {
+            assets[0] = a; assets[1] = b;
+            maxIn[0] = amtA; maxIn[1] = amtB;
+        } else {
+            assets[0] = b; assets[1] = a;
+            maxIn[0] = amtB; maxIn[1] = amtA;
+        }
+        bytes memory userData = abi.encode(uint8(1), maxIn, 0);
+        IERC20(a).safeApprove(vault, amtA);
+        IERC20(b).safeApprove(vault, amtB);
+        IBalancerVault.JoinPoolRequest memory req = IBalancerVault.JoinPoolRequest({
+            assets: assets,
+            maxAmountsIn: maxIn,
+            userData: userData,
+            fromInternalBalance: false
+        });
+        try IBalancerVault(vault).joinPool(poolId, address(this), address(this), req) {} catch {}
+    }
 
-        uint256 usdcOut = _swapBestIn(bwaezi, usdc, bwAmount, minUsdcOut, bwUsdcFee);
-        if (usdcOut > 0) {
-            usdcGained = usdcOut;
-            return (bwSold, usdcGained, 0);
+    function _reinvestDrip() internal {
+        // Simple ratio from spread; if spread unavailable, use mid ratio
+        uint256 spread1e18 = _spreadFromQuotes();
+        uint256 r = _reinvestRatio(spread1e18);
+
+        uint256 scwUsdc = IERC20(usdc).balanceOf(scw);
+        uint256 scwWeth = IERC20(weth).balanceOf(scw);
+        uint256 scwBw   = BWZC.balanceOf(scw);
+
+        uint256 usdcDeposit = scwUsdc * r / 1e18;
+        uint256 wethDeposit = scwWeth * r / 1e18;
+        uint256 bwDeposit   = scwBw   * r / 1e18;
+
+        if (usdcDeposit > 0) IERC20(usdc).safeTransferFrom(scw, address(this), usdcDeposit);
+        if (wethDeposit > 0) IERC20(weth).safeTransferFrom(scw, address(this), wethDeposit);
+        if (bwDeposit   > 0) BWZC.safeTransferFrom(scw, address(this), bwDeposit);
+
+        // Split across 8 venues (best-effort, equal splits)
+        uint256 uSplit = usdcDeposit / 3;
+        uint256 wSplit = wethDeposit / 3;
+        uint256 bSplit = bwDeposit   / 4;
+
+        if (uSplit > 0 && bSplit > 0) {
+            _v2Add(uniV2Router, usdc, bwaezi, uSplit, bSplit);
+            _v2Add(sushiRouter, usdc, bwaezi, uSplit, bSplit);
+            _v3Mint(usdc, bwaezi, bwUsdcFee, -887220, 887220, uSplit, bSplit);
+            _balJoin(balBWUSDCId, usdc, bwaezi, uSplit, bSplit);
+        }
+        if (wSplit > 0 && bSplit > 0) {
+            _v2Add(uniV2Router, weth, bwaezi, wSplit, bSplit);
+            _v2Add(sushiRouter, weth, bwaezi, wSplit, bSplit);
+            _v3Mint(weth, bwaezi, bwWethFee, -887220, 887220, wSplit, bSplit);
+            _balJoin(balBWWETHId, weth, bwaezi, wSplit, bSplit);
         }
 
-        // Fallback: sell into WETH
-        uint256 ethUsd = _fetchEthUsdFresh();
-        uint256 expectedWethOut = (bwAmount * sellPriceUSD) * 1e18 / ethUsd / 1e18;
-        uint256 minWethOut = expectedWethOut * (10000 - epsilon) / 10000;
-
-        uint256 wethOut = _swapBestIn(bwaezi, weth, bwAmount, minWethOut, bwWethFee);
-        if (wethOut == 0) revert NoQuote();
-        wethGained = wethOut;
+        emit Reinvested(r * 10000 / 1e18, usdcDeposit, wethDeposit);
     }
 
-    /* ----------------------------- Reinvest drip (8 venues, compact) ----------------------------- */
-    function _reinvestCompact(uint256 usdcResidual, uint256 wethResidual, BundleConfig memory cfg) internal {
-        uint256 rBps = _reinvestRatio(cfg.spreadUSD1e18);
-        if (rBps == 0) return;
-
-        // Allocate a fraction of residuals to LP provisioning across 8 venues (best-effort)
-        uint256 usdcIntoPools = usdcResidual * rBps / 10000;
-        uint256 wethIntoPools = wethResidual * rBps / 10000;
-
-        // Compact: split evenly across 4 pairs (USDC/BW and WETH/BW on UniV2 + Sushi)
-        uint256 usdcEach = usdcIntoPools / 4;
-        uint256 wethEach = wethIntoPools / 4;
-
-        // Add liquidity attempts (ignore failures to keep compact best-effort)
-        // UniV2 USDC/BW
-        _tryAddLiquidity(uniV2Router, usdc, bwaezi, usdcEach, usdcEach);
-        // UniV2 WETH/BW
-        _tryAddLiquidity(uniV2Router, weth, bwaezi, wethEach, wethEach);
-        // Sushi USDC/BW
-        _tryAddLiquidity(sushiRouter, usdc, bwaezi, usdcEach, usdcEach);
-        // Sushi WETH/BW
-        _tryAddLiquidity(sushiRouter, weth, bwaezi, wethEach, wethEach);
-
-        emit Reinvested(rBps, usdcIntoPools, wethIntoPools);
-    }
-
-    function _tryAddLiquidity(address router, address tokenA, address tokenB, uint256 amtA, uint256 amtB) internal {
-        if (amtA == 0 || amtB == 0) return;
-        try IUniswapV2Router(router).addLiquidity(
-            tokenA, tokenB, amtA, amtB, amtA * 99 / 100, amtB * 99 / 100, address(this), block.timestamp + 300
-        ) returns (uint256, uint256, uint256) {
-            // no-op
-        } catch {
-            // swallow
-        }
-    }
-
-    /* ----------------------------- Paymaster top-up ----------------------------- */
-    function _maybeTopupPaymaster() internal {
+    /* ----------------------------- Paymaster top-up (dual) ----------------------------- */
+    function _maybeTopEntryPoint() internal {
         address pm = activePaymaster == 0 ? paymasterA : paymasterB;
-        uint256 bal = IEntryPoint(entryPoint).balanceOf(pm);
-        if (bal >= targetDepositWei) return;
+        uint256 dep = IEntryPoint(entryPoint).balanceOf(pm);
+        if (dep >= targetDepositWei) return;
 
-        // Draw from SCW WETH balance
-        uint256 scwWethBal = IERC20(weth).balanceOf(scw);
-        if (scwWethBal == 0) return;
+        uint256 scwWeth = IERC20(weth).balanceOf(scw);
+        if (scwWeth == 0) return;
 
-        uint256 draw = scwWethBal * paymasterDrawBps / 10000;
+        uint256 draw = scwWeth * paymasterDrawBps / 10000;
         if (draw == 0) return;
 
-        // Pull WETH from SCW (assumes approval)
         IERC20(weth).safeTransferFrom(scw, address(this), draw);
-
-        // Unwrap to ETH
         IWETH(weth).withdraw(draw);
-
-        // Deposit to EntryPoint for paymaster
         IEntryPoint(entryPoint).depositTo{value: draw}(pm);
 
-        uint256 newBal = IEntryPoint(entryPoint).balanceOf(pm);
-        emit PaymasterTopped(pm, draw, newBal);
+        emit PaymasterTopped(pm, draw, IEntryPoint(entryPoint).balanceOf(pm));
     }
 
-    /* ----------------------------- Rescue functions ----------------------------- */
-    function rescueERC20(address token, uint256 amount) external onlyOwner nonReentrant {
+    /* ----------------------------- Treasury & rescues ----------------------------- */
+    function withdrawToken(address token, uint256 amount) external onlyOwner nonReentrant {
         IERC20(token).safeTransfer(owner, amount);
         emit ERC20Withdrawn(token, amount);
     }
 
-    function rescueETH(uint256 amount) external onlyOwner nonReentrant {
-        (bool ok, ) = owner.call{value: amount}("");
-        if (!ok) revert BadArgs();
+    function emergencyWithdrawETH(uint256 amount) external onlyOwner nonReentrant {
+        (bool s,) = payable(owner).call{value: amount}("");
+        if (!s) revert BadArgs();
         emit ETHWithdrawn(amount);
     }
 
-    function rescueERC721(address token, uint256 tokenId) external onlyOwner nonReentrant {
-        IERC721(token).transferFrom(address(this), owner, tokenId);
-        emit ERC721Rescued(token, tokenId);
+    function emergencyUnwrapWETH(uint256 amount) external onlyOwner nonReentrant {
+        IWETH(weth).withdraw(amount);
+        (bool s,) = payable(owner).call{value: amount}("");
+        if (!s) revert BadArgs();
+        emit ETHWithdrawn(amount);
     }
 
-    function rescueERC1155(address token, uint256 id, uint256 amount, bytes calldata data) external onlyOwner nonReentrant {
-        IERC1155(token).safeTransferFrom(address(this), owner, id, amount, data);
-        emit ERC1155Rescued(token, id, amount);
+    function emergencyPause() external onlyOwner {
+        paused = true;
+        emit PausedSet(true);
     }
 
-    /* ----------------------------- Fallbacks ----------------------------- */
+    function rescueERC721(address nft, uint256 id, address to) external onlyOwner nonReentrant {
+        IERC721(nft).transferFrom(address(this), to, id);
+        emit ERC721Rescued(nft, id);
+    }
+
+    function rescueERC1155(address t, uint256 id, uint256 a, address to, bytes calldata d) external onlyOwner nonReentrant {
+        IERC1155(t).safeTransferFrom(address(this), to, id, a, d);
+        emit ERC1155Rescued(t, id, a);
+    }
+
     receive() external payable {}
-    fallback() external payable {}
 }
