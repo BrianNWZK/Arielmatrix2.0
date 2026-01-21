@@ -1,6 +1,5 @@
 // main.js
-// Compile + deploy WarehouseBalancerArb (MEV v17/v18)
-// Usage: node main.js
+// Compile + deploy WarehouseBalancerArb (MEV v17/v18) - SIZE-OPTIMIZED VERSION
 
 import fs from "fs";
 import path from "path";
@@ -63,8 +62,13 @@ function compile(source, fileName) {
     language: "Solidity",
     sources: { [fileName]: { content: source } },
     settings: {
-      optimizer: { enabled: true, runs: 1 }, // minimize bytecode size
+      evmVersion: "shanghai",
       viaIR: true,
+      optimizer: {
+        enabled: true,
+        runs: 200,  // Balanced; try 1000 or 200000 if still too large
+        details: { yul: true }
+      },
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
   };
@@ -79,10 +83,14 @@ function compile(source, fileName) {
   }
   const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
   if (!compiled) throw new Error("Contract WarehouseBalancerArb not found.");
+  const deployedSize = compiled.evm.deployedBytecode.object.length / 2;
+  if (deployedSize > 24576) {
+    throw new Error(`Contract too large: ${deployedSize} bytes > 24,576 EVM limit. Try higher optimizer runs, remove features (e.g., seedAllPools), or use proxy pattern.`);
+  }
   return {
     abi: compiled.abi,
     bytecode: "0x" + compiled.evm.bytecode.object,
-    deployedSize: (compiled.evm.deployedBytecode.object.length / 2)
+    deployedSize
   };
 }
 
@@ -97,19 +105,23 @@ async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) 
 
 // --- Deploy ---
 async function main() {
-  console.log("=== Compile + Deploy WarehouseBalancerArb ===");
+  console.log("=== Compile + Deploy WarehouseBalancerArb (SIZE-OPTIMIZED) ===");
 
   const { baseDir, file, fullPath } = findContractFile();
   console.log("Source file:", fullPath);
   const source = fs.readFileSync(fullPath, "utf8");
 
   const { abi, bytecode, deployedSize } = compile(source, file);
-  console.log(`Deployed bytecode size: ${deployedSize} bytes`);
+  console.log(`Deployed bytecode size: ${deployedSize} bytes (<= 24576 OK)`);
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
   console.log("Deployer:", wallet.address);
-  console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
+  const balance = await provider.getBalance(wallet.address);
+  console.log("Balance:", ethers.formatEther(balance), "ETH");
+  if (balance < ethers.parseEther("0.5")) {
+    throw new Error("Insufficient balance! Fund deployer with at least 0.5 ETH.");
+  }
 
   // Normalize addresses
   const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
@@ -125,66 +137,41 @@ async function main() {
   console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
 
   const args = [
-    A.SCW,
-    A.BALANCER_VAULT,
-    A.BWAEZI,
-    A.USDC,
-    A.WETH,
-    A.UNIV3_ROUTER,
-    A.UNIV2_ROUTER,
-    A.SUSHI_ROUTER,
-    A.QUOTER_V2,
-    A.ENTRYPOINT,
-    A.CHAINLINK_ETHUSD,
-    A.UNIV3_BW_USDC,
-    A.UNIV3_BW_WETH,
-    A.UNIV2_BW_USDC,
-    A.UNIV2_BW_WETH,
-    A.SUSHI_BW_USDC,
-    A.SUSHI_BW_WETH,
-    A.BAL_BW_USDC,
-    A.BAL_BW_WETH,
-    BAL_BW_USDC_ID,
-    BAL_BW_WETH_ID,
+    A.SCW, A.BALANCER_VAULT, A.BWAEZI, A.USDC, A.WETH,
+    A.UNIV3_ROUTER, A.UNIV2_ROUTER, A.SUSHI_ROUTER, A.QUOTER_V2,
+    A.ENTRYPOINT, A.CHAINLINK_ETHUSD,
+    A.UNIV3_BW_USDC, A.UNIV3_BW_WETH,
+    A.UNIV2_BW_USDC, A.UNIV2_BW_WETH,
+    A.SUSHI_BW_USDC, A.SUSHI_BW_WETH,
+    A.BAL_BW_USDC, A.BAL_BW_WETH,
+    BAL_BW_USDC_ID, BAL_BW_WETH_ID,
     A.POSITION_MANAGER
   ];
 
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
 
-  try {
-    const txReq = await factory.getDeployTransaction(...args);
-    const est = await provider.estimateGas(txReq);
-    console.log("Estimated gas:", est.toString());
-  } catch (e) {
-    console.warn("Gas estimation failed:", e.message);
-  }
-
   const contract = await factory.deploy(...args);
-  console.log("TX:", contract.deploymentTransaction().hash);
+  console.log("TX submitted:", contract.deploymentTransaction().hash);
 
   await contract.waitForDeployment();
   const addr = await contract.getAddress();
   console.log("✅ Deployed at:", addr);
 
-    const info = {
+  const info = {
     address: addr,
     tx: contract.deploymentTransaction().hash,
     deployer: wallet.address,
     poolIds: { BAL_BW_USDC_ID, BAL_BW_WETH_ID },
     network: await provider.getNetwork(),
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    bytecodeSize: deployedSize
   };
 
   fs.writeFileSync("deployment-info.json", JSON.stringify(info, null, 2));
   console.log("Saved deployment-info.json");
 }
 
-// --- Run ---
 main().catch(err => {
-  console.error("❌ Deployment failed:", err.message);
-  console.error("Troubleshooting tips:");
-  console.error("1. Ensure deployer wallet has sufficient ETH for gas");
-  console.error("2. Verify all constructor arguments are valid addresses and pool IDs");
-  console.error("3. Contract size warnings may require optimizer runs=1 or splitting into libraries");
+  console.error("❌ Deployment failed:", err.message || err);
   process.exit(1);
 });
