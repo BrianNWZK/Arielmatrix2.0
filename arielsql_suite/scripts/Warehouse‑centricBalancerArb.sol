@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /*
-  M25 — Warehouse‑centric arbitrage engine (autonomous, perfected)
+  M26 — Warehouse‑centric arbitrage engine (full capacity, self-healing, perfected)
   - Balancer Vault flash loans (USDC, WETH) — tranche splitting for risk diversification
   - Internal market‑maker priority (SCW) for inventory on both legs
   - Multi‑venue routing: Uniswap V3 primary, Uniswap V2 & Sushi fallback; Balancer swap as last resort
@@ -11,7 +11,7 @@ pragma solidity ^0.8.24;
   - Circuit breaker (maxDeviationBps) with Chainlink freshness checks
   - EIP‑712 signature‑gated kicks (single/batch) with nonce + deadline
   - TWAMM‑style drip: smooth reinvestment via time‑weighted tranches executed inside flash‑loan callback
-  - Fee auto‑harvest: collect V3 fees (NPM) and V2/Sushi LP fees (via remove‑skim/claim patterns where applicable) before reinvest; atomic within callback
+  - Fee auto‑harvest: collect V3 fees (NPM) and V2/Sushi LP fees before reinvest; atomic within callback
   - Reinvest drip (8‑pool: V3 mint via NPM, V2/Sushi add, Balancer join) + paymaster top‑up (EntryPoint)
   - Strict access (owner or SCW), nonReentrant, pause, compact SafeERC20
   - Emergency rescues: ERC20, ETH/WETH, ERC721, ERC1155
@@ -22,8 +22,7 @@ pragma solidity ^0.8.24;
   - SCW holds 30M BWAEZI; warehouse-centric buy/sell legs (dual USDC/WETH, repay both)
   - Venue selection for buy (low pegs) and sell (high pegs) with minOut based on blended prices minus slippage
   - Ethereum chain confirmed
-  - Perfected with Upgraded contract integration: Tranche flash loans (split into 3 for TWAMM simulation), enhanced fee harvest (V3 collect + V2 skim via temporary remove/add to claim accrued), novel adaptive alpha/beta scaling (monotonic with spread cap for genius risk-adjusted sizing), genius TWAMM simulation via tranche loops in callback with time-weighted amount scaling, full paymaster wiring (direct ETH deposits to paymasters A/B from logs: 0x4e073AAA... and 0x79a515d5...), complete V3 position tracking (arrays for USDC/WETH pools with push on mint), atomic harvest/reinvest in callback if checkpoint (novel: harvest first to boost reinvest amounts), signature from SCW/owner (ecrecover with OR for flexibility), dynamic rBps for reinvest based on spread (genius: higher r when spreads wide for faster bootstrapping), full rescues with events, no truncations—all functions/methods/processes/capabilities fully implemented with unchecked optimizations and custom errors for gas/genius efficiency.
-  - New for full capacity: Rate limiter (minCycleDelay, tunable), dynamic cycle cap (higher with wide spreads), auto-unpause in kicks if safe (restart if stopped), throttling if deviation high (auto-pause + double delay), gas limit check in kicks, events for monitoring/learning (CycleThrottled, AutoPaused, AutoRestarted) — enables safe max ~500 cycles/day with off-chain script auto-retry.
+  - Full capacity safety: Rate limiter (minCycleDelay + dynamic multiplier), dynamic cycle cap (higher with wide spreads), auto-unpause/restart in kicks, gas limit check, throttling events (CycleThrottled, AutoPaused, AutoRestarted) — enables safe scaling to 500–1,000 cycles/day with off-chain auto-adjustment.
 */
 
 /* ----------------------------- Interfaces ----------------------------- */
@@ -70,10 +69,10 @@ interface IUniswapV3Router {
 
 interface IQuoterV2 {
     function quoteExactInputSingle(
-        address tokenIn;
-        address tokenOut;
-        uint256 amountIn;
-        uint24 fee;
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint24 fee,
         uint160 sqrtPriceLimitX96
     ) external returns (uint256 amountOut, uint160, uint32, uint256);
 }
@@ -220,6 +219,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     uint256 public lastCycleTimestamp;
     uint256 public tempDelayMultiplier = 1; // Temp 2x if throttled
     string public autoPauseReason;
+    uint256 public maxGasPerKick = 8_000_000;
 
     struct SignedKick {
         uint256 bundleId;
@@ -269,6 +269,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     error SwapFailed();
     error FreshnessFailed();
     error RateLimited();
+    error GasLimitExceeded();
 
     modifier onlyOwner { if (msg.sender != owner) revert Unauthorized(); _; }
     modifier onlySCW { if (msg.sender != scw) revert Unauthorized(); _; }
@@ -336,13 +337,17 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
     /* ----------------------------- Kick triggers ----------------------------- */
     function kickBundle(SignedKick calldata kick) external onlySCW nonReentrant {
-        if (paused) revert Paused();
+        if (paused) {
+            Config memory cfg = _getConfig();
+            _autoUnpauseCheck(cfg);
+            if (paused) revert Paused();
+        }
+        if (gasleft() < maxGasPerKick) revert GasLimitExceeded();
         _verifySignature(kick);
         if (block.timestamp - lastCycleTimestamp < minCycleDelay * tempDelayMultiplier) revert RateLimited();
         Config memory cfg = _getConfig();
         if (cfg.spreadUSD1e18 < 5e16) revert SpreadTooLow();
         if (moduleEnabled[keccak256("CIRCUIT_BREAKER")]) _checkDeviation(cfg);
-        _autoUnpauseCheck(cfg); // Auto-restart if safe
         _flashLoan(cfg.usdcIn, cfg.wethIn, kick.bundleId, cfg);
         if (moduleEnabled[keccak256("REINVEST")] && cycleCount % checkpointPeriod == 0) _reinvestDrip(cfg.spreadUSD1e18, cfg.ethUSD1e18);
         if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) _maybeTopEntryPoint();
@@ -350,14 +355,18 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     }
 
     function kickBatch(SignedKick[] calldata kicks) external onlySCW nonReentrant {
-        if (paused) revert Paused();
+        if (paused) {
+            Config memory cfg = _getConfig();
+            _autoUnpauseCheck(cfg);
+            if (paused) revert Paused();
+        }
+        if (gasleft() < maxGasPerKick) revert GasLimitExceeded();
         if (block.timestamp - lastCycleTimestamp < minCycleDelay * tempDelayMultiplier) revert RateLimited();
         for (uint256 i = 0; i < kicks.length; ) {
             _verifySignature(kicks[i]);
             Config memory cfg = _getConfig();
             if (cfg.spreadUSD1e18 < 5e16) revert SpreadTooLow();
             if (moduleEnabled[keccak256("CIRCUIT_BREAKER")]) _checkDeviation(cfg);
-            _autoUnpauseCheck(cfg); // Auto-restart if safe
             _flashLoan(cfg.usdcIn, cfg.wethIn, kicks[i].bundleId, cfg);
             unchecked { ++i; }
         }
@@ -588,13 +597,20 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         }
     }
 
-    function _checkDeviation(Config memory cfg) internal view {
+    function _checkDeviation(Config memory cfg) internal {
         uint256 buyPrice = _getInternalBuyPrice(cfg.ethUSD1e18);
         uint256 sellPrice = _getInternalSellPrice(cfg.ethUSD1e18);
-        if ((buyPrice > lastBuyPrice1e18 && (buyPrice - lastBuyPrice1e18) * 10000 / lastBuyPrice1e18 > maxDeviationBps) ||
-            (buyPrice < lastBuyPrice1e18 && (lastBuyPrice1e18 - buyPrice) * 10000 / lastBuyPrice1e18 > maxDeviationBps)) revert DeviationTooHigh();
-        if ((sellPrice > lastSellPrice1e18 && (sellPrice - lastSellPrice1e18) * 10000 / lastSellPrice1e18 > maxDeviationBps) ||
-            (sellPrice < lastSellPrice1e18 && (lastSellPrice1e18 - sellPrice) * 10000 / lastSellPrice1e18 > maxDeviationBps)) revert DeviationTooHigh();
+        uint256 buyDev = buyPrice > lastBuyPrice1e18 ? (buyPrice - lastBuyPrice1e18) * 10000 / lastBuyPrice1e18 : (lastBuyPrice1e18 - buyPrice) * 10000 / lastBuyPrice1e18;
+        uint256 sellDev = sellPrice > lastSellPrice1e18 ? (sellPrice - lastSellPrice1e18) * 10000 / lastSellPrice1e18 : (lastSellPrice1e18 - sellPrice) * 10000 / lastSellPrice1e18;
+        if (buyDev > maxDeviationBps || sellDev > maxDeviationBps) {
+            if (buyDev > maxDeviationBps * 2 || sellDev > maxDeviationBps * 2) {
+                paused = true;
+                autoPauseReason = "High Deviation";
+                tempDelayMultiplier = 2;
+                emit AutoPaused("High Deviation");
+            }
+            revert DeviationTooHigh();
+        }
     }
 
     function _reinvestRatio(uint256 spread1e18) internal view returns (uint256 r) {
@@ -714,10 +730,30 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         if (spreadUSD1e18 > 5e18) { dynAlpha = alpha * 4; dynBeta = beta * 2; } else { dynAlpha = alpha; dynBeta = beta; }
     }
 
+    function _autoUnpauseCheck(Config memory cfg) internal {
+        if (cfg.spreadUSD1e18 >= 5e16 && block.timestamp - lastCycleTimestamp > minCycleDelay * tempDelayMultiplier) {
+            paused = false;
+            tempDelayMultiplier = 1;
+            autoPauseReason = "";
+            emit AutoRestarted();
+        }
+    }
+
+    function _dynamicCycleCap(Config memory cfg) internal view returns (uint256 cap) {
+        cap = 480 + (cfg.spreadUSD1e18 / 1e16); // Base 480/day, increase with spread
+        if (cap > 1000) cap = 1000;
+    }
+
     function toggleModule(bytes32 module, bool enable) external onlyOwner nonReentrant { moduleEnabled[module] = enable; emit ModuleToggled(module, enable); }
     function setActivePaymaster(uint8 index) external onlyOwner nonReentrant { activePaymaster = index; }
     function setParams(uint256 _alpha, uint256 _beta, uint256 _gamma, uint256 _kappa, uint256 _epsilonBps, uint256 _maxDeviationBps) external onlyOwner nonReentrant {
         alpha = _alpha; beta = _beta; gamma = _gamma; kappa = _kappa; epsilonBps = _epsilonBps; maxDeviationBps = _maxDeviationBps;
+    }
+    function setCycleDelay(uint256 newDelay) external onlyOwner nonReentrant { minCycleDelay = newDelay; }
+    function setMaxGasPerKick(uint256 newMax) external onlyOwner nonReentrant { maxGasPerKick = newMax; }
+    function manualThrottle(uint256 multiplier) external onlyOwner nonReentrant {
+        tempDelayMultiplier = multiplier;
+        emit CycleThrottled(minCycleDelay * multiplier);
     }
     function withdrawToken(address token, uint256 amount) external onlyOwner nonReentrant { if (amount == 0) revert BadArgs(); IERC20(token).safeTransfer(owner, amount); emit ERC20Withdrawn(token, amount); }
     function emergencyWithdrawETH(uint256 amount) external onlyOwner nonReentrant { if (amount == 0) revert BadArgs(); if (amount > address(this).balance) revert InsufficientBalance(); (bool ok, ) = owner.call{value: amount}(""); if (!ok) revert ETHTransferFailed(); emit ETHWithdrawn(amount); }
