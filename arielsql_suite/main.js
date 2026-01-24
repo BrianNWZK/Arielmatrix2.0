@@ -1,4 +1,3 @@
-// Compile + deploy WarehouseBalancerArb V20
 // Usage: node main.js
 import fs from "fs";
 import path from "path";
@@ -15,7 +14,7 @@ if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 const RAW = {
   scw: "0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2",
   balancer_vault: "0xba12222222228d8ba445958a75a0704d566bf2c8",
-  bwaezi: "0x54d1c2889b08cad0932266eade15ec884fa0cdc2",
+  bwzc: "0x54d1c2889b08cad0932266eade15ec884fa0cdc2",
   usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
   weth: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
   univ3_router: "0xe592427a0aece92de3edee1f18e0157c05861564",
@@ -117,7 +116,7 @@ async function main() {
     A.SCW,
     A.USDC,
     A.WETH,
-    A.BWAEZI,
+    A.BWZC,
     A.UNIV3_ROUTER,
     A.QUOTER_V2,
     A.CHAINLINK_ETHUSD,
