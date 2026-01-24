@@ -1014,8 +1014,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 balShare = 2e17;
 
         // V3 mint with dynamic ticks
-        int24 tickU = IUniswapV3Pool(uniV3UsdcPool).slot0().tick;
-        int24 tickW = IUniswapV3Pool(uniV3WethPool).slot0().tick;
+        (, int24 tickU,,,,,) = IUniswapV3Pool(uniV3UsdcPool).slot0();
+        (, int24 tickW,,,,,) = IUniswapV3Pool(uniV3WethPool).slot0();
 
         if (usdcDeposit > 0 || bwDeposit > 0) {
             address token0 = usdc < bwzc ? usdc : bwzc;
