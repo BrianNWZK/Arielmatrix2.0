@@ -89,8 +89,15 @@ interface IUniswapV3Router {
 }
 
 interface IQuoterV2 {
-    function quoteExactInputSingle(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)
-        external returns (uint256 amountOut, uint160, uint32, uint256);
+    struct QuoteExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint256 amountIn;
+        uint24 fee;
+        uint160 sqrtPriceLimitX96;
+    }
+    function quoteExactInputSingle(QuoteExactInputSingleParams calldata params)
+        external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate);
 }
 
 interface IChainlinkFeed {
@@ -671,7 +678,15 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
     /* ----------------------------- Quoting ----------------------------- */
     function _quoteExactInputV3(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee) internal returns (uint256) {
-        try IQuoterV2(quoterV2).quoteExactInputSingle(tokenIn, tokenOut, amountIn, fee, 0) returns (uint256 amountOut, , , ) {
+        try IQuoterV2(quoterV2).quoteExactInputSingle(
+            IQuoterV2.QuoteExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                amountIn: amountIn,
+                fee: fee,
+                sqrtPriceLimitX96: 0
+            })
+        ) returns (uint256 amountOut, uint160, uint32, uint256) {
             if (amountOut < minQuoteThreshold) return 0;
             return amountOut;
         } catch { return 0; }
@@ -726,16 +741,22 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
     /* ----------------------------- Uniswap V3 Liquidity Helpers ----------------------------- */
     function _addLiquidityV3(uint256 usdcAmt, uint256 bwzcAmt) internal returns (uint256 tokenId) {
+        address token0 = usdc < bwzc ? usdc : bwzc;
+        address token1 = usdc < bwzc ? bwzc : usdc;
+        uint256 amount0Desired = token0 == usdc ? usdcAmt : bwzcAmt;
+        uint256 amount1Desired = token0 == usdc ? bwzcAmt : usdcAmt;
+        uint256 amount0Min = amount0Desired * (10000 - epsilonBps) / 10000;
+        uint256 amount1Min = amount1Desired * (10000 - epsilonBps) / 10000;
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
-            token0: usdc,
-            token1: bwzc,
+            token0: token0,
+            token1: token1,
             fee: 3000, // 0.3% pool fee tier
             tickLower: -887220, // full range lower tick
             tickUpper: 887220, // full range upper tick
-            amount0Desired: usdcAmt,
-            amount1Desired: bwzcAmt,
-            amount0Min: usdcAmt * (10000 - epsilonBps) / 10000, // slippage guard
-            amount1Min: bwzcAmt * (10000 - epsilonBps) / 10000,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: amount0Min,
+            amount1Min: amount1Min,
             recipient: address(this),
             deadline: block.timestamp
         });
@@ -750,8 +771,15 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
                 amount0Max: type(uint128).max,
                 amount1Max: type(uint128).max
             });
-        (usdcAmt, bwzcAmt) = INonfungiblePositionManager(npm).collect(collectParams);
-        return (usdcAmt, bwzcAmt);
+        (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(npm).collect(collectParams);
+        (, , address token0, , , , , , , , , ) = INonfungiblePositionManagerView(npm).positions(tokenId);
+        if (token0 == usdc) {
+            usdcAmt = amount0;
+            bwzcAmt = amount1;
+        } else {
+            usdcAmt = amount1;
+            bwzcAmt = amount0;
+        }
     }
 
     /* ----------------------------- Config & Sizing ----------------------------- */
@@ -990,16 +1018,22 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         int24 tickW = IUniswapV3Pool(uniV3WethPool).slot0().tick;
 
         if (usdcDeposit > 0 || bwDeposit > 0) {
+            address token0 = usdc < bwzc ? usdc : bwzc;
+            address token1 = usdc < bwzc ? bwzc : usdc;
+            uint256 amount0Desired = token0 == usdc ? usdcDeposit * v3Share / 1e18 : bwDeposit * v3Share / 1e18;
+            uint256 amount1Desired = token0 == usdc ? bwDeposit * v3Share / 1e18 : usdcDeposit * v3Share / 1e18;
+            uint256 amount0Min = amount0Desired * (10000 - epsilonBps) / 10000;
+            uint256 amount1Min = amount1Desired * (10000 - epsilonBps) / 10000;
             INonfungiblePositionManager.MintParams memory pU = INonfungiblePositionManager.MintParams({
-                token0: usdc < bwzc ? usdc : bwzc,
-                token1: usdc < bwzc ? bwzc : usdc,
+                token0: token0,
+                token1: token1,
                 fee: 3000,
                 tickLower: tickU - 600,
                 tickUpper: tickU + 600,
-                amount0Desired: usdcDeposit * v3Share / 1e18,
-                amount1Desired: bwDeposit * v3Share / 1e18,
-                amount0Min: (usdcDeposit * v3Share / 1e18) * (10000 - epsilonBps) / 10000,
-                amount1Min: (bwDeposit * v3Share / 1e18) * (10000 - epsilonBps) / 10000,
+                amount0Desired: amount0Desired,
+                amount1Desired: amount1Desired,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 recipient: scw,
                 deadline: block.timestamp + 300
             });
@@ -1007,16 +1041,22 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         }
 
         if (wethDeposit > 0 || bwDeposit > 0) {
+            address token0 = weth < bwzc ? weth : bwzc;
+            address token1 = weth < bwzc ? bwzc : weth;
+            uint256 amount0Desired = token0 == weth ? wethDeposit * v3Share / 1e18 : bwDeposit * v3Share / 1e18;
+            uint256 amount1Desired = token0 == weth ? bwDeposit * v3Share / 1e18 : wethDeposit * v3Share / 1e18;
+            uint256 amount0Min = amount0Desired * (10000 - epsilonBps) / 10000;
+            uint256 amount1Min = amount1Desired * (10000 - epsilonBps) / 10000;
             INonfungiblePositionManager.MintParams memory pW = INonfungiblePositionManager.MintParams({
-                token0: weth < bwzc ? weth : bwzc,
-                token1: weth < bwzc ? bwzc : weth,
+                token0: token0,
+                token1: token1,
                 fee: 3000,
                 tickLower: tickW - 600,
                 tickUpper: tickW + 600,
-                amount0Desired: wethDeposit * v3Share / 1e18,
-                amount1Desired: bwDeposit * v3Share / 1e18,
-                amount0Min: (wethDeposit * v3Share / 1e18) * (10000 - epsilonBps) / 10000,
-                amount1Min: (bwDeposit * v3Share / 1e18) * (10000 - epsilonBps) / 10000,
+                amount0Desired: amount0Desired,
+                amount1Desired: amount1Desired,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 recipient: scw,
                 deadline: block.timestamp + 300
             });
@@ -1032,18 +1072,24 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         IUniswapV2Router(sushiRouter).addLiquidity(weth, bwzc, wethDeposit * sushiShare / 1e18, bwDeposit * sushiShare / 1e18, 0, 0, scw, block.timestamp + 300);
 
         // Balancer join
+        address tokenA = usdc < bwzc ? usdc : bwzc;
+        address tokenB = usdc < bwzc ? bwzc : usdc;
         address[] memory assetsU = new address[](2);
-        assetsU[0] = usdc; assetsU[1] = bwzc;
+        assetsU[0] = tokenA; assetsU[1] = tokenB;
         uint256[] memory maxInU = new uint256[](2);
-        maxInU[0] = usdcDeposit * balShare / 1e18; maxInU[1] = bwDeposit * balShare / 1e18;
+        maxInU[0] = tokenA == usdc ? usdcDeposit * balShare / 1e18 : bwDeposit * balShare / 1e18;
+        maxInU[1] = tokenA == usdc ? bwDeposit * balShare / 1e18 : usdcDeposit * balShare / 1e18;
         bytes memory userDataU = abi.encode(1, maxInU, 0); // EXACT_TOKENS_IN_FOR_BPT_OUT
         IBalancerVault.JoinPoolRequest memory reqU = IBalancerVault.JoinPoolRequest(assetsU, maxInU, userDataU, false);
         IBalancerVault(vault).joinPool(balBWUSDCId, address(this), scw, reqU);
 
+        tokenA = weth < bwzc ? weth : bwzc;
+        tokenB = weth < bwzc ? bwzc : weth;
         address[] memory assetsW = new address[](2);
-        assetsW[0] = weth; assetsW[1] = bwzc;
+        assetsW[0] = tokenA; assetsW[1] = tokenB;
         uint256[] memory maxInW = new uint256[](2);
-        maxInW[0] = wethDeposit * balShare / 1e18; maxInW[1] = bwDeposit * balShare / 1e18;
+        maxInW[0] = tokenA == weth ? wethDeposit * balShare / 1e18 : bwDeposit * balShare / 1e18;
+        maxInW[1] = tokenA == weth ? bwDeposit * balShare / 1e18 : wethDeposit * balShare / 1e18;
         bytes memory userDataW = abi.encode(1, maxInW, 0);
         IBalancerVault.JoinPoolRequest memory reqW = IBalancerVault.JoinPoolRequest(assetsW, maxInW, userDataW, false);
         IBalancerVault(vault).joinPool(balBWWETHId, address(this), scw, reqW);
