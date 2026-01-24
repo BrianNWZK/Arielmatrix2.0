@@ -283,7 +283,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     error Unauthorized();
     error Reentrant();
     error DeadlinePassed();
-    error NonceUsed();
+    error NonceAlreadyUsed();
     error SignatureInvalid();
     error SpreadTooLow();
     error DeviationTooHigh();
@@ -637,21 +637,21 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
             // Shuffle index for tranche
             uint256 idx = (t + shuffleSeed) % tranches;
 
-            uint256 bwFromUsdcMin = trancheUsdc.mulDiv(1e12.mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
+            uint256 bwFromUsdcMin = trancheUsdc.mulDiv(uint256(1e12).mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
             uint256 bwFromWethMin = trancheWeth.mulDiv(cfg.ethUSD1e18.mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
 
             uint256 bwFromUsdc = _swapBest(usdc, bwzc, trancheUsdc, bwFromUsdcMin, 3000);
             uint256 bwFromWeth = _swapBest(weth, bwzc, trancheWeth, bwFromWethMin, 3000);
             totalBwBought += bwFromUsdc + bwFromWeth;
 
-            uint256 usdcFromSellMin = bwFromUsdc.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), 1e18 * 1e12);
+            uint256 usdcFromSellMin = bwFromUsdc.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), uint256(1e18) * uint256(1e12));
             uint256 wethFromSellMin = bwFromWeth.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), cfg.ethUSD1e18);
 
             uint256 usdcFromSell = _swapBest(bwzc, usdc, bwFromUsdc, usdcFromSellMin, 3000);
             uint256 wethFromSell = _swapBest(bwzc, weth, bwFromWeth, wethFromSellMin, 3000);
 
             // Proportional fee per actual amounts
-            uint256 trancheFeeUsd = (trancheUsdc.mulDiv(usdcFee, usdcIn) * 1e12) + (trancheWeth.mulDiv(wethFee, wethIn) * cfg.ethUSD1e18 / 1e18);
+            uint256 trancheFeeUsd = (trancheUsdc.mulDiv(usdcFee, usdcIn) * uint256(1e12)) + (trancheWeth.mulDiv(wethFee, wethIn) * cfg.ethUSD1e18 / 1e18);
             totalTrancheFeesUsd += trancheFeeUsd;
 
             totalUsdcFromSell += usdcFromSell;
@@ -663,7 +663,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         IERC20(usdc).safeTransfer(vault, usdcIn + usdcFee);
         IERC20(weth).safeTransfer(vault, wethIn + wethFee);
 
-        uint256 totalProfitUsd = (totalUsdcFromSell * 1e12) + (totalWethFromSell * cfg.ethUSD1e18 / 1e18);
+        uint256 totalProfitUsd = (totalUsdcFromSell * uint256(1e12)) + (totalWethFromSell * cfg.ethUSD1e18 / 1e18);
         if (totalProfitUsd <= totalTrancheFeesUsd) revert SpreadTooLow();
 
         if (totalUsdcFromSell > 0) IERC20(usdc).safeTransfer(scw, totalUsdcFromSell);
@@ -946,7 +946,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
         address signer = ecrecover(digest, k.v, k.r, k.s);
         if (signer != owner && signer != scw) revert SignatureInvalid();
-        if (usedNonces[signer][k.nonce]) revert NonceUsed();
+        if (usedNonces[signer][k.nonce]) revert NonceAlreadyUsed();
 
         usedNonces[signer][k.nonce] = true;
         emit NonceUsed(signer, k.nonce);
