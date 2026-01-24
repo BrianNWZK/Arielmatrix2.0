@@ -1149,7 +1149,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         // Simple Fisher-Yates shuffle simulation
         for (uint256 i = 3; i > 0; ) {
             uint256 j = (venueOrder % i) + 1;
-            (orders[i], orders[j) = (orders[j], orders[i]);
+            (orders[i], orders[j]) = (orders[j], orders[i]);
             unchecked { --i; }
         }
 
