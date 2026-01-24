@@ -540,10 +540,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
         Config memory lastCfg = _getConfig();
         if (moduleEnabled[keccak256("REINVEST")] && cycleCount % checkpointPeriod == 0) {
-            _reinvestDrip(lastCfg.spreadUSD1e18, lastCfg.ethUSD1e18);
+            _reinvestDrip(lastCfg.spreadUSD1e18);
         }
 
-        if (moduleEnabled[keccak256("PAYMASTER_TOPUP")] ) _maybeTopEntryPoint();
+        if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) _maybeTopEntryPoint();
 
         lastCycleTimestamp = block.timestamp;
         if (tempDelayMultiplier > 1 && cycleCount % 10 == 0) tempDelayMultiplier = 1;
@@ -568,10 +568,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
         if (single) {
             if (moduleEnabled[keccak256("REINVEST")] && cycleCount % checkpointPeriod == 0) {
-                _reinvestDrip(cfg.spreadUSD1e18, cfg.ethUSD1e18);
+                _reinvestDrip(cfg.spreadUSD1e18);
             }
 
-            if (moduleEnabled[keccak256("PAYMASTER_TOPUP")] ) _maybeTopEntryPoint();
+            if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) _maybeTopEntryPoint();
 
             lastCycleTimestamp = block.timestamp;
             if (tempDelayMultiplier > 1 && cycleCount % 10 == 0) tempDelayMultiplier = 1;
@@ -633,9 +633,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         if (cfg.spreadUSD1e18 < histSpread * 9 / 10) revert SpreadTooLow(); // If dropping fast, abort
 
         for (uint256 t = 0; t < tranches; ) {
-            // Shuffle index for tranche
-            uint256 idx = (t + shuffleSeed) % tranches;
-
             // Compute adaptive seed/arb for USDC
             uint256 multiplier = 1e18 + (spreadBps * 1e18 / 6000);
             uint256 arbAmountUsdc = trancheUsdc * 1e18 / multiplier;
@@ -991,7 +988,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     }
 
     /* ----------------------------- Reinvest drip ----------------------------- */
-    function _reinvestDrip(uint256 spreadUSD1e18, uint256 ethUSD1e18) internal {
+    function _reinvestDrip(uint256 spreadUSD1e18) internal {
         uint256 r = rMin + (rMax - rMin) * (spreadUSD1e18 > 1e17 ? 1 : spreadUSD1e18 / 1e17);
         if (r > rMax) r = rMax;
 
@@ -1152,7 +1149,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         // Simple Fisher-Yates shuffle simulation
         for (uint256 i = 3; i > 0; ) {
             uint256 j = (venueOrder % i) + 1;
-            (orders[i], orders[j]) = (orders[j], orders[i]);
+            (orders[i], orders[j) = (orders[j], orders[i]);
             unchecked { --i; }
         }
 
