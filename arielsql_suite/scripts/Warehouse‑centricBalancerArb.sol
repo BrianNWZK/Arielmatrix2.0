@@ -255,6 +255,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
     /* ----------------------------- Events ----------------------------- */
     event CycleExecuted(uint256 bundleId, uint256 usdcIn, uint256 wethIn, uint256 bwBought, uint256 residualUsdc, uint256 residualWeth);
+    event DualCycleExecuted(uint256 bundleId, uint256 seedAmount, uint256 arbAmount, uint256 bwzcBought, uint256 residual, uint256 zero);
     event Reinvested(uint256 rBps, uint256 usdcDeposit, uint256 wethDeposit, uint256 bwDeposit);
     event PaymasterTopped(address paymaster, uint256 draw, uint256 newBal);
     event PausedSet(bool paused);
@@ -525,10 +526,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
 
         if (cycleCount + kicks.length > maxCyclesPerDay) revert CapacityExceeded();
 
-        uint256 accruedUsdcFees;
-        uint256 accruedWethFees;
-        uint256 accruedBwFees;
-
         for (uint256 i = 0; i < kicks.length; ) {
             _verifySignature(kicks[i]);
             Config memory cfg = _getConfig();
@@ -546,7 +543,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
             _reinvestDrip(lastCfg.spreadUSD1e18, lastCfg.ethUSD1e18);
         }
 
-        if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) _maybeTopEntryPoint();
+        if (moduleEnabled[keccak256("PAYMASTER_TOPUP")] ) _maybeTopEntryPoint();
 
         lastCycleTimestamp = block.timestamp;
         if (tempDelayMultiplier > 1 && cycleCount % 10 == 0) tempDelayMultiplier = 1;
@@ -574,7 +571,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
                 _reinvestDrip(cfg.spreadUSD1e18, cfg.ethUSD1e18);
             }
 
-            if (moduleEnabled[keccak256("PAYMASTER_TOPUP")]) _maybeTopEntryPoint();
+            if (moduleEnabled[keccak256("PAYMASTER_TOPUP")] ) _maybeTopEntryPoint();
 
             lastCycleTimestamp = block.timestamp;
             if (tempDelayMultiplier > 1 && cycleCount % 10 == 0) tempDelayMultiplier = 1;
@@ -614,16 +611,20 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 wethFee = fees[1];
 
         uint256 totalBwBought = 0;
-        uint256 totalUsdcFromSell = 0;
-        uint256 totalWethFromSell = 0;
+        uint256 totalResidualUsdc = 0;
+        uint256 totalResidualWeth = 0;
 
         uint256 tranches = moduleEnabled[keccak256("AUTO_TRANCHE")] ? _optimalTrancheCount(cfg) : (moduleEnabled[keccak256("TWAMM")] ? 3 : 1);
 
         uint256 trancheUsdc = usdcIn / tranches;
         uint256 trancheWeth = wethIn / tranches;
+        uint256 trancheUsdcFee = usdcFee / tranches;
+        uint256 trancheWethFee = wethFee / tranches;
 
         uint256 internalBuyPrice1e18 = _getInternalBuyPrice(cfg.ethUSD1e18);
         uint256 internalSellPrice1e18 = _getInternalSellPrice(cfg.ethUSD1e18);
+
+        uint256 spreadBps = (cfg.spreadUSD1e18 * 10000) / 1e18;
 
         uint256 shuffleSeed = moduleEnabled[keccak256("MEV_SHUFFLE")] ? uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, cycleCount))) % tranches : 0;
 
@@ -631,49 +632,43 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         uint256 histSpread = (lastBuyPrice1e18 - lastSellPrice1e18) * 1e18 / lastBuyPrice1e18;
         if (cfg.spreadUSD1e18 < histSpread * 9 / 10) revert SpreadTooLow(); // If dropping fast, abort
 
-        uint256 totalTrancheFeesUsd = 0;
-
         for (uint256 t = 0; t < tranches; ) {
             // Shuffle index for tranche
             uint256 idx = (t + shuffleSeed) % tranches;
 
-            uint256 bwFromUsdcMin = trancheUsdc.mulDiv(uint256(1e12).mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
-            uint256 bwFromWethMin = trancheWeth.mulDiv(cfg.ethUSD1e18.mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
+            // Compute adaptive seed/arb for USDC
+            uint256 multiplier = 1e18 + (spreadBps * 1e18 / 6000);
+            uint256 arbAmountUsdc = trancheUsdc * 1e18 / multiplier;
+            uint256 seedAmountUsdc = trancheUsdc - arbAmountUsdc;
 
-            uint256 bwFromUsdc = _swapBest(usdc, bwzc, trancheUsdc, bwFromUsdcMin, 3000);
-            uint256 bwFromWeth = _swapBest(weth, bwzc, trancheWeth, bwFromWethMin, 3000);
-            totalBwBought += bwFromUsdc + bwFromWeth;
+            uint256 bwFromUsdcMin = arbAmountUsdc.mulDiv(uint256(1e12).mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
+            uint256 usdcFromSellMin = arbAmountUsdc.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), uint256(1e18) * uint256(1e12)); // Adjusted for bwzcBought approx arbAmountUsdc / price
 
-            uint256 usdcFromSellMin = bwFromUsdc.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), uint256(1e18) * uint256(1e12));
-            uint256 wethFromSellMin = bwFromWeth.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), cfg.ethUSD1e18);
+            // Execute USDC cycle
+            (uint256 bwzcBoughtUsdc, uint256 residualUsdc) = _executeUsdcBwzcCycle(seedAmountUsdc, arbAmountUsdc, 0, trancheUsdcFee, bundleId, bwFromUsdcMin, usdcFromSellMin, internalBuyPrice1e18, internalSellPrice1e18);
 
-            uint256 usdcFromSell = _swapBest(bwzc, usdc, bwFromUsdc, usdcFromSellMin, 3000);
-            uint256 wethFromSell = _swapBest(bwzc, weth, bwFromWeth, wethFromSellMin, 3000);
+            // Compute adaptive seed/arb for WETH
+            uint256 arbAmountWeth = trancheWeth * 1e18 / multiplier;
+            uint256 seedAmountWeth = trancheWeth - arbAmountWeth;
 
-            // Proportional fee per actual amounts
-            uint256 trancheFeeUsd = (trancheUsdc.mulDiv(usdcFee, usdcIn) * uint256(1e12)) + (trancheWeth.mulDiv(wethFee, wethIn) * cfg.ethUSD1e18 / 1e18);
-            totalTrancheFeesUsd += trancheFeeUsd;
+            uint256 bwFromWethMin = arbAmountWeth.mulDiv(cfg.ethUSD1e18.mulDiv((10000 - epsilonBps), 10000), internalBuyPrice1e18);
+            uint256 wethFromSellMin = arbAmountWeth.mulDiv(internalSellPrice1e18.mulDiv((10000 - epsilonBps), 10000), cfg.ethUSD1e18); // Adjusted
 
-            totalUsdcFromSell += usdcFromSell;
-            totalWethFromSell += wethFromSell;
+            // Execute WETH cycle
+            (uint256 bwzcBoughtWeth, uint256 residualWeth) = _executeWethBwzcCycle(seedAmountWeth, arbAmountWeth, 0, trancheWethFee, bundleId, bwFromWethMin, wethFromSellMin, internalBuyPrice1e18, internalSellPrice1e18, cfg.ethUSD1e18);
+
+            totalBwBought += bwzcBoughtUsdc + bwzcBoughtWeth;
+            totalResidualUsdc += residualUsdc;
+            totalResidualWeth += residualWeth;
 
             unchecked { ++t; }
         }
-
-        IERC20(usdc).safeTransfer(vault, usdcIn + usdcFee);
-        IERC20(weth).safeTransfer(vault, wethIn + wethFee);
-
-        uint256 totalProfitUsd = (totalUsdcFromSell * uint256(1e12)) + (totalWethFromSell * cfg.ethUSD1e18 / 1e18);
-        if (totalProfitUsd <= totalTrancheFeesUsd) revert SpreadTooLow();
-
-        if (totalUsdcFromSell > 0) IERC20(usdc).safeTransfer(scw, totalUsdcFromSell);
-        if (totalWethFromSell > 0) IERC20(weth).safeTransfer(scw, totalWethFromSell);
 
         lastBuyPrice1e18 = internalBuyPrice1e18;
         lastSellPrice1e18 = internalSellPrice1e18;
 
         cycleCount += 1;
-        emit CycleExecuted(bundleId, usdcIn, wethIn, totalBwBought, totalUsdcFromSell, totalWethFromSell);
+        emit CycleExecuted(bundleId, usdcIn, wethIn, totalBwBought, totalResidualUsdc, totalResidualWeth);
     }
 
     /* ----------------------------- Quoting ----------------------------- */
@@ -740,11 +735,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
     }
 
     /* ----------------------------- Uniswap V3 Liquidity Helpers ----------------------------- */
-    function _addLiquidityV3(uint256 usdcAmt, uint256 bwzcAmt) internal returns (uint256 tokenId) {
-        address token0 = usdc < bwzc ? usdc : bwzc;
-        address token1 = usdc < bwzc ? bwzc : usdc;
-        uint256 amount0Desired = token0 == usdc ? usdcAmt : bwzcAmt;
-        uint256 amount1Desired = token0 == usdc ? bwzcAmt : usdcAmt;
+    function _addLiquidityV3(address paired, uint256 pairedAmt, uint256 bwzcAmt) internal returns (uint256 tokenId) {
+        address token0 = paired < bwzc ? paired : bwzc;
+        address token1 = paired < bwzc ? bwzc : paired;
+        uint256 amount0Desired = token0 == paired ? pairedAmt : bwzcAmt;
+        uint256 amount1Desired = token0 == paired ? bwzcAmt : pairedAmt;
         uint256 amount0Min = amount0Desired * (10000 - epsilonBps) / 10000;
         uint256 amount1Min = amount1Desired * (10000 - epsilonBps) / 10000;
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
@@ -763,7 +758,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         (tokenId,,,) = INonfungiblePositionManager(npm).mint(params);
         return tokenId;
     }
-    function _removeLiquidityV3(uint256 tokenId) internal returns (uint256 usdcAmt, uint256 bwzcAmt) {
+
+    function _removeLiquidityV3(address paired, uint256 tokenId) internal returns (uint256 pairedAmt, uint256 bwzcAmt) {
         INonfungiblePositionManager.CollectParams memory collectParams =
             INonfungiblePositionManager.CollectParams({
                 tokenId: tokenId,
@@ -772,12 +768,12 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
                 amount1Max: type(uint128).max
             });
         (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(npm).collect(collectParams);
-        (, , address token0, , , , , , , , , ) = INonfungiblePositionManagerView(npm).positions(tokenId);
-        if (token0 == usdc) {
-            usdcAmt = amount0;
+        (, , address token0, address token1, , , , , , , , ) = INonfungiblePositionManagerView(npm).positions(tokenId);
+        if (token0 == paired) {
+            pairedAmt = amount0;
             bwzcAmt = amount1;
         } else {
-            usdcAmt = amount1;
+            pairedAmt = amount1;
             bwzcAmt = amount0;
         }
     }
@@ -1212,5 +1208,106 @@ contract WarehouseBalancerArb is IFlashLoanRecipient {
         }
 
         revert SwapFailed();
+    }
+
+    /* ----------------------------- Dual Flash Loan Cycles (USDC + WETH) ----------------------------- */
+
+    function _executeUsdcBwzcCycle(
+        uint256 seedAmountUSDC,
+        uint256 arbAmountUSDC,
+        uint256 bwzcSeed,
+        uint256 usdcFee,
+        uint256 bundleId,
+        uint256 bwFromUsdcMin,
+        uint256 usdcFromSellMin,
+        uint256 internalBuyPrice1e18,
+        uint256 internalSellPrice1e18
+    ) internal returns (uint256 bwzcBought, uint256 residual) {
+        // --- SELL LEG SEEDING ---
+        uint256 tokenId = _addLiquidityV3(usdc, seedAmountUSDC, bwzcSeed);
+
+        // --- BUY LEG ---
+        bwzcBought = _swapBest(usdc, bwzc, arbAmountUSDC, bwFromUsdcMin, 3000);
+
+        // --- SELL LEG ---
+        uint256 usdcRecovered = _swapBest(bwzc, usdc, bwzcBought, usdcFromSellMin, 3000);
+
+        // --- REMOVE LIQUIDITY ---
+        (uint256 usdcFromLiquidity, uint256 bwzcReturned) = _removeLiquidityV3(usdc, tokenId);
+
+        // --- REPAY ---
+        uint256 totalRepay = arbAmountUSDC + seedAmountUSDC + usdcFee;
+        if (usdcRecovered + usdcFromLiquidity < totalRepay) revert SpreadTooLow();
+
+        IERC20(usdc).safeTransfer(vault, totalRepay);
+
+        // --- PROFIT ---
+        residual = (usdcRecovered + usdcFromLiquidity) - totalRepay;
+        IERC20(usdc).safeTransfer(scw, residual);
+        IERC20(bwzc).safeTransfer(scw, bwzcReturned);
+
+        emit DualCycleExecuted(bundleId, seedAmountUSDC, arbAmountUSDC, bwzcBought, residual, 0);
+
+        return (bwzcBought, residual);
+    }
+
+    function _executeWethBwzcCycle(
+        uint256 seedAmountWETH,
+        uint256 arbAmountWETH,
+        uint256 bwzcSeed,
+        uint256 wethFee,
+        uint256 bundleId,
+        uint256 bwFromWethMin,
+        uint256 wethFromSellMin,
+        uint256 internalBuyPrice1e18,
+        uint256 internalSellPrice1e18,
+        uint256 ethUSD1e18
+    ) internal returns (uint256 bwzcBought, uint256 residual) {
+        // --- SELL LEG SEEDING ---
+        uint256 tokenId = _addLiquidityV3(weth, seedAmountWETH, bwzcSeed);
+
+        // --- BUY LEG ---
+        bwzcBought = _buyBWZCWithWeth(arbAmountWETH, bwFromWethMin);
+
+        // --- SELL LEG ---
+        uint256 wethRecovered = _sellBWZCForWeth(bwzcBought, wethFromSellMin);
+
+        // --- REMOVE LIQUIDITY ---
+        (uint256 wethFromLiquidity, uint256 bwzcReturned) = _removeLiquidityV3(weth, tokenId);
+
+        // --- REPAY ---
+        uint256 totalRepay = arbAmountWETH + seedAmountWETH + wethFee;
+        if (wethRecovered + wethFromLiquidity < totalRepay) revert SpreadTooLow();
+
+        IERC20(weth).safeTransfer(vault, totalRepay);
+
+        // --- PROFIT ---
+        residual = (wethRecovered + wethFromLiquidity) - totalRepay;
+        IERC20(weth).safeTransfer(scw, residual);
+        IERC20(bwzc).safeTransfer(scw, bwzcReturned);
+
+        emit DualCycleExecuted(bundleId, seedAmountWETH, arbAmountWETH, bwzcBought, residual, 0);
+
+        return (bwzcBought, residual);
+    }
+
+    /* ----------------------------- WETH/BWZC Helpers ----------------------------- */
+
+    function _buyBWZCWithWeth(uint256 wethAmt, uint256 minOut) internal returns (uint256 bwzcOut) {
+        // Swap WETH -> BWZC at low peg pool (Balancer/Sushi/Uniswap V2 fallback)
+        bwzcOut = _swapBest(weth, bwzc, wethAmt, minOut, 3000);
+    }
+
+    function _sellBWZCForWeth(uint256 bwzcAmt, uint256 minOut) internal returns (uint256 wethOut) {
+        // Swap BWZC -> WETH into seeded high peg pool
+        wethOut = _swapBest(bwzc, weth, bwzcAmt, minOut, 3000);
+    }
+
+    /* ----------------------------- Adaptive Seed Ratio ----------------------------- */
+
+    function _adaptiveSeedRatio(uint256 arbAmount, uint256 spreadBps) internal pure returns (uint256 seedAmount) {
+        // seed = arbAmount * (1 + spread/600)
+        uint256 multiplier = 1e18 + (spreadBps * 1e18 / 6000);
+        seedAmount = arbAmount * multiplier / 1e18;
     }
 }
