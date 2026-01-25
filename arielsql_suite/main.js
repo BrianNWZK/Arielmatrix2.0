@@ -87,6 +87,11 @@ async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) 
   const wethId = await wethPool.getPoolId();
   return { usdcId, wethId };
 }
+async function fetchBwzcDecimals(provider, bwzcAddr) {
+  const abi = ["function decimals() external view returns (uint8)"];
+  const contract = new ethers.Contract(bwzcAddr, abi, provider);
+  return await contract.decimals();
+}
 // --- Deploy ---
 async function main() {
   console.log("=== Compile + Deploy WarehouseBalancerArb V20 ===");
@@ -110,6 +115,10 @@ async function main() {
   );
   console.log("BAL_BW_USDC_ID:", BAL_BW_USDC_ID);
   console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
+  // Fetch BWZC decimals
+  console.log("Fetching BWZC decimals...");
+  const BWZC_DECIMALS = await fetchBwzcDecimals(provider, A.BWZC);
+  console.log("BWZC_DECIMALS:", BWZC_DECIMALS);
   const OWNER = wallet.address;
   const args = [
     OWNER,
@@ -125,6 +134,7 @@ async function main() {
     A.SUSHI_ROUTER,
     A.ENTRYPOINT,
     A.POSITION_MANAGER,
+    BWZC_DECIMALS,
     A.PAYMASTER_A,
     A.PAYMASTER_B,
     BAL_BW_USDC_ID,
@@ -148,6 +158,7 @@ async function main() {
     tx: contract.deploymentTransaction().hash,
     deployer: wallet.address,
     poolIds: { BAL_BW_USDC_ID, BAL_BW_WETH_ID },
+    bwzcDecimals: BWZC_DECIMALS,
     network: await provider.getNetwork(),
     timestamp: new Date().toISOString()
   };
