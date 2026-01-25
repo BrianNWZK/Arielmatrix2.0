@@ -190,6 +190,7 @@ error InsufficientLiquidity();
 error JoinFailed();
 error ExitFailed();
 error HarvestFailed();
+error InvalidParameter();
 
 /* -------------------------------- Libraries -------------------------------- */
 library SafeERC20 {
@@ -235,6 +236,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     event ERC1155Rescued(address token, uint256 id, uint256 amount, address to);
     event FeesHarvested(address venue, uint256 amount0, uint256 amount1);
     event WithdrawnToOwner(address asset, uint256 amount);
+    event ConfigUpdated(string param, uint256 oldValue, uint256 newValue);
 
     /* ----------------------------- Immutables ----------------------------- */
     address public immutable owner;
@@ -395,6 +397,43 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         ));
     }
 
+    // Setters for configurables with bounds and events
+    function setAlpha(uint256 newAlpha) external onlyOwner {
+        require(newAlpha >= 1e18 && newAlpha <= 10e18, "InvalidParameter");
+        emit ConfigUpdated("alpha", alpha, newAlpha);
+        alpha = newAlpha;
+    }
+
+    function setBeta(uint256 newBeta) external onlyOwner {
+        require(newBeta >= 1e17 && newBeta <= 2e18, "InvalidParameter");
+        emit ConfigUpdated("beta", beta, newBeta);
+        beta = newBeta;
+    }
+
+    function setGamma(uint256 newGamma) external onlyOwner {
+        require(newGamma >= 1e15 && newGamma <= 5e16, "InvalidParameter");
+        emit ConfigUpdated("gamma", gamma, newGamma);
+        gamma = newGamma;
+    }
+
+    function setKappa(uint256 newKappa) external onlyOwner {
+        require(newKappa >= 1e15 && newKappa <= 5e16, "InvalidParameter");
+        emit ConfigUpdated("kappa", kappa, newKappa);
+        kappa = newKappa;
+    }
+
+    function setEpsilonBps(uint256 newEpsilonBps) external onlyOwner {
+        require(newEpsilonBps >= 10 && newEpsilonBps <= 100, "InvalidParameter");
+        emit ConfigUpdated("epsilonBps", epsilonBps, newEpsilonBps);
+        epsilonBps = newEpsilonBps;
+    }
+
+    function setMaxDeviationBps(uint256 newMaxDeviationBps) external onlyOwner {
+        require(newMaxDeviationBps >= 500 && newMaxDeviationBps <= 2000, "InvalidParameter");
+        emit ConfigUpdated("maxDeviationBps", maxDeviationBps, newMaxDeviationBps);
+        maxDeviationBps = newMaxDeviationBps;
+    }
+
     function _getEthUsdPrice() internal view returns (uint256) {
         (uint80 roundId, int256 price, , uint256 updatedAt, uint80 answeredInRound) = IChainlinkFeed(chainlinkEthUsd).latestRoundData();
         if (updatedAt == 0 || answeredInRound < roundId) revert StaleOracle();
@@ -442,24 +481,49 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
             emit FeesHarvested(uniV3WethPool, amount0, amount1);
         }
 
-        // Harvest V2/Sushi/Bal by remove liq
-        // For V2
+        // Harvest V2/Sushi/Bal by remove liq - now complete for all pools
+        // V2 USDC
         uint256 lpV2Usdc = IERC20(uniV2UsdcPool).balanceOf(address(this));
         if (lpV2Usdc > 0) {
             IERC20(uniV2UsdcPool).safeApprove(uniV2Router, lpV2Usdc);
             (uint256 amountA, uint256 amountB) = IUniswapV2Router(uniV2Router).removeLiquidity(usdc, bwzc, lpV2Usdc, 0, 0, address(this), block.timestamp + 300);
             emit FeesHarvested(uniV2UsdcPool, amountA, amountB);
         }
-        // Similar for other pools: uniV2WethPool, sushiUsdcPool, sushiWethPool
-
-        // For Balancer, exit pool
+        // V2 WETH
+        uint256 lpV2Weth = IERC20(uniV2WethPool).balanceOf(address(this));
+        if (lpV2Weth > 0) {
+            IERC20(uniV2WethPool).safeApprove(uniV2Router, lpV2Weth);
+            (uint256 amountA, uint256 amountB) = IUniswapV2Router(uniV2Router).removeLiquidity(weth, bwzc, lpV2Weth, 0, 0, address(this), block.timestamp + 300);
+            emit FeesHarvested(uniV2WethPool, amountA, amountB);
+        }
+        // Sushi USDC
+        uint256 lpSushiUsdc = IERC20(sushiUsdcPool).balanceOf(address(this));
+        if (lpSushiUsdc > 0) {
+            IERC20(sushiUsdcPool).safeApprove(sushiRouter, lpSushiUsdc);
+            (uint256 amountA, uint256 amountB) = IUniswapV2Router(sushiRouter).removeLiquidity(usdc, bwzc, lpSushiUsdc, 0, 0, address(this), block.timestamp + 300);
+            emit FeesHarvested(sushiUsdcPool, amountA, amountB);
+        }
+        // Sushi WETH
+        uint256 lpSushiWeth = IERC20(sushiWethPool).balanceOf(address(this));
+        if (lpSushiWeth > 0) {
+            IERC20(sushiWethPool).safeApprove(sushiRouter, lpSushiWeth);
+            (uint256 amountA, uint256 amountB) = IUniswapV2Router(sushiRouter).removeLiquidity(weth, bwzc, lpSushiWeth, 0, 0, address(this), block.timestamp + 300);
+            emit FeesHarvested(sushiWethPool, amountA, amountB);
+        }
+        // Balancer USDC
         address[] memory assetsU = new address[](2);
         assetsU[0] = usdc; assetsU[1] = bwzc;
         uint256[] memory minOutU = new uint256[](2);
         bytes memory userDataU = abi.encode(0, 0); // EXIT_KIND
         IBalancerVault.ExitPoolRequest memory reqU = IBalancerVault.ExitPoolRequest(assetsU, minOutU, userDataU, false);
         IBalancerVault(vault).exitPool(balBWUSDCId, address(this), payable(address(this)), reqU);
-        // Similar for WETH pool
+        // Balancer WETH
+        address[] memory assetsW = new address[](2);
+        assetsW[0] = weth; assetsW[1] = bwzc;
+        uint256[] memory minOutW = new uint256[](2);
+        bytes memory userDataW = abi.encode(0, 0);
+        IBalancerVault.ExitPoolRequest memory reqW = IBalancerVault.ExitPoolRequest(assetsW, minOutW, userDataW, false);
+        IBalancerVault(vault).exitPool(balBWWETHId, address(this), payable(address(this)), reqW);
     }
 
     function _addLiquidityV3(address paired, uint256 pairedAmount, uint256 bwzcAmount) internal returns (uint256 tokenId) {
@@ -861,13 +925,29 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
         IERC20(bwzc).safeTransferFrom(scw, address(this), totalBw);
 
-        // 1. Pre-seed low-peg for buy leg (large BWAEZI injection)
-        // (call your preSeedLowPegPools or inline joins/addLiquidity)
-        // For simplicity, implement as swaps to inject BWAEZI into low-peg pools (Balancer, Sushi, V2)
+        // 1. Pre-seed low-peg for buy leg (large BWAEZI injection) - enhanced for intelligent distribution
         uint256 injectAmount = bwzcForBuy / 3;
-        _swapBest(bwzc, usdc, injectAmount, 0, 3000, false); // Sell to Balancer/Sushi/V2 via _swapBest
-        _swapBest(bwzc, usdc, injectAmount, 0, 3000, false);
-        _swapBest(bwzc, usdc, injectAmount, 0, 3000, false); // Adjust venues if needed
+        // Venue-specific: Balancer, Sushi, V2 for even distribution
+        // Balancer low-peg injection via joinPool for precise balance
+        address[] memory assetsBal = new address[](2);
+        assetsBal[0] = usdc; assetsBal[1] = bwzc;
+        uint256[] memory maxInBal = new uint256[](2);
+        maxInBal[0] = 0; // No USDC, only BWAEZI injection
+        maxInBal[1] = injectAmount;
+        bytes memory userDataBal = abi.encode(1, maxInBal, 1); // EXACT_TOKENS_IN_FOR_BPT_OUT
+        IBalancerVault.JoinPoolRequest memory reqBal = IBalancerVault.JoinPoolRequest(assetsBal, maxInBal, userDataBal, false);
+        IBalancerVault(vault).joinPool(balBWUSDCId, address(this), address(this), reqBal);
+
+        // Sushi injection via addLiquidity (BWAEZI only, minimal paired)
+        IUniswapV2Router(sushiRouter).addLiquidity(usdc, bwzc, 0, injectAmount, 0, 0, address(this), block.timestamp + 300);
+
+        // V2 injection via addLiquidity (BWAEZI only)
+        IUniswapV2Router(uniV2Router).addLiquidity(usdc, bwzc, 0, injectAmount, 0, 0, address(this), block.timestamp + 300);
+
+        // Similar for WETH side if needed (balanced injection)
+        uint256 injectWeth = injectAmount / 2; // Example split for dual-paired
+        IUniswapV2Router(uniV2Router).addLiquidity(weth, bwzc, 0, injectWeth, 0, 0, address(this), block.timestamp + 300);
+        IUniswapV2Router(sushiRouter).addLiquidity(weth, bwzc, 0, injectWeth, 0, 0, address(this), block.timestamp + 300);
 
         // 2. Flash loan $4M total
         address[] memory tokens = new address[](2);
