@@ -463,9 +463,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
         // Bal spot quote (approx, using balances)
         bytes32 poolId = tokenIn == usdc ? balBWUSDCId : balBWWETHId;
-        (, uint256[] memory balances,) = IBalancerVault(vault).getPoolTokens(poolId);
-        uint256 reserveIn = balances[0] == tokenIn ? balances[0] : balances[1];
-        uint256 reserveOut = balances[0] == tokenIn ? balances[1] : balances[0];
+        (address[] memory tokens, uint256[] memory balances, ) = IBalancerVault(vault).getPoolTokens(poolId);
+        uint256 inIndex = tokens[0] == tokenIn ? 0 : 1;
+        uint256 outIndex = tokens[0] == tokenOut ? 0 : 1;
+        uint256 reserveIn = balances[inIndex];
+        uint256 reserveOut = balances[outIndex];
         uint256 balQuote = (reserveOut * amountIn * 997) / (reserveIn * 1000 + amountIn * 997); // Approx CP with fee
 
         maxQuote = MathLib.max(v3Quote, MathLib.max(v2Quote, MathLib.max(sushiQuote, balQuote)));
@@ -529,9 +531,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     function _balancerReserve(bytes32 poolId) internal view returns (uint256 reserveUSD1e18) {
-        (, uint256[] memory balances, ) = IBalancerVault(vault).getPoolTokens(poolId);
+        (address[] memory tokens, uint256[] memory balances, ) = IBalancerVault(vault).getPoolTokens(poolId);
         address paired = poolId == balBWUSDCId ? usdc : weth;
-        uint256 pairedBal = balances[0]; // assuming index 0 is paired
+        uint256 pairedIndex = tokens[0] == paired ? 0 : 1;
+        uint256 pairedBal = balances[pairedIndex];
         reserveUSD1e18 = paired == usdc ? pairedBal * 1e12 : pairedBal * _getEthUsdPrice() / 1e18;
     }
 
@@ -684,7 +687,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         }
 
         // Bal USDC
-        IERC20 bptUsdc = IERC20(IBalancerVault(vault).getPoolTokens(balBWUSDCId)[0]);
+        (address[] memory tokensU, , ) = IBalancerVault(vault).getPoolTokens(balBWUSDCId);
+        IERC20 bptUsdc = IERC20(tokensU[0]); // Assume BPT is tokens[0]
         uint256 bptBalUsdc = bptUsdc.balanceOf(address(this));
         if (bptBalUsdc > 0) {
             address[] memory assets = new address[](2);
@@ -698,7 +702,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         }
 
         // Bal WETH
-        IERC20 bptWeth = IERC20(IBalancerVault(vault).getPoolTokens(balBWWETHId)[0]);
+        (address[] memory tokensW, , ) = IBalancerVault(vault).getPoolTokens(balBWWETHId);
+        IERC20 bptWeth = IERC20(tokensW[0]); // Assume BPT is tokens[0]
         uint256 bptBalWeth = bptWeth.balanceOf(address(this));
         if (bptBalWeth > 0) {
             address[] memory assets = new address[](2);
