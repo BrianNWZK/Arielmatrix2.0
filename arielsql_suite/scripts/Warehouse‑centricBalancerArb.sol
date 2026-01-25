@@ -414,7 +414,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     function _quoteBest(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee) internal returns (uint256 maxQuote) {
         // V3 quote
         uint256 v3Quote;
-        try IQuoterV2(quoterV2).quoteExactInputSingle(IQuoterV2.QuoteExactInputSingleParams(tokenIn, tokenOut, amountIn, fee, 0)) returns (uint256 out,,,) {
+        try IQuoterV2(quoterV2).quoteExactInputSingle(IQuoterV2.QuoteExactInputSingleParams(tokenIn, tokenOut, amountIn, fee, 0)) returns (uint256 out, uint160 /*sqrtPriceX96After*/, uint32 /*initializedTicksCrossed*/, uint256 /*gasEstimate*/) {
             v3Quote = out;
         } catch {}
 
