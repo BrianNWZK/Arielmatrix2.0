@@ -328,42 +328,63 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
-        scw = msg.sender; // Adjust to actual SCW address, e.g., 0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA from log
-        usdc = address(0); // Set actual USDC address
-        weth = address(0); // Set actual WETH address
-        bwzc = address(0); // Set actual BWZC address
-        uniV3Router = address(0); // Set actual
-        quoterV2 = address(0); // Set actual
-        chainlinkEthUsd = address(0); // Set actual
-        vault = address(0); // Set actual Balancer Vault
-        uniV2Router = address(0); // Set actual UniV2 Router
-        sushiRouter = address(0); // Set actual Sushi Router
-        entryPoint = address(0); // Set actual EntryPoint
-        npm = address(0); // Set actual NPM
-        bwzcDecimals = IERC20(bwzc).decimals();
+    constructor(
+        address _owner,
+        address _scw,
+        address _usdc,
+        address _weth,
+        address _bwzc,
+        address _uniV3Router,
+        address _quoterV2,
+        address _chainlinkEthUsd,
+        address _vault,
+        address _uniV2Router,
+        address _sushiRouter,
+        address _entryPoint,
+        address _npm,
+        uint8 _bwzcDecimals,
+        address _paymasterA,
+        address _paymasterB,
+        bytes32 _balBWUSDCId,
+        bytes32 _balBWWETHId
+    ) {
+        owner = _owner;
+        scw = _scw;
+        usdc = _usdc;
+        weth = _weth;
+        bwzc = _bwzc;
+        uniV3Router = _uniV3Router;
+        quoterV2 = _quoterV2;
+        chainlinkEthUsd = _chainlinkEthUsd;
+        vault = _vault;
+        uniV2Router = _uniV2Router;
+        sushiRouter = _sushiRouter;
+        entryPoint = _entryPoint;
+        npm = _npm;
+        bwzcDecimals = _bwzcDecimals;
         deployTimestamp = block.timestamp;
 
-        balBWUSDCId = 0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706;
-        balBWWETHId = 0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707;
+        paymasterA = _paymasterA;
+        paymasterB = _paymasterB;
+        balBWUSDCId = _balBWUSDCId;
+        balBWWETHId = _balBWWETHId;
 
-        // Unlimited approvals
-        IERC20(usdc).safeApprove(uniV3Router, type(uint256).max);
-        IERC20(usdc).safeApprove(vault, type(uint256).max);
-        IERC20(usdc).safeApprove(uniV2Router, type(uint256).max);
-        IERC20(usdc).safeApprove(sushiRouter, type(uint256).max);
-        IERC20(usdc).safeApprove(npm, type(uint256).max);
-        IERC20(weth).safeApprove(uniV3Router, type(uint256).max);
-        IERC20(weth).safeApprove(vault, type(uint256).max);
-        IERC20(weth).safeApprove(uniV2Router, type(uint256).max);
-        IERC20(weth).safeApprove(sushiRouter, type(uint256).max);
-        IERC20(weth).safeApprove(npm, type(uint256).max);
-        IERC20(bwzc).safeApprove(uniV3Router, type(uint256).max);
-        IERC20(bwzc).safeApprove(vault, type(uint256).max);
-        IERC20(bwzc).safeApprove(uniV2Router, type(uint256).max);
-        IERC20(bwzc).safeApprove(sushiRouter, type(uint256).max);
-        IERC20(bwzc).safeApprove(npm, type(uint256).max);
+        // Unlimited approvals for atomic txs
+        IERC20(_usdc).safeApprove(_uniV3Router, type(uint256).max);
+        IERC20(_usdc).safeApprove(_vault, type(uint256).max);
+        IERC20(_usdc).safeApprove(_uniV2Router, type(uint256).max);
+        IERC20(_usdc).safeApprove(_sushiRouter, type(uint256).max);
+        IERC20(_usdc).safeApprove(_npm, type(uint256).max);
+        IERC20(_weth).safeApprove(_uniV3Router, type(uint256).max);
+        IERC20(_weth).safeApprove(_vault, type(uint256).max);
+        IERC20(_weth).safeApprove(_uniV2Router, type(uint256).max);
+        IERC20(_weth).safeApprove(_sushiRouter, type(uint256).max);
+        IERC20(_weth).safeApprove(_npm, type(uint256).max);
+        IERC20(_bwzc).safeApprove(_uniV3Router, type(uint256).max);
+        IERC20(_bwzc).safeApprove(_vault, type(uint256).max);
+        IERC20(_bwzc).safeApprove(_uniV2Router, type(uint256).max);
+        IERC20(_bwzc).safeApprove(_sushiRouter, type(uint256).max);
+        IERC20(_bwzc).safeApprove(_npm, type(uint256).max);
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -559,15 +580,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
         bool first24h = block.timestamp < deployTimestamp + 86400; // 24 hours = 86400s
 
-        uint256 reinvestPct;
-        uint256 withdrawPct;
-        if (first24h) {
-            reinvestPct = 80; // 80% reinvest, 20% withdraw
-            withdrawPct = 20;
-        } else {
-            reinvestPct = 20; // Reverse: 20% reinvest, 80% withdraw
-            withdrawPct = 80;
-        }
+        uint256 reinvestPct = first24h ? 80 : 20; // Use it here
+        uint256 withdrawPct = first24h ? 20 : 80;
 
         // Reinvest portion
         uint256 usdcReinvest = usdcBal * reinvestPct / 100;
@@ -789,10 +803,10 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 bundleId,
         uint256 bwFromWethMin,
         uint256 wethFromSellMin,
-        uint256 ethUSD, // Used, to silence unused warning
+        uint256 ethUsd, // Used, to silence unused warning
         bool isBuy
     ) internal returns (uint256 bwzcBought, uint256 residual) {
-        ethUSD; // Silence unused parameter warning (used in circuit breaker externally)
+        ethUsd; // Silence unused parameter warning (used in circuit breaker externally)
 
         // SELL LEG SEEDING
         uint256 tokenId = _addLiquidityV3(weth, seedAmountWETH, bwzcSeed);
