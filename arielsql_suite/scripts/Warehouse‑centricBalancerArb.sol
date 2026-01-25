@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
 /*
   MIRACLE M26D — WarehouseBalancerArb (Production Version, merged & corrected, perfected, bootstrapped)
 
@@ -27,6 +25,37 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
   - New: Reduced checkpointPeriod to 20; time-based split for residuals/fees: first 24h 80% reinvest/20% to SCW/EOA, then reverse to 20% reinvest/80% to SCW/EOA every checkpoint; auto-harvest on checkpoint
   - Breathe Mode: Removed growth-limiting guards (no 50% depth cap, no early LowLiquidity revert for cycleCount<5, relaxed SpreadTooLow); large initial borrows ($2M USDC + equiv WETH); bootstrapLargeCycle for first large injection; minUsdcIn for aggressive start; skipped capSafe for cycleCount<5
 */
+
+// Inlined ReentrancyGuard from OpenZeppelin to avoid import issues
+abstract contract ReentrancyGuard {
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+
+    uint256 private _status;
+
+    error ReentrancyGuardReentrantCall();
+
+    constructor() {
+        _status = NOT_ENTERED;
+    }
+
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        if (_status == ENTERED) {
+            revert ReentrancyGuardReentrantCall();
+        }
+        _status = ENTERED;
+    }
+
+    function _nonReentrantAfter() private {
+        _status = NOT_ENTERED;
+    }
+}
 
 interface IERC20 {
     function allowance(address owner, address spender) external view returns (uint256);
