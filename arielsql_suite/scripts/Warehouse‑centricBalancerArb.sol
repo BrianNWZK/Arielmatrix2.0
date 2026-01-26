@@ -24,9 +24,19 @@ pragma solidity ^0.8.24;
   - Efficiency: Refactored for gas (tighter ranges, batched approvals), effectiveness (harvest extracts net profits)
   - New: Reduced checkpointPeriod to 20; time-based split for residuals/fees: first 24h 80% reinvest/20% to SCW/EOA, then reverse to 20% reinvest/80% to SCW/EOA every checkpoint; auto-harvest on checkpoint
   - Breathe Mode: Removed growth-limiting guards (no 50% depth cap, no early LowLiquidity revert for cycleCount<5, relaxed SpreadTooLow); large initial borrows ($2M USDC + equiv WETH); bootstrapLargeCycle for first large injection; minUsdcIn for aggressive start; skipped capSafe for cycleCount<5
+
+/*
+  Profit Sharing Rules (exact as specified):
+  - Arbitrage residuals: immediate split after every cycle
+    - First 24h: 20% to SCW, 80% kept in contract for reinvest
+    - After 24h: 80% to SCW, 20% kept in contract for reinvest
+    - No EOA share from arbs
+  - Harvested fees/dust/NFTs/swaps: only at checkpoints (every 20 cycles)
+    - SCW gets 0%
+    - Split: first 24h → 20% EOA / 80% reinvest; after → 80% EOA / 20% reinvest
+  - Reinvest at checkpoint: remaining arb residuals + harvest reinvest share → _reinvestDrip
 */
 
-// Inlined ReentrancyGuard from OpenZeppelin to avoid import issues
 abstract contract ReentrancyGuard {
     uint256 private constant NOT_ENTERED = 1;
     uint256 private constant ENTERED = 2;
@@ -156,6 +166,8 @@ interface IBalancerVault {
     struct SingleSwap { bytes32 poolId; uint8 kind; address assetIn; address assetOut; uint256 amount; bytes userData; }
     struct FundManagement { address sender; bool fromInternalBalance; address payable recipient; bool toInternalBalance; }
     function swap(SingleSwap calldata singleSwap, FundManagement calldata funds, uint256 limit, uint256 deadline) external payable returns (uint256);
+    function getPool(bytes32 poolId) external view returns (address, PoolSpecialization);
+    enum PoolSpecialization { GENERAL, MINIMAL_SWAP_INFO, TWO_TOKEN }
 }
 
 interface IFlashLoanRecipient {
@@ -275,7 +287,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     uint256 public kappa = 3e16;
 
     uint256 public epsilonBps      = 30;   // slippage guard
-    uint256 public maxDeviationBps = 1000;  // circuit breaker (increased to 10% for breathe)
+    uint256 public maxDeviationBps = 1000;  // circuit breaker
 
     uint256 public lastBuyPrice1e18;
     uint256 public lastSellPrice1e18;
@@ -287,26 +299,26 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     uint256 public paymasterDrawBps = 300;  // 3%
 
     uint256 public cycleCount;
-    uint256 public checkpointPeriod = 20; // Reduced to 20
+    uint256 public checkpointPeriod = 20;
 
     uint256 public stalenessThreshold = 3600;
-    uint256 public minQuoteThreshold = 1e12; // lowered for breathe
+    uint256 public minQuoteThreshold = 1e12;
 
     bool    public paused;
-    mapping(bytes32 => bool) public moduleEnabled; // toggles
-    mapping(address => mapping(uint256 => bool)) public usedNonces; // per-signer
+    mapping(bytes32 => bool) public moduleEnabled;
+    mapping(address => mapping(uint256 => bool)) public usedNonces;
 
     /* ----------------------------- V3 Position Tracking ----------------------------- */
     uint256[] public v3UsdcBwTokenIds;
     uint256[] public v3WethBwTokenIds;
 
     /* ----------------------------- Capacity & Safety ----------------------------- */
-    uint256 public minCycleDelay = 180; // seconds
+    uint256 public minCycleDelay = 180;
     uint256 public lastCycleTimestamp;
-    uint256 public tempDelayMultiplier = 1; // e.g., 2x when throttled
+    uint256 public tempDelayMultiplier = 1;
     string  public autoPauseReason;
 
-    uint256 public minGasPerKick = 1e15; // e.g., 0.001 ETH
+    uint256 public minGasPerKick = 1e15;
 
     bytes32 public constant KICK_TYPEHASH = keccak256("Kick(uint256 bundleId,uint256 deadline,uint256 nonce)");
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -371,7 +383,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         balBWUSDCId = _balBWUSDCId;
         balBWWETHId = _balBWWETHId;
 
-        // Unlimited approvals for atomic txs
+        // Unlimited approvals
         IERC20(_usdc).safeApprove(_uniV3Router, type(uint256).max);
         IERC20(_usdc).safeApprove(_vault, type(uint256).max);
         IERC20(_usdc).safeApprove(_uniV2Router, type(uint256).max);
@@ -397,7 +409,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         ));
     }
 
-    // Setters for configurables with bounds and events
+    // Setters for configurables
     function setAlpha(uint256 newAlpha) external onlyOwner {
         require(newAlpha >= 1e18 && newAlpha <= 10e18, "InvalidParameter");
         emit ConfigUpdated("alpha", alpha, newAlpha);
@@ -438,28 +450,24 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         (uint80 roundId, int256 price, , uint256 updatedAt, uint80 answeredInRound) = IChainlinkFeed(chainlinkEthUsd).latestRoundData();
         if (updatedAt == 0 || answeredInRound < roundId) revert StaleOracle();
         if (block.timestamp - updatedAt > stalenessThreshold) revert StaleOracle();
-        return uint256(price) * 1e10; // Assuming 8 decimals to 18
+        return uint256(price) * 1e10;
     }
 
     function _quoteBest(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee) internal returns (uint256 amountOut) {
         if (amountIn < minQuoteThreshold) revert LowLiquidity();
 
-        // Quote V3
         IQuoterV2.QuoteExactInputSingleParams memory params = IQuoterV2.QuoteExactInputSingleParams(tokenIn, tokenOut, amountIn, fee, 0);
-        (uint256 v3Out, , , ) = IQuoterV2(quoterV2).quoteExactInputSingle(params); // Ignore sqrt, ticks, gas
+        (uint256 v3Out, , , ) = IQuoterV2(quoterV2).quoteExactInputSingle(params);
 
-        // Quote V2
         address[] memory path = new address[](2);
         path[0] = tokenIn;
         path[1] = tokenOut;
         uint256[] memory v2OutArr = IUniswapV2Router(uniV2Router).getAmountsOut(amountIn, path);
         uint256 v2Out = v2OutArr[1];
 
-        // Quote Sushi
         uint256[] memory sushiOutArr = IUniswapV2Router(sushiRouter).getAmountsOut(amountIn, path);
         uint256 sushiOut = sushiOutArr[1];
 
-        // Quote Balancer
         bytes32 poolId = tokenIn == usdc ? balBWUSDCId : balBWWETHId;
         IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap(poolId, 0, tokenIn, tokenOut, amountIn, "");
         IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement(address(this), false, payable(address(this)), false);
@@ -469,19 +477,18 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     function harvestAllFees() public {
-        // Harvest V3
-        for (uint256 i = 0; i < v3UsdcBwTokenIds.length; i++) {
-            INonfungiblePositionManager.CollectParams memory params = INonfungiblePositionManager.CollectParams(v3UsdcBwTokenIds[i], address(this), type(uint128).max, type(uint128).max);
-            (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(npm).collect(params);
+        // V3
+        while (v3UsdcBwTokenIds.length > 0) {
+            uint256 tokenId = v3UsdcBwTokenIds[v3UsdcBwTokenIds.length - 1];
+            (uint256 amount0, uint256 amount1) = _removeLiquidityV3(usdc, tokenId);
             emit FeesHarvested(uniV3UsdcPool, amount0, amount1);
         }
-        for (uint256 i = 0; i < v3WethBwTokenIds.length; i++) {
-            INonfungiblePositionManager.CollectParams memory params = INonfungiblePositionManager.CollectParams(v3WethBwTokenIds[i], address(this), type(uint128).max, type(uint128).max);
-            (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(npm).collect(params);
+        while (v3WethBwTokenIds.length > 0) {
+            uint256 tokenId = v3WethBwTokenIds[v3WethBwTokenIds.length - 1];
+            (uint256 amount0, uint256 amount1) = _removeLiquidityV3(weth, tokenId);
             emit FeesHarvested(uniV3WethPool, amount0, amount1);
         }
 
-        // Harvest V2/Sushi/Bal by remove liq - now complete for all pools
         // V2 USDC
         uint256 lpV2Usdc = IERC20(uniV2UsdcPool).balanceOf(address(this));
         if (lpV2Usdc > 0) {
@@ -511,26 +518,44 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
             emit FeesHarvested(sushiWethPool, amountA, amountB);
         }
         // Balancer USDC
-        address[] memory assetsU = new address[](2);
-        assetsU[0] = usdc; assetsU[1] = bwzc;
-        uint256[] memory minOutU = new uint256[](2);
-        bytes memory userDataU = abi.encode(0, 0); // EXIT_KIND
-        IBalancerVault.ExitPoolRequest memory reqU = IBalancerVault.ExitPoolRequest(assetsU, minOutU, userDataU, false);
-        IBalancerVault(vault).exitPool(balBWUSDCId, address(this), payable(address(this)), reqU);
+        (address poolU, ) = IBalancerVault(vault).getPool(balBWUSDCId);
+        uint256 bptBalU = IERC20(poolU).balanceOf(address(this));
+        if (bptBalU > 0) {
+            uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
+            uint256 bwzcBefore = IERC20(bwzc).balanceOf(address(this));
+            address[] memory assetsU = new address[](2);
+            assetsU[0] = usdc; assetsU[1] = bwzc;
+            uint256[] memory minOutU = new uint256[](2);
+            bytes memory userDataU = abi.encode(2, bptBalU);
+            IBalancerVault.ExitPoolRequest memory reqU = IBalancerVault.ExitPoolRequest(assetsU, minOutU, userDataU, false);
+            IBalancerVault(vault).exitPool(balBWUSDCId, address(this), payable(address(this)), reqU);
+            uint256 usdcHarvested = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
+            uint256 bwzcHarvested = IERC20(bwzc).balanceOf(address(this)) - bwzcBefore;
+            emit FeesHarvested(poolU, usdcHarvested, bwzcHarvested);
+        }
         // Balancer WETH
-        address[] memory assetsW = new address[](2);
-        assetsW[0] = weth; assetsW[1] = bwzc;
-        uint256[] memory minOutW = new uint256[](2);
-        bytes memory userDataW = abi.encode(0, 0);
-        IBalancerVault.ExitPoolRequest memory reqW = IBalancerVault.ExitPoolRequest(assetsW, minOutW, userDataW, false);
-        IBalancerVault(vault).exitPool(balBWWETHId, address(this), payable(address(this)), reqW);
+        (address poolW, ) = IBalancerVault(vault).getPool(balBWWETHId);
+        uint256 bptBalW = IERC20(poolW).balanceOf(address(this));
+        if (bptBalW > 0) {
+            uint256 wethBefore = IERC20(weth).balanceOf(address(this));
+            uint256 bwzcBefore = IERC20(bwzc).balanceOf(address(this));
+            address[] memory assetsW = new address[](2);
+            assetsW[0] = weth; assetsW[1] = bwzc;
+            uint256[] memory minOutW = new uint256[](2);
+            bytes memory userDataW = abi.encode(2, bptBalW);
+            IBalancerVault.ExitPoolRequest memory reqW = IBalancerVault.ExitPoolRequest(assetsW, minOutW, userDataW, false);
+            IBalancerVault(vault).exitPool(balBWWETHId, address(this), payable(address(this)), reqW);
+            uint256 wethHarvested = IERC20(weth).balanceOf(address(this)) - wethBefore;
+            uint256 bwzcHarvested = IERC20(bwzc).balanceOf(address(this)) - bwzcBefore;
+            emit FeesHarvested(poolW, wethHarvested, bwzcHarvested);
+        }
     }
 
     function _addLiquidityV3(address paired, uint256 pairedAmount, uint256 bwzcAmount) internal returns (uint256 tokenId) {
         address pool = paired == usdc ? uniV3UsdcPool : uniV3WethPool;
-        ( , int24 tick, , , , , ) = IUniswapV3Pool(pool).slot0(); // Fixed unused sqrtPriceX96 by removing it
-        int24 tickSpacing = 60; // Assume 0.3% fee, tickSpacing 60
-        int24 tickLower = tick - tickSpacing * 5; // Narrower range
+        ( , int24 tick, , , , , ) = IUniswapV3Pool(pool).slot0();
+        int24 tickSpacing = 60;
+        int24 tickLower = tick - tickSpacing * 5;
         int24 tickUpper = tick + tickSpacing * 5;
 
         address token0 = paired < bwzc ? paired : bwzc;
@@ -573,7 +598,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
         INonfungiblePositionManager(npm).burn(tokenId);
 
-        // Remove from array
         uint256[] storage ids = paired == usdc ? v3UsdcBwTokenIds : v3WethBwTokenIds;
         for (uint256 i = 0; i < ids.length; i++) {
             if (ids[i] == tokenId) {
@@ -585,43 +609,31 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     function _reinvestDrip(uint256 usdcDeposit, uint256 wethDeposit, uint256 bwDeposit) internal {
-        uint256 r = MathLib.max(rMin, MathLib.mulDiv(rMax, cycleCount, cycleCount + 1)); // Example adaptive r
+        uint256 r = MathLib.max(rMin, MathLib.mulDiv(rMax, cycleCount, cycleCount + 1));
 
-        // Split shares
         uint256 v3Share = r * 40 / 100;
         uint256 v2Share = r * 20 / 100;
         uint256 sushiShare = r * 20 / 100;
         uint256 balShare = r * 20 / 100;
 
-        // V3 USDC/BW
         _addLiquidityV3(usdc, usdcDeposit * v3Share / 1e18, bwDeposit * v3Share / 1e18);
-
-        // V3 WETH/BW
         _addLiquidityV3(weth, wethDeposit * v3Share / 1e18, bwDeposit * v3Share / 1e18);
 
-        // V2 USDC/BW
         IUniswapV2Router(uniV2Router).addLiquidity(usdc, bwzc, usdcDeposit * v2Share / 1e18, bwDeposit * v2Share / 1e18, 0, 0, address(this), block.timestamp + 300);
-
-        // V2 WETH/BW
         IUniswapV2Router(uniV2Router).addLiquidity(weth, bwzc, wethDeposit * v2Share / 1e18, bwDeposit * v2Share / 1e18, 0, 0, address(this), block.timestamp + 300);
 
-        // Sushi USDC/BW
         IUniswapV2Router(sushiRouter).addLiquidity(usdc, bwzc, usdcDeposit * sushiShare / 1e18, bwDeposit * sushiShare / 1e18, 0, 0, address(this), block.timestamp + 300);
-
-        // Sushi WETH/BW
         IUniswapV2Router(sushiRouter).addLiquidity(weth, bwzc, wethDeposit * sushiShare / 1e18, bwDeposit * sushiShare / 1e18, 0, 0, address(this), block.timestamp + 300);
 
-        // Balancer USDC/BW
         address[] memory assetsU = new address[](2);
         assetsU[0] = usdc; assetsU[1] = bwzc;
         uint256[] memory maxInU = new uint256[](2);
         maxInU[0] = usdcDeposit * balShare / 1e18;
         maxInU[1] = bwDeposit * balShare / 1e18;
-        bytes memory userDataU = abi.encode(1, maxInU, 1); // EXACT_TOKENS_IN_FOR_BPT_OUT, min BPT=1
+        bytes memory userDataU = abi.encode(1, maxInU, 1);
         IBalancerVault.JoinPoolRequest memory reqU = IBalancerVault.JoinPoolRequest(assetsU, maxInU, userDataU, false);
         IBalancerVault(vault).joinPool(balBWUSDCId, address(this), address(this), reqU);
 
-        // Balancer WETH/BW
         address[] memory assetsW = new address[](2);
         assetsW[0] = weth; assetsW[1] = bwzc;
         uint256[] memory maxInW = new uint256[](2);
@@ -636,30 +648,43 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
     /* ----------------------------- Checkpoint Logic with Splits ----------------------------- */
     function _checkpointAndSplit() internal {
-        harvestAllFees(); // Auto-harvest fees/LP on checkpoint
+        bool first24h = block.timestamp < deployTimestamp + 86400;
+        uint256 eoaPct = first24h ? 20 : 80;
+        uint256 reinvestPct = first24h ? 80 : 20;
 
-        uint256 usdcBal = IERC20(usdc).balanceOf(address(this));
-        uint256 wethBal = IERC20(weth).balanceOf(address(this));
-        uint256 bwzcBal = IERC20(bwzc).balanceOf(address(this));
+        uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
+        uint256 wethBefore = IERC20(weth).balanceOf(address(this));
+        uint256 bwzcBefore = IERC20(bwzc).balanceOf(address(this));
 
-        bool first24h = block.timestamp < deployTimestamp + 86400; // 24 hours = 86400s
+        harvestAllFees(); // Harvest fees/dust/NFTs/swaps
 
-        uint256 reinvestPct = first24h ? 80 : 20; // Use it here
-        uint256 withdrawPct = first24h ? 20 : 80;
+        uint256 usdcTotal = IERC20(usdc).balanceOf(address(this));
+        uint256 wethTotal = IERC20(weth).balanceOf(address(this));
+        uint256 bwzcTotal = IERC20(bwzc).balanceOf(address(this));
 
-        // Reinvest portion
-        uint256 usdcReinvest = usdcBal * reinvestPct / 100;
-        uint256 wethReinvest = wethBal * reinvestPct / 100;
-        uint256 bwzcReinvest = bwzcBal * reinvestPct / 100;
-        _reinvestDrip(usdcReinvest, wethReinvest, bwzcReinvest);
+        uint256 usdcHarvested = usdcTotal - usdcBefore;
+        uint256 wethHarvested = wethTotal - wethBefore;
+        uint256 bwzcHarvested = bwzcTotal - bwzcBefore;
 
-        // Withdraw portion (to EOA for fees/LP, but residuals already handled in cycle)
-        uint256 usdcWithdraw = usdcBal * withdrawPct / 100;
-        uint256 wethWithdraw = wethBal * withdrawPct / 100;
-        uint256 bwzcWithdraw = bwzcBal * withdrawPct / 100;
-        if (usdcWithdraw > 0) IERC20(usdc).safeTransfer(owner, usdcWithdraw);
-        if (wethWithdraw > 0) IERC20(weth).safeTransfer(owner, wethWithdraw);
-        if (bwzcWithdraw > 0) IERC20(bwzc).safeTransfer(owner, bwzcWithdraw);
+        // Split harvested: EOA and reinvest only (SCW gets 0%)
+        uint256 usdcEoa = usdcHarvested * eoaPct / 100;
+        uint256 usdcReinvestHarvest = usdcHarvested - usdcEoa;
+        IERC20(usdc).safeTransfer(owner, usdcEoa);
+
+        uint256 wethEoa = wethHarvested * eoaPct / 100;
+        uint256 wethReinvestHarvest = wethHarvested - wethEoa;
+        IERC20(weth).safeTransfer(owner, wethEoa);
+
+        uint256 bwzcEoa = bwzcHarvested * eoaPct / 100;
+        uint256 bwzcReinvestHarvest = bwzcHarvested - bwzcEoa;
+        IERC20(bwzc).safeTransfer(owner, bwzcEoa);
+
+        // Reinvest: remaining arb residuals + harvest reinvest share
+        uint256 usdcReinvestTotal = usdcBefore + usdcReinvestHarvest;
+        uint256 wethReinvestTotal = wethBefore + wethReinvestHarvest;
+        uint256 bwzcReinvestTotal = bwzcBefore + bwzcReinvestHarvest;
+
+        _reinvestDrip(usdcReinvestTotal, wethReinvestTotal, bwzcReinvestTotal);
     }
 
     /* ----------------------------- Paymaster top-up ----------------------------- */
@@ -684,7 +709,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
     receive() external payable {}
 
-    /* ----------------------------- Rescues (Expanded for LP/Fees) ----------------------------- */
+    /* ----------------------------- Rescues ----------------------------- */
     function rescueERC20(address token, uint256 amount, address to) external onlyOwner bypassPause {
         IERC20(token).safeTransfer(to, amount);
         emit ERC20Withdrawn(token, amount, to);
@@ -713,9 +738,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         emit ERC1155Rescued(token, id, amount, to);
     }
 
-    /* ----------------------------- Swap Best with Shuffle (Fixed, Direction-Aware) ----------------------------- */
+    /* ----------------------------- Swap Best ----------------------------- */
     function _swapBest(address tokenIn, address tokenOut, uint256 amountIn, uint256 minOut, uint24 fee, bool isBuy) internal returns (uint256 amountOut) {
-        // Direction-aware order: for buy (low peg), Sushi/Bal/V2/V3; for sell (high peg), V3/V2/Sushi/Bal
         address[4] memory venues = isBuy ? [sushiRouter, vault, uniV2Router, uniV3Router] : [uniV3Router, uniV2Router, sushiRouter, vault];
 
         for (uint256 k = 0; k < 4; ) {
@@ -767,12 +791,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         revert SwapFailed();
     }
 
-    /* ----------------------------- Dual Flash Loan Cycles (USDC + WETH) ----------------------------- */
+    /* ----------------------------- Dual Flash Loan Cycles ----------------------------- */
     function receiveFlashLoan(address[] calldata tokens, uint256[] calldata amounts, uint256[] calldata fees, bytes calldata userData) external nonReentrant {
         require(msg.sender == vault, "not vault");
-        require(tokens[0] == usdc && tokens[1] == weth, "invalid tokens"); // Use tokens to silence unused warning
+        require(tokens[0] == usdc && tokens[1] == weth, "invalid tokens");
 
-        // Decode userData: assume abi.encode(bundleId, spreadBpsUsdc, spreadBpsWeth, bwzcSeedUsdc, bwzcSeedWeth)
         (uint256 bundleId, uint256 spreadBpsUsdc, uint256 spreadBpsWeth, uint256 bwzcSeedUsdc, uint256 bwzcSeedWeth) = abi.decode(userData, (uint256, uint256, uint256, uint256, uint256));
 
         uint256 ethUsd = _getEthUsdPrice();
@@ -782,7 +805,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 arbUsdc = amounts[0] - seedUsdc;
         uint256 bwFromUsdcMin = _quoteBest(usdc, bwzc, arbUsdc, 3000) * (10000 - epsilonBps) / 10000;
         uint256 usdcFromSellMin = _quoteBest(bwzc, usdc, bwFromUsdcMin, 3000) * (10000 - epsilonBps) / 10000;
-        (uint256 bwBoughtUsdc, uint256 resUsdc) = _executeUsdcBwzcCycle(seedUsdc, arbUsdc, bwzcSeedUsdc, fees[0], bundleId, bwFromUsdcMin, usdcFromSellMin, true); // isBuy=true for buy swap
+        (uint256 bwBoughtUsdc, uint256 resUsdc) = _executeUsdcBwzcCycle(seedUsdc, arbUsdc, bwzcSeedUsdc, fees[0], bundleId, bwFromUsdcMin, usdcFromSellMin, true);
 
         // WETH leg
         uint256 seedWeth = _adaptiveSeedRatio(amounts[1], spreadBpsWeth);
@@ -791,7 +814,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 wethFromSellMin = _quoteBest(bwzc, weth, bwFromWethMin, 3000) * (10000 - epsilonBps) / 10000;
         (uint256 bwBoughtWeth, uint256 resWeth) = _executeWethBwzcCycle(seedWeth, arbWeth, bwzcSeedWeth, fees[1], bundleId, bwFromWethMin, wethFromSellMin, ethUsd, true);
 
-        // Circuit breaker check
+        // Circuit breaker
         uint256 newBuy = (bwBoughtUsdc + bwBoughtWeth) / (arbUsdc + arbWeth * ethUsd / 1e18);
         uint256 newSell = (resUsdc + resWeth * ethUsd / 1e18) / (bwBoughtUsdc + bwBoughtWeth);
         if (newBuy > lastBuyPrice1e18 * (10000 + maxDeviationBps) / 10000 || newBuy < lastBuyPrice1e18 * (10000 - maxDeviationBps) / 10000) revert DeviationTooHigh();
@@ -799,13 +822,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         lastBuyPrice1e18 = newBuy;
         lastSellPrice1e18 = newSell;
 
-        // Reinvest if checkpoint
         cycleCount++;
         if (cycleCount % checkpointPeriod == 0) {
             _checkpointAndSplit();
         }
 
-        // Top paymaster
         _maybeTopEntryPoint();
 
         lastCycleTimestamp = block.timestamp;
@@ -821,38 +842,30 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 usdcFromSellMin,
         bool isBuy
     ) internal returns (uint256 bwzcBought, uint256 residual) {
-        // SELL LEG SEEDING
         uint256 tokenId = _addLiquidityV3(usdc, seedAmountUSDC, bwzcSeed);
 
-        // BUY LEG
         bwzcBought = _swapBest(usdc, bwzc, arbAmountUSDC, bwFromUsdcMin, 3000, isBuy);
 
-        // SELL LEG
         uint256 usdcRecovered = _swapBest(bwzc, usdc, bwzcBought, usdcFromSellMin, 3000, false);
 
-        // REMOVE LIQUIDITY
         (uint256 usdcFromLiquidity, uint256 bwzcReturned) = _removeLiquidityV3(usdc, tokenId);
 
-        // REPAY
         uint256 totalRepay = arbAmountUSDC + seedAmountUSDC + usdcFee;
-        if (usdcRecovered + usdcFromLiquidity < totalRepay && cycleCount >= 5) revert SpreadTooLow(); // Breathe: allow small neg for early
+        if (usdcRecovered + usdcFromLiquidity < totalRepay && cycleCount >= 5) revert SpreadTooLow();
 
         IERC20(usdc).safeTransfer(vault, totalRepay);
 
-        // PROFIT - Split residuals based on time
         residual = (usdcRecovered + usdcFromLiquidity) - totalRepay;
+
         bool first24h = block.timestamp < deployTimestamp + 86400;
-        uint256 scwPct = first24h ? 20 : 80; // 20% first 24h, then 80%
+        uint256 scwPct      = first24h ? 20 : 80;
         uint256 reinvestPct = first24h ? 80 : 20;
 
         uint256 scwShare = residual * scwPct / 100;
-        // Removed unused reinvestShare = residual * reinvestPct / 100;
+        IERC20(usdc).safeTransfer(scw, scwShare);  // immediate to SCW
 
-        IERC20(usdc).safeTransfer(scw, scwShare);
-        // Reinvest share stays in contract for drip on checkpoint
-
-        IERC20(bwzc).safeTransfer(scw, bwzcReturned * scwPct / 100);
-        // BWZC reinvest share stays in contract
+        uint256 bwzcScw = bwzcReturned * scwPct / 100;
+        IERC20(bwzc).safeTransfer(scw, bwzcScw);
 
         emit DualCycleExecuted(bundleId, seedAmountUSDC, arbAmountUSDC, bwzcBought, residual, 0);
 
@@ -867,107 +880,88 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 bundleId,
         uint256 bwFromWethMin,
         uint256 wethFromSellMin,
-        uint256 ethUsd, // Used, to silence unused warning
+        uint256 ethUsd,
         bool isBuy
     ) internal returns (uint256 bwzcBought, uint256 residual) {
-        ethUsd; // Silence unused parameter warning (used in circuit breaker externally)
+        ethUsd; // silence warning
 
-        // SELL LEG SEEDING
         uint256 tokenId = _addLiquidityV3(weth, seedAmountWETH, bwzcSeed);
 
-        // BUY LEG
         bwzcBought = _swapBest(weth, bwzc, arbAmountWETH, bwFromWethMin, 3000, isBuy);
 
-        // SELL LEG
         uint256 wethRecovered = _swapBest(bwzc, weth, bwzcBought, wethFromSellMin, 3000, false);
 
-        // REMOVE LIQUIDITY
         (uint256 wethFromLiquidity, uint256 bwzcReturned) = _removeLiquidityV3(weth, tokenId);
 
-        // REPAY
         uint256 totalRepay = arbAmountWETH + seedAmountWETH + wethFee;
-        if (wethRecovered + wethFromLiquidity < totalRepay && cycleCount >= 5) revert SpreadTooLow(); // Breathe: allow small neg for early
+        if (wethRecovered + wethFromLiquidity < totalRepay && cycleCount >= 5) revert SpreadTooLow();
 
         IERC20(weth).safeTransfer(vault, totalRepay);
 
-        // PROFIT - Split residuals based on time
         residual = (wethRecovered + wethFromLiquidity) - totalRepay;
+
         bool first24h = block.timestamp < deployTimestamp + 86400;
-        uint256 scwPct = first24h ? 20 : 80;
+        uint256 scwPct      = first24h ? 20 : 80;
         uint256 reinvestPct = first24h ? 80 : 20;
 
         uint256 scwShare = residual * scwPct / 100;
-        // Removed unused reinvestShare = residual * reinvestPct / 100;
-
         IERC20(weth).safeTransfer(scw, scwShare);
-        // Reinvest share stays in contract
 
-        IERC20(bwzc).safeTransfer(scw, bwzcReturned * scwPct / 100);
-        // BWZC reinvest share stays
+        uint256 bwzcScw = bwzcReturned * scwPct / 100;
+        IERC20(bwzc).safeTransfer(scw, bwzcScw);
 
         emit DualCycleExecuted(bundleId, seedAmountWETH, arbAmountWETH, bwzcBought, 0, residual);
 
         return (bwzcBought, residual);
     }
 
-    /* ----------------------------- Adaptive Seed Ratio ----------------------------- */
     function _adaptiveSeedRatio(uint256 arbAmount, uint256 spreadBps) internal pure returns (uint256 seedAmount) {
         uint256 multiplier = 1e18 + (spreadBps * 1e18 / 6000);
         seedAmount = arbAmount * multiplier / 1e18;
     }
 
-    /* ----------------------------- Bootstrap Large Cycle ----------------------------- */
     function bootstrapLargeCycle(uint256 bwzcForBuy, uint256 bwzcForSeed) external {
         require(msg.sender == scw, "only SCW");
 
         uint256 totalBw = bwzcForBuy + bwzcForSeed;
-        require(totalBw >= 40000 * 1e18, "insufficient BWAEZI"); // adjust decimals
+        require(totalBw >= 40000 * 1e18, "insufficient BWAEZI");
 
         IERC20(bwzc).safeTransferFrom(scw, address(this), totalBw);
 
-        // 1. Pre-seed low-peg for buy leg (large BWAEZI injection) - enhanced for intelligent distribution
         uint256 injectAmount = bwzcForBuy / 3;
-        // Venue-specific: Balancer, Sushi, V2 for even distribution
-        // Balancer low-peg injection via joinPool for precise balance
         address[] memory assetsBal = new address[](2);
         assetsBal[0] = usdc; assetsBal[1] = bwzc;
         uint256[] memory maxInBal = new uint256[](2);
-        maxInBal[0] = 0; // No USDC, only BWAEZI injection
+        maxInBal[0] = 0;
         maxInBal[1] = injectAmount;
-        bytes memory userDataBal = abi.encode(1, maxInBal, 1); // EXACT_TOKENS_IN_FOR_BPT_OUT
+        bytes memory userDataBal = abi.encode(1, maxInBal, 1);
         IBalancerVault.JoinPoolRequest memory reqBal = IBalancerVault.JoinPoolRequest(assetsBal, maxInBal, userDataBal, false);
         IBalancerVault(vault).joinPool(balBWUSDCId, address(this), address(this), reqBal);
 
-        // Sushi injection via addLiquidity (BWAEZI only, minimal paired)
         IUniswapV2Router(sushiRouter).addLiquidity(usdc, bwzc, 0, injectAmount, 0, 0, address(this), block.timestamp + 300);
-
-        // V2 injection via addLiquidity (BWAEZI only)
         IUniswapV2Router(uniV2Router).addLiquidity(usdc, bwzc, 0, injectAmount, 0, 0, address(this), block.timestamp + 300);
 
-        // Similar for WETH side if needed (balanced injection)
-        uint256 injectWeth = injectAmount / 2; // Example split for dual-paired
+        uint256 injectWeth = injectAmount / 2;
         IUniswapV2Router(uniV2Router).addLiquidity(weth, bwzc, 0, injectWeth, 0, 0, address(this), block.timestamp + 300);
         IUniswapV2Router(sushiRouter).addLiquidity(weth, bwzc, 0, injectWeth, 0, 0, address(this), block.timestamp + 300);
 
-        // 2. Flash loan $4M total
         address[] memory tokens = new address[](2);
         tokens[0] = usdc;
         tokens[1] = weth;
 
         uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 2_000_000 * 1e6; // $2M USDC (assuming 6 decimals)
-        amounts[1] = 2_000_000 * 1e18 / _getEthUsdPrice(); // $2M WETH equiv
+        amounts[0] = 2_000_000 * 1e6;
+        amounts[1] = 2_000_000 * 1e18 / _getEthUsdPrice();
 
         bytes memory userData = abi.encode(
-            1, // bundleId
-            600, 600, // spreads
-            bwzcForSeed / 2, bwzcForSeed / 2 // seed split
+            1,
+            600, 600,
+            bwzcForSeed / 2, bwzcForSeed / 2
         );
 
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
 
-    /* ----------------------------- Kick with Signature ----------------------------- */
     function kick(SignedKick calldata signedKick) external {
         require(block.timestamp <= signedKick.deadline, "expired");
         require(!usedNonces[msg.sender][signedKick.nonce], "nonce used");
@@ -978,13 +972,12 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         address signer = ecrecover(hash, signedKick.v, signedKick.r, signedKick.s);
         require(signer == scw, "invalid sig");
 
-        // Flash loan call
         address[] memory tokens = new address[](2);
         tokens[0] = usdc; tokens[1] = weth;
         uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 1e6; // Example smaller amounts, adjust
+        amounts[0] = 1e6;
         amounts[1] = 1e18 / _getEthUsdPrice();
-        bytes memory userData = abi.encode(signedKick.bundleId, 600, 600, 1e3, 1e3); // Example spreads/seeds, adjust dynamically if needed
+        bytes memory userData = abi.encode(signedKick.bundleId, 600, 600, 1e3, 1e3);
 
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
