@@ -979,21 +979,3 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
 }
-'''
-
-# Compile without optimizer
-compiled = solcx.compile_source(contract_code, output_values=['abi', 'bin'], optimize=False)
-print("Compiled without optimizer:")
-print("Bytecode size without optimizer:", len(compiled['<stdin>:WarehouseBalancerArb']['bin']) // 2)
-
-# Compile with optimizer runs=200
-compiled_opt = solcx.compile_source(contract_code, output_values=['abi', 'bin'], optimize=True, optimize_runs=200)
-print("Compiled with optimizer runs=200:")
-print("Bytecode size with optimizer:", len(compiled_opt['<stdin>:WarehouseBalancerArb']['bin']) // 2)
-
-# Compile with optimizer runs=1
-compiled_opt_low = solcx.compile_source(contract_code, output_values=['abi', 'bin'], optimize=True, optimize_runs=1)
-print("Compiled with optimizer runs=1:")
-print("Bytecode size with low runs:", len(compiled_opt_low['<stdin>:WarehouseBalancerArb']['bin']) // 2)
-
-# Check for warnings - but since it's compilation, print any errors if occur
