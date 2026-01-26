@@ -277,7 +277,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     address public uniV3UsdcPool = 0x261c64d4d96EBfa14398B52D93C9d063E3a619f8;
     address public uniV3WethPool = 0x142C3dce0a5605Fb385fAe7760302fab761022aa;
     address public uniV2UsdcPool = 0xb3911905f8a6160eF89391442f85ecA7c397859c;
-    address public uniV2WethPool = 0x6dF6F882ED69918349F75Fe397b37e62C04515b6;
+    address public uniV2WethPool = 0x6dF6F882ED69918349f75Fe397b37e62C04515b6;
     address public sushiUsdcPool = 0x9d2f8F9A2E3C240dECbbE23e9B3521E6ca2489D1;
     address public sushiWethPool = 0xE9E62C8Cc585C21Fb05fd82Fb68e0129711869f9;
 
@@ -650,7 +650,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     function _checkpointAndSplit() internal {
         bool first24h = block.timestamp < deployTimestamp + 86400;
         uint256 eoaPct = first24h ? 20 : 80;
-        uint256 reinvestPct = first24h ? 80 : 20;
 
         uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
         uint256 wethBefore = IERC20(weth).balanceOf(address(this));
@@ -859,7 +858,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
         bool first24h = block.timestamp < deployTimestamp + 86400;
         uint256 scwPct      = first24h ? 20 : 80;
-        uint256 reinvestPct = first24h ? 80 : 20;
 
         uint256 scwShare = residual * scwPct / 100;
         IERC20(usdc).safeTransfer(scw, scwShare);  // immediate to SCW
@@ -902,7 +900,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
         bool first24h = block.timestamp < deployTimestamp + 86400;
         uint256 scwPct      = first24h ? 20 : 80;
-        uint256 reinvestPct = first24h ? 80 : 20;
 
         uint256 scwShare = residual * scwPct / 100;
         IERC20(weth).safeTransfer(scw, scwShare);
@@ -982,3 +979,21 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
 }
+'''
+
+# Compile without optimizer
+compiled = solcx.compile_source(contract_code, output_values=['abi', 'bin'], optimize=False)
+print("Compiled without optimizer:")
+print("Bytecode size without optimizer:", len(compiled['<stdin>:WarehouseBalancerArb']['bin']) // 2)
+
+# Compile with optimizer runs=200
+compiled_opt = solcx.compile_source(contract_code, output_values=['abi', 'bin'], optimize=True, optimize_runs=200)
+print("Compiled with optimizer runs=200:")
+print("Bytecode size with optimizer:", len(compiled_opt['<stdin>:WarehouseBalancerArb']['bin']) // 2)
+
+# Compile with optimizer runs=1
+compiled_opt_low = solcx.compile_source(contract_code, output_values=['abi', 'bin'], optimize=True, optimize_runs=1)
+print("Compiled with optimizer runs=1:")
+print("Bytecode size with low runs:", len(compiled_opt_low['<stdin>:WarehouseBalancerArb']['bin']) // 2)
+
+# Check for warnings - but since it's compilation, print any errors if occur
