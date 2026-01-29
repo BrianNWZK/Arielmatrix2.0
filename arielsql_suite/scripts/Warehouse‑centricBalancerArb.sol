@@ -35,9 +35,8 @@ pragma solidity ^0.8.24;
   - Sell Leg Seeding: $2,600,040 (50/50 USDC/WETH, ~26,000 BWAEZI at $100 peg)
   - Total BWAEZI Needed: ~30,667
   - Changes: Institutional precision with basis points, TWAMM chunking, decimal fixes, all functions defined/complete, repayment consolidated, consistent distributions, capped multipliers to prevent overflows.
+*/
 
-  
-// ReentrancyGuard (unchanged)
 abstract contract ReentrancyGuard {
     uint256 private constant NOT_ENTERED = 1;
     uint256 private constant ENTERED = 2;
@@ -68,7 +67,6 @@ abstract contract ReentrancyGuard {
     }
 }
 
-// Interfaces (complete set from original)
 interface IERC20 {
     function allowance(address owner, address spender) external view returns (uint256);
     function balanceOf(address) external view returns (uint256);
@@ -746,35 +744,35 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         permanentBWZCAdded += bwzcBuyLeave;
     }
 
+    function _executeArbitrageSwap(
+        uint256 swapUsdcLeg,
+        uint256 swapWethLeg,
+        uint256 bwzcBuySwapUsdc,
+        uint256 bwzcBuySwapWeth,
+        uint256 bundleId,
+        uint256 feeUsdc,
+        uint256 feeWeth
+    ) internal returns (uint256 totalProfit) {
+        uint256 ethUsd = _getEthUsdPrice();
 
-function _executeArbitrageSwap(
-    uint256 swapUsdcLeg,
-    uint256 swapWethLeg,
-    uint256 bwzcBuySwapUsdc,
-    uint256 bwzcBuySwapWeth,
-    uint256 bundleId,
-    uint256 feeUsdc,
-    uint256 feeWeth
-) internal returns (uint256 totalProfit) {
-    uint256 ethUsd = _getEthUsdPrice();
+        // Execute USDC leg
+        uint256 usdcProfit = _executeUsdcBwzcCycle(
+            swapUsdcLeg,
+            bwzcBuySwapUsdc,
+            feeUsdc,
+            bundleId
+        );
 
-    // CORRECT: Single return values, no tuple destructuring
-    uint256 usdcProfit = _executeUsdcBwzcCycle(
-        swapUsdcLeg,
-        bwzcBuySwapUsdc,
-        feeUsdc,
-        bundleId
-    );
+        // Execute WETH leg
+        uint256 wethProfit = _executeWethBwzcCycle(
+            swapWethLeg,
+            bwzcBuySwapWeth,
+            feeWeth,
+            bundleId
+        );
 
-    uint256 wethProfit = _executeWethBwzcCycle(
-        swapWethLeg,
-        bwzcBuySwapWeth,
-        feeWeth,
-        bundleId
-    );
-
-    totalProfit = usdcProfit + (wethProfit * ethUsd / 1e18);
-}
+        totalProfit = usdcProfit + (wethProfit * ethUsd / 1e18);
+    }
 
     function kick(SignedKick calldata signedKick) external {
         require(block.timestamp <= signedKick.deadline, "expired");
@@ -796,9 +794,9 @@ function _executeArbitrageSwap(
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
 
-    // ============================================================================
-    //                           MISSING IMPLEMENTATIONS
-    // ============================================================================
+    // ───────────────────────────────────────────────────────────────
+    //                  ARBITRAGE & LIQUIDITY DEEPENING HELPERS
+    // ───────────────────────────────────────────────────────────────
 
     function _addDeepV3Liquidity(
         uint256 usdcAmount,
@@ -807,264 +805,219 @@ function _executeArbitrageSwap(
     ) internal {
         if (usdcAmount == 0 && wethAmount == 0) return;
 
-        uint256 bwzcUsdcSide = bwzcAmount / 2;
-        uint256 bwzcWethSide = bwzcAmount - bwzcUsdcSide;
+        // Split BWZC roughly 50/50 between USDC-pair and WETH-pair
+        uint256 bwzcHalf   = bwzcAmount / 2;
+        uint256 bwzcRemain = bwzcAmount - bwzcHalf;
 
-        if (usdcAmount > 0 && bwzcUsdcSide > 0) {
-            _addLiquidityV3(usdc, usdcAmount, bwzcUsdcSide);
+        // USDC-BWZC position
+        if (usdcAmount > 0 && bwzcHalf > 0) {
+            _addLiquidityV3(usdc, usdcAmount, bwzcHalf);
         }
 
-        if (wethAmount > 0 && bwzcWethSide > 0) {
-            _addLiquidityV3(weth, wethAmount, bwzcWethSide);
+        // WETH-BWZC position
+        if (wethAmount > 0 && bwzcRemain > 0) {
+            _addLiquidityV3(weth, wethAmount, bwzcRemain);
         }
 
+        // Track permanent liquidity added (used for monitoring / analytics)
         permanentUSDCAdded += usdcAmount;
         permanentWETHAdded += wethAmount;
         permanentBWZCAdded += bwzcAmount;
     }
 
-    // ────────────────────────────────────────────────────────────────────────────
-
     function _executeUsdcBwzcCycle(
         uint256 swapUsdc,
-        uint256 /* bwzcBuySwapUsdc */,  // reserved for future tranche logic
+        uint256 bwzcBuySwapUsdc,    // currently unused in core logic — kept for future tranche / TWAMM extension
         uint256 feeUsdc,
         uint256 bundleId
     ) internal returns (uint256 usdcProfit) {
         if (swapUsdc == 0) return 0;
 
-        uint256 pBalancer = _getBalancerPrice(usdc, bwzc);
-        uint256 pV3       = _getUniswapV3Price(usdc, bwzc);
+        uint256 ethUsd = _getEthUsdPrice();
+
+        // Get spot prices for spread detection
+        uint256 priceBalancer = _getBalancerPrice(usdc, bwzc);
+        uint256 priceUniV3    = _getUniswapV3Price(usdc, bwzc);
 
         uint256 spreadBps = 0;
-        if (pV3 > pBalancer && pBalancer != 0) {
-            spreadBps = (pV3 - pBalancer) * 10000 / pBalancer;
+        if (priceUniV3 > priceBalancer && priceBalancer > 0) {
+            spreadBps = (priceUniV3 - priceBalancer) * 10000 / priceBalancer;
         }
 
-        uint256 minSpread = cycleCount < 5 ? 50 : 200;
-        if (spreadBps < minSpread) revert SpreadTooLow();
+        // Breathe mode: very permissive in early cycles
+        uint256 minSpreadBps = (cycleCount < 5) ? 50 : 200;
+        if (spreadBps < minSpreadBps) revert SpreadTooLow();
 
+        // Adaptive seeding: higher spread → more seeding
         uint256 seedUsdc = _adaptiveSeedRatio(swapUsdc, spreadBps);
-        uint256 arbUsdc  = swapUsdc > seedUsdc ? swapUsdc - seedUsdc : 0;
+        uint256 arbUsdc  = (swapUsdc > seedUsdc) ? swapUsdc - seedUsdc : 0;
 
         if (arbUsdc == 0) return 0;
 
-        uint256 expOut   = _quoteBest(usdc, bwzc, arbUsdc, 3000);
-        uint256 minOut   = expOut * (10000 - epsilonBps) / 10000;
+        // Buy leg with slippage protection
+        uint256 expectedBwOut = _quoteBest(usdc, bwzc, arbUsdc, 3000);
+        if (expectedBwOut == 0) revert LowLiquidity();
 
-        uint256 bwzcBought = _swapBest(usdc, bwzc, arbUsdc, minOut, 3000, true);
+        uint256 minBwOut = expectedBwOut * (10000 - epsilonBps) / 10000;
+        uint256 bwzcBought = _swapBest(usdc, bwzc, arbUsdc, minBwOut, 3000, true);
 
-        uint256 expBack  = _quoteBest(bwzc, usdc, bwzcBought, 3000);
-        uint256 minBack  = expBack * (10000 - epsilonBps) / 10000;
+        // Sell leg
+        uint256 expectedUsdcBack = _quoteBest(bwzc, usdc, bwzcBought, 3000);
+        uint256 minUsdcBack = expectedUsdcBack * (10000 - epsilonBps) / 10000;
 
-        uint256 recovered = _swapBest(bwzc, usdc, bwzcBought, minBack, 3000, false);
+        uint256 usdcRecovered = _swapBest(bwzc, usdc, bwzcBought, minUsdcBack, 3000, false);
 
-        uint256 toRepay = swapUsdc + feeUsdc;
-        if (recovered <= toRepay) revert InsufficientLiquidity();
+        uint256 totalRepay = swapUsdc + feeUsdc;
+        if (usdcRecovered <= totalRepay) revert InsufficientLiquidity();
 
-        usdcProfit = recovered - toRepay;
+        usdcProfit = usdcRecovered - totalRepay;
 
-        uint256 effPrice = (arbUsdc * 1e18) / bwzcBought;
-        _updateCircuitBreaker(effPrice, true);
+        // Circuit breaker update (buy price)
+        uint256 effectivePrice = (arbUsdc * 1e18) / bwzcBought;
+        _updateCircuitBreaker(effectivePrice, true);
 
-        emit DualCycleExecuted(bundleId, seedUsdc, arbUsdc, bwzcBought, usdcProfit, 0);
+        emit DualCycleExecuted(
+            bundleId,
+            seedUsdc,
+            arbUsdc,
+            bwzcBought,
+            usdcProfit,
+            0
+        );
     }
-
-    // ────────────────────────────────────────────────────────────────────────────
 
     function _executeWethBwzcCycle(
         uint256 swapWeth,
-        uint256 /* bwzcBuySwapWeth */,
+        uint256 bwzcBuySwapWeth,    // currently unused — placeholder
         uint256 feeWeth,
         uint256 bundleId
     ) internal returns (uint256 wethProfit) {
         if (swapWeth == 0) return 0;
 
-        uint256 pBalancer = _getBalancerPrice(weth, bwzc);
-        uint256 pV3       = _getUniswapV3Price(weth, bwzc);
+        uint256 ethUsd = _getEthUsdPrice();
+
+        uint256 priceBalancer = _getBalancerPrice(weth, bwzc);
+        uint256 priceUniV3    = _getUniswapV3Price(weth, bwzc);
 
         uint256 spreadBps = 0;
-        if (pV3 > pBalancer && pBalancer != 0) {
-            spreadBps = (pV3 - pBalancer) * 10000 / pBalancer;
+        if (priceUniV3 > priceBalancer && priceBalancer > 0) {
+            spreadBps = (priceUniV3 - priceBalancer) * 10000 / priceBalancer;
         }
 
-        uint256 minSpread = cycleCount < 5 ? 50 : 200;
-        if (spreadBps < minSpread) revert SpreadTooLow();
+        uint256 minSpreadBps = (cycleCount < 5) ? 50 : 200;
+        if (spreadBps < minSpreadBps) revert SpreadTooLow();
 
         uint256 seedWeth = _adaptiveSeedRatio(swapWeth, spreadBps);
-        uint256 arbWeth  = swapWeth > seedWeth ? swapWeth - seedWeth : 0;
+        uint256 arbWeth  = (swapWeth > seedWeth) ? swapWeth - seedWeth : 0;
 
         if (arbWeth == 0) return 0;
 
-        uint256 expOut   = _quoteBest(weth, bwzc, arbWeth, 3000);
-        uint256 minOut   = expOut * (10000 - epsilonBps) / 10000;
+        uint256 expectedBwOut = _quoteBest(weth, bwzc, arbWeth, 3000);
+        if (expectedBwOut == 0) revert LowLiquidity();
 
-        uint256 bwzcBought = _swapBest(weth, bwzc, arbWeth, minOut, 3000, true);
+        uint256 minBwOut = expectedBwOut * (10000 - epsilonBps) / 10000;
+        uint256 bwzcBought = _swapBest(weth, bwzc, arbWeth, minBwOut, 3000, true);
 
-        uint256 expBack  = _quoteBest(bwzc, weth, bwzcBought, 3000);
-        uint256 minBack  = expBack * (10000 - epsilonBps) / 10000;
+        uint256 expectedWethBack = _quoteBest(bwzc, weth, bwzcBought, 3000);
+        uint256 minWethBack = expectedWethBack * (10000 - epsilonBps) / 10000;
 
-        uint256 recovered = _swapBest(bwzc, weth, bwzcBought, minBack, 3000, false);
+        uint256 wethRecovered = _swapBest(bwzc, weth, bwzcBought, minWethBack, 3000, false);
 
-        uint256 toRepay = swapWeth + feeWeth;
-        if (recovered <= toRepay) revert InsufficientLiquidity();
+        uint256 totalRepay = swapWeth + feeWeth;
+        if (wethRecovered <= totalRepay) revert InsufficientLiquidity();
 
-        wethProfit = recovered - toRepay;
+        wethProfit = wethRecovered - totalRepay;
 
-        uint256 effPrice = (arbWeth * 1e18) / bwzcBought;
-        _updateCircuitBreaker(effPrice, true);
+        uint256 effectivePrice = (arbWeth * 1e18) / bwzcBought;
+        _updateCircuitBreaker(effectivePrice, true);
 
-        emit DualCycleExecuted(bundleId, seedWeth, arbWeth, bwzcBought, 0, wethProfit);
+        emit DualCycleExecuted(
+            bundleId,
+            seedWeth,
+            arbWeth,
+            bwzcBought,
+            0,
+            wethProfit
+        );
     }
 
-    // ────────────────────────────────────────────────────────────────────────────
-    //                  IMPROVED / FIXED PRICE HELPERS
-    // ────────────────────────────────────────────────────────────────────────────
+    // ───────────────────────────────────────────────────────────────
+    //                  PRICE & CIRCUIT BREAKER HELPERS
+    // ───────────────────────────────────────────────────────────────
 
-    function _getBalancerPrice(address tokenIn, address tokenOut) internal view returns (uint256 price) {
-        bytes32 pid = tokenIn == usdc ? balBWUSDCId : balBWWETHId;
-        (address[] memory tokens, uint256[] memory bals,) = IBalancerVault(vault).getPoolTokens(pid);
+    function _getBalancerPrice(address tokenIn, address tokenOut) internal view returns (uint256 priceIn18Decimals) {
+        bytes32 poolId = (tokenIn == usdc) ? balBWUSDCId : balBWWETHId;
 
-        uint256 bIn = 0;
-        uint256 bOut = 0;
+        (address[] memory tokens, uint256[] memory balances,) = IBalancerVault(vault).getPoolTokens(poolId);
+
+        uint256 balIn  = 0;
+        uint256 balOut = 0;
+
         for (uint256 i = 0; i < tokens.length; i++) {
-            if (tokens[i] == tokenIn)  bIn  = bals[i];
-            if (tokens[i] == tokenOut) bOut = bals[i];
+            if (tokens[i] == tokenIn)  balIn  = balances[i];
+            if (tokens[i] == tokenOut) balOut = balances[i];
         }
 
-        if (bOut == 0) return 0;
+        if (balOut == 0) return 0;
 
-        price = bIn * 1e18 / bOut;
+        priceIn18Decimals = balIn * 1e18 / balOut;
 
+        // Normalize direction and decimals (USDC = 6 decimals)
         if (tokenIn == usdc) {
-            price *= 1e12;
+            priceIn18Decimals *= 1e12;           // price of BWZC in USDC (18 decimals)
         } else if (tokenOut == usdc) {
-            price = price > 0 ? 1e30 / price : 0;
+            priceIn18Decimals = 1e30 / priceIn18Decimals;  // reciprocal
         }
+        // WETH case already ~18 decimals
     }
 
-    function _getUniswapV3Price(address tokenIn, address tokenOut) internal view returns (uint256 price) {
-        address pool = tokenIn == usdc ? uniV3UsdcPool : uniV3WethPool;
-        (uint160 sqrt,,,,,,) = IUniswapV3Pool(pool).slot0();
+    function _getUniswapV3Price(address tokenIn, address tokenOut) internal view returns (uint256 priceIn18Decimals) {
+        address poolAddr = (tokenIn == usdc) ? uniV3UsdcPool : uniV3WethPool;
 
-        uint256 sq = uint256(sqrt) * uint256(sqrt);
-        price = sq >> 192;
+        (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(poolAddr).slot0();
 
-        bool usdcToken0 = usdc < bwzc;
+        // price = (sqrtPriceX96 / 2^96)^2
+        uint256 price = uint256(sqrtPriceX96) * uint256(sqrtPriceX96) / (1 << 192);
 
+        bool usdcIsToken0 = usdc < bwzc;
+
+        // price is token1 / token0
         if (tokenIn == bwzc) {
-            price = price > 0 ? 1e36 / price : 0;
+            // we want price of BWZC in quote token → reciprocal
+            price = (price == 0) ? 0 : 1e36 / price;
         }
 
-        if ((tokenOut == usdc) != usdcToken0) {
+        // Adjust decimals if quote is USDC
+        if ((tokenOut == usdc) != usdcIsToken0) {
             price *= 1e12;
         }
+
+        priceIn18Decimals = price;
     }
 
-    function _updateCircuitBreaker(uint256 effPrice, bool isBuy) internal {
+    function _updateCircuitBreaker(uint256 currentPrice, bool isBuy) internal {
+        if (currentPrice == 0) return;
+
         uint256 lastPrice = isBuy ? lastBuyPrice1e18 : lastSellPrice1e18;
+
         if (lastPrice == 0) {
-            if (isBuy) lastBuyPrice1e18 = effPrice;
-            else lastSellPrice1e18 = effPrice;
+            if (isBuy) lastBuyPrice1e18 = currentPrice;
+            else       lastSellPrice1e18 = currentPrice;
             return;
         }
 
-        uint256 deviationBps = effPrice > lastPrice 
-            ? (effPrice - lastPrice) * 10000 / lastPrice
-            : (lastPrice - effPrice) * 10000 / lastPrice;
-
-        if (deviationBps > maxDeviationBps) revert DeviationTooHigh();
-
-        if (isBuy) lastBuyPrice1e18 = effPrice;
-        else lastSellPrice1e18 = effPrice;
-    }
-
-    receive() external payable {}
-
-    // ──────────────────────────────────────────────────────────────
-    //                  HARVEST FEES – FIXED
-    // ──────────────────────────────────────────────────────────────
-
-    function harvestAllFees() public returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBw) {
-        // Uniswap V3 USDC/BWZC
-        while (v3UsdcBwTokenIds.length > 0) {
-            uint256 tokenId = v3UsdcBwTokenIds[v3UsdcBwTokenIds.length - 1];
-            (uint256 amountUsdc, uint256 amountBwzc) = _removeLiquidityV3(usdc, tokenId);
-            feeUsdc += amountUsdc;
-            feeBw   += amountBwzc;
+        uint256 deviationBps;
+        if (currentPrice > lastPrice) {
+            deviationBps = (currentPrice - lastPrice) * 10000 / lastPrice;
+        } else {
+            deviationBps = (lastPrice - currentPrice) * 10000 / lastPrice;
         }
 
-        // Uniswap V3 WETH/BWZC
-        while (v3WethBwTokenIds.length > 0) {
-            uint256 tokenId = v3WethBwTokenIds[v3WethBwTokenIds.length - 1];
-            (uint256 amountWeth, uint256 amountBwzc) = _removeLiquidityV3(weth, tokenId);
-            feeWeth += amountWeth;
-            feeBw   += amountBwzc;
+        if (deviationBps > maxDeviationBps) {
+            revert DeviationTooHigh();
         }
 
-        // Uniswap V2 USDC/BWZC
-        uint256 lpV2Usdc = IERC20(uniV2UsdcPool).balanceOf(address(this));
-        if (lpV2Usdc > 0) {
-            IERC20(uniV2UsdcPool).safeApprove(uniV2Router, lpV2Usdc);
-            (uint256 amountUsdc, uint256 amountBwzc) = IUniswapV2Router(uniV2Router).removeLiquidity(usdc, bwzc, lpV2Usdc, 0, 0, address(this), block.timestamp + 300);
-            feeUsdc += amountUsdc;
-            feeBw   += amountBwzc;
-        }
-        // Uniswap V2 WETH/BWZC
-        uint256 lpV2Weth = IERC20(uniV2WethPool).balanceOf(address(this));
-        if (lpV2Weth > 0) {
-            IERC20(uniV2WethPool).safeApprove(uniV2Router, lpV2Weth);
-            (uint256 amountWeth, uint256 amountBwzc) = IUniswapV2Router(uniV2Router).removeLiquidity(weth, bwzc, lpV2Weth, 0, 0, address(this), block.timestamp + 300);
-            feeWeth += amountWeth;
-            feeBw   += amountBwzc;
-        }
-        // Sushi USDC/BWZC
-        uint256 lpSushiUsdc = IERC20(sushiUsdcPool).balanceOf(address(this));
-        if (lpSushiUsdc > 0) {
-            IERC20(sushiUsdcPool).safeApprove(sushiRouter, lpSushiUsdc);
-            (uint256 amountUsdc, uint256 amountBwzc) = IUniswapV2Router(sushiRouter).removeLiquidity(usdc, bwzc, lpSushiUsdc, 0, 0, address(this), block.timestamp + 300);
-            feeUsdc += amountUsdc;
-            feeBw   += amountBwzc;
-        }
-        // Sushi WETH/BWZC
-        uint256 lpSushiWeth = IERC20(sushiWethPool).balanceOf(address(this));
-        if (lpSushiWeth > 0) {
-            IERC20(sushiWethPool).safeApprove(sushiRouter, lpSushiWeth);
-            (uint256 amountWeth, uint256 amountBwzc) = IUniswapV2Router(sushiRouter).removeLiquidity(weth, bwzc, lpSushiWeth, 0, 0, address(this), block.timestamp + 300);
-            feeWeth += amountWeth;
-            feeBw   += amountBwzc;
-        }
-        // Balancer USDC/BWZC
-        (address poolU, ) = IBalancerVault(vault).getPool(balBWUSDCId);
-        uint256 bptBalU = IERC20(poolU).balanceOf(address(this));
-        if (bptBalU > 0) {
-            uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
-            uint256 bwzcBefore = IERC20(bwzc).balanceOf(address(this));
-            address[] memory assetsU = new address[](2);
-            assetsU[0] = usdc; assetsU[1] = bwzc;
-            uint256[] memory minOutU = new uint256[](2);
-            bytes memory userDataU = abi.encode(2, bptBalU);
-            IBalancerVault.ExitPoolRequest memory reqU = IBalancerVault.ExitPoolRequest(assetsU, minOutU, userDataU, false);
-            IBalancerVault(vault).exitPool(balBWUSDCId, address(this), payable(address(this)), reqU);
-            feeUsdc += IERC20(usdc).balanceOf(address(this)) - usdcBefore;
-            feeBw += IERC20(bwzc).balanceOf(address(this)) - bwzcBefore;
-        }
-        // Balancer WETH/BWZC
-        (address poolW, ) = IBalancerVault(vault).getPool(balBWWETHId);
-        uint256 bptBalW = IERC20(poolW).balanceOf(address(this));
-        if (bptBalW > 0) {
-            uint256 wethBefore = IERC20(weth).balanceOf(address(this));
-            uint256 bwzcBefore = IERC20(bwzc).balanceOf(address(this));
-            address[] memory assetsW = new address[](2);
-            assetsW[0] = weth; assetsW[1] = bwzc;
-            uint256[] memory minOutW = new uint256[](2);
-            bytes memory userDataW = abi.encode(2, bptBalW);
-            IBalancerVault.ExitPoolRequest memory reqW = IBalancerVault.ExitPoolRequest(assetsW, minOutW, userDataW, false);
-            IBalancerVault(vault).exitPool(balBWWETHId, address(this), payable(address(this)), reqW);
-            feeWeth += IERC20(weth).balanceOf(address(this)) - wethBefore;
-            feeBw += IERC20(bwzc).balanceOf(address(this)) - bwzcBefore;
-        }
-
-        emit FeesHarvested(feeUsdc, feeWeth, feeBw);
+        if (isBuy) lastBuyPrice1e18 = currentPrice;
+        else       lastSellPrice1e18 = currentPrice;
     }
 }
