@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /*
-  MIRACLE M26D — WarehouseBalancerArb (Production Version, merged & corrected, perfected, bootstrapped)
+  MIRACLE M26D — WarehouseBalancerArb (Production Version, Final Corrections)
   
   UPDATED WITH $4M BOOTSTRAP STRATEGY BASED ON LIVE ETHERSCAN DATA:
   - SCW BWZC Balance: 29,999,999.53 (30M essentially)
@@ -147,7 +147,7 @@ interface IBalancerVault {
 }
 
 interface IFlashLoanRecipient {
-    function receiveFlashLoan(address[] calldata tokens, uint256[] calldata amounts, uint256[] calldata fees, bytes calldata userData) external;
+    function receiveFlashLoan(address[] calldata tokens, uint256[] calldata amounts, uint256[] calldata feeAmounts, bytes calldata userData) external;
 }
 
 interface IUniswapV2Router {
@@ -221,7 +221,6 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     uint256 public constant TOTAL_BOOTSTRAP_USD = 4_000_000 * 1e6; // $4M total
     uint256 public constant BUY_LEG_PERCENT = 15; // 15% for arbitrage = $600k
     uint256 public constant SEED_LEG_PERCENT = 15; // 15% for pre-seed = $600k
-    uint256 public constant LIQUIDITY_LEG_PERCENT = 70; // 70% for post-arb liquidity = $2.8M
     
     // PRICES FROM LIVE ETHERSCAN DATA
     uint256 public constant BALANCER_PRICE_USD = 23_500_000; // $23.50 with 6 decimals precision
@@ -422,7 +421,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     //                  PRECISE $4M BOOTSTRAP FUNCTIONS
     // ──────────────────────────────────────────────────────────────
 
-    function calculatePreciseBootstrap() public view returns (
+    function calculatePreciseBootstrap() public pure returns (
         uint256 totalBwzcNeeded,
         uint256 expectedDailyProfit,
         uint256 expectedDailyFees,
@@ -631,7 +630,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         require(totalProfitValue >= deepeningValue, "Insufficient net profit");
         
         // Execute deepening
-        _deepenAllPools(bwzcForDeepening, deepeningValue);
+        _deepenAllPools(bwzcForDeepening);
         
         // Send remaining profits to SCW
         uint256 remainingUsdc = IERC20(usdc).balanceOf(address(this));
@@ -641,12 +640,13 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         if (remainingWeth > 0) IERC20(weth).safeTransfer(scw, remainingWeth);
         
         // Update permanent liquidity tracking
+        uint256 ethUsd = _getEthUsdPrice();
         permanentUSDCAdded += deepeningValue / 2;
-        permanentWETHAdded += (deepeningValue / 2 * 1e18) / _getEthUsdPrice();
+        permanentWETHAdded += (deepeningValue / 2 * 1e18) / ethUsd;
         permanentBWZCAdded += bwzcForDeepening;
     }
 
-    function _deepenAllPools(uint256 bwzcAmount, uint256 deepeningValue) internal {
+    function _deepenAllPools(uint256 bwzcAmount) internal {
         // Split 50/50 between USDC and WETH pairs
         uint256 bwzcForUsdc = bwzcAmount / 2;
         uint256 bwzcForWeth = bwzcAmount - bwzcForUsdc;
@@ -690,7 +690,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     //                  PREDICTIVE ANALYTICS & MONITORING
     // ──────────────────────────────────────────────────────────────
 
-    function predictBalances(uint256 daysToSimulate) external view returns (
+    function predictBalances(uint256 daysToSimulate) external pure returns (
         uint256 scwUsdc,
         uint256 scwWeth,
         uint256 scwBwzc,
@@ -785,9 +785,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256 bwzcOut) {
-        bytes32 poolId = balBWUSDCId;
         IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
-            poolId: poolId,
+            poolId: balBWUSDCId,
             kind: 0, // GIVEN_IN
             assetIn: usdc,
             assetOut: bwzc,
@@ -807,9 +806,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     function _buyOnBalancerWETH(uint256 wethAmount) internal returns (uint256 bwzcOut) {
-        bytes32 poolId = balBWWETHId;
         IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
-            poolId: poolId,
+            poolId: balBWWETHId,
             kind: 0,
             assetIn: weth,
             assetOut: bwzc,
@@ -1100,14 +1098,16 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
     }
 
-    // Note: The following functions are kept for backward compatibility
-    // but should be deprecated in favor of the precise functions above
-    function harvestAllFees() external returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBw) {
-        // Implementation would collect fees from all venues
+    // ──────────────────────────────────────────────────────────────
+    //                  DEPRECATED FUNCTIONS (FOR COMPATIBILITY)
+    // ──────────────────────────────────────────────────────────────
+
+    function harvestAllFees() external pure returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBw) {
+        // Fees are now handled in _distributeProfitsAndDeepen
         return (0, 0, 0);
     }
     
-    function bootstrapLargeCycleUpgraded(uint256 bwzcForBuy, uint256 bwzcForSellSeed) external {
+    function bootstrapLargeCycleUpgraded() external {
         // Deprecated - use executePreciseBootstrap instead
         revert("Use executePreciseBootstrap()");
     }
