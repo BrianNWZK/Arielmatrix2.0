@@ -746,35 +746,35 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         permanentBWZCAdded += bwzcBuyLeave;
     }
 
-    function _executeArbitrageSwap(
-        uint256 swapUsdcLeg,
-        uint256 swapWethLeg,
-        uint256 bwzcBuySwapUsdc,
-        uint256 bwzcBuySwapWeth,
-        uint256 bundleId,
-        uint256 feeUsdc,
-        uint256 feeWeth
-    ) internal returns (uint256 totalProfit) {
-        uint256 ethUsd = _getEthUsdPrice();
 
-        // Execute USDC leg
-        (uint256 usdcProfit, ) = _executeUsdcBwzcCycle(
-            swapUsdcLeg,
-            bwzcBuySwapUsdc,
-            feeUsdc,
-            bundleId
-        );
+function _executeArbitrageSwap(
+    uint256 swapUsdcLeg,
+    uint256 swapWethLeg,
+    uint256 bwzcBuySwapUsdc,
+    uint256 bwzcBuySwapWeth,
+    uint256 bundleId,
+    uint256 feeUsdc,
+    uint256 feeWeth
+) internal returns (uint256 totalProfit) {
+    uint256 ethUsd = _getEthUsdPrice();
 
-        // Execute WETH leg
-        (uint256 wethProfit, ) = _executeWethBwzcCycle(
-            swapWethLeg,
-            bwzcBuySwapWeth,
-            feeWeth,
-            bundleId
-        );
+    // CORRECT: Single return values, no tuple destructuring
+    uint256 usdcProfit = _executeUsdcBwzcCycle(
+        swapUsdcLeg,
+        bwzcBuySwapUsdc,
+        feeUsdc,
+        bundleId
+    );
 
-        totalProfit = usdcProfit + (wethProfit * ethUsd / 1e18);
-    }
+    uint256 wethProfit = _executeWethBwzcCycle(
+        swapWethLeg,
+        bwzcBuySwapWeth,
+        feeWeth,
+        bundleId
+    );
+
+    totalProfit = usdcProfit + (wethProfit * ethUsd / 1e18);
+}
 
     function kick(SignedKick calldata signedKick) external {
         require(block.timestamp <= signedKick.deadline, "expired");
