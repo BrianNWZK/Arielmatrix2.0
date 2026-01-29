@@ -281,7 +281,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     address public uniV3UsdcPool = 0x261c64d4d96EBfa14398B52D93C9d063E3a619f8;
     address public uniV3WethPool = 0x142C3dce0a5605Fb385fAe7760302fab761022aa;
     address public uniV2UsdcPool = 0xb3911905f8a6160eF89391442f85ecA7c397859c;
-    address public uniV2WethPool = 0x6dF6F882ED69918349f75Fe397b37e62C04515b6;
+    address public uniV2WethPool = 0x6df6f882ed69918349f75fe397b37e62c04515b6;
     address public sushiUsdcPool = 0x9d2f8F9A2E3C240dECbbE23e9B3521E6ca2489D1;
     address public sushiWethPool = 0xE9E62C8Cc585C21Fb05fd82Fb68e0129711869f9;
 
