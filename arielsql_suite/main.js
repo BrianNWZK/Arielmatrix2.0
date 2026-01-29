@@ -26,7 +26,7 @@ const RAW = {
   univ3_bw_usdc: "0x261c64d4d96ebfa14398b52d93c9d063e3a619f8",
   univ3_bw_weth: "0x142c3dce0a5605fb385fae7760302fab761022aa",
   univ2_bw_usdc: "0xb3911905f8a6160ef89391442f85eca7c397859c",
-  univ2_bw_weth: "0x6df6f882ed69918349f75fe397b37e62c04515b6",
+  univ2_bw_weth: "0x6dF6F882ED69918349F75Fe397b37e62C04515b6",
   sushi_bw_usdc: "0x9d2f8f9a2e3c240decbbe23e9b3521e6ca2489d1",
   sushi_bw_weth: "0xe9e62c8cc585c21fb05fd82fb68e0129711869f9",
   bal_bw_usdc: "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
