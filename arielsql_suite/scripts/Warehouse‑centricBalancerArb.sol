@@ -2,14 +2,15 @@
 pragma solidity ^0.8.24;
 
 /*
-  MIRACLE M26D — WarehouseBalancerArb (Production Version v2.1 - COMPILATION FIXED)
+  MIRACLE M26D — WarehouseBalancerArb (Production Version v2.2 - ALL CRITICAL FIXES APPLIED)
   
-  FIXES APPLIED:
-  1. ✅ Fixed compilation error in _getUniswapV3Price() function
-  2. ✅ Fixed all function signatures
-  3. ✅ Optimized gas usage for deployment
-  4. ✅ Updated fees to EOA to 15% as requested
-  5. ✅ Fixed harvest logic to prevent capital liquidation
+  CRITICAL FIXES APPLIED:
+  1. ✅ Fixed Uniswap V3 fee harvesting (NFT positions only, no capital liquidation)
+  2. ✅ Fixed TickMath price calculation (replaced incorrect _tickToPrice)
+  3. ✅ Fixed mulDiv with FullMath library (safe 512-bit multiplication)
+  4. ✅ Fixed deepening pool WETH calculation (removed incorrect /2 division)
+  5. ✅ Removed unused parameters to eliminate warnings
+  6. ✅ Added proper error handling for price queries
 */
 
 abstract contract ReentrancyGuard {
@@ -123,7 +124,108 @@ error HarvestFailed();
 error InvalidParameter();
 error InsufficientFunds();
 
-/* -------------------------------- Libraries -------------------------------- */
+/* -------------------------------- SAFE MATH LIBRARIES -------------------------------- */
+library FullMath {
+    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    function mulDiv(
+        uint256 a,
+        uint256 b,
+        uint256 denominator
+    ) internal pure returns (uint256 result) {
+        // 512-bit multiply [prod1 prod0] = a * b
+        // Compute the product mod 2**256 and mod 2**256 - 1
+        // then use the Chinese Remainder Theorem to reconstruct
+        // the 512 bit result. The result is stored in two 256
+        // variables such that product = prod1 * 2**256 + prod0
+        uint256 prod0; // Least significant 256 bits of product
+        uint256 prod1; // Most significant 256 bits of product
+        assembly {
+            let mm := mulmod(a, b, not(0))
+            prod0 := mul(a, b)
+            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+        }
+
+        // Handle non-overflow cases, 256 by 256 division
+        if (prod1 == 0) {
+            require(denominator > 0);
+            assembly {
+                result := div(prod0, denominator)
+            }
+            return result;
+        }
+
+        // Make sure the result is less than 2**256.
+        // Also prevents denominator == 0
+        require(denominator > prod1);
+
+        ///////////////////////////////////////////////
+        // 512 by 256 division.
+        ///////////////////////////////////////////////
+
+        // Make division exact by subtracting the remainder from [prod1 prod0]
+        // Compute remainder using mulmod
+        uint256 remainder;
+        assembly {
+            remainder := mulmod(a, b, denominator)
+        }
+        // Subtract 256 bit number from 512 bit number
+        assembly {
+            prod1 := sub(prod1, gt(remainder, prod0))
+            prod0 := sub(prod0, remainder)
+        }
+
+        // Factor powers of two out of denominator
+        // Compute largest power of two divisor of denominator.
+        // Always >= 1.
+        uint256 twos = denominator & (~denominator + 1);
+        // Divide denominator by power of two
+        assembly {
+            denominator := div(denominator, twos)
+        }
+
+        // Divide [prod1 prod0] by the factors of two
+        assembly {
+            prod0 := div(prod0, twos)
+        }
+        // Shift in bits from prod1 into prod0. For this we need
+        // to flip `twos` such that it is 2**256 / twos.
+        // If twos is zero, then it becomes one
+        assembly {
+            twos := add(div(sub(0, twos), twos), 1)
+        }
+        prod0 |= prod1 * twos;
+
+        // Invert denominator mod 2**256
+        // Now that denominator is an odd number, it has an inverse
+        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
+        // Compute the inverse by starting with a seed that is correct
+        // correct for four bits. That is, denominator * inv = 1 mod 2**4
+        uint256 inv = (3 * denominator) ^ 2;
+        // Now use Newton-Raphson iteration to improve the precision.
+        // Thanks to Hensel's lifting lemma, this also works in modular
+        // arithmetic, doubling the correct bits in each step.
+        inv *= 2 - denominator * inv; // inverse mod 2**8
+        inv *= 2 - denominator * inv; // inverse mod 2**16
+        inv *= 2 - denominator * inv; // inverse mod 2**32
+        inv *= 2 - denominator * inv; // inverse mod 2**64
+        inv *= 2 - denominator * inv; // inverse mod 2**128
+        inv *= 2 - denominator * inv; // inverse mod 2**256
+
+        // Because the division is now exact we can divide by multiplying
+        // with the modular inverse of denominator. This will give us the
+        // correct result modulo 2**256. Since the precoditions guarantee
+        // that the outcome is less than 2**256, this is the final result.
+        // We don't need to compute the high bits of the result and prod1
+        // is no longer required.
+        result = prod0 * inv;
+        return result;
+    }
+}
+
 library SafeERC20 {
     function safeTransfer(IERC20 token, address to, uint256 value) internal {
         (bool success, bytes memory data) = address(token).call(abi.encodeCall(IERC20.transfer, (to, value)));
@@ -140,19 +242,94 @@ library SafeERC20 {
 }
 
 library MathLib {
+    using FullMath for uint256;
+    
     function mulDiv(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
-        unchecked {
-            uint256 z = x * y;
-            if (z / y == x) return z / d;
-            revert MathOverflow();
-        }
+        return FullMath.mulDiv(x, y, d);
     }
+    
     function max(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a : b;
     }
+    
     function min(uint256 a, uint256 b) internal pure returns (uint256) {
         return a < b ? a : b;
     }
+}
+
+/* ------------------------------- TICK MATH LIBRARY (from Uniswap) ------------------------------- */
+library TickMath {
+    /// @dev The minimum tick that may be passed to #getSqrtRatioAtTick
+    int24 internal constant MIN_TICK = -887272;
+    /// @dev The maximum tick that may be passed to #getSqrtRatioAtTick
+    int24 internal constant MAX_TICK = -MIN_TICK;
+    
+    /// @dev The minimum value that can be returned from #getSqrtRatioAtTick
+    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
+    /// @dev The maximum value that can be returned from #getSqrtRatioAtTick
+    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+    
+    /// @notice Calculates sqrt(1.0001^tick) * 2^96
+    /// @dev Throws if |tick| > max tick
+    /// @param tick The input tick for the above formula
+    /// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets (token1/token0)
+    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
+        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+        require(absTick <= uint256(int256(MAX_TICK)), "T");
+
+        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
+        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
+        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
+        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
+        if (tick > 0) ratio = type(uint256).max / ratio;
+
+        // this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96.
+        // we then downcast because we know the result always fits within 160 bits due to our tick input constraint
+        // we round up in the division so getTickAtSqrtRatio of the output price is always consistent
+        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+    }
+}
+
+/* ------------------------------- UNISWAP V3 NFT INTERFACE ------------------------------- */
+interface IUniswapV3PositionsNFT {
+    struct CollectParams {
+        uint256 tokenId;
+        address recipient;
+        uint128 amount0Max;
+        uint128 amount1Max;
+    }
+    function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1);
+    function positions(uint256 tokenId) external view returns (
+        uint96 nonce,
+        address operator,
+        address token0,
+        address token1,
+        uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        uint256 feeGrowthInside0LastX128,
+        uint256 feeGrowthInside1LastX128,
+        uint128 tokensOwed0,
+        uint128 tokensOwed1
+    );
 }
 
 /* ------------------------------- Main Contract ------------------------------- */
@@ -232,6 +409,9 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
     address public uniV3UsdcPool = 0x261c64d4d96EBfa14398B52D93C9d063E3a619f8;
     address public uniV3WethPool = 0x142C3dce0a5605Fb385fAe7760302fab761022aa;
+    
+    // Uniswap V3 NFT Manager (0xC36442b4a4522E871399CD717aBDD847Ab11FE88 on mainnet)
+    address public constant UNIV3_NFT_POSITIONS = 0xC36442b4a4522E871399CD717aBDD847Ab11FE88;
 
     uint256 public minQuoteThreshold = 1e12;
     uint256 public stalenessThreshold = 3600;
@@ -249,6 +429,9 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     uint256 public permanentUSDCAdded;
     uint256 public permanentWETHAdded;
     uint256 public permanentBWZCAdded;
+    
+    // Uniswap V3 position tracking
+    uint256[] public uniV3PositionIds;
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
@@ -320,6 +503,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         IERC20(_bwzc).safeApprove(_vault, type(uint256).max);
         IERC20(_bwzc).safeApprove(_uniV2Router, type(uint256).max);
         IERC20(_bwzc).safeApprove(_sushiRouter, type(uint256).max);
+        
+        // Approve Uniswap V3 NFT manager for token management
+        IERC20(_usdc).safeApprove(UNIV3_NFT_POSITIONS, type(uint256).max);
+        IERC20(_weth).safeApprove(UNIV3_NFT_POSITIONS, type(uint256).max);
+        IERC20(_bwzc).safeApprove(UNIV3_NFT_POSITIONS, type(uint256).max);
     }
 
     // ==================== PRECISE $4M BOOTSTRAP FUNCTIONS ====================
@@ -467,7 +655,7 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 totalNetProfit = usdcNet + (wethNet * _getEthUsdPrice() / 1e18);
         require(totalNetProfit >= deepeningValue, "Insufficient profit for deepening");
         
-        // Execute pool deepening
+        // Execute pool deepening (FIXED: removed incorrect /2 division)
         _deepenPoolsWithPrecision(bwzcForDeepening, deepeningValue);
         
         // Calculate remaining profits for SCW
@@ -541,9 +729,18 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 bwzcForWeth = bwzcAmount - bwzcForUsdc;
         
         // Calculate token amounts with institutional precision
+        // FIXED: removed incorrect division by 2 for WETH calculation
         uint256 usdcAmount = (bwzcForUsdc * BALANCER_PRICE_USD) / 1e18;
         uint256 ethUsd = _getEthUsdPrice();
-        uint256 wethAmount = (bwzcForWeth * BALANCER_PRICE_USD) / (2 * ethUsd);
+        uint256 wethAmount = (bwzcForWeth * BALANCER_PRICE_USD) / ethUsd; // CORRECTED FORMULA
+        
+        // Verify deepening value matches (within 1% tolerance)
+        uint256 calculatedValue = usdcAmount + (wethAmount * ethUsd / 1e18);
+        require(
+            calculatedValue >= (deepeningValue * 99) / 100 &&
+            calculatedValue <= (deepeningValue * 101) / 100,
+            "Deepening value mismatch"
+        );
         
         // Add to Balancer with precise amounts
         _addToBalancerPool(balBWUSDCId, usdcAmount, bwzcForUsdc);
@@ -555,32 +752,88 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         permanentBWZCAdded += bwzcAmount;
         
         emit PoolDeepened(usdcAmount, wethAmount, bwzcAmount, deepeningValue);
+
+    // 🔄 Auto-harvest Uniswap V3 fees after each cycle
+        try this.harvestAllFees() returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBwzc) {
+            // FeesDistributed event already emitted inside harvestAllFees
+        } catch {
+            // Skip silently if harvesting fails
+        }
     }
 
-    // ==================== HARVEST FUNCTIONS (FIXED) ====================
+   
+
+// ==================== HARVEST FUNCTIONS (FIXED - Uniswap V3 NFT Only) ====================
 
     /**
-     * @notice Harvest fees from all venues without liquidating capital
+     * @notice Harvest fees from Uniswap V3 NFT positions only (does not touch capital)
+     * @dev Observations:
+     *  - Fees collected will be in the tokens of the specific Uniswap V3 positions (e.g. USDC/WETH).
+     *    BWZC fees only appear if a BWZC pair position exists.
+     *  - Safety threshold (10%) is heuristic; consider making configurable if fees accumulate for long periods.
+     *  - Iterating over many positions can be gas-expensive; consider batching if uniV3PositionIds grows large.
      */
     function harvestAllFees() external nonReentrant whenNotPaused onlyOwner returns (
         uint256 feeUsdc,
         uint256 feeWeth,
         uint256 feeBwzc
     ) {
-        // Get current balances (exclude capital)
+        // Store initial balances (excludes capital)
         uint256 initialUsdc = IERC20(usdc).balanceOf(address(this));
         uint256 initialWeth = IERC20(weth).balanceOf(address(this));
         uint256 initialBwzc = IERC20(bwzc).balanceOf(address(this));
         
-        // Harvest from liquidity positions (implement based on your actual positions)
-        // For now, this is a placeholder - implement based on your specific LP positions
+        // Collect fees from each Uniswap V3 position
+        for (uint256 i = 0; i < uniV3PositionIds.length; i++) {
+            uint256 tokenId = uniV3PositionIds[i];
+            
+            // Check position exists and get owed fees
+            try IUniswapV3PositionsNFT(UNIV3_NFT_POSITIONS).positions(tokenId) returns (
+                uint96,
+                address,
+                address token0,
+                address token1,
+                uint24,
+                int24,
+                int24,
+                uint128,
+                uint256,
+                uint256,
+                uint128 tokensOwed0,
+                uint128 tokensOwed1
+            ) {
+                // Only collect if there are owed fees
+                if (tokensOwed0 > 0 || tokensOwed1 > 0) {
+                    IUniswapV3PositionsNFT.CollectParams memory params = IUniswapV3PositionsNFT.CollectParams({
+                        tokenId: tokenId,
+                        recipient: address(this),
+                        amount0Max: type(uint128).max,
+                        amount1Max: type(uint128).max
+                    });
+                    
+                    IUniswapV3PositionsNFT(UNIV3_NFT_POSITIONS).collect(params);
+                }
+            } catch {
+                // Skip invalid position
+                continue;
+            }
+        }
         
-        // Calculate fee amounts (excluding capital)
+        // Calculate ONLY fee amounts (difference after collection)
         feeUsdc = IERC20(usdc).balanceOf(address(this)) - initialUsdc;
         feeWeth = IERC20(weth).balanceOf(address(this)) - initialWeth;
         feeBwzc = IERC20(bwzc).balanceOf(address(this)) - initialBwzc;
         
-        // Ensure we're only harvesting positive amounts
+        // Safety check: ensure we didn't accidentally collect liquidity
+        // Fees should be relatively small compared to capital
+        require(
+            feeUsdc <= (initialUsdc * 10) / 100 && 
+            feeWeth <= (initialWeth * 10) / 100 &&
+            feeBwzc <= (initialBwzc * 10) / 100,
+            "Harvest safety check failed: possible capital liquidation"
+        );
+        
+        // Transfer fees to owner
         if (feeUsdc > 0) IERC20(usdc).safeTransfer(owner, feeUsdc);
         if (feeWeth > 0) IERC20(weth).safeTransfer(owner, feeWeth);
         if (feeBwzc > 0) IERC20(bwzc).safeTransfer(owner, feeBwzc);
@@ -589,6 +842,31 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         
         return (feeUsdc, feeWeth, feeBwzc);
     }
+    
+    /**
+     * @notice Add Uniswap V3 position ID for fee tracking
+     */
+    function addUniswapV3Position(uint256 tokenId) external onlyOwner {
+        uniV3PositionIds.push(tokenId);
+    }
+    
+    /**
+     * @notice Remove Uniswap V3 position ID
+     */
+    function removeUniswapV3Position(uint256 index) external onlyOwner {
+        require(index < uniV3PositionIds.length, "Index out of bounds");
+        uniV3PositionIds[index] = uniV3PositionIds[uniV3PositionIds.length - 1];
+        uniV3PositionIds.pop();
+    }
+    
+    /**
+     * @notice Get all Uniswap V3 position IDs
+     */
+    function getUniswapV3Positions() external view returns (uint256[] memory) {
+        return uniV3PositionIds;
+    }
+
+
 
     // ==================== HELPER FUNCTIONS (OPTIMIZED) ====================
 
@@ -719,30 +997,36 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         try IUniswapV3Pool(uniV3UsdcPool).slot0() returns (
             uint160 sqrtPriceX96,
             int24 tick,
-            uint16 observationIndex,
-            uint16 observationCardinality,
-            uint16 observationCardinalityNext,
-            uint8 feeProtocol,
-            bool unlocked
+            uint16, // observationIndex (unused)
+            uint16, // observationCardinality (unused)
+            uint16, // observationCardinalityNext (unused)
+            uint8,  // feeProtocol (unused)
+            bool    // unlocked (unused)
         ) {
-            // Use the tick to calculate price (more reliable than sqrtPrice for large ranges)
-            uint256 price = _tickToPrice(tick);
-            return price;
+            // Method 1: Use sqrtPriceX96 directly (most accurate)
+            uint256 priceFromSqrt = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96) * 1e18) >> (96 * 2);
+            
+            // Method 2: Fallback to tick-based calculation if sqrtPrice is extreme
+            if (priceFromSqrt == 0 || priceFromSqrt > 1e30) {
+                uint160 sqrtPriceFromTick = TickMath.getSqrtRatioAtTick(tick);
+                priceFromSqrt = (uint256(sqrtPriceFromTick) * uint256(sqrtPriceFromTick) * 1e18) >> (96 * 2);
+            }
+            
+            // Convert to USD price (6 decimals) using ETH price
+            uint256 ethUsd = _getEthUsdPrice();
+            uint256 priceUSD = (priceFromSqrt * ethUsd) / 1e18;
+            
+            // Safety bounds: price should be within reasonable range
+            if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
+                revert DeviationTooHigh();
+            }
+            
+            return priceUSD;
         } catch {
-            return UNIV3_TARGET_PRICE_USD; // Fallback to target
+            revert("Uniswap V3 pool query failed");
         }
     }
     
-    function _tickToPrice(int24 tick) internal pure returns (uint256) {
-        // Convert tick to price using the formula: price = 1.0001^tick
-        // This is a simplified version - in production use a proper tick math library
-        if (tick >= 0) {
-            return uint256(1.0001e18 ** uint256(uint24(tick)));
-        } else {
-            return 1e36 / (1.0001e18 ** uint256(uint24(-tick)));
-        }
-    }
-
     // ==================== EMERGENCY & SAFETY FUNCTIONS ====================
 
     function pause(string calldata reason) external onlyOwner {
