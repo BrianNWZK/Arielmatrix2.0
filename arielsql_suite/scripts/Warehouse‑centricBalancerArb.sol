@@ -571,7 +571,9 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         
         // Convert WETH value to actual WETH
         uint256 ethUsdPrice = _getEthUsdPrice();
-        uint256 wethAmount = (wethForSeed * 1e18) / ethUsdPrice;
+       uint256 usdValue6dec = (bwzcForWeth * BALANCER_PRICE_USD) / 1e18;
+       uint256 wethAmount = (usdValue6dec * 1e18) / ethUsdPrice;
+
         
         // Pre-seed Balancer pools
         _addToBalancerPool(balBWUSDCId, usdcForSeed, bwzcForUsdc);
@@ -645,7 +647,8 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         uint256 wethNet = wethProfit - wethFees;
         
         // Calculate 3% pool deepening from borrowed amount
-        uint256 totalBorrowValue = usdcBorrowed + (wethBorrowed * _getEthUsdPrice() / 1e18);
+        uint256 wethUsd18dec = wethBorrowed * _getEthUsdPrice() / 1e18;
+        uint256 totalBorrowValue = usdcBorrowed + _normalizeToUsd6dec(wethUsd18dec);
         uint256 deepeningValue = (totalBorrowValue * DEEPENING_PERCENT_BPS) / 10000;
         
         // Buy BWZC for deepening using profits
@@ -666,9 +669,17 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         if (usdcForSCW > 0) IERC20(usdc).safeTransfer(scw, usdcForSCW);
         if (wethForSCW > 0) IERC20(weth).safeTransfer(scw, wethForSCW);
         
-        // Repay flash loan
-        IERC20(usdc).safeTransfer(vault, usdcBorrowed + feeAmounts[0]);
-        IERC20(weth).safeTransfer(vault, wethBorrowed + feeAmounts[1]);
+       
+        // NEW: Explicitly account for flash loan fees + safety check
+        uint256 usdcRepay = usdcBorrowed + feeAmounts[0];
+        uint256 wethRepay = wethBorrowed + feeAmounts[1];
+
+        require(usdcProfit >= feeAmounts[0], "Profit < flash fee USDC");
+        require(wethProfit >= feeAmounts[1], "Profit < flash fee WETH");
+
+        // Repay flash loan (using calculated repay amounts)
+        IERC20(usdc).safeTransfer(vault, usdcRepay);
+        IERC20(weth).safeTransfer(vault, wethRepay);
         
         // Return BWZC loan to SCW
         IERC20(bwzc).safeTransfer(scw, bwzcForArbitrage);
@@ -690,15 +701,44 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         emit FeesDistributed(owner, usdcFees, wethFees, 0);
     }
 
-    function _executePreciseArbitrage(
-        uint256 usdcAmount,
-        uint256 wethAmount,
-        uint256 expectedBwzc
-    ) internal returns (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) {
-        // Check current spread
-        uint256 currentSpread = _calculateCurrentSpread();
-        require(currentSpread >= minSpreadBps, "Spread too low");
-        
+   function _executePreciseArbitrage(
+    uint256 usdcAmount,
+    uint256 wethAmount,
+    uint256 expectedBwzc
+) internal returns (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) {
+    // 1. Spread profitability gate (minimum only — no upper cap)
+    uint256 currentSpread = _calculateCurrentSpread();
+    require(currentSpread >= minSpreadBps, "Spread too low"); // Ensures covers fees + slippage
+
+    // 2. Chainlink ETH/USD oracle fetch + full validation
+    (
+        uint80 roundId,
+        int256 oraclePriceRaw,
+        uint256 /* startedAt unused */,
+        uint256 updatedAt,
+        uint80 answeredInRound
+    ) = IChainlinkFeed(chainlinkEthUsd).latestRoundData();
+
+    // Basic sanity + freshness checks
+    require(oraclePriceRaw > 0, "Invalid oracle price");
+    require(updatedAt != 0 && answeredInRound >= roundId, "Incomplete or invalid Chainlink round");
+    require(block.timestamp <= updatedAt + stalenessThreshold, "Stale Chainlink price");
+
+    // 3. Normalize to 6 decimals (Chainlink = 8 decimals)
+    // Use FullMath for overflow safety (recommended over raw division)
+    uint256 oraclePrice6dec = FullMath.mulDiv(uint256(oraclePriceRaw), 1, 100);
+
+    // 4. Current Uniswap V3 BWZC price (assumed already 6-dec from earlier fix)
+    uint256 currentUniPrice = _getUniswapV3Price();
+
+    // 5. Deviation protection (prevents manipulated Uni price)
+    require(
+        absDiffBps(currentUniPrice, oraclePrice6dec) <= maxDeviationBps,
+        "Oracle deviation too high"
+    );
+
+   
+
         // Execute buy on Balancer
         uint256 bwzcFromUsdc = _buyOnBalancerUSDC(usdcAmount);
         uint256 bwzcFromWeth = _buyOnBalancerWETH(wethAmount);
@@ -732,7 +772,9 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         // FIXED: removed incorrect division by 2 for WETH calculation
         uint256 usdcAmount = (bwzcForUsdc * BALANCER_PRICE_USD) / 1e18;
         uint256 ethUsd = _getEthUsdPrice();
-        uint256 wethAmount = (bwzcForWeth * BALANCER_PRICE_USD) / ethUsd; // CORRECTED FORMULA
+       uint256 usdValue6dec = (bwzcForWeth * BALANCER_PRICE_USD) / 1e18;
+       uint256 wethAmount = (usdValue6dec * 1e18) / ethUsd;
+
         
         // Verify deepening value matches (within 1% tolerance)
         uint256 calculatedValue = usdcAmount + (wethAmount * ethUsd / 1e18);
@@ -1014,7 +1056,11 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
             
             // Convert to USD price (6 decimals) using ETH price
             uint256 ethUsd = _getEthUsdPrice();
-            uint256 priceUSD = (priceFromSqrt * ethUsd) / 1e18;
+            uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+            uint256 bwzcPerUsdc = rawPrice / 1e12;
+            uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : (1e18 / bwzcPerUsdc) * 1e6 / 1e18;
+            if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) revert DeviationTooHigh();
+
             
             // Safety bounds: price should be within reasonable range
             if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
