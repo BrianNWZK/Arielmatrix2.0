@@ -499,16 +499,44 @@ _addToBalancerPool(balBWUSDCId, usdcForSeed, bwzcForUsdc);
 _addToBalancerPool(balBWWETHId, wethAmount, bwzcForWeth);
 }
 function _phase2BorrowAndArbitrage(uint256 bwzcForArbitrage) internal {
-// Borrow $4M from Balancer (50/50 USDC/WETH)
-uint256 ethUsdPrice = _getEthUsdPrice();
-uint256 usdcBorrow = TOTAL_BOOTSTRAP_USD / 2;
-uint256 wethBorrow = (TOTAL_BOOTSTRAP_USD / 2 * 1e18) / ethUsdPrice;
-address[] memory tokens = new address;
-tokens[0] = usdc;
-tokens[1] = weth;
-uint256[] memory amounts = new uint256;
-amounts[0] = usdcBorrow;
-amounts[1] = wethBorrow;
+// Borrow $4M from Balancer — 50/50 USD value split (USDC & WETH)
+// Optimized: minimal checks, no unnecessary variables, inline calculations
+
+uint256 ethUsd = _getEthUsdPrice();
+
+// Single cheap require — combined safety check
+require(ethUsd > 1e10, "Oracle");  // prevents div-by-zero or absurdly low price
+
+// Calculate once — no intermediate targetUsdValuePerLeg variable
+uint256 halfUsd = TOTAL_BOOTSTRAP_USD >> 1;  // / 2 using bit shift (cheaper than division)
+
+// USDC borrow = exactly half (already 6 decimals)
+uint256 usdcBorrow = halfUsd;
+
+// WETH borrow = (halfUsd * 1e18) / ethUsd  → optimized order avoids overflow risk
+uint256 wethBorrow = (halfUsd * 1e18) / ethUsd;
+
+// ────────────────────────────────────────────────
+// Array creation — minimal gas way (still needs size)
+address[] memory tokens = new address[](2);
+assembly {
+    mstore(add(tokens, 0x20), usdc)     // tokens[0] = usdc
+    mstore(add(tokens, 0x40), weth)     // tokens[1] = weth
+}
+
+uint256[] memory amounts = new uint256[](2);
+assembly {
+    mstore(add(amounts, 0x20), usdcBorrow)
+    mstore(add(amounts, 0x40), wethBorrow)
+}
+
+// ────────────────────────────────────────────────
+// Optional: very cheap dust protection (remove if you trust oracle & constants)
+if (usdcBorrow < 1e6 || wethBorrow < 1e9) {
+    revert("Dust");
+}
+
+
 // Encode precise parameters
 bytes memory userData = abi.encode(
 bwzcForArbitrage,
