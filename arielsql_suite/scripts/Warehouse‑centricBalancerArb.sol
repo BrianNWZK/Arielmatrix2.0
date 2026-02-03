@@ -793,6 +793,22 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
         
         emit PoolDeepened(usdcAmount, wethAmount, bwzcAmount, deepeningValue);
 
+} 
+
+//safer math version (using FullMath.mulDiv) 
+function absDiffBps(uint256 a, uint256 b) internal pure returns (uint256) {
+    if (a == b) return 0;
+    
+    uint256 diff = a > b ? a - b : b - a;
+    uint256 base = a > b ? a : b;
+    
+    if (base == 0) return type(uint256).max; // or revert("Zero base price")
+    
+    // Safe mulDiv: (diff * 10000) / base
+    return FullMath.mulDiv(diff, 10000, base);
+}
+
+
     // 🔄 Auto-harvest Uniswap V3 fees after each cycle
         try this.harvestAllFees() returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBwzc) {
             // FeesDistributed event already emitted inside harvestAllFees
