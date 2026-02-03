@@ -795,7 +795,13 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
 
 } 
 
-//safer math version (using FullMath.mulDiv) 
+// Normalize an 18‑decimal USD value down to 6‑decimals (USDC style)
+function _normalizeToUsd6dec(uint256 usdAmount18) internal pure returns (uint256) {
+    // 18 decimals → 6 decimals = divide by 1e12
+    return usdAmount18 / 1e12;
+}
+
+// Safer math version using FullMath.mulDiv
 function absDiffBps(uint256 a, uint256 b) internal pure returns (uint256) {
     if (a == b) return 0;
     
@@ -808,8 +814,7 @@ function absDiffBps(uint256 a, uint256 b) internal pure returns (uint256) {
     return FullMath.mulDiv(diff, 10000, base);
 }
 
-
-  // 🔄 Auto-harvest Uniswap V3 fees after each cycle
+// 🔄 Auto-harvest Uniswap V3 fees after each cycle
 function _autoHarvest() internal {
     try this.harvestAllFees() returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBwzc) {
         // FeesDistributed event already emitted inside harvestAllFees
@@ -817,6 +822,7 @@ function _autoHarvest() internal {
         // Skip silently if harvesting fails
     }
 }
+
 
    
 
