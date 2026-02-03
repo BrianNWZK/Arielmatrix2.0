@@ -710,32 +710,31 @@ contract WarehouseBalancerArb is IFlashLoanRecipient, ReentrancyGuard {
     uint256 currentSpread = _calculateCurrentSpread();
     require(currentSpread >= minSpreadBps, "Spread too low"); // Ensures covers fees + slippage
 
-    // 2. Chainlink ETH/USD oracle fetch + full validation
-    (
-        uint80 roundId,
-        int256 oraclePriceRaw,
-        uint256 /* startedAt unused */,
-        uint256 updatedAt,
-        uint80 answeredInRound
-    ) = IChainlinkFeed(chainlinkEthUsd).latestRoundData();
+  // 2. Chainlink ETH/USD oracle fetch + full validation
+(
+    , 
+    int256 oraclePriceRaw,
+    , 
+    uint256 updatedAt,
+    
+) = IChainlinkFeed(chainlinkEthUsd).latestRoundData();
 
-    // Basic sanity + freshness checks
-    require(oraclePriceRaw > 0, "Invalid oracle price");
-    require(updatedAt != 0 && answeredInRound >= roundId, "Incomplete or invalid Chainlink round");
-    require(block.timestamp <= updatedAt + stalenessThreshold, "Stale Chainlink price");
+// Basic sanity + freshness checks
+require(oraclePriceRaw > 0, "Invalid oracle price");
+require(updatedAt != 0, "No round data");
+require(block.timestamp <= updatedAt + stalenessThreshold, "Stale Chainlink price");
 
-    // 3. Normalize to 6 decimals (Chainlink = 8 decimals)
-    // Use FullMath for overflow safety (recommended over raw division)
-    uint256 oraclePrice6dec = FullMath.mulDiv(uint256(oraclePriceRaw), 1, 100);
+// 3. Normalize to 18 decimals (recommended for internal math)
+uint256 oraclePrice = uint256(oraclePriceRaw) * 1e10;
 
-    // 4. Current Uniswap V3 BWZC price (assumed already 6-dec from earlier fix)
-    uint256 currentUniPrice = _getUniswapV3Price();
+// 4. Current Uniswap V3 BWZC price (assumed already normalized)
+uint256 currentUniPrice = _getUniswapV3Price();
 
-    // 5. Deviation protection (prevents manipulated Uni price)
-    require(
-        absDiffBps(currentUniPrice, oraclePrice6dec) <= maxDeviationBps,
-        "Oracle deviation too high"
-    );
+// 5. Deviation protection (adjust maxDeviationBps as needed, e.g. 200 = 2%)
+require(
+    absDiffBps(currentUniPrice, oraclePrice) <= maxDeviationBps,
+    "Oracle deviation too high"
+);
 
    
 
