@@ -809,13 +809,14 @@ function absDiffBps(uint256 a, uint256 b) internal pure returns (uint256) {
 }
 
 
-    // 🔄 Auto-harvest Uniswap V3 fees after each cycle
-        try this.harvestAllFees() returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBwzc) {
-            // FeesDistributed event already emitted inside harvestAllFees
-        } catch {
-            // Skip silently if harvesting fails
-        }
+  // 🔄 Auto-harvest Uniswap V3 fees after each cycle
+function _autoHarvest() internal {
+    try this.harvestAllFees() returns (uint256 feeUsdc, uint256 feeWeth, uint256 feeBwzc) {
+        // FeesDistributed event already emitted inside harvestAllFees
+    } catch {
+        // Skip silently if harvesting fails
     }
+}
 
    
 
