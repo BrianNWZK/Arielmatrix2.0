@@ -795,32 +795,33 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     }
 
     // ✅ FIXED: PROPER UNLIMITED APPROVALS FOR ALL ROUTERS
-    function _setUnlimitedApprovals() internal {
-        // Balancer Vault approvals
-        IERC20(usdc).safeApprove(vault, type(uint256).max);
-        IERC20(weth).safeApprove(vault, type(uint256).max);
-        IERC20(bwzc).safeApprove(vault, type(uint256).max);
-        
-        // Uniswap V3 Router approvals
-        IERC20(usdc).safeApprove(uniV3Router, type(uint256).max);
-        IERC20(weth).safeApprove(uniV3Router, type(uint256).max);
-        IERC20(bwzc).safeApprove(uniV3Router, type(uint256).max);
-        
-        // Uniswap V2 Router approvals
-        IERC20(usdc).safeApprove(uniV2Router, type(uint256).max);
-        IERC20(weth).safeApprove(uniV2Router, type(uint256).max);
-        IERC20(bwzc).safeApprove(uniV2Router, type(uint256).max);
-        
-        // SushiSwap Router approvals
-        IERC20(usdc).safeApprove(sushiRouter, type(uint256).max);
-        IERC20(weth).safeApprove(sushiRouter, type(uint256).max);
-        IERC20(bwzc).safeApprove(sushiRouter, type(uint256).max);
-        
-        // Uniswap V3 NFT Position Manager approvals
-        IERC20(usdc).safeApprove(uniV3NFT, type(uint256).max);
-        IERC20(weth).safeApprove(uniV3NFT, type(uint256).max);
-        IERC20(bwzc).safeApprove(uniV3NFT, type(uint256).max);
-    }
+   function _setUnlimitedApprovals() internal {
+    // Balancer Vault approvals
+    IERC20(usdc).safeApprove(vault, type(uint256).max);
+    IERC20(weth).safeApprove(vault, type(uint256).max);
+    IERC20(bwzc).safeApprove(vault, type(uint256).max);
+    
+    // Uniswap V3 Router approvals
+    IERC20(usdc).safeApprove(uniV3Router, type(uint256).max);
+    IERC20(weth).safeApprove(uniV3Router, type(uint256).max);
+    IERC20(bwzc).safeApprove(uniV3Router, type(uint256).max);
+    
+    // Uniswap V2 Router approvals
+    IERC20(usdc).safeApprove(uniV2Router, type(uint256).max);
+    IERC20(weth).safeApprove(uniV2Router, type(uint256).max);
+    IERC20(bwzc).safeApprove(uniV2Router, type(uint256).max);
+    
+    // SushiSwap Router approvals
+    IERC20(usdc).safeApprove(sushiRouter, type(uint256).max);
+    IERC20(weth).safeApprove(sushiRouter, type(uint256).max);
+    IERC20(bwzc).safeApprove(sushiRouter, type(uint256).max);
+    
+    // Uniswap V3 NFT Position Manager approvals
+    IERC20(usdc).safeApprove(uniV3NFT, type(uint256).max);
+    IERC20(weth).safeApprove(uniV3NFT, type(uint256).max);
+    IERC20(bwzc).safeApprove(uniV3NFT, type(uint256).max);
+}
+
 
     modifier whenNotPaused() {
         if (paused) revert Paused();
