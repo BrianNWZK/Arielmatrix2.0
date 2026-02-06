@@ -1444,20 +1444,20 @@ function _abs(int256 x) internal pure returns (uint256) {
     }
 
     // ✅ FIXED: CORRECT BOOTSTRAP CALCULATION WITH WETH PRICING
-    function calculatePreciseBootstrap() public view returns (
-        uint256 totalBwzcNeeded,
-        uint256 usdcLoanAmount,
-        uint256 wethLoanAmount
-    ) {
-        totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-        usdcLoanAmount = TOTAL_BOOTSTRAP_USD / 2;
-        
-        // Calculate WETH amount using current ETH price
-        (uint256 ethPrice,) = _getConsensusEthPrice();
-        wethLoanAmount = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice);
-    }
-
-    // ✅ FIXED: CORRECT BOOTSTRAP EXECUTION WITH PROPER WETH AMOUNTS
+function calculatePreciseBootstrap() public returns (
+    uint256 totalBwzcNeeded,
+    uint256 usdcLoanAmount,
+    uint256 wethLoanAmount
+) {
+    totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
+    usdcLoanAmount = TOTAL_BOOTSTRAP_USD / 2;
+    
+    // Calculate WETH amount using current ETH price
+    (uint256 ethPrice,) = _getConsensusEthPrice();
+    wethLoanAmount = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice);
+}
+    
+// ✅ FIXED: CORRECT BOOTSTRAP EXECUTION WITH PROPER WETH AMOUNTS
     function executeBulletproofBootstrap(uint256 bwzcForArbitrage) external nonReentrant whenNotPaused {
         require(msg.sender == scw, "Only SCW");
         require(_calculateCurrentSpread() >= _calculateMinRequiredSpread(), "Spread too low");
@@ -1644,7 +1644,7 @@ function _abs(int256 x) internal pure returns (uint256) {
         return _calculateMinRequiredSpread();
     }
     
-    function getConsensusEthPrice() external view returns (uint256 price, uint8 confidence) {
+    function getConsensusEthPrice() external returns (uint256 price, uint8 confidence) {
         return _getConsensusEthPrice();
     }
     
