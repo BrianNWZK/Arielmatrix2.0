@@ -846,11 +846,21 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
             }
         } catch {}
         
-        try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData() returns (uint80, int256 p2, , uint256 u2, uint80) {
-            if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
-                prices[valid++] = uint256(p2) * 1e10;
-            }
-        } catch {}
+        try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData()
+returns (
+    uint80 roundId,
+    int256 p2,
+    uint256 startedAt,
+    uint256 u2,
+    uint80 answeredInRound
+) {
+    if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
+        prices[valid++] = uint256(p2) * 1e10;
+    }
+} catch {
+    // handle failure
+}
+
         
         if (uniV3EthUsdPool != address(0)) {
             try IUniswapV3Pool(uniV3EthUsdPool).slot0() returns (uint160 sqrtPriceX96, , , , , , ) {
