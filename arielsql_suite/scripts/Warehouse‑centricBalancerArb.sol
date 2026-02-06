@@ -857,17 +857,19 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         _;
     }
 
-    // ✅ FIXED: CORRECT SCALING ARITHMETIC WITH UNDERFLOW PROTECTION
-    function _calculateScaledAmount(uint256 baseAmount, uint256 scaleFactorBps) internal pure returns (uint256) {
-        return FullMath.mulDiv(baseAmount, scaleFactorBps, 10000);
-    }
-
-    function _calculateMinRequiredSpread() internal pure returns (uint256) {
-        return 200 + BALANCER_FLASH_FEE_BPS + SLIPPAGE_TOLERANCE_BPS + SAFETY_BUFFER_BPS;
-    }
 
 
-function _getConsensusEthPrice() internal view returns (uint256 price, uint8 confidence) {
+// ✅ FIXED: CORRECT SCALING ARITHMETIC WITH UNDERFLOW PROTECTION
+function _calculateScaledAmount(uint256 baseAmount, uint256 scaleFactorBps) internal pure returns (uint256) {
+    return FullMath.mulDiv(baseAmount, scaleFactorBps, 10000);
+}
+
+function _calculateMinRequiredSpread() internal pure returns (uint256) {
+    return 200 + BALANCER_FLASH_FEE_BPS + SLIPPAGE_TOLERANCE_BPS + SAFETY_BUFFER_BPS;
+}
+
+// ✅ FIXED: Removed 'view' modifier since function emits events
+function _getConsensusEthPrice() internal returns (uint256 price, uint8 confidence) {
     uint256[] memory prices = new uint256[](3);
     uint8 valid = 0;
     
@@ -952,8 +954,6 @@ function _calculateCurrentSpread() internal view returns (uint256 spreadBps) {
 function _abs(int256 x) internal pure returns (uint256) {
     return uint256(x >= 0 ? x : -x);
 }
-
-
 
    
     // ✅ FIXED: PROPER WETH FLASH LOAN AMOUNT CALCULATION
