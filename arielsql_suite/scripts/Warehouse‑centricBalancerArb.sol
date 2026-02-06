@@ -709,12 +709,7 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     address public entryPoint;
     address public paymasterA;
     address public paymasterB;
-    uint8 public bwzcDecimals;
-
-// ✅ ADD HERE - AFTER OTHER ADDRESSES, BEFORE POOL IDs
-    address public entryPoint;
-    address public paymasterA;
-    address public paymasterB;
+   
 
     // Pool IDs and addresses
     bytes32 public balBWUSDCId;
