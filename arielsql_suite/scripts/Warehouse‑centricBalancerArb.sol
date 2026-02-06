@@ -695,17 +695,26 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     enum TransactionState { IDLE, EXECUTING, COMMITTED, ROLLED_BACK }
     TransactionState public txState = TransactionState.IDLE;
 
-    // Addresses
-    address public immutable scw;
-    address public immutable usdc;
-    address public immutable weth;
-    address public immutable bwzc;
-    address public immutable vault;
-    address public immutable uniV2Router;
-    address public immutable sushiRouter;
-    address public immutable uniV3Router;
-    address public immutable uniV3NFT;
-    address public immutable quoterV2;
+    // ========== CONFIGURABLE ADDRESSES (CAN BE CHANGED) ==========
+    address public scw;
+    address public usdc;
+    address public weth;
+    address public bwzc;
+    address public vault;
+    address public uniV2Router;
+    address public sushiRouter;
+    address public uniV3Router;
+    address public uniV3NFT;
+    address public quoterV2;
+    address public entryPoint;
+    address public paymasterA;
+    address public paymasterB;
+    uint8 public bwzcDecimals;
+
+// ✅ ADD HERE - AFTER OTHER ADDRESSES, BEFORE POOL IDs
+    address public entryPoint;
+    address public paymasterA;
+    address public paymasterB;
 
     // Pool IDs and addresses
     bytes32 public balBWUSDCId;
@@ -752,6 +761,12 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     event FeesHarvested(uint256 usdcAmount, uint256 wethAmount, uint256 bwzcAmount);
     event FeesDistributed(address eoa, uint256 usdcAmount, uint256 wethAmount, uint256 bwzcAmount);
     event ScaleFactorUpdated(uint256 newScaleFactor);
+    event AdminAddressUpdated(bytes32 indexed key, address value);
+    event AdminPoolIdUpdated(bytes32 indexed key, bytes32 value);
+    event ContractPaused(bool paused);
+    event TokensRescued(address indexed token, uint256 amount);
+    event ETHWithdrawn(uint256 amount);
+    event ParameterUpdated(string param, uint256 value);
 
     constructor(
         address _scw,
@@ -770,8 +785,13 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         address _chainlinkEthUsdSecondary,
         address _uniV3EthUsdPool,
         address _uniV3UsdcPool,
-        address _uniV3WethPool
+        address _uniV3WethPool,
+        address _entryPoint,
+        address _paymasterA,
+        address _paymasterB,
+        uint8 _bwzcDecimals
     ) Ownable(msg.sender) {
+        // Set all configurable addresses
         scw = _scw;
         usdc = _usdc;
         weth = _weth;
@@ -789,68 +809,155 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         uniV3EthUsdPool = _uniV3EthUsdPool;
         uniV3UsdcPool = _uniV3UsdcPool;
         uniV3WethPool = _uniV3WethPool;
+        entryPoint = _entryPoint;
+        paymasterA = _paymasterA;
+        paymasterB = _paymasterB;
+    
         
         // 🔥 SET UNLIMITED APPROVALS ON DEPLOYMENT
-       _ensureApprovals();
+        _ensureApprovals();
     }
 
+    // ========== SHUT-AND-SIMPLE ADMIN SYSTEM ==========
+    
+    // Change any single address
+    function adminSetAddress(bytes32 key, address value) external onlyOwner {
+        if (key == "scw") scw = value;
+        else if (key == "usdc") usdc = value;
+        else if (key == "weth") weth = value;
+        else if (key == "bwzc") bwzc = value;
+        else if (key == "vault") vault = value;
+        else if (key == "uniV2Router") uniV2Router = value;
+        else if (key == "sushiRouter") sushiRouter = value;
+        else if (key == "uniV3Router") uniV3Router = value;
+        else if (key == "uniV3NFT") uniV3NFT = value;
+        else if (key == "quoterV2") quoterV2 = value;
+        else if (key == "chainlinkEthUsd") chainlinkEthUsd = value;
+        else if (key == "chainlinkEthUsdSecondary") chainlinkEthUsdSecondary = value;
+        else if (key == "uniV3EthUsdPool") uniV3EthUsdPool = value;
+        else if (key == "uniV3UsdcPool") uniV3UsdcPool = value;
+        else if (key == "uniV3WethPool") uniV3WethPool = value;
+        else if (key == "entryPoint") entryPoint = value;
+        else if (key == "paymasterA") paymasterA = value;
+        else if (key == "paymasterB") paymasterB = value;
+        else revert("Invalid address key");
+        
+        emit AdminAddressUpdated(key, value);
+    }
+    
+    // Change any pool ID
+    function adminSetPoolId(bytes32 key, bytes32 value) external onlyOwner {
+        if (key == "balBWUSDCId") balBWUSDCId = value;
+        else if (key == "balBWWETHId") balBWWETHId = value;
+        else revert("Invalid poolId key");
+        
+        emit AdminPoolIdUpdated(key, value);
+    }
+    
+    // Change numeric parameters
+    function adminSetParameter(bytes32 key, uint256 value) external onlyOwner {
+        if (key == "stalenessThreshold") stalenessThreshold = value;
+        else if (key == "usdcTickLower") usdcTickLower = int24(int256(value));
+        else if (key == "usdcTickUpper") usdcTickUpper = int24(int256(value));
+        else if (key == "wethTickLower") wethTickLower = int24(int256(value));
+        else if (key == "wethTickUpper") wethTickUpper = int24(int256(value));
+        else if (key == "uniV3Fee") uniV3Fee = uint24(value);
+        else if (key == "currentScaleFactorBps") {
+            require(value <= MAX_SCALE_BPS, "Exceeds max scale");
+            currentScaleFactorBps = value;
+        }
+        else revert("Invalid parameter key");
+        
+        emit ParameterUpdated(string(abi.encodePacked(key)), value);
+    }
+    
+    // Emergency: Pause/unpause entire contract
+    function adminSetPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit ContractPaused(_paused);
+    }
+    
+    modifier notPaused() {
+        require(!paused, "Contract paused");
+        _;
+    }
+    
+    // Emergency: Withdraw any stuck tokens
+    function adminRescueTokens(address token, uint256 amount) external onlyOwner {
+        IERC20(token).transfer(owner(), amount);
+        emit TokensRescued(token, amount);
+    }
+    
+    // Emergency: Withdraw ETH
+    function adminWithdrawETH(uint256 amount) external onlyOwner {
+        payable(owner()).transfer(amount);
+        emit ETHWithdrawn(amount);
+    }
+    
+    // Update approvals after address changes
+    function adminUpdateApprovals() external onlyOwner {
+        _ensureApprovals();
+    }
+
+    // ========== APPROVAL MANAGEMENT ==========
     function _ensureApprovals() internal {
-    // Balancer Vault approvals (only if needed)
-    if (IERC20(usdc).allowance(address(this), vault) == 0) {
-        IERC20(usdc).approve(vault, type(uint256).max);
+        // Balancer Vault approvals (only if needed)
+        if (IERC20(usdc).allowance(address(this), vault) == 0) {
+            IERC20(usdc).approve(vault, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), vault) == 0) {
+            IERC20(weth).approve(vault, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), vault) == 0) {
+            IERC20(bwzc).approve(vault, type(uint256).max);
+        }
+        
+        // Uniswap V3 Router approvals
+        if (IERC20(usdc).allowance(address(this), uniV3Router) == 0) {
+            IERC20(usdc).approve(uniV3Router, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), uniV3Router) == 0) {
+            IERC20(weth).approve(uniV3Router, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), uniV3Router) == 0) {
+            IERC20(bwzc).approve(uniV3Router, type(uint256).max);
+        }
+        
+        // Uniswap V2 Router approvals
+        if (IERC20(usdc).allowance(address(this), uniV2Router) == 0) {
+            IERC20(usdc).approve(uniV2Router, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), uniV2Router) == 0) {
+            IERC20(weth).approve(uniV2Router, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), uniV2Router) == 0) {
+            IERC20(bwzc).approve(uniV2Router, type(uint256).max);
+        }
+        
+        // SushiSwap Router approvals
+        if (IERC20(usdc).allowance(address(this), sushiRouter) == 0) {
+            IERC20(usdc).approve(sushiRouter, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), sushiRouter) == 0) {
+            IERC20(weth).approve(sushiRouter, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), sushiRouter) == 0) {
+            IERC20(bwzc).approve(sushiRouter, type(uint256).max);
+        }
+        
+        // Uniswap V3 NFT Position Manager approvals
+        if (IERC20(usdc).allowance(address(this), uniV3NFT) == 0) {
+            IERC20(usdc).approve(uniV3NFT, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), uniV3NFT) == 0) {
+            IERC20(weth).approve(uniV3NFT, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), uniV3NFT) == 0) {
+            IERC20(bwzc).approve(uniV3NFT, type(uint256).max);
+        }
     }
-    if (IERC20(weth).allowance(address(this), vault) == 0) {
-        IERC20(weth).approve(vault, type(uint256).max);
-    }
-    if (IERC20(bwzc).allowance(address(this), vault) == 0) {
-        IERC20(bwzc).approve(vault, type(uint256).max);
-    }
-    
-    // Uniswap V3 Router approvals
-    if (IERC20(usdc).allowance(address(this), uniV3Router) == 0) {
-        IERC20(usdc).approve(uniV3Router, type(uint256).max);
-    }
-    if (IERC20(weth).allowance(address(this), uniV3Router) == 0) {
-        IERC20(weth).approve(uniV3Router, type(uint256).max);
-    }
-    if (IERC20(bwzc).allowance(address(this), uniV3Router) == 0) {
-        IERC20(bwzc).approve(uniV3Router, type(uint256).max);
-    }
-    
-    // Uniswap V2 Router approvals
-    if (IERC20(usdc).allowance(address(this), uniV2Router) == 0) {
-        IERC20(usdc).approve(uniV2Router, type(uint256).max);
-    }
-    if (IERC20(weth).allowance(address(this), uniV2Router) == 0) {
-        IERC20(weth).approve(uniV2Router, type(uint256).max);
-    }
-    if (IERC20(bwzc).allowance(address(this), uniV2Router) == 0) {
-        IERC20(bwzc).approve(uniV2Router, type(uint256).max);
-    }
-    
-    // SushiSwap Router approvals
-    if (IERC20(usdc).allowance(address(this), sushiRouter) == 0) {
-        IERC20(usdc).approve(sushiRouter, type(uint256).max);
-    }
-    if (IERC20(weth).allowance(address(this), sushiRouter) == 0) {
-        IERC20(weth).approve(sushiRouter, type(uint256).max);
-    }
-    if (IERC20(bwzc).allowance(address(this), sushiRouter) == 0) {
-        IERC20(bwzc).approve(sushiRouter, type(uint256).max);
-    }
-    
-    // Uniswap V3 NFT Position Manager approvals
-    if (IERC20(usdc).allowance(address(this), uniV3NFT) == 0) {
-        IERC20(usdc).approve(uniV3NFT, type(uint256).max);
-    }
-    if (IERC20(weth).allowance(address(this), uniV3NFT) == 0) {
-        IERC20(weth).approve(uniV3NFT, type(uint256).max);
-    }
-    if (IERC20(bwzc).allowance(address(this), uniV3NFT) == 0) {
-        IERC20(bwzc).approve(uniV3NFT, type(uint256).max);
-    }
-}
 
+    
 
     modifier whenNotPaused() {
         if (paused) revert Paused();
