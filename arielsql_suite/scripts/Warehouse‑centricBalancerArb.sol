@@ -791,7 +791,7 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         uniV3WethPool = _uniV3WethPool;
         
         // 🔥 SET UNLIMITED APPROVALS ON DEPLOYMENT
-        _setUnlimitedApprovals();
+       _ensureApprovals();
     }
 
     function _ensureApprovals() internal {
