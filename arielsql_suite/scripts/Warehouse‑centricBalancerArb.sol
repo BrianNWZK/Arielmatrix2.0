@@ -794,32 +794,61 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         _setUnlimitedApprovals();
     }
 
-    // ✅ FIXED: PROPER UNLIMITED APPROVALS FOR ALL ROUTERS
-   function _setUnlimitedApprovals() internal {
-    // Balancer Vault approvals
-    IERC20(usdc).safeApprove(vault, type(uint256).max);
-    IERC20(weth).safeApprove(vault, type(uint256).max);
-    IERC20(bwzc).safeApprove(vault, type(uint256).max);
+    function _ensureApprovals() internal {
+    // Balancer Vault approvals (only if needed)
+    if (IERC20(usdc).allowance(address(this), vault) == 0) {
+        IERC20(usdc).approve(vault, type(uint256).max);
+    }
+    if (IERC20(weth).allowance(address(this), vault) == 0) {
+        IERC20(weth).approve(vault, type(uint256).max);
+    }
+    if (IERC20(bwzc).allowance(address(this), vault) == 0) {
+        IERC20(bwzc).approve(vault, type(uint256).max);
+    }
     
     // Uniswap V3 Router approvals
-    IERC20(usdc).safeApprove(uniV3Router, type(uint256).max);
-    IERC20(weth).safeApprove(uniV3Router, type(uint256).max);
-    IERC20(bwzc).safeApprove(uniV3Router, type(uint256).max);
+    if (IERC20(usdc).allowance(address(this), uniV3Router) == 0) {
+        IERC20(usdc).approve(uniV3Router, type(uint256).max);
+    }
+    if (IERC20(weth).allowance(address(this), uniV3Router) == 0) {
+        IERC20(weth).approve(uniV3Router, type(uint256).max);
+    }
+    if (IERC20(bwzc).allowance(address(this), uniV3Router) == 0) {
+        IERC20(bwzc).approve(uniV3Router, type(uint256).max);
+    }
     
     // Uniswap V2 Router approvals
-    IERC20(usdc).safeApprove(uniV2Router, type(uint256).max);
-    IERC20(weth).safeApprove(uniV2Router, type(uint256).max);
-    IERC20(bwzc).safeApprove(uniV2Router, type(uint256).max);
+    if (IERC20(usdc).allowance(address(this), uniV2Router) == 0) {
+        IERC20(usdc).approve(uniV2Router, type(uint256).max);
+    }
+    if (IERC20(weth).allowance(address(this), uniV2Router) == 0) {
+        IERC20(weth).approve(uniV2Router, type(uint256).max);
+    }
+    if (IERC20(bwzc).allowance(address(this), uniV2Router) == 0) {
+        IERC20(bwzc).approve(uniV2Router, type(uint256).max);
+    }
     
     // SushiSwap Router approvals
-    IERC20(usdc).safeApprove(sushiRouter, type(uint256).max);
-    IERC20(weth).safeApprove(sushiRouter, type(uint256).max);
-    IERC20(bwzc).safeApprove(sushiRouter, type(uint256).max);
+    if (IERC20(usdc).allowance(address(this), sushiRouter) == 0) {
+        IERC20(usdc).approve(sushiRouter, type(uint256).max);
+    }
+    if (IERC20(weth).allowance(address(this), sushiRouter) == 0) {
+        IERC20(weth).approve(sushiRouter, type(uint256).max);
+    }
+    if (IERC20(bwzc).allowance(address(this), sushiRouter) == 0) {
+        IERC20(bwzc).approve(sushiRouter, type(uint256).max);
+    }
     
     // Uniswap V3 NFT Position Manager approvals
-    IERC20(usdc).safeApprove(uniV3NFT, type(uint256).max);
-    IERC20(weth).safeApprove(uniV3NFT, type(uint256).max);
-    IERC20(bwzc).safeApprove(uniV3NFT, type(uint256).max);
+    if (IERC20(usdc).allowance(address(this), uniV3NFT) == 0) {
+        IERC20(usdc).approve(uniV3NFT, type(uint256).max);
+    }
+    if (IERC20(weth).allowance(address(this), uniV3NFT) == 0) {
+        IERC20(weth).approve(uniV3NFT, type(uint256).max);
+    }
+    if (IERC20(bwzc).allowance(address(this), uniV3NFT) == 0) {
+        IERC20(bwzc).approve(uniV3NFT, type(uint256).max);
+    }
 }
 
 
