@@ -836,97 +836,96 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return 200 + BALANCER_FLASH_FEE_BPS + SLIPPAGE_TOLERANCE_BPS + SAFETY_BUFFER_BPS;
     }
 
-    function _getConsensusEthPrice() internal view returns (uint256 price, uint8 confidence) {
-        uint256[] memory prices = new uint256[](3);
-        uint8 valid = 0;
-        
-        try IChainlinkFeed(chainlinkEthUsd).latestRoundData() returns (uint80, int256 p, , uint256 u, uint80) {
-            if (p > 0 && block.timestamp - u <= stalenessThreshold) {
-                prices[valid++] = uint256(p) * 1e10; // Chainlink 8 decimals to 18
-            }
-        } catch {}
-        
-       try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData()
-returns (uint80, int256, uint256, uint256, uint80) {
-    (uint80 roundId, int256 p2, uint256 startedAt, uint256 u2, uint80 answeredInRound) =
-        IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData();
 
-    if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
-        prices[valid++] = uint256(p2) * 1e10;
+function _getConsensusEthPrice() internal view returns (uint256 price, uint8 confidence) {
+    uint256[] memory prices = new uint256[](3);
+    uint8 valid = 0;
+    
+    // Primary Chainlink feed
+    try IChainlinkFeed(chainlinkEthUsd).latestRoundData()
+        returns (uint80, int256 p, uint256, uint256 u, uint80)
+    {
+        if (p > 0 && block.timestamp - u <= stalenessThreshold) {
+            prices[valid++] = uint256(p) * 1e10; // Chainlink 8 decimals → 18
+        }
+    } catch {}
+
+    // Secondary Chainlink feed
+    try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData()
+        returns (uint80, int256 p2, uint256, uint256 u2, uint80)
+    {
+        if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
+            prices[valid++] = uint256(p2) * 1e10;
+        }
+    } catch {}
+
+    // Uniswap V3 pool
+    if (uniV3EthUsdPool != address(0)) {
+        try IUniswapV3Pool(uniV3EthUsdPool).slot0()
+            returns (uint160 sqrtPriceX96, int24, uint16, uint16, uint16, uint8, bool)
+        {
+            uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+            prices[valid++] = rawPrice * 1e12; // Adjust for USDC decimals
+        } catch {}
     }
-} catch {
-    // handle failure
+    
+    confidence = valid;
+    if (valid >= 2) {
+        price = (prices[0] + prices[1]) / 2;
+        uint256 deviation = _abs(int256(prices[0]) - int256(prices[1]));
+        uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
+        if (deviationBps > 100) revert DeviationTooHigh();
+        emit OracleConsensus(price, confidence);
+        return (price, confidence);
+    } else if (valid == 1) {
+        price = prices[0];
+        emit OracleConsensus(price, confidence);
+        return (price, confidence);
+    }
+    
+    revert OracleConsensusFailed();
+}
+
+function _getUniswapV3Price() internal view returns (uint256) {
+    try IUniswapV3Pool(uniV3UsdcPool).slot0()
+        returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool)
+    {
+        uint256 priceFromSqrt = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96) * 1e18) >> (96 * 2);
+        
+        if (priceFromSqrt == 0 || priceFromSqrt > 1e30) {
+            uint160 sqrtPriceFromTick = TickMath.getSqrtRatioAtTick(tick);
+            priceFromSqrt = (uint256(sqrtPriceFromTick) * uint256(sqrtPriceFromTick) * 1e18) >> (96 * 2);
+        }
+        
+        uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+        uint256 bwzcPerUsdc = rawPrice / 1e12;
+        uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : FullMath.mulDiv(1e6, 1, bwzcPerUsdc);
+        
+        if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
+            revert DeviationTooHigh();
+        }
+        
+        return priceUSD;
+    } catch {
+        revert("Uniswap V3 pool query failed");
+    }
+}
+
+function _calculateCurrentSpread() internal view returns (uint256 spreadBps) {
+    uint256 balancerPrice = BALANCER_PRICE_USD;
+    uint256 uniswapPrice = _getUniswapV3Price();
+    if (uniswapPrice <= balancerPrice) return 0;
+    spreadBps = FullMath.mulDiv(uniswapPrice - balancerPrice, 10000, balancerPrice);
+    return spreadBps;
+}
+
+function _abs(int256 x) internal pure returns (uint256) {
+    return uint256(x >= 0 ? x : -x);
 }
 
 
-        
-        if (uniV3EthUsdPool != address(0)) {
-            try IUniswapV3Pool(uniV3EthUsdPool).slot0() returns (uint160 sqrtPriceX96, , , , , , ) {
-                uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
-                prices[valid++] = rawPrice * 1e12; // Adjust for USDC decimals
-            } catch {}
-        }
-        
-        confidence = valid;
-        if (valid >= 2) {
-            price = (prices[0] + prices[1]) / 2;
-            uint256 deviation = _abs(int256(prices[0]) - int256(prices[1]));
-            uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
-            if (deviationBps > 100) revert DeviationTooHigh();
-            emit OracleConsensus(price, confidence);
-            return (price, confidence);
-        } else if (valid == 1) {
-            price = prices[0];
-            emit OracleConsensus(price, confidence);
-            return (price, confidence);
-        }
-        
-        revert OracleConsensusFailed();
-    }
-    
-    function _getUniswapV3Price() internal view returns (uint256) {
-        try IUniswapV3Pool(uniV3UsdcPool).slot0() returns (
-            uint160 sqrtPriceX96,
-            int24 tick,
-            uint16,
-            uint16,
-            uint16,
-            uint8,
-            bool
-        ) {
-            uint256 priceFromSqrt = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96) * 1e18) >> (96 * 2);
-            
-            if (priceFromSqrt == 0 || priceFromSqrt > 1e30) {
-                uint160 sqrtPriceFromTick = TickMath.getSqrtRatioAtTick(tick);
-                priceFromSqrt = (uint256(sqrtPriceFromTick) * uint256(sqrtPriceFromTick) * 1e18) >> (96 * 2);
-            }
-            
-            uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
-            uint256 bwzcPerUsdc = rawPrice / 1e12;
-            uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : FullMath.mulDiv(1e6, 1, bwzcPerUsdc);
-            
-            if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
-                revert DeviationTooHigh();
-            }
-            
-            return priceUSD;
-        } catch {
-            revert("Uniswap V3 pool query failed");
-        }
-    }
 
-    function _calculateCurrentSpread() internal view returns (uint256 spreadBps) {
-        uint256 balancerPrice = BALANCER_PRICE_USD;
-        uint256 uniswapPrice = _getUniswapV3Price();
-        if (uniswapPrice <= balancerPrice) return 0;
-        spreadBps = FullMath.mulDiv(uniswapPrice - balancerPrice, 10000, balancerPrice);
-        return spreadBps;
-    }
-
-    function _abs(int256 x) internal pure returns (uint256) {
-        return uint256(x >= 0 ? x : -x);
-    }
-
+   
     // ✅ FIXED: PROPER WETH FLASH LOAN AMOUNT CALCULATION
     function _calculateWETHAmount(uint256 usdAmount, uint256 ethPrice) internal pure returns (uint256) {
         return FullMath.mulDiv(usdAmount, 1e18, ethPrice);
