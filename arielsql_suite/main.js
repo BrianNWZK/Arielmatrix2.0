@@ -48,8 +48,8 @@ function compileContract() {
   const baseDir = "arielsql_suite/scripts";
   
   // Read both refactored files
-  const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb-sol.txt"), "utf8");
-  const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries-sol.txt"), "utf8");
+  const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb.sol"), "utf8");
+  const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries.sol"), "utf8");
   
   // Prepare solc input
   const input = {
