@@ -48,19 +48,16 @@ function compileContract() {
   const baseDir = "arielsql_suite/scripts";
 
 const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb.sol"), "utf8");
-const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries.sol"), "utf8");
-const ierc20Source = fs.readFileSync(path.join(baseDir, "IERC20.sol"), "utf8");
 
 const input = {
   language: "Solidity",
   sources: {
-    "WarehouseBalancerArb.sol": { content: mainSource },
-    "MathLibraries.sol": { content: mathLibSource },
-    "IERC20.sol": { content: ierc20Source }
+    "WarehouseBalancerArb.sol": { content: mainSource }
+    
   },
   settings: {
     viaIR: true,
-    optimizer: { enabled: true, runs: 1 },
+    optimizer: { enabled: true, runs: 200 },
     outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
   }
 };
