@@ -26,9 +26,6 @@ ULTIMATE PERFECTION ACHIEVED:
 - ✅ COMPLETE FEE HARVESTING: All 3 tokens (USDC/WETH/BWZC)
 */
 
-import "./MathLibraries.sol";
-import "./IERC20.sol";
-
 abstract contract ReentrancyGuard {
     uint256 private constant NOT_ENTERED = 1;
     uint256 private constant ENTERED = 2;
@@ -96,7 +93,17 @@ abstract contract Ownable {
     }
 }
 
-
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function allowance(address owner, address spender) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+    function decimals() external view returns (uint8);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+}
 
 interface IWETH is IERC20 {
     function deposit() external payable;
@@ -282,29 +289,279 @@ interface INonfungiblePositionManager {
     );
 }
 
-/* -------------------------------- Custom Errors -------------------------------- */
-error SwapFailed();
-error SpreadTooLow();
-error InsufficientBalance();
-error ETHTransferFailed();
-error MathOverflow();
-error LowLiquidity();
-error InvalidSignature();
-error NonceUsed();
-error DeadlineExpired();
-error Paused();
-error DeviationTooHigh();
-error StaleOracle();
-error InsufficientLiquidity();
-error JoinFailed();
-error ExitFailed();
-error HarvestFailed();
-error InvalidParameter();
-error InsufficientFunds();
-error OracleConsensusFailed();
-error InvalidStateTransition();
-error ScaleLimitReached();
-error RateLimitExceeded();
+/* -------------------------------- OPTIMIZED ERROR CODES -------------------------------- */
+error Err01(); // SwapFailed
+error Err02(); // SpreadTooLow  
+error Err03(); // InsufficientBalance
+error Err04(); // ETHTransferFailed
+error Err05(); // MathOverflow
+error Err06(); // LowLiquidity
+error Err07(); // InvalidSignature
+error Err08(); // NonceUsed
+error Err09(); // DeadlineExpired
+error Err10(); // Paused
+error Err11(); // DeviationTooHigh
+error Err12(); // StaleOracle
+error Err13(); // InsufficientLiquidity
+error Err14(); // JoinFailed
+error Err15(); // ExitFailed
+error Err16(); // HarvestFailed
+error Err17(); // InvalidParameter
+error Err18(); // InsufficientFunds
+error Err19(); // OracleConsensusFailed
+error Err20(); // InvalidStateTransition
+error Err21(); // ScaleLimitReached
+error Err22(); // RateLimitExceeded
+
+
+
+/* -------------------------------- SAFE MATH LIBRARIES -------------------------------- */
+library SafeERC20 {
+    error SafeERC20FailedOperation(address token);
+    error SafeERC20FailedDecreaseAllowance(address spender, uint256 currentAllowance, uint256 requestedDecrease);
+
+    function safeTransfer(IERC20 token, address to, uint256 value) internal {
+        if (!_safeTransfer(token, to, value, true)) {
+            revert SafeERC20FailedOperation(address(token));
+        }
+    }
+
+    function safeTransferFrom(IERC20 token, address from, address to, uint256 value) internal {
+        if (!_safeTransferFrom(token, from, to, value, true)) {
+            revert SafeERC20FailedOperation(address(token));
+        }
+    }
+
+    function safeIncreaseAllowance(IERC20 token, address spender, uint256 value) internal {
+        uint256 oldAllowance = token.allowance(address(this), spender);
+        forceApprove(token, spender, oldAllowance + value);
+    }
+
+    function safeDecreaseAllowance(IERC20 token, address spender, uint256 requestedDecrease) internal {
+        unchecked {
+            uint256 currentAllowance = token.allowance(address(this), spender);
+            if (currentAllowance < requestedDecrease) {
+                revert SafeERC20FailedDecreaseAllowance(spender, currentAllowance, requestedDecrease);
+            }
+            forceApprove(token, spender, currentAllowance - requestedDecrease);
+        }
+    }
+
+    function forceApprove(IERC20 token, address spender, uint256 value) internal {
+        if (!_safeApprove(token, spender, value, false)) {
+            if (!_safeApprove(token, spender, 0, true)) revert SafeERC20FailedOperation(address(token));
+            if (!_safeApprove(token, spender, value, true)) revert SafeERC20FailedOperation(address(token));
+        }
+    }
+
+    function _safeTransfer(IERC20 token, address to, uint256 value, bool bubble) private returns (bool success) {
+        bytes4 selector = IERC20.transfer.selector;
+        assembly {
+            let fmp := mload(0x40)
+            mstore(0x00, selector)
+            mstore(0x04, and(to, shr(96, not(0))))
+            mstore(0x24, value)
+            success := call(gas(), token, 0, 0x00, 0x44, 0x00, 0x20)
+            if iszero(and(success, eq(mload(0x00), 1))) {
+                if and(iszero(success), bubble) {
+                    returndatacopy(fmp, 0x00, returndatasize())
+                    revert(fmp, returndatasize())
+                }
+                success := and(success, and(iszero(returndatasize()), gt(extcodesize(token), 0)))
+            }
+            mstore(0x40, fmp)
+        }
+    }
+
+    function _safeTransferFrom(IERC20 token, address from, address to, uint256 value, bool bubble) private returns (bool success) {
+        bytes4 selector = IERC20.transferFrom.selector;
+        assembly {
+            let fmp := mload(0x40)
+            mstore(0x00, selector)
+            mstore(0x04, and(from, shr(96, not(0))))
+            mstore(0x24, and(to, shr(96, not(0))))
+            mstore(0x44, value)
+            success := call(gas(), token, 0, 0x00, 0x64, 0x00, 0x20)
+            if iszero(and(success, eq(mload(0x00), 1))) {
+                if and(iszero(success), bubble) {
+                    returndatacopy(fmp, 0x00, returndatasize())
+                    revert(fmp, returndatasize())
+                }
+                success := and(success, and(iszero(returndatasize()), gt(extcodesize(token), 0)))
+            }
+            mstore(0x40, fmp)
+            mstore(0x60, 0)
+        }
+    }
+
+    function _safeApprove(IERC20 token, address spender, uint256 value, bool bubble) private returns (bool success) {
+        bytes4 selector = IERC20.approve.selector;
+        assembly {
+            let fmp := mload(0x40)
+            mstore(0x00, selector)
+            mstore(0x04, and(spender, shr(96, not(0))))
+            mstore(0x24, value)
+            success := call(gas(), token, 0, 0x00, 0x44, 0x00, 0x20)
+            if iszero(and(success, eq(mload(0x00), 1))) {
+                if and(iszero(success), bubble) {
+                    returndatacopy(fmp, 0x00, returndatasize())
+                    revert(fmp, returndatasize())
+                }
+                success := and(success, and(iszero(returndatasize()), gt(extcodesize(token), 0)))
+            }
+            mstore(0x40, fmp)
+        }
+    }
+}
+
+library FullMath {
+    function mulDiv(
+        uint256 a,
+        uint256 b,
+        uint256 denominator
+    ) internal pure returns (uint256 result) {
+        uint256 prod0;
+        uint256 prod1;
+        assembly {
+            let mm := mulmod(a, b, not(0))
+            prod0 := mul(a, b)
+            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+        }
+
+        if (prod1 == 0) {
+            require(denominator > 0);
+            assembly {
+                result := div(prod0, denominator)
+            }
+            return result;
+        }
+
+        require(denominator > prod1);
+
+        uint256 remainder;
+        assembly {
+            remainder := mulmod(a, b, denominator)
+        }
+
+        assembly {
+            prod1 := sub(prod1, gt(remainder, prod0))
+            prod0 := sub(prod0, remainder)
+        }
+
+        uint256 twos = (0 - denominator) & denominator;
+        assembly {
+            denominator := div(denominator, twos)
+        }
+
+        assembly {
+            prod0 := div(prod0, twos)
+        }
+
+        assembly {
+            twos := add(div(sub(0, twos), twos), 1)
+        }
+        prod0 |= prod1 * twos;
+
+        uint256 inv = (3 * denominator) ^ 2;
+        inv *= 2 - denominator * inv; // inverse mod 2**8
+        inv *= 2 - denominator * inv; // inverse mod 2**16
+        inv *= 2 - denominator * inv; // inverse mod 2**32
+        inv *= 2 - denominator * inv; // inverse mod 2**64
+        inv *= 2 - denominator * inv; // inverse mod 2**128
+        inv *= 2 - denominator * inv; // inverse mod 2**256
+
+        result = prod0 * inv;
+        return result;
+    }
+
+    function mulDivRoundingUp(
+        uint256 a,
+        uint256 b,
+        uint256 denominator
+    ) internal pure returns (uint256 result) {
+        result = mulDiv(a, b, denominator);
+        if (mulmod(a, b, denominator) > 0) {
+            require(result < type(uint256).max);
+            result++;
+        }
+    }
+}
+
+
+library TickMath {
+    int24 internal constant MIN_TICK = -887272;
+    int24 internal constant MAX_TICK = 887272;
+    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
+    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+    
+    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
+        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+        require(absTick <= uint256(int256(MAX_TICK)), 'T');
+        
+        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
+        uint256[18] memory m = [0xfff97272373d413259a46990580e213a, 0xfff2e50f5f656932ef12357cf3c7fdcc, 0xffe5caca7e10e4e61c3624eaa0941cd0, 0xffcb9843d60f6159c9db58835c926644, 0xff973b41fa98c081472e6896dfb254c0, 0xff2ea164f5c96a3843ec78b326b52861, 0xfe5dee046a99a2a811c461f1969c3053, 0xfcbe86c7900a88aedcffc83b479aa3a4, 0xf987a7253ac413176f2b074cf7815e54, 0xf3392b0822b70005940c7a398e4b70f3, 0xe7159475a2c29b7443b29c7fa6e889d9, 0xd097f3bdfd2022b8845ad8f792aa5825, 0xa9f746462d870fdf8a65dc1f90e061e5, 0x70d869a156d2a1b890bb3df62baf32f7, 0x31be135f97d08fd981231505542fcfa6, 0x9aa508b5b7a84e1c677de54f3e99bc9, 0x5d6af8dedb81196699c329225ee604, 0x2216e584f5fa1ea926041bedfe98];
+        
+        for (uint256 i = 0; i < 18; i++) {
+            if (absTick & (2 << i) != 0) ratio = (ratio * m[i]) >> 128;
+        }
+        
+        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+        if (tick > 0) ratio = type(uint256).max / ratio;
+        
+        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+    }
+    
+    function getTickAtSqrtRatio(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
+        require(sqrtPriceX96 >= MIN_SQRT_RATIO && sqrtPriceX96 < MAX_SQRT_RATIO, 'R');
+        
+        uint256 ratio = uint256(sqrtPriceX96) << 32;
+        uint256 msb = _msb(ratio);
+        
+        ratio = msb >= 128 ? ratio >> (msb - 127) : ratio << (127 - msb);
+        
+        int256 log_2 = (int256(msb) - 128) << 64;
+        log_2 = _log2(ratio, log_2);
+        
+        int256 log_sqrt10001 = (log_2 * 255738958999603826347141) / (1 << 128);
+        
+        int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
+        int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
+        
+        tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
+    }
+    
+    function _msb(uint256 x) private pure returns (uint256 msb) {
+        uint256[8] memory thresholds = [
+            0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFF,
+            0xFFFF,
+            0xFF,
+            0xF,
+            0x3,
+            0x1
+        ];
+        
+        for (uint256 i = 0; i < 8; i++) {
+            if (x > thresholds[i]) {
+                msb |= (7 - i) << 3;
+                x >>= (7 - i) << 3;
+            }
+        }
+        if (x > 1) msb |= 1;
+    }
+    
+    function _log2(uint256 r, int256 log_2) private pure returns (int256) {
+        for (uint256 i = 0; i < 14; i++) {
+            r = (r * r) >> 127;
+            uint256 f = r >> 128;
+            log_2 |= int256(f) << (63 - i);
+            r >>= f;
+        }
+        return log_2;
+    }
+}
+
 
 
 contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
@@ -534,64 +791,37 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         _ensureApprovals();
     }
 
-    // ========== APPROVAL MANAGEMENT ==========
-    function _ensureApprovals() internal {
-        // Balancer Vault approvals (only if needed)
-        if (IERC20(usdc).allowance(address(this), vault) == 0) {
-            IERC20(usdc).approve(vault, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), vault) == 0) {
-            IERC20(weth).approve(vault, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), vault) == 0) {
-            IERC20(bwzc).approve(vault, type(uint256).max);
-        }
+    
+
+// ========== OPTIMIZED APPROVAL MANAGEMENT WITH ERROR HANDLING ==========
+function _ensureApprovals() internal {
+    // Batch approve with minimal checks
+    _batchApprove(usdc);
+    _batchApprove(weth);
+    _batchApprove(bwzc);
+}
+
+function _batchApprove(address token) private {
+    // Array of unique spenders (remove duplicates at compile time)
+    address[] memory spenders = new address[](5);
+    spenders[0] = vault;
+    spenders[1] = uniV3Router;
+    spenders[2] = uniV2Router;
+    spenders[3] = sushiRouter;
+    spenders[4] = uniV3NFT;
+    
+    IERC20 tokenContract = IERC20(token);
+    
+    for (uint256 i = 0; i < spenders.length; i++) {
+        // Quick check: skip zero address
+        if (spenders[i] == address(0)) continue;
         
-        // Uniswap V3 Router approvals
-        if (IERC20(usdc).allowance(address(this), uniV3Router) == 0) {
-            IERC20(usdc).approve(uniV3Router, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), uniV3Router) == 0) {
-            IERC20(weth).approve(uniV3Router, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), uniV3Router) == 0) {
-            IERC20(bwzc).approve(uniV3Router, type(uint256).max);
-        }
-        
-        // Uniswap V2 Router approvals
-        if (IERC20(usdc).allowance(address(this), uniV2Router) == 0) {
-            IERC20(usdc).approve(uniV2Router, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), uniV2Router) == 0) {
-            IERC20(weth).approve(uniV2Router, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), uniV2Router) == 0) {
-            IERC20(bwzc).approve(uniV2Router, type(uint256).max);
-        }
-        
-        // SushiSwap Router approvals
-        if (IERC20(usdc).allowance(address(this), sushiRouter) == 0) {
-            IERC20(usdc).approve(sushiRouter, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), sushiRouter) == 0) {
-            IERC20(weth).approve(sushiRouter, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), sushiRouter) == 0) {
-            IERC20(bwzc).approve(sushiRouter, type(uint256).max);
-        }
-        
-        // Uniswap V3 NFT Position Manager approvals
-        if (IERC20(usdc).allowance(address(this), uniV3NFT) == 0) {
-            IERC20(usdc).approve(uniV3NFT, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), uniV3NFT) == 0) {
-            IERC20(weth).approve(uniV3NFT, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), uniV3NFT) == 0) {
-            IERC20(bwzc).approve(uniV3NFT, type(uint256).max);
+        // Only approve if allowance is 0
+        if (tokenContract.allowance(address(this), spenders[i]) == 0) {
+            tokenContract.approve(spenders[i], type(uint256).max);
         }
     }
-
+}
     
 
     modifier whenNotPaused() {
@@ -1243,33 +1473,25 @@ function calculatePreciseBootstrap() public returns (
         emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
     }
 
-    /* ==================== VIEW & HELPER FUNCTIONS ==================== */
+   /* ==================== OPTIMIZED VIEW & HELPER FUNCTIONS ==================== */
     
     function addUniswapV3Position(uint256 tokenId, bool isUsdcPosition) external onlyOwner {
-        // Fetch position data to verify
-        (, , address token0, address token1, , , , , , , , ) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
+        (,,address token0, address token1,,,,,,,,) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
         
-        // Verify it's a valid BWZC pool
-        require((token0 == bwzc && (token1 == usdc || token1 == weth)) || 
-                (token1 == bwzc && (token0 == usdc || token0 == weth)), "Invalid pool");
+        // Verify valid BWZC pool
+        bool isValid = (token0 == bwzc && (token1 == usdc || token1 == weth)) || 
+                      (token1 == bwzc && (token0 == usdc || token0 == weth));
+        require(isValid, "Invalid pool");
         
         uniV3PositionIds.push(tokenId);
-        positionInfo[tokenId] = PositionInfo({
-            token0: token0,
-            token1: token1,
-            isUsdcPosition: isUsdcPosition
-        });
+        positionInfo[tokenId] = PositionInfo(token0, token1, isUsdcPosition);
     }
     
     function removeUniswapV3Position(uint256 index) external onlyOwner {
-        require(index < uniV3PositionIds.length, "Index out of bounds");
+        require(index < uniV3PositionIds.length, "Index OOB");
         uint256 tokenId = uniV3PositionIds[index];
-        
-        // Remove from array
         uniV3PositionIds[index] = uniV3PositionIds[uniV3PositionIds.length - 1];
         uniV3PositionIds.pop();
-        
-        // Clear position info
         delete positionInfo[tokenId];
     }
     
@@ -1278,16 +1500,13 @@ function calculatePreciseBootstrap() public returns (
     }
     
     function _rollbackTransaction() internal {
-        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
-        uint256 wethBalance = IERC20(weth).balanceOf(address(this));
-        uint256 bwzcBalance = IERC20(bwzc).balanceOf(address(this));
-        
-        if (usdcBalance > 0) IERC20(usdc).safeTransfer(scw, usdcBalance);
-        if (wethBalance > 0) IERC20(weth).safeTransfer(scw, wethBalance);
-        if (bwzcBalance > 0) IERC20(bwzc).safeTransfer(scw, bwzcBalance);
-        
+        address[3] memory tokens = [usdc, weth, bwzc];
+        for (uint256 i = 0; i < tokens.length; i++) {
+            uint256 bal = IERC20(tokens[i]).balanceOf(address(this));
+            if (bal > 0) IERC20(tokens[i]).safeTransfer(scw, bal);
+        }
         txState = TransactionState.ROLLED_BACK;
-        emit Rollback("Transaction rolled back");
+        emit Rollback("Rolled back");
     }
     
     function resetTransactionState() external onlyOwner {
@@ -1305,22 +1524,17 @@ function calculatePreciseBootstrap() public returns (
     }
     
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
-        require(paused, "Not in emergency");
+        require(paused, "!emergency");
         IERC20(token).safeTransfer(owner(), amount);
     }
     
     function emergencyWithdrawETH(uint256 amount) external onlyOwner {
-        require(paused, "Not in emergency");
-        (bool success, ) = owner().call{value: amount}("");
-        require(success, "ETH transfer failed");
+        require(paused, "!emergency");
+        (bool success,) = owner().call{value: amount}("");
+        require(success, "ETH fail");
     }
     
-    function getContractBalances() external view returns (
-        uint256 usdcBal,
-        uint256 wethBal,
-        uint256 bwzcBal,
-        uint256 ethBal
-    ) {
+    function getContractBalances() external view returns (uint256, uint256, uint256, uint256) {
         return (
             IERC20(usdc).balanceOf(address(this)),
             IERC20(weth).balanceOf(address(this)),
@@ -1329,51 +1543,29 @@ function calculatePreciseBootstrap() public returns (
         );
     }
     
-    function getPoolBalances() external view returns (
-        uint256 balancerUsdc,
-        uint256 balancerWeth,
-        uint256 balancerBwzc
-    ) {
-        (address[] memory tokens1, uint256[] memory balances1, ) = 
-            IBalancerVault(vault).getPoolTokens(balBWUSDCId);
-        (address[] memory tokens2, uint256[] memory balances2, ) = 
-            IBalancerVault(vault).getPoolTokens(balBWWETHId);
+    function getPoolBalances() external view returns (uint256, uint256, uint256) {
+        (,uint256[] memory bal1,) = IBalancerVault(vault).getPoolTokens(balBWUSDCId);
+        (,uint256[] memory bal2,) = IBalancerVault(vault).getPoolTokens(balBWWETHId);
         
-        uint256 totalUsdc;
-        uint256 totalWeth;
-        uint256 totalBwzc;
-        
-        for (uint256 i = 0; i < tokens1.length; i++) {
-            if (tokens1[i] == usdc) totalUsdc += balances1[i];
-            if (tokens1[i] == bwzc) totalBwzc += balances1[i];
-        }
-        
-        for (uint256 i = 0; i < tokens2.length; i++) {
-            if (tokens2[i] == weth) totalWeth += balances2[i];
-            if (tokens2[i] == bwzc) totalBwzc += balances2[i];
-        }
-        
-        return (totalUsdc, totalWeth, totalBwzc);
+        return (
+            bal1[0],  // USDC in first pool
+            bal2[1],  // WETH in second pool  
+            bal1[1] + bal2[0]  // BWZC in both pools
+        );
     }
     
-    function predictPerformance(uint256 daysToSimulate) external pure returns (
-        uint256 scwUsdcProfit,
-        uint256 scwWethProfit,
-        uint256 eoaUsdcFees,
-        uint256 eoaWethFees,
-        uint256 poolDeepeningValue
-    ) {
-        uint256 CYCLES_PER_DAY = 10; // Assuming 10 cycles per day
-        uint256 cycles = daysToSimulate * CYCLES_PER_DAY;
+    function predictPerformance(uint256 daysToSimulate) external pure returns (uint256, uint256, uint256, uint256, uint256) {
+        uint256 cycles = daysToSimulate * 10; // 10 cycles/day
         uint256 totalProfit = PROFIT_PER_CYCLE_USD * cycles;
+        uint256 halfProfit = totalProfit / 2;
         
-        eoaUsdcFees = (totalProfit / 2 * FEES_TO_EOA_BPS) / 10000;
-        eoaWethFees = (totalProfit / 2 * FEES_TO_EOA_BPS) / 10000;
+        uint256 eoaUsdcFees = (halfProfit * FEES_TO_EOA_BPS) / 10000;
+        uint256 eoaWethFees = (halfProfit * FEES_TO_EOA_BPS) / 10000;
+        uint256 poolDeepeningValue = (TOTAL_BOOTSTRAP_USD * DEEPENING_PERCENT_BPS * cycles) / 10000;
+        uint256 halfDeepening = poolDeepeningValue / 2;
         
-        poolDeepeningValue = (TOTAL_BOOTSTRAP_USD * DEEPENING_PERCENT_BPS * cycles) / 10000;
-        
-        scwUsdcProfit = (totalProfit / 2) - eoaUsdcFees - (poolDeepeningValue / 2);
-        scwWethProfit = (totalProfit / 2) - eoaWethFees - (poolDeepeningValue / 2);
+        uint256 scwUsdcProfit = halfProfit - eoaUsdcFees - halfDeepening;
+        uint256 scwWethProfit = halfProfit - eoaWethFees - halfDeepening;
         
         return (scwUsdcProfit, scwWethProfit, eoaUsdcFees, eoaWethFees, poolDeepeningValue);
     }
@@ -1386,13 +1578,12 @@ function calculatePreciseBootstrap() public returns (
         return _calculateMinRequiredSpread();
     }
     
-    function getConsensusEthPrice() external returns (uint256 price, uint8 confidence) {
+    function getConsensusEthPrice() external returns (uint256, uint8) {
         return _getConsensusEthPrice();
     }
     
     receive() external payable {}
     
     fallback() external payable {
-        revert("Direct ETH transfers not allowed");
+        revert("No ETH");
     }
-}
