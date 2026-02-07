@@ -1,22 +1,7 @@
 /// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// IERC20 interface needed for SafeERC20
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-    function decimals() external view returns (uint8);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-}
 
-
-
-/* -------------------------------- SAFE MATH LIBRARIES -------------------------------- */
 library SafeERC20 {
     error SafeERC20FailedOperation(address token);
     error SafeERC20FailedDecreaseAllowance(address spender, uint256 currentAllowance, uint256 requestedDecrease);
