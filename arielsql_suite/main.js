@@ -47,32 +47,21 @@ function checksum(addr) {
 function compileContract() {
   const baseDir = "arielsql_suite/scripts";
   
-  // Read both files
-  const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb.sol"), "utf8");
-  const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries.sol"), "utf8");
+  // Read both refactored files
+  const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb-sol.txt"), "utf8");
+  const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries-sol.txt"), "utf8");
   
   // Prepare solc input
   const input = {
     language: "Solidity",
     sources: {
-      "WarehouseBalancerArb.sol": {
-        content: mainSource
-      },
-      "MathLibraries.sol": {
-        content: mathLibSource
-      }
+      "WarehouseBalancerArb.sol": { content: mainSource },
+      "MathLibraries.sol": { content: mathLibSource }
     },
     settings: {
       viaIR: true,
-      optimizer: { 
-        enabled: true, 
-        runs: 1
-      },
-      outputSelection: { 
-        "*": { 
-          "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] 
-        }
-      }
+      optimizer: { enabled: true, runs: 1 },
+      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
   };
   
@@ -87,7 +76,6 @@ function compileContract() {
       errors.forEach(e => console.error(e.formattedMessage || e.message));
       throw new Error("Compilation failed");
     }
-    
     if (warnings.length) {
       warnings.forEach(w => console.warn("Warning:", w.formattedMessage || w.message));
     }
@@ -104,21 +92,6 @@ function compileContract() {
     bytecode: "0x" + compiled.evm.bytecode.object,
     deployedSize: (compiled.evm.deployedBytecode.object.length / 2)
   };
-}
-
-async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) {
-  const poolAbi = ["function getPoolId() external view returns (bytes32)"];
-  const usdcPool = new ethers.Contract(balPoolAddrUSDC, poolAbi, provider);
-  const wethPool = new ethers.Contract(balPoolAddrWETH, poolAbi, provider);
-  const usdcId = await usdcPool.getPoolId();
-  const wethId = await wethPool.getPoolId();
-  return { usdcId, wethId };
-}
-
-async function fetchBwzcDecimals(provider, bwzcAddr) {
-  const abi = ["function decimals() external view returns (uint8)"];
-  const contract = new ethers.Contract(bwzcAddr, abi, provider);
-  return await contract.decimals();
 }
 
 // --- Deploy ---
