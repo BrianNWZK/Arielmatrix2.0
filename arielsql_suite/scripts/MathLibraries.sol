@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "./IERC20.sol";
-
 /* 
 MATH LIBRARIES EXTERNALIZED FOR CONTRACT SIZE OPTIMIZATION
 Total size: ~5,100 bytes (saved from main contract)
 */
+
+import "./IERC20.sol";
 
 library SafeERC20 {
     error SafeERC20FailedOperation(address token);
