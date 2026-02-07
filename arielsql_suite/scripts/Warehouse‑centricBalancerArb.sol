@@ -289,7 +289,7 @@ interface INonfungiblePositionManager {
     );
 }
 
-/* -------------------------------- OPTIMIZED ERROR CODES -------------------------------- */
+/* -------------------------------- Custom Errors -------------------------------- */
 error SwapFailed();
 error SpreadTooLow();
 error InsufficientBalance();
@@ -312,8 +312,6 @@ error OracleConsensusFailed();
 error InvalidStateTransition();
 error ScaleLimitReached();
 error RateLimitExceeded();
-
-
 
 /* -------------------------------- SAFE MATH LIBRARIES -------------------------------- */
 library SafeERC20 {
@@ -487,82 +485,187 @@ library FullMath {
     }
 }
 
-
 library TickMath {
     int24 internal constant MIN_TICK = -887272;
-    int24 internal constant MAX_TICK = 887272;
+    int24 internal constant MAX_TICK = -MIN_TICK;
+
     uint160 internal constant MIN_SQRT_RATIO = 4295128739;
     uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
-    
+
     function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
         uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
         require(absTick <= uint256(int256(MAX_TICK)), 'T');
-        
+
         uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
-        uint256[18] memory m = [0xfff97272373d413259a46990580e213a, 0xfff2e50f5f656932ef12357cf3c7fdcc, 0xffe5caca7e10e4e61c3624eaa0941cd0, 0xffcb9843d60f6159c9db58835c926644, 0xff973b41fa98c081472e6896dfb254c0, 0xff2ea164f5c96a3843ec78b326b52861, 0xfe5dee046a99a2a811c461f1969c3053, 0xfcbe86c7900a88aedcffc83b479aa3a4, 0xf987a7253ac413176f2b074cf7815e54, 0xf3392b0822b70005940c7a398e4b70f3, 0xe7159475a2c29b7443b29c7fa6e889d9, 0xd097f3bdfd2022b8845ad8f792aa5825, 0xa9f746462d870fdf8a65dc1f90e061e5, 0x70d869a156d2a1b890bb3df62baf32f7, 0x31be135f97d08fd981231505542fcfa6, 0x9aa508b5b7a84e1c677de54f3e99bc9, 0x5d6af8dedb81196699c329225ee604, 0x2216e584f5fa1ea926041bedfe98];
-        
-        for (uint256 i = 0; i < 18; i++) {
-            if (absTick & (2 << i) != 0) ratio = (ratio * m[i]) >> 128;
-        }
-        
+        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea164f5c96a3843ec78b326b52861) >> 128;
+        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
         if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
         if (tick > 0) ratio = type(uint256).max / ratio;
-        
+
         sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
     }
-    
+
     function getTickAtSqrtRatio(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
         require(sqrtPriceX96 >= MIN_SQRT_RATIO && sqrtPriceX96 < MAX_SQRT_RATIO, 'R');
-        
         uint256 ratio = uint256(sqrtPriceX96) << 32;
-        uint256 msb = _msb(ratio);
-        
-        ratio = msb >= 128 ? ratio >> (msb - 127) : ratio << (127 - msb);
-        
+
+        uint256 r = ratio;
+        uint256 msb = 0;
+
+        assembly {
+            let f := shl(7, gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(6, gt(r, 0xFFFFFFFFFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(5, gt(r, 0xFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(4, gt(r, 0xFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(3, gt(r, 0xFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(2, gt(r, 0xF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(1, gt(r, 0x3))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := gt(r, 0x1)
+            msb := or(msb, f)
+        }
+
+        if (msb >= 128) r = ratio >> (msb - 127);
+        else r = ratio << (127 - msb);
+
         int256 log_2 = (int256(msb) - 128) << 64;
-        log_2 = _log2(ratio, log_2);
-        
-        int256 log_sqrt10001 = (log_2 * 255738958999603826347141) / (1 << 128);
-        
+
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(63, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(62, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(61, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(60, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(59, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(58, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(57, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(56, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(55, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(54, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(53, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(52, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(51, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(50, f))
+        }
+
+        int256 log_sqrt10001 = log_2 * 255738958999603826347141; // 128.128 number
+
         int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
         int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
-        
+
         tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
     }
-    
-    function _msb(uint256 x) private pure returns (uint256 msb) {
-        uint256[8] memory thresholds = [
-            0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFF,
-            0xFF,
-            0xF,
-            0x3,
-            0x1
-        ];
-        
-        for (uint256 i = 0; i < 8; i++) {
-            if (x > thresholds[i]) {
-                msb |= (7 - i) << 3;
-                x >>= (7 - i) << 3;
-            }
-        }
-        if (x > 1) msb |= 1;
-    }
-    
-    function _log2(uint256 r, int256 log_2) private pure returns (int256) {
-        for (uint256 i = 0; i < 14; i++) {
-            r = (r * r) >> 127;
-            uint256 f = r >> 128;
-            log_2 |= int256(f) << (63 - i);
-            r >>= f;
-        }
-        return log_2;
-    }
 }
-
-
 
 contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     using SafeERC20 for IERC20;
@@ -791,37 +894,64 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         _ensureApprovals();
     }
 
-    
-
-// ========== OPTIMIZED APPROVAL MANAGEMENT WITH ERROR HANDLING ==========
-function _ensureApprovals() internal {
-    // Batch approve with minimal checks
-    _batchApprove(usdc);
-    _batchApprove(weth);
-    _batchApprove(bwzc);
-}
-
-function _batchApprove(address token) private {
-    // Array of unique spenders (remove duplicates at compile time)
-    address[] memory spenders = new address[](5);
-    spenders[0] = vault;
-    spenders[1] = uniV3Router;
-    spenders[2] = uniV2Router;
-    spenders[3] = sushiRouter;
-    spenders[4] = uniV3NFT;
-    
-    IERC20 tokenContract = IERC20(token);
-    
-    for (uint256 i = 0; i < spenders.length; i++) {
-        // Quick check: skip zero address
-        if (spenders[i] == address(0)) continue;
+    // ========== APPROVAL MANAGEMENT ==========
+    function _ensureApprovals() internal {
+        // Balancer Vault approvals (only if needed)
+        if (IERC20(usdc).allowance(address(this), vault) == 0) {
+            IERC20(usdc).approve(vault, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), vault) == 0) {
+            IERC20(weth).approve(vault, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), vault) == 0) {
+            IERC20(bwzc).approve(vault, type(uint256).max);
+        }
         
-        // Only approve if allowance is 0
-        if (tokenContract.allowance(address(this), spenders[i]) == 0) {
-            tokenContract.approve(spenders[i], type(uint256).max);
+        // Uniswap V3 Router approvals
+        if (IERC20(usdc).allowance(address(this), uniV3Router) == 0) {
+            IERC20(usdc).approve(uniV3Router, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), uniV3Router) == 0) {
+            IERC20(weth).approve(uniV3Router, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), uniV3Router) == 0) {
+            IERC20(bwzc).approve(uniV3Router, type(uint256).max);
+        }
+        
+        // Uniswap V2 Router approvals
+        if (IERC20(usdc).allowance(address(this), uniV2Router) == 0) {
+            IERC20(usdc).approve(uniV2Router, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), uniV2Router) == 0) {
+            IERC20(weth).approve(uniV2Router, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), uniV2Router) == 0) {
+            IERC20(bwzc).approve(uniV2Router, type(uint256).max);
+        }
+        
+        // SushiSwap Router approvals
+        if (IERC20(usdc).allowance(address(this), sushiRouter) == 0) {
+            IERC20(usdc).approve(sushiRouter, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), sushiRouter) == 0) {
+            IERC20(weth).approve(sushiRouter, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), sushiRouter) == 0) {
+            IERC20(bwzc).approve(sushiRouter, type(uint256).max);
+        }
+        
+        // Uniswap V3 NFT Position Manager approvals
+        if (IERC20(usdc).allowance(address(this), uniV3NFT) == 0) {
+            IERC20(usdc).approve(uniV3NFT, type(uint256).max);
+        }
+        if (IERC20(weth).allowance(address(this), uniV3NFT) == 0) {
+            IERC20(weth).approve(uniV3NFT, type(uint256).max);
+        }
+        if (IERC20(bwzc).allowance(address(this), uniV3NFT) == 0) {
+            IERC20(bwzc).approve(uniV3NFT, type(uint256).max);
         }
     }
-}
+
     
 
     modifier whenNotPaused() {
@@ -1473,25 +1603,33 @@ function calculatePreciseBootstrap() public returns (
         emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
     }
 
-   /* ==================== OPTIMIZED VIEW & HELPER FUNCTIONS ==================== */
+    /* ==================== VIEW & HELPER FUNCTIONS ==================== */
     
     function addUniswapV3Position(uint256 tokenId, bool isUsdcPosition) external onlyOwner {
-        (,,address token0, address token1,,,,,,,,) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
+        // Fetch position data to verify
+        (, , address token0, address token1, , , , , , , , ) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
         
-        // Verify valid BWZC pool
-        bool isValid = (token0 == bwzc && (token1 == usdc || token1 == weth)) || 
-                      (token1 == bwzc && (token0 == usdc || token0 == weth));
-        require(isValid, "Invalid pool");
+        // Verify it's a valid BWZC pool
+        require((token0 == bwzc && (token1 == usdc || token1 == weth)) || 
+                (token1 == bwzc && (token0 == usdc || token0 == weth)), "Invalid pool");
         
         uniV3PositionIds.push(tokenId);
-        positionInfo[tokenId] = PositionInfo(token0, token1, isUsdcPosition);
+        positionInfo[tokenId] = PositionInfo({
+            token0: token0,
+            token1: token1,
+            isUsdcPosition: isUsdcPosition
+        });
     }
     
     function removeUniswapV3Position(uint256 index) external onlyOwner {
-        require(index < uniV3PositionIds.length, "Index OOB");
+        require(index < uniV3PositionIds.length, "Index out of bounds");
         uint256 tokenId = uniV3PositionIds[index];
+        
+        // Remove from array
         uniV3PositionIds[index] = uniV3PositionIds[uniV3PositionIds.length - 1];
         uniV3PositionIds.pop();
+        
+        // Clear position info
         delete positionInfo[tokenId];
     }
     
@@ -1500,13 +1638,16 @@ function calculatePreciseBootstrap() public returns (
     }
     
     function _rollbackTransaction() internal {
-        address[3] memory tokens = [usdc, weth, bwzc];
-        for (uint256 i = 0; i < tokens.length; i++) {
-            uint256 bal = IERC20(tokens[i]).balanceOf(address(this));
-            if (bal > 0) IERC20(tokens[i]).safeTransfer(scw, bal);
-        }
+        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+        uint256 wethBalance = IERC20(weth).balanceOf(address(this));
+        uint256 bwzcBalance = IERC20(bwzc).balanceOf(address(this));
+        
+        if (usdcBalance > 0) IERC20(usdc).safeTransfer(scw, usdcBalance);
+        if (wethBalance > 0) IERC20(weth).safeTransfer(scw, wethBalance);
+        if (bwzcBalance > 0) IERC20(bwzc).safeTransfer(scw, bwzcBalance);
+        
         txState = TransactionState.ROLLED_BACK;
-        emit Rollback("Rolled back");
+        emit Rollback("Transaction rolled back");
     }
     
     function resetTransactionState() external onlyOwner {
@@ -1524,17 +1665,22 @@ function calculatePreciseBootstrap() public returns (
     }
     
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
-        require(paused, "!emergency");
+        require(paused, "Not in emergency");
         IERC20(token).safeTransfer(owner(), amount);
     }
     
     function emergencyWithdrawETH(uint256 amount) external onlyOwner {
-        require(paused, "!emergency");
-        (bool success,) = owner().call{value: amount}("");
-        require(success, "ETH fail");
+        require(paused, "Not in emergency");
+        (bool success, ) = owner().call{value: amount}("");
+        require(success, "ETH transfer failed");
     }
     
-    function getContractBalances() external view returns (uint256, uint256, uint256, uint256) {
+    function getContractBalances() external view returns (
+        uint256 usdcBal,
+        uint256 wethBal,
+        uint256 bwzcBal,
+        uint256 ethBal
+    ) {
         return (
             IERC20(usdc).balanceOf(address(this)),
             IERC20(weth).balanceOf(address(this)),
@@ -1543,29 +1689,51 @@ function calculatePreciseBootstrap() public returns (
         );
     }
     
-    function getPoolBalances() external view returns (uint256, uint256, uint256) {
-        (,uint256[] memory bal1,) = IBalancerVault(vault).getPoolTokens(balBWUSDCId);
-        (,uint256[] memory bal2,) = IBalancerVault(vault).getPoolTokens(balBWWETHId);
+    function getPoolBalances() external view returns (
+        uint256 balancerUsdc,
+        uint256 balancerWeth,
+        uint256 balancerBwzc
+    ) {
+        (address[] memory tokens1, uint256[] memory balances1, ) = 
+            IBalancerVault(vault).getPoolTokens(balBWUSDCId);
+        (address[] memory tokens2, uint256[] memory balances2, ) = 
+            IBalancerVault(vault).getPoolTokens(balBWWETHId);
         
-        return (
-            bal1[0],  // USDC in first pool
-            bal2[1],  // WETH in second pool  
-            bal1[1] + bal2[0]  // BWZC in both pools
-        );
+        uint256 totalUsdc;
+        uint256 totalWeth;
+        uint256 totalBwzc;
+        
+        for (uint256 i = 0; i < tokens1.length; i++) {
+            if (tokens1[i] == usdc) totalUsdc += balances1[i];
+            if (tokens1[i] == bwzc) totalBwzc += balances1[i];
+        }
+        
+        for (uint256 i = 0; i < tokens2.length; i++) {
+            if (tokens2[i] == weth) totalWeth += balances2[i];
+            if (tokens2[i] == bwzc) totalBwzc += balances2[i];
+        }
+        
+        return (totalUsdc, totalWeth, totalBwzc);
     }
     
-    function predictPerformance(uint256 daysToSimulate) external pure returns (uint256, uint256, uint256, uint256, uint256) {
-        uint256 cycles = daysToSimulate * 10; // 10 cycles/day
+    function predictPerformance(uint256 daysToSimulate) external pure returns (
+        uint256 scwUsdcProfit,
+        uint256 scwWethProfit,
+        uint256 eoaUsdcFees,
+        uint256 eoaWethFees,
+        uint256 poolDeepeningValue
+    ) {
+        uint256 CYCLES_PER_DAY = 10; // Assuming 10 cycles per day
+        uint256 cycles = daysToSimulate * CYCLES_PER_DAY;
         uint256 totalProfit = PROFIT_PER_CYCLE_USD * cycles;
-        uint256 halfProfit = totalProfit / 2;
         
-        uint256 eoaUsdcFees = (halfProfit * FEES_TO_EOA_BPS) / 10000;
-        uint256 eoaWethFees = (halfProfit * FEES_TO_EOA_BPS) / 10000;
-        uint256 poolDeepeningValue = (TOTAL_BOOTSTRAP_USD * DEEPENING_PERCENT_BPS * cycles) / 10000;
-        uint256 halfDeepening = poolDeepeningValue / 2;
+        eoaUsdcFees = (totalProfit / 2 * FEES_TO_EOA_BPS) / 10000;
+        eoaWethFees = (totalProfit / 2 * FEES_TO_EOA_BPS) / 10000;
         
-        uint256 scwUsdcProfit = halfProfit - eoaUsdcFees - halfDeepening;
-        uint256 scwWethProfit = halfProfit - eoaWethFees - halfDeepening;
+        poolDeepeningValue = (TOTAL_BOOTSTRAP_USD * DEEPENING_PERCENT_BPS * cycles) / 10000;
+        
+        scwUsdcProfit = (totalProfit / 2) - eoaUsdcFees - (poolDeepeningValue / 2);
+        scwWethProfit = (totalProfit / 2) - eoaWethFees - (poolDeepeningValue / 2);
         
         return (scwUsdcProfit, scwWethProfit, eoaUsdcFees, eoaWethFees, poolDeepeningValue);
     }
@@ -1578,13 +1746,13 @@ function calculatePreciseBootstrap() public returns (
         return _calculateMinRequiredSpread();
     }
     
-    function getConsensusEthPrice() external returns (uint256, uint8) {
+    function getConsensusEthPrice() external returns (uint256 price, uint8 confidence) {
         return _getConsensusEthPrice();
     }
     
     receive() external payable {}
     
     fallback() external payable {
-        revert("No ETH");
+        revert("Direct ETH transfers not allowed");
     }
-} 
+}
