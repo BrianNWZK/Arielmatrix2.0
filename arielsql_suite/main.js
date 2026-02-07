@@ -25,7 +25,7 @@ const RAW = {
   quoter_v2: "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6",
   entrypoint: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
   chainlink_ethusd: "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
-  chainlink_ethusd_secondary: "0x0000000000000000000000000000000000000000", // Placeholder
+  chainlink_ethusd_secondary: "0x0000000000000000000000000000000000000000",
   univ3_bw_usdc: "0x261c64d4d96ebfa14398b52d93c9d063e3a619f8",
   univ3_bw_weth: "0x142c3dce0a5605fb385fae7760302fab761022aa",
   univ2_bw_usdc: "0xb3911905f8a6160ef89391442f85eca7c397859c",
@@ -35,7 +35,6 @@ const RAW = {
   bal_bw_usdc: "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
   bal_bw_weth: "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef",
   position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88",
-  // Dual paymasters (from your deployment logs)
   paymaster_a: "0x4e073aaa36cd51fd37298f87e3fce8437a08dd71",
   paymaster_b: "0x79a515d5a085d2b86aff104ec9c8c2152c9549c0"
 };
@@ -45,47 +44,29 @@ function checksum(addr) {
   return ethers.getAddress(addr.toLowerCase());
 }
 
-function findAllSolidityFiles(baseDir) {
-  const files = [];
+function compileContract() {
+  const baseDir = "arielsql_suite/scripts";
   
-  function scanDirectory(dir) {
-    const items = fs.readdirSync(dir, { withFileTypes: true });
-    
-    for (const item of items) {
-      const fullPath = path.join(dir, item.name);
-      
-      if (item.isDirectory()) {
-        scanDirectory(fullPath);
-      } else if (item.name.endsWith('.sol')) {
-        files.push({
-          name: item.name,
-          path: fullPath,
-          relativePath: path.relative(baseDir, fullPath)
-        });
-      }
-    }
-  }
+  // Read both files
+  const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb.sol"), "utf8");
+  const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries.sol"), "utf8");
   
-  scanDirectory(baseDir);
-  return files;
-}
-
-function compileMultiFile(sourceFiles, mainFile) {
-  // Prepare input for solc
+  // Prepare solc input
   const input = {
     language: "Solidity",
-    sources: {},
+    sources: {
+      "WarehouseBalancerArb.sol": {
+        content: mainSource
+      },
+      "MathLibraries.sol": {
+        content: mathLibSource
+      }
+    },
     settings: {
       viaIR: true,
       optimizer: { 
         enabled: true, 
-        runs: 1,
-        details: {
-          yul: true,
-          yulDetails: {
-            optimizerSteps: "u"
-          }
-        }
+        runs: 1
       },
       outputSelection: { 
         "*": { 
@@ -95,16 +76,7 @@ function compileMultiFile(sourceFiles, mainFile) {
     }
   };
   
-  // Add all source files
-  for (const file of sourceFiles) {
-    input.sources[file.relativePath] = {
-      content: fs.readFileSync(file.path, 'utf8')
-    };
-  }
-  
-  console.log(`Compiling ${sourceFiles.length} files...`);
-  console.log("Main file:", mainFile.relativePath);
-  
+  console.log("Compiling contracts...");
   const output = JSON.parse(solc.compile(JSON.stringify(input)));
   
   if (output.errors) {
@@ -121,8 +93,7 @@ function compileMultiFile(sourceFiles, mainFile) {
     }
   }
   
-  // Find the main contract
-  const compiled = output.contracts[mainFile.relativePath]?.WarehouseBalancerArb;
+  const compiled = output.contracts["WarehouseBalancerArb.sol"]?.WarehouseBalancerArb;
   if (!compiled) {
     console.error("Available contracts:", Object.keys(output.contracts || {}));
     throw new Error("Contract WarehouseBalancerArb not found.");
@@ -154,62 +125,51 @@ async function fetchBwzcDecimals(provider, bwzcAddr) {
 async function main() {
   console.log("=== Compile + Deploy WarehouseBalancerArb V20 ===");
   
-  const baseDir = "arielsql_suite/scripts";
-  
-  // Check if the files exist
-  if (!fs.existsSync(baseDir)) {
-    throw new Error(`Directory ${baseDir} not found. Make sure your project structure is correct.`);
-  }
-  
-  // Find all Solidity files
-  const allFiles = findAllSolidityFiles(baseDir);
-  console.log(`Found ${allFiles.length} Solidity files`);
-  
-  // Find the main contract
-  const mainFile = allFiles.find(f => 
-    f.name.toLowerCase().includes("warehouse") && 
-    f.name.toLowerCase().includes("balancerarb")
-  );
-  
-  if (!mainFile) {
-    throw new Error("WarehouseBalancerArb.sol not found");
-  }
-  
-  // Compile all files together
-  const { abi, bytecode, deployedSize } = compileMultiFile(allFiles, mainFile);
-  
-  console.log(`Deployed bytecode size: ${deployedSize} bytes`);
-  console.log(`Contract size check: ${deployedSize > 24576 ? '❌ EXCEEDS LIMIT' : '✅ OK'} (limit: 24576 bytes)`);
-  
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-  console.log("Deployer:", wallet.address);
-  console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
-  
-  // Normalize addresses
-  const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
-  
-  // Fetch Balancer pool IDs
-  console.log("Fetching Balancer pool IDs...");
-  const { usdcId: BAL_BW_USDC_ID, wethId: BAL_BW_WETH_ID } = await fetchBalancerPoolIds(
-    provider,
-    A.BAL_BW_USDC,
-    A.BAL_BW_WETH
-  );
-  console.log("BAL_BW_USDC_ID:", BAL_BW_USDC_ID);
-  console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
-  
-  // Fetch BWZC decimals
-  console.log("Fetching BWZC decimals...");
-  const BWZC_DECIMALS = await fetchBwzcDecimals(provider, A.BWZC);
-  console.log("BWZC_DECIMALS:", BWZC_DECIMALS);
-  
-  const factory = new ethers.ContractFactory(abi, bytecode, wallet);
-  
-  // ✅ CORRECTED: 20 parameters matching your constructor exactly
-  console.log("Deploying with 20 constructor arguments...");
-  
   try {
+    // Compile
+    const { abi, bytecode, deployedSize } = compileContract();
+    
+    console.log(`Deployed bytecode size: ${deployedSize} bytes`);
+    console.log(`Contract size check: ${deployedSize > 24576 ? '❌ EXCEEDS LIMIT' : '✅ OK'} (limit: 24576 bytes)`);
+    
+    if (deployedSize > 24576) {
+      console.warn("\n⚠️  WARNING: Contract size exceeds limit!");
+      console.warn("Consider additional optimizations:");
+      console.warn("1. Use more aggressive optimizer settings");
+      console.warn("2. Move more functions to external libraries");
+      console.warn("3. Remove unused functions");
+      console.warn("4. Use shorter error messages");
+    }
+    
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+    console.log("\nDeployer:", wallet.address);
+    console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
+    
+    // Normalize addresses
+    const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
+    
+    // Fetch Balancer pool IDs
+    console.log("\nFetching Balancer pool IDs...");
+    const { usdcId: BAL_BW_USDC_ID, wethId: BAL_BW_WETH_ID } = await fetchBalancerPoolIds(
+      provider,
+      A.BAL_BW_USDC,
+      A.BAL_BW_WETH
+    );
+    console.log("BAL_BW_USDC_ID:", BAL_BW_USDC_ID);
+    console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
+    
+    // Fetch BWZC decimals
+    console.log("\nFetching BWZC decimals...");
+    const BWZC_DECIMALS = await fetchBwzcDecimals(provider, A.BWZC);
+    console.log("BWZC_DECIMALS:", BWZC_DECIMALS);
+    
+    const factory = new ethers.ContractFactory(abi, bytecode, wallet);
+    
+    // Deploy with 20 constructor arguments
+    console.log("\nDeploying with 20 constructor arguments...");
+    console.log("This may take a moment...");
+    
     const contract = await factory.deploy(
       A.SCW,                    // 1. _scw
       A.USDC,                   // 2. _usdc
@@ -232,11 +192,12 @@ async function main() {
       A.PAYMASTER_A,            // 19. _paymasterA
       A.PAYMASTER_B,            // 20. _paymasterB
       {
-        gasLimit: 10000000  // Increased gas limit for large contract
+        gasLimit: 10000000,
+        gasPrice: await provider.getFeeData().then(feeData => feeData.gasPrice)
       }
     );
     
-    console.log("TX sent:", contract.deploymentTransaction().hash);
+    console.log("\nTX sent:", contract.deploymentTransaction().hash);
     console.log("Waiting for deployment confirmation...");
     
     await contract.waitForDeployment();
@@ -291,36 +252,15 @@ async function main() {
     console.log("\n🎉 Deployment successful!");
     
   } catch (error) {
-    console.error("❌ Deployment failed:", error.message);
+    console.error("\n❌ Deployment failed:", error.message);
+    console.error("Stack:", error.stack);
     
-    // Helpful debug info
     if (error.message.includes("insufficient funds")) {
       console.error("\n💡 Tip: Add more ETH to your deployer wallet");
     } else if (error.message.includes("nonce")) {
       console.error("\n💡 Tip: Try resetting your wallet nonce");
-    } else if (error.message.includes("argument") || error.message.includes("overrides")) {
-      console.error("\n💡 Tip: Constructor argument mismatch - verify the 20 parameters match exactly");
-      console.error("Expected constructor parameters:");
-      console.error("1. _scw (address)");
-      console.error("2. _usdc (address)");
-      console.error("3. _weth (address)");
-      console.error("4. _bwzc (address)");
-      console.error("5. _vault (address)");
-      console.error("6. _uniV2Router (address)");
-      console.error("7. _sushiRouter (address)");
-      console.error("8. _uniV3Router (address)");
-      console.error("9. _uniV3NFT (address)");
-      console.error("10. _quoterV2 (address)");
-      console.error("11. _balBWUSDCId (bytes32)");
-      console.error("12. _balBWWETHId (bytes32)");
-      console.error("13. _chainlinkEthUsd (address)");
-      console.error("14. _chainlinkEthUsdSecondary (address)");
-      console.error("15. _uniV3EthUsdPool (address)");
-      console.error("16. _uniV3UsdcPool (address)");
-      console.error("17. _uniV3WethPool (address)");
-      console.error("18. _entryPoint (address)");
-      console.error("19. _paymasterA (address)");
-      console.error("20. _paymasterB (address)");
+    } else if (error.message.includes("argument")) {
+      console.error("\n💡 Tip: Constructor argument mismatch");
     }
     
     process.exit(1);
