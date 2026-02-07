@@ -1,16 +1,18 @@
 /// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 
 library SafeERC20 {
     error SafeERC20FailedOperation(address token);
     error SafeERC20FailedDecreaseAllowance(address spender, uint256 currentAllowance, uint256 requestedDecrease);
 
-    function safeTransfer(IERC20 token, address to, uint256 value) internal {
-        if (!_safeTransfer(token, to, value, true)) {
-            revert SafeERC20FailedOperation(address(token));
-        }
+   function safeTransfer(IERC20 token, address to, uint256 value) internal {
+    if (!_safeTransfer(token, to, value, true)) {
+        revert SafeERC20FailedOperation(address(token));
     }
+}
+
 
     function safeTransferFrom(IERC20 token, address from, address to, uint256 value) internal {
         if (!_safeTransferFrom(token, from, to, value, true)) {
