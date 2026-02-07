@@ -403,7 +403,9 @@ library TickMath {
         int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
         tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
     }
-}contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
+}
+
+contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     using SafeERC20 for IERC20;
 
     // ────────────────────────────────────────────────
