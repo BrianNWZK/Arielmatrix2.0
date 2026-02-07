@@ -783,8 +783,8 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         address _uniV3WethPool,
         address _entryPoint,
         address _paymasterA,
-        address _paymasterB,
-        uint8 _bwzcDecimals
+        address _paymasterB
+        
     ) Ownable(msg.sender) {
         // Set all configurable addresses
         scw = _scw;
