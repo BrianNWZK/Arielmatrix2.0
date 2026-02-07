@@ -31,7 +31,7 @@ const RAW = {
   univ2_bw_usdc: "0xb3911905f8a6160ef89391442f85eca7c397859c",
   univ2_bw_weth: "0x6dF6F882ED69918349F75Fe397b37e62C04515b6",
   sushi_bw_usdc: "0x9d2f8f9a2e3c240decbbe23e9b3521e6ca2489d1",
-  sushi_bw_weth: "0xe9e62c8cc585c21fb05fd82fb68e0129711869f9",
+  sushi_bw_weth: "0xe9e62c8cc585c21fb5fd82fb68e0129711869f9",
   bal_bw_usdc: "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
   bal_bw_weth: "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef",
   position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88",
@@ -45,40 +45,89 @@ function checksum(addr) {
   return ethers.getAddress(addr.toLowerCase());
 }
 
-function findContractFile() {
-  const baseDir = "arielsql_suite/scripts";
-  const files = fs.readdirSync(baseDir);
-  const target = files.find(
-    f =>
-      f.endsWith(".sol") &&
-      f.toLowerCase().includes("warehouse") &&
-      f.toLowerCase().includes("balancerarb")
-  );
-  if (!target) throw new Error(`Solidity file not found in ${baseDir}.`);
-  return { baseDir, file: target, fullPath: path.join(baseDir, target) };
+function findAllSolidityFiles(baseDir) {
+  const files = [];
+  
+  function scanDirectory(dir) {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
+      
+      if (item.isDirectory()) {
+        scanDirectory(fullPath);
+      } else if (item.name.endsWith('.sol')) {
+        files.push({
+          name: item.name,
+          path: fullPath,
+          relativePath: path.relative(baseDir, fullPath)
+        });
+      }
+    }
+  }
+  
+  scanDirectory(baseDir);
+  return files;
 }
 
-function compile(source, fileName) {
+function compileMultiFile(sourceFiles, mainFile) {
+  // Prepare input for solc
   const input = {
     language: "Solidity",
-    sources: { [fileName]: { content: source } },
+    sources: {},
     settings: {
-      optimizer: { enabled: true, runs: 1 },
       viaIR: true,
-      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
+      optimizer: { 
+        enabled: true, 
+        runs: 1,
+        details: {
+          yul: true,
+          yulDetails: {
+            optimizerSteps: "u"
+          }
+        }
+      },
+      outputSelection: { 
+        "*": { 
+          "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] 
+        }
+      }
     }
   };
+  
+  // Add all source files
+  for (const file of sourceFiles) {
+    input.sources[file.relativePath] = {
+      content: fs.readFileSync(file.path, 'utf8')
+    };
+  }
+  
+  console.log(`Compiling ${sourceFiles.length} files...`);
+  console.log("Main file:", mainFile.relativePath);
+  
   const output = JSON.parse(solc.compile(JSON.stringify(input)));
+  
   if (output.errors) {
-    const errs = output.errors.filter(e => e.severity === "error");
-    if (errs.length) {
-      errs.forEach(e => console.error(e.formattedMessage));
+    const errors = output.errors.filter(e => e.severity === "error");
+    const warnings = output.errors.filter(e => e.severity === "warning");
+    
+    if (errors.length) {
+      errors.forEach(e => console.error(e.formattedMessage || e.message));
       throw new Error("Compilation failed");
     }
-    output.errors.filter(e => e.severity === "warning").forEach(w => console.warn("Warning:", w.formattedMessage));
+    
+    if (warnings.length) {
+      warnings.forEach(w => console.warn("Warning:", w.formattedMessage || w.message));
+    }
   }
-  const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
-  if (!compiled) throw new Error("Contract WarehouseBalancerArb not found.");
+  
+  // Find the main contract
+  const compiled = output.contracts[mainFile.relativePath]?.WarehouseBalancerArb;
+  if (!compiled) {
+    console.error("Available contracts:", Object.keys(output.contracts || {}));
+    throw new Error("Contract WarehouseBalancerArb not found.");
+  }
+  
   return {
     abi: compiled.abi,
     bytecode: "0x" + compiled.evm.bytecode.object,
@@ -104,12 +153,33 @@ async function fetchBwzcDecimals(provider, bwzcAddr) {
 // --- Deploy ---
 async function main() {
   console.log("=== Compile + Deploy WarehouseBalancerArb V20 ===");
-  const { baseDir, file, fullPath } = findContractFile();
-  console.log("Source file:", fullPath);
   
-  const source = fs.readFileSync(fullPath, "utf8");
-  const { abi, bytecode, deployedSize } = compile(source, file);
+  const baseDir = "arielsql_suite/scripts";
+  
+  // Check if the files exist
+  if (!fs.existsSync(baseDir)) {
+    throw new Error(`Directory ${baseDir} not found. Make sure your project structure is correct.`);
+  }
+  
+  // Find all Solidity files
+  const allFiles = findAllSolidityFiles(baseDir);
+  console.log(`Found ${allFiles.length} Solidity files`);
+  
+  // Find the main contract
+  const mainFile = allFiles.find(f => 
+    f.name.toLowerCase().includes("warehouse") && 
+    f.name.toLowerCase().includes("balancerarb")
+  );
+  
+  if (!mainFile) {
+    throw new Error("WarehouseBalancerArb.sol not found");
+  }
+  
+  // Compile all files together
+  const { abi, bytecode, deployedSize } = compileMultiFile(allFiles, mainFile);
+  
   console.log(`Deployed bytecode size: ${deployedSize} bytes`);
+  console.log(`Contract size check: ${deployedSize > 24576 ? '❌ EXCEEDS LIMIT' : '✅ OK'} (limit: 24576 bytes)`);
   
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
@@ -161,6 +231,9 @@ async function main() {
       A.ENTRYPOINT,             // 18. _entryPoint
       A.PAYMASTER_A,            // 19. _paymasterA
       A.PAYMASTER_B,            // 20. _paymasterB
+      {
+        gasLimit: 10000000  // Increased gas limit for large contract
+      }
     );
     
     console.log("TX sent:", contract.deploymentTransaction().hash);
@@ -203,7 +276,6 @@ async function main() {
         A.ENTRYPOINT,
         A.PAYMASTER_A,
         A.PAYMASTER_B,
-        
       ],
       poolIds: {
         BAL_BW_USDC_ID: BAL_BW_USDC_ID,
