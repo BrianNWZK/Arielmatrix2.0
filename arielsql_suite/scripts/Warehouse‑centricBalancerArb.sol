@@ -290,28 +290,28 @@ interface INonfungiblePositionManager {
 }
 
 /* -------------------------------- OPTIMIZED ERROR CODES -------------------------------- */
-error Err01(); // SwapFailed
-error Err02(); // SpreadTooLow  
-error Err03(); // InsufficientBalance
-error Err04(); // ETHTransferFailed
-error Err05(); // MathOverflow
-error Err06(); // LowLiquidity
-error Err07(); // InvalidSignature
-error Err08(); // NonceUsed
-error Err09(); // DeadlineExpired
-error Err10(); // Paused
-error Err11(); // DeviationTooHigh
-error Err12(); // StaleOracle
-error Err13(); // InsufficientLiquidity
-error Err14(); // JoinFailed
-error Err15(); // ExitFailed
-error Err16(); // HarvestFailed
-error Err17(); // InvalidParameter
-error Err18(); // InsufficientFunds
-error Err19(); // OracleConsensusFailed
-error Err20(); // InvalidStateTransition
-error Err21(); // ScaleLimitReached
-error Err22(); // RateLimitExceeded
+error SwapFailed();
+error SpreadTooLow();
+error InsufficientBalance();
+error ETHTransferFailed();
+error MathOverflow();
+error LowLiquidity();
+error InvalidSignature();
+error NonceUsed();
+error DeadlineExpired();
+error Paused();
+error DeviationTooHigh();
+error StaleOracle();
+error InsufficientLiquidity();
+error JoinFailed();
+error ExitFailed();
+error HarvestFailed();
+error InvalidParameter();
+error InsufficientFunds();
+error OracleConsensusFailed();
+error InvalidStateTransition();
+error ScaleLimitReached();
+error RateLimitExceeded();
 
 
 
