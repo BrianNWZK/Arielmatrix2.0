@@ -46,24 +46,25 @@ function checksum(addr) {
 
 function compileContract() {
   const baseDir = "arielsql_suite/scripts";
-  
-  // Read both refactored files
-  const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb.sol"), "utf8");
-  const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries.sol"), "utf8");
-  
-  // Prepare solc input
-  const input = {
-    language: "Solidity",
-    sources: {
-      "WarehouseBalancerArb.sol": { content: mainSource },
-      "MathLibraries.sol": { content: mathLibSource }
-    },
-    settings: {
-      viaIR: true,
-      optimizer: { enabled: true, runs: 1 },
-      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
-    }
-  };
+
+const mainSource = fs.readFileSync(path.join(baseDir, "Warehouse‑centricBalancerArb.sol"), "utf8");
+const mathLibSource = fs.readFileSync(path.join(baseDir, "MathLibraries.sol"), "utf8");
+const ierc20Source = fs.readFileSync(path.join(baseDir, "IERC20.sol"), "utf8");
+
+const input = {
+  language: "Solidity",
+  sources: {
+    "WarehouseBalancerArb.sol": { content: mainSource },
+    "MathLibraries.sol": { content: mathLibSource },
+    "IERC20.sol": { content: ierc20Source }
+  },
+  settings: {
+    viaIR: true,
+    optimizer: { enabled: true, runs: 200 },
+    outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
+  }
+};
+
   
   console.log("Compiling contracts...");
   const output = JSON.parse(solc.compile(JSON.stringify(input)));
