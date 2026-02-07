@@ -7,9 +7,6 @@ MATH LIBRARIES EXTERNALIZED FOR CONTRACT SIZE OPTIMIZATION
 Total size: ~5,100 bytes (saved from main contract)
 */
 
-
-
-/* -------------------------------- SAFE MATH LIBRARIES -------------------------------- */
 library SafeERC20 {
     error SafeERC20FailedOperation(address token);
     error SafeERC20FailedDecreaseAllowance(address spender, uint256 currentAllowance, uint256 requestedDecrease);
