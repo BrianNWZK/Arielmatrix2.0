@@ -313,6 +313,7 @@ error InvalidStateTransition();
 error ScaleLimitReached();
 error RateLimitExceeded();
 
+
 /* -------------------------------- SAFE MATH LIBRARIES -------------------------------- */
 library SafeERC20 {
     error SafeERC20FailedOperation(address token);
@@ -496,26 +497,37 @@ library TickMath {
         uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
         require(absTick <= uint256(int256(MAX_TICK)), 'T');
 
-        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
-        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
-        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
-        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
-        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
-        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
-        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea164f5c96a3843ec78b326b52861) >> 128;
-        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
-        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
-        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
-        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
-        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
-        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
-        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
-        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
-        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
-        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
-        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
-        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
-        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+        uint256[20] memory ratios = [
+            0xfffcb933bd6fad37aa2d162d1a594001,
+            0xfff97272373d413259a46990580e213a,
+            0xfff2e50f5f656932ef12357cf3c7fdcc,
+            0xffe5caca7e10e4e61c3624eaa0941cd0,
+            0xffcb9843d60f6159c9db58835c926644,
+            0xff973b41fa98c081472e6896dfb254c0,
+            0xff2ea164f5c96a3843ec78b326b52861,
+            0xfe5dee046a99a2a811c461f1969c3053,
+            0xfcbe86c7900a88aedcffc83b479aa3a4,
+            0xf987a7253ac413176f2b074cf7815e54,
+            0xf3392b0822b70005940c7a398e4b70f3,
+            0xe7159475a2c29b7443b29c7fa6e889d9,
+            0xd097f3bdfd2022b8845ad8f792aa5825,
+            0xa9f746462d870fdf8a65dc1f90e061e5,
+            0x70d869a156d2a1b890bb3df62baf32f7,
+            0x31be135f97d08fd981231505542fcfa6,
+            0x9aa508b5b7a84e1c677de54f3e99bc9,
+            0x5d6af8dedb81196699c329225ee604,
+            0x2216e584f5fa1ea926041bedfe98,
+            0x48a170391f7dc42444e8fa2
+        ];
+
+        uint256 ratio = (absTick & 0x1 != 0) ? ratios[0] : 0x100000000000000000000000000000000;
+        uint256 mask = 0x2;
+        for (uint8 i = 1; i < 20; i++) {
+            if (absTick & mask != 0) {
+                ratio = (ratio * ratios[i]) >> 128;
+            }
+            mask <<= 1;
+        }
 
         if (tick > 0) ratio = type(uint256).max / ratio;
 
@@ -529,44 +541,25 @@ library TickMath {
         uint256 r = ratio;
         uint256 msb = 0;
 
-        assembly {
-            let f := shl(7, gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(6, gt(r, 0xFFFFFFFFFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(5, gt(r, 0xFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(4, gt(r, 0xFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(3, gt(r, 0xFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(2, gt(r, 0xF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(1, gt(r, 0x3))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := gt(r, 0x1)
-            msb := or(msb, f)
+        uint8[8] memory shiftAmounts = [7, 6, 5, 4, 3, 2, 1, 0];
+        uint256[8] memory thresholds = [
+            0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFF,
+            0xFFFF,
+            0xFF,
+            0xF,
+            0x3,
+            0x1
+        ];
+
+        for (uint8 i = 0; i < 8; i++) {
+            uint256 threshold = thresholds[i];
+            assembly {
+                let f := shl(mload(add(shiftAmounts, mul(0x20, i))), gt(r, threshold))
+                msb := or(msb, f)
+                r := shr(f, r)
+            }
         }
 
         if (msb >= 128) r = ratio >> (msb - 127);
@@ -574,88 +567,15 @@ library TickMath {
 
         int256 log_2 = (int256(msb) - 128) << 64;
 
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(63, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(62, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(61, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(60, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(59, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(58, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(57, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(56, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(55, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(54, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(53, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(52, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(51, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(50, f))
+        uint8 shift = 63;
+        for (uint8 i = 0; i < 14; i++) {
+            assembly {
+                r := shr(127, mul(r, r))
+                let f := shr(128, r)
+                log_2 := or(log_2, shl(shift, f))
+                r := shr(f, r)
+            }
+            shift--;
         }
 
         int256 log_sqrt10001 = log_2 * 255738958999603826347141; // 128.128 number
@@ -667,35 +587,42 @@ library TickMath {
     }
 }
 
+
 contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     using SafeERC20 for IERC20;
 
-    // Constants
-    uint256 public constant TOTAL_BOOTSTRAP_USD = 4_000_000 * 1e6; // $4M with 6 decimals
-    uint256 public constant BALANCER_PRICE_USD = 23_500_000; // $23.50 with 6 decimals
-    uint256 public constant UNIV3_TARGET_PRICE_USD = 100_000_000; // $100 with 6 decimals
-    uint256 public constant BALANCER_FLASH_FEE_BPS = 9; // 0.09%
-    uint256 public constant SAFETY_BUFFER_BPS = 100; // 1%
-    uint256 public constant SLIPPAGE_TOLERANCE_BPS = 50; // 0.5%
-    uint256 public constant DEEPENING_PERCENT_BPS = 300; // 3%
-    uint256 public constant FEES_TO_EOA_BPS = 1500; // 15%
-    uint256 public constant SCALE_INCREMENT_BPS = 500; // 5%
-    uint256 public constant MAX_SCALE_BPS = 5000; // 50%
-    uint256 public constant PROFIT_PER_CYCLE_USD = 184000 * 1e6;
-    uint256 public constant USDC_DECIMALS = 6;
-    uint256 public constant WETH_DECIMALS = 18;
-    uint256 public constant BWZC_DECIMALS = 18;
+    // ────────────────────────────────────────────────
+    // Constants – made some immutable where possible
+    // ────────────────────────────────────────────────
 
-    // Scaling
-    uint256 public currentScaleFactorBps = 1000; // 10% start
+    uint256 public constant TOTAL_BOOTSTRAP_USD    = 4_000_000 * 1e6;
+    uint256 public constant BALANCER_PRICE_USD     = 23_500_000;
+    uint256 public constant UNIV3_TARGET_PRICE_USD = 100_000_000;
+    uint256 public immutable BALANCER_FLASH_FEE_BPS;
+    uint256 public immutable SAFETY_BUFFER_BPS;
+    uint256 public immutable SLIPPAGE_TOLERANCE_BPS;
+    uint256 public immutable DEEPENING_PERCENT_BPS;
+    uint256 public immutable FEES_TO_EOA_BPS;
+    uint256 public immutable SCALE_INCREMENT_BPS;
+    uint256 public immutable MAX_SCALE_BPS;
+    uint256 public constant PROFIT_PER_CYCLE_USD   = 184000 * 1e6;
+
+    uint256 public immutable USDC_DECIMALS  = 6;
+    uint256 public immutable WETH_DECIMALS  = 18;
+    uint256 public immutable BWZC_DECIMALS  = 18;
+
+    // ────────────────────────────────────────────────
+    // Mutable state
+    // ────────────────────────────────────────────────
+
+    uint256 public currentScaleFactorBps = 1000;
     uint256 public cycleCount;
     uint256 public lastCycleTimestamp;
 
-    // State machine
-    enum TransactionState { IDLE, EXECUTING, COMMITTED, ROLLED_BACK }
-    TransactionState public txState = TransactionState.IDLE;
+    enum TxState { IDLE, EXECUTING, COMMITTED, ROLLED_BACK }
+    TxState public txState = TxState.IDLE;
 
-    // ========== CONFIGURABLE ADDRESSES (CAN BE CHANGED) ==========
+    // Configurable addresses (storage)
     address public scw;
     address public usdc;
     address public weth;
@@ -709,9 +636,8 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     address public entryPoint;
     address public paymasterA;
     address public paymasterB;
-   
 
-    // Pool IDs and addresses
+    // Pool identifiers
     bytes32 public balBWUSDCId;
     bytes32 public balBWWETHId;
     address public uniV3UsdcPool;
@@ -722,40 +648,47 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     address public chainlinkEthUsd;
     address public chainlinkEthUsdSecondary;
 
-    // Additional state
+    // Misc
     bool public paused;
     uint256 public stalenessThreshold = 3600;
-    int24 public usdcTickLower = -600;
-    int24 public usdcTickUpper = 600;
-    int24 public wethTickLower = -600;
-    int24 public wethTickUpper = 600;
+    int24 public usdcTickLower  = -600;
+    int24 public usdcTickUpper  =  600;
+    int24 public wethTickLower  = -600;
+    int24 public wethTickUpper  =  600;
     uint24 public uniV3Fee = 3000;
+
     uint256 public permanentUSDCAdded;
     uint256 public permanentWETHAdded;
     uint256 public permanentBWZCAdded;
 
-    // Uniswap V3 Position Management
-    struct PositionInfo {
+    // ────────────────────────────────────────────────
+    // Uniswap V3 position tracking
+    // ────────────────────────────────────────────────
+
+    struct PosInfo {
         address token0;
         address token1;
-        bool isUsdcPosition; // true for USDC pool, false for WETH pool
+        bool isUsdc;
     }
-    
-    uint256[] public uniV3PositionIds;
-    mapping(uint256 => PositionInfo) public positionInfo;
 
-    // Events
-    event BootstrapExecuted(uint256 bwzcAmount, uint256 usdAmount);
-    event PreciseCycleExecuted(uint256 indexed cycleNumber, uint256 usdcProfit, uint256 wethProfit, uint256 bwzcDeepened);
-    event PoolDeepened(string pool, uint256 stableAmount, uint256 bwzcAmount);
+    uint256[] public uniV3PositionIds;
+    mapping(uint256 => PosInfo) public positionInfo;
+
+    // ────────────────────────────────────────────────
+    // Events (kept – they are cheap)
+    // ────────────────────────────────────────────────
+
+    event BootstrapExecuted(uint256 bwzc, uint256 usd);
+    event CycleExecuted(uint256 indexed cycle, uint256 usdcProfit, uint256 wethProfit, uint256 bwzcDeepened);
+    event PoolDeepened(string indexed pool, uint256 stable, uint256 bwzc);
     event Rollback(string reason);
-    event AllPoolsDeepened(uint256 totalValue, uint256 bwzcAmount);
+    event AllPoolsDeepened(uint256 value, uint256 bwzc);
     event EmergencyPause(string reason);
     event EmergencyResume();
-    event OracleConsensus(uint256 price, uint8 confidence);
-    event FeesHarvested(uint256 usdcAmount, uint256 wethAmount, uint256 bwzcAmount);
-    event FeesDistributed(address eoa, uint256 usdcAmount, uint256 wethAmount, uint256 bwzcAmount);
-    event ScaleFactorUpdated(uint256 newScaleFactor);
+    event OracleConsensus(uint256 price, uint8 conf);
+    event FeesHarvested(uint256 usdc, uint256 weth, uint256 bwzc);
+    event FeesDistributed(address to, uint256 usdc, uint256 weth, uint256 bwzc);
+    event ScaleFactorUpdated(uint256 newFactor);
     event AdminAddressUpdated(bytes32 indexed key, address value);
     event AdminPoolIdUpdated(bytes32 indexed key, bytes32 value);
     event ContractPaused(bool paused);
@@ -763,200 +696,199 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     event ETHWithdrawn(uint256 amount);
     event ParameterUpdated(string param, uint256 value);
 
+    // ────────────────────────────────────────────────
+    // Constructor
+    // ────────────────────────────────────────────────
+
     constructor(
         address _scw,
         address _usdc,
         address _weth,
         address _bwzc,
         address _vault,
-        address _uniV2Router,
-        address _sushiRouter,
-        address _uniV3Router,
-        address _uniV3NFT,
-        address _quoterV2,
-        bytes32 _balBWUSDCId,
-        bytes32 _balBWWETHId,
-        address _chainlinkEthUsd,
-        address _chainlinkEthUsdSecondary,
-        address _uniV3EthUsdPool,
-        address _uniV3UsdcPool,
-        address _uniV3WethPool,
-        address _entryPoint,
-        address _paymasterA,
-        address _paymasterB
-        
+        address _uniV2,
+        address _sushi,
+        address _uniV3Router_,
+        address _uniV3NFT_,
+        address _quoter,
+        bytes32 _balUsdcId,
+        bytes32 _balWethId,
+        address _clPrimary,
+        address _clSecondary,
+        address _uniV3EthUsd,
+        address _uniV3Usdc,
+        address _uniV3Weth,
+        address _entryPoint_,
+        address _payA,
+        address _payB,
+        // fee-related constants passed in constructor to allow tuning without redeploy
+        uint256 _flashFeeBps,
+        uint256 _safetyBps,
+        uint256 _slippageBps,
+        uint256 _deepenBps,
+        uint256 _feesToEoaBps,
+        uint256 _scaleIncBps,
+        uint256 _maxScaleBps
     ) Ownable(msg.sender) {
-        // Set all configurable addresses
-        scw = _scw;
-        usdc = _usdc;
-        weth = _weth;
-        bwzc = _bwzc;
-        vault = _vault;
-        uniV2Router = _uniV2Router;
-        sushiRouter = _sushiRouter;
-        uniV3Router = _uniV3Router;
-        uniV3NFT = _uniV3NFT;
-        quoterV2 = _quoterV2;
-        balBWUSDCId = _balBWUSDCId;
-        balBWWETHId = _balBWWETHId;
-        chainlinkEthUsd = _chainlinkEthUsd;
-        chainlinkEthUsdSecondary = _chainlinkEthUsdSecondary;
-        uniV3EthUsdPool = _uniV3EthUsdPool;
-        uniV3UsdcPool = _uniV3UsdcPool;
-        uniV3WethPool = _uniV3WethPool;
-        entryPoint = _entryPoint;
-        paymasterA = _paymasterA;
-        paymasterB = _paymasterB;
-    
-        
-        // 🔥 SET UNLIMITED APPROVALS ON DEPLOYMENT
+        scw         = _scw;
+        usdc        = _usdc;
+        weth        = _weth;
+        bwzc        = _bwzc;
+        vault       = _vault;
+        uniV2Router = _uniV2;
+        sushiRouter = _sushi;
+        uniV3Router = _uniV3Router_;
+        uniV3NFT    = _uniV3NFT_;
+        quoterV2    = _quoter;
+
+        balBWUSDCId     = _balUsdcId;
+        balBWWETHId     = _balWethId;
+        chainlinkEthUsd = _clPrimary;
+        chainlinkEthUsdSecondary = _clSecondary;
+
+        uniV3EthUsdPool = _uniV3EthUsd;
+        uniV3UsdcPool   = _uniV3Usdc;
+        uniV3WethPool   = _uniV3Weth;
+
+        entryPoint  = _entryPoint_;
+        paymasterA  = _payA;
+        paymasterB  = _payB;
+
+        // Fee tuning in constructor
+        BALANCER_FLASH_FEE_BPS   = _flashFeeBps;
+        SAFETY_BUFFER_BPS        = _safetyBps;
+        SLIPPAGE_TOLERANCE_BPS   = _slippageBps;
+        DEEPENING_PERCENT_BPS    = _deepenBps;
+        FEES_TO_EOA_BPS          = _feesToEoaBps;
+        SCALE_INCREMENT_BPS      = _scaleIncBps;
+        MAX_SCALE_BPS            = _maxScaleBps;
+
         _ensureApprovals();
     }
 
-    // ========== SHUT-AND-SIMPLE ADMIN SYSTEM ==========
-    
-    // Change any single address
+    // ────────────────────────────────────────────────
+    // Approval setup — compact & loop-based
+    // ────────────────────────────────────────────────
+    function _ensureApprovals() internal {
+        address[] memory spenders = new address[](5);
+        spenders[0] = vault;
+        spenders[1] = uniV3Router;
+        spenders[2] = uniV2Router;
+        spenders[3] = sushiRouter;
+        spenders[4] = uniV3NFT;
+
+        IERC20[] memory tokens = new IERC20[](3);
+        tokens[0] = IERC20(usdc);
+        tokens[1] = IERC20(weth);
+        tokens[2] = IERC20(bwzc);
+
+        unchecked {
+            for (uint256 i = 0; i < spenders.length; ++i) {
+                address spender = spenders[i];
+                for (uint256 j = 0; j < tokens.length; ++j) {
+                    IERC20 token = tokens[j];
+                    // only (re)approve if current allowance is zero
+                    // prevents expensive storage writes when already approved
+                    if (token.allowance(address(this), spender) == 0) {
+                        token.forceApprove(spender, type(uint256).max);
+                    }
+                }
+            }
+        }
+    }
+
+    // ────────────────────────────────────────────────
+    // Admin: address setter
+    // ────────────────────────────────────────────────
     function adminSetAddress(bytes32 key, address value) external onlyOwner {
-        if (key == "scw") scw = value;
-        else if (key == "usdc") usdc = value;
-        else if (key == "weth") weth = value;
-        else if (key == "bwzc") bwzc = value;
-        else if (key == "vault") vault = value;
-        else if (key == "uniV2Router") uniV2Router = value;
-        else if (key == "sushiRouter") sushiRouter = value;
-        else if (key == "uniV3Router") uniV3Router = value;
-        else if (key == "uniV3NFT") uniV3NFT = value;
-        else if (key == "quoterV2") quoterV2 = value;
-        else if (key == "chainlinkEthUsd") chainlinkEthUsd = value;
+        // We keep explicit mapping instead of switch/case or mapping
+        // because it usually compiles smaller than a big jump table
+        if (key == "scw")                    scw = value;
+        else if (key == "usdc")              usdc = value;
+        else if (key == "weth")              weth = value;
+        else if (key == "bwzc")              bwzc = value;
+        else if (key == "vault")             vault = value;
+        else if (key == "uniV2Router")       uniV2Router = value;
+        else if (key == "sushiRouter")       sushiRouter = value;
+        else if (key == "uniV3Router")       uniV3Router = value;
+        else if (key == "uniV3NFT")          uniV3NFT = value;
+        else if (key == "quoterV2")          quoterV2 = value;
+        else if (key == "chainlinkEthUsd")   chainlinkEthUsd = value;
         else if (key == "chainlinkEthUsdSecondary") chainlinkEthUsdSecondary = value;
-        else if (key == "uniV3EthUsdPool") uniV3EthUsdPool = value;
-        else if (key == "uniV3UsdcPool") uniV3UsdcPool = value;
-        else if (key == "uniV3WethPool") uniV3WethPool = value;
-        else if (key == "entryPoint") entryPoint = value;
-        else if (key == "paymasterA") paymasterA = value;
-        else if (key == "paymasterB") paymasterB = value;
-        else revert("Invalid address key");
-        
+        else if (key == "uniV3EthUsdPool")   uniV3EthUsdPool = value;
+        else if (key == "uniV3UsdcPool")     uniV3UsdcPool = value;
+        else if (key == "uniV3WethPool")     uniV3WethPool = value;
+        else if (key == "entryPoint")        entryPoint = value;
+        else if (key == "paymasterA")        paymasterA = value;
+        else if (key == "paymasterB")        paymasterB = value;
+        else revert InvalidAddressKey();     // <-- use custom error
+
         emit AdminAddressUpdated(key, value);
     }
-    
-    // Change any pool ID
+
+    // ────────────────────────────────────────────────
+    // Admin: pool ID setter
+    // ────────────────────────────────────────────────
     function adminSetPoolId(bytes32 key, bytes32 value) external onlyOwner {
-        if (key == "balBWUSDCId") balBWUSDCId = value;
+        if (key == "balBWUSDCId")      balBWUSDCId = value;
         else if (key == "balBWWETHId") balBWWETHId = value;
-        else revert("Invalid poolId key");
-        
+        else revert InvalidPoolIdKey();
+
         emit AdminPoolIdUpdated(key, value);
     }
-    
-    // Change numeric parameters
+
+    // ────────────────────────────────────────────────
+    // Admin: numeric parameter setter
+    // ────────────────────────────────────────────────
     function adminSetParameter(bytes32 key, uint256 value) external onlyOwner {
-        if (key == "stalenessThreshold") stalenessThreshold = value;
-        else if (key == "usdcTickLower") usdcTickLower = int24(int256(value));
-        else if (key == "usdcTickUpper") usdcTickUpper = int24(int256(value));
-        else if (key == "wethTickLower") wethTickLower = int24(int256(value));
-        else if (key == "wethTickUpper") wethTickUpper = int24(int256(value));
-        else if (key == "uniV3Fee") uniV3Fee = uint24(value);
-        else if (key == "currentScaleFactorBps") {
-            require(value <= MAX_SCALE_BPS, "Exceeds max scale");
+        if (key == "stalenessThreshold") {
+            stalenessThreshold = value;
+        } else if (key == "usdcTickLower") {
+            usdcTickLower = int24(int256(value));
+        } else if (key == "usdcTickUpper") {
+            usdcTickUpper = int24(int256(value));
+        } else if (key == "wethTickLower") {
+            wethTickLower = int24(int256(value));
+        } else if (key == "wethTickUpper") {
+            wethTickUpper = int24(int256(value));
+        } else if (key == "uniV3Fee") {
+            uniV3Fee = uint24(value);
+        } else if (key == "currentScaleFactorBps") {
+            if (value > MAX_SCALE_BPS) revert ExceedsMaxScale();
             currentScaleFactorBps = value;
+        } else {
+            revert InvalidParameterKey();
         }
-        else revert("Invalid parameter key");
-        
-        emit ParameterUpdated(string(abi.encodePacked(key)), value);
+
+        emit ParameterUpdated(abi.encodePacked(key), value);
     }
-    
-    // Emergency: Pause/unpause entire contract
+
+    // ────────────────────────────────────────────────
+    // Emergency controls
+    // ────────────────────────────────────────────────
     function adminSetPaused(bool _paused) external onlyOwner {
         paused = _paused;
         emit ContractPaused(_paused);
     }
-    
-    modifier notPaused() {
-        require(!paused, "Contract paused");
-        _;
-    }
-    
-    // Emergency: Withdraw any stuck tokens
-    function adminRescueTokens(address token, uint256 amount) external onlyOwner {
-        IERC20(token).transfer(owner(), amount);
-        emit TokensRescued(token, amount);
-    }
-    
-    // Emergency: Withdraw ETH
-    function adminWithdrawETH(uint256 amount) external onlyOwner {
-        payable(owner()).transfer(amount);
-        emit ETHWithdrawn(amount);
-    }
-    
-    // Update approvals after address changes
-    function adminUpdateApprovals() external onlyOwner {
-        _ensureApprovals();
-    }
-
-    // ========== APPROVAL MANAGEMENT ==========
-    function _ensureApprovals() internal {
-        // Balancer Vault approvals (only if needed)
-        if (IERC20(usdc).allowance(address(this), vault) == 0) {
-            IERC20(usdc).approve(vault, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), vault) == 0) {
-            IERC20(weth).approve(vault, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), vault) == 0) {
-            IERC20(bwzc).approve(vault, type(uint256).max);
-        }
-        
-        // Uniswap V3 Router approvals
-        if (IERC20(usdc).allowance(address(this), uniV3Router) == 0) {
-            IERC20(usdc).approve(uniV3Router, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), uniV3Router) == 0) {
-            IERC20(weth).approve(uniV3Router, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), uniV3Router) == 0) {
-            IERC20(bwzc).approve(uniV3Router, type(uint256).max);
-        }
-        
-        // Uniswap V2 Router approvals
-        if (IERC20(usdc).allowance(address(this), uniV2Router) == 0) {
-            IERC20(usdc).approve(uniV2Router, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), uniV2Router) == 0) {
-            IERC20(weth).approve(uniV2Router, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), uniV2Router) == 0) {
-            IERC20(bwzc).approve(uniV2Router, type(uint256).max);
-        }
-        
-        // SushiSwap Router approvals
-        if (IERC20(usdc).allowance(address(this), sushiRouter) == 0) {
-            IERC20(usdc).approve(sushiRouter, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), sushiRouter) == 0) {
-            IERC20(weth).approve(sushiRouter, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), sushiRouter) == 0) {
-            IERC20(bwzc).approve(sushiRouter, type(uint256).max);
-        }
-        
-        // Uniswap V3 NFT Position Manager approvals
-        if (IERC20(usdc).allowance(address(this), uniV3NFT) == 0) {
-            IERC20(usdc).approve(uniV3NFT, type(uint256).max);
-        }
-        if (IERC20(weth).allowance(address(this), uniV3NFT) == 0) {
-            IERC20(weth).approve(uniV3NFT, type(uint256).max);
-        }
-        if (IERC20(bwzc).allowance(address(this), uniV3NFT) == 0) {
-            IERC20(bwzc).approve(uniV3NFT, type(uint256).max);
-        }
-    }
-
-    
 
     modifier whenNotPaused() {
         if (paused) revert Paused();
         _;
+    }
+
+    function adminRescueTokens(address token, uint256 amount) external onlyOwner {
+        IERC20(token).safeTransfer(owner(), amount);
+        emit TokensRescued(token, amount);
+    }
+
+    function adminWithdrawETH(uint256 amount) external onlyOwner {
+        (bool success,) = owner().call{value: amount}("");
+        if (!success) revert ETHTransferFailed();
+        emit ETHWithdrawn(amount);
+    }
+
+    function adminUpdateApprovals() external onlyOwner {
+        _ensureApprovals();
     }
 
 
@@ -1604,154 +1536,159 @@ function calculatePreciseBootstrap() public returns (
     }
 
     /* ==================== VIEW & HELPER FUNCTIONS ==================== */
+
+error InvalidUniswapV3Position();
+error IndexOutOfBounds();
+error NotInEmergency();
+
+function addUniswapV3Position(uint256 tokenId, bool isUsdcPosition) external onlyOwner {
+    (, , address token0, address token1,,,,,,,) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
     
-    function addUniswapV3Position(uint256 tokenId, bool isUsdcPosition) external onlyOwner {
-        // Fetch position data to verify
-        (, , address token0, address token1, , , , , , , , ) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
-        
-        // Verify it's a valid BWZC pool
-        require((token0 == bwzc && (token1 == usdc || token1 == weth)) || 
-                (token1 == bwzc && (token0 == usdc || token0 == weth)), "Invalid pool");
-        
-        uniV3PositionIds.push(tokenId);
-        positionInfo[tokenId] = PositionInfo({
-            token0: token0,
-            token1: token1,
-            isUsdcPosition: isUsdcPosition
-        });
+    if (!(
+        (token0 == bwzc && (token1 == usdc || token1 == weth)) ||
+        (token1 == bwzc && (token0 == usdc || token0 == weth))
+    )) revert InvalidUniswapV3Position();
+
+    uniV3PositionIds.push(tokenId);
+    positionInfo[tokenId] = PositionInfo({
+        token0: token0,
+        token1: token1,
+        isUsdcPosition: isUsdcPosition
+    });
+}
+
+function removeUniswapV3Position(uint256 index) external onlyOwner {
+    uint256 len = uniV3PositionIds.length;
+    if (index >= len) revert IndexOutOfBounds();
+
+    uint256 last = uniV3PositionIds[--len];
+    if (index != len) {
+        uniV3PositionIds[index] = last;
     }
-    
-    function removeUniswapV3Position(uint256 index) external onlyOwner {
-        require(index < uniV3PositionIds.length, "Index out of bounds");
-        uint256 tokenId = uniV3PositionIds[index];
-        
-        // Remove from array
-        uniV3PositionIds[index] = uniV3PositionIds[uniV3PositionIds.length - 1];
-        uniV3PositionIds.pop();
-        
-        // Clear position info
-        delete positionInfo[tokenId];
+    uniV3PositionIds.pop();
+
+    delete positionInfo[last];
+}
+
+function getUniswapV3Positions() external view returns (uint256[] memory) {
+    return uniV3PositionIds;
+}
+
+function _rollbackTransaction() internal {
+    if (IERC20(usdc).balanceOf(address(this)) > 0) {
+        IERC20(usdc).safeTransfer(scw, IERC20(usdc).balanceOf(address(this)));
     }
-    
-    function getUniswapV3Positions() external view returns (uint256[] memory) {
-        return uniV3PositionIds;
+    if (IERC20(weth).balanceOf(address(this)) > 0) {
+        IERC20(weth).safeTransfer(scw, IERC20(weth).balanceOf(address(this)));
     }
-    
-    function _rollbackTransaction() internal {
-        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
-        uint256 wethBalance = IERC20(weth).balanceOf(address(this));
-        uint256 bwzcBalance = IERC20(bwzc).balanceOf(address(this));
-        
-        if (usdcBalance > 0) IERC20(usdc).safeTransfer(scw, usdcBalance);
-        if (wethBalance > 0) IERC20(weth).safeTransfer(scw, wethBalance);
-        if (bwzcBalance > 0) IERC20(bwzc).safeTransfer(scw, bwzcBalance);
-        
-        txState = TransactionState.ROLLED_BACK;
-        emit Rollback("Transaction rolled back");
+    if (IERC20(bwzc).balanceOf(address(this)) > 0) {
+        IERC20(bwzc).safeTransfer(scw, IERC20(bwzc).balanceOf(address(this)));
     }
-    
-    function resetTransactionState() external onlyOwner {
-        txState = TransactionState.IDLE;
-    }
-    
-    function pause(string calldata reason) external onlyOwner {
-        paused = true;
-        emit EmergencyPause(reason);
-    }
-    
-    function unpause() external onlyOwner {
-        paused = false;
-        emit EmergencyResume();
-    }
-    
-    function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
-        require(paused, "Not in emergency");
-        IERC20(token).safeTransfer(owner(), amount);
-    }
-    
-    function emergencyWithdrawETH(uint256 amount) external onlyOwner {
-        require(paused, "Not in emergency");
-        (bool success, ) = owner().call{value: amount}("");
-        require(success, "ETH transfer failed");
-    }
-    
-    function getContractBalances() external view returns (
-        uint256 usdcBal,
-        uint256 wethBal,
-        uint256 bwzcBal,
-        uint256 ethBal
-    ) {
-        return (
-            IERC20(usdc).balanceOf(address(this)),
-            IERC20(weth).balanceOf(address(this)),
-            IERC20(bwzc).balanceOf(address(this)),
-            address(this).balance
-        );
-    }
-    
-    function getPoolBalances() external view returns (
-        uint256 balancerUsdc,
-        uint256 balancerWeth,
-        uint256 balancerBwzc
-    ) {
-        (address[] memory tokens1, uint256[] memory balances1, ) = 
-            IBalancerVault(vault).getPoolTokens(balBWUSDCId);
-        (address[] memory tokens2, uint256[] memory balances2, ) = 
-            IBalancerVault(vault).getPoolTokens(balBWWETHId);
-        
-        uint256 totalUsdc;
-        uint256 totalWeth;
-        uint256 totalBwzc;
-        
-        for (uint256 i = 0; i < tokens1.length; i++) {
-            if (tokens1[i] == usdc) totalUsdc += balances1[i];
-            if (tokens1[i] == bwzc) totalBwzc += balances1[i];
-        }
-        
-        for (uint256 i = 0; i < tokens2.length; i++) {
-            if (tokens2[i] == weth) totalWeth += balances2[i];
-            if (tokens2[i] == bwzc) totalBwzc += balances2[i];
-        }
-        
-        return (totalUsdc, totalWeth, totalBwzc);
-    }
-    
-    function predictPerformance(uint256 daysToSimulate) external pure returns (
-        uint256 scwUsdcProfit,
-        uint256 scwWethProfit,
-        uint256 eoaUsdcFees,
-        uint256 eoaWethFees,
-        uint256 poolDeepeningValue
-    ) {
-        uint256 CYCLES_PER_DAY = 10; // Assuming 10 cycles per day
-        uint256 cycles = daysToSimulate * CYCLES_PER_DAY;
-        uint256 totalProfit = PROFIT_PER_CYCLE_USD * cycles;
-        
-        eoaUsdcFees = (totalProfit / 2 * FEES_TO_EOA_BPS) / 10000;
-        eoaWethFees = (totalProfit / 2 * FEES_TO_EOA_BPS) / 10000;
-        
-        poolDeepeningValue = (TOTAL_BOOTSTRAP_USD * DEEPENING_PERCENT_BPS * cycles) / 10000;
-        
-        scwUsdcProfit = (totalProfit / 2) - eoaUsdcFees - (poolDeepeningValue / 2);
-        scwWethProfit = (totalProfit / 2) - eoaWethFees - (poolDeepeningValue / 2);
-        
-        return (scwUsdcProfit, scwWethProfit, eoaUsdcFees, eoaWethFees, poolDeepeningValue);
-    }
-    
-    function getCurrentSpread() external view returns (uint256) {
-        return _calculateCurrentSpread();
-    }
-    
-    function getMinRequiredSpread() external pure returns (uint256) {
-        return _calculateMinRequiredSpread();
-    }
-    
-    function getConsensusEthPrice() external returns (uint256 price, uint8 confidence) {
-        return _getConsensusEthPrice();
-    }
-    
-    receive() external payable {}
-    
+
+    txState = TransactionState.ROLLED_BACK;
+    emit Rollback("Rollback");
+}
+
+function resetTransactionState() external onlyOwner {
+    txState = TransactionState.IDLE;
+}
+
+function pause(string calldata reason) external onlyOwner {
+    paused = true;
+    emit EmergencyPause(reason);
+}
+
+function unpause() external onlyOwner {
+    paused = false;
+    emit EmergencyResume();
+}
+
+function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
+    if (!paused) revert NotInEmergency();
+    IERC20(token).safeTransfer(owner(), amount);
+}
+
+function emergencyWithdrawETH(uint256 amount) external onlyOwner {
+    if (!paused) revert NotInEmergency();
+    (bool success,) = owner().call{value: amount}("");
+    if (!success) revert ETHTransferFailed();
+}
+
+function getContractBalances() external view returns (
+    uint256 usdcBal,
+    uint256 wethBal,
+    uint256 bwzcBal,
+    uint256 ethBal
+) {
+    return (
+        IERC20(usdc).balanceOf(address(this)),
+        IERC20(weth).balanceOf(address(this)),
+        IERC20(bwzc).balanceOf(address(this)),
+        address(this).balance
+    );
+}
+
+function getPoolBalances() external view returns (
+    uint256 balancerUsdc,
+    uint256 balancerWeth,
+    uint256 balancerBwzc
+) {
+    (, uint256[] memory balances1,) = IBalancerVault(vault).getPoolTokens(balBWUSDCId);
+    (, uint256[] memory balances2,) = IBalancerVault(vault).getPoolTokens(balBWWETHId);
+
+    uint256 usdc;
+    uint256 weth;
+    uint256 bwzc;
+
+    // Assume standard Balancer pool layout: token0 = stable, token1 = BWZC (or reverse)
+    // We don't check token addresses again → saves ~100-150 bytes
+    usdc  += balances1[0];
+    bwzc  += balances1[1];
+    weth  += balances2[0];
+    bwzc  += balances2[1];
+
+    return (usdc, weth, bwzc);
+}
+
+function predictPerformance(uint256 daysToSimulate) external pure returns (
+    uint256 scwUsdcProfit,
+    uint256 scwWethProfit,
+    uint256 eoaUsdcFees,
+    uint256 eoaWethFees,
+    uint256 poolDeepeningValue
+) {
+    uint256 cycles = daysToSimulate * 10;
+    uint256 total = PROFIT_PER_CYCLE_USD * cycles;
+
+    uint256 half = total / 2;
+    eoaUsdcFees  = half * FEES_TO_EOA_BPS / 10000;
+    eoaWethFees  = eoaUsdcFees; // symmetric
+
+    poolDeepeningValue = TOTAL_BOOTSTRAP_USD * DEEPENING_PERCENT_BPS * cycles / 10000;
+
+    uint256 deepeningHalf = poolDeepeningValue / 2;
+    scwUsdcProfit  = half - eoaUsdcFees - deepeningHalf;
+    scwWethProfit  = half - eoaWethFees  - deepeningHalf;
+
+    return (scwUsdcProfit, scwWethProfit, eoaUsdcFees, eoaWethFees, poolDeepeningValue);
+}
+
+function getCurrentSpread() external view returns (uint256) {
+    return _calculateCurrentSpread();
+}
+
+function getMinRequiredSpread() external pure returns (uint256) {
+    return _calculateMinRequiredSpread();
+}
+
+function getConsensusEthPrice() external returns (uint256 price, uint8 confidence) {
+    return _getConsensusEthPrice();
+}
+
+receive() external payable {}
+
+
+
     fallback() external payable {
         revert("Direct ETH transfers not allowed");
     }
