@@ -755,7 +755,7 @@ function _getConsensusEthPrice() internal returns (uint256 price, uint8 confiden
     if (valid >= 2) {
         price = (prices[0] + prices[1]) / 2;
         uint256 deviation = _abs(int256(prices[0]) - int256(prices[1]));
-        uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
+       uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
         if (deviationBps > 100) revert DeviationTooHigh();
         emit OracleConsensus(price, confidence);
         return (price, confidence);
@@ -781,7 +781,7 @@ function _getUniswapV3Price() internal view returns (uint256) {
         
         uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
         uint256 bwzcPerUsdc = rawPrice / 1e12;
-        uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : FullMath.mulDiv(1e6, 1, bwzcPerUsdc);
+       uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : FullMath.mulDiv(1e6, 1, bwzcPerUsdc);
         
         if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
             revert DeviationTooHigh();
@@ -797,7 +797,7 @@ function _calculateCurrentSpread() internal view returns (uint256 spreadBps) {
     uint256 balancerPrice = BALANCER_PRICE_USD;
     uint256 uniswapPrice = _getUniswapV3Price();
     if (uniswapPrice <= balancerPrice) return 0;
-    spreadBps = FullMath.mulDiv(uniswapPrice - balancerPrice, 10000, balancerPrice);
+   spreadBps = FullMath.mulDiv(uniswapPrice - balancerPrice, 10000, balancerPrice);
     return spreadBps;
 }
 
@@ -808,7 +808,7 @@ function _abs(int256 x) internal pure returns (uint256) {
    
     // ✅ FIXED: PROPER WETH FLASH LOAN AMOUNT CALCULATION
     function _calculateWETHAmount(uint256 usdAmount, uint256 ethPrice) internal pure returns (uint256) {
-        return FullMath.mulDiv(usdAmount, 1e18, ethPrice);
+       return FullMath.mulDiv(usdAmount, 1e18, ethPrice);
     }
 
     function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
@@ -1021,10 +1021,10 @@ function _abs(int256 x) internal pure returns (uint256) {
         bytes calldata userData
     ) external override nonReentrant {
         require(msg.sender == vault, "Not vault");
-        require(txState == TransactionState.IDLE, "Invalid state");
+       require(txState == TxState.IDLE, "Invalid state");
         
         // Remove rate limiting for MEV opportunities
-        txState = TransactionState.EXECUTING;
+       txState = TxState.EXECUTING;
 
         (uint256 bwzcForArbitrage, uint256 expectedUsdc, uint256 expectedWeth, uint256 deadline) = 
             abi.decode(userData, (uint256, uint256, uint256, uint256));
@@ -1051,9 +1051,9 @@ function _abs(int256 x) internal pure returns (uint256) {
         uint256 bwzcDeepened = _deepenPoolsWithPrecision(usdcProfit, wethProfit, bwzcBought + harvestedBwzc);
 
         // Auto-distribute 15% to EOA
-        uint256 usdcToEOA = FullMath.mulDiv(usdcProfit, FEES_TO_EOA_BPS, 10000);
-        uint256 wethToEOA = FullMath.mulDiv(wethProfit, FEES_TO_EOA_BPS, 10000);
-        uint256 bwzcToEOA = FullMath.mulDiv(harvestedBwzc, FEES_TO_EOA_BPS, 10000);
+       uint256 usdcToEOA = FullMath.mulDiv(usdcProfit, FEES_TO_EOA_BPS, 10000);
+       uint256 wethToEOA = FullMath.mulDiv(wethProfit, FEES_TO_EOA_BPS, 10000);
+       uint256 bwzcToEOA = FullMath.mulDiv(harvestedBwzc, FEES_TO_EOA_BPS, 10000);
         
         if (usdcToEOA > 0) IERC20(usdc).safeTransfer(owner(), usdcToEOA);
         if (wethToEOA > 0) IERC20(weth).safeTransfer(owner(), wethToEOA);
@@ -1073,7 +1073,7 @@ function _abs(int256 x) internal pure returns (uint256) {
         
         cycleCount++;
         lastCycleTimestamp = block.timestamp;
-        txState = TransactionState.COMMITTED;
+       txState = TxState.COMMITTED;
     }
 
     // ✅ FIXED: CORRECT 8-POOL DEEPENING WITH UNDERFLOW PROTECTION
@@ -1222,11 +1222,12 @@ function _abs(int256 x) internal pure returns (uint256) {
         uniV3PositionIds.push(tokenId);
         
         // ✅ FIXED: STORE COMPLETE POSITION INFO
-        positionInfo[tokenId] = PositionInfo({
-            token0: bwzcToken < stableToken ? bwzcToken : stableToken,
-            token1: bwzcToken < stableToken ? stableToken : bwzcToken,
-            isUsdcPosition: isUsdcPool
-        });
+       positionInfo[tokenId] = PosInfo({
+       token0: bwzcToken < stableToken ? bwzcToken : stableToken,
+       token1: bwzcToken < stableToken ? stableToken : bwzcToken,
+       isUsdc: isUsdcPool
+   });
+
     }
 
     // ✅ FIXED: COMPLETE FEE HARVESTING WITH POSITION INFO
@@ -1241,7 +1242,7 @@ function _abs(int256 x) internal pure returns (uint256) {
             });
             (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(uniV3NFT).collect(params);
             
-            PositionInfo memory info = positionInfo[tokenId];
+           PosInfo memory info = positionInfo[tokenId];
             
             // Determine token assignment based on stored position info
             if (info.token0 == bwzc) {
