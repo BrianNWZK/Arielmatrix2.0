@@ -879,23 +879,51 @@ function _getUniswapV3Price() internal view returns (uint256) {
         if (wethProfit < wethAmount * requiredSpread / 10000) revert("WETH profit too low");
     }
 
-    function receiveFlashLoan(
-        address[] calldata tokens,
-        uint256[] calldata amounts,
-        uint256[] calldata feeAmounts,
-        bytes calldata userData
-    ) external override nonReentrant {
-        if (msg.sender != vault) revert("Not vault");
-        if (txState != TxState.IDLE) revert InvalidStateTransition();
-        
-        txState = TxState.EXECUTING;
-        
-        (uint256 bwzcForArbitrage, uint256 expectedUsdc, uint256 expectedWeth, uint256 deadline) = 
-            abi.decode(userData, (uint256, uint256, uint256, uint256));
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        
-        uint256 usdcBorrowed = amounts[0];
-        uint256 wethBorrowed = amounts[1];
+   function receiveFlashLoan(
+    address[] calldata tokens,
+    uint256[] calldata amounts,
+    uint256[] calldata feeAmounts,
+    bytes calldata userData
+) external override nonReentrant {
+    // ==================== SECURITY CHECKS ====================
+    
+    // 1. Validate caller
+    if (msg.sender != vault) revert("Not vault");
+    
+    // 2. Validate transaction state
+    if (txState != TxState.IDLE) revert InvalidStateTransition();
+    
+    // 3. ✅ FIXED: Validate tokens array (was unused!)
+    if (tokens.length != 2) revert("Must flash exactly 2 tokens");
+    if (tokens[0] != usdc) revert("First token must be USDC");
+    if (tokens[1] != weth) revert("Second token must be WETH");
+    
+    // 4. Validate amounts array
+    if (amounts.length != 2) revert("Must have exactly 2 amounts");
+    uint256 usdcBorrowed = amounts[0];
+    uint256 wethBorrowed = amounts[1];
+    if (usdcBorrowed == 0) revert("USDC amount cannot be zero");
+    if (wethBorrowed == 0) revert("WETH amount cannot be zero");
+    
+    // 5. Validate fee amounts
+    if (feeAmounts.length != 2) revert("Must have exactly 2 fee amounts");
+    
+    txState = TxState.EXECUTING;
+    
+    // ==================== DECODE USER DATA ====================
+    (uint256 bwzcForArbitrage, uint256 expectedUsdc, uint256 expectedWeth, uint256 deadline) = 
+        abi.decode(userData, (uint256, uint256, uint256, uint256));
+    
+    // 6. Validate deadline
+    if (block.timestamp > deadline) revert DeadlineExpired();
+    
+    // 7. ✅ FIXED: Validate expected amounts match actual (were unused!)
+    if (usdcBorrowed != expectedUsdc) revert("USDC amount mismatch");
+    if (wethBorrowed != expectedWeth) revert("WETH amount mismatch");
+    
+    // 8. Validate bwzcForArbitrage
+    if (bwzcForArbitrage == 0) revert("BWZC for arbitrage cannot be zero");
+    
         
         (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) = 
             _executePreciseArbitrage(usdcBorrowed, wethBorrowed, bwzcForArbitrage);
