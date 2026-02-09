@@ -1,248 +1,59 @@
-// Usage: node main.js
-import fs from "fs";
-import path from "path";
-import solc from "solc";
+import { ethers } from "ethers";
 import dotenv from "dotenv";
 import dotenvExpand from "dotenv-expand";
-import { ethers } from "ethers";
-
 dotenvExpand.expand(dotenv.config());
 
-// --- ENV ---
-const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
+// --- CONFIG ---
+const RPC_URL = process.env.RPC_URL || "https://eth.llamarpc.com";
+const PRIVATE_KEY = process.env.SOVEREIGN_PRIVATE_KEY;
+if (!PRIVATE_KEY) throw new Error("Missing SOVEREIGN_PRIVATE_KEY");
 
-if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY in .env");
-if (!PRIVATE_KEY.startsWith("0x") || PRIVATE_KEY.length !== 66) {
-  throw new Error("PRIVATE_KEY must be 64 hex characters prefixed with 0x");
-}
+const SCW_ADDRESS = process.env.SCW_ADDRESS; // your Smart Contract Wallet (required)
+if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS in .env");
 
-// --- RAW ADDRESSES (all lowercase) ---
-const RAW = {
-  scw: "0x59be70f1c57470d7773c3d5d27b8d165fcbe7eb2",
-  balancer_vault: "0xba12222222228d8ba445958a75a0704d566bf2c8",
-  bwzc: "0x54d1c2889b08cad0932266eade15ec884fa0cdc2",
-  usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-  weth: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-  univ3_router: "0xe592427a0aece92de3edee1f18e0157c05861564",
-  univ2_router: "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
-  sushi_router: "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",
-  quoter_v2: "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6",
-  entrypoint: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
-  chainlink_ethusd: "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
-  chainlink_ethusd_secondary: "0x0000000000000000000000000000000000000000", // Placeholder - update if you have a real secondary feed
-  // IMPORTANT: This was missing → caused null/undefined in constructor args
-  univ3_eth_usd_pool: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640", // Example: popular ETH/USDC 0.05% pool on Uniswap V3 (update if needed)
-  univ3_bw_usdc: "0x261c64d4d96ebfa14398b52d93c9d063e3a619f8",
-  univ3_bw_weth: "0x142c3dce0a5605fb385fae7760302fab761022aa",
-  univ2_bw_usdc: "0xb3911905f8a6160ef89391442f85eca7c397859c",
-  univ2_bw_weth: "0x6dF6F882ED69918349F75Fe397b37e62C04515b6",
-  sushi_bw_usdc: "0x9d2f8f9a2e3c240decbbe23e9b3521e6ca2489d1",
-  sushi_bw_weth: "0xe9e62c8cc585c21fb05fd82fb68e0129711869f9",
-  bal_bw_usdc: "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a",
-  bal_bw_weth: "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef",
-  position_manager: "0xc36442b4a4522e871399cd717abdd847ab11fe88",
-  paymaster_a: "0x4e073aaa36cd51fd37298f87e3fce8437a08dd71",
-  paymaster_b: "0x79a515d5a085d2b86aff104ec9c8c2152c9549c0"
-};
+const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"; // BWAEZI token
 
-// --- Helpers ---
-function checksum(addr) {
-  return ethers.getAddress(addr.toLowerCase());
-}
+// WarehouseBalancerArb contract address (the one that needs BWZC approval)
+const WAREHOUSE_CONTRACT = "0x456d84bCf880E1b490877a39E5Fb55ABD710636c";
 
-function findContractFile() {
-  const baseDir = "arielsql_suite/scripts";
-  const files = fs.readdirSync(baseDir);
-  const target = files.find(
-    f =>
-      f.endsWith(".sol") &&
-      f.toLowerCase().includes("warehouse") &&
-      f.toLowerCase().includes("balancerarb")
-  );
-  if (!target) throw new Error(`Solidity file not found in ${baseDir}.`);
-  return { baseDir, file: target, fullPath: path.join(baseDir, target) };
-}
+// --- ABI fragments ---
+const tokenIface = new ethers.Interface([
+  "function approve(address spender, uint256 amount) returns (bool)"
+]);
 
-function compile(source, fileName) {
-  const input = {
-    language: "Solidity",
-    sources: { [fileName]: { content: source } },
-    settings: {
-      optimizer: { enabled: true, runs: 200 },
-      viaIR: true,
-      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
-    }
-  };
-  const output = JSON.parse(solc.compile(JSON.stringify(input)));
-  if (output.errors) {
-    const errs = output.errors.filter(e => e.severity === "error");
-    if (errs.length) {
-      errs.forEach(e => console.error(e.formattedMessage));
-      throw new Error("Compilation failed");
-    }
-    output.errors.filter(e => e.severity === "warning").forEach(w => console.warn("Warning:", w.formattedMessage));
-  }
-  const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
-  if (!compiled) throw new Error("Contract WarehouseBalancerArb not found.");
-  return {
-    abi: compiled.abi,
-    bytecode: "0x" + compiled.evm.bytecode.object,
-    deployedSize: (compiled.evm.deployedBytecode.object.length / 2)
-  };
-}
+// SCW ABI (SimpleAccount style - execute function)
+const scwIface = new ethers.Interface([
+  "function execute(address dest, uint256 value, bytes calldata func) external"
+]);
 
-async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) {
-  const poolAbi = ["function getPoolId() external view returns (bytes32)"];
-  const usdcPool = new ethers.Contract(balPoolAddrUSDC, poolAbi, provider);
-  const wethPool = new ethers.Contract(balPoolAddrWETH, poolAbi, provider);
-  const usdcId = await usdcPool.getPoolId();
-  const wethId = await wethPool.getPoolId();
-  return { usdcId, wethId };
-}
-
-async function fetchBwzcDecimals(provider, bwzcAddr) {
-  const abi = ["function decimals() external view returns (uint8)"];
-  const contract = new ethers.Contract(bwzcAddr, abi, provider);
-  return await contract.decimals();
-}
-
-// --- Deploy ---
 async function main() {
-  console.log("=== Compile + Deploy WarehouseBalancerArb V20 ===");
-
-  // 1. RPC Health Check
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  try {
-    const network = await provider.getNetwork();
-    console.log(`Connected to network: ${network.name} (chainId: ${network.chainId})`);
-  } catch (err) {
-    throw new Error(`RPC connection failed: ${err.message}. Check RPC_URL.`);
-  }
-
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-  console.log("Deployer:", wallet.address);
 
-  const balance = await provider.getBalance(wallet.address);
-  console.log("Balance:", ethers.formatEther(balance), "ETH");
-  if (balance === 0n) throw new Error("Deployer has 0 ETH - cannot deploy");
+  console.log("SCW:", SCW_ADDRESS);
+  console.log("Warehouse Contract:", WAREHOUSE_CONTRACT);
+  console.log("BWAEZI Token:", BWAEZI);
 
-  const { baseDir, file, fullPath } = findContractFile();
-  console.log("Source file:", fullPath);
+  const scw = new ethers.Contract(SCW_ADDRESS, scwIface, wallet);
 
-  const source = fs.readFileSync(fullPath, "utf8");
-  const { abi, bytecode, deployedSize } = compile(source, file);
-  console.log(`Deployed bytecode size: ${deployedSize} bytes`);
+  console.log(`Approving Warehouse contract ${WAREHOUSE_CONTRACT} for unlimited BWAEZI...`);
 
-  // Normalize addresses
-  const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
+  // Encode approve(max) on BWAEZI token
+  const approveData = tokenIface.encodeFunctionData("approve", [
+    WAREHOUSE_CONTRACT,
+    ethers.MaxUint256
+  ]);
 
-  // Fetch Balancer pool IDs
-  console.log("Fetching Balancer pool IDs...");
-  const { usdcId: BAL_BW_USDC_ID, wethId: BAL_BW_WETH_ID } = await fetchBalancerPoolIds(
-    provider,
-    A.BAL_BW_USDC,
-    A.BAL_BW_WETH
-  );
-  console.log("BAL_BW_USDC_ID:", BAL_BW_USDC_ID);
-  console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
+  // Execute via SCW
+  const tx = await scw.execute(BWAEZI, 0, approveData);
+  console.log("TX sent:", tx.hash);
+  await tx.wait();
 
-  // Fetch BWZC decimals
-  console.log("Fetching BWZC decimals...");
-  const BWZC_DECIMALS = await fetchBwzcDecimals(provider, A.BWZC);
-  console.log("BWZC_DECIMALS:", BWZC_DECIMALS);
-
-  console.log("Deploying with 20 constructor arguments...");
-
-  try {
-    const factory = new ethers.ContractFactory(abi, bytecode, wallet);
-
-    const contract = await factory.deploy(
-      A.SCW,                    // 1
-      A.USDC,                   // 2
-      A.WETH,                   // 3
-      A.BWZC,                   // 4
-      A.BALANCER_VAULT,         // 5
-      A.UNIV2_ROUTER,           // 6
-      A.SUSHI_ROUTER,           // 7
-      A.UNIV3_ROUTER,           // 8
-      A.POSITION_MANAGER,       // 9
-      A.QUOTER_V2,              // 10
-      BAL_BW_USDC_ID,           // 11 bytes32
-      BAL_BW_WETH_ID,           // 12 bytes32
-      A.CHAINLINK_ETHUSD,       // 13
-      A.CHAINLINK_ETHUSD_SECONDARY, // 14
-      A.UNIV3_ETH_USD_POOL,     // 15 ← now defined!
-      A.UNIV3_BW_USDC,          // 16
-      A.UNIV3_BW_WETH,          // 17
-      A.ENTRYPOINT,             // 18
-      A.PAYMASTER_A,            // 19
-      A.PAYMASTER_B,            // 20
-      // Gas override - adjust if needed (mainnet can be picky)
-      { gasLimit: 8_000_000 }
-    );
-
-    console.log("Deployment TX hash:", contract.deploymentTransaction().hash);
-    console.log("Waiting for deployment confirmation...");
-
-    await contract.waitForDeployment();
-    const addr = await contract.getAddress();
-    console.log("✅ Deployed at:", addr);
-
-    // Verify deployment
-    const code = await provider.getCode(addr);
-    if (code === "0x") {
-      throw new Error("Contract deployment failed - no code at address");
-    }
-    console.log("Contract code verified successfully");
-
-    // Save deployment info
-    const info = {
-      address: addr,
-      tx: contract.deploymentTransaction().hash,
-      deployer: wallet.address,
-      constructorArguments: [
-        A.SCW, A.USDC, A.WETH, A.BWZC, A.BALANCER_VAULT,
-        A.UNIV2_ROUTER, A.SUSHI_ROUTER, A.UNIV3_ROUTER, A.POSITION_MANAGER, A.QUOTER_V2,
-        BAL_BW_USDC_ID, BAL_BW_WETH_ID,
-        A.CHAINLINK_ETHUSD, A.CHAINLINK_ETHUSD_SECONDARY, A.UNIV3_ETH_USD_POOL,
-        A.UNIV3_BW_USDC, A.UNIV3_BW_WETH,
-        A.ENTRYPOINT, A.PAYMASTER_A, A.PAYMASTER_B
-      ],
-      poolIds: {
-        BAL_BW_USDC_ID,
-        BAL_BW_WETH_ID
-      },
-      bwzcDecimals: BWZC_DECIMALS,
-      network: await provider.getNetwork(),
-      timestamp: new Date().toISOString()
-    };
-
-    fs.writeFileSync("deployment-info.json", JSON.stringify(info, null, 2));
-    console.log("Saved deployment-info.json");
-    console.log("\n🎉 Deployment successful!");
-
-  } catch (error) {
-    console.error("❌ Deployment failed:", error.message);
-    console.error("Full error:", error);
-
-    if (error.code === "INVALID_ARGUMENT" && error.message.includes("target")) {
-      console.error("\nethers v6 signer/target issue detected. Possible fixes:");
-      console.error("1. Confirm PRIVATE_KEY is correct (0x + 64 hex chars)");
-      console.error("2. Try a different RPC (e.g. Alchemy/Infura instead of publicnode)");
-      console.error("3. Downgrade ethers to v5: npm install ethers@5");
-    } else if (error.message.includes("insufficient funds")) {
-      console.error("\n💡 Tip: Fund your deployer wallet with ETH");
-    } else if (error.message.includes("gas")) {
-      console.error("\n💡 Tip: Increase gasLimit in deploy options or wait for lower network congestion");
-    }
-
-    process.exit(1);
-  }
+  console.log(`✅ Warehouse contract ${WAREHOUSE_CONTRACT} successfully approved for unlimited BWAEZI`);
+  console.log("🎉 Approval complete. Warehouse operations (bootstrap/cycles) can now run.");
 }
 
-// --- Run ---
-main().catch(err => {
-  console.error("Fatal error:", err);
+main().catch(e => {
+  console.error("Fatal error:", e);
   process.exit(1);
 });
