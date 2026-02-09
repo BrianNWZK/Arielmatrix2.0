@@ -4,7 +4,7 @@ pragma abicoder v2;
 
 /* 
 ENHANCED M26D — Institutional WarehouseBalancerArb (Production Version v5.0 - ULTIMATE PERFECTION)
-OPTIMIZED VERSION: 24,420 bytes (under 24,560 limit)
+
 */
 
 abstract contract ReentrancyGuard {
@@ -380,108 +380,89 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     event ETHWithdrawn(uint256 amount);
     event ParameterUpdated(string param, uint256 value);
 
-   // Add this new struct definition
-struct DeploymentConfig {
-    address scw;
-    address usdc;
-    address weth;
-    address bwzc;
-    address vault;
-    address uniV2Router;
-    address sushiRouter;
-    address uniV3Router;
-    address uniV3NFT;
-    address quoterV2;
-    bytes32 balBWUSDCId;
-    bytes32 balBWWETHId;
-    address chainlinkEthUsd;
-    address chainlinkEthUsdSecondary;
-    address uniV3UsdcPool;    // BW/USDC pool
-    address uniV3WethPool;    // BW/WETH pool
-    address entryPoint;
-    address paymasterA;
-    address paymasterB;
-}
+    constructor(
+        address _scw,
+        address _usdc,
+        address _weth,
+        address _bwzc,
+        address _vault,
+        address _uniV2Router,
+        address _sushiRouter,
+        address _uniV3Router,
+        address _uniV3NFT,
+        address _quoterV2,
+        bytes32 _balBWUSDCId,
+        bytes32 _balBWWETHId,
+        address _chainlinkEthUsd,
+        address _chainlinkEthUsdSecondary,
+        address _uniV3EthUsdPool,
+        address _uniV3UsdcPool,
+        address _uniV3WethPool,
+        address _entryPoint,
+        address _paymasterA,
+        address _paymasterB
+    ) Ownable(msg.sender) {
+        scw = _scw;
+        usdc = _usdc;
+        weth = _weth;
+        bwzc = _bwzc;
+        vault = _vault;
+        uniV2Router = _uniV2Router;
+        sushiRouter = _sushiRouter;
+        uniV3Router = _uniV3Router;
+        uniV3NFT = _uniV3NFT;
+        quoterV2 = _quoterV2;
+        balBWUSDCId = _balBWUSDCId;
+        balBWWETHId = _balBWWETHId;
+        chainlinkEthUsd = _chainlinkEthUsd;
+        chainlinkEthUsdSecondary = _chainlinkEthUsdSecondary;
+        uniV3EthUsdPool = _uniV3EthUsdPool;
+        uniV3UsdcPool = _uniV3UsdcPool;
+        uniV3WethPool = _uniV3WethPool;
+        entryPoint = _entryPoint;
+        paymasterA = _paymasterA;
+        paymasterB = _paymasterB;
+        
+        _ensureApprovals();
+    }
 
-constructor(DeploymentConfig memory config) Ownable(msg.sender) {
-    // Set all addresses from config struct
-    scw = config.scw;
-    usdc = config.usdc;
-    weth = config.weth;
-    bwzc = config.bwzc;
-    vault = config.vault;
-    uniV2Router = config.uniV2Router;
-    sushiRouter = config.sushiRouter;
-    uniV3Router = config.uniV3Router;
-    uniV3NFT = config.uniV3NFT;
-    quoterV2 = config.quoterV2;
-    balBWUSDCId = config.balBWUSDCId;
-    balBWWETHId = config.balBWWETHId;
-    chainlinkEthUsd = config.chainlinkEthUsd;
-    chainlinkEthUsdSecondary = config.chainlinkEthUsdSecondary;
-    uniV3UsdcPool = config.uniV3UsdcPool;
-    uniV3WethPool = config.uniV3WethPool;
-    entryPoint = config.entryPoint;
-    paymasterA = config.paymasterA;
-    paymasterB = config.paymasterB;
-    
-    // Set uniV3EthUsdPool to zero (not needed)
-    // uniV3EthUsdPool = address(0);
-    
-    _ensureApprovals();
-}
-
-   // ================================
-//  UPDATED _ensureApprovals() (More Gas Efficient)
-// ================================
-function _ensureApprovals() internal {
-    // Create token instances once to save gas
-    IERC20 usdcToken = IERC20(usdc);
-    IERC20 wethToken = IERC20(weth);
-    IERC20 bwzcToken = IERC20(bwzc);
-    
-    // List of spenders that need approval
-    address[5] memory spenders = [vault, uniV3Router, uniV2Router, sushiRouter, uniV3NFT];
-    
-    // Approve max amount to each spender
-    for (uint256 i = 0; i < spenders.length; i++) {
-        if (usdcToken.allowance(address(this), spenders[i]) == 0) {
-            usdcToken.approve(spenders[i], type(uint256).max);
-        }
-        if (wethToken.allowance(address(this), spenders[i]) == 0) {
-            wethToken.approve(spenders[i], type(uint256).max);
-        }
-        if (bwzcToken.allowance(address(this), spenders[i]) == 0) {
-            bwzcToken.approve(spenders[i], type(uint256).max);
+    function _ensureApprovals() internal {
+        address[5] memory spenders = [vault, uniV3Router, uniV2Router, sushiRouter, uniV3NFT];
+        IERC20[3] memory tokens = [IERC20(usdc), IERC20(weth), IERC20(bwzc)];
+        
+        for (uint256 i = 0; i < spenders.length; i++) {
+            for (uint256 j = 0; j < tokens.length; j++) {
+                if (tokens[j].allowance(address(this), spenders[i]) == 0) {
+                    tokens[j].approve(spenders[i], type(uint256).max);
+                }
+            }
         }
     }
-}
 
-    // ================================
-//  OPTIONAL: Update adminSetAddress() for struct compatibility
-// ================================
-function adminSetAddress(bytes32 key, address value) external onlyOwner {
-    if (key == "scw") scw = value;
-    else if (key == "usdc") usdc = value;
-    else if (key == "weth") weth = value;
-    else if (key == "bwzc") bwzc = value;
-    else if (key == "vault") vault = value;
-    else if (key == "uniV2Router") uniV2Router = value;
-    else if (key == "sushiRouter") sushiRouter = value;
-    else if (key == "uniV3Router") uniV3Router = value;
-    else if (key == "uniV3NFT") uniV3NFT = value;
-    else if (key == "quoterV2") quoterV2 = value;
-    else if (key == "chainlinkEthUsd") chainlinkEthUsd = value;
-    else if (key == "chainlinkEthUsdSecondary") chainlinkEthUsdSecondary = value;
-    else if (key == "uniV3UsdcPool") uniV3UsdcPool = value;
-    else if (key == "uniV3WethPool") uniV3WethPool = value;
-    else if (key == "entryPoint") entryPoint = value;
-    else if (key == "paymasterA") paymasterA = value;
-    else if (key == "paymasterB") paymasterB = value;
-    else revert InvalidAddressKey();
-    
-    emit AdminAddressUpdated(key, value);
-}
+    function adminSetAddress(bytes32 key, address value) external onlyOwner {
+        if (key == "scw") scw = value;
+        else if (key == "usdc") usdc = value;
+        else if (key == "weth") weth = value;
+        else if (key == "bwzc") bwzc = value;
+        else if (key == "vault") vault = value;
+        else if (key == "uniV2Router") uniV2Router = value;
+        else if (key == "sushiRouter") sushiRouter = value;
+        else if (key == "uniV3Router") uniV3Router = value;
+        else if (key == "uniV3NFT") uniV3NFT = value;
+        else if (key == "quoterV2") quoterV2 = value;
+        else if (key == "chainlinkEthUsd") chainlinkEthUsd = value;
+        else if (key == "chainlinkEthUsdSecondary") chainlinkEthUsdSecondary = value;
+        else if (key == "uniV3EthUsdPool") uniV3EthUsdPool = value;
+        else if (key == "uniV3UsdcPool") uniV3UsdcPool = value;
+        else if (key == "uniV3WethPool") uniV3WethPool = value;
+        else if (key == "entryPoint") entryPoint = value;
+        else if (key == "paymasterA") paymasterA = value;
+        else if (key == "paymasterB") paymasterB = value;
+        else revert InvalidAddressKey();
+        
+        emit AdminAddressUpdated(key, value);
+    }
+
     function adminSetPoolId(bytes32 key, bytes32 value) external onlyOwner {
         if (key == "balBWUSDCId") balBWUSDCId = value;
         else if (key == "balBWWETHId") balBWWETHId = value;
@@ -546,112 +527,59 @@ function adminSetAddress(bytes32 key, address value) external onlyOwner {
         return 200 + BALANCER_FLASH_FEE_BPS + SLIPPAGE_TOLERANCE_BPS + SAFETY_BUFFER_BPS;
     }
 
-    // ================================
-// 4. UPDATED _getConsensusEthPrice() 
-// ================================
-function _getConsensusEthPrice() internal returns (uint256 price, uint8 confidence) {
-    // Only 2 possible sources now (Chainlink primary + secondary)
-    uint256[] memory prices = new uint256[](2);
-    uint8 valid = 0;
-    
-    // Primary Chainlink ETH/USD
-    try IChainlinkFeed(chainlinkEthUsd).latestRoundData() returns (
-        uint80, 
-        int256 p, 
-        uint256, 
-        uint256 updatedAt, 
-        uint80
-    ) {
-        if (p > 0 && block.timestamp - updatedAt <= stalenessThreshold) {
-            // Chainlink returns price with 8 decimals, convert to 18 decimals
-            prices[valid++] = uint256(p) * 1e10;
-        }
-    } catch {
-        // Silently fail - just don't add this source
-    }
-    
-    // Secondary Chainlink ETH/USD (optional)
-    if (chainlinkEthUsdSecondary != address(0)) {
-        try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData() returns (
-            uint80, 
-            int256 p2, 
-            uint256, 
-            uint256 updatedAt2, 
-            uint80
-        ) {
-            if (p2 > 0 && block.timestamp - updatedAt2 <= stalenessThreshold) {
+    function _getConsensusEthPrice() internal returns (uint256 price, uint8 confidence) {
+        uint256[] memory prices = new uint256[](3);
+        uint8 valid = 0;
+        
+        try IChainlinkFeed(chainlinkEthUsd).latestRoundData() returns (uint80, int256 p, uint256, uint256 u, uint80) {
+            if (p > 0 && block.timestamp - u <= stalenessThreshold) {
+                prices[valid++] = uint256(p) * 1e10;
+            }
+        } catch {}
+        
+        try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData() returns (uint80, int256 p2, uint256, uint256 u2, uint80) {
+            if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
                 prices[valid++] = uint256(p2) * 1e10;
             }
+        } catch {}
+        
+        if (uniV3EthUsdPool != address(0)) {
+            try IUniswapV3Pool(uniV3EthUsdPool).slot0() returns (uint160 sqrtPriceX96, int24, uint16, uint16, uint16, uint8, bool) {
+                uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+                prices[valid++] = rawPrice * 1e12;
+            } catch {}
+        }
+        
+        confidence = valid;
+        if (valid >= 2) {
+            price = (prices[0] + prices[1]) / 2;
+            uint256 deviation = prices[0] > prices[1] ? prices[0] - prices[1] : prices[1] - prices[0];
+            uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
+            if (deviationBps > 100) revert DeviationTooHigh();
+            emit OracleConsensus(price, confidence);
+        } else if (valid == 1) {
+            price = prices[0];
+            emit OracleConsensus(price, confidence);
+        } else {
+            revert OracleConsensusFailed();
+        }
+    }
+
+    function _getUniswapV3Price() internal view returns (uint256) {
+        try IUniswapV3Pool(uniV3UsdcPool).slot0() returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool) {
+            uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+            uint256 bwzcPerUsdc = rawPrice / 1e12;
+            uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : FullMath.mulDiv(1e6, 1, bwzcPerUsdc);
+            
+            if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
+                revert DeviationTooHigh();
+            }
+            
+            return priceUSD;
         } catch {
-            // Silently fail - just don't add this source
+            revert UniswapV3QueryFailed();
         }
     }
-    
-    confidence = valid;
-    
-    if (valid >= 2) {
-        // Two valid sources - take average
-        price = (prices[0] + prices[1]) / 2;
-        
-        // Check deviation between sources (max 1%)
-        uint256 deviation = prices[0] > prices[1] ? 
-            prices[0] - prices[1] : 
-            prices[1] - prices[0];
-        uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
-        
-        if (deviationBps > 100) revert DeviationTooHigh(); // 1% max deviation
-        
-        emit OracleConsensus(price, confidence);
-    } else if (valid == 1) {
-        // Only one valid source
-        price = prices[0];
-        emit OracleConsensus(price, confidence);
-    } else {
-        // No valid sources
-        revert OracleConsensusFailed();
-    }
-}
-
-   // ================================
-// UPDATED _getUniswapV3Price() 
-// ================================
-function _getUniswapV3Price() internal view returns (uint256) {
-    try IUniswapV3Pool(uniV3UsdcPool).slot0() returns (
-        uint160 sqrtPriceX96, 
-        int24 tick,      // Variable declared but never used - compiler will warn
-        uint16, 
-        uint16, 
-        uint16, 
-        uint8, 
-        bool
-    ) {
-        // Calculate price from sqrtPriceX96
-        // sqrtPriceX96 = sqrt(price) * 2^96
-        // price = (sqrtPriceX96 / 2^96)^2
-        
-        // Convert sqrtPriceX96 to actual price (BWZC per USDC)
-        uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
-        
-        // Adjust for decimals: USDC has 6 decimals, BWZC has 18 decimals
-        // If rawPrice is BWZC per USDC * 2^192, we need to divide by 1e12
-        // because: (18 dec BWZC / 6 dec USDC) = 12 decimal difference
-        uint256 bwzcPerUsdc = rawPrice / 1e12;
-        
-        // Convert to USD price per BWZC: priceUSD = USDC per BWZC * 1e6
-        // Since bwzcPerUsdc = BWZC per USDC, USDC per BWZC = 1 / bwzcPerUsdc
-        uint256 priceUSD = bwzcPerUsdc == 0 ? 0 : FullMath.mulDiv(1e6, 1, bwzcPerUsdc);
-        
-        // Sanity check: price shouldn't deviate more than 10x from Balancer price
-        if (priceUSD < BALANCER_PRICE_USD / 10 || priceUSD > BALANCER_PRICE_USD * 10) {
-            revert DeviationTooHigh();
-        }
-        
-        return priceUSD;
-    } catch {
-        revert UniswapV3QueryFailed();
-    }
-}
-
 
     function _calculateCurrentSpread() internal view returns (uint256 spreadBps) {
         uint256 balancerPrice = BALANCER_PRICE_USD;
@@ -879,50 +807,55 @@ function _getUniswapV3Price() internal view returns (uint256) {
         if (wethProfit < wethAmount * requiredSpread / 10000) revert("WETH profit too low");
     }
 
-   function receiveFlashLoan(
+    function receiveFlashLoan(
     address[] calldata tokens,
     uint256[] calldata amounts,
     uint256[] calldata feeAmounts,
     bytes calldata userData
 ) external override nonReentrant {
-    // ==================== SECURITY CHECKS ====================
+    // ================================
+    // CRITICAL VALIDATION CHECKS
+    // ================================
     
-    // 1. Validate caller
+    // 1. Validate caller is Balancer Vault
     if (msg.sender != vault) revert("Not vault");
     
     // 2. Validate transaction state
     if (txState != TxState.IDLE) revert InvalidStateTransition();
     
-    // 3. ✅ FIXED: Validate tokens array (was unused!)
+    // 3. Validate tokens array matches expected tokens
     if (tokens.length != 2) revert("Must flash exactly 2 tokens");
     if (tokens[0] != usdc) revert("First token must be USDC");
     if (tokens[1] != weth) revert("Second token must be WETH");
     
     // 4. Validate amounts array
     if (amounts.length != 2) revert("Must have exactly 2 amounts");
-    uint256 usdcBorrowed = amounts[0];
-    uint256 wethBorrowed = amounts[1];
-    if (usdcBorrowed == 0) revert("USDC amount cannot be zero");
-    if (wethBorrowed == 0) revert("WETH amount cannot be zero");
+    if (amounts[0] == 0) revert("USDC amount cannot be zero");
+    if (amounts[1] == 0) revert("WETH amount cannot be zero");
     
     // 5. Validate fee amounts
     if (feeAmounts.length != 2) revert("Must have exactly 2 fee amounts");
     
     txState = TxState.EXECUTING;
     
-    // ==================== DECODE USER DATA ====================
+    // ================================
+    // DECODE AND VALIDATE USER DATA
+    // ================================
     (uint256 bwzcForArbitrage, uint256 expectedUsdc, uint256 expectedWeth, uint256 deadline) = 
         abi.decode(userData, (uint256, uint256, uint256, uint256));
     
     // 6. Validate deadline
     if (block.timestamp > deadline) revert DeadlineExpired();
     
-    // 7. ✅ FIXED: Validate expected amounts match actual (were unused!)
-    if (usdcBorrowed != expectedUsdc) revert("USDC amount mismatch");
-    if (wethBorrowed != expectedWeth) revert("WETH amount mismatch");
+    // 7. Validate expected amounts match actual borrowed amounts
+    if (amounts[0] != expectedUsdc) revert("USDC amount mismatch");
+    if (amounts[1] != expectedWeth) revert("WETH amount mismatch");
     
-    // 8. Validate bwzcForArbitrage
+    // 8. Validate bwzcForArbitrage is reasonable
     if (bwzcForArbitrage == 0) revert("BWZC for arbitrage cannot be zero");
+    
+    uint256 usdcBorrowed = amounts[0];
+    uint256 wethBorrowed = amounts[1];
     
         
         (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) = 
