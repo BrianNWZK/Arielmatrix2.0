@@ -4,7 +4,13 @@ import path from "path";
 import solc from "solc";
 import dotenv from "dotenv";
 import dotenvExpand from "dotenv-expand";
+import { ethers } from "ethers";
 dotenvExpand.expand(dotenv.config());
+
+// --- ENV ---
+const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
 
 // --- RAW ADDRESSES (all lowercase) ---
 const RAW = {
@@ -35,6 +41,10 @@ const RAW = {
 };
 
 // --- Helpers ---
+function checksum(addr) {
+  return ethers.getAddress(addr.toLowerCase());
+}
+
 function findContractFile() {
   const baseDir = "arielsql_suite/scripts";
   const files = fs.readdirSync(baseDir);
@@ -48,257 +58,201 @@ function findContractFile() {
   return { baseDir, file: target, fullPath: path.join(baseDir, target) };
 }
 
-function compileWithSettings(source, fileName, optimizerEnabled, runs = 200, viaIR = false) {
+function compile(source, fileName) {
   const input = {
     language: "Solidity",
     sources: { [fileName]: { content: source } },
     settings: {
-      optimizer: { 
-        enabled: optimizerEnabled, 
-        runs: runs 
-      },
-      viaIR: viaIR,
+      optimizer: { enabled: true, runs: 200},
+      viaIR: true,
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
   };
-  
-  try {
-    const output = JSON.parse(solc.compile(JSON.stringify(input)));
-    
-    if (output.errors) {
-      const errs = output.errors.filter(e => e.severity === "error");
-      if (errs.length) {
-        console.log(`  ❌ Compilation failed: ${errs[0].message}`);
-        return null;
-      }
-      // Show warnings
-      output.errors.filter(e => e.severity === "warning").forEach(w => console.warn(`  ⚠️ ${w.message}`));
+  const output = JSON.parse(solc.compile(JSON.stringify(input)));
+  if (output.errors) {
+    const errs = output.errors.filter(e => e.severity === "error");
+    if (errs.length) {
+      errs.forEach(e => console.error(e.formattedMessage));
+      throw new Error("Compilation failed");
     }
-    
-    const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
-    if (!compiled) {
-      console.log(`  ❌ Contract WarehouseBalancerArb not found in compilation output`);
-      return null;
-    }
-    
-    const bytecode = "0x" + compiled.evm.bytecode.object;
-    const deployedBytecode = "0x" + compiled.evm.deployedBytecode.object;
-    
-    return {
-      bytecode: bytecode,
-      deployedBytecode: deployedBytecode,
-      deployedSize: (compiled.evm.deployedBytecode.object.length / 2),
-      creationSize: (compiled.evm.bytecode.object.length / 2),
-      success: true,
-      abi: compiled.abi
-    };
-  } catch (error) {
-    console.log(`  ❌ Compilation error: ${error.message}`);
-    return null;
+    output.errors.filter(e => e.severity === "warning").forEach(w => console.warn("Warning:", w.formattedMessage));
   }
+  const compiled = output.contracts[fileName]?.WarehouseBalancerArb;
+  if (!compiled) throw new Error("Contract WarehouseBalancerArb not found.");
+  return {
+    abi: compiled.abi,
+    bytecode: "0x" + compiled.evm.bytecode.object,
+    deployedSize: (compiled.evm.deployedBytecode.object.length / 2)
+  };
 }
 
-function analyzeBytecode(bytecode, name) {
-  if (!bytecode) return;
-  
-  const size = bytecode.length / 2 - 1; // Remove 0x prefix
-  console.log(`  Bytecode size: ${size.toLocaleString()} bytes`);
-  
-  // Check if matches your deployed size (16,589 bytes)
-  if (size === 16589) {
-    console.log(`  ✅ MATCHES your deployed size (16,589 bytes)!`);
-  }
-  
-  // Show first 100 characters
-  console.log(`  First 100 chars: ${bytecode.substring(0, 100)}...`);
-  
-  // Analyze for common patterns
-  const hasConstructor = bytecode.includes("60806040") || bytecode.includes("6080604052");
-  console.log(`  Has constructor: ${hasConstructor ? "Yes" : "No"}`);
-  
-  return size;
+async function fetchBalancerPoolIds(provider, balPoolAddrUSDC, balPoolAddrWETH) {
+  const poolAbi = ["function getPoolId() external view returns (bytes32)"];
+  const usdcPool = new ethers.Contract(balPoolAddrUSDC, poolAbi, provider);
+  const wethPool = new ethers.Contract(balPoolAddrWETH, poolAbi, provider);
+  const usdcId = await usdcPool.getPoolId();
+  const wethId = await wethPool.getPoolId();
+  return { usdcId, wethId };
 }
 
-// --- Main: Compile Only ---
+async function fetchBwzcDecimals(provider, bwzcAddr) {
+  const abi = ["function decimals() external view returns (uint8)"];
+  const contract = new ethers.Contract(bwzcAddr, abi, provider);
+  return await contract.decimals();
+}
+
+// --- Deploy ---
 async function main() {
-  console.log("=== Bytecode Size Analyzer (NO DEPLOYMENT) ===\n");
-  const { fullPath } = findContractFile();
+  console.log("=== Compile + Deploy WarehouseBalancerArb V20 ===");
+  const { baseDir, file, fullPath } = findContractFile();
   console.log("Source file:", fullPath);
   
-  // Read and analyze source
   const source = fs.readFileSync(fullPath, "utf8");
-  const sourceSize = Buffer.byteLength(source, 'utf8');
-  const lines = source.split('\n').length;
+  const { abi, bytecode, deployedSize } = compile(source, file);
+  console.log(`Deployed bytecode size: ${deployedSize} bytes`);
   
-  console.log("\n" + "=".repeat(60));
-  console.log("SOURCE FILE ANALYSIS");
-  console.log("=".repeat(60));
-  console.log(`Size: ${sourceSize.toLocaleString()} bytes`);
-  console.log(`Lines: ${lines}`);
-  console.log(`Characters: ${source.length.toLocaleString()}`);
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+  console.log("Deployer:", wallet.address);
+  console.log("Balance:", ethers.formatEther(await provider.getBalance(wallet.address)), "ETH");
   
-  // Check for the 24,420 byte comment
-  if (source.includes("24,420 bytes")) {
-    console.log("\n⚠️  Found comment claiming 24,420 bytes in source code");
-  }
+  // Normalize addresses
+  const A = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.toUpperCase(), checksum(v)]));
   
-  // Check if it has the struct constructor
-  if (source.includes("struct DeploymentConfig")) {
-    console.log("✅ Has struct-based constructor");
-  } else if (source.includes("constructor(")) {
-    console.log("❌ Has regular constructor (may have stack issues)");
-  }
+  // Fetch Balancer pool IDs
+  console.log("Fetching Balancer pool IDs...");
+  const { usdcId: BAL_BW_USDC_ID, wethId: BAL_BW_WETH_ID } = await fetchBalancerPoolIds(
+    provider,
+    A.BAL_BW_USDC,
+    A.BAL_BW_WETH
+  );
+  console.log("BAL_BW_USDC_ID:", BAL_BW_USDC_ID);
+  console.log("BAL_BW_WETH_ID:", BAL_BW_WETH_ID);
   
-  console.log("\n" + "=".repeat(60));
-  console.log("COMPILATION TESTS");
-  console.log("=".repeat(60));
+  // Fetch BWZC decimals
+  console.log("Fetching BWZC decimals...");
+  const BWZC_DECIMALS = await fetchBwzcDecimals(provider, A.BWZC);
+  console.log("BWZC_DECIMALS:", BWZC_DECIMALS);
   
-  // Test different compiler settings
-  const tests = [
-    { name: "NO OPTIMIZATION, NO viaIR", opt: false, runs: 0, viaIR: false },
-    { name: "NO OPTIMIZATION, WITH viaIR", opt: false, runs: 0, viaIR: true },
-    { name: "OPT runs=1, viaIR (YOUR CURRENT)", opt: true, runs: 1, viaIR: true },
-    { name: "OPT runs=200, viaIR", opt: true, runs: 200, viaIR: true },
-    { name: "OPT runs=200, NO viaIR", opt: true, runs: 200, viaIR: false },
-    { name: "OPT runs=1000, viaIR", opt: true, runs: 1000, viaIR: true },
-  ];
+  const factory = new ethers.ContractFactory(abi, bytecode, wallet);
   
-  const results = [];
+  // ✅ CORRECTED: 20 parameters matching your constructor exactly
+  console.log("Deploying with 20 constructor arguments...");
   
-  for (const test of tests) {
-    console.log(`\n🔧 Testing: ${test.name}`);
-    console.log(`  Settings: optimizer=${test.opt}, runs=${test.runs}, viaIR=${test.viaIR}`);
+  try {
+  const contract = await factory.deploy(
+    A.SCW,                    // 1. _scw
+    A.USDC,                   // 2. _usdc
+    A.WETH,                   // 3. _weth
+    A.BWZC,                   // 4. _bwzc
+    A.BALANCER_VAULT,         // 5. _vault
+    A.UNIV2_ROUTER,           // 6. _uniV2Router
+    A.SUSHI_ROUTER,           // 7. _sushiRouter
+    A.UNIV3_ROUTER,           // 8. _uniV3Router
+    A.POSITION_MANAGER,       // 9. _uniV3NFT
+    A.QUOTER_V2,              // 10. _quoterV2
+    BAL_BW_USDC_ID,           // 11. _balBWUSDCId (bytes32)
+    BAL_BW_WETH_ID,           // 12. _balBWWETHId (bytes32)
+    A.CHAINLINK_ETHUSD,       // 13. _chainlinkEthUsd
+    A.CHAINLINK_ETHUSD_SECONDARY, // 14. _chainlinkEthUsdSecondary
+    A.UNIV3_ETH_USD_POOL,     // 15. _uniV3EthUsdPool ✅ CORRECTED!
+    A.UNIV3_BW_USDC,          // 16. _uniV3UsdcPool
+    A.UNIV3_BW_WETH,          // 17. _uniV3WethPool
+    A.ENTRYPOINT,             // 18. _entryPoint
+    A.PAYMASTER_A,            // 19. _paymasterA
+    A.PAYMASTER_B,            // 20. _paymasterB
+  );
     
-    const result = compileWithSettings(source, "WarehouseBalancerArb.sol", test.opt, test.runs, test.viaIR);
+    console.log("TX sent:", contract.deploymentTransaction().hash);
+    console.log("Waiting for deployment confirmation...");
     
-    if (result && result.success) {
-      console.log(`  ✅ Success: ${result.deployedSize.toLocaleString()} bytes`);
-      results.push({
-        name: test.name,
-        size: result.deployedSize,
-        settings: test,
-        bytecode: result.deployedBytecode
-      });
-      
-      analyzeBytecode(result.deployedBytecode, test.name);
-    } else {
-      console.log(`  ❌ Failed to compile`);
+    await contract.waitForDeployment();
+    const addr = await contract.getAddress();
+    console.log("✅ Deployed at:", addr);
+    
+    // Verify deployment
+    const code = await provider.getCode(addr);
+    if (code === "0x") {
+      throw new Error("Contract deployment failed - no code at address");
     }
-  }
-  
-  console.log("\n" + "=".repeat(60));
-  console.log("RESULTS SUMMARY");
-  console.log("=".repeat(60));
-  
-  if (results.length === 0) {
-    console.log("❌ No successful compilations!");
-    return;
-  }
-  
-  console.log("\n📊 Successful compilations:");
-  results.forEach((r, i) => {
-    const diffFromTarget = r.size - 16589;
-    const diffStr = diffFromTarget === 0 ? "🎯 EXACT MATCH" : 
-                   diffFromTarget > 0 ? `+${diffFromTarget}` : `${diffFromTarget}`;
-    console.log(`${i+1}. ${r.name}: ${r.size.toLocaleString()} bytes (${diffStr})`);
-  });
-  
-  // Find matches for 16,589 bytes
-  const exactMatches = results.filter(r => r.size === 16589);
-  const closeMatches = results.filter(r => Math.abs(r.size - 16589) <= 100);
-  
-  if (exactMatches.length > 0) {
-    console.log("\n🎯 EXACT MATCHES FOUND for 16,589 bytes:");
-    exactMatches.forEach(match => {
-      console.log(`  • ${match.name}`);
-      console.log(`    Settings: optimizer=${match.settings.opt}, runs=${match.settings.runs}, viaIR=${match.settings.viaIR}`);
-    });
-  } else if (closeMatches.length > 0) {
-    console.log("\n🔍 CLOSE MATCHES to 16,589 bytes:");
-    closeMatches.forEach(match => {
-      const diff = match.size - 16589;
-      console.log(`  • ${match.name}: ${match.size} bytes (${diff > 0 ? '+' : ''}${diff})`);
-    });
-  } else {
-    console.log("\n❌ NO CLOSE MATCHES to 16,589 bytes");
-  }
-  
-  // Compare bytecodes
-  console.log("\n" + "=".repeat(60));
-  console.log("BYTECODE COMPARISON");
-  console.log("=".repeat(60));
-  
-  if (results.length >= 2) {
-    console.log("\nComparing bytecodes (first 200 chars):");
-    const reference = results[0].bytecode.substring(0, 200);
-    console.log(`Reference (${results[0].name}): ${reference}`);
+    console.log("Contract code verified successfully");
     
-    for (let i = 1; i < results.length; i++) {
-      const compare = results[i].bytecode.substring(0, 200);
-      const isSame = reference === compare;
-      console.log(`\n${results[i].name}:`);
-      console.log(`  First 200 chars: ${compare}`);
-      console.log(`  Same as reference: ${isSame ? "✅ YES" : "❌ NO"}`);
+    // Save deployment info
+    const info = {
+      address: addr,
+      tx: contract.deploymentTransaction().hash,
+      deployer: wallet.address,
+      constructorArguments: [
+        A.SCW,
+        A.USDC,
+        A.WETH,
+        A.BWZC,
+        A.BALANCER_VAULT,
+        A.UNIV2_ROUTER,
+        A.SUSHI_ROUTER,
+        A.UNIV3_ROUTER,
+        A.POSITION_MANAGER,
+        A.QUOTER_V2,
+        BAL_BW_USDC_ID,
+        BAL_BW_WETH_ID,
+        A.CHAINLINK_ETHUSD,
+        A.CHAINLINK_ETHUSD_SECONDARY,
+        A.UNIV3_ETH_USD_POOL,
+        A.UNIV3_BW_USDC,
+        A.UNIV3_BW_WETH,
+        A.ENTRYPOINT,
+        A.PAYMASTER_A,
+        A.PAYMASTER_B,
+        
+      ],
+      poolIds: {
+        BAL_BW_USDC_ID: BAL_BW_USDC_ID,
+        BAL_BW_WETH_ID: BAL_BW_WETH_ID
+      },
+      bwzcDecimals: BWZC_DECIMALS,
+      network: await provider.getNetwork(),
+      timestamp: new Date().toISOString()
+    };
+    
+    fs.writeFileSync("deployment-info.json", JSON.stringify(info, null, 2));
+    console.log("Saved deployment-info.json");
+    console.log("\n🎉 Deployment successful!");
+    
+  } catch (error) {
+    console.error("❌ Deployment failed:", error.message);
+    
+    // Helpful debug info
+    if (error.message.includes("insufficient funds")) {
+      console.error("\n💡 Tip: Add more ETH to your deployer wallet");
+    } else if (error.message.includes("nonce")) {
+      console.error("\n💡 Tip: Try resetting your wallet nonce");
+    } else if (error.message.includes("argument") || error.message.includes("overrides")) {
+      console.error("\n💡 Tip: Constructor argument mismatch - verify the 20 parameters match exactly");
+      console.error("Expected constructor parameters:");
+      console.error("1. _scw (address)");
+      console.error("2. _usdc (address)");
+      console.error("3. _weth (address)");
+      console.error("4. _bwzc (address)");
+      console.error("5. _vault (address)");
+      console.error("6. _uniV2Router (address)");
+      console.error("7. _sushiRouter (address)");
+      console.error("8. _uniV3Router (address)");
+      console.error("9. _uniV3NFT (address)");
+      console.error("10. _quoterV2 (address)");
+      console.error("11. _balBWUSDCId (bytes32)");
+      console.error("12. _balBWWETHId (bytes32)");
+      console.error("13. _chainlinkEthUsd (address)");
+      console.error("14. _chainlinkEthUsdSecondary (address)");
+     
+      console.error("16. _uniV3UsdcPool (address)");
+      console.error("17. _uniV3WethPool (address)");
+      console.error("18. _entryPoint (address)");
+      console.error("19. _paymasterA (address)");
+      console.error("20. _paymasterB (address)");
     }
+    
+    process.exit(1);
   }
-  
-  // Save detailed results
-  const analysisResults = {
-    sourceFile: fullPath,
-    sourceStats: {
-      size: sourceSize,
-      lines: lines,
-      characters: source.length,
-      hasStructConstructor: source.includes("struct DeploymentConfig"),
-      claims24420Bytes: source.includes("24,420 bytes")
-    },
-    compilationResults: results.map(r => ({
-      name: r.name,
-      size: r.size,
-      settings: r.settings,
-      bytecodePrefix: r.bytecode.substring(0, 100)
-    })),
-    targetSize: 16589,
-    exactMatches: exactMatches.map(m => m.name),
-    timestamp: new Date().toISOString()
-  };
-  
-  fs.writeFileSync("bytecode-analysis.json", JSON.stringify(analysisResults, null, 2));
-  console.log("\n📄 Detailed results saved to bytecode-analysis.json");
-  
-  // Final recommendations
-  console.log("\n" + "=".repeat(60));
-  console.log("RECOMMENDATIONS");
-  console.log("=".repeat(60));
-  
-  const viaIRResults = results.filter(r => r.settings.viaIR);
-  const noViaIRResults = results.filter(r => !r.settings.viaIR);
-  
-  if (noViaIRResults.length === 0) {
-    console.log("🚨 CONTRACT REQUIRES viaIR TO COMPILE!");
-    console.log("   This indicates 'Stack too deep' error in constructor.");
-    console.log("   Solution: Use struct-based constructor as suggested.");
-  }
-  
-  if (exactMatches.length > 0) {
-    console.log(`\n✅ Found exact match for your deployed size (16,589 bytes)`);
-    console.log(`   Use: ${exactMatches[0].name}`);
-  }
-  
-  // Check if any produce close to 24,420 bytes
-  const closeTo24420 = results.filter(r => Math.abs(r.size - 24420) <= 500);
-  if (closeTo24420.length > 0) {
-    console.log(`\n📏 Close to claimed 24,420 bytes:`);
-    closeTo24420.forEach(r => {
-      console.log(`   ${r.name}: ${r.size} bytes`);
-    });
-  }
-  
-  console.log("\n💡 Next steps:");
-  console.log("1. Check which settings produce 16,589 bytes");
-  console.log("2. If none match, your source may be different than deployed");
-  console.log("3. Fix struct constructor if needed");
-  console.log("4. Test with optimized settings for production");
 }
 
 // --- Run ---
