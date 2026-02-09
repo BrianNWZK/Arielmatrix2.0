@@ -63,7 +63,7 @@ function compile(source, fileName) {
     language: "Solidity",
     sources: { [fileName]: { content: source } },
     settings: {
-      optimizer: { enabled: true, runs: 1 },
+      optimizer: { enabled: true, runs: 200},
       viaIR: true,
       outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
