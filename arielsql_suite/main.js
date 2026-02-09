@@ -14,7 +14,7 @@ if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS in .env");
 const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"; // BWAEZI token
 
 // WarehouseBalancerArb contract address (the one that needs BWZC approval)
-const WAREHOUSE_CONTRACT = "0x456d84bCf880E1b490877a39E5Fb55ABD710636c";
+const WAREHOUSE_CONTRACT = "0x8c659BD828FFc5c8B07E3583142629551184D36E";
 
 // --- ABI fragments ---
 const tokenIface = new ethers.Interface([
