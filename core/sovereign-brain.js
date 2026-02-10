@@ -258,7 +258,7 @@ console.log(`
 ║         SOVEREIGN MEV v19.0 - OPERATIONAL SEPARATION         ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                                                               ║
-║  WAREHOUSE CONTRACT (0x456d84bCf880E1b490877a39E5Fb55ABD710636c):║
+║  WAREHOUSE CONTRACT (0x8c659BD828FFc5c8B07E3583142629551184D36E):║
 ║  • Handles ALL flash loans & capital-intensive operations    ║
 ║  • Bootstrap, arbitrage with leverage, pool deepening        ║
 ║  • V3 NFT fee harvesting (capital safe)                      ║
