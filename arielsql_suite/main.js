@@ -8,6 +8,26 @@ import process from 'process';
 import net from 'net';
 
 import {ProductionSovereignCore, LIVE  } from '../core/sovereign-brain.js';
+import { EnhancedRPCManager } from '../core/sovereign-brain-v19.0.js';
+
+async initializeBlockchainConnection() {
+  try {
+    console.log('🔗 Initializing mainnet connection...');
+    const rpcManager = new EnhancedRPCManager();
+    await rpcManager.init();
+    const primary = rpcManager.getProvider();
+    await primary.getBlockNumber();
+
+    this.blockchainConnected = true;
+    global.blockchainProvider = primary;
+
+    console.log('✅ Blockchain connected (mainnet sticky provider)');
+  } catch (error) {
+    console.error('⚠️ Blockchain connection failed:', error.message);
+    setTimeout(() => this.initializeBlockchainConnection(), 15000);
+  }
+}
+
 
 async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
   return new Promise((resolve) => {
