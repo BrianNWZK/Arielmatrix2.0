@@ -4485,7 +4485,6 @@ export {
   ReflexiveAmplifier,
   AdaptiveRangeMaker,
   GovernanceRegistry,
-  FeeHarvester,
   // NEW SYSTEMS ADDED
   ContractMEVSynergy,
   HybridHarvestOrchestrator,
