@@ -7,7 +7,7 @@ import { ethers } from 'ethers';
 import process from 'process';
 import net from 'net';
 
-import { ProductionSovereignCore, LIVE } from '../core/sovereign-brain.js';
+import {ProductionSovereignCore, chainRegistry, LIVE  } from '../core/sovereign-brain.js';
 
 async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
   return new Promise((resolve) => {
