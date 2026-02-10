@@ -1302,8 +1302,9 @@ class EnhancedArbitrageEngine {
     this.oracles = oracles;
     this.warehouse = warehouseManager;
     
+   // REMOVE harvester reference - use HybridHarvestOrchestrator instead
     this.lastWarehouseArbCheck = 0;
-    this.warehouseCheckInterval = 60000; // Check every minute
+    this.warehouseCheckInterval = 60000;
     
     // CRITICAL: NO FLASHLOAN HANDLING IN MEV
     console.log('MEV Arbitrage Engine: Flashloan handling DISABLED (handled by contract only)');
