@@ -3920,7 +3920,7 @@ class ProductionSovereignCore {
   }
 
   async initialize() {
-    console.log('=== Initializing Sovereign MEV v18 ===');
+    console.log(`=== Initializing Sovereign MEV ${LIVE.VERSION} ===`);
     
     // Initialize RPC
     await this.rpc.init();
@@ -3956,11 +3956,9 @@ class ProductionSovereignCore {
       this.warehouseManager
     );
     this.kernel.setPeg(LIVE.PEG.TARGET_USD, LIVE.PEG.TOLERANCE_PCT);
-    
     this.arb = new EnhancedArbitrageEngine(this.provider, this.dexRegistry, this.oracles, this.warehouseManager);
-    this.harvester = new FeeHarvester(this.provider);
     this.rangeMaker = new AdaptiveRangeMaker(this.provider);
-    this.gov.setStake(LIVE.EOA_OWNER_ADDRESS, LIVE.GOVERNANCE.MIN_STAKE_BWAEZI);
+    this.gov.setStake(this.signer.address, LIVE.GOVERNANCE.MIN_STAKE_BWAEZI);
     
     // NOVEL: Initialize the three new systems (add these 3 lines)
     this.synergyEngine = new ContractMEVSynergy(this.warehouseManager, this, this.provider);
@@ -3987,7 +3985,7 @@ class ProductionSovereignCore {
     // Start block coordinator
     this.blockCoordinator.start();
     
-    console.log('✅ Sovereign MEV v18 initialized successfully');
+    console.log('✅ Sovereign MEV v19 initialized successfully');
     console.log('📊 Warehouse state monitoring active');
     console.log('🔧 Dual paymaster routing enabled');
     console.log('🚀 Contract-MEV Synergy Engine activated (+10-30% profit)');
