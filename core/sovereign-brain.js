@@ -4617,7 +4617,6 @@ export {
   EnhancedRPCManager,
   StrictOrderingNonce,
   AntiBotShield,
-  EnhancedOmniExecutionAA,
   DualPaymasterRouter,
   WarehouseContractManager,
   LiveContractStateMonitor,
