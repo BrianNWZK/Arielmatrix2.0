@@ -234,6 +234,22 @@ const LIVE = {
   }
 };
 
+/* =========================================================================
+   CRITICAL FIX: chainRegistry (declared separately)
+   ========================================================================= */
+const chainRegistry = {
+  1: {
+    name: 'mainnet',
+    rpcs: LIVE.PUBLIC_RPC_ENDPOINTS || [
+      'https://eth.llamarpc.com',
+      'https://rpc.ankr.com/eth',
+      'https://ethereum-rpc.publicnode.com'
+    ],
+    chainId: 1
+  }
+};
+
+
 // =========================================================================
 // CRITICAL OPERATIONAL SEPARATION DECLARATION
 // =========================================================================
@@ -3711,6 +3727,140 @@ class OracleAggregator {
   }
 }
 
+
+export class EnhancedOmniExecutionAA {
+  constructor(signer, provider, paymasterRouter) {
+    this.signer = signer;
+    this.provider = provider;
+    this.paymasterRouter = paymasterRouter;
+
+    this.scw = LIVE.SCW_ADDRESS;
+    this.entryPoint = LIVE.ENTRY_POINT;
+    this.bundlerUrl = LIVE.BUNDLER.RPC_URL;
+
+    const network = ethers.Network.from({ chainId: LIVE.NETWORK.chainId, name: LIVE.NETWORK.name });
+    this.bundler = new ethers.JsonRpcProvider(this.bundlerUrl, network, { staticNetwork: network });
+
+    this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
+    this.shield = new AntiBotShield();
+    this.warehouse = new WarehouseContractManager(provider, signer);
+  }
+
+  encodeExecute(to, value, data) {
+    const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+    return iface.encodeFunctionData('execute', [to, value, data]);
+  }
+
+  async getEntryPointDeposit(account) {
+    const ep = new ethers.Contract(this.entryPoint, ['function getDeposit(address) view returns (uint256)'], this.provider);
+    return await ep.getDeposit(account);
+  }
+
+  async signUserOp(userOp) {
+    const packed = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address","uint256","bytes","bytes","uint256","uint256","uint256","uint256","uint256","bytes"],
+      [userOp.sender, userOp.nonce, userOp.initCode, userOp.callData, userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas, userOp.maxFeePerGas, userOp.maxPriorityFeePerGas, userOp.paymasterAndData]
+    );
+    const userOpHash = ethers.keccak256(packed);
+    const encHash = ethers.solidityPackedKeccak256(["bytes32","address","uint256","bytes32"], [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]);
+    userOp.signature = await this.signer.signMessage(ethers.getBytes(encHash));
+    return userOp;
+  }
+
+  async sendUserOp(userOp) {
+    const body = { method: 'eth_sendUserOperation', params: [userOp, this.entryPoint], id: 1, jsonrpc: '2.0' };
+    const res = await fetch(this.bundlerUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const json = await res.json();
+    if (json.error) throw new Error(json.error.message || 'Bundler error');
+    return json.result;
+  }
+
+  async buildAndSendUserOp(target, calldata, description = 'v19_exec', useWarehouse = false) {
+    const nonce = await this.nonceLock.acquire();
+
+    // Get optimal paymaster
+    const paymaster = await this.paymasterRouter.getOptimalPaymaster();
+    const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
+
+    const feeData = await this.provider.getFeeData();
+    const baseMF = (feeData.maxFeePerGas || ethers.parseUnits('15', 'gwei'));
+    const baseMP = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'));
+    const mpCap = ethers.parseUnits(String(LIVE.RISK.COMPETITION.MAX_PRIORITY_FEE_GWEI || 6), 'gwei');
+    const mf = this.shield.gasBump(baseMF);
+    const mpRaw = this.shield.gasBump(baseMP);
+    const mp = mpRaw > mpCap ? mpCap : mpRaw;
+
+    const paymasterAndData = paymasterDeposit > ethers.parseEther(String(process.env.PM_MIN_DEPOSIT_ETH || '0.002'))
+      ? ethers.concat([paymaster, '0x'])
+      : '0x';
+
+    const userOp = {
+      sender: this.scw,
+      nonce: ethers.toQuantity(nonce),
+      initCode: '0x',
+      callData: this.encodeExecute(target, 0n, calldata),
+      callGasLimit: ethers.toQuantity(toBN(process.env.CALL_GAS_LIMIT || 450_000)),
+      verificationGasLimit: ethers.toQuantity(toBN(process.env.VERIFICATION_GAS_LIMIT || 240_000)),
+      preVerificationGas: ethers.toQuantity(toBN(process.env.PRE_VERIFICATION_GAS || 70_000)),
+      maxFeePerGas: ethers.toQuantity(mf),
+      maxPriorityFeePerGas: ethers.toQuantity(mp),
+      paymasterAndData,
+      signature: '0x'
+    };
+
+    const signed = await this.signUserOp(userOp);
+    const hash = await this.sendUserOp(signed);
+    this.nonceLock.release();
+
+    return {
+      userOpHash: hash,
+      desc: description,
+      nonce: nonce,
+      paymasterUsed: paymaster,
+      targetContract: useWarehouse ? 'WarehouseBalancerArb' : 'Standard'
+    };
+  }
+
+  // Warehouse-specific operations
+  async executeWarehouseBootstrap(bwzcAmount) {
+    const iface = new ethers.Interface(['function executePreciseBootstrap(uint256 bwzcForArbitrage)']);
+    const calldata = iface.encodeFunctionData('executePreciseBootstrap', [bwzcAmount]);
+
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'warehouse_bootstrap',
+      true
+    );
+  }
+
+  async executeWarehouseHarvest() {
+    const iface = new ethers.Interface(['function harvestAllFees() returns (uint256,uint256,uint256)']);
+    const calldata = iface.encodeFunctionData('harvestAllFees', []);
+
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'warehouse_harvest',
+      true
+    );
+  }
+
+  async addV3PositionToWarehouse(tokenId) {
+    const iface = new ethers.Interface(['function addUniswapV3Position(uint256 tokenId)']);
+    const calldata = iface.encodeFunctionData('addUniswapV3Position', [tokenId]);
+
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'add_v3_position',
+      true
+    );
+  }
+}
+
+
+
 /* =========================================================================
    Production Sovereign Core 
    ========================================================================= */
@@ -4467,6 +4617,7 @@ export {
   EnhancedRPCManager,
   StrictOrderingNonce,
   AntiBotShield,
+  EnhancedOmniExecutionAA,
   DualPaymasterRouter,
   WarehouseContractManager,
   LiveContractStateMonitor,
