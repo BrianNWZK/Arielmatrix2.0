@@ -3736,10 +3736,6 @@ export class EnhancedOmniExecutionAA {
 
     this.scw = LIVE.SCW_ADDRESS;
     this.entryPoint = LIVE.ENTRY_POINT;
-    this.bundlerUrl = LIVE.BUNDLER.RPC_URL;
-
-    const network = ethers.Network.from({ chainId: LIVE.NETWORK.chainId, name: LIVE.NETWORK.name });
-    this.bundler = new ethers.JsonRpcProvider(this.bundlerUrl, network, { staticNetwork: network });
 
     this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
     this.shield = new AntiBotShield();
@@ -3768,29 +3764,53 @@ export class EnhancedOmniExecutionAA {
   }
 
   async sendUserOp(userOp) {
-    const body = { method: 'eth_sendUserOperation', params: [userOp, this.entryPoint], id: 1, jsonrpc: '2.0' };
-    const res = await fetch(this.bundlerUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const json = await res.json();
-    if (json.error) throw new Error(json.error.message || 'Bundler error');
-    return json.result;
+    // Primary: Direct RPC call (works on AA-enabled nodes like Alchemy/Infura)
+    try {
+      const hash = await this.provider.send("eth_sendUserOperation", [userOp, this.entryPoint]);
+      console.log("Direct UserOp sent via RPC:", hash);
+      return hash;
+    } catch (error) {
+      console.warn("Direct RPC failed (method not supported), falling back to handleOps:", error.message);
+      
+      // Fallback: Direct handleOps contract call (works on any standard RPC)
+      try {
+        const entryPoint = new ethers.Contract(
+          this.entryPoint,
+          ['function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
+          this.signer
+        );
+
+        const tx = await entryPoint.handleOps([userOp], this.signer.address);
+        console.log("handleOps transaction sent:", tx.hash);
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          return tx.hash;
+        } else {
+          throw new Error('UserOp execution failed in handleOps');
+        }
+      } catch (fallbackError) {
+        console.error("All UserOp submission methods failed:", fallbackError);
+        throw fallbackError;
+      }
+    }
   }
 
   async buildAndSendUserOp(target, calldata, description = 'v19_exec', useWarehouse = false) {
     const nonce = await this.nonceLock.acquire();
 
-    // Get optimal paymaster
     const paymaster = await this.paymasterRouter.getOptimalPaymaster();
     const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
 
     const feeData = await this.provider.getFeeData();
-    const baseMF = (feeData.maxFeePerGas || ethers.parseUnits('15', 'gwei'));
-    const baseMP = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'));
+    const baseMF = feeData.maxFeePerGas || ethers.parseUnits('15', 'gwei');
+    const baseMP = feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei');
     const mpCap = ethers.parseUnits(String(LIVE.RISK.COMPETITION.MAX_PRIORITY_FEE_GWEI || 6), 'gwei');
     const mf = this.shield.gasBump(baseMF);
     const mpRaw = this.shield.gasBump(baseMP);
     const mp = mpRaw > mpCap ? mpCap : mpRaw;
 
-    const paymasterAndData = paymasterDeposit > ethers.parseEther(String(process.env.PM_MIN_DEPOSIT_ETH || '0.002'))
+    const paymasterAndData = paymasterDeposit > ethers.parseEther('0.002')
       ? ethers.concat([paymaster, '0x'])
       : '0x';
 
@@ -3799,9 +3819,9 @@ export class EnhancedOmniExecutionAA {
       nonce: ethers.toQuantity(nonce),
       initCode: '0x',
       callData: this.encodeExecute(target, 0n, calldata),
-      callGasLimit: ethers.toQuantity(toBN(process.env.CALL_GAS_LIMIT || 450_000)),
-      verificationGasLimit: ethers.toQuantity(toBN(process.env.VERIFICATION_GAS_LIMIT || 240_000)),
-      preVerificationGas: ethers.toQuantity(toBN(process.env.PRE_VERIFICATION_GAS || 70_000)),
+      callGasLimit: ethers.toQuantity(450000n),
+      verificationGasLimit: ethers.toQuantity(240000n),
+      preVerificationGas: ethers.toQuantity(70000n),
       maxFeePerGas: ethers.toQuantity(mf),
       maxPriorityFeePerGas: ethers.toQuantity(mp),
       paymasterAndData,
@@ -3812,6 +3832,8 @@ export class EnhancedOmniExecutionAA {
     const hash = await this.sendUserOp(signed);
     this.nonceLock.release();
 
+    console.log(`UserOp submitted: ${description} | Paymaster: ${paymaster} | Hash: ${hash}`);
+
     return {
       userOpHash: hash,
       desc: description,
@@ -3821,41 +3843,23 @@ export class EnhancedOmniExecutionAA {
     };
   }
 
-  // Warehouse-specific operations
+  // Warehouse-specific operations (direct execution)
   async executeWarehouseBootstrap(bwzcAmount) {
     const iface = new ethers.Interface(['function executePreciseBootstrap(uint256 bwzcForArbitrage)']);
     const calldata = iface.encodeFunctionData('executePreciseBootstrap', [bwzcAmount]);
-
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'warehouse_bootstrap',
-      true
-    );
+    return await this.buildAndSendUserOp(LIVE.WAREHOUSE_CONTRACT, calldata, 'warehouse_bootstrap', true);
   }
 
   async executeWarehouseHarvest() {
     const iface = new ethers.Interface(['function harvestAllFees() returns (uint256,uint256,uint256)']);
     const calldata = iface.encodeFunctionData('harvestAllFees', []);
-
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'warehouse_harvest',
-      true
-    );
+    return await this.buildAndSendUserOp(LIVE.WAREHOUSE_CONTRACT, calldata, 'warehouse_harvest', true);
   }
 
   async addV3PositionToWarehouse(tokenId) {
     const iface = new ethers.Interface(['function addUniswapV3Position(uint256 tokenId)']);
     const calldata = iface.encodeFunctionData('addUniswapV3Position', [tokenId]);
-
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'add_v3_position',
-      true
-    );
+    return await this.buildAndSendUserOp(LIVE.WAREHOUSE_CONTRACT, calldata, 'add_v3_position', true);
   }
 }
 
