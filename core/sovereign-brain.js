@@ -11,7 +11,7 @@
  * - Schedules 2-4 bundles per block with anti-bot hardening
  *
  * OPERATIONAL SEGREGATION:
- * - Warehouse Contract (0x456d84bCf880E1b490877a39E5Fb55ABD710636c):
+ * - Warehouse Contract (0x8c659BD828FFc5c8B07E3583142629551184D36E):
  *   CONTRACT_OPERATIONS = ALL LOADS ["bootstrap_4M_flashloan", "balancer_uni_arbitrage", "v3_nft_fee_harvest", "pool_deepening_3pct"]
  *   
  * - MEV System:
@@ -138,7 +138,9 @@ const LIVE = {
     MIN_PROFIT_USD: Number(process.env.ARB_MIN_PROFIT || 5),
     CHECK_INTERVAL_MS: Number(process.env.ARB_CHECK_INTERVAL || 15000),
     STAT_ARB_WINDOW_S: Number(process.env.STAT_ARB_WINDOW_S || 300),
-    ML_VOL_SIGMA_BASE: Number(process.env.ML_VOL_SIGMA_BASE || 0.5)
+    ML_VOL_SIGMA_BASE: Number(process.env.ML_VOL_SIGMA_BASE || 0.5),
+    // CRITICAL: NO FLASHLOAN HANDLING IN MEV - ONLY IN CONTRACT
+    FLASHLOAN_MIN_EV_USD: Number(process.env.FLASHLOAN_MIN_EV_USD || 999999) // Effectively disabled
   },
 
   // AAVE CONFIGURATION - DISABLED IN MEV (Handled by Contract Only)
@@ -424,61 +426,19 @@ class AntiBotShield {
    StrictOrderingNonce (for AA operations)
    ========================================================================= */
 class StrictOrderingNonce {
-  constructor(provider, entryPoint, scw) {
-    this.provider   = provider;
-    this.entryPoint = entryPoint;
-    this.scw        = scw;
-    this.lastNonce  = null;
-
-    // The only lock we need — promise chain
-    this._nonceLock = Promise.resolve();
+  constructor(provider, entryPoint, scw){ this.provider=provider; this.entryPoint=entryPoint; this.scw=scw; this.locked=false; this.lastNonce=null; this.lockTs=0; }
+  async current(){
+    const c = new ethers.Contract(this.entryPoint, ['function getNonce(address,uint192) view returns (uint256)'], this.provider);
+    const n = await c.getNonce(this.scw, 0);
+    this.lastNonce = n; return n;
   }
-
-  async current() {
-    const contract = new ethers.Contract(
-      this.entryPoint,
-      ['function getNonce(address,uint192) view returns (uint256)'],
-      this.provider
-    );
-    const nonce = await contract.getNonce(this.scw, 0);
-    this.lastNonce = nonce;
-    return nonce;
+  async acquire(){
+    const now = nowTs();
+    if (this.locked && (now - this.lockTs) < LIVE.BUNDLE.NONCE_LOCK_MS) throw new Error('nonce locked');
+    this.locked = true; this.lockTs = now; return await this.current();
   }
-
-  /**
-   * Acquire nonce reservation lock.
-   * @returns {Promise<{ nonce: bigint, release: () => void }>}
-   * @throws if lock acquisition fails or nonce query fails
-   */
-  async acquire() {
-    const prev = this._nonceLock;
-
-    let release;
-    const nextLock = new Promise(r => { release = r; });
-    this._nonceLock = nextLock;
-
-    // Wait until previous operation finished
-    await prev;
-
-    try {
-      const nonce = await this.current();
-
-      // Optional: add your time-based guard here if still needed
-      // if (someCondition) { release(); throw new Error("nonce cooldown active"); }
-
-      return {
-        nonce,
-        release: () => {
-          release();           // allow next waiter to proceed
-        }
-      };
-    } catch (err) {
-      release();               // critical: always release on error
-      throw err;
-    }
-  }
+  release(){ this.locked=false; }
 }
-
 
 /* =========================================================================
    Dual Paymaster Router (DIRECT WIRING - NO BUNDLERS)
@@ -534,13 +494,11 @@ class DualPaymasterRouter {
     this.health.B = healthB.healthy ? 100 : 0;
 
     // Switch if active is unhealthy and cooldown has passed
-    // Switch if active is unhealthy and cooldown has passed
-if (this.health[this.active] === 0 && (nowTs() - this.lastSwitch) > this.minSwitchInterval) {
-  this.active = this.active === 'A' ? 'B' : 'A';
-  this.lastSwitch = nowTs();
-  console.log(`Paymaster switched to ${this.active}`);
-}
-
+    if (this.health[this.active] === 0 && (nowTs() - this.lastSwitch) > this.minSwitchInterval) {
+      this.active = this.active === 'A' ? 'B' : 'A';
+      this.lastSwitch = nowTs();
+      console.log(`Switched active paymaster to ${this.active}`);
+    }
 
     return { healthA, healthB, active: this.active };
   }
@@ -3449,223 +3407,30 @@ class ProfitVerifier {
   }
 }
 
-// ────────────────────────────────────────────────────────────────
-// ── FINAL RESOLUTION OF ERROR #4: FULL WIRING OF COMPLIANCE.MODE + SPLIT_ROUTES ──
-// ────────────────────────────────────────────────────────────────
-
-// 1. Compliance manager – actively gates every high-risk decision
 class ComplianceManager {
-  constructor(mode = 'standard') {
-    this.mode = mode.toLowerCase();
-    this.strict    = this.mode === 'strict';
-    this.defensive = this.mode === 'defensive' || this.strict;
-  }
-
-  isDefensiveOnly() { return this.defensive; }
-  sandwichDisabled() { return true; }
-  shouldLog() { return true; }
-
-  allowHighRiskOperation(opType) {
-    if (this.strict) {
-      return ['peg-defense', 'cross-dex', 'general_fee_harvest', 'bundle_orchestration', 'stat_arbitrage'].includes(opType);
-    }
-    if (this.defensive) {
-      return !['sandwich', 'backrun', 'frontrun'].includes(opType);
-    }
-    return true;
-  }
-
-  shouldSkipHighGasOp(gasGwei) {
-    if (this.strict || this.defensive) return gasGwei > 120;
-    return gasGwei > 250;
-  }
-
-  getMaxBundleSize() {
-    return this.strict ? 1 : this.defensive ? 2 : 4;
-  }
-}
-
-// 2. Multi-route execution – actively consumes LIVE.REFLEXIVE.SPLIT_ROUTES
-async function executeReflexiveSplit(tokenIn, tokenOut, amountIn, recipient) {
-  const routes = LIVE.REFLEXIVE.SPLIT_ROUTES?.length 
-    ? LIVE.REFLEXIVE.SPLIT_ROUTES 
-    : ['UNISWAP_V3'];
-
-  console.debug(`[ReflexiveSplit] Attempting ${routes.length} routes: ${routes.join(', ')}`);
-
-  const quotePromises = routes.map(async route => {
-    try {
-      const adapter = this.dexRegistry.getAdapter(route);
-      if (!adapter) throw new Error(`No adapter for ${route}`);
-
-      const quote = await Promise.race([
-        adapter.getQuote(tokenIn, tokenOut, amountIn),
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout on ${route}`)), 9000))
-      ]);
-
-      return { route, quote, success: true };
-    } catch (err) {
-      console.warn(`[ReflexiveSplit] ${route} failed: ${err.message}`);
-      return { route, success: false };
-    }
-  });
-
-  const results = await Promise.allSettled(quotePromises);
-  const valid = results
-    .filter(r => r.status === 'fulfilled' && r.value?.success && r.value?.quote?.amountOut != null)
-    .map(r => r.value);
-
-  if (valid.length === 0) {
-    console.warn('[ReflexiveSplit] No successful routes');
-    return null;
-  }
-
-  const best = valid.reduce((prev, curr) => 
-    (curr.quote.amountOut > prev.quote.amountOut) ? curr : prev
-  );
-
-  console.log(`[ReflexiveSplit] Best route: ${best.route} → expected out: ${best.quote.amountOut}`);
-
-  try {
-    const execution = await best.quote.execute({
-      recipient,
-      slippageTolerance: 0.005,
-      deadline: Math.floor(Date.now() / 1000) + 420
-    });
-
-    return {
-      route: best.route,
-      txHash: execution?.hash || execution?.transactionHash,
-      amountOutExpected: best.quote.amountOut,
-      success: true
-    };
-  } catch (err) {
-    console.error(`[ReflexiveSplit] Execution failed on ${best.route}:`, err.shortMessage || err.message);
-    return null;
-  }
+  constructor(mode){ const m=(mode||'standard').toLowerCase(); this.strict=(m==='strict'); }
+  canArbitrage(){ return true; }
+  canPegDefend(){ return true; }
+  canHarvestFees(){ return true; }
+  canStreamMint(){ return !this.strict; }
+  maxSlippagePct(){ return LIVE.PEG.MAX_SLIPPAGE_PCT; }
+  budgetMinute(){ return LIVE.RISK.BUDGETS.MINUTE_USD; }
+  antiFrontRunningBias(){ return 0.001; }
 }
 
 /* =========================================================================
    Reflexive amplifier + adaptive range maker + governance
    ========================================================================= */
-
 class ReflexiveAmplifier {
-  constructor(kernel, compliance, dexRegistry) {
-    this.kernel      = kernel;
-    this.compliance  = compliance;
-    this.dexRegistry = dexRegistry;
-
-    this.dailyCount    = 0;
-    this.lastAmplifyTs = 0;
-    this.lastResetDate = new Date().toDateString();
-
-    // Bind split execution so it can be called internally
-    this.executeReflexiveSplit = executeReflexiveSplit.bind(this);
+  constructor(){ this.dailyCount=0; this.lastAmplifyTs=0; }
+  canAmplify(modulation){
+    const cool = (nowTs() - this.lastAmplifyTs) > LIVE.REFLEXIVE.HYSTERESIS_WINDOW_MS;
+    const underCap = this.dailyCount < LIVE.REFLEXIVE.MAX_DAILY_AMPLIFICATIONS;
+    return modulation >= LIVE.REFLEXIVE.AMPLIFICATION_THRESHOLD && cool && underCap;
   }
-
-  canAmplify(modulation) {
-    const now = nowTs();
-    const today = new Date().toDateString();
-
-    if (today !== this.lastResetDate) {
-      this.dailyCount = 0;
-      this.lastResetDate = today;
-      console.log('[ReflexiveAmplifier] Daily amplification count reset');
-    }
-
-    const cooldownOk   = (now - this.lastAmplifyTs) > LIVE.REFLEXIVE.HYSTERESIS_WINDOW_MS;
-    const underCap     = this.dailyCount < LIVE.REFLEXIVE.MAX_DAILY_AMPLIFICATIONS;
-    const strongSignal = modulation >= LIVE.REFLEXIVE.AMPLIFICATION_THRESHOLD;
-
-    return strongSignal && cooldownOk && underCap;
-  }
-
-  jitter() {
-    return Math.floor(
-      Math.random() * (LIVE.REFLEXIVE.JITTER_MS_MAX - LIVE.REFLEXIVE.JITTER_MS_MIN + 1)
-    ) + LIVE.REFLEXIVE.JITTER_MS_MIN;
-  }
-
-  mark() {
-    this.dailyCount++;
-    this.lastAmplifyTs = nowTs();
-    console.log(`[ReflexiveAmplifier] Amplification #${this.dailyCount} marked`);
-  }
-
-  async amplify(opportunity) {
-    const modulation = this.kernel?.adaptiveEq?.modulation?.() ?? 0;
-
-    if (!this.canAmplify(modulation)) {
-      console.debug('[ReflexiveAmplifier] Conditions not met');
-      return null;
-    }
-
-    if (!this.compliance.allowHighRiskOperation(opportunity.type)) {
-      console.warn(`[ReflexiveAmplifier] Compliance blocked amplification of type: ${opportunity.type}`);
-      return null;
-    }
-
-    console.log(`[ReflexiveAmplifier] Amplifying (${opportunity.type}) – modulation: ${modulation.toFixed(3)}`);
-
-    // Try split routing first
-    const splitResult = await this.executeReflexiveSplit(
-      opportunity.tokenIn,
-      opportunity.tokenOut,
-      opportunity.amountIn,
-      LIVE.SCW_ADDRESS
-    );
-
-    if (splitResult?.success) {
-      this.mark();
-      return {
-        success: true,
-        route: splitResult.route,
-        txHash: splitResult.txHash
-      };
-    }
-
-    // Fallback to single best route
-    console.warn('[ReflexiveAmplifier] Split failed – falling back to best single route');
-    const bestAdapter = this.dexRegistry.getBestAdapter(opportunity.tokenIn, opportunity.tokenOut);
-    if (!bestAdapter) return { success: false };
-
-    try {
-      const quote = await bestAdapter.getQuote(
-        opportunity.tokenIn,
-        opportunity.tokenOut,
-        opportunity.amountIn
-      );
-
-      if (!quote?.amountOut) return { success: false };
-
-      const result = await quote.execute({
-        recipient: LIVE.SCW_ADDRESS,
-        slippageTolerance: 0.005,
-        deadline: Math.floor(nowTs() / 1000) + 420
-      });
-
-      this.mark();
-      return {
-        success: true,
-        route: bestAdapter.name || 'single-best',
-        txHash: result?.hash || result?.transactionHash
-      };
-    } catch (err) {
-      console.error('[ReflexiveAmplifier] Single-route fallback failed:', err.shortMessage || err.message);
-      return { success: false };
-    }
-  }
-
-  getState() {
-    return {
-      dailyCount: this.dailyCount,
-      lastAmplifyTs: this.lastAmplifyTs,
-      lastResetDate: this.lastResetDate,
-      canAmplifyNow: this.canAmplify(this.kernel?.adaptiveEq?.modulation?.() ?? 0)
-    };
-  }
+  jitter(){ return Math.floor(Math.random()*(LIVE.REFLEXIVE.JITTER_MS_MAX - LIVE.REFLEXIVE.JITTER_MS_MIN)) + LIVE.REFLEXIVE.JITTER_MS_MIN; }
+  mark(){ this.dailyCount++; this.lastAmplifyTs = nowTs(); }
 }
-
 
 class AdaptiveRangeMaker {
   constructor(provider){ this.provider=provider; this.lastAdjustTs=0; }
@@ -3947,7 +3712,7 @@ class OracleAggregator {
 }
 
 /* =========================================================================
-   Production Sovereign Core (updated & fully wired for Error #4)
+   Production Sovereign Core 
    ========================================================================= */
 class ProductionSovereignCore {
   constructor() {
@@ -3968,7 +3733,7 @@ class ProductionSovereignCore {
     this.health = new HealthGuard();
     this.arb = null;
     this.harvester = null;
-    this.reflex = null;                // ← Initialized in initialize()
+    this.reflex = new ReflexiveAmplifier();
     this.rangeMaker = null;
     this.gov = new GovernanceRegistry();
     
@@ -3982,8 +3747,7 @@ class ProductionSovereignCore {
       warehouseProfitUSD: 0,
       synergyBoosts: 0,
       hybridHarvests: 0,
-      safetyBlocks: 0,
-      amplificationsTriggered: 0       // ← Added for reflexive tracking
+      safetyBlocks: 0
     };
     
     this.lastSenseTs = 0;
@@ -3995,39 +3759,40 @@ class ProductionSovereignCore {
     
     this.warehouseMonitor = null;
     
-    // NOVEL: Add the three new systems
-    this.synergyEngine = null;
-    this.hybridHarvester = null;
-    this.harvestSafety = null;
+    // NOVEL: Add the three new systems (minimal changes)
+    this.synergyEngine = null;          // ContractMEVSynergy
+    this.hybridHarvester = null;        // HybridHarvestOrchestrator  
+    this.harvestSafety = null;          // HarvestSafetyOverride
   }
 
   async initialize() {
-    console.log('=== Initializing Sovereign MEV v19 (patched & wired) ===');
+    console.log('=== Initializing Sovereign MEV v18 ===');
     
-    // RPC & signer
+    // Initialize RPC
     await this.rpc.init();
     this.provider = this.rpc.getProvider();
     
+    // Initialize signer
     const pk = process.env.PRIVATE_KEY;
     if (!pk) throw new Error('Missing PRIVATE_KEY');
     this.signer = new ethers.Wallet(pk, this.provider);
     console.log('Deployer:', this.signer.address);
     
-    // Paymaster & AA
+    // Initialize paymaster router
     this.paymasterRouter = new DualPaymasterRouter(this.provider);
     await this.paymasterRouter.updateHealth();
     console.log('Active paymaster:', this.paymasterRouter.active);
     
-    this.aa = new EnhancedOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
-    
-    // Warehouse
+    // Initialize warehouse manager
     this.warehouseManager = new WarehouseContractManager(this.provider, this.signer);
     console.log('Warehouse contract:', LIVE.WAREHOUSE_CONTRACT);
     
-    // Core services
+    // Initialize AA execution with dual paymaster support
+    this.aa = new EnhancedOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
+    
+    // Initialize other components
     this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.oracles = new OracleAggregator(this.provider);
-    
     this.kernel = new EnhancedConsciousnessKernel(
       this.oracles, 
       this.dexRegistry, 
@@ -4043,60 +3808,46 @@ class ProductionSovereignCore {
     this.rangeMaker = new AdaptiveRangeMaker(this.provider);
     this.gov.setStake(LIVE.EOA_OWNER_ADDRESS, LIVE.GOVERNANCE.MIN_STAKE_BWAEZI);
     
-    // NEW SYSTEMS
+    // NOVEL: Initialize the three new systems (add these 3 lines)
     this.synergyEngine = new ContractMEVSynergy(this.warehouseManager, this, this.provider);
     this.hybridHarvester = new HybridHarvestOrchestrator(this.warehouseManager, this.harvester, this.provider);
     this.harvestSafety = new HarvestSafetyOverride();
     
-    // Bundle & simulation
+    // Initialize bundle system with warehouse integration
     this.bundleManager = new EnhancedBundleManager(this.aa, this.relayRouter, this.rpc, this.warehouseManager);
     await this.bundleManager.initialize();
     
     this.blockCoordinator = new BlockCoordinator(this.provider, this.bundleManager);
     this.parallelSim = new ParallelSimulator(this.rpc.providers);
     
-    // Warehouse monitor & synergy sync
+    // Initialize warehouse monitor
     this.warehouseMonitor = new LiveContractStateMonitor(this.warehouseManager, this.provider);
     await this.warehouseMonitor.start();
+    
+    // Start synergy synchronization (new)
     await this.synergyEngine.startSynergySync();
     
-    // ── FINAL WIRING FOR ERROR #4 ──
-    this.reflex = new ReflexiveAmplifier(
-      this.kernel,
-      this.compliance,
-      this.dexRegistry
-    );
-    console.log('ReflexiveAmplifier wired – SPLIT_ROUTES active:', LIVE.REFLEXIVE.SPLIT_ROUTES);
-    console.log('Compliance mode active:', this.compliance.mode);
-    
-    // Start loops
+    // Start heartbeat
     this._startHeartbeat();
+    
+    // Start block coordinator
     this.blockCoordinator.start();
     
-    console.log('✅ Sovereign MEV v19 initialized successfully');
-    console.log('📊 Warehouse monitoring active');
-    console.log('🔧 Dual paymaster enabled');
-    console.log('🚀 Synergy Engine (+10-30%) active');
-    console.log('🛡️ Hybrid Harvesting v1.0 online');
-    console.log('🔒 Harvest Safety Override enabled');
+    console.log('✅ Sovereign MEV v18 initialized successfully');
+    console.log('📊 Warehouse state monitoring active');
+    console.log('🔧 Dual paymaster routing enabled');
+    console.log('🚀 Contract-MEV Synergy Engine activated (+10-30% profit)');
+    console.log('🛡️  Hybrid Harvesting Architecture v1.0 online');
+    console.log('🔒 Harvest Safety Override enabled (zero capital risk)');
     
     return this;
   }
 
- // ────────────────────────────────────────────────────────────────
-  // Updated heartbeat – now uses compliance + reflexive amplification
-  // ────────────────────────────────────────────────────────────────
   async _startHeartbeat() {
     setInterval(async () => {
       try {
         const feeData = await this.rpc.getFeeData();
         const gasGwei = Number(ethers.formatUnits(feeData.maxFeePerGas || feeData.gasPrice || 0n, 'gwei'));
-
-        // Compliance gate #1: high gas skip
-        if (this.compliance.shouldSkipHighGasOp(gasGwei)) {
-          console.log(`Compliance: high gas (${gasGwei} gwei) → skipping cycle`);
-          return;
-        }
 
         const now = nowTs();
         const sense = await this.kernel.sense({
@@ -4118,23 +3869,6 @@ class ProductionSovereignCore {
 
         const decision = this.kernel.decide();
 
-        // ── Compliance gate #2 + Reflexive amplification ──
-        if (decision?.opportunity) {
-          const opp = decision.opportunity;
-
-          if (!this.compliance.allowHighRiskOperation(opp.type)) {
-            console.warn(`Compliance blocked opportunity: ${opp.type} in ${this.compliance.mode} mode`);
-          } else {
-            const ampResult = await this.reflex.amplify(opp);
-            if (ampResult?.success) {
-              console.log(`[Heartbeat] Reflexive amplification success via ${ampResult.route} → tx ${ampResult.txHash}`);
-              this.stats.amplificationsTriggered = (this.stats.amplificationsTriggered || 0) + 1;
-              this.stats.tradesExecuted++;
-              
-            }
-          }
-        }
-         
         // NOVEL: Apply Contract-MEV synergy enhancement (automatic 10-30% profit boost)
         const synergyResult = await this.synergyEngine.enhanceContractCycle();
         if (synergyResult.enhanced) {
