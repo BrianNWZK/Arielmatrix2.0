@@ -1132,7 +1132,8 @@ getRecommendation() {
         dailyProfit: this.state.bootstrapRequirements?.expectedDailyProfit || 1840000
     };
 }
-
+   
+//
 
 /* =========================================================================
    Enhanced Bundle Manager with Warehouse Integration
