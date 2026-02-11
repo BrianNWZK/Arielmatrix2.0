@@ -571,17 +571,28 @@ class DirectOmniExecutionAA {
   }
 
   async getEntryPointDeposit(account) {
-    const ep = new ethers.Contract(this.entryPoint, ['function getDeposit(address) view returns (uint256)'], this.provider);
+    const ep = new ethers.Contract(
+      this.entryPoint,
+      ['function getDeposit(address) view returns (uint256)'],
+      this.provider
+    );
     return await ep.getDeposit(account);
   }
 
   async signUserOp(userOp) {
     const packed = ethers.AbiCoder.defaultAbiCoder().encode(
       ["address","uint256","bytes","bytes","uint256","uint256","uint256","uint256","uint256","bytes"],
-      [userOp.sender, userOp.nonce, userOp.initCode, userOp.callData, userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas, userOp.maxFeePerGas, userOp.maxPriorityFeePerGas, userOp.paymasterAndData]
+      [
+        userOp.sender, userOp.nonce, userOp.initCode, userOp.callData,
+        userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas,
+        userOp.maxFeePerGas, userOp.maxPriorityFeePerGas, userOp.paymasterAndData
+      ]
     );
     const userOpHash = ethers.keccak256(packed);
-    const encHash = ethers.solidityPackedKeccak256(["bytes32","address","uint256","bytes32"], [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]);
+    const encHash = ethers.solidityPackedKeccak256(
+      ["bytes32","address","uint256","bytes32"],
+      [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]
+    );
     userOp.signature = await this.signer.signMessage(ethers.getBytes(encHash));
     return userOp;
   }
@@ -698,7 +709,10 @@ class DirectOmniExecutionAA {
       true
     );
   }
-}
+}  // <-- closes DirectOmniExecutionAA
+
+
+
 
 /* =========================================================================
    Warehouse Contract Manager
@@ -4672,3 +4686,6 @@ export {
   HarvestSafetyOverride
   
 };
+
+
+
