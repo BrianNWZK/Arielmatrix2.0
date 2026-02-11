@@ -908,6 +908,30 @@ class WarehouseContractManager {
     return { totalBwzcNeeded, usdcLoanAmount, wethLoanAmount, source: 'fallback' };
 }
 
+decodeRevert(data) {
+    if (!data || !data.startsWith('0x')) return null;
+
+    const iface = new ethers.Interface([
+        'error SpreadTooLow()',
+        'error InsufficientBalance()',
+        'error SCWInsufficientBWZC()',
+        'error DeviationTooHigh()',
+        'error OracleConsensusFailed()',
+        'error InsufficientLiquidity()',
+        'error UniswapV3QueryFailed()'
+        // Add any other custom errors from your WarehouseBalancerArb contract
+    ]);
+
+    try {
+        const parsed = iface.parseError(data);
+        return parsed?.name || 'Unknown';
+    } catch {
+        return 'Unknown';
+    }
+}
+
+
+     
 /* =========================================================================
    Live Contract State Monitor
    ========================================================================= */
@@ -1039,74 +1063,60 @@ class LiveContractStateMonitor {
     }
   }
 
- isReadyForBootstrap(state, balances, requirements) {
-    if (!state || state.paused) return false;
-    if (state.cycleCount > 0) return false;
+async isReadyForBootstrap() {
+    // Create contract instance inside the method
+    const bwzcContract = new ethers.Contract(
+        LIVE.TOKENS.BWAEZI,
+        [
+            "function balanceOf(address) view returns (uint256)",
+            "function decimals() view returns (uint8)"
+        ],
+        this.provider
+    );
 
-    const scwBwzcBalance = parseFloat(balances.bwzc || 0);
-    const requiredBwzc = requirements.totalBwzcNeeded || 39130.44;
+    // Read SCW balance
+    const rawBalance = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
+    const decimals = await bwzcContract.decimals(); // should be 18
+    const bwzcBalance = ethers.formatUnits(rawBalance, decimals);
 
-    if (scwBwzcBalance < requiredBwzc) return false;
-
-    const spread = this.state.spread || 0;
-    if (spread <= 0 || spread < LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100) return false;
-
-    return true;
-}
-
-decodeRevert(data) {
-    const iface = new ethers.Interface([
-        'error SpreadTooLow()',
-        'error InsufficientBalance()',
-        'error SCWInsufficientBWZC()',
-        'error DeviationTooHigh()',
-        'error OracleConsensusFailed()'
-    ]);
-    try { return iface.parseError(data).name; } catch { return 'Unknown'; }
-}
-
-   
-    
-    // Check SCW has sufficient BWZC
-   const bwzcContract = new ethers.Contract(
-  LIVE.TOKENS.BWAEZI,
-  ["function balanceOf(address) view returns (uint256)",
-   "function decimals() view returns (uint8)"],
-  this.provider
-);
-
-const rawBalance = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
-const decimals = await bwzcContract.decimals(); // should be 18
-const bwzcBalance = ethers.formatUnits(rawBalance, decimals);
-
-    
     // Check spread is sufficient
     if (this.state.spread < LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100) {
-      console.log(`Spread ${this.state.spread.toFixed(2)}% below minimum ${LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100}%`);
-      return false;
+        console.log(
+            `Spread ${this.state.spread.toFixed(2)}% below minimum ${LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100}%`
+        );
+        return false;
     }
-    
+
+    // Check SCW balance against bootstrap requirement
+    const requiredBwzc = Number(
+        ethers.formatUnits(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP, decimals)
+    );
+    if (parseFloat(bwzcBalance) < requiredBwzc) {
+        console.log(`❌ Insufficient BWZC in SCW: ${bwzcBalance} < ${requiredBwzc}`);
+        return false;
+    }
+
     return true;
-  }
-
-  getState() {
-    return this.state;
-  }
-
-  getRecommendation() {
-    if (!this.state.readyForBootstrap) {
-      return { action: 'wait', reason: 'Conditions not met' };
-    }
-    
-    return {
-      action: 'bootstrap',
-      bwzcAmount: this.state.bootstrapRequirements?.totalBwzcNeeded || 39130.44,
-      expectedProfit: LIVE.WAREHOUSE.PROFIT_PER_CYCLE_USD,
-      expectedSpread: this.state.spread,
-      dailyProfit: this.state.bootstrapRequirements?.expectedDailyProfit || 1840000
-    };
-  }
 }
+
+getState() {
+    return this.state;
+}
+
+getRecommendation() {
+    if (!this.state.readyForBootstrap) {
+        return { action: 'wait', reason: 'Conditions not met' };
+    }
+
+    return {
+        action: 'bootstrap',
+        bwzcAmount: this.state.bootstrapRequirements?.totalBwzcNeeded || 39130.44,
+        expectedProfit: LIVE.WAREHOUSE.PROFIT_PER_CYCLE_USD,
+        expectedSpread: this.state.spread,
+        dailyProfit: this.state.bootstrapRequirements?.expectedDailyProfit || 1840000
+    };
+}
+
 
 /* =========================================================================
    Enhanced Bundle Manager with Warehouse Integration
