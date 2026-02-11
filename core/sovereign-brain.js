@@ -908,7 +908,7 @@ class WarehouseContractManager {
     return { totalBwzcNeeded, usdcLoanAmount, wethLoanAmount, source: 'fallback' };
 }
 
-decodeRevert(data) {
+function decodeRevert(data) {
     if (!data || !data.startsWith('0x')) return null;
 
     const iface = new ethers.Interface([
@@ -919,7 +919,6 @@ decodeRevert(data) {
         'error OracleConsensusFailed()',
         'error InsufficientLiquidity()',
         'error UniswapV3QueryFailed()'
-        // Add any other custom errors from your WarehouseBalancerArb contract
     ]);
 
     try {
