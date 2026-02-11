@@ -901,35 +901,38 @@ class WarehouseContractManager {
         source: 'contract'
     };
 } catch {
-    // Fallback static calculation
-    const totalBwzcNeeded = 4000000 / 23.5;
-    const usdcLoanAmount = 2000000;
-    const wethLoanAmount = 2000000 / 3000;
-    return { totalBwzcNeeded, usdcLoanAmount, wethLoanAmount, source: 'fallback' };
-}
 
-function decodeRevert(data) {
+// Fallback static calculation
+      const totalBwzcNeeded = 4000000 / 23.5;
+      const usdcLoanAmount = 2000000;
+      const wethLoanAmount = 2000000 / 3000;
+      return { totalBwzcNeeded, usdcLoanAmount, wethLoanAmount, source: 'fallback' };
+    }
+  }
+
+  decodeRevert(data) {
     if (!data || !data.startsWith('0x')) return null;
 
     const iface = new ethers.Interface([
-        'error SpreadTooLow()',
-        'error InsufficientBalance()',
-        'error SCWInsufficientBWZC()',
-        'error DeviationTooHigh()',
-        'error OracleConsensusFailed()',
-        'error InsufficientLiquidity()',
-        'error UniswapV3QueryFailed()'
+      'error SpreadTooLow()',
+      'error InsufficientBalance()',
+      'error SCWInsufficientBWZC()',
+      'error DeviationTooHigh()',
+      'error OracleConsensusFailed()',
+      'error InsufficientLiquidity()',
+      'error UniswapV3QueryFailed()'
     ]);
 
     try {
-        const parsed = iface.parseError(data);
-        return parsed?.name || 'Unknown';
+      const parsed = iface.parseError(data);
+      return parsed?.name || 'Unknown';
     } catch {
-        return 'Unknown';
+      return 'Unknown';
     }
+  }
 }
 
-
+      
      
 /* =========================================================================
    Live Contract State Monitor
