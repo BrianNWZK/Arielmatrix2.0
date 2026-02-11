@@ -717,7 +717,7 @@ class WarehouseContractManager {
         'function getUniswapV3Positions() external view returns (uint256[])',
         'function getContractBalances() external view returns (uint256, uint256, uint256, uint256)',
         'function getPoolBalances() external view returns (uint256, uint256, uint256)',
-        'function predictPerformance(uint256 daysToSimulate) external pure returns (uint256, uint256, uint256, uint256, uint256)',
+        'function predictPerformance(uint256 daysToSimulate) external view returns (uint256, uint256, uint256, uint256, uint256)',
         'function paused() external view returns (bool)',
         'function owner() external view returns (address)',
         'function scw() external view returns (address)',
@@ -726,7 +726,7 @@ class WarehouseContractManager {
         'function permanentUSDCAdded() external view returns (uint256)',
         'function permanentWETHAdded() external view returns (uint256)',
         'function permanentBWZCAdded() external view returns (uint256)',
-        'function calculatePreciseBootstrap() external pure returns (uint256, uint256, uint256)'
+        'function calculatePreciseBootstrap() external returns (uint256, uint256, uint256)'
       ],
       signer
     );
@@ -892,18 +892,20 @@ class WarehouseContractManager {
   }
 
   async calculateBootstrapRequirements() {
-    try {
-      const result = await this.contract.calculatePreciseBootstrap();
-      return {
+   try {
+    const result = await this.contract.calculatePreciseBootstrap();
+    return {
         totalBwzcNeeded: Number(ethers.formatEther(result[0])),
-        expectedDailyProfit: Number(ethers.formatUnits(result[1], 6)),
-        bwzcConsumptionDaily: Number(ethers.formatEther(result[2]))
-      };
-    } catch (error) {
-      console.error('Bootstrap calculation failed:', error);
-      return null;
-    }
-  }
+        usdcLoanAmount: Number(ethers.formatUnits(result[1], 6)),
+        wethLoanAmount: Number(ethers.formatEther(result[2])),
+        source: 'contract'
+    };
+} catch {
+    // Fallback static calculation
+    const totalBwzcNeeded = 4000000 / 23.5;
+    const usdcLoanAmount = 2000000;
+    const wethLoanAmount = 2000000 / 3000;
+    return { totalBwzcNeeded, usdcLoanAmount, wethLoanAmount, source: 'fallback' };
 }
 
 /* =========================================================================
@@ -984,30 +986,19 @@ class LiveContractStateMonitor {
 
   async calculateSpread() {
     try {
-      // Fetch current prices from pools
-      const quoter = new ethers.Contract(
-        LIVE.WAREHOUSE.QUOTER_V2,
-        ['function quoteExactInputSingle((address,address,uint256,uint24,uint160)) returns (uint256,uint160,uint32,uint256)'],
-        this.provider
-      );
+        let balancerPriceUSD = LIVE.WAREHOUSE.BALANCER_PRICE_USD;
+        let uniV3Price = 0;
 
-      const amountIn = ethers.parseEther('1');
-      
-      // Get price from Balancer (via Uniswap simulation)
-      const balancerPriceUSD = LIVE.WAREHOUSE.BALANCER_PRICE_USD;
-      
-      // Get price from Uniswap V3
-      const uniV3Price = await this.getUniswapV3Price();
-      
-      if (uniV3Price === 0) return 0;
-      
-      const spread = ((uniV3Price - balancerPriceUSD) * 10000) / balancerPriceUSD;
-      return Number(spread) / 100; // Convert to percentage
-    } catch (error) {
-      console.error('Spread calculation failed:', error);
-      return 0;
-    }
-  }
+        try { uniV3Price = await this.getUniswapV3Price(); } catch {}
+        if (uniV3Price === 0) try { uniV3Price = await this.getPriceViaQuoter(); } catch {}
+        if (uniV3Price === 0) try { uniV3Price = await this.getSlot0Fallback(); } catch {}
+
+        if (uniV3Price === 0) return 0;
+        const spread = ((uniV3Price - balancerPriceUSD) * 10000) / balancerPriceUSD;
+        return spread / 100;
+    } catch { return 0; }
+}
+
 
   async getUniswapV3Price() {
     try {
@@ -1048,23 +1039,46 @@ class LiveContractStateMonitor {
     }
   }
 
-  isReadyForBootstrap(state, balances, requirements) {
+ isReadyForBootstrap(state, balances, requirements) {
     if (!state || state.paused) return false;
-    
-    // Check if already bootstrapped
-    if (state.cycleCount > 0) {
-      console.log('Already bootstrapped');
-      return false;
-    }
+    if (state.cycleCount > 0) return false;
+
+    const scwBwzcBalance = parseFloat(balances.bwzc || 0);
+    const requiredBwzc = requirements.totalBwzcNeeded || 39130.44;
+
+    if (scwBwzcBalance < requiredBwzc) return false;
+
+    const spread = this.state.spread || 0;
+    if (spread <= 0 || spread < LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100) return false;
+
+    return true;
+}
+
+decodeRevert(data) {
+    const iface = new ethers.Interface([
+        'error SpreadTooLow()',
+        'error InsufficientBalance()',
+        'error SCWInsufficientBWZC()',
+        'error DeviationTooHigh()',
+        'error OracleConsensusFailed()'
+    ]);
+    try { return iface.parseError(data).name; } catch { return 'Unknown'; }
+}
+
+   
     
     // Check SCW has sufficient BWZC
-    const scwBwzcBalance = balances.contract?.bwzc || 0;
-    const requiredBwzc = requirements?.totalBwzcNeeded || LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP;
-    
-    if (scwBwzcBalance < requiredBwzc) {
-      console.log(`Insufficient BWZC in SCW: ${scwBwzcBalance.toFixed(2)} < ${requiredBwzc}`);
-      return false;
-    }
+   const bwzcContract = new ethers.Contract(
+  LIVE.TOKENS.BWAEZI,
+  ["function balanceOf(address) view returns (uint256)",
+   "function decimals() view returns (uint8)"],
+  this.provider
+);
+
+const rawBalance = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
+const decimals = await bwzcContract.decimals(); // should be 18
+const bwzcBalance = ethers.formatUnits(rawBalance, decimals);
+
     
     // Check spread is sufficient
     if (this.state.spread < LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100) {
@@ -3921,17 +3935,19 @@ class ProductionSovereignCore {
   }
 
   async initialize() {
-    console.log(`=== Initializing Sovereign MEV ${LIVE.VERSION} ===`);
-    
-    // Initialize RPC
     await this.rpc.init();
     this.provider = this.rpc.getProvider();
-    
-    // Initialize signer
-    const pk = process.env.PRIVATE_KEY;
-    if (!pk) throw new Error('Missing PRIVATE_KEY');
-    this.signer = new ethers.Wallet(pk, this.provider);
-    console.log('Deployer:', this.signer.address);
+    this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
+
+    this.warehouseManager = new WarehouseContractManager(this.provider, this.signer);
+    try {
+        const state = await this.warehouseManager.getState();
+        console.log('✅ Warehouse connected:', state.scw);
+    } catch {
+        console.warn('⚠️ Warehouse initialization failed, fallback mode');
+    }
+}
+
     
     // Initialize paymaster router
     this.paymasterRouter = new DualPaymasterRouter(this.provider);
