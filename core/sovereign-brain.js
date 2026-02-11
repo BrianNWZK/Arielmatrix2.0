@@ -1131,9 +1131,9 @@ getRecommendation() {
         expectedSpread: this.state.spread,
         dailyProfit: this.state.bootstrapRequirements?.expectedDailyProfit || 1840000
     };
-}
+  }
    
-//
+}
 
 /* =========================================================================
    Enhanced Bundle Manager with Warehouse Integration
@@ -3973,9 +3973,8 @@ class ProductionSovereignCore {
     } catch {
         console.warn('⚠️ Warehouse initialization failed, fallback mode');
     }
-}
 
-    
+ 
     // Initialize paymaster router
     this.paymasterRouter = new DualPaymasterRouter(this.provider);
     await this.paymasterRouter.updateHealth();
