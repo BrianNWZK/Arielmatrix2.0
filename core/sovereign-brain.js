@@ -4287,7 +4287,6 @@ export {
   AntiBotShield,
   DualPaymasterRouter,
   WarehouseContractManager,
-  LiveContractStateMonitor,
   EnhancedBundleManager,
   EnhancedArbitrageEngine,
   EnhancedConsciousnessKernel,
