@@ -3,7 +3,7 @@
  *
  * SOVEREIGN ORCHESTRATION ENGINE v19.0 — "Sovereign MEV + Warehouse Integration"
  * - Preserves ALL v17.0 features with enhanced warehouse integration
- * - Wires MEV with Contract Address: 0x456d84bCf880E1b490877a39E5Fb55ABD710636c
+ * - Wires MEV with Contract Address: 0x8c659BD828FFc5c8B07E3583142629551184D36E
  * - Implements dual paymaster wiring (A/B rotation) - NO BUNDLERS
  * - Enhanced bundle pipeline with contract execution hooks
  * - Strict nonce/ordering preserved
@@ -4849,6 +4849,42 @@ function createEnhancedProductionAPI(core) {
 
   return app;
 }
+
+// =========================================================================
+// HTTP Server for Render Web Service – REQUIRED for port binding
+// =========================================================================
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const app = express();
+  const PORT = process.env.PORT || 10000;
+
+  // Basic health check endpoint
+  app.get('/health', (req, res) => res.send('OK'));
+
+  // Instantiate deployment and ensure Sovereign Brain is initialized
+  const deployment = new UltraFastDeployment();
+  deployment.deployImmediately().then(() => {
+    // Use the core from deployment once ready
+    const apiRouter = createEnhancedProductionAPI(deployment.core);
+    app.use('/api', apiRouter);
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Sovereign MEV v19 API listening on port ${PORT}`);
+    });
+  }).catch(err => {
+    console.error('💥 Failed to deploy Sovereign Brain:', err.message);
+    // Emergency fallback server
+    app.get('/', (req, res) => res.json({
+      status: 'EMERGENCY_MODE',
+      error: err.message,
+      timestamp: new Date().toISOString()
+    }));
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🛡️ Emergency server listening on port ${PORT}`);
+    });
+  });
+}
+
+
 
 
 /* =========================================================================
