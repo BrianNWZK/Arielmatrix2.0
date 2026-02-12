@@ -713,700 +713,92 @@ class DirectOmniExecutionAA {
 
 
 /* =========================================================================
-   Warehouse Contract Manager - PURE TRIGGER, CONTRACT DECIDES EVERYTHING
+   Warehouse Contract Manager - ABSOLUTE MINIMALIST
    ========================================================================= */
 class WarehouseContractManager {
   constructor(provider, signer) {
     this.provider = provider;
     this.signer = signer;
     
-    // Contract instance - SOURCE OF TRUTH
+    // ONLY thing we need - trigger function
     this.contract = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       [
-        // EXECUTION FUNCTIONS - Minimal interface, contract decides
-        'function executeBulletproofBootstrap(uint256 bwzcForArbitrage) external',
-        'function harvestAllFees() external returns (uint256, uint256, uint256)',
-        
-        // POSITION MANAGEMENT
-        'function addUniswapV3Position(uint256 tokenId) external',
-        'function removeUniswapV3Position(uint256 index) external',
-        'function getUniswapV3Positions() external view returns (uint256[])',
-        
-        // BALANCE & STATE VIEWS
-        'function getContractBalances() external view returns (uint256, uint256, uint256, uint256)',
-        'function getPoolBalances() external view returns (uint256, uint256, uint256)',
-        'function paused() external view returns (bool)',
-        'function owner() external view returns (address)',
-        'function scw() external view returns (address)',
-        'function cycleCount() external view returns (uint256)',
-        'function lastCycleTimestamp() external view returns (uint256)',
-        'function currentScaleFactorBps() external view returns (uint256)',
-        'function permanentUSDCAdded() external view returns (uint256)',
-        'function permanentWETHAdded() external view returns (uint256)',
-        'function permanentBWZCAdded() external view returns (uint256)',
-        
-        // CALCULATION FUNCTIONS
-        'function calculatePreciseBootstrap() external returns (uint256, uint256, uint256)',
-        'function getCurrentSpread() external view returns (uint256)',
-        'function getMinRequiredSpread() external pure returns (uint256)',
-        'function getConsensusEthPrice() external returns (uint256, uint8)',
-        'function predictPerformance(uint256 daysToSimulate) external view returns (uint256, uint256, uint256, uint256, uint256)'
+        'function executeBulletproofBootstrap(uint256) external'
       ],
       signer
     );
-    
-    // Error decoder for contract revert reasons
-    this.errorInterface = new ethers.Interface([
-      'error SpreadTooLow()',
-      'error SCWInsufficientBWZC()',
-      'error InsufficientBalance()',
-      'error ScaleLimitReached()',
-      'error Paused()',
-      'error SwapFailed()',
-      'error JoinFailed()',
-      'error InsufficientBalancerLiquidity()',
-      'error LowLiquidity()',
-      'error InvalidParameter()',
-      'error InsufficientFunds()',
-      'error DeadlineExpired()',
-      'error DeviationTooHigh()',
-      'error StaleOracle()',
-      'error OracleConsensusFailed()',
-      'error InvalidStateTransition()',
-      'error UniswapV3QueryFailed()',
-      'error ETHTransferFailed()',
-      'error MathOverflow()',
-      'error NotInEmergency()'
-    ]);
   }
 
-  // =========================================================================
-  // PURE TRIGGER - Contract Validates Everything
-  // =========================================================================
-  
   /**
-   * Trigger warehouse cycle with MINIMAL amount (1 wei)
-   * Contract calculates its own optimal amount via calculatePreciseBootstrap()
-   * Contract validates: spread, liquidity, BWZC balance, scale factor, pause state, oracle
-   * If any check fails → contract reverts with specific error (low gas cost)
+   * THE ONLY FUNCTION THAT MATTERS
+   * Every 90 seconds, send 1 wei. Contract decides everything else.
    */
-  async triggerCycle() {
+  async trigger() {
     try {
-      // CRITICAL: Use 1 wei - contract IGNORES this value and calculates its own needs
-      const SYMBOLIC_AMOUNT = ethers.parseEther("1"); // 1 wei - just a placeholder
-      
       const calldata = this.contract.interface.encodeFunctionData(
         'executeBulletproofBootstrap',
-        [SYMBOLIC_AMOUNT]
+        [ethers.parseEther("1")]  // 1 wei - completely ignored by contract
       );
       
       return {
         success: true,
         target: LIVE.WAREHOUSE_CONTRACT,
         calldata,
-        description: 'warehouse_periodic_trigger',
-        gasLimit: 3_500_000, // Enough for full 8-pool arbitrage
-        method: 'executeBulletproofBootstrap',
-        amount: SYMBOLIC_AMOUNT
+        description: 'warehouse_trigger',
+        gasLimit: 3_500_000  // Enough if contract decides to execute
       };
     } catch (error) {
-      console.error('Failed to encode trigger:', error);
-      return {
-        success: false,
-        error: error.message
-      };
+      return { success: false, error: error.message };
     }
-  }
-
-  /**
-   * Trigger fee harvest - contract manages its own V3 positions
-   */
-  async triggerHarvest() {
-    try {
-      const calldata = this.contract.interface.encodeFunctionData(
-        'harvestAllFees',
-        []
-      );
-      
-      return {
-        success: true,
-        target: LIVE.WAREHOUSE_CONTRACT,
-        calldata,
-        description: 'warehouse_fee_harvest',
-        gasLimit: 1_500_000,
-        method: 'harvestAllFees'
-      };
-    } catch (error) {
-      console.error('Failed to encode harvest:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  // =========================================================================
-  // STATE VIEWS - Read-Only, No Execution
-  // =========================================================================
-
-  async getState() {
-    try {
-      const [
-        paused,
-        owner,
-        scw,
-        cycleCount,
-        lastCycleTimestamp,
-        scaleFactor,
-        permanentUSDCAdded,
-        permanentWETHAdded,
-        permanentBWZCAdded,
-        currentSpread,
-        minRequiredSpread
-      ] = await Promise.allSettled([
-        this.contract.paused(),
-        this.contract.owner(),
-        this.contract.scw(),
-        this.contract.cycleCount(),
-        this.contract.lastCycleTimestamp(),
-        this.contract.currentScaleFactorBps(),
-        this.contract.permanentUSDCAdded(),
-        this.contract.permanentWETHAdded(),
-        this.contract.permanentBWZCAdded(),
-        this.contract.getCurrentSpread(),
-        this.contract.getMinRequiredSpread()
-      ]);
-
-      return {
-        paused: paused.status === 'fulfilled' ? paused.value : null,
-        owner: owner.status === 'fulfilled' ? owner.value : null,
-        scw: scw.status === 'fulfilled' ? scw.value : null,
-        cycleCount: cycleCount.status === 'fulfilled' ? Number(cycleCount.value) : 0,
-        lastCycleTimestamp: lastCycleTimestamp.status === 'fulfilled' ? Number(lastCycleTimestamp.value) : 0,
-        scaleFactor: scaleFactor.status === 'fulfilled' ? Number(scaleFactor.value) : 1000,
-        permanentLiquidity: {
-          usdc: permanentUSDCAdded.status === 'fulfilled' ? Number(ethers.formatUnits(permanentUSDCAdded.value, 6)) : 0,
-          weth: permanentWETHAdded.status === 'fulfilled' ? Number(ethers.formatEther(permanentWETHAdded.value)) : 0,
-          bwzc: permanentBWZCAdded.status === 'fulfilled' ? Number(ethers.formatEther(permanentBWZCAdded.value)) : 0
-        },
-        currentSpread: currentSpread.status === 'fulfilled' ? Number(currentSpread.value) / 100 : 0,
-        minRequiredSpread: minRequiredSpread.status === 'fulfilled' ? Number(minRequiredSpread.value) / 100 : 2,
-        isSpreadSufficient: currentSpread.status === 'fulfilled' && minRequiredSpread.status === 'fulfilled' 
-          ? currentSpread.value >= minRequiredSpread.value 
-          : null,
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      console.error('Failed to fetch warehouse state:', error);
-      return null;
-    }
-  }
-
-  async getBalances() {
-    try {
-      const [contractBal, poolBal] = await Promise.allSettled([
-        this.contract.getContractBalances(),
-        this.contract.getPoolBalances()
-      ]);
-
-      return {
-        contract: {
-          usdc: contractBal.status === 'fulfilled' ? Number(ethers.formatUnits(contractBal.value[0], 6)) : 0,
-          weth: contractBal.status === 'fulfilled' ? Number(ethers.formatEther(contractBal.value[1])) : 0,
-          bwzc: contractBal.status === 'fulfilled' ? Number(ethers.formatEther(contractBal.value[2])) : 0,
-          eth: contractBal.status === 'fulfilled' ? Number(ethers.formatEther(contractBal.value[3])) : 0
-        },
-        pools: {
-          balancerUsdc: poolBal.status === 'fulfilled' ? Number(ethers.formatUnits(poolBal.value[0], 6)) : 0,
-          balancerWeth: poolBal.status === 'fulfilled' ? Number(ethers.formatEther(poolBal.value[1])) : 0,
-          balancerBwzc: poolBal.status === 'fulfilled' ? Number(ethers.formatEther(poolBal.value[2])) : 0
-        },
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      console.error('Failed to fetch balances:', error);
-      return null;
-    }
-  }
-
-  async getV3Positions() {
-    try {
-      return await this.contract.getUniswapV3Positions();
-    } catch (error) {
-      console.error('Failed to get V3 positions:', error);
-      return [];
-    }
-  }
-
-  async predictPerformance(days = 1) {
-    try {
-      const result = await this.contract.predictPerformance(days);
-      return {
-        scwUsdcProfit: Number(ethers.formatUnits(result[0], 6)),
-        scwWethProfit: Number(ethers.formatEther(result[1])),
-        eoaUsdcFees: Number(ethers.formatUnits(result[2], 6)),
-        eoaWethFees: Number(ethers.formatEther(result[3])),
-        poolDeepeningValue: Number(ethers.formatUnits(result[4], 6))
-      };
-    } catch (error) {
-      console.error('Performance prediction failed:', error);
-      return null;
-    }
-  }
-
-  async calculateOptimalAmounts() {
-    try {
-      const result = await this.contract.calculatePreciseBootstrap();
-      return {
-        totalBwzcNeeded: ethers.formatEther(result[0]),
-        usdcLoanAmount: ethers.formatUnits(result[1], 6),
-        wethLoanAmount: ethers.formatEther(result[2]),
-        source: 'contract',
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      console.error('Failed to calculate optimal amounts:', error);
-      return null;
-    }
-  }
-
-  async getCurrentSpread() {
-    try {
-      const spread = await this.contract.getCurrentSpread();
-      return Number(spread) / 100; // Convert basis points to percentage
-    } catch (error) {
-      console.error('Failed to get current spread:', error);
-      return 0;
-    }
-  }
-
-  async getMinRequiredSpread() {
-    try {
-      const spread = await this.contract.getMinRequiredSpread();
-      return Number(spread) / 100; // Convert basis points to percentage
-    } catch (error) {
-      console.error('Failed to get min required spread:', error);
-      return 2.0; // Default 2%
-    }
-  }
-
-  async getConsensusEthPrice() {
-    try {
-      const [price, confidence] = await this.contract.getConsensusEthPrice();
-      return {
-        price: Number(ethers.formatUnits(price, 18)), // Format from 1e18
-        confidence: Number(confidence),
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      console.error('Failed to get consensus ETH price:', error);
-      return null;
-    }
-  }
-
-  // =========================================================================
-  // POSITION MANAGEMENT - Owner Only Operations
-  // =========================================================================
-
-  async addV3Position(tokenId, isUsdcPosition) {
-    try {
-      const tx = await this.contract.addUniswapV3Position(tokenId, isUsdcPosition);
-      const receipt = await tx.wait();
-      return {
-        success: receipt.status === 1,
-        txHash: tx.hash,
-        tokenId,
-        isUsdcPosition
-      };
-    } catch (error) {
-      console.error('Failed to add V3 position:', error);
-      return { 
-        success: false, 
-        error: error.message,
-        reason: this.decodeRevert(error)
-      };
-    }
-  }
-
-  async removeV3Position(index) {
-    try {
-      const tx = await this.contract.removeUniswapV3Position(index);
-      const receipt = await tx.wait();
-      return {
-        success: receipt.status === 1,
-        txHash: tx.hash,
-        index
-      };
-    } catch (error) {
-      console.error('Failed to remove V3 position:', error);
-      return { 
-        success: false, 
-        error: error.message,
-        reason: this.decodeRevert(error)
-      };
-    }
-  }
-
-  // =========================================================================
-  // UTILITIES - Revert Decoding
-  // =========================================================================
-
-  decodeRevert(error) {
-    // Extract revert data
-    let revertData = null;
-    
-    if (error.data) {
-      revertData = error.data;
-    } else if (error.error?.data) {
-      revertData = error.error.data;
-    } else if (error.receipt?.logs) {
-      // Try to find revert in receipt
-      for (const log of error.receipt.logs) {
-        if (log.topics[0] === ethers.id('Revert(bytes)')) {
-          revertData = log.data;
-          break;
-        }
-      }
-    }
-    
-    // Parse known error signatures
-    if (revertData && typeof revertData === 'string' && revertData.startsWith('0x')) {
-      try {
-        const parsed = this.errorInterface.parseError(revertData);
-        if (parsed) {
-          return parsed.name;
-        }
-      } catch {
-        // Not a known error signature
-      }
-      
-      // Try standard revert string
-      try {
-        const reason = ethers.toUtf8String('0x' + revertData.slice(138));
-        if (reason && reason.length < 100) {
-          return reason;
-        }
-      } catch {
-        // Not a standard revert string
-      }
-    }
-    
-    // Extract from error message
-    if (error.message) {
-      const match = error.message.match(/execution reverted: "?([^"']+)"?/);
-      if (match) return match[1];
-      
-      if (error.message.includes('SpreadTooLow')) return 'SpreadTooLow';
-      if (error.message.includes('SCWInsufficientBWZC')) return 'SCWInsufficientBWZC';
-      if (error.message.includes('ScaleLimitReached')) return 'ScaleLimitReached';
-      if (error.message.includes('Paused')) return 'Paused';
-      if (error.message.includes('InsufficientBalancerLiquidity')) return 'InsufficientBalancerLiquidity';
-    }
-    
-    return 'Unknown';
   }
 }
 
 /* =========================================================================
-   Warehouse Perpetual Trigger System - INSTITUTIONAL GRADE
+   Warehouse Perpetual Trigger - PURE, CLEAN, SIMPLE
    ========================================================================= */
 class WarehousePerpetualTrigger {
   constructor(warehouseManager, aaExecutor) {
     this.warehouse = warehouseManager;
     this.aa = aaExecutor;
-    
-    // Statistics tracking
-    this.stats = {
-      totalTriggers: 0,
-      successfulExecutions: 0,
-      failedExecutions: 0,
-      lastTriggerTime: 0,
-      lastSuccessTime: 0,
-      revertReasons: new Map(), // Count of each revert reason
-      totalGasUsed: 0n
-    };
-    
     this.intervalId = null;
   }
 
-  /**
-   * PURE TRIGGER - NO CONDITIONS, NO PRE-CHECKS
-   * Contract decides everything: spread, liquidity, balance, scale, pause
-   */
   async trigger() {
-    this.stats.totalTriggers++;
-    this.stats.lastTriggerTime = Date.now();
-    
     try {
-      // Get trigger data from warehouse manager
-      const trigger = await this.warehouse.triggerCycle();
+      const trigger = await this.warehouse.trigger();
+      if (!trigger.success) return;
       
-      if (!trigger.success) {
-        throw new Error('Failed to encode trigger');
-      }
-      
-      // Submit via AA/paymaster
-      const result = await this.aa.buildAndSendUserOp(
+      await this.aa.buildAndSendUserOp(
         trigger.target,
         trigger.calldata,
         trigger.description,
-        {
-          gasLimit: trigger.gasLimit,
-          maxPriorityFeePerGas: ethers.parseUnits("2", "gwei"),
-          skipPreflight: true // Don't simulate - let contract decide
-        }
+        { gasLimit: trigger.gasLimit, skipPreflight: true }
       );
       
-      // Success - contract accepted execution
-      this.stats.successfulExecutions++;
-      this.stats.lastSuccessTime = Date.now();
-      
-      if (result.receipt) {
-        this.stats.totalGasUsed += BigInt(result.receipt.gasUsed);
-      }
-      
-      console.log(`✅ [Warehouse] SUCCESS - Cycle executed (Nonce: ${result.nonce})`);
-      
-      return { success: true, result };
-      
+      console.log(`✅ [Warehouse] Trigger sent`);
     } catch (error) {
-      this.stats.failedExecutions++;
-      
-      // Decode revert reason - contract is telling us why it rejected
-      const revertReason = this.warehouse.decodeRevert(error);
-      
-      // Track revert statistics
-      const count = this.stats.revertReasons.get(revertReason) || 0;
-      this.stats.revertReasons.set(revertReason, count + 1);
-      
-      // Clean, minimal logging - expected behavior
-      console.log(`⏭️ [Warehouse] Rejected: ${revertReason}`);
-      
-      return {
-        success: false,
-        reason: revertReason,
-        error
-      };
+      // Don't care why. Just log and move on.
+      console.log(`⏭️ [Warehouse] Rejected`);
     }
   }
 
-  /**
-   * Trigger fee harvest
-   */
-  async triggerHarvest() {
-    try {
-      const harvest = await this.warehouse.triggerHarvest();
-      
-      if (!harvest.success) {
-        throw new Error('Failed to encode harvest');
-      }
-      
-      const result = await this.aa.buildAndSendUserOp(
-        harvest.target,
-        harvest.calldata,
-        harvest.description,
-        {
-          gasLimit: harvest.gasLimit,
-          maxPriorityFeePerGas: ethers.parseUnits("2", "gwei")
-        }
-      );
-      
-      console.log(`💰 [Warehouse] Harvest executed - ${result.userOpHash}`);
-      
-      return { success: true, result };
-      
-    } catch (error) {
-      const revertReason = this.warehouse.decodeRevert(error);
-      console.log(`⏭️ [Warehouse] Harvest rejected: ${revertReason}`);
-      
-      return {
-        success: false,
-        reason: revertReason,
-        error
-      };
-    }
-  }
-
-  /**
-   * Start perpetual triggering - every 90 seconds, no conditions
-   */
   start(intervalMs = 90_000) {
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║     WAREHOUSE PERPETUAL TRIGGER - INSTITUTIONAL MODE         ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Interval: ${intervalMs}ms (${intervalMs/1000}s)                                      ║
-║  • Trigger Mode: PURE - NO PRE-CONDITIONS                    ║
-║  • Amount Sent: 1 wei (symbolic - contract calculates)       ║
-║  • Contract Decides: ✓ Spread  ✓ Liquidity  ✓ Balance       ║
-║                    ✓ Scale   ✓ Pause    ✓ Oracle            ║
-║  • Gas Strategy: 3.5M limit, 2 gwei priority                ║
-║  • Run Forever: Yes - bot lifecycle                          ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
+    console.log(`⏰ Warehouse trigger every ${intervalMs/1000} seconds - NO CONDITIONS, NO CHECKS, NO BRAIN`);
     
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-    }
-    
-    this.intervalId = setInterval(async () => {
-      await this.trigger();
-    }, intervalMs);
-    
+    if (this.intervalId) clearInterval(this.intervalId);
+    this.intervalId = setInterval(() => this.trigger(), intervalMs);
     this.intervalId.unref?.();
-    
     return this;
   }
 
-  /**
-   * Stop perpetual trigger
-   */
   stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
-    return this;
-  }
-
-  /**
-   * Get detailed statistics
-   */
-  getStats() {
-    const totalReverts = Array.from(this.stats.revertReasons.values())
-      .reduce((a, b) => a + b, 0);
-    
-    const successRate = this.stats.totalTriggers > 0
-      ? (this.stats.successfulExecutions / this.stats.totalTriggers * 100).toFixed(2)
-      : '0.00';
-    
-    const revertBreakdown = Array.from(this.stats.revertReasons.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([reason, count]) => ({
-        reason,
-        count,
-        percentage: this.stats.totalTriggers > 0
-          ? ((count / this.stats.totalTriggers) * 100).toFixed(1)
-          : '0.0'
-      }));
-    
-    return {
-      totalTriggers: this.stats.totalTriggers,
-      successfulExecutions: this.stats.successfulExecutions,
-      failedExecutions: this.stats.failedExecutions,
-      successRate: `${successRate}%`,
-      lastTrigger: this.stats.lastTriggerTime 
-        ? new Date(this.stats.lastTriggerTime).toISOString() 
-        : 'Never',
-      lastSuccess: this.stats.lastSuccessTime
-        ? new Date(this.stats.lastSuccessTime).toISOString()
-        : 'Never',
-      totalGasUsed: ethers.formatEther(this.stats.totalGasUsed),
-      revertBreakdown,
-      uptime: this.intervalId ? 'Active' : 'Stopped'
-    };
   }
 }
-
-/* =========================================================================
-   Live Contract State Monitor - READ-ONLY OBSERVATION
-   ========================================================================= */
-class LiveContractStateMonitor {
-  constructor(warehouseManager, provider) {
-    this.warehouse = warehouseManager;
-    this.provider = provider;
-    
-    // Pure observation - no decision making
-    this.state = {
-      lastUpdate: 0,
-      balances: null,
-      contractState: null,
-      predictions: null,
-      spread: 0,
-      optimalAmounts: null
-    };
-    
-    this.running = false;
-    this.updateCount = 0;
-  }
-
-  async start(interval = 30000) {
-    if (this.running) return;
-    this.running = true;
-    
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║     WAREHOUSE STATE MONITOR - READ-ONLY OBSERVATION          ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Mode: OBSERVE ONLY - NO DECISIONS                         ║
-║  • Update Interval: ${interval}ms                                          ║
-║  • Purpose: Dashboard & Alerting                             ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-    
-    while (this.running) {
-      try {
-        await this.update();
-        await sleep(interval);
-      } catch (error) {
-        console.error('[Monitor] Error:', error.message);
-        await sleep(interval * 2);
-      }
-    }
-  }
-
-  stop() {
-    this.running = false;
-  }
-
-  async update() {
-    const [state, balances, spread, optimalAmounts] = await Promise.allSettled([
-      this.warehouse.getState(),
-      this.warehouse.getBalances(),
-      this.warehouse.getCurrentSpread(),
-      this.warehouse.calculateOptimalAmounts()
-    ]);
-
-    this.updateCount++;
-    
-    this.state = {
-      lastUpdate: Date.now(),
-      updateCount: this.updateCount,
-      contractState: state.status === 'fulfilled' ? state.value : null,
-      balances: balances.status === 'fulfilled' ? balances.value : null,
-      spread: spread.status === 'fulfilled' ? spread.value : 0,
-      optimalAmounts: optimalAmounts.status === 'fulfilled' ? optimalAmounts.value : null,
-      timestamp: Date.now()
-    };
-
-    // Log key metrics every 5 minutes (10 updates at 30s interval)
-    if (this.updateCount % 10 === 0 && this.state.contractState) {
-      console.log(`[Monitor] Cycle: ${this.state.contractState.cycleCount} | Spread: ${this.state.spread.toFixed(2)}% | Scale: ${this.state.contractState.scaleFactor/100}%`);
-    }
-  }
-
-  getState() {
-    return this.state;
-  }
-
-  async getDetailedReport() {
-    const [positions, performance] = await Promise.allSettled([
-      this.warehouse.getV3Positions(),
-      this.warehouse.predictPerformance(1)
-    ]);
-
-    return {
-      ...this.state,
-      v3Positions: positions.status === 'fulfilled' ? positions.value.length : 0,
-      predictedDailyProfit: performance.status === 'fulfilled' ? performance.value : null,
-      generatedAt: Date.now()
-    };
-  }
-}
-
-
-
 
 /* =========================================================================
    Enhanced Bundle Manager with Warehouse Integration
@@ -1417,7 +809,6 @@ class EnhancedBundleManager {
     this.relays = relayRouter;
     this.rpc = rpcManager;
     this.warehouse = warehouseManager;
-    this.stateMonitor = new LiveContractStateMonitor(warehouseManager, rpcManager.getProvider());
     
     this.pending = [];
     this.maxPerBlock = LIVE.BUNDLE.MAX_PER_BLOCK;
@@ -4268,9 +3659,7 @@ class ProductionSovereignCore {
     this.warehouseTrigger = new WarehousePerpetualTrigger(this.warehouseManager, this.aa);
     this.warehouseTrigger.start(90_000); // Every 90 seconds, forever
     
-    // 5. Warehouse State Monitor - READ ONLY, OBSERVATION ONLY
-    this.warehouseMonitor = new LiveContractStateMonitor(this.warehouseManager, this.provider);
-    await this.warehouseMonitor.start(30_000); // Update every 30s for dashboard
+    
     
     // =====================================================================
     // MEV COMPONENTS - SEPARATE DOMAIN, NO WAREHOUSE OVERLAP
