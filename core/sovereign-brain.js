@@ -712,39 +712,143 @@ class DirectOmniExecutionAA {
 }  // <-- closes DirectOmniExecutionAA
 
 
-
-
 /* =========================================================================
-   Warehouse Contract Manager
+   Warehouse Contract Manager - PURE TRIGGER, CONTRACT DECIDES EVERYTHING
    ========================================================================= */
 class WarehouseContractManager {
   constructor(provider, signer) {
     this.provider = provider;
     this.signer = signer;
+    
+    // Contract instance - SOURCE OF TRUTH
     this.contract = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       [
-        'function executePreciseBootstrap(uint256 bwzcForArbitrage) external',
+        // EXECUTION FUNCTIONS - Minimal interface, contract decides
+        'function executeBulletproofBootstrap(uint256 bwzcForArbitrage) external',
         'function harvestAllFees() external returns (uint256, uint256, uint256)',
+        
+        // POSITION MANAGEMENT
         'function addUniswapV3Position(uint256 tokenId) external',
         'function removeUniswapV3Position(uint256 index) external',
         'function getUniswapV3Positions() external view returns (uint256[])',
+        
+        // BALANCE & STATE VIEWS
         'function getContractBalances() external view returns (uint256, uint256, uint256, uint256)',
         'function getPoolBalances() external view returns (uint256, uint256, uint256)',
-        'function predictPerformance(uint256 daysToSimulate) external view returns (uint256, uint256, uint256, uint256, uint256)',
         'function paused() external view returns (bool)',
         'function owner() external view returns (address)',
         'function scw() external view returns (address)',
         'function cycleCount() external view returns (uint256)',
         'function lastCycleTimestamp() external view returns (uint256)',
+        'function currentScaleFactorBps() external view returns (uint256)',
         'function permanentUSDCAdded() external view returns (uint256)',
         'function permanentWETHAdded() external view returns (uint256)',
         'function permanentBWZCAdded() external view returns (uint256)',
-        'function calculatePreciseBootstrap() external returns (uint256, uint256, uint256)'
+        
+        // CALCULATION FUNCTIONS
+        'function calculatePreciseBootstrap() external returns (uint256, uint256, uint256)',
+        'function getCurrentSpread() external view returns (uint256)',
+        'function getMinRequiredSpread() external pure returns (uint256)',
+        'function getConsensusEthPrice() external returns (uint256, uint8)',
+        'function predictPerformance(uint256 daysToSimulate) external view returns (uint256, uint256, uint256, uint256, uint256)'
       ],
       signer
     );
+    
+    // Error decoder for contract revert reasons
+    this.errorInterface = new ethers.Interface([
+      'error SpreadTooLow()',
+      'error SCWInsufficientBWZC()',
+      'error InsufficientBalance()',
+      'error ScaleLimitReached()',
+      'error Paused()',
+      'error SwapFailed()',
+      'error JoinFailed()',
+      'error InsufficientBalancerLiquidity()',
+      'error LowLiquidity()',
+      'error InvalidParameter()',
+      'error InsufficientFunds()',
+      'error DeadlineExpired()',
+      'error DeviationTooHigh()',
+      'error StaleOracle()',
+      'error OracleConsensusFailed()',
+      'error InvalidStateTransition()',
+      'error UniswapV3QueryFailed()',
+      'error ETHTransferFailed()',
+      'error MathOverflow()',
+      'error NotInEmergency()'
+    ]);
   }
+
+  // =========================================================================
+  // PURE TRIGGER - Contract Validates Everything
+  // =========================================================================
+  
+  /**
+   * Trigger warehouse cycle with MINIMAL amount (1 wei)
+   * Contract calculates its own optimal amount via calculatePreciseBootstrap()
+   * Contract validates: spread, liquidity, BWZC balance, scale factor, pause state, oracle
+   * If any check fails → contract reverts with specific error (low gas cost)
+   */
+  async triggerCycle() {
+    try {
+      // CRITICAL: Use 1 wei - contract IGNORES this value and calculates its own needs
+      const SYMBOLIC_AMOUNT = ethers.parseEther("1"); // 1 wei - just a placeholder
+      
+      const calldata = this.contract.interface.encodeFunctionData(
+        'executeBulletproofBootstrap',
+        [SYMBOLIC_AMOUNT]
+      );
+      
+      return {
+        success: true,
+        target: LIVE.WAREHOUSE_CONTRACT,
+        calldata,
+        description: 'warehouse_periodic_trigger',
+        gasLimit: 3_500_000, // Enough for full 8-pool arbitrage
+        method: 'executeBulletproofBootstrap',
+        amount: SYMBOLIC_AMOUNT
+      };
+    } catch (error) {
+      console.error('Failed to encode trigger:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Trigger fee harvest - contract manages its own V3 positions
+   */
+  async triggerHarvest() {
+    try {
+      const calldata = this.contract.interface.encodeFunctionData(
+        'harvestAllFees',
+        []
+      );
+      
+      return {
+        success: true,
+        target: LIVE.WAREHOUSE_CONTRACT,
+        calldata,
+        description: 'warehouse_fee_harvest',
+        gasLimit: 1_500_000,
+        method: 'harvestAllFees'
+      };
+    } catch (error) {
+      console.error('Failed to encode harvest:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // =========================================================================
+  // STATE VIEWS - Read-Only, No Execution
+  // =========================================================================
 
   async getState() {
     try {
@@ -754,32 +858,44 @@ class WarehouseContractManager {
         scw,
         cycleCount,
         lastCycleTimestamp,
+        scaleFactor,
         permanentUSDCAdded,
         permanentWETHAdded,
-        permanentBWZCAdded
-      ] = await Promise.all([
+        permanentBWZCAdded,
+        currentSpread,
+        minRequiredSpread
+      ] = await Promise.allSettled([
         this.contract.paused(),
         this.contract.owner(),
         this.contract.scw(),
         this.contract.cycleCount(),
         this.contract.lastCycleTimestamp(),
+        this.contract.currentScaleFactorBps(),
         this.contract.permanentUSDCAdded(),
         this.contract.permanentWETHAdded(),
-        this.contract.permanentBWZCAdded()
+        this.contract.permanentBWZCAdded(),
+        this.contract.getCurrentSpread(),
+        this.contract.getMinRequiredSpread()
       ]);
 
       return {
-        paused,
-        owner,
-        scw,
-        cycleCount: Number(cycleCount),
-        lastCycleTimestamp: Number(lastCycleTimestamp),
+        paused: paused.status === 'fulfilled' ? paused.value : null,
+        owner: owner.status === 'fulfilled' ? owner.value : null,
+        scw: scw.status === 'fulfilled' ? scw.value : null,
+        cycleCount: cycleCount.status === 'fulfilled' ? Number(cycleCount.value) : 0,
+        lastCycleTimestamp: lastCycleTimestamp.status === 'fulfilled' ? Number(lastCycleTimestamp.value) : 0,
+        scaleFactor: scaleFactor.status === 'fulfilled' ? Number(scaleFactor.value) : 1000,
         permanentLiquidity: {
-          usdc: Number(ethers.formatUnits(permanentUSDCAdded, 6)),
-          weth: Number(ethers.formatUnits(permanentWETHAdded, 18)),
-          bwzc: Number(ethers.formatEther(permanentBWZCAdded))
+          usdc: permanentUSDCAdded.status === 'fulfilled' ? Number(ethers.formatUnits(permanentUSDCAdded.value, 6)) : 0,
+          weth: permanentWETHAdded.status === 'fulfilled' ? Number(ethers.formatEther(permanentWETHAdded.value)) : 0,
+          bwzc: permanentBWZCAdded.status === 'fulfilled' ? Number(ethers.formatEther(permanentBWZCAdded.value)) : 0
         },
-        timestamp: nowTs()
+        currentSpread: currentSpread.status === 'fulfilled' ? Number(currentSpread.value) / 100 : 0,
+        minRequiredSpread: minRequiredSpread.status === 'fulfilled' ? Number(minRequiredSpread.value) / 100 : 2,
+        isSpreadSufficient: currentSpread.status === 'fulfilled' && minRequiredSpread.status === 'fulfilled' 
+          ? currentSpread.value >= minRequiredSpread.value 
+          : null,
+        timestamp: Date.now()
       };
     } catch (error) {
       console.error('Failed to fetch warehouse state:', error);
@@ -789,94 +905,28 @@ class WarehouseContractManager {
 
   async getBalances() {
     try {
-      const [contractBal, poolBal] = await Promise.all([
+      const [contractBal, poolBal] = await Promise.allSettled([
         this.contract.getContractBalances(),
         this.contract.getPoolBalances()
       ]);
 
       return {
         contract: {
-          usdc: Number(ethers.formatUnits(contractBal[0], 6)),
-          weth: Number(ethers.formatEther(contractBal[1])),
-          bwzc: Number(ethers.formatEther(contractBal[2])),
-          eth: Number(ethers.formatEther(contractBal[3]))
+          usdc: contractBal.status === 'fulfilled' ? Number(ethers.formatUnits(contractBal.value[0], 6)) : 0,
+          weth: contractBal.status === 'fulfilled' ? Number(ethers.formatEther(contractBal.value[1])) : 0,
+          bwzc: contractBal.status === 'fulfilled' ? Number(ethers.formatEther(contractBal.value[2])) : 0,
+          eth: contractBal.status === 'fulfilled' ? Number(ethers.formatEther(contractBal.value[3])) : 0
         },
         pools: {
-          balancerUsdc: Number(ethers.formatUnits(poolBal[0], 6)),
-          balancerWeth: Number(ethers.formatEther(poolBal[1])),
-          balancerBwzc: Number(ethers.formatEther(poolBal[2]))
-        }
+          balancerUsdc: poolBal.status === 'fulfilled' ? Number(ethers.formatUnits(poolBal.value[0], 6)) : 0,
+          balancerWeth: poolBal.status === 'fulfilled' ? Number(ethers.formatEther(poolBal.value[1])) : 0,
+          balancerBwzc: poolBal.status === 'fulfilled' ? Number(ethers.formatEther(poolBal.value[2])) : 0
+        },
+        timestamp: Date.now()
       };
     } catch (error) {
       console.error('Failed to fetch balances:', error);
       return null;
-    }
-  }
-
-  async executeBootstrap(bwzcForArbitrage) {
-    try {
-      const tx = await this.contract.executePreciseBootstrap(bwzcForArbitrage);
-      console.log('Bootstrap transaction sent:', tx.hash);
-      const receipt = await tx.wait();
-      return {
-        success: receipt.status === 1,
-        txHash: tx.hash,
-        blockNumber: receipt.blockNumber,
-        gasUsed: receipt.gasUsed.toString()
-      };
-    } catch (error) {
-      console.error('Bootstrap execution failed:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async harvestFees() {
-    try {
-      const tx = await this.contract.harvestAllFees();
-      console.log('Harvest transaction sent:', tx.hash);
-      const receipt = await tx.wait();
-      
-      // Parse logs to get actual fee amounts
-      const iface = this.contract.interface;
-      const feeEvent = receipt.logs.find(log => {
-        try {
-          const parsed = iface.parseLog(log);
-          return parsed.name === 'FeesDistributed';
-        } catch {
-          return false;
-        }
-      });
-
-      let fees = { usdc: 0, weth: 0, bwzc: 0 };
-      if (feeEvent) {
-        const parsed = iface.parseLog(feeEvent);
-        fees = {
-          usdc: Number(ethers.formatUnits(parsed.args.usdcAmount, 6)),
-          weth: Number(ethers.formatEther(parsed.args.wethAmount)),
-          bwzc: Number(ethers.formatEther(parsed.args.bwzcAmount))
-        };
-      }
-
-      return {
-        success: receipt.status === 1,
-        txHash: tx.hash,
-        fees,
-        blockNumber: receipt.blockNumber
-      };
-    } catch (error) {
-      console.error('Fee harvest failed:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async addV3Position(tokenId) {
-    try {
-      const tx = await this.contract.addUniswapV3Position(tokenId);
-      await tx.wait();
-      return { success: true, txHash: tx.hash };
-    } catch (error) {
-      console.error('Failed to add V3 position:', error);
-      return { success: false, error: error.message };
     }
   }
 
@@ -905,78 +955,402 @@ class WarehouseContractManager {
     }
   }
 
-  async calculateBootstrapRequirements() {
-   try {
-    const result = await this.contract.calculatePreciseBootstrap();
-    return {
-        totalBwzcNeeded: Number(ethers.formatEther(result[0])),
-        usdcLoanAmount: Number(ethers.formatUnits(result[1], 6)),
-        wethLoanAmount: Number(ethers.formatEther(result[2])),
-        source: 'contract'
-    };
-} catch {
-
-// Fallback static calculation
-      const totalBwzcNeeded = 4000000 / 23.5;
-      const usdcLoanAmount = 2000000;
-      const wethLoanAmount = 2000000 / 3000;
-      return { totalBwzcNeeded, usdcLoanAmount, wethLoanAmount, source: 'fallback' };
+  async calculateOptimalAmounts() {
+    try {
+      const result = await this.contract.calculatePreciseBootstrap();
+      return {
+        totalBwzcNeeded: ethers.formatEther(result[0]),
+        usdcLoanAmount: ethers.formatUnits(result[1], 6),
+        wethLoanAmount: ethers.formatEther(result[2]),
+        source: 'contract',
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('Failed to calculate optimal amounts:', error);
+      return null;
     }
   }
 
-  decodeRevert(data) {
-    if (!data || !data.startsWith('0x')) return null;
-
-    const iface = new ethers.Interface([
-      'error SpreadTooLow()',
-      'error InsufficientBalance()',
-      'error SCWInsufficientBWZC()',
-      'error DeviationTooHigh()',
-      'error OracleConsensusFailed()',
-      'error InsufficientLiquidity()',
-      'error UniswapV3QueryFailed()'
-    ]);
-
+  async getCurrentSpread() {
     try {
-      const parsed = iface.parseError(data);
-      return parsed?.name || 'Unknown';
-    } catch {
-      return 'Unknown';
+      const spread = await this.contract.getCurrentSpread();
+      return Number(spread) / 100; // Convert basis points to percentage
+    } catch (error) {
+      console.error('Failed to get current spread:', error);
+      return 0;
     }
+  }
+
+  async getMinRequiredSpread() {
+    try {
+      const spread = await this.contract.getMinRequiredSpread();
+      return Number(spread) / 100; // Convert basis points to percentage
+    } catch (error) {
+      console.error('Failed to get min required spread:', error);
+      return 2.0; // Default 2%
+    }
+  }
+
+  async getConsensusEthPrice() {
+    try {
+      const [price, confidence] = await this.contract.getConsensusEthPrice();
+      return {
+        price: Number(ethers.formatUnits(price, 18)), // Format from 1e18
+        confidence: Number(confidence),
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('Failed to get consensus ETH price:', error);
+      return null;
+    }
+  }
+
+  // =========================================================================
+  // POSITION MANAGEMENT - Owner Only Operations
+  // =========================================================================
+
+  async addV3Position(tokenId, isUsdcPosition) {
+    try {
+      const tx = await this.contract.addUniswapV3Position(tokenId, isUsdcPosition);
+      const receipt = await tx.wait();
+      return {
+        success: receipt.status === 1,
+        txHash: tx.hash,
+        tokenId,
+        isUsdcPosition
+      };
+    } catch (error) {
+      console.error('Failed to add V3 position:', error);
+      return { 
+        success: false, 
+        error: error.message,
+        reason: this.decodeRevert(error)
+      };
+    }
+  }
+
+  async removeV3Position(index) {
+    try {
+      const tx = await this.contract.removeUniswapV3Position(index);
+      const receipt = await tx.wait();
+      return {
+        success: receipt.status === 1,
+        txHash: tx.hash,
+        index
+      };
+    } catch (error) {
+      console.error('Failed to remove V3 position:', error);
+      return { 
+        success: false, 
+        error: error.message,
+        reason: this.decodeRevert(error)
+      };
+    }
+  }
+
+  // =========================================================================
+  // UTILITIES - Revert Decoding
+  // =========================================================================
+
+  decodeRevert(error) {
+    // Extract revert data
+    let revertData = null;
+    
+    if (error.data) {
+      revertData = error.data;
+    } else if (error.error?.data) {
+      revertData = error.error.data;
+    } else if (error.receipt?.logs) {
+      // Try to find revert in receipt
+      for (const log of error.receipt.logs) {
+        if (log.topics[0] === ethers.id('Revert(bytes)')) {
+          revertData = log.data;
+          break;
+        }
+      }
+    }
+    
+    // Parse known error signatures
+    if (revertData && typeof revertData === 'string' && revertData.startsWith('0x')) {
+      try {
+        const parsed = this.errorInterface.parseError(revertData);
+        if (parsed) {
+          return parsed.name;
+        }
+      } catch {
+        // Not a known error signature
+      }
+      
+      // Try standard revert string
+      try {
+        const reason = ethers.toUtf8String('0x' + revertData.slice(138));
+        if (reason && reason.length < 100) {
+          return reason;
+        }
+      } catch {
+        // Not a standard revert string
+      }
+    }
+    
+    // Extract from error message
+    if (error.message) {
+      const match = error.message.match(/execution reverted: "?([^"']+)"?/);
+      if (match) return match[1];
+      
+      if (error.message.includes('SpreadTooLow')) return 'SpreadTooLow';
+      if (error.message.includes('SCWInsufficientBWZC')) return 'SCWInsufficientBWZC';
+      if (error.message.includes('ScaleLimitReached')) return 'ScaleLimitReached';
+      if (error.message.includes('Paused')) return 'Paused';
+      if (error.message.includes('InsufficientBalancerLiquidity')) return 'InsufficientBalancerLiquidity';
+    }
+    
+    return 'Unknown';
   }
 }
 
-      
-     
 /* =========================================================================
-   Live Contract State Monitor
+   Warehouse Perpetual Trigger System - INSTITUTIONAL GRADE
+   ========================================================================= */
+class WarehousePerpetualTrigger {
+  constructor(warehouseManager, aaExecutor) {
+    this.warehouse = warehouseManager;
+    this.aa = aaExecutor;
+    
+    // Statistics tracking
+    this.stats = {
+      totalTriggers: 0,
+      successfulExecutions: 0,
+      failedExecutions: 0,
+      lastTriggerTime: 0,
+      lastSuccessTime: 0,
+      revertReasons: new Map(), // Count of each revert reason
+      totalGasUsed: 0n
+    };
+    
+    this.intervalId = null;
+  }
+
+  /**
+   * PURE TRIGGER - NO CONDITIONS, NO PRE-CHECKS
+   * Contract decides everything: spread, liquidity, balance, scale, pause
+   */
+  async trigger() {
+    this.stats.totalTriggers++;
+    this.stats.lastTriggerTime = Date.now();
+    
+    try {
+      // Get trigger data from warehouse manager
+      const trigger = await this.warehouse.triggerCycle();
+      
+      if (!trigger.success) {
+        throw new Error('Failed to encode trigger');
+      }
+      
+      // Submit via AA/paymaster
+      const result = await this.aa.buildAndSendUserOp(
+        trigger.target,
+        trigger.calldata,
+        trigger.description,
+        {
+          gasLimit: trigger.gasLimit,
+          maxPriorityFeePerGas: ethers.parseUnits("2", "gwei"),
+          skipPreflight: true // Don't simulate - let contract decide
+        }
+      );
+      
+      // Success - contract accepted execution
+      this.stats.successfulExecutions++;
+      this.stats.lastSuccessTime = Date.now();
+      
+      if (result.receipt) {
+        this.stats.totalGasUsed += BigInt(result.receipt.gasUsed);
+      }
+      
+      console.log(`✅ [Warehouse] SUCCESS - Cycle executed (Nonce: ${result.nonce})`);
+      
+      return { success: true, result };
+      
+    } catch (error) {
+      this.stats.failedExecutions++;
+      
+      // Decode revert reason - contract is telling us why it rejected
+      const revertReason = this.warehouse.decodeRevert(error);
+      
+      // Track revert statistics
+      const count = this.stats.revertReasons.get(revertReason) || 0;
+      this.stats.revertReasons.set(revertReason, count + 1);
+      
+      // Clean, minimal logging - expected behavior
+      console.log(`⏭️ [Warehouse] Rejected: ${revertReason}`);
+      
+      return {
+        success: false,
+        reason: revertReason,
+        error
+      };
+    }
+  }
+
+  /**
+   * Trigger fee harvest
+   */
+  async triggerHarvest() {
+    try {
+      const harvest = await this.warehouse.triggerHarvest();
+      
+      if (!harvest.success) {
+        throw new Error('Failed to encode harvest');
+      }
+      
+      const result = await this.aa.buildAndSendUserOp(
+        harvest.target,
+        harvest.calldata,
+        harvest.description,
+        {
+          gasLimit: harvest.gasLimit,
+          maxPriorityFeePerGas: ethers.parseUnits("2", "gwei")
+        }
+      );
+      
+      console.log(`💰 [Warehouse] Harvest executed - ${result.userOpHash}`);
+      
+      return { success: true, result };
+      
+    } catch (error) {
+      const revertReason = this.warehouse.decodeRevert(error);
+      console.log(`⏭️ [Warehouse] Harvest rejected: ${revertReason}`);
+      
+      return {
+        success: false,
+        reason: revertReason,
+        error
+      };
+    }
+  }
+
+  /**
+   * Start perpetual triggering - every 90 seconds, no conditions
+   */
+  start(intervalMs = 90_000) {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║     WAREHOUSE PERPETUAL TRIGGER - INSTITUTIONAL MODE         ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Interval: ${intervalMs}ms (${intervalMs/1000}s)                                      ║
+║  • Trigger Mode: PURE - NO PRE-CONDITIONS                    ║
+║  • Amount Sent: 1 wei (symbolic - contract calculates)       ║
+║  • Contract Decides: ✓ Spread  ✓ Liquidity  ✓ Balance       ║
+║                    ✓ Scale   ✓ Pause    ✓ Oracle            ║
+║  • Gas Strategy: 3.5M limit, 2 gwei priority                ║
+║  • Run Forever: Yes - bot lifecycle                          ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+    
+    this.intervalId = setInterval(async () => {
+      await this.trigger();
+    }, intervalMs);
+    
+    this.intervalId.unref?.();
+    
+    return this;
+  }
+
+  /**
+   * Stop perpetual trigger
+   */
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    return this;
+  }
+
+  /**
+   * Get detailed statistics
+   */
+  getStats() {
+    const totalReverts = Array.from(this.stats.revertReasons.values())
+      .reduce((a, b) => a + b, 0);
+    
+    const successRate = this.stats.totalTriggers > 0
+      ? (this.stats.successfulExecutions / this.stats.totalTriggers * 100).toFixed(2)
+      : '0.00';
+    
+    const revertBreakdown = Array.from(this.stats.revertReasons.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, count]) => ({
+        reason,
+        count,
+        percentage: this.stats.totalTriggers > 0
+          ? ((count / this.stats.totalTriggers) * 100).toFixed(1)
+          : '0.0'
+      }));
+    
+    return {
+      totalTriggers: this.stats.totalTriggers,
+      successfulExecutions: this.stats.successfulExecutions,
+      failedExecutions: this.stats.failedExecutions,
+      successRate: `${successRate}%`,
+      lastTrigger: this.stats.lastTriggerTime 
+        ? new Date(this.stats.lastTriggerTime).toISOString() 
+        : 'Never',
+      lastSuccess: this.stats.lastSuccessTime
+        ? new Date(this.stats.lastSuccessTime).toISOString()
+        : 'Never',
+      totalGasUsed: ethers.formatEther(this.stats.totalGasUsed),
+      revertBreakdown,
+      uptime: this.intervalId ? 'Active' : 'Stopped'
+    };
+  }
+}
+
+/* =========================================================================
+   Live Contract State Monitor - READ-ONLY OBSERVATION
    ========================================================================= */
 class LiveContractStateMonitor {
   constructor(warehouseManager, provider) {
     this.warehouse = warehouseManager;
     this.provider = provider;
+    
+    // Pure observation - no decision making
     this.state = {
       lastUpdate: 0,
       balances: null,
       contractState: null,
       predictions: null,
       spread: 0,
-      readyForBootstrap: false,
-      bootstrapRequirements: null
+      optimalAmounts: null
     };
+    
     this.running = false;
+    this.updateCount = 0;
   }
 
   async start(interval = 30000) {
     if (this.running) return;
     this.running = true;
     
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║     WAREHOUSE STATE MONITOR - READ-ONLY OBSERVATION          ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Mode: OBSERVE ONLY - NO DECISIONS                         ║
+║  • Update Interval: ${interval}ms                                          ║
+║  • Purpose: Dashboard & Alerting                             ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    
     while (this.running) {
       try {
         await this.update();
         await sleep(interval);
       } catch (error) {
-        console.error('State monitor error:', error);
+        console.error('[Monitor] Error:', error.message);
         await sleep(interval * 2);
       }
     }
@@ -987,153 +1361,52 @@ class LiveContractStateMonitor {
   }
 
   async update() {
-    const [state, balances, spread, requirements] = await Promise.all([
+    const [state, balances, spread, optimalAmounts] = await Promise.allSettled([
       this.warehouse.getState(),
       this.warehouse.getBalances(),
-      this.calculateSpread(),
-      this.warehouse.calculateBootstrapRequirements()
+      this.warehouse.getCurrentSpread(),
+      this.warehouse.calculateOptimalAmounts()
     ]);
 
-    if (state && balances) {
-      const predictions = await this.warehouse.predictPerformance(1);
-      
-      this.state = {
-        lastUpdate: nowTs(),
-        balances,
-        contractState: state,
-        predictions,
-        spread,
-        bootstrapRequirements: requirements,
-        readyForBootstrap: this.isReadyForBootstrap(state, balances, requirements)
-      };
+    this.updateCount++;
+    
+    this.state = {
+      lastUpdate: Date.now(),
+      updateCount: this.updateCount,
+      contractState: state.status === 'fulfilled' ? state.value : null,
+      balances: balances.status === 'fulfilled' ? balances.value : null,
+      spread: spread.status === 'fulfilled' ? spread.value : 0,
+      optimalAmounts: optimalAmounts.status === 'fulfilled' ? optimalAmounts.value : null,
+      timestamp: Date.now()
+    };
 
-      // Log key metrics
-      console.log(`[Warehouse Monitor] Cycle: ${state.cycleCount}, Spread: ${spread.toFixed(2)}%, Ready: ${this.state.readyForBootstrap}`);
-      
-      // Auto-harvest if cycles have passed and there are positions
-      if (state.cycleCount > 0 && state.lastCycleTimestamp > 0) {
-        const hoursSinceLastCycle = (nowTs() - state.lastCycleTimestamp) / 3600000;
-        if (hoursSinceLastCycle >= 2) { // Harvest every 2 hours
-          const positions = await this.warehouse.getV3Positions();
-          if (positions.length > 0) {
-            console.log('Auto-harvest triggered');
-            // Note: In production, you might want to trigger this via a separate process
-          }
-        }
-      }
+    // Log key metrics every 5 minutes (10 updates at 30s interval)
+    if (this.updateCount % 10 === 0 && this.state.contractState) {
+      console.log(`[Monitor] Cycle: ${this.state.contractState.cycleCount} | Spread: ${this.state.spread.toFixed(2)}% | Scale: ${this.state.contractState.scaleFactor/100}%`);
     }
   }
 
-  async calculateSpread() {
-    try {
-        let balancerPriceUSD = LIVE.WAREHOUSE.BALANCER_PRICE_USD;
-        let uniV3Price = 0;
-
-        try { uniV3Price = await this.getUniswapV3Price(); } catch {}
-        if (uniV3Price === 0) try { uniV3Price = await this.getPriceViaQuoter(); } catch {}
-        if (uniV3Price === 0) try { uniV3Price = await this.getSlot0Fallback(); } catch {}
-
-        if (uniV3Price === 0) return 0;
-        const spread = ((uniV3Price - balancerPriceUSD) * 10000) / balancerPriceUSD;
-        return spread / 100;
-    } catch { return 0; }
-}
-
-
-  async getUniswapV3Price() {
-    try {
-      const pool = new ethers.Contract(
-        LIVE.POOLS.BWAEZI_USDC_3000,
-        ['function slot0() view returns (uint160 sqrtPriceX96, int24 tick)'],
-        this.provider
-      );
-      
-      const slot0 = await pool.slot0();
-      const sqrtPriceX96 = slot0.sqrtPriceX96;
-      
-      // Convert sqrtPriceX96 to price
-      const price = (Number(sqrtPriceX96) ** 2) / (2 ** 192);
-      
-      // Convert to USD using ETH price
-      const ethUsd = await this.getEthUsdPrice();
-      return price * ethUsd * 1e6; // Convert to 6 decimal USD
-    } catch (error) {
-      console.error('Uniswap V3 price fetch failed:', error);
-      return 0;
-    }
-  }
-
-  async getEthUsdPrice() {
-    try {
-      const feed = new ethers.Contract(
-        LIVE.ORACLE.CHAINLINK_ETH_USD,
-        ['function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)'],
-        this.provider
-      );
-      
-      const [, price] = await feed.latestRoundData();
-      return Number(price) / 1e8; // Chainlink has 8 decimals
-    } catch (error) {
-      console.error('ETH/USD price fetch failed:', error);
-      return 3000; // Fallback
-    }
-  }
-
-async isReadyForBootstrap() {
-    // Create contract instance inside the method
-    const bwzcContract = new ethers.Contract(
-        LIVE.TOKENS.BWAEZI,
-        [
-            "function balanceOf(address) view returns (uint256)",
-            "function decimals() view returns (uint8)"
-        ],
-        this.provider
-    );
-
-    // Read SCW balance
-    const rawBalance = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
-    const decimals = await bwzcContract.decimals(); // should be 18
-    const bwzcBalance = ethers.formatUnits(rawBalance, decimals);
-
-    // Check spread is sufficient
-    if (this.state.spread < LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100) {
-        console.log(
-            `Spread ${this.state.spread.toFixed(2)}% below minimum ${LIVE.WAREHOUSE.MIN_SPREAD_BPS / 100}%`
-        );
-        return false;
-    }
-
-    // Check SCW balance against bootstrap requirement
-    const requiredBwzc = Number(
-        ethers.formatUnits(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP, decimals)
-    );
-    if (parseFloat(bwzcBalance) < requiredBwzc) {
-        console.log(`❌ Insufficient BWZC in SCW: ${bwzcBalance} < ${requiredBwzc}`);
-        return false;
-    }
-
-    return true;
-}
-
-getState() {
+  getState() {
     return this.state;
-}
+  }
 
-getRecommendation() {
-    if (!this.state.readyForBootstrap) {
-        return { action: 'wait', reason: 'Conditions not met' };
-    }
+  async getDetailedReport() {
+    const [positions, performance] = await Promise.allSettled([
+      this.warehouse.getV3Positions(),
+      this.warehouse.predictPerformance(1)
+    ]);
 
     return {
-        action: 'bootstrap',
-        bwzcAmount: this.state.bootstrapRequirements?.totalBwzcNeeded || 39130.44,
-        expectedProfit: LIVE.WAREHOUSE.PROFIT_PER_CYCLE_USD,
-        expectedSpread: this.state.spread,
-        dailyProfit: this.state.bootstrapRequirements?.expectedDailyProfit || 1840000
+      ...this.state,
+      v3Positions: positions.status === 'fulfilled' ? positions.value.length : 0,
+      predictedDailyProfit: performance.status === 'fulfilled' ? performance.value : null,
+      generatedAt: Date.now()
     };
   }
-   
 }
+
+
+
 
 /* =========================================================================
    Enhanced Bundle Manager with Warehouse Integration
@@ -3908,7 +4181,7 @@ export class EnhancedOmniExecutionAA {
 
 
 /* =========================================================================
-   Production Sovereign Core 
+   Production Sovereign Core - INSTITUTIONAL PERFECTION
    ========================================================================= */
 class ProductionSovereignCore {
   constructor() {
@@ -3941,6 +4214,9 @@ class ProductionSovereignCore {
       pegActions: 0,
       warehouseCycles: 0,
       warehouseProfitUSD: 0,
+      warehouseTriggers: 0,
+      warehouseSuccesses: 0,
+      warehouseFailures: 0,
       synergyBoosts: 0,
       hybridHarvests: 0,
       safetyBlocks: 0
@@ -3954,11 +4230,12 @@ class ProductionSovereignCore {
     this.parallelSim = null;
     
     this.warehouseMonitor = null;
+    this.warehouseTrigger = null;      // Pure trigger system - CONTRACT DECIDES
     
-    // NOVEL: Add the three new systems (minimal changes)
-    this.synergyEngine = null;          // ContractMEVSynergy
-    this.hybridHarvester = null;        // HybridHarvestOrchestrator  
-    this.harvestSafety = null;          // HarvestSafetyOverride
+    // Clean separation - MEV only, no warehouse decision logic
+    this.synergyEngine = null;          // Optional enhancement, never decision maker
+    this.hybridHarvester = null;        // For non-warehouse fee harvesting
+    this.harvestSafety = null;          // Safety override for MEV operations
   }
 
   async initialize() {
@@ -3966,74 +4243,125 @@ class ProductionSovereignCore {
     this.provider = this.rpc.getProvider();
     this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
-    this.warehouseManager = new WarehouseContractManager(this.provider, this.signer);
-    try {
-        const state = await this.warehouseManager.getState();
-        console.log('✅ Warehouse connected:', state.scw);
-    } catch {
-        console.warn('⚠️ Warehouse initialization failed, fallback mode');
-    }
-
- 
-    // Initialize paymaster router
+    // =====================================================================
+    // INITIALIZATION ORDER - CRITICAL
+    // =====================================================================
+    
+    // 1. Paymaster router - direct wiring, no bundlers
     this.paymasterRouter = new DualPaymasterRouter(this.provider);
     await this.paymasterRouter.updateHealth();
-    console.log('Active paymaster:', this.paymasterRouter.active);
+    console.log('✅ Active paymaster:', this.paymasterRouter.active);
     
-    // Initialize warehouse manager
-    this.warehouseManager = new WarehouseContractManager(this.provider, this.signer);
-    console.log('Warehouse contract:', LIVE.WAREHOUSE_CONTRACT);
-    
-    // Initialize AA execution with dual paymaster support
+    // 2. AA execution engine
     this.aa = new EnhancedOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
     
-    // Initialize other components
+    // 3. Warehouse Contract Manager - PURE TRIGGER, CONTRACT DECIDES
+    this.warehouseManager = new WarehouseContractManager(this.provider, this.signer);
+    try {
+      const state = await this.warehouseManager.getState();
+      console.log('✅ Warehouse connected:', state?.scw || LIVE.WAREHOUSE_CONTRACT);
+    } catch (error) {
+      console.warn('⚠️ Warehouse connection:', error.message);
+    }
+    
+    // 4. Warehouse Perpetual Trigger - 90 second interval, NO CONDITIONS
+    this.warehouseTrigger = new WarehousePerpetualTrigger(this.warehouseManager, this.aa);
+    this.warehouseTrigger.start(90_000); // Every 90 seconds, forever
+    
+    // 5. Warehouse State Monitor - READ ONLY, OBSERVATION ONLY
+    this.warehouseMonitor = new LiveContractStateMonitor(this.warehouseManager, this.provider);
+    await this.warehouseMonitor.start(30_000); // Update every 30s for dashboard
+    
+    // =====================================================================
+    // MEV COMPONENTS - SEPARATE DOMAIN, NO WAREHOUSE OVERLAP
+    // =====================================================================
+    
     this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.oracles = new OracleAggregator(this.provider);
+    
+    // Consciousness kernel - NO WAREHOUSE DECISION LOGIC
     this.kernel = new EnhancedConsciousnessKernel(
       this.oracles, 
       this.dexRegistry, 
       this.compliance, 
       this.profitVerifier, 
       this.eq,
-      this.warehouseManager
+      null // Remove warehouse dependency - kernel doesn't make warehouse decisions
     );
     this.kernel.setPeg(LIVE.PEG.TARGET_USD, LIVE.PEG.TOLERANCE_PCT);
-    this.arb = new EnhancedArbitrageEngine(this.provider, this.dexRegistry, this.oracles, this.warehouseManager);
+    
+    // Arbitrage engine - NO WAREHOUSE OPPORTUNITIES
+    this.arb = new EnhancedArbitrageEngine(
+      this.provider, 
+      this.dexRegistry, 
+      this.oracles, 
+      null // Remove warehouse dependency - MEV doesn't decide warehouse ops
+    );
+    
     this.rangeMaker = new AdaptiveRangeMaker(this.provider);
     this.gov.setStake(this.signer.address, LIVE.GOVERNANCE.MIN_STAKE_BWAEZI);
     
-    // NOVEL: Initialize the three new systems (add these 3 lines)
+    // =====================================================================
+    // OPTIONAL ENHANCEMENTS - NEVER DECISION MAKERS
+    // =====================================================================
+    
+    // Synergy engine - ENHANCEMENT ONLY, no decision authority
     this.synergyEngine = new ContractMEVSynergy(this.warehouseManager, this, this.provider);
+    await this.synergyEngine.startSynergySync();
+    
+    // Hybrid harvester - FOR NON-WAREHOUSE POOLS ONLY
     this.hybridHarvester = new HybridHarvestOrchestrator(this.warehouseManager, this.harvester, this.provider);
+    
+    // Safety override - FOR MEV OPERATIONS ONLY
     this.harvestSafety = new HarvestSafetyOverride();
     
-    // Initialize bundle system with warehouse integration
-    this.bundleManager = new EnhancedBundleManager(this.aa, this.relayRouter, this.rpc, this.warehouseManager);
+    // =====================================================================
+    // BUNDLE MANAGEMENT - MEV ONLY, NO WAREHOUSE QUEUE
+    // =====================================================================
+    
+    this.bundleManager = new EnhancedBundleManager(
+      this.aa, 
+      this.relayRouter, 
+      this.rpc, 
+      null // Remove warehouse integration - warehouse has its own trigger
+    );
     await this.bundleManager.initialize();
     
     this.blockCoordinator = new BlockCoordinator(this.provider, this.bundleManager);
     this.parallelSim = new ParallelSimulator(this.rpc.providers);
     
-    // Initialize warehouse monitor
-    this.warehouseMonitor = new LiveContractStateMonitor(this.warehouseManager, this.provider);
-    await this.warehouseMonitor.start();
-    
-    // Start synergy synchronization (new)
-    await this.synergyEngine.startSynergySync();
-    
-    // Start heartbeat
+    // Start heartbeat - MEV ONLY
     this._startHeartbeat();
     
     // Start block coordinator
     this.blockCoordinator.start();
     
-    console.log('✅ Sovereign MEV v19 initialized successfully');
-    console.log('📊 Warehouse state monitoring active');
-    console.log('🔧 Dual paymaster routing enabled');
-    console.log('🚀 Contract-MEV Synergy Engine activated (+10-30% profit)');
-    console.log('🛡️  Hybrid Harvesting Architecture v1.0 online');
-    console.log('🔒 Harvest Safety Override enabled (zero capital risk)');
+    // =====================================================================
+    // SYSTEM STATUS - COMPLETE SEPARATION OF CONCERNS
+    // =====================================================================
+    
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║     SOVEREIGN MEV v19 - INSTITUTIONAL SEPARATION             ║
+╠═══════════════════════════════════════════════════════════════╣
+║                                                               ║
+║  WAREHOUSE DOMAIN:                                           ║
+║  • Contract: ${LIVE.WAREHOUSE_CONTRACT.slice(0, 10)}...${LIVE.WAREHOUSE_CONTRACT.slice(-8)}              ║
+║  • Trigger: Every 90 seconds - PURE, NO CONDITIONS          ║
+║  • Decision Maker: CONTRACT ONLY                            ║
+║  • Amount Sent: 1 wei (symbolic - contract calculates)      ║
+║                                                               ║
+║  MEV DOMAIN:                                                ║
+║  • Cross-DEX Arbitrage - NO LOANS                          ║
+║  • Peg Defense - NO CAPITAL LIQUIDATION                    ║
+║  • Statistical Arbitrage - NO WAREHOUSE OVERLAP            ║
+║                                                               ║
+║  ✅ COMPLETE SEPARATION OF CONCERNS                         ║
+║  ✅ CONTRACT IS SOVEREIGN DECISION MAKER                    ║
+║  ✅ MEV OPERATES IN ITS OWN DOMAIN                          ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
     
     return this;
   }
@@ -4064,54 +4392,37 @@ class ProductionSovereignCore {
 
         const decision = this.kernel.decide();
 
-        // NOVEL: Apply Contract-MEV synergy enhancement (automatic 10-30% profit boost)
-        const synergyResult = await this.synergyEngine.enhanceContractCycle();
-        if (synergyResult.enhanced) {
-          this.stats.synergyBoosts++;
-          console.log(`🔗 Synergy applied: +${synergyResult.profitBoostPercent?.toFixed(1) || '10-30'}% profit enhancement`);
+        // =================================================================
+        // WAREHOUSE - NO DECISIONS HERE, PURE TRIGGER RUNS INDEPENDENTLY
+        // =================================================================
+        // The warehouse trigger runs on its own 90-second interval
+        // It does NOT depend on heartbeat, kernel decisions, or any conditions
+        // Contract is the sole decision maker
+        
+        // =================================================================
+        // SYNERGY ENHANCEMENT - OPTIONAL, NEVER DECISION MAKER
+        // =================================================================
+        try {
+          const synergyResult = await this.synergyEngine.enhanceContractCycle();
+          if (synergyResult.enhanced) {
+            this.stats.synergyBoosts++;
+          }
+        } catch (error) {
+          // Silently fail - synergy is enhancement only
         }
 
-        // Handle warehouse operations with highest priority
-        if (decision.action === 'warehouse_bootstrap') {
-          console.log('🚀 Executing warehouse bootstrap');
-          this.profitVerifier.declare();
-          
-          const bootstrapResult = await this.aa.executeWarehouseBootstrap(
-            ethers.parseEther(decision.params.bwzcAmount.toString())
-          );
-          
-          if (bootstrapResult.userOpHash) {
-            const evUSD = LIVE.WAREHOUSE.PROFIT_PER_CYCLE_USD;
-            this.profitVerifier.record(evUSD);
-            this.health.record(evUSD);
-            this.stats.warehouseCycles++;
-            this.stats.warehouseProfitUSD += evUSD;
-            this.stats.tradesExecuted++;
-            this.stats.totalRevenueUSD += evUSD;
-            this.stats.currentDayUSD += evUSD;
-            
-            console.log(`✅ Warehouse bootstrap executed: ${evUSD} USD expected`);
-          }
-        } 
-        else if (decision.action === 'warehouse_harvest') {
-          console.log('💰 Executing warehouse fee harvest');
-          const harvestResult = await this.aa.executeWarehouseHarvest();
-          if (harvestResult.success) {
-            this.stats.hybridHarvests++;
-          }
-        }
-        // Original arbitrage logic with safety validation
-        else if (decision.action === 'arbitrage') {
+        // =================================================================
+        // MEV OPERATIONS - CROSS-DEX ARBITRAGE, PEG DEFENSE
+        // =================================================================
+        
+        if (decision.action === 'arbitrage') {
           this.profitVerifier.declare();
           const budget = this.dynamicBudgetAdjust(liquidityNorm, gasGwei, sense.risk.dispersionPct, uptrendBias);
 
           const res1 = await this.arb.findCrossDex(LIVE.SCW_ADDRESS, this.aa);
           const res2 = await this.arb.findStatArb(LIVE.SCW_ADDRESS, this.aa);
 
-          // Also check warehouse opportunities
-          const warehouseOpp = await this.arb.findWarehouseOpportunities(LIVE.SCW_ADDRESS, this.aa);
-
-          // NOVEL: Safety validation before enqueuing
+          // Safety validation for MEV operations
           const operationsToValidate = [];
           if (res1.executed) operationsToValidate.push({
             calldata: res1.calldata,
@@ -4124,52 +4435,28 @@ class ProductionSovereignCore {
             context: { operationType: 'stat_arb', dexType: 'UNISWAP_V3' }
           });
 
-          // Validate all operations
           const safetyResults = this.harvestSafety.validateBatch(operationsToValidate);
-          
-          // Track safety blocks
           this.stats.safetyBlocks += safetyResults.summary.failed;
 
-          // Enqueue only validated operations
+          // Enqueue only validated, safe operations
           if (res1.executed && safetyResults.valid.some(v => v.operation.calldata === res1.calldata)) {
             this.bundleManager.enqueue(res1.router, res1.calldata, res1.desc, decision.priority);
           }
           if (res2.executed && safetyResults.valid.some(v => v.operation.calldata === res2.calldata)) {
             this.bundleManager.enqueue(res2.router, res2.calldata, res2.desc, decision.priority);
           }
-          
-          // Handle warehouse opportunity with hybrid orchestrator
-          if (warehouseOpp.executed) {
-            if (warehouseOpp.type === 'bootstrap') {
-              await this.bundleManager.enqueueWarehouseOperation('bootstrap', warehouseOpp.bwzcAmount);
-            } else if (warehouseOpp.type === 'harvest') {
-              // Use hybrid harvester for optimal routing
-              const hybridResult = await this.hybridHarvester.harvestAllFees([
-                {
-                  poolAddress: LIVE.WAREHOUSE_CONTRACT,
-                  dexType: 'WAREHOUSE',
-                  operationType: 'harvest',
-                  metadata: { cycleCount: sense.warehouse?.cycleCount || 0 }
-                }
-              ]);
-              if (hybridResult.summary.totalFeesUSD > 0) {
-                this.stats.hybridHarvests++;
-              }
-            }
-          }
 
           const executed = (res1.executed && safetyResults.valid.some(v => v.operation.calldata === res1.calldata)) ||
-                          (res2.executed && safetyResults.valid.some(v => v.operation.calldata === res2.calldata)) ||
-                          warehouseOpp.executed;
+                          (res2.executed && safetyResults.valid.some(v => v.operation.calldata === res2.calldata));
           
           const evUSD = executed ? Math.max(
             res1.profitEdgeUSD || 0, 
-            (res2.deviationPct || 0)/100 * budget,
-            warehouseOpp.executed ? LIVE.WAREHOUSE.PROFIT_PER_CYCLE_USD : 0
+            (res2.deviationPct || 0)/100 * budget
           ) : 0;
           
           this.profitVerifier.record(evUSD);
           this.health.record(evUSD);
+          
           if (executed) { 
             this.stats.tradesExecuted++; 
             this.stats.totalRevenueUSD += evUSD; 
@@ -4184,7 +4471,6 @@ class ProductionSovereignCore {
           const built = await adapter.buildSwapCalldata(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, amountInUSDC, LIVE.SCW_ADDRESS);
           
           if (built) {
-            // Safety validation for peg defense
             const safetyCheck = this.harvestSafety.validateCalldata(built.calldata, built.router, {
               operationType: 'peg_defense',
               dexType: 'UNISWAP_V3',
@@ -4202,28 +4488,25 @@ class ProductionSovereignCore {
           }
         }
 
-        // NOVEL: Periodic hybrid harvesting (every 10 cycles)
-        if (this.stats.tradesExecuted % 10 === 0 && this.stats.tradesExecuted > 0) {
-          await this.harvestAllFeesSafely();
-        }
-
+        // Circuit breaker check
         if (this.health.runawayTriggered()) {
           console.warn('⚠️ Circuit breaker triggered - cooling down');
         }
+        
       } catch (e) {
-        console.error('Heartbeat error:', e);
+        console.debug('Heartbeat iteration:', e.shortMessage || e.message);
         await sleep(3000);
       }
     }, LIVE.ARBITRAGE.CHECK_INTERVAL_MS);
   }
 
-  dynamicBudgetAdjust(liquidityNorm, gasGwei, dispersionPct, uptrendBias=1.0) {
+  dynamicBudgetAdjust(liquidityNorm, gasGwei, dispersionPct, uptrendBias = 1.0) {
     const base = LIVE.RISK.BUDGETS.MINUTE_USD;
     const liqFactor = clamp01(liquidityNorm);
     const gasFactor = Math.max(0.5, Math.min(1.0, LIVE.RISK.ADAPTIVE_DEGRADATION.HIGH_GAS_GWEI / Math.max(1, gasGwei)));
     const dispFactor = Math.max(0.5, Math.min(1.5, 1 + (dispersionPct - 1.0)/100));
     
-    // NOVEL: Apply synergy boost if available
+    // Synergy boost - enhancement only
     let synergyBoost = 1.0;
     if (this.synergyEngine) {
       const metrics = this.synergyEngine.getMetrics();
@@ -4233,298 +4516,213 @@ class ProductionSovereignCore {
     return Math.round(base * liqFactor * gasFactor * dispFactor * uptrendBias * synergyBoost);
   }
 
+  // =======================================================================
+  // STATISTICS & DASHBOARD - PURE OBSERVATION
+  // =======================================================================
+
   getStats() {
-    const warehouseState = this.warehouseMonitor ? this.warehouseMonitor.getState() : null;
-    const queueStats = this.bundleManager ? this.bundleManager.getQueueStats() : null;
-    const synergyMetrics = this.synergyEngine ? this.synergyEngine.getMetrics() : null;
-    const harvestStats = this.hybridHarvester ? this.hybridHarvester.getStats() : null;
-    const safetyStats = this.harvestSafety ? this.harvestSafety.getStats() : null;
+    const warehouseState = this.warehouseMonitor?.getState() || null;
+    const triggerStats = this.warehouseTrigger?.getStats() || null;
+    const queueStats = this.bundleManager?.getQueueStats() || null;
+    const synergyMetrics = this.synergyEngine?.getMetrics() || null;
+    
+    // Update warehouse stats from trigger
+    if (triggerStats) {
+      this.stats.warehouseTriggers = triggerStats.totalTriggers;
+      this.stats.warehouseSuccesses = triggerStats.successfulExecutions;
+      this.stats.warehouseFailures = triggerStats.failedExecutions;
+      this.stats.warehouseCycles = triggerStats.successfulExecutions;
+      this.stats.warehouseProfitUSD = triggerStats.successfulExecutions * LIVE.WAREHOUSE.PROFIT_PER_CYCLE_USD;
+    }
     
     return {
       system: { 
         status: 'OPERATIONAL', 
         version: LIVE.VERSION,
-        activePaymaster: this.paymasterRouter ? this.paymasterRouter.active : 'N/A',
-        synergyActive: !!this.synergyEngine,
-        hybridHarvesting: !!this.hybridHarvester,
-        safetyEnabled: !!this.harvestSafety
+        activePaymaster: this.paymasterRouter?.active || 'N/A',
+        uptime: process.uptime()
       },
-      trading: { 
-        tradesExecuted: this.stats.tradesExecuted, 
-        totalRevenueUSD: this.stats.totalRevenueUSD, 
-        currentDayUSD: this.stats.currentDayUSD, 
+      
+      // MEV DOMAIN - Cross-DEX arbitrage, peg defense
+      mev: {
+        tradesExecuted: this.stats.tradesExecuted,
+        totalRevenueUSD: this.stats.totalRevenueUSD,
+        currentDayUSD: this.stats.currentDayUSD,
         projectedDaily: Math.round(this.stats.currentDayUSD * 24),
-        synergyBoosts: this.stats.synergyBoosts,
-        hybridHarvests: this.stats.hybridHarvests,
-        safetyBlocks: this.stats.safetyBlocks
+        pegActions: this.stats.pegActions,
+        safetyBlocks: this.stats.safetyBlocks,
+        synergyBoosts: this.stats.synergyBoosts
       },
+      
+      // WAREHOUSE DOMAIN - Contract decides, we only observe
       warehouse: {
-        cycles: this.stats.warehouseCycles,
+        // Trigger stats
+        triggers: this.stats.warehouseTriggers,
+        successfulCycles: this.stats.warehouseSuccesses,
+        failedAttempts: this.stats.warehouseFailures,
         profitUSD: this.stats.warehouseProfitUSD,
-        state: warehouseState ? {
-          cycleCount: warehouseState.contractState?.cycleCount || 0,
-          spread: warehouseState.spread?.toFixed(2) || '0',
-          readyForBootstrap: warehouseState.readyForBootstrap || false
-        } : null
+        
+        // Contract state (read-only)
+        state: warehouseState?.contractState ? {
+          cycleCount: warehouseState.contractState.cycleCount,
+          scaleFactor: `${(warehouseState.contractState.scaleFactor / 100).toFixed(1)}%`,
+          lastCycle: warehouseState.contractState.lastCycleTimestamp 
+            ? new Date(warehouseState.contractState.lastCycleTimestamp).toISOString()
+            : 'Never',
+          paused: warehouseState.contractState.paused
+        } : null,
+        
+        // Market conditions (read-only)
+        market: {
+          currentSpread: warehouseState?.spread ? `${warehouseState.spread.toFixed(2)}%` : '0%',
+          minRequiredSpread: warehouseState?.contractState?.minRequiredSpread 
+            ? `${warehouseState.contractState.minRequiredSpread.toFixed(2)}%` 
+            : '2.0%',
+          isSpreadSufficient: warehouseState?.contractState?.isSpreadSufficient
+        },
+        
+        // Revert breakdown (from trigger)
+        revertBreakdown: triggerStats?.revertBreakdown || [],
+        successRate: triggerStats?.successRate || '0%'
       },
-      synergy: synergyMetrics,
-      harvesting: harvestStats,
-      safety: safetyStats,
-      peg: { 
-        actions: this.stats.pegActions, 
-        targetUSD: LIVE.PEG.TARGET_USD 
-      },
-      queues: queueStats
-    };
-  }
-
-  // NOVEL: Enhanced safe harvesting method
-  async harvestAllFeesSafely() {
-    if (!this.hybridHarvester) {
-      throw new Error('Hybrid harvester not initialized');
-    }
-    
-    console.log('🔄 Starting safe hybrid harvesting...');
-    
-    // 1. Detect all positions
-    const positions = await this.hybridHarvester.detectAllFeePositions();
-    
-    // 2. Safety validation on all operations
-    const safetyResults = this.harvestSafety.validateBatch(
-      positions.map(p => ({
-        calldata: this.generateHarvestCalldata(p),
-        target: p.poolAddress || p.positionId || LIVE.WAREHOUSE_CONTRACT,
-        context: {
-          operationType: 'harvest',
-          dexType: p.dexType,
-          route: p.route,
-          priority: p.priority
-        }
-      }))
-    );
-    
-    // 3. Route optimally with safety
-    const harvestResults = await this.hybridHarvester.harvestAllFees(positions);
-    
-    // 4. Apply synergy enhancement
-    const synergyResult = await this.synergyEngine.enhanceContractCycle();
-    
-    // 5. Update stats
-    this.stats.hybridHarvests++;
-    if (harvestResults.summary.totalFeesUSD > 0) {
-      this.stats.totalRevenueUSD += harvestResults.summary.totalFeesUSD;
-      this.stats.currentDayUSD += harvestResults.summary.totalFeesUSD;
-    }
-    
-    // 6. Log comprehensive results
-    console.log('🔗 Hybrid Harvest Complete:', {
-      positions: positions.length,
-      safe: safetyResults.summary.passed,
-      blocked: safetyResults.summary.failed,
-      contractHarvests: harvestResults.details.contractResults.length,
-      mevHarvests: harvestResults.details.mevResults.length,
-      synergyBoost: synergyResult.profitBoostPercent ? `+${synergyResult.profitBoostPercent.toFixed(1)}%` : 'N/A',
-      totalFeesUSD: harvestResults.summary.totalFeesUSD
-    });
-    
-    return {
-      safety: safetyResults,
-      harvest: harvestResults,
-      synergy: synergyResult,
-      timestamp: Date.now()
-    };
-  }
-  
-  generateHarvestCalldata(position) {
-    // Generate appropriate calldata based on position type
-    if (position.dexType === 'UNISWAP_V3' && position.positionId) {
-      const iface = new ethers.Interface([
-        'function collect((uint256,address,uint128,uint128))',
-        'function collect(uint256,address,uint128,uint128)'
-      ]);
       
-      // Default collect parameters
-      const params = {
-        tokenId: position.positionId,
-        recipient: LIVE.SCW_ADDRESS,
-        amount0Max: ethers.MaxUint256,
-        amount1Max: ethers.MaxUint256
-      };
+      // MEV Queues
+      queues: queueStats,
       
-      return iface.encodeFunctionData('collect', [params]);
-    } else if (position.dexType === 'WAREHOUSE') {
-      // Warehouse harvest
-      const iface = new ethers.Interface(['function harvestAllFees()']);
-      return iface.encodeFunctionData('harvestAllFees', []);
-    }
-    
-    // Default empty calldata
-    return '0x';
-  }
-
-  // NOVEL: Safety wrapper for all transactions
-  async executeWithSafetyValidation(target, calldata, value, description, context = {}) {
-    // Validate the transaction before execution
-    const safetyCheck = this.harvestSafety.validateCalldata(calldata, target, context);
-    
-    if (!safetyCheck.valid) {
-      console.error(`🚫 SAFETY BLOCKED: ${safetyCheck.reason}`);
-      this.stats.safetyBlocks++;
-      throw new Error(`Transaction blocked by safety system: ${safetyCheck.reason}`);
-    }
-    
-    if (safetyCheck.requiresCaution) {
-      console.warn(`⚠️ Safety warning: ${safetyCheck.warningReason}`);
-      // Additional monitoring can be added here
-    }
-    
-    // Proceed with original execution
-    return await this.aa.buildAndSendUserOp(target, calldata, description);
+      // Synergy metrics (enhancement only)
+      synergy: synergyMetrics ? {
+        cyclesEnhanced: synergyMetrics.cyclesEnhanced,
+        avgBoost: synergyMetrics.avgBoost ? `${synergyMetrics.avgBoost.toFixed(1)}%` : '0%',
+        totalValueAddedUSD: synergyMetrics.totalValueAddedUSD || 0
+      } : null
+    };
   }
 
   async getDetailedWarehouseInfo() {
     if (!this.warehouseManager) return null;
     
-    const [state, balances, predictions, positions] = await Promise.all([
+    const [state, balances, optimalAmounts, positions, spread] = await Promise.allSettled([
       this.warehouseManager.getState(),
       this.warehouseManager.getBalances(),
-      this.warehouseManager.predictPerformance(1),
-      this.warehouseManager.getV3Positions()
+      this.warehouseManager.calculateOptimalAmounts(),
+      this.warehouseManager.getV3Positions(),
+      this.warehouseManager.getCurrentSpread()
     ]);
-    
-    const spread = this.warehouseMonitor ? this.warehouseMonitor.getState().spread : 0;
-    const recommendation = this.kernel ? this.kernel.getWarehouseRecommendation() : null;
-    const synergyMetrics = this.synergyEngine ? this.synergyEngine.getMetrics() : null;
-    const harvestPolicy = this.hybridHarvester ? this.hybridHarvester.getHarvestPolicy() : null;
+
+    const triggerStats = this.warehouseTrigger?.getStats() || null;
     
     return {
       contract: LIVE.WAREHOUSE_CONTRACT,
-      state,
-      balances,
-      predictions,
-      positions: positions.length,
-      spread: spread.toFixed(2) + '%',
-      recommendation,
-      synergy: synergyMetrics,
-      harvestPolicy,
-      safetyStats: this.harvestSafety ? this.harvestSafety.getStats() : null,
-      lastUpdated: nowTs()
+      timestamp: Date.now(),
+      
+      // Contract state (read-only)
+      state: state.status === 'fulfilled' ? state.value : null,
+      
+      // Balances (read-only)
+      balances: balances.status === 'fulfilled' ? balances.value : null,
+      
+      // Optimal amounts (contract-calculated)
+      optimalAmounts: optimalAmounts.status === 'fulfilled' ? optimalAmounts.value : null,
+      
+      // Positions
+      v3Positions: {
+        count: positions.status === 'fulfilled' ? positions.value.length : 0,
+        ids: positions.status === 'fulfilled' ? positions.value : []
+      },
+      
+      // Market conditions
+      currentSpread: spread.status === 'fulfilled' ? `${spread.value.toFixed(2)}%` : '0%',
+      
+      // Trigger performance
+      triggerPerformance: triggerStats ? {
+        totalTriggers: triggerStats.totalTriggers,
+        successRate: triggerStats.successRate,
+        lastSuccess: triggerStats.lastSuccess,
+        lastTrigger: triggerStats.lastTrigger,
+        topRejects: triggerStats.revertBreakdown?.slice(0, 5) || []
+      } : null,
+      
+      // Permanent liquidity
+      permanentLiquidity: state.status === 'fulfilled' ? state.value.permanentLiquidity : null
     };
   }
 
-  async executeWarehouseBootstrapManual(bwzcAmount) {
-    if (!this.aa) {
-      throw new Error('AA execution not initialized');
+  // =======================================================================
+  // ADMIN/MANUAL OPERATIONS - OWNER ONLY, WITH SAFETY
+  // =======================================================================
+
+  async executeWarehouseBootstrapManual() {
+    if (!this.aa || !this.warehouseTrigger) {
+      throw new Error('System not initialized');
     }
     
-    console.log(`Executing manual warehouse bootstrap with ${bwzcAmount} BWZC`);
+    console.log('🔧 Manual warehouse trigger initiated');
     
-    // Safety validation
-    const iface = new ethers.Interface(['function executePreciseBootstrap(uint256 bwzcForArbitrage)']);
-    const calldata = iface.encodeFunctionData('executePreciseBootstrap', [ethers.parseEther(bwzcAmount.toString())]);
+    // Use the same pure trigger mechanism - contract decides everything
+    const result = await this.warehouseTrigger.trigger();
     
-    const safetyCheck = this.harvestSafety.validateCalldata(calldata, LIVE.WAREHOUSE_CONTRACT, {
-      operationType: 'bootstrap',
-      amount: ethers.parseEther(bwzcAmount.toString()).toString()
-    });
-    
-    if (!safetyCheck.valid) {
-      throw new Error(`Bootstrap blocked by safety: ${safetyCheck.reason}`);
+    if (result.success) {
+      console.log('✅ Manual warehouse bootstrap submitted successfully');
+    } else {
+      console.log(`⏭️ Manual warehouse bootstrap rejected: ${result.reason}`);
     }
     
-    return await this.aa.executeWarehouseBootstrap(ethers.parseEther(bwzcAmount.toString()));
+    return result;
   }
 
   async executeWarehouseHarvestManual() {
-    if (!this.aa) {
-      throw new Error('AA execution not initialized');
+    if (!this.warehouseTrigger) {
+      throw new Error('Warehouse trigger not initialized');
     }
     
-    console.log('Executing manual warehouse harvest');
-    
-    // Use the hybrid harvester for optimal routing
-    return await this.harvestAllFeesSafely();
+    console.log('🔧 Manual warehouse harvest initiated');
+    return await this.warehouseTrigger.triggerHarvest();
   }
 
-  async addV3PositionManual(tokenId) {
-    if (!this.aa) {
-      throw new Error('AA execution not initialized');
+  async addV3PositionManual(tokenId, isUsdcPosition) {
+    if (!this.warehouseManager) {
+      throw new Error('Warehouse manager not initialized');
     }
     
-    console.log(`Adding V3 position ${tokenId} to warehouse`);
-    
-    // Safety validation
-    const iface = new ethers.Interface(['function addUniswapV3Position(uint256 tokenId)']);
-    const calldata = iface.encodeFunctionData('addUniswapV3Position', [tokenId]);
-    
-    const safetyCheck = this.harvestSafety.validateCalldata(calldata, LIVE.WAREHOUSE_CONTRACT, {
-      operationType: 'add_position',
-      positionId: tokenId
-    });
-    
-    if (!safetyCheck.valid) {
-      throw new Error(`Add position blocked by safety: ${safetyCheck.reason}`);
-    }
-    
-    return await this.aa.addV3PositionToWarehouse(tokenId);
+    console.log(`🔧 Adding V3 position ${tokenId} to warehouse`);
+    return await this.warehouseManager.addV3Position(tokenId, isUsdcPosition);
   }
-  
-  // NOVEL: Get enhanced system health
-  getEnhancedStats() {
-    const baseStats = this.getStats();
-    const synergyMetrics = this.synergyEngine ? this.synergyEngine.getMetrics() : null;
-    const harvestStats = this.hybridHarvester ? this.hybridHarvester.getStats() : null;
-    const safetyStats = this.harvestSafety ? this.harvestSafety.getStats() : null;
+
+  async removeV3PositionManual(index) {
+    if (!this.warehouseManager) {
+      throw new Error('Warehouse manager not initialized');
+    }
     
-    return {
-      ...baseStats,
-      synergy: synergyMetrics,
-      harvesting: harvestStats,
-      safety: safetyStats,
-      systemHealth: this.calculateSystemHealth(synergyMetrics, harvestStats, safetyStats),
-      performanceScore: this.calculatePerformanceScore()
-    };
+    console.log(`🔧 Removing V3 position at index ${index}`);
+    return await this.warehouseManager.removeV3Position(index);
   }
-  
-  calculateSystemHealth(synergy, harvesting, safety) {
-    if (!synergy || !harvesting) return 'INITIALIZING';
+
+  // =======================================================================
+  // CLEAN SHUTDOWN
+  // =======================================================================
+
+  async shutdown() {
+    console.log('🛑 Shutting down Sovereign MEV v19...');
     
-    const scores = {
-      synergy: synergy.cyclesEnhanced > 0 ? 100 : 0,
-      harvesting: harvesting.efficiency > 80 ? 100 : harvesting.efficiency > 50 ? 70 : 30,
-      safety: safety.blockRate < 5 ? 100 : safety.blockRate < 20 ? 70 : 30
-    };
-    
-    const avgScore = (scores.synergy + scores.harvesting + scores.safety) / 3;
-    
-    if (avgScore >= 90) return 'OPTIMAL';
-    if (avgScore >= 70) return 'HEALTHY';
-    if (avgScore >= 50) return 'DEGRADED';
-    return 'CRITICAL';
-  }
-  
-  calculatePerformanceScore() {
-    const baseScore = 100;
-    let adjustments = 0;
-    
-    // Synergy boost positive
-    if (this.stats.synergyBoosts > 0) {
-      adjustments += Math.min(this.stats.synergyBoosts * 2, 20);
+    // Stop warehouse trigger
+    if (this.warehouseTrigger) {
+      this.warehouseTrigger.stop();
+      console.log('✅ Warehouse trigger stopped');
     }
     
-    // Safety blocks positive (shows system is working)
-    if (this.stats.safetyBlocks > 0) {
-      adjustments += Math.min(this.stats.safetyBlocks, 10);
+    // Stop warehouse monitor
+    if (this.warehouseMonitor) {
+      this.warehouseMonitor.stop();
+      console.log('✅ Warehouse monitor stopped');
     }
     
-    // Negative for failed operations
-    const failureRate = this.stats.tradesExecuted > 0 ? 
-      this.stats.safetyBlocks / this.stats.tradesExecuted : 0;
-    if (failureRate > 0.1) {
-      adjustments -= Math.min(failureRate * 100, 30);
+    // Stop block coordinator
+    if (this.blockCoordinator) {
+      this.blockCoordinator.stop();
+      console.log('✅ Block coordinator stopped');
     }
     
-    return Math.max(0, Math.min(100, baseScore + adjustments));
+    console.log('✅ Shutdown complete');
   }
 }
 
