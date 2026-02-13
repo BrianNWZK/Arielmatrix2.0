@@ -3720,7 +3720,6 @@ export {
   AdaptiveRangeMaker,
   GovernanceRegistry,
   // NEW SYSTEMS ADDED
-  ContractMEVSynergy,
   HybridHarvestOrchestrator,
   HarvestSafetyOverride
   
