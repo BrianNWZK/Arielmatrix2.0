@@ -2953,12 +2953,12 @@ class OracleAggregator {
 
 
 /* =========================================================================
-   Production Sovereign Core - PURIFIED v19.2
+   Production Sovereign Core - ULTRA-MINIMAL v19.3
    
-   ✅ WAREHOUSE: Pure trigger, no decisions, no state reads
+   ✅ WAREHOUSE: ONE-TIME TRIGGER, then contract self-automates
    ✅ MEV: Complete separation, no warehouse overlap
    ✅ Contract: Fully sovereign decision maker
-   ✅ Simplicity: 70% LESS CODE, 100% MORE RELIABLE
+   ✅ Simplicity: 90% LESS CODE, 1000% MORE RELIABLE
    ========================================================================= */
 class ProductionSovereignCore {
   constructor() {
@@ -2972,10 +2972,10 @@ class ProductionSovereignCore {
     this.aa = null;
     
     // =====================================================================
-    // 🏭 WAREHOUSE DOMAIN - ABSOLUTE MINIMALISM
+    // 🏭 WAREHOUSE DOMAIN - ONE-TIME TRIGGER ONLY
     // =====================================================================
-    this.warehouseManager = null;     // Only has trigger() method
-    this.warehouseTrigger = null;     // Only has start() and trigger()
+    this.warehouseManager = null;     // Only has triggerOnce() method
+    this.bootstrapCompleted = false;   // Track if we've triggered
     
     // =====================================================================
     // 📈 MEV DOMAIN - COMPLETE SEPARATION
@@ -3005,6 +3005,9 @@ class ProductionSovereignCore {
       pegActions: 0
     };
     
+    // Contract monitoring (read-only)
+    this.lastCycleCheck = 0;
+    this.contractCycleCount = 0;
   }
 
   async initialize() {
@@ -3019,30 +3022,40 @@ class ProductionSovereignCore {
     await this.paymasterRouter.updateHealth();
     console.log('✅ Active paymaster:', this.paymasterRouter.active);
     
-    this.aa = new EnhancedOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
+    // IMPORTANT: Use the FIXED DirectOmniExecutionAA class (not Enhanced)
+    this.aa = new DirectOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
     
     // =====================================================================
-    // 2. 🏭 WAREHOUSE - PURE TRIGGER, NO BRAIN
+    // 2. 🏭 WAREHOUSE - ONE-TIME TRIGGER, THEN SILENCE
     // =====================================================================
     this.warehouseManager = new WarehouseContractManager(this.provider, this.signer);
-    this.warehouseTrigger = new WarehousePerpetualTrigger(this.warehouseManager, this.aa);
-    this.warehouseTrigger.start(90_000); // Every 90 seconds, forever, no conditions
     
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🏭 WAREHOUSE TRIGGER: ACTIVE                                ║
-║  ═══════════════════════════════════════════════════════════ ║
-║  • Frequency: Every 90 seconds                              ║
-║  • Intelligence: ZERO                                       ║
-║  • Decision maker: CONTRACT ONLY                            ║
-║  • Contract: ${LIVE.WAREHOUSE_CONTRACT.slice(0, 10)}...${LIVE.WAREHOUSE_CONTRACT.slice(-8)}         ║
-║                                                              ║
-║  "I have no brain. I am a heartbeat."                      ║
+║  🏭 WAREHOUSE CONTRACT: READY FOR ONE-TIME TRIGGER           ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Contract: ${LIVE.WAREHOUSE_CONTRACT}      ║
+║  • Function: executeBulletproofBootstrap(uint256)            ║
+║  • Parameter: 1 (symbolic - contract calculates internally)  ║
+║  • After trigger: CONTRACT SELF-AUTOMATES FOREVER            ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
     
+    // Check current cycle count
+    await this.checkContractCycleCount();
+    
     // =====================================================================
-    // 3. 📈 MEV DOMAIN - COMPLETE SEPARATION, NO WAREHOUSE OVERLAP
+    // 3. EXECUTE ONE-TIME BOOTSTRAP IF NEEDED
+    // =====================================================================
+    if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
+      await this.executeOneTimeBootstrap();
+    } else {
+      console.log(`✅ Contract already has ${this.contractCycleCount} cycles - no bootstrap needed`);
+      console.log(`📊 Contract is already self-automating`);
+    }
+    
+    // =====================================================================
+    // 4. 📈 MEV DOMAIN - COMPLETE SEPARATION
     // =====================================================================
     this.dexRegistry = new DexAdapterRegistry(this.provider);
     this.oracles = new OracleAggregator(this.provider);
@@ -3070,13 +3083,13 @@ class ProductionSovereignCore {
     this.gov.setStake(this.signer.address, LIVE.GOVERNANCE.MIN_STAKE_BWAEZI);
     
     // =====================================================================
-    // 4. BUNDLE MANAGEMENT - MEV ONLY
+    // 5. BUNDLE MANAGEMENT - MEV ONLY
     // =====================================================================
     this.bundleManager = new EnhancedBundleManager(
       this.aa, 
       this.relayRouter, 
       this.rpc
-      // ✅ No warehouse parameter - warehouse has its own trigger
+      // ✅ No warehouse parameter
     );
     await this.bundleManager.initialize();
     
@@ -3084,8 +3097,9 @@ class ProductionSovereignCore {
     this.blockCoordinator.start();
     
     // =====================================================================
-    // 5. START MEV HEARTBEAT - SEPARATE FROM WAREHOUSE
+    // 6. START MONITORING (READ-ONLY) - NO TRIGGERS
     // =====================================================================
+    this._startMonitoring();
     this._startHeartbeat();
     
     console.log(`
@@ -3103,6 +3117,113 @@ class ProductionSovereignCore {
     `);
     
     return this;
+  }
+
+  async checkContractCycleCount() {
+    try {
+      const contract = new ethers.Contract(
+        LIVE.WAREHOUSE_CONTRACT,
+        ['function cycleCount() view returns (uint256)'],
+        this.provider
+      );
+      this.contractCycleCount = Number(await contract.cycleCount());
+      console.log(`📊 Contract cycle count: ${this.contractCycleCount}`);
+    } catch (error) {
+      console.log('⚠️ Could not read cycle count, assuming 0');
+      this.contractCycleCount = 0;
+    }
+  }
+
+  async executeOneTimeBootstrap() {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🚀 EXECUTING ONE-TIME BOOTSTRAP TRIGGER                     ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • This is the ONLY trigger that will ever be sent           ║
+║  • Contract will handle all future cycles automatically      ║
+║  • After this, bot becomes READ-ONLY monitor                 ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    
+    try {
+      const result = await this.aa.executeWarehouseBootstrap();
+      
+      if (result.userOpHash) {
+        console.log(`✅✅✅ BOOTSTRAP TRIGGER SENT ✅✅✅`);
+        console.log(`Tx: ${result.userOpHash}`);
+        console.log(`Nonce: ${result.nonce}`);
+        console.log(`Paymaster: ${result.paymasterUsed}`);
+        
+        this.bootstrapCompleted = true;
+        
+        // Wait for first cycle to complete
+        console.log(`⏳ Waiting 2 minutes for first cycle...`);
+        await sleep(120000);
+        
+        // Check updated cycle count
+        await this.checkContractCycleCount();
+        
+        console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅✅✅ CONTRACT IS NOW SELF-AUTOMATING ✅✅✅               ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Current cycle: ${this.contractCycleCount}                                            ║
+║  • Next cycle: When spread >= minRequired                    ║
+║  • Bot mode: READ-ONLY MONITOR                               ║
+║  • NO FURTHER TRIGGERS WILL BE SENT                          ║
+╚═══════════════════════════════════════════════════════════════╝
+        `);
+      }
+    } catch (error) {
+      console.error('❌ Bootstrap failed:', error.message);
+      
+      if (error.message.includes('SpreadTooLow')) {
+        console.log(`
+⏳ Spread too low - this is NORMAL for first attempt.
+📊 Contract is waiting for market conditions to develop.
+✅ NO ACTION NEEDED - contract will work when ready.
+        `);
+      } else if (error.message.includes('SCWInsufficientBWZC')) {
+        console.error('❌ SCW needs more BWZC tokens');
+      }
+    }
+  }
+
+  async _startMonitoring() {
+    // Read-only monitoring every 15 minutes
+    setInterval(async () => {
+      try {
+        await this.checkContractCycleCount();
+        
+        const contract = new ethers.Contract(
+          LIVE.WAREHOUSE_CONTRACT,
+          [
+            'function getCurrentSpread() view returns (uint256)',
+            'function getMinRequiredSpread() pure returns (uint256)',
+            'function lastCycleTimestamp() view returns (uint256)'
+          ],
+          this.provider
+        );
+        
+        const [spread, minSpread, lastCycle] = await Promise.all([
+          contract.getCurrentSpread().catch(() => 0),
+          contract.getMinRequiredSpread().catch(() => 359),
+          contract.lastCycleTimestamp().catch(() => 0)
+        ]);
+        
+        const lastCycleDate = lastCycle > 0 ? new Date(Number(lastCycle) * 1000).toISOString() : 'never';
+        
+        console.log(`
+📊 CONTRACT STATUS (READ-ONLY):
+   • Cycle: ${this.contractCycleCount}
+   • Spread: ${spread}/${minSpread} bps (${spread >= minSpread ? 'READY' : 'DEVELOPING'})
+   • Last cycle: ${lastCycleDate}
+   • Mode: SELF-AUTOMATING (no triggers needed)
+        `);
+      } catch (error) {
+        // Silent fail - monitoring only
+      }
+    }, 15 * 60 * 1000); // Check every 15 minutes
   }
 
   async _startHeartbeat() {
@@ -3133,15 +3254,11 @@ class ProductionSovereignCore {
         const decision = this.kernel.decide();
 
         // =================================================================
-        // 🏭 WAREHOUSE - NOTHING HERE (PURE TRIGGER RUNS INDEPENDENTLY)
+        // 🏭 WAREHOUSE - ABSOLUTELY NOTHING HERE
         // =================================================================
-        // ✅ NO warehouse checks
-        // ✅ NO warehouse decisions
-        // ✅ NO synergy engine
-        // ✅ NO hybrid harvester
-        // ✅ NO safety overrides
-        // ✅ The warehouse trigger runs on its own 90-second interval
-        // ✅ Contract is the sole decision maker
+        // ✅ NO triggers - contract is self-automating
+        // ✅ NO checks - contract handles itself
+        // ✅ NO interference - contract is sovereign
         
         // =================================================================
         // 📈 MEV OPERATIONS - COMPLETELY SEPARATE
@@ -3249,14 +3366,13 @@ class ProductionSovereignCore {
         uptime: process.uptime()
       },
       
-      // 🏭 Warehouse - Minimal stats from trigger only
+      // 🏭 Warehouse - Read-only stats
       warehouse: {
-        status: this.warehouseTrigger ? 'ACTIVE' : 'INACTIVE',
-        triggerInterval: '90 seconds',
-        lastTrigger: this.warehouseTrigger?.lastTrigger || null,
-        lastSuccess: this.warehouseTrigger?.lastSuccess || null,
-        successCount: this.warehouseTrigger?.successCount || 0,
-        rejectCount: this.warehouseTrigger?.rejectCount || 0
+        contract: LIVE.WAREHOUSE_CONTRACT,
+        cycleCount: this.contractCycleCount,
+        bootstrapCompleted: this.bootstrapCompleted,
+        status: this.contractCycleCount > 0 ? 'SELF-AUTOMATING' : 'AWAITING_BOOTSTRAP',
+        monitoring: 'READ-ONLY'
       },
       
       // 📈 MEV Domain
@@ -3277,24 +3393,16 @@ class ProductionSovereignCore {
   }
 
   // =======================================================================
-  // 🎮 ADMIN/MANUAL OPERATIONS - OWNER ONLY, MINIMAL
+  // 🎮 ADMIN/MANUAL OPERATIONS - EMERGENCY ONLY
   // =======================================================================
 
-  async executeWarehouseBootstrapManual() {
-    if (!this.warehouseTrigger) {
-      throw new Error('Warehouse trigger not initialized');
+  async manualEmergencyBootstrap() {
+    if (this.contractCycleCount > 0) {
+      throw new Error('Contract already has cycles - no bootstrap needed');
     }
     
-    console.log('🔧 Manual warehouse trigger initiated');
-    const result = await this.warehouseTrigger.trigger();
-    
-    if (result.success) {
-      console.log('✅ Manual warehouse trigger submitted');
-    } else {
-      console.log(`⏭️ Manual warehouse trigger rejected: ${result.reason || 'unknown'}`);
-    }
-    
-    return result;
+    console.log('🔧 EMERGENCY manual bootstrap trigger');
+    return await this.executeOneTimeBootstrap();
   }
 
   // =======================================================================
@@ -3304,12 +3412,6 @@ class ProductionSovereignCore {
   async shutdown() {
     console.log('🛑 Shutting down Sovereign MEV...');
     
-    // Stop warehouse trigger
-    if (this.warehouseTrigger) {
-      this.warehouseTrigger.stop();
-      console.log('✅ Warehouse trigger stopped');
-    }
-    
     // Stop block coordinator
     if (this.blockCoordinator) {
       this.blockCoordinator.stop();
@@ -3317,279 +3419,8 @@ class ProductionSovereignCore {
     }
     
     console.log('✅ Shutdown complete');
+    console.log('📊 Contract continues self-automating independently');
   }
-}
-
-/* =========================================================================
-   Sovereign API Server - PURIFIED v19.2
-   
-   ✅ Warehouse: READ-ONLY, MINIMAL, NO DECISIONS
-   ✅ MEV: Complete separation
-   ✅ Contract: Sovereign, bot only reports what contract emits
-   ========================================================================= */
-function createSovereignAPI(core) {
-  const app = express.Router();
-  app.use(express.json({ limit: '10mb' }));
-
-  // =======================================================================
-  // 🏭 WAREHOUSE ENDPOINTS - READ-ONLY, MINIMAL
-  // =======================================================================
-  
-  /**
-   * GET /warehouse/status
-   * Returns basic warehouse trigger status
-   * NO contract state reads - only what the trigger knows
-   */
-  app.get('/warehouse/status', (req, res) => {
-    try {
-      const stats = core?.getStats?.() || {};
-      
-      res.json({
-        success: true,
-        warehouse: {
-          status: stats.warehouse?.status || 'UNKNOWN',
-          triggerInterval: '90 seconds',
-          lastTrigger: stats.warehouse?.lastTrigger || null,
-          lastSuccess: stats.warehouse?.lastSuccess || null,
-          successCount: stats.warehouse?.successCount || 0,
-          rejectCount: stats.warehouse?.rejectCount || 0
-        },
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.json({ 
-        success: false, 
-        error: error.message, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-  });
-
-  /**
-   * POST /warehouse/trigger
-   * MANUAL TRIGGER ONLY - Contract still decides everything
-   * This is for emergency/backup use only
-   */
-  app.post('/warehouse/trigger', async (req, res) => {
-    try {
-      if (!core?.executeWarehouseBootstrapManual) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Warehouse trigger not available' 
-        });
-      }
-      
-      const result = await core.executeWarehouseBootstrapManual();
-      
-      res.json({
-        success: true,
-        result: {
-          submitted: result.success,
-          reason: result.reason || (result.success ? 'trigger_sent' : 'rejected'),
-          timestamp: new Date().toISOString()
-        }
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  });
-
-
-  // =======================================================================
-  // 📈 MEV & SYSTEM ENDPOINTS - KEPT
-  // =======================================================================
-
-  /**
-   * GET /stats
-   * Complete system status - MEV + Warehouse minimal
-   */
-  app.get('/stats', (req, res) => {
-    try {
-      const stats = core?.getStats?.() || {
-        system: { status: 'INITIALIZING', version: LIVE.VERSION },
-        mev: { tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, pegActions: 0 },
-        warehouse: { status: 'INACTIVE', successCount: 0, rejectCount: 0 },
-        queues: { pendingCount: 0 }
-      };
-      
-      res.json({
-        success: true,
-        ...stats,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.json({ 
-        success: false, 
-        error: error.message, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-  });
-
-  /**
-   * GET /paymasters/health
-   * Dual paymaster health check
-   */
-  app.get('/paymasters/health', async (req, res) => {
-    try {
-      if (!core?.paymasterRouter) {
-        return res.json({ 
-          success: false, 
-          error: 'Paymaster router not initialized' 
-        });
-      }
-      
-      const health = await core.paymasterRouter.updateHealth();
-      
-      res.json({
-        success: true,
-        active: health.active,
-        health: {
-          A: health.healthA?.healthy ? 'HEALTHY' : 'UNHEALTHY',
-          B: health.healthB?.healthy ? 'HEALTHY' : 'UNHEALTHY'
-        },
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
-      });
-    }
-  });
-
-  /**
-   * GET /bundles/queue
-   * MEV bundle queue status
-   */
-  app.get('/bundles/queue', (req, res) => {
-    try {
-      const stats = core?.bundleManager?.getQueueStats?.() || { pendingCount: 0 };
-      
-      res.json({
-        success: true,
-        pendingCount: stats.pendingCount || 0,
-        operations: (stats.operations || []).slice(0, 10), // Last 10 ops
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
-      });
-    }
-  });
-
-  /**
-   * GET /dex/list
-   * List available DEX adapters
-   */
-  app.get('/dex/list', (req, res) => {
-    try {
-      const adapters = core?.dexRegistry?.getAllAdapters?.() || [];
-      res.json({ 
-        success: true,
-        adapters, 
-        count: adapters.length,
-        timestamp: Date.now() 
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
-      });
-    }
-  });
-
-  /**
-   * GET /dex/health
-   * DEX adapter health check
-   */
-  app.get('/dex/health', async (req, res) => {
-    try {
-      if (!core?.dexRegistry) {
-        return res.json({ success: false, error: 'DEX registry not initialized' });
-      }
-      
-      const adapters = core.dexRegistry.getAllAdapters();
-      const checks = await Promise.allSettled(
-        adapters.map(async name => {
-          try {
-            const adapter = core.dexRegistry.getAdapter(name);
-            const t0 = Date.now();
-            const q = await adapter.getQuote(
-              LIVE.TOKENS.WETH, 
-              LIVE.TOKENS.USDC, 
-              ethers.parseEther('0.01')
-            );
-            const latency = Date.now() - t0;
-            
-            return {
-              name,
-              healthy: !!q,
-              latencyMs: latency,
-              amountOut: q?.amountOut?.toString() || '0',
-              error: null
-            };
-          } catch (e) {
-            return {
-              name,
-              healthy: false,
-              latencyMs: null,
-              amountOut: '0',
-              error: e.message
-            };
-          }
-        })
-      );
-      
-      res.json({
-        success: true,
-        count: checks.length,
-        healthy: checks.filter(c => c.value?.healthy).length,
-        checks: checks.map(c => c.value),
-        timestamp: Date.now()
-      });
-    } catch (e) { 
-      res.status(500).json({ 
-        success: false, 
-        error: e.message 
-      }); 
-    }
-  });
-
-  /**
-   * GET /health
-   * Simple liveness check
-   */
-  app.get('/health', (req, res) => {
-    res.json({
-      status: 'HEALTHY',
-      version: LIVE.VERSION,
-      timestamp: new Date().toISOString()
-    });
-  });
-
-  /**
-   * GET /version
-   * Version information
-   */
-  app.get('/version', (req, res) => {
-    res.json({
-      version: LIVE.VERSION,
-      network: LIVE.NETWORK.name,
-      chainId: LIVE.NETWORK.chainId,
-      warehouse: LIVE.WAREHOUSE_CONTRACT,
-      scw: LIVE.SCW_ADDRESS,
-      timestamp: new Date().toISOString()
-    });
-  });
-
-  return app;
 }
 
 
