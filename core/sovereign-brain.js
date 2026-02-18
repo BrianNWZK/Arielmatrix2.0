@@ -583,108 +583,9 @@ class DirectOmniExecutionAA {
     return await ep.getDeposit(account);
   }
 
-  async signUserOp(userOp) {
-    const packed = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address","uint256","bytes","bytes","uint256","uint256","uint256","uint256","uint256","bytes"],
-      [
-        userOp.sender, userOp.nonce, userOp.initCode, userOp.callData,
-        userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas,
-        userOp.maxFeePerGas, userOp.maxPriorityFeePerGas, userOp.paymasterAndData
-      ]
-    );
-    const userOpHash = ethers.keccak256(packed);
-    const encHash = ethers.solidityPackedKeccak256(
-      ["bytes32","address","uint256","bytes32"],
-      [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]
-    );
-    userOp.signature = await this.signer.signMessage(ethers.getBytes(encHash));
-    return userOp;
-  }
-
-  async sendUserOpDirect(userOp) {
-    const entryPoint = new ethers.Contract(
-      this.entryPoint,
-      ['function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
-      this.signer
-    );
-    
-    try {
-      const tx = await entryPoint.handleOps([userOp], this.signer.address, {
-        gasLimit: 2_000_000
-      });
-      const receipt = await tx.wait();
-      
-      if (receipt.status === 1) {
-        return tx.hash;
-      } else {
-        throw new Error('UserOp execution failed');
-      }
-    } catch (error) {
-      throw new Error(`Direct UserOp execution failed: ${error.message}`);
-    }
-  }
-
-  async buildAndSendUserOp(target, calldata, description='v19_exec', useWarehouse = false) {
-    const nonce = await this.nonceLock.acquire();
-    
-    const paymaster = await this.paymasterRouter.getOptimalPaymaster();
-    const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
-    
-    const feeData = await this.provider.getFeeData();
-    const baseMF = (feeData.maxFeePerGas || ethers.parseUnits('15','gwei'));
-    const baseMP = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1','gwei'));
-    const mpCap = ethers.parseUnits(String(LIVE.RISK.COMPETITION.MAX_PRIORITY_FEE_GWEI || 6), 'gwei');
-    const mf = this.shield.gasBump(baseMF);
-    const mpRaw = this.shield.gasBump(baseMP);
-    const mp = mpRaw > mpCap ? mpCap : mpRaw;
-
-    const paymasterAndData = paymasterDeposit > ethers.parseEther('0.002') 
-      ? ethers.concat([paymaster, '0x']) 
-      : '0x';
-
-    const userOp = {
-      sender: this.scw,
-      nonce: ethers.toQuantity(nonce),
-      initCode: '0x',
-      callData: this.encodeExecute(target, 0n, calldata),
-      callGasLimit: ethers.toQuantity(useWarehouse ? 5_000_000n : 450_000n),
-      verificationGasLimit: ethers.toQuantity(240_000n),
-      preVerificationGas: ethers.toQuantity(70_000n),
-      maxFeePerGas: ethers.toQuantity(mf),
-      maxPriorityFeePerGas: ethers.toQuantity(mp),
-      paymasterAndData,
-      signature: '0x'
-    };
-
-    const signed = await this.signUserOp(userOp);
-    const hash = await this.sendUserOpDirect(signed);
-    this.nonceLock.release();
-    
-    return { 
-      userOpHash: hash, 
-      desc: description, 
-      nonce: nonce,
-      paymasterUsed: paymaster
-    };
-  }
-
-  // CORRECTED: Use the actual function name from the contract
-  async executeWarehouseBootstrap() {
-    const iface = new ethers.Interface(['function executeBulletproofBootstrap(uint256) external']);
-    // Pass 1 as symbolic amount - contract calculates internally
-    const calldata = iface.encodeFunctionData('executeBulletproofBootstrap', [ethers.parseEther("1")]);
-    
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'warehouse_bootstrap',
-      true
-    );
-  }
-}
-  /* =======================================================================
-     FIXED: PROPER EIP-712 SIGNING - Solves "cannot encode object" error
-     ======================================================================= */
+  // =======================================================================
+  // FIXED: PROPER EIP-712 SIGNING - Solves "cannot encode object" error
+  // =======================================================================
   async signUserOp(userOp) {
     try {
       // 1. Pack the UserOp exactly as EntryPoint expects (with keccak256 of dynamic fields)
@@ -759,6 +660,89 @@ class DirectOmniExecutionAA {
       return userOp;
     }
   }
+
+  async sendUserOpDirect(userOp) {
+    const entryPoint = new ethers.Contract(
+      this.entryPoint,
+      ['function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
+      this.signer
+    );
+    
+    try {
+      const tx = await entryPoint.handleOps([userOp], this.signer.address, {
+        gasLimit: 2_000_000
+      });
+      const receipt = await tx.wait();
+      
+      if (receipt.status === 1) {
+        return tx.hash;
+      } else {
+        throw new Error('UserOp execution failed');
+      }
+    } catch (error) {
+      throw new Error(`Direct UserOp execution failed: ${error.message}`);
+    }
+  }
+
+  async buildAndSendUserOp(target, calldata, description = 'v19_exec', useWarehouse = false) {
+    const nonce = await this.nonceLock.acquire();
+    
+    const paymaster = await this.paymasterRouter.getOptimalPaymaster();
+    const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
+    
+    const feeData = await this.provider.getFeeData();
+    const baseMF = (feeData.maxFeePerGas || ethers.parseUnits('15', 'gwei'));
+    const baseMP = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'));
+    const mpCap = ethers.parseUnits(String(LIVE.RISK.COMPETITION.MAX_PRIORITY_FEE_GWEI || 6), 'gwei');
+    const mf = this.shield.gasBump(baseMF);
+    const mpRaw = this.shield.gasBump(baseMP);
+    const mp = mpRaw > mpCap ? mpCap : mpRaw;
+
+    const paymasterAndData = paymasterDeposit > ethers.parseEther('0.002') 
+      ? ethers.concat([paymaster, '0x']) 
+      : '0x';
+
+    const userOp = {
+      sender: this.scw,
+      nonce: ethers.toQuantity(nonce),
+      initCode: '0x',
+      callData: this.encodeExecute(target, 0n, calldata),
+      callGasLimit: ethers.toQuantity(useWarehouse ? 5_000_000n : 450_000n),
+      verificationGasLimit: ethers.toQuantity(240_000n),
+      preVerificationGas: ethers.toQuantity(70_000n),
+      maxFeePerGas: ethers.toQuantity(mf),
+      maxPriorityFeePerGas: ethers.toQuantity(mp),
+      paymasterAndData,
+      signature: '0x'
+    };
+
+    const signed = await this.signUserOp(userOp);
+    const hash = await this.sendUserOpDirect(signed);
+    this.nonceLock.release();
+    
+    return { 
+      userOpHash: hash, 
+      desc: description, 
+      nonce: nonce,
+      paymasterUsed: paymaster
+    };
+  }
+
+  // CORRECTED: Use the actual function name from the contract
+  async executeWarehouseBootstrap() {
+    const iface = new ethers.Interface(['function executeBulletproofBootstrap(uint256) external']);
+    // Pass 1 as symbolic amount - contract calculates internally
+    const calldata = iface.encodeFunctionData('executeBulletproofBootstrap', [ethers.parseEther("1")]);
+    
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'warehouse_bootstrap',
+      true
+    );
+  }
+}
+
 
   /* =======================================================================
      DEBUG HELPER - Test signing without sending
