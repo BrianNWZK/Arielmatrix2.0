@@ -3490,7 +3490,7 @@ export {
   EnhancedArbitrageEngine,
   EnhancedConsciousnessKernel,
   ProductionSovereignCore,
-  createSovereignAPI,
+  createEnhancedProductionAPI,
   RelayRouter,
   BlockCoordinator,
   ParallelSimulator,
