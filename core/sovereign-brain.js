@@ -623,6 +623,9 @@ class DualPaymasterRouter {
    ✅ DEBUG capabilities - Built-in troubleshooting
    ========================================================================= */
 
+/* =========================================================================
+   Direct OmniExecutionAA (NO BUNDLERS - DIRECT PAYMASTER) - FIXED v19.3
+   ========================================================================= */
 class DirectOmniExecutionAA {
   constructor(signer, provider, paymasterRouter) {
     this.signer = signer;
@@ -641,83 +644,30 @@ class DirectOmniExecutionAA {
     this.shield = new AntiBotShield();
   }
 
-  // =======================================================================
-  // FIXED: PROPER BOOTSTRAP EXECUTION WITH PAYMASTER
-  // =======================================================================
-  async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
-    console.log('📤 Building warehouse bootstrap transaction with paymaster...');
-    
-    // 1. Create warehouse contract interface
-    const warehouseInterface = new ethers.Interface([
-      'function executeBulletproofBootstrap(uint256) external'
-    ]);
-    
-    // 2. Encode the warehouse function call
-    const warehouseCalldata = warehouseInterface.encodeFunctionData(
-      'executeBulletproofBootstrap', 
-      [bwzcAmount]
-    );
-    
-    // 3. Encode SCW.execute() to call warehouse
-    const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
-      LIVE.WAREHOUSE_CONTRACT,
-      0n,
-      warehouseCalldata
-    ]);
-    
-    // 4. Get nonce
-    const nonce = await this.nonceLock.acquire();
-    
-    // 5. Get optimal paymaster
-    const paymaster = await this.paymasterRouter.getOptimalPaymaster();
-    const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
-    
-    console.log(`📊 Paymaster ${paymaster.slice(0,10)}... deposit: ${ethers.formatEther(paymasterDeposit)} ETH`);
-    
-    // 6. Get fee data
-    const feeData = await this.provider.getFeeData();
-    const baseFee = feeData.maxFeePerGas || ethers.parseUnits('2', 'gwei'); // Conservative 2 gwei
-    const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.1', 'gwei'); // 0.1 gwei priority
-    
-    // 7. Create UserOp with paymaster
-    const userOp = {
-      sender: this.scw,
-      nonce: nonce,
-      initCode: '0x',
-      callData: scwCalldata,
-      callGasLimit: 5_000_000n,
-      verificationGasLimit: 1_000_000n,
-      preVerificationGas: 150_000n,
-      maxFeePerGas: baseFee,
-      maxPriorityFeePerGas: basePriority,
-      paymasterAndData: paymasterDeposit > 0n ? ethers.solidityPacked(['address', 'bytes'], [paymaster, '0x']) : '0x',
-      signature: '0x'
-    };
+  encodeExecute(to, value, data) {
+    const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
+    return iface.encodeFunctionData('execute', [to, value, data]);
+  }
 
-    // 8. Sign UserOp
-    const signedUserOp = await this.signUserOp(userOp);
-    
-    // 9. Send to EntryPoint
-    const hash = await this.sendUserOpDirect(signedUserOp);
-    
-    this.nonceLock.release();
-    
-    console.log(`✅ Bootstrap UserOp sent: ${hash}`);
-    
-    return {
-      userOpHash: hash,
-      nonce: nonce.toString(),
-      paymasterUsed: paymasterDeposit > 0n ? paymaster : 'none',
-      method: 'DIRECT_ENTRYPOINT'
-    };
+  async getEntryPointDeposit(account) {
+    try {
+      const entryPoint = new ethers.Contract(
+        this.entryPoint,
+        ['function getDeposit(address) view returns (uint256)'],
+        this.provider
+      );
+      return await entryPoint.getDeposit(account);
+    } catch {
+      return 0n;
+    }
   }
 
   // =======================================================================
-  // FIXED: PROPER EIP-712 SIGNING WITH CORRECT TYPES
+  // PROPER EIP-712 SIGNING
   // =======================================================================
   async signUserOp(userOp) {
     try {
-      // Define the EIP-712 types with proper {name, type} structure
+      // Define the EIP-712 types
       const types = {
         UserOperation: [
           { name: 'sender', type: 'address' },
@@ -733,7 +683,6 @@ class DirectOmniExecutionAA {
         ]
       };
 
-      // Domain separator
       const domain = {
         name: 'EntryPoint',
         version: '0.6.0',
@@ -741,7 +690,6 @@ class DirectOmniExecutionAA {
         verifyingContract: this.entryPoint
       };
 
-      // Create a copy without signature for signing
       const toSign = {
         sender: userOp.sender,
         nonce: userOp.nonce,
@@ -755,14 +703,12 @@ class DirectOmniExecutionAA {
         paymasterAndData: userOp.paymasterAndData
       };
 
-      // Sign with EIP-712
       userOp.signature = await this.signer.signTypedData(domain, types, toSign);
       return userOp;
       
     } catch (error) {
       console.warn('⚠️ EIP-712 signing failed, using fallback:', error.message);
       
-      // FALLBACK: Simple message signing
       const packed = ethers.AbiCoder.defaultAbiCoder().encode(
         ['address', 'uint256', 'bytes', 'bytes', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'bytes'],
         [
@@ -790,19 +736,9 @@ class DirectOmniExecutionAA {
     }
   }
 
-  async getEntryPointDeposit(account) {
-    try {
-      const entryPoint = new ethers.Contract(
-        this.entryPoint,
-        ['function getDeposit(address) view returns (uint256)'],
-        this.provider
-      );
-      return await entryPoint.getDeposit(account);
-    } catch {
-      return 0n;
-    }
-  }
-
+  // =======================================================================
+  // SEND USEROP DIRECTLY TO ENTRYPOINT
+  // =======================================================================
   async sendUserOpDirect(userOp) {
     const entryPoint = new ethers.Contract(
       this.entryPoint,
@@ -831,6 +767,9 @@ class DirectOmniExecutionAA {
     }
   }
 
+  // =======================================================================
+  // BUILD AND SEND USEROP
+  // =======================================================================
   async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = false) {
     const nonce = await this.nonceLock.acquire();
     
@@ -845,6 +784,8 @@ class DirectOmniExecutionAA {
     const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
     
     const feeData = await this.provider.getFeeData();
+    const baseFee = feeData.maxFeePerGas || ethers.parseUnits('2', 'gwei');
+    const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.1', 'gwei');
     
     const userOp = {
       sender: this.scw,
@@ -854,8 +795,8 @@ class DirectOmniExecutionAA {
       callGasLimit: useWarehouse ? 5_000_000n : 1_000_000n,
       verificationGasLimit: 500_000n,
       preVerificationGas: 100_000n,
-      maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('2', 'gwei'),
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('0.1', 'gwei'),
+      maxFeePerGas: baseFee,
+      maxPriorityFeePerGas: basePriority,
       paymasterAndData: paymasterDeposit > 0n ? ethers.solidityPacked(['address', 'bytes'], [paymaster, '0x']) : '0x',
       signature: '0x'
     };
@@ -865,6 +806,8 @@ class DirectOmniExecutionAA {
     
     this.nonceLock.release();
     
+    console.log(`✅ ${description} | Nonce: ${nonce.toString()} | Hash: ${hash.slice(0, 10)}...`);
+    
     return {
       userOpHash: hash,
       desc: description,
@@ -872,13 +815,65 @@ class DirectOmniExecutionAA {
       paymasterUsed: paymasterDeposit > 0n ? paymaster : 'none'
     };
   }
-}
-   
-   // =======================================================================
-  // DEBUG HELPER - Test signing without sending
+
   // =======================================================================
+  // WAREHOUSE BOOTSTRAP - SINGLE VERSION
+  // =======================================================================
+  async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
+    console.log('📤 Building warehouse bootstrap transaction...');
+    
+    const warehouseInterface = new ethers.Interface([
+      'function executeBulletproofBootstrap(uint256) external'
+    ]);
+    
+    const warehouseCalldata = warehouseInterface.encodeFunctionData(
+      'executeBulletproofBootstrap', 
+      [bwzcAmount]
+    );
+    
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      warehouseCalldata,
+      'warehouse_bootstrap',
+      true
+    );
+  }
+
+  // =======================================================================
+  // WAREHOUSE HARVEST
+  // =======================================================================
+  async executeWarehouseHarvest() {
+    const iface = new ethers.Interface(['function harvestAllFees() external returns (uint256,uint256,uint256)']);
+    const calldata = iface.encodeFunctionData('harvestAllFees', []);
+    
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'warehouse_harvest',
+      true
+    );
+  }
+
+  // =======================================================================
+  // ADD V3 POSITION
+  // =======================================================================
+  async addV3PositionToWarehouse(tokenId) {
+    const iface = new ethers.Interface(['function addUniswapV3Position(uint256) external']);
+    const calldata = iface.encodeFunctionData('addUniswapV3Position', [tokenId]);
+    
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'add_v3_position',
+      true
+    );
+  }
+
+  // =======================================================================
+  // DEBUG HELPER (OPTIONAL - COMMENT OUT IF NOT NEEDED)
+  // =======================================================================
+  /*
   async debugSignUserOp(testUserOp = null) {
-    // Create a test UserOp if none provided
     const userOp = testUserOp || {
       sender: this.scw,
       nonce: 1n,
@@ -893,14 +888,9 @@ class DirectOmniExecutionAA {
       signature: '0x'
     };
     
-    console.log('🔍 Debugging UserOp signing:');
-    console.log(`  sender: ${userOp.sender}`);
-    console.log(`  nonce: ${userOp.nonce.toString()}`);
-    console.log(`  callData length: ${userOp.callData.length}`);
-    console.log(`  paymasterAndData length: ${userOp.paymasterAndData.length}`);
+    console.log('🔍 Debugging UserOp signing...');
     
     try {
-      // Test EIP-712 signing
       const packed = ethers.AbiCoder.defaultAbiCoder().encode(
         ["address", "uint256", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint256", "uint256", "bytes32"],
         [
@@ -920,9 +910,6 @@ class DirectOmniExecutionAA {
       const userOpHash = ethers.keccak256(packed);
       const salt = this.shield.entropySalt();
       
-      console.log(`  userOpHash: ${userOpHash}`);
-      console.log(`  salt: ${salt}`);
-      
       const domain = {
         name: 'EntryPoint',
         version: '0.6.0',
@@ -939,156 +926,17 @@ class DirectOmniExecutionAA {
         ]
       };
       
-      const value = {
-        userOpHash,
-        entryPoint: this.entryPoint,
-        chainId: LIVE.NETWORK.chainId,
-        salt
-      };
+      const value = { userOpHash, entryPoint: this.entryPoint, chainId: LIVE.NETWORK.chainId, salt };
       
       const signature = await this.signer.signTypedData(domain, types, value);
-      console.log(`✅ EIP-712 signature successful: ${signature.slice(0, 42)}...`);
-      return { success: true, signature, method: 'EIP-712' };
+      console.log(`✅ EIP-712 signature successful`);
+      return { success: true, method: 'EIP-712' };
     } catch (error) {
       console.error(`❌ Debug signing failed: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
-
-  async sendUserOpDirect(userOp) {
-    // CRITICAL: Direct EntryPoint call - NO BUNDLER
-    const entryPoint = new ethers.Contract(
-      this.entryPoint,
-      [
-        'function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external',
-        'function simulateHandleOp((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes), address, bytes) external returns (uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)'
-      ],
-      this.signer
-    );
-    
-    try {
-      // First simulate to ensure success (optional, can be skipped for gas savings)
-      try {
-        await entryPoint.simulateHandleOp.staticCall(userOp, userOp.sender, '0x');
-      } catch (simError) {
-        // If simulation fails but we want to try anyway, just log it
-        console.debug('⚠️ Simulation warning:', simError.message);
-        // Don't throw - some valid UserOps fail simulation but succeed in execution
-      }
-      
-      // Execute directly
-      console.log(`📤 Sending UserOp to EntryPoint with nonce ${userOp.nonce}`);
-      const tx = await entryPoint.handleOps([userOp], this.signer.address, {
-        gasLimit: 2_000_000 // Safe gas limit
-      });
-      
-      console.log(`⏳ Transaction submitted: ${tx.hash}`);
-      const receipt = await tx.wait();
-      
-      if (receipt.status === 1) {
-        console.log(`✅ UserOp executed: ${tx.hash}`);
-        return tx.hash;
-      } else {
-        throw new Error(`UserOp execution failed (receipt status ${receipt.status})`);
-      }
-    } catch (error) {
-      console.error('❌ Direct UserOp execution failed:', error.message);
-      throw new Error(`Direct UserOp execution failed: ${error.message}`);
-    }
-  }
-
-  async buildAndSendUserOp(target, calldata, description = 'v19_direct_exec', useWarehouse = false) {
-    const nonce = await this.nonceLock.acquire();
-    
-    // Get optimal paymaster (DIRECT WIRING)
-    const paymaster = await this.paymasterRouter.getOptimalPaymaster();
-    const paymasterDeposit = await this.getEntryPointDeposit(paymaster);
-    
-    const feeData = await this.provider.getFeeData();
-    const baseMF = (feeData.maxFeePerGas || ethers.parseUnits('15', 'gwei'));
-    const baseMP = (feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'));
-    const mpCap = ethers.parseUnits(String(LIVE.RISK.COMPETITION.MAX_PRIORITY_FEE_GWEI || 6), 'gwei');
-    const mf = this.shield.gasBump(baseMF);
-    const mpRaw = this.shield.gasBump(baseMP);
-    const mp = mpRaw > mpCap ? mpCap : mpRaw;
-
-    // IMPORTANT: PaymasterAndData format must be EXACT
-    const paymasterAndData = paymasterDeposit > ethers.parseEther(String(process.env.PM_MIN_DEPOSIT_ETH || '0.002')) 
-      ? ethers.concat([paymaster, '0x']) 
-      : '0x';
-
-    // Create UserOp with BigInt values (not strings) for proper encoding
-    const userOp = {
-      sender: this.scw,
-      nonce: nonce,  // Keep as BigInt
-      initCode: '0x',
-      callData: this.encodeExecute(target, 0n, calldata),
-      callGasLimit: toBN(process.env.CALL_GAS_LIMIT || 450_000),
-      verificationGasLimit: toBN(process.env.VERIFICATION_GAS_LIMIT || 240_000),
-      preVerificationGas: toBN(process.env.PRE_VERIFICATION_GAS || 70_000),
-      maxFeePerGas: mf,
-      maxPriorityFeePerGas: mp,
-      paymasterAndData,
-      signature: '0x'
-    };
-
-    // Sign the UserOp with the fixed method
-    const signed = await this.signUserOp(userOp);
-    
-    // Send the signed UserOp
-    const hash = await this.sendUserOpDirect(signed);
-    
-    this.nonceLock.release();
-    
-    console.log(`✅ UserOp ${description} | Nonce: ${nonce.toString()} | Hash: ${hash.slice(0, 10)}...`);
-    
-    return { 
-      userOpHash: hash, 
-      desc: description, 
-      nonce: nonce.toString(),
-      paymasterUsed: paymaster,
-      targetContract: useWarehouse ? 'WarehouseBalancerArb' : 'Standard',
-      method: 'DIRECT_ENTRYPOINT'
-    };
-  }
-
-  // Warehouse-specific operations - KEPT SIMPLE
- async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
-    // Using the CORRECT function name from the contract
-    const iface = new ethers.Interface(['function executeBulletproofBootstrap(uint256) external']);
-    const calldata = iface.encodeFunctionData('executeBulletproofBootstrap', [bwzcAmount]);
-    
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'warehouse_bootstrap',
-      true
-    );
-  }
-
-  async executeWarehouseHarvest() {
-    const iface = new ethers.Interface(['function harvestAllFees() external returns (uint256,uint256,uint256)']);
-    const calldata = iface.encodeFunctionData('harvestAllFees', []);
-    
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'warehouse_harvest',
-      true
-    );
-  }
-
-  async addV3PositionToWarehouse(tokenId) {
-    const iface = new ethers.Interface(['function addUniswapV3Position(uint256) external']);
-    const calldata = iface.encodeFunctionData('addUniswapV3Position', [tokenId]);
-    
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'add_v3_position',
-      true
-    );
-  }
+  */
 }
 
 
