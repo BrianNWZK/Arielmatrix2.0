@@ -3424,6 +3424,94 @@ class ProductionSovereignCore {
 }
 
 
+/* =========================================================================
+   SOVEREIGN API CREATOR - ADD THIS MISSING FUNCTION!
+   ========================================================================= */
+function createSovereignAPI(core) {
+  const router = express.Router();
+  
+  // Health check
+  router.get('/health', (req, res) => {
+    res.json({ status: 'HEALTHY', timestamp: Date.now() });
+  });
+  
+  // System stats
+  router.get('/stats', (req, res) => {
+    try {
+      const stats = core.getStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Warehouse status
+  router.get('/warehouse/status', async (req, res) => {
+    try {
+      const cycleCount = core.contractCycleCount || 0;
+      res.json({
+        contract: LIVE.WAREHOUSE_CONTRACT,
+        cycleCount,
+        status: cycleCount > 0 ? 'SELF-AUTOMATING' : 'AWAITING_BOOTSTRAP',
+        bootstrapCompleted: core.bootstrapCompleted || false
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Manual bootstrap trigger (emergency only)
+  router.post('/warehouse/bootstrap', async (req, res) => {
+    try {
+      if (core.contractCycleCount > 0) {
+        return res.status(400).json({ 
+          error: 'Contract already has cycles - no bootstrap needed' 
+        });
+      }
+      
+      const result = await core.manualEmergencyBootstrap();
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Paymaster health
+  router.get('/paymasters/health', async (req, res) => {
+    try {
+      const health = await core.paymasterRouter?.updateHealth();
+      res.json(health || { active: 'unknown' });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Bundle queue
+  router.get('/bundles/queue', (req, res) => {
+    try {
+      const stats = core.bundleManager?.getQueueStats() || { pendingCount: 0 };
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // DEX list
+  router.get('/dex/list', (req, res) => {
+    try {
+      const adapters = core.dexRegistry?.getAllAdapters() || [];
+      res.json({ adapters, count: adapters.length });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  return router;
+}
+
+
+
+
 // =========================================================================
 // HTTP Server for Render Web Service – REQUIRED for port binding
 // =========================================================================
@@ -3455,8 +3543,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     try {
       await core.initialize();
       
-      // Mount API after core is ready
-      const apiRouter = createEnhancedProductionAPI(core);
+      // FIXED: Use createSovereignAPI (matches the function we just added)
+      const apiRouter = createSovereignAPI(core);
       app.use('/api', apiRouter);
       
       app.get('/', (req, res) => res.json({
@@ -3467,14 +3555,30 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         timestamp: new Date().toISOString()
       }));
       
+      console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅ SOVEREIGN MEV BRAIN DEPLOYED                             ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Version: ${LIVE.VERSION}                                   
+║  • Contract: ${LIVE.WAREHOUSE_CONTRACT.slice(0, 10)}...${LIVE.WAREHOUSE_CONTRACT.slice(-8)}       
+║  • SCW: ${LIVE.SCW_ADDRESS.slice(0, 10)}...${LIVE.SCW_ADDRESS.slice(-8)}                   
+║  • API: http://localhost:${PORT}/api                         
+║  • Health: http://localhost:${PORT}/health                   
+╚═══════════════════════════════════════════════════════════════╝
+      `);
+      
     } catch (err) {
       console.error('💥 Initialization error:', err.message);
+      
+      // Emergency fallback
+      app.get('/', (req, res) => res.json({
+        status: 'EMERGENCY_MODE',
+        error: err.message,
+        timestamp: new Date().toISOString()
+      }));
     }
   }, 2000);
 }
-
-
-
 /* =========================================================================
    UPDATED EXPORTS SECTION
    ========================================================================= */
