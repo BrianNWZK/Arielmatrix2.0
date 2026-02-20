@@ -583,85 +583,93 @@ class DirectOmniExecutionAA {
     return await ep.getDeposit(account);
   }
 
-  // =======================================================================
-  // FIXED: PROPER EIP-712 SIGNING - Solves "cannot encode object" error
-  // =======================================================================
-  async signUserOp(userOp) {
-    try {
-      // 1. Pack the UserOp exactly as EntryPoint expects (with keccak256 of dynamic fields)
-      const packed = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256", "bytes32", "bytes32", 
-         "uint256", "uint256", "uint256", "uint256", "uint256", "bytes32"],
-        [
-          userOp.sender,
-          userOp.nonce,
-          ethers.keccak256(userOp.initCode),
-          ethers.keccak256(userOp.callData),
-          userOp.callGasLimit,
-          userOp.verificationGasLimit,
-          userOp.preVerificationGas,
-          userOp.maxFeePerGas,
-          userOp.maxPriorityFeePerGas,
-          ethers.keccak256(userOp.paymasterAndData)
-        ]
-      );
+ // =======================================================================
+// FIXED: PROPER EIP-712 SIGNING - Solves "cannot encode object" error
+// =======================================================================
+async signUserOp(userOp) {
+  try {
+    // 1. Pack the UserOp exactly as EntryPoint expects
+    const packed = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes32", "bytes32", 
+       "uint256", "uint256", "uint256", "uint256", "uint256", "bytes32"],
+      [
+        userOp.sender,
+        userOp.nonce,
+        ethers.keccak256(userOp.initCode || '0x'),
+        ethers.keccak256(userOp.callData || '0x'),
+        userOp.callGasLimit || 0n,
+        userOp.verificationGasLimit || 0n,
+        userOp.preVerificationGas || 0n,
+        userOp.maxFeePerGas || 0n,
+        userOp.maxPriorityFeePerGas || 0n,
+        ethers.keccak256(userOp.paymasterAndData || '0x')
+      ]
+    );
 
-      // 2. Get the UserOp hash
-      const userOpHash = ethers.keccak256(packed);
+    // 2. Get the UserOp hash
+    const userOpHash = ethers.keccak256(packed);
 
-      // 3. Create EIP-712 domain separator
-      const domain = {
-        name: 'EntryPoint',
-        version: '0.6.0',
-        chainId: LIVE.NETWORK.chainId,
-        verifyingContract: this.entryPoint
-      };
+    // 3. Create EIP-712 domain
+    const domain = {
+      name: 'EntryPoint',
+      version: '0.6.0',
+      chainId: LIVE.NETWORK.chainId,
+      verifyingContract: this.entryPoint
+    };
 
-      // 4. Define the types for the structured data
-      const types = {
-        UserOp: [
-          { name: 'userOpHash', type: 'bytes32' },
-          { name: 'entryPoint', type: 'address' },
-          { name: 'chainId', type: 'uint256' },
-          { name: 'salt', type: 'bytes32' }
-        ]
-      };
+    // 4. Define the types
+    const types = {
+      UserOp: [
+        { name: 'userOpHash', type: 'bytes32' },
+        { name: 'entryPoint', type: 'address' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'salt', type: 'bytes32' }
+      ]
+    };
 
-      // 5. Create the value object with ALL required fields
-      const value = {
-        userOpHash: userOpHash,
-        entryPoint: this.entryPoint,
-        chainId: LIVE.NETWORK.chainId,
-        salt: this.shield.entropySalt()
-      };
+    // 5. Create the value object
+    const value = {
+      userOpHash: userOpHash,
+      entryPoint: this.entryPoint,
+      chainId: LIVE.NETWORK.chainId,
+      salt: this.shield.entropySalt()
+    };
 
-      // 6. Sign with EIP-712 (preferred method)
-      userOp.signature = await this.signer.signTypedData(domain, types, value);
-      return userOp;
-      
-    } catch (signError) {
-      console.warn('⚠️ EIP-712 signing failed, using fallback method:', signError.message);
-      
-      // 7. FALLBACK: Legacy signing method for wallets without EIP-712
-      const packed = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address","uint256","bytes","bytes","uint256","uint256","uint256","uint256","uint256","bytes"],
-        [
-          userOp.sender, userOp.nonce, userOp.initCode, userOp.callData,
-          userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas,
-          userOp.maxFeePerGas, userOp.maxPriorityFeePerGas, userOp.paymasterAndData
-        ]
-      );
-      const userOpHash = ethers.keccak256(packed);
-      const encHash = ethers.solidityPackedKeccak256(
-        ["bytes32","address","uint256","bytes32"],
-        [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]
-      );
-      userOp.signature = await this.signer.signMessage(ethers.getBytes(encHash));
-      return userOp;
-    }
+    // 6. Sign with EIP-712
+    userOp.signature = await this.signer.signTypedData(domain, types, value);
+    return userOp;
+    
+  } catch (signError) {
+    console.warn('⚠️ EIP-712 signing failed, using fallback:', signError.message);
+    
+    // 7. FALLBACK: Legacy signing
+    const packed = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address","uint256","bytes","bytes","uint256","uint256","uint256","uint256","uint256","bytes"],
+      [
+        userOp.sender,
+        userOp.nonce,
+        userOp.initCode || '0x',
+        userOp.callData || '0x',
+        userOp.callGasLimit || 0n,
+        userOp.verificationGasLimit || 0n,
+        userOp.preVerificationGas || 0n,
+        userOp.maxFeePerGas || 0n,
+        userOp.maxPriorityFeePerGas || 0n,
+        userOp.paymasterAndData || '0x'
+      ]
+    );
+    const userOpHash = ethers.keccak256(packed);
+    const encHash = ethers.solidityPackedKeccak256(
+      ["bytes32","address","uint256","bytes32"],
+      [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]
+    );
+    userOp.signature = await this.signer.signMessage(ethers.getBytes(encHash));
+    return userOp;
   }
-
-  // =======================================================================
+}
+ 
+   
+   // =======================================================================
   // DEBUG HELPER - Test signing without sending
   // =======================================================================
   async debugSignUserOp(testUserOp = null) {
@@ -840,7 +848,7 @@ class DirectOmniExecutionAA {
   }
 
   // Warehouse-specific operations - KEPT SIMPLE
-  async executeWarehouseBootstrap(bwzcAmount) {
+ async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
     // Using the CORRECT function name from the contract
     const iface = new ethers.Interface(['function executeBulletproofBootstrap(uint256) external']);
     const calldata = iface.encodeFunctionData('executeBulletproofBootstrap', [bwzcAmount]);
