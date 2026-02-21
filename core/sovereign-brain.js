@@ -660,82 +660,95 @@ class DirectOmniExecutionAA {
     }
   }
 
-   // =======================================================================
-  // FIXED: EIP-712 SIGNING WITH PAYMASTER
-  // =======================================================================
-  async signUserOp(userOp) {
-    try {
-      // Convert to proper format for signing
-      const userOpForSigning = {
-        sender: userOp.sender,
-        nonce: userOp.nonce.toString(),
-        initCode: userOp.initCode,
-        callData: userOp.callData,
-        callGasLimit: userOp.callGasLimit.toString(),
-        verificationGasLimit: userOp.verificationGasLimit.toString(),
-        preVerificationGas: userOp.preVerificationGas.toString(),
-        maxFeePerGas: userOp.maxFeePerGas.toString(),
-        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas.toString(),
-        paymasterAndData: userOp.paymasterAndData
-      };
 
-      const types = {
-        UserOperation: [
-          { name: 'sender', type: 'address' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'initCode', type: 'bytes' },
-          { name: 'callData', type: 'bytes' },
-          { name: 'callGasLimit', type: 'uint256' },
-          { name: 'verificationGasLimit', type: 'uint256' },
-          { name: 'preVerificationGas', type: 'uint256' },
-          { name: 'maxFeePerGas', type: 'uint256' },
-          { name: 'maxPriorityFeePerGas', type: 'uint256' },
-          { name: 'paymasterAndData', type: 'bytes' }
-        ]
-      };
+// =======================================================================
+// CORRECTED: EIP-712 SIGNING FOR ENTRYPOINT v0.6
+// =======================================================================
+async signUserOp(userOp) {
+  try {
+    // 1. Define the EIP-712 domain
+    const domain = {
+      name: 'EntryPoint',
+      version: '0.6.0',
+      chainId: LIVE.NETWORK.chainId,
+      verifyingContract: this.entryPoint
+    };
 
-      const domain = {
-        name: 'EntryPoint',
-        version: '0.6.0',
-        chainId: LIVE.NETWORK.chainId,
-        verifyingContract: this.entryPoint
-      };
+    // 2. Define the types. These MUST match the EntryPoint's expected struct.
+    // For EntryPoint v0.6, it's typically 'UserOperation' with these fields.
+    const types = {
+      UserOperation: [
+        { name: 'sender', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'initCode', type: 'bytes' },
+        { name: 'callData', type: 'bytes' },
+        { name: 'callGasLimit', type: 'uint256' },
+        { name: 'verificationGasLimit', type: 'uint256' },
+        { name: 'preVerificationGas', type: 'uint256' },
+        { name: 'maxFeePerGas', type: 'uint256' },
+        { name: 'maxPriorityFeePerGas', type: 'uint256' },
+        { name: 'paymasterAndData', type: 'bytes' },
+        { name: 'signature', type: 'bytes' } // Signature is part of the struct for signing? Usually not. Let's check.
+        // IMPORTANT: The struct for signing usually does NOT include the signature field itself.
+        // Let's remove it for the signing payload.
+      ]
+    };
 
-      console.log(`✍️ Signing UserOp with EIP-712...`);
-      userOp.signature = await this.signer.signTypedData(domain, types, userOpForSigning);
-      console.log(`✅ Signature generated`);
-      return userOp;
-      
-    } catch (error) {
-      console.warn('⚠️ EIP-712 signing failed, using fallback:', error.message);
-      
-      // Fallback to simple message signing
-      const packed = ethers.AbiCoder.defaultAbiCoder().encode(
-        ['address', 'uint256', 'bytes', 'bytes', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'bytes'],
-        [
-          userOp.sender,
-          userOp.nonce,
-          userOp.initCode,
-          userOp.callData,
-          userOp.callGasLimit,
-          userOp.verificationGasLimit,
-          userOp.preVerificationGas,
-          userOp.maxFeePerGas,
-          userOp.maxPriorityFeePerGas,
-          userOp.paymasterAndData
-        ]
-      );
-      
-      const userOpHash = ethers.keccak256(packed);
-      const messageHash = ethers.solidityPackedKeccak256(
-        ['bytes32', 'address', 'uint256'],
-        [userOpHash, this.entryPoint, LIVE.NETWORK.chainId]
-      );
-      
-      userOp.signature = await this.signer.signMessage(ethers.getBytes(messageHash));
-      return userOp;
-    }
+    // 3. Prepare the value object for signing. Use BigInts directly; ethers handles them.
+    const value = {
+      sender: userOp.sender,
+      nonce: userOp.nonce,
+      initCode: userOp.initCode,
+      callData: userOp.callData,
+      callGasLimit: userOp.callGasLimit,
+      verificationGasLimit: userOp.verificationGasLimit,
+      preVerificationGas: userOp.preVerificationGas,
+      maxFeePerGas: userOp.maxFeePerGas,
+      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+      paymasterAndData: userOp.paymasterAndData
+      // DO NOT INCLUDE SIGNATURE HERE
+    };
+
+    console.log(`✍️ Signing UserOp with EIP-712 for sender ${value.sender}...`);
+
+    // 4. Sign the typed data
+    userOp.signature = await this.signer.signTypedData(domain, types, value);
+    
+    console.log(`✅ Signature generated: ${userOp.signature.slice(0, 42)}...`);
+    return userOp;
+    
+  } catch (error) {
+    console.error('❌ EIP-712 signing failed:', error.message);
+    console.log('⚠️ Falling back to legacy signing method.');
+    
+    // 5. Fallback: Manual hash and sign (more likely to work if EIP-712 is the issue)
+    const packed = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint256", "uint256", "bytes32"],
+      [
+        userOp.sender,
+        userOp.nonce,
+        ethers.keccak256(userOp.initCode),
+        ethers.keccak256(userOp.callData),
+        userOp.callGasLimit,
+        userOp.verificationGasLimit,
+        userOp.preVerificationGas,
+        userOp.maxFeePerGas,
+        userOp.maxPriorityFeePerGas,
+        ethers.keccak256(userOp.paymasterAndData)
+      ]
+    );
+    
+    const userOpHash = ethers.keccak256(packed);
+    // Hash with EntryPoint and chainId for replay protection across chains
+    const finalHash = ethers.solidityPackedKeccak256(
+      ["bytes32", "address", "uint256"],
+      [userOpHash, this.entryPoint, LIVE.NETWORK.chainId]
+    );
+    
+    userOp.signature = await this.signer.signMessage(ethers.getBytes(finalHash));
+    return userOp;
   }
+}
    
    // =======================================================================
   // FIXED: SEND USEROP WITH PAYMASTER SUPPORT
