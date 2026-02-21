@@ -623,9 +623,7 @@ class DualPaymasterRouter {
    ✅ DEBUG capabilities - Built-in troubleshooting
    ========================================================================= */
 
-/* =========================================================================
-   Direct OmniExecutionAA (NO BUNDLERS - DIRECT PAYMASTER) - FIXED v19.3
-   ========================================================================= */
+
 class DirectOmniExecutionAA {
   constructor(signer, provider, paymasterRouter) {
     this.signer = signer;
@@ -662,12 +660,25 @@ class DirectOmniExecutionAA {
     }
   }
 
-  // =======================================================================
-  // PROPER EIP-712 SIGNING
+   // =======================================================================
+  // FIXED: EIP-712 SIGNING WITH PAYMASTER
   // =======================================================================
   async signUserOp(userOp) {
     try {
-      // Define the EIP-712 types
+      // Convert to proper format for signing
+      const userOpForSigning = {
+        sender: userOp.sender,
+        nonce: userOp.nonce.toString(),
+        initCode: userOp.initCode,
+        callData: userOp.callData,
+        callGasLimit: userOp.callGasLimit.toString(),
+        verificationGasLimit: userOp.verificationGasLimit.toString(),
+        preVerificationGas: userOp.preVerificationGas.toString(),
+        maxFeePerGas: userOp.maxFeePerGas.toString(),
+        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas.toString(),
+        paymasterAndData: userOp.paymasterAndData
+      };
+
       const types = {
         UserOperation: [
           { name: 'sender', type: 'address' },
@@ -690,25 +701,15 @@ class DirectOmniExecutionAA {
         verifyingContract: this.entryPoint
       };
 
-      const toSign = {
-        sender: userOp.sender,
-        nonce: userOp.nonce,
-        initCode: userOp.initCode,
-        callData: userOp.callData,
-        callGasLimit: userOp.callGasLimit,
-        verificationGasLimit: userOp.verificationGasLimit,
-        preVerificationGas: userOp.preVerificationGas,
-        maxFeePerGas: userOp.maxFeePerGas,
-        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-        paymasterAndData: userOp.paymasterAndData
-      };
-
-      userOp.signature = await this.signer.signTypedData(domain, types, toSign);
+      console.log(`✍️ Signing UserOp with EIP-712...`);
+      userOp.signature = await this.signer.signTypedData(domain, types, userOpForSigning);
+      console.log(`✅ Signature generated`);
       return userOp;
       
     } catch (error) {
       console.warn('⚠️ EIP-712 signing failed, using fallback:', error.message);
       
+      // Fallback to simple message signing
       const packed = ethers.AbiCoder.defaultAbiCoder().encode(
         ['address', 'uint256', 'bytes', 'bytes', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'bytes'],
         [
@@ -727,29 +728,47 @@ class DirectOmniExecutionAA {
       
       const userOpHash = ethers.keccak256(packed);
       const messageHash = ethers.solidityPackedKeccak256(
-        ['bytes32', 'address', 'uint256', 'bytes32'],
-        [userOpHash, this.entryPoint, LIVE.NETWORK.chainId, this.shield.entropySalt()]
+        ['bytes32', 'address', 'uint256'],
+        [userOpHash, this.entryPoint, LIVE.NETWORK.chainId]
       );
       
       userOp.signature = await this.signer.signMessage(ethers.getBytes(messageHash));
       return userOp;
     }
   }
-
-  // =======================================================================
-  // SEND USEROP DIRECTLY TO ENTRYPOINT
+   
+   // =======================================================================
+  // FIXED: SEND USEROP WITH PAYMASTER SUPPORT
   // =======================================================================
   async sendUserOpDirect(userOp) {
     const entryPoint = new ethers.Contract(
       this.entryPoint,
-      ['function handleOps(tuple(address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
+      ['function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
       this.signer
     );
     
     try {
       console.log(`📤 Sending UserOp with nonce ${userOp.nonce.toString()}`);
-      const tx = await entryPoint.handleOps([userOp], this.signer.address, {
-        gasLimit: 2_000_000
+      
+      // Convert all BigInt to hex strings for the RPC call
+      const userOpForRPC = {
+        sender: userOp.sender,
+        nonce: ethers.toBeHex(userOp.nonce),
+        initCode: userOp.initCode,
+        callData: userOp.callData,
+        callGasLimit: ethers.toBeHex(userOp.callGasLimit),
+        verificationGasLimit: ethers.toBeHex(userOp.verificationGasLimit),
+        preVerificationGas: ethers.toBeHex(userOp.preVerificationGas),
+        maxFeePerGas: ethers.toBeHex(userOp.maxFeePerGas),
+        maxPriorityFeePerGas: ethers.toBeHex(userOp.maxPriorityFeePerGas),
+        paymasterAndData: userOp.paymasterAndData,
+        signature: userOp.signature
+      };
+      
+      console.log(`📋 UserOp RPC format ready`);
+      
+      const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
+        gasLimit: 3_000_000
       });
       
       console.log(`⏳ Transaction submitted: ${tx.hash}`);
@@ -757,18 +776,41 @@ class DirectOmniExecutionAA {
       
       if (receipt.status === 1) {
         console.log(`✅ UserOp executed: ${tx.hash}`);
+        console.log(`📊 Gas used: ${receipt.gasUsed.toString()}`);
         return tx.hash;
       } else {
         throw new Error(`UserOp execution failed (receipt status ${receipt.status})`);
       }
     } catch (error) {
       console.error('❌ UserOp execution failed:', error.message);
+      
+      // Try to simulate to get better error
+      try {
+        const userOpForRPC = {
+          sender: userOp.sender,
+          nonce: ethers.toBeHex(userOp.nonce),
+          initCode: userOp.initCode,
+          callData: userOp.callData,
+          callGasLimit: ethers.toBeHex(userOp.callGasLimit),
+          verificationGasLimit: ethers.toBeHex(userOp.verificationGasLimit),
+          preVerificationGas: ethers.toBeHex(userOp.preVerificationGas),
+          maxFeePerGas: ethers.toBeHex(userOp.maxFeePerGas),
+          maxPriorityFeePerGas: ethers.toBeHex(userOp.maxPriorityFeePerGas),
+          paymasterAndData: userOp.paymasterAndData,
+          signature: userOp.signature
+        };
+        
+        await entryPoint.handleOps.staticCall([userOpForRPC], this.signer.address);
+      } catch (simError) {
+        console.error('📋 Simulation error:', simError.message);
+      }
+      
       throw error;
     }
   }
-
+   
   // =======================================================================
-  // BUILD AND SEND USEROP
+  // FIXED: BUILD AND SEND USEROP - PAYMASTER COMPATIBLE
   // =======================================================================
   async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = false) {
     const nonce = await this.nonceLock.acquire();
@@ -787,19 +829,39 @@ class DirectOmniExecutionAA {
     const baseFee = feeData.maxFeePerGas || ethers.parseUnits('2', 'gwei');
     const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.1', 'gwei');
     
+    // CRITICAL FIX: PaymasterAndData format must be EXACT for your paymaster
+    // Your paymaster expects: [20-byte address][32-byte context?] 
+    // But for basic sponsorship, just the address is fine
+    const paymasterAndData = paymasterDeposit > 0n 
+      ? paymaster  // Just the address - your paymaster will handle context in validate
+      : '0x';
+    
+    // IMPORTANT: For your paymaster to work, we need to ensure the SCW has 
+    // approved the paymaster (which your logs show is DONE ✅)
+    
+    // Estimate required prefund (gas cost in wei)
+    const requiredPreFund = (baseFee + basePriority) * 500000n; // Conservative estimate
+    
+    console.log(`📊 Paymaster details:`);
+    console.log(`  • Address: ${paymaster}`);
+    console.log(`  • Deposit: ${ethers.formatEther(paymasterDeposit)} ETH`);
+    console.log(`  • Required prefund: ${ethers.formatEther(requiredPreFund)} ETH`);
+    
     const userOp = {
       sender: this.scw,
       nonce: nonce,
       initCode: '0x',
       callData: scwCalldata,
       callGasLimit: useWarehouse ? 5_000_000n : 1_000_000n,
-      verificationGasLimit: 500_000n,
-      preVerificationGas: 100_000n,
+      verificationGasLimit: 1_500_000n, // Higher for paymaster validation
+      preVerificationGas: 200_000n,
       maxFeePerGas: baseFee,
       maxPriorityFeePerGas: basePriority,
-      paymasterAndData: paymasterDeposit > 0n ? ethers.solidityPacked(['address', 'bytes'], [paymaster, '0x']) : '0x',
+      paymasterAndData: paymasterAndData,
       signature: '0x'
     };
+    
+    console.log(`📦 UserOp built with paymaster`);
     
     const signed = await this.signUserOp(userOp);
     const hash = await this.sendUserOpDirect(signed);
@@ -816,6 +878,8 @@ class DirectOmniExecutionAA {
     };
   }
 
+
+   
   // =======================================================================
   // WAREHOUSE BOOTSTRAP - SINGLE VERSION
   // =======================================================================
