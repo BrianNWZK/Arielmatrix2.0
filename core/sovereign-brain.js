@@ -1045,9 +1045,7 @@ class DirectOmniExecutionAA {
       return { success: false, error: error.message };
     }
   }
-  */
-}
-
+  
 
 /* =========================================================================
    ULTRA-MINIMAL WAREHOUSE TRIGGER - ONE CALL, THEN CONTRACT RUNS ITSELF
