@@ -1100,39 +1100,7 @@ class MEVHarvestingManager {
   }
 }
 
-/* =========================================================================
-   HYBRID HARVEST ORCHESTRATOR - Routes to correct handler
-   ========================================================================= */
 
-class HybridHarvestOrchestrator {
-  constructor(warehouseManager, mevHarvestingManager) {
-    this.warehouse = warehouseManager;  // Handles warehouse-owned positions
-    this.mevHarvester = mevHarvestingManager; // Handles SCW-owned positions
-    
-    // Warehouse-owned pools (contract manages these)
-    this.warehousePools = new Set([
-      LIVE.POOLS.BWAEZI_USDC_3000.toLowerCase(),
-      LIVE.POOLS.BWAEZI_WETH_3000.toLowerCase(),
-      LIVE.POOLS.BALANCER_BW_USDC.toLowerCase(),
-      LIVE.POOLS.BALANCER_BW_WETH.toLowerCase()
-    ]);
-  }
-
-  async harvestAllFees() {
-    console.log('\n🌾 HYBRID HARVEST CYCLE');
-    console.log('═'.repeat(50));
-    
-    const results = {
-      warehouse: { status: 'SELF-AUTOMATING', note: 'Contract handles its own positions' },
-      mev: await this.mevHarvester.harvestAllMEVPositions()
-    };
-    
-    console.log(`✅ Warehouse: Self-automating (no action needed)`);
-    console.log(`✅ MEV: Harvested ${results.mev.v3Harvests.length} V3 positions`);
-    
-    return results;
-  }
-}
 
 /* =========================================================================
    ULTRA-MINIMAL WAREHOUSE PERPETUAL TRIGGER - CHECKS ONLY, NO HARVESTING
