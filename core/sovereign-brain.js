@@ -880,7 +880,7 @@ class DirectOmniExecutionAA {
 
  
 /* =========================================================================
-   ULTRA-MINIMAL WAREHOUSE TRIGGER - ONE CALL, THEN CONTRACT RUNS ITSELF
+   WAREHOUSE CONTRACT MANAGER - PURE WAREHOUSE ONLY, NO COMPATIBILITY METHODS
    ========================================================================= */
 
 class WarehouseContractManager {
@@ -888,11 +888,11 @@ class WarehouseContractManager {
     this.provider = provider;
     this.signer = signer;
     
-    // CORRECT ABI with the actual function name
+    // CORRECT ABI - ONLY warehouse contract functions
     this.contract = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       [
-        // CORRECT function name - NOT executePreciseBootstrap
+        // Bootstrap function - ONE CALL to start everything
         'function executeBulletproofBootstrap(uint256) external',
         
         // View functions for monitoring only
@@ -991,73 +991,202 @@ class WarehouseContractManager {
   }
 }
 
-  // ADD THESE METHODS after checkStatus() (around line 920)
-  
-  async getV3Positions() {
-    try {
-      // This function may not exist in your contract
-      console.log('⚠️ getV3Positions called but function may not exist');
-      return [];
-    } catch (error) {
-      return [];
-    }
-  }
-
-  async harvestFees() {
-    try {
-      // This function may not exist in your contract
-      console.log('⚠️ harvestFees called but function may not exist');
-      return { success: false, fees: { usdc: 0, weth: 0, bwzc: 0 } };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async addV3Position(positionId) {
-    try {
-      // This function may not exist in your contract
-      console.log(`⚠️ addV3Position called for ${positionId} but function may not exist`);
-      return { success: false };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
 /* =========================================================================
-   WarehousePerpetualTrigger - JUST A TIMER
+   MEV HARVESTING MANAGER - For NON-WAREHOUSE protocols (SCW-owned positions)
    ========================================================================= */
+
+class MEVHarvestingManager {
+  constructor(provider, signer, dexRegistry) {
+    this.provider = provider;
+    this.signer = signer;
+    this.dexRegistry = dexRegistry;
+  }
+
+  async getSCWV3Positions() {
+    try {
+      // Query SCW's owned V3 NFT positions
+      const positionManager = new ethers.Contract(
+        LIVE.DEXES.UNISWAP_V3.positionManager,
+        [
+          'function balanceOf(address) view returns (uint256)',
+          'function tokenOfOwnerByIndex(address,uint256) view returns (uint256)',
+          'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)'
+        ],
+        this.provider
+      );
+      
+      const balance = await positionManager.balanceOf(LIVE.SCW_ADDRESS);
+      const positions = [];
+      
+      for (let i = 0; i < balance; i++) {
+        const tokenId = await positionManager.tokenOfOwnerByIndex(LIVE.SCW_ADDRESS, i);
+        
+        // Get position details to check if it's harvestable
+        const position = await positionManager.positions(tokenId);
+        
+        positions.push({
+          tokenId,
+          token0: position[2],
+          token1: position[3],
+          fee: position[4],
+          liquidity: position[7]
+        });
+      }
+      
+      return positions;
+    } catch (error) {
+      console.log('⚠️ Could not fetch SCW V3 positions:', error.message);
+      return [];
+    }
+  }
+
+  async harvestUniswapV3Fees(tokenId) {
+    try {
+      console.log(`🌾 Harvesting V3 fees for token ${tokenId}...`);
+      
+      const positionManager = new ethers.Contract(
+        LIVE.DEXES.UNISWAP_V3.positionManager,
+        ['function collect((uint256,address,uint128,uint128)) returns (uint256,uint256)'],
+        this.signer
+      );
+      
+      const collectParams = {
+        tokenId: tokenId,
+        recipient: LIVE.SCW_ADDRESS,
+        amount0Max: ethers.MaxUint128,
+        amount1Max: ethers.MaxUint128
+      };
+      
+      const tx = await positionManager.collect(collectParams);
+      const receipt = await tx.wait();
+      
+      return {
+        success: true,
+        tokenId,
+        txHash: tx.hash,
+        gasUsed: receipt.gasUsed.toString()
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async harvestSushiFees(poolAddress) {
+    try {
+      // SushiSwap fee harvesting logic
+      // This would depend on how Sushi fees are structured
+      console.log(`🌾 Harvesting Sushi fees for pool ${poolAddress}...`);
+      
+      return { success: false, error: 'Sushi harvesting not implemented' };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async harvestAllMEVPositions() {
+    const results = {
+      v3Harvests: [],
+      sushiHarvests: []
+    };
+    
+    // Harvest V3 positions
+    const v3Positions = await this.getSCWV3Positions();
+    for (const position of v3Positions) {
+      const result = await this.harvestUniswapV3Fees(position.tokenId);
+      results.v3Harvests.push(result);
+    }
+    
+    return results;
+  }
+}
+
+/* =========================================================================
+   HYBRID HARVEST ORCHESTRATOR - Routes to correct handler
+   ========================================================================= */
+
+class HybridHarvestOrchestrator {
+  constructor(warehouseManager, mevHarvestingManager) {
+    this.warehouse = warehouseManager;  // Handles warehouse-owned positions
+    this.mevHarvester = mevHarvestingManager; // Handles SCW-owned positions
+    
+    // Warehouse-owned pools (contract manages these)
+    this.warehousePools = new Set([
+      LIVE.POOLS.BWAEZI_USDC_3000.toLowerCase(),
+      LIVE.POOLS.BWAEZI_WETH_3000.toLowerCase(),
+      LIVE.POOLS.BALANCER_BW_USDC.toLowerCase(),
+      LIVE.POOLS.BALANCER_BW_WETH.toLowerCase()
+    ]);
+  }
+
+  async harvestAllFees() {
+    console.log('\n🌾 HYBRID HARVEST CYCLE');
+    console.log('═'.repeat(50));
+    
+    const results = {
+      warehouse: { status: 'SELF-AUTOMATING', note: 'Contract handles its own positions' },
+      mev: await this.mevHarvester.harvestAllMEVPositions()
+    };
+    
+    console.log(`✅ Warehouse: Self-automating (no action needed)`);
+    console.log(`✅ MEV: Harvested ${results.mev.v3Harvests.length} V3 positions`);
+    
+    return results;
+  }
+}
+
+/* =========================================================================
+   ULTRA-MINIMAL WAREHOUSE PERPETUAL TRIGGER - CHECKS ONLY, NO HARVESTING
+   ========================================================================= */
+
 class WarehousePerpetualTrigger {
-  constructor(warehouseManager, aaExecutor) {
+  constructor(warehouseManager) {
     this.warehouse = warehouseManager;
-    this.aa = aaExecutor;
     this.intervalId = null;
+    this.lastTrigger = null;
+    this.lastSuccess = null;
+    this.successCount = 0;
+    this.rejectCount = 0;
   }
 
   async trigger() {
     try {
-      const trigger = await this.warehouse.trigger();
-      if (!trigger.success) return;
+      console.log('⏰ [Warehouse] Status check...');
       
-      await this.aa.buildAndSendUserOp(
-        trigger.target,
-        trigger.calldata,
-        trigger.description,
-        { gasLimit: trigger.gasLimit, skipPreflight: true }
-      );
+      const status = await this.warehouse.checkStatus();
       
-      console.log(`✅ [Warehouse] Trigger sent`);
-    } catch {
-      console.log(`⏭️ [Warehouse] Rejected`);
+      if (status.cycleCount > 0) {
+        console.log(`✅ Warehouse is self-automating (cycle ${status.cycleCount})`);
+        this.lastSuccess = Date.now();
+        this.successCount++;
+      } else {
+        console.log(`⏳ Warehouse waiting for bootstrap conditions...`);
+        this.lastTrigger = Date.now();
+      }
+    } catch (error) {
+      this.rejectCount++;
+      console.log(`❌ [Warehouse] Error:`, error.message);
     }
   }
 
-  start(intervalMs = 90_000) {
-    console.log(`⏰ Warehouse trigger every ${intervalMs/1000}s - NO BRAIN`);
+  start(intervalMs = 300000) { // 5 minutes
+    console.log(`⏰ Warehouse status check every ${intervalMs/1000/60} minutes`);
+    console.log(`📊 READ-ONLY MODE - No triggers sent, just monitoring`);
+    
+    // Immediate first check
+    setTimeout(() => this.trigger(), 5000);
+    
+    // Then regular interval
     this.intervalId = setInterval(() => this.trigger(), intervalMs);
-    this.intervalId.unref?.();
     return this;
   }
-}
 
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+}
 
 
 /* =========================================================================
