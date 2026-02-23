@@ -809,11 +809,11 @@ const userOp = {
   nonce: nonce,
   initCode: '0x',
   callData: scwCalldata,
-  callGasLimit: useWarehouse ? 5_000_000n : 1_000_000n,
-  verificationGasLimit: 3_000_000n,  // ← INCREASED FOR PAYMASTER
+  callGasLimit: 5_000_000n,
+  verificationGasLimit: 3_000_000n,
   preVerificationGas: 200_000n,
-  maxFeePerGas: baseFee,
-  maxPriorityFeePerGas: basePriority,
+  maxFeePerGas: ethers.parseUnits('50', 'gwei'),     // ← LOWERED from 311 gwei
+  maxPriorityFeePerGas: ethers.parseUnits('3', 'gwei'), // ← REASONABLE
   paymasterAndData: paymasterAndData,
   signature: '0x'
 };
