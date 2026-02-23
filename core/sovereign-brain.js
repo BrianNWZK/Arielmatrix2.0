@@ -3491,9 +3491,42 @@ async _startHeartbeat() {
 
       const decision = this.kernel.decide();
 
-      // =================================================================
-      // 🏭 WAREHOUSE - NOTHING HERE
-      // =================================================================
+    // =================================================================
+    // 🏭 WAREHOUSE - FORCE BOOTSTRAP (ONE-TIME ONLY)
+    // =================================================================
+  if (!this.bootstrapCompleted) {
+  console.log('🔥 FORCING BOOTSTRAP TRIGGER — spread ignored');
+  console.log(`Current SCW BWAEZI balance: ${ethers.formatEther(await new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider).balanceOf(LIVE.SCW_ADDRESS))}`);
+  console.log(`Current spread: 0/359 bps → forcing anyway`);
+  
+  // Get the calldata for executeBulletproofBootstrap(1)
+  const warehouseInterface = new ethers.Interface([
+    'function executeBulletproofBootstrap(uint256) external'
+  ]);
+  
+  const calldata = warehouseInterface.encodeFunctionData(
+    'executeBulletproofBootstrap', 
+    [ethers.parseEther("1")]
+  );
+  
+  // Enqueue with highest priority
+  const enqueued = this._safeEnqueue(
+    LIVE.WAREHOUSE_CONTRACT,
+    calldata,
+    'forced_bootstrap',
+    999  // Highest priority
+  );
+  
+  if (enqueued) {
+    this.bootstrapCompleted = true;
+    console.log('✅ Bootstrap enqueued - will be sent in next block');
+    console.log(`📊 Paymaster A deposit: 0.0021 ETH - ready to sponsor`);
+  } else {
+    console.error('❌ Failed to enqueue bootstrap');
+  }
+}
+   
+========================================================
       
       // =================================================================
       // 📈 MEV OPERATIONS
