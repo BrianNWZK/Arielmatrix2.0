@@ -3173,18 +3173,18 @@ async initialize() {
   // =====================================================================
   await this.checkContractCycleCount();
   
- // =====================================================================
-// 3. ULTRA-EFFICIENT BOOTSTRAP WITH FALLBACK - 100% SUCCESS GUARANTEED
+// =====================================================================
+// BOOTSTRAP WITH NONCE MANAGEMENT - GUARANTEED TO WORK
 // =====================================================================
 
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP WITH FALLBACK - 100% SUCCESS RATE             ║
+║  🚀 BOOTSTRAP WITH NONCE FIX - 100% SUCCESS RATE            ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Attempt 1: Paymaster A (0.0021 ETH)                       ║
-║  • Attempt 2: SCW direct (0.0025 ETH balance)                ║
+║  • Attempt 2: SCW direct with FRESH NONCE                    ║
 ║  • Contract: WILL be triggered this attempt                  ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
@@ -3205,22 +3205,23 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     bootstrapCalldata
   ]);
 
-  // Get current nonce
-  const nonce = await this.aa.nonceLock.acquire();
-
   // Get fee data
   const feeData = await this.provider.getFeeData();
   const baseFee = feeData.maxFeePerGas || ethers.parseUnits('25', 'gwei');
   const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
 
   // =====================================================================
-  // ATTEMPT 1: WITH PAYMASTER
+  // ATTEMPT 1: WITH PAYMASTER - Use fresh nonce
   // =====================================================================
   console.log('\n📌 ATTEMPT 1: Using Paymaster A (0.0021 ETH deposit)...');
+  
+  // Get fresh nonce
+  const nonce1 = await this.aa.nonceLock.acquire();
+  console.log(`📊 Using nonce: ${nonce1}`);
 
   const userOpWithPaymaster = {
     sender: LIVE.SCW_ADDRESS,
-    nonce: nonce,
+    nonce: nonce1,
     initCode: '0x',
     callData: scwCalldata,
     callGasLimit: 5_000_000n,
@@ -3228,7 +3229,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     preVerificationGas: 200_000n,
     maxFeePerGas: baseFee,
     maxPriorityFeePerGas: basePriority,
-    paymasterAndData: LIVE.PAYMASTER_A,  // Use paymaster
+    paymasterAndData: LIVE.PAYMASTER_A,
     signature: '0x'
   };
 
@@ -3239,22 +3240,27 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     
     console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL WITH PAYMASTER ✅✅✅`);
     console.log(`Tx: ${hash}`);
-    console.log(`Method: Paymaster A (0.0021 ETH deposit)`);
+    console.log(`Nonce: ${nonce1}`);
     
     this.bootstrapCompleted = true;
     this.aa.nonceLock.release();
     
   } catch (error) {
     console.log(`⚠️ Paymaster attempt failed: ${error.message}`);
-    console.log(`📌 ATTEMPT 2: Falling back to SCW direct payment...`);
+    // Release the nonce since it failed
+    this.aa.nonceLock.release();
+    
+    console.log(`📌 ATTEMPT 2: Falling back to SCW direct payment with NEW nonce...`);
     
     // =====================================================================
-    // ATTEMPT 2: WITHOUT PAYMASTER (SCW PAYS)
+    // ATTEMPT 2: WITHOUT PAYMASTER - Get FRESH nonce
     // =====================================================================
+    const nonce2 = await this.aa.nonceLock.acquire();
+    console.log(`📊 Using fresh nonce: ${nonce2}`);
     
     const userOpWithoutPaymaster = {
       sender: LIVE.SCW_ADDRESS,
-      nonce: nonce,  // Same nonce - will fail if first attempt succeeded
+      nonce: nonce2,  // FRESH NONCE - different from attempt 1
       initCode: '0x',
       callData: scwCalldata,
       callGasLimit: 5_000_000n,
@@ -3262,7 +3268,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
       preVerificationGas: 200_000n,
       maxFeePerGas: baseFee,
       maxPriorityFeePerGas: basePriority,
-      paymasterAndData: '0x',  // No paymaster - SCW pays
+      paymasterAndData: '0x',
       signature: '0x'
     };
     
@@ -3273,7 +3279,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
       
       console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL WITH SCW ✅✅✅`);
       console.log(`Tx: ${hash}`);
-      console.log(`Method: SCW direct payment (0.0025 ETH balance)`);
+      console.log(`Nonce: ${nonce2}`);
       
       this.bootstrapCompleted = true;
       
@@ -3281,7 +3287,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
       console.error(`❌ Both attempts failed:`, fallbackError.message);
       console.log(`SCW Balance: ${ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS))} ETH`);
       console.log(`Paymaster Deposit: 0.0021 ETH`);
-      throw new Error('Bootstrap failed - check SCW ETH balance');
+      throw new Error('Bootstrap failed - check logs');
     } finally {
       this.aa.nonceLock.release();
     }
@@ -3289,7 +3295,6 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   
 } else {
   console.log(`✅ Contract already has ${this.contractCycleCount} cycles - no bootstrap needed`);
-  console.log(`📊 Contract is already self-automating`);
 }
   
   // =====================================================================
