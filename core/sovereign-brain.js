@@ -799,24 +799,24 @@ class DirectOmniExecutionAA {
     const baseFee = feeData.maxFeePerGas || ethers.parseUnits('25', 'gwei');
     const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('2', 'gwei');
     
-    // Calculate required prefund (gas limit * (baseFee + basePriority))
-    const requiredPrefund = (baseFee + basePriority) * 500000n;
-    console.log(`  • Required prefund: ${ethers.formatEther(requiredPrefund)} ETH`);
-    console.log(`  • Paymaster has: 0.0021 ETH (sufficient)`);
-    
-    const userOp = {
-      sender: this.scw,
-      nonce: nonce,
-      initCode: '0x',
-      callData: scwCalldata,
-      callGasLimit: useWarehouse ? 5_000_000n : 1_000_000n,
-      verificationGasLimit: 1_500_000n,
-      preVerificationGas: 200_000n,
-      maxFeePerGas: baseFee,
-      maxPriorityFeePerGas: basePriority,
-      paymasterAndData: paymasterAndData,  // ← PROPERLY FORMATTED
-      signature: '0x'
-    };
+  // Calculate required prefund (gas limit * (baseFee + basePriority))
+const requiredPrefund = (baseFee + basePriority) * 500000n;
+console.log(`  • Required prefund: ${ethers.formatEther(requiredPrefund)} ETH`);
+console.log(`  • Paymaster has: 0.0021 ETH (sufficient)`);
+
+const userOp = {
+  sender: this.scw,
+  nonce: nonce,
+  initCode: '0x',
+  callData: scwCalldata,
+  callGasLimit: useWarehouse ? 5_000_000n : 1_000_000n,
+  verificationGasLimit: 3_000_000n,  // ← INCREASED FOR PAYMASTER
+  preVerificationGas: 200_000n,
+  maxFeePerGas: baseFee,
+  maxPriorityFeePerGas: basePriority,
+  paymasterAndData: paymasterAndData,
+  signature: '0x'
+};
     
     console.log(`📦 UserOp built with properly formatted paymaster`);
     
