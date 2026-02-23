@@ -3168,75 +3168,13 @@ async initialize() {
   // IMPORTANT: Use the FIXED DirectOmniExecutionAA class
   this.aa = new DirectOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
   
-
-// =====================================================================
-// 2. 🏭 WAREHOUSE - ONE CALL, THEN DONE
-// =====================================================================
-
-// Create contract instance with minimal ABI
-const warehouseContract = new ethers.Contract(
-  LIVE.WAREHOUSE_CONTRACT,
-  ['function executeBulletproofBootstrap(uint256) external'],
-  this.signer
-);
-
-console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🚀 EXECUTING ONE-TIME BOOTSTRAP - DIRECT CALL              ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Function: executeBulletproofBootstrap(1)                 ║
-║  • Gas limit: 5,000,000                                      ║
-║  • After this: CONTRACT SELF-AUTOMATES FOREVER              ║
-╚═══════════════════════════════════════════════════════════════╝
-`);
-
-try {
-  // DIRECT CALL - NO AA, NO PAYMASTER, NO COMPLEXITY
-  console.log('📤 Sending direct transaction...');
-  
-  const tx = await warehouseContract.executeBulletproofBootstrap(ethers.parseEther("1"), {
-    gasLimit: 5_000_000,
-    maxFeePerGas: ethers.parseUnits('30', 'gwei'),
-    maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
-  });
-  
-  console.log(`⏳ Transaction: ${tx.hash}`);
-  console.log('⏳ Waiting for confirmation...');
-  
-  const receipt = await tx.wait();
-  
-  if (receipt.status === 1) {
-    console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL ✅✅✅`);
-    console.log(`Block: ${receipt.blockNumber}`);
-    console.log(`Gas used: ${receipt.gasUsed.toString()}`);
-    
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ CONTRACT IS NOW SELF-AUTOMATING ✅✅✅               ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • One transaction sent                                       ║
-║  • Contract handles all future cycles                         ║
-║  • NO MORE TRIGGERS NEEDED                                    ║
-║  • Bot now in READ-ONLY mode                                  ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-    
-    this.bootstrapCompleted = true;
-  }
-} catch (error) {
-  console.error('❌ Bootstrap failed:', error.message);
-  
-  if (error.message.includes('SpreadTooLow')) {
-    console.log(`
-📊 Spread too low - this is NORMAL.
-⏳ Contract is waiting for market conditions.
-✅ NO ACTION NEEDED - contract will work when ready.
-    `);
-  }
-}
+  // =====================================================================
+  // 2. CHECK CURRENT CYCLE COUNT
+  // =====================================================================
+  await this.checkContractCycleCount();
   
   // =====================================================================
-  // 3. EXECUTE ONE-TIME BOOTSTRAP IF NEEDED
+  // 3. EXECUTE ONE-TIME BOOTSTRAP IF NEEDED (VIA AA WITH PAYMASTER)
   // =====================================================================
   if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     await this.executeOneTimeBootstrap();
@@ -3284,7 +3222,7 @@ try {
   this.blockCoordinator = new BlockCoordinator(this.provider, this.bundleManager);
   this.blockCoordinator.start();
 
-// =====================================================================
+  // =====================================================================
   // 6. 🌐 HYBRID HARVESTING SYSTEM - ACTIVATE
   // =====================================================================
   this.harvestSafety = new HarvestSafetyOverride();
@@ -3337,7 +3275,6 @@ try {
 
   console.log('✅ Hybrid harvesting scheduled (every 30 minutes)');
   
-   
   // =====================================================================
   // 7. START MONITORING
   // =====================================================================
@@ -3358,7 +3295,7 @@ try {
   return this;
 }
 
-
+   
 async checkPaymasterStatus() {
   if (!this.paymasterRouter) return;
   
