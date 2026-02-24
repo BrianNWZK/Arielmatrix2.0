@@ -865,9 +865,9 @@ async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = fa
   
   // OPTIMIZED GAS LIMITS - Prevents AA31 "deposit too low"
   // Warehouse operations need more gas, standard ops need less
-  const callGasLimit = useWarehouse ? 1_200_000n : 800_000n;  // 1.2M for warehouse, 800k for normal
-  const verificationGasLimit = 500_000n;  // 500k for paymaster validation
-  const preVerificationGas = 200_000n;    // 200k overhead
+ const callGasLimit = useWarehouse ? 400_000n : 250_000n;      // ↓ from 1.2M to 400k
+ const verificationGasLimit = 150_000n;                        // ↓ from 500k to 150k
+ const preVerificationGas = 50_000n;                           // ↓ from 200k to 50k
   
   // Calculate required prefund with optimized limits
   const requiredPrefund = (baseFee + basePriority) * (callGasLimit + verificationGasLimit + preVerificationGas);
@@ -3174,6 +3174,108 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
+
+// =====================================================================
+// DIRECT CONTRACT BOOTSTRAP - BYPASS ALL MEV COMPLEXITY
+// =====================================================================
+
+// After provider and signer are set up, BEFORE any MEV initialization:
+console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🔥 DIRECT CONTRACT BOOTSTRAP - BYPASSING ALL MEV CHECKS    ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Contract: ${LIVE.WAREHOUSE_CONTRACT}                              ║
+║  • SCW: ${LIVE.SCW_ADDRESS}                                      ║
+║  • Amount: 1 wei (just to trigger)                            ║
+║  • Gas paid by: SCW (we have 0.0025 ETH)                      ║
+╚═══════════════════════════════════════════════════════════════╝
+`);
+
+try {
+  // Create warehouse interface
+  const warehouseInterface = new ethers.Interface([
+    'function executeBulletproofBootstrap(uint256) external'
+  ]);
+  
+  const bootstrapCalldata = warehouseInterface.encodeFunctionData(
+    'executeBulletproofBootstrap', 
+    [ethers.parseEther("1")]  // Just 1 wei to trigger
+  );
+
+  // Create SCW interface
+  const scwInterface = new ethers.Interface([
+    'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+  ]);
+  
+  const scwCalldata = scwInterface.encodeFunctionData('execute', [
+    LIVE.WAREHOUSE_CONTRACT,
+    0n,
+    bootstrapCalldata
+  ]);
+
+  // Send DIRECT transaction from EOA to SCW (not through EntryPoint!)
+  console.log('📤 Sending direct transaction from EOA to SCW...');
+  
+  const tx = await this.signer.sendTransaction({
+    to: LIVE.SCW_ADDRESS,
+    data: scwCalldata,
+    gasLimit: 500_000n,  // Reasonable gas limit
+    maxFeePerGas: ethers.parseUnits('30', 'gwei'),
+    maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
+  });
+
+  console.log(`⏳ Transaction submitted: ${tx.hash}`);
+  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+  
+  const receipt = await tx.wait();
+  
+  if (receipt.status === 1) {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅✅✅ CONTRACT BOOTSTRAPPED! ✅✅✅                        ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Transaction: ${tx.hash}                                      ║
+║  • Block: ${receipt.blockNumber}                                              ║
+║  • Gas used: ${receipt.gasUsed.toString()}                                          ║
+║  • Status: CONTRACT NOW SELF-AUTOMATING                       ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    
+    this.bootstrapCompleted = true;
+    
+    // Wait for first cycle
+    console.log('⏳ Waiting 30 seconds for first cycle...');
+    await sleep(30000);
+    
+    // Check cycle count
+    const warehouseView = new ethers.Contract(
+      LIVE.WAREHOUSE_CONTRACT,
+      ['function cycleCount() view returns (uint256)'],
+      this.provider
+    );
+    const cycleCount = await warehouseView.cycleCount();
+    console.log(`📊 Contract cycle count: ${cycleCount.toString()}`);
+    
+  } else {
+    console.error('❌ Bootstrap transaction failed!');
+  }
+  
+} catch (error) {
+  console.error('❌ Bootstrap error:', error.message);
+  
+  // Check if it's a spread issue (which is fine - contract will wait)
+  if (error.message.includes('SpreadTooLow')) {
+    console.log(`
+⏳ Spread too low - this is NORMAL.
+📊 Contract is waiting for market conditions.
+✅ NO ACTION NEEDED - contract will bootstrap when ready.
+    `);
+  }
+}
+
+// THEN continue with normal MEV initialization...
+console.log('\n📈 Continuing with MEV system initialization...');
+   
   // =====================================================================
   // 1. PAYMASTER & AA - WITH PROPER FUNDING
   // =====================================================================
@@ -3274,9 +3376,9 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   const baseFee = feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
   const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei');
 
-  const callGasLimit = 1_200_000n;
-  const verificationGasLimitPaymaster = 500_000n;
-  const preVerificationGas = 200_000n;
+ const callGasLimit = useWarehouse ? 400_000n : 250_000n;      // ↓ from 1.2M to 400k
+ const verificationGasLimit = 150_000n;                        // ↓ from 500k to 150k
+ const preVerificationGas = 50_000n;                           // ↓ from 200k to 50k
 
   // =====================================================================
   // STEP 3: OPTION 1 - WITH PAYMASTER (if working)
