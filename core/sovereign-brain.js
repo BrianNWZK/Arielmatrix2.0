@@ -594,115 +594,71 @@ class DirectOmniExecutionAA {
     }
   }
 
-  // =======================================================================
-  // FIXED: PROPER EIP-712 SIGNING WITH SAFEGUARDS
-  // =======================================================================
-  async signUserOp(userOp) {
-    // CRITICAL: Ensure all bytes fields are '0x' if empty/null
-    userOp.initCode = userOp.initCode || '0x';
-    userOp.callData = userOp.callData || '0x';
-    userOp.paymasterAndData = userOp.paymasterAndData || '0x';
+ // =======================================================================
+// FIXED: PROPER EIP-712 SIGNING WITH NO FALLBACK
+// =======================================================================
+async signUserOp(userOp) {
+  // Ensure all fields are properly formatted
+  userOp.initCode = userOp.initCode || '0x';
+  userOp.callData = userOp.callData || '0x';
+  userOp.paymasterAndData = userOp.paymasterAndData || '0x';
+  userOp.signature = '0x';  // Start with empty signature
 
-    // Debug logging
-    console.log('🔍 Raw UserOp before signing:', {
-      sender: userOp.sender,
-      nonce: userOp.nonce?.toString?.(),
-      initCode: userOp.initCode,
-      callData: userOp.callData?.slice(0, 50) + '...',
-      callGasLimit: userOp.callGasLimit?.toString?.(),
-      verificationGasLimit: userOp.verificationGasLimit?.toString?.(),
-      preVerificationGas: userOp.preVerificationGas?.toString?.(),
-      maxFeePerGas: userOp.maxFeePerGas?.toString?.(),
-      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas?.toString?.(),
-      paymasterAndData: userOp.paymasterAndData === '0x' ? 'none' : userOp.paymasterAndData?.slice(0, 20) + '...'
-    });
+  // CORRECT TYPES for EntryPoint v0.6
+  const types = {
+    UserOp: [  // ← CRITICAL: Must be "UserOp", not "UserOperation"
+      { name: 'sender', type: 'address' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'initCode', type: 'bytes' },
+      { name: 'callData', type: 'bytes' },
+      { name: 'callGasLimit', type: 'uint256' },
+      { name: 'verificationGasLimit', type: 'uint256' },
+      { name: 'preVerificationGas', type: 'uint256' },
+      { name: 'maxFeePerGas', type: 'uint256' },
+      { name: 'maxPriorityFeePerGas', type: 'uint256' },
+      { name: 'paymasterAndData', type: 'bytes' },
+      { name: 'signature', type: 'bytes' }  // ← MUST include signature field
+    ]
+  };
 
-    try {
-      // Define the EIP-712 types
-      const types = {
-        UserOperation: [
-          { name: 'sender', type: 'address' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'initCode', type: 'bytes' },
-          { name: 'callData', type: 'bytes' },
-          { name: 'callGasLimit', type: 'uint256' },
-          { name: 'verificationGasLimit', type: 'uint256' },
-          { name: 'preVerificationGas', type: 'uint256' },
-          { name: 'maxFeePerGas', type: 'uint256' },
-          { name: 'maxPriorityFeePerGas', type: 'uint256' },
-          { name: 'paymasterAndData', type: 'bytes' }
-        ]
-      };
+  const domain = {
+    name: 'EntryPoint',
+    version: '0.6.0',
+    chainId: LIVE.NETWORK.chainId,
+    verifyingContract: this.entryPoint
+  };
 
-      const domain = {
-        name: 'EntryPoint',
-        version: '0.6.0',
-        chainId: LIVE.NETWORK.chainId,
-        verifyingContract: this.entryPoint
-      };
+  // CORRECT VALUE - includes ALL fields with signature empty
+  const value = {
+    sender: userOp.sender,
+    nonce: userOp.nonce,
+    initCode: userOp.initCode,
+    callData: userOp.callData,
+    callGasLimit: userOp.callGasLimit,
+    verificationGasLimit: userOp.verificationGasLimit,
+    preVerificationGas: userOp.preVerificationGas,
+    maxFeePerGas: userOp.maxFeePerGas,
+    maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+    paymasterAndData: userOp.paymasterAndData,
+    signature: '0x'  // ← Empty signature in signed data
+  };
 
-      const toSign = {
-        sender: userOp.sender,
-        nonce: userOp.nonce,
-        initCode: userOp.initCode,
-        callData: userOp.callData,
-        callGasLimit: userOp.callGasLimit,
-        verificationGasLimit: userOp.verificationGasLimit,
-        preVerificationGas: userOp.preVerificationGas,
-        maxFeePerGas: userOp.maxFeePerGas,
-        maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-        paymasterAndData: userOp.paymasterAndData
-      };
+  console.log('✍️ Signing UserOp with EIP-712...');
+  console.log('Domain:', domain);
+  console.log('Types:', types);
+  console.log('Value:', value);
 
-      console.log('✍️ Signing UserOp with EIP-712...');
-      userOp.signature = await this.signer.signTypedData(domain, types, toSign);
-      console.log(`✅ Signature generated: ${userOp.signature.slice(0, 42)}...`);
-      return userOp;
-      
-    } catch (error) {
-      console.error('❌ EIP-712 signing failed:', error.message);
-      console.log('⚠️ Falling back to direct hashing method...');
-      
-      // =================================================================
-      // ULTIMATE FALLBACK: DIRECT HASHING (WORKS 100%)
-      // =================================================================
-      
-      // 1. Pack the UserOp exactly as EntryPoint expects
-      const packed = ethers.AbiCoder.defaultAbiCoder().encode(
-        ["address", "uint256", "bytes32", "bytes32", "uint256", "uint256", "uint256", "uint256", "uint256", "bytes32"],
-        [
-          userOp.sender,
-          userOp.nonce,
-          ethers.keccak256(userOp.initCode || '0x'),
-          ethers.keccak256(userOp.callData || '0x'),
-          userOp.callGasLimit,
-          userOp.verificationGasLimit,
-          userOp.preVerificationGas,
-          userOp.maxFeePerGas,
-          userOp.maxPriorityFeePerGas,
-          ethers.keccak256(userOp.paymasterAndData || '0x')
-        ]
-      );
-      
-      // 2. Get the UserOp hash
-      const userOpHash = ethers.keccak256(packed);
-      
-      // 3. Hash with EntryPoint and chainId for replay protection
-      const finalHash = ethers.solidityPackedKeccak256(
-        ["bytes32", "address", "uint256"],
-        [userOpHash, this.entryPoint, LIVE.NETWORK.chainId]
-      );
-      
-      console.log(`📝 UserOpHash: ${userOpHash.slice(0, 42)}...`);
-      console.log(`📝 FinalHash: ${finalHash.slice(0, 42)}...`);
-      
-      // 4. Sign the hash
-      userOp.signature = await this.signer.signMessage(ethers.getBytes(finalHash));
-      console.log(`✅ Signature generated via direct hash`);
-      return userOp;
-    }
+  try {
+    // Use signTypedData directly - NO FALLBACK
+    userOp.signature = await this.signer.signTypedData(domain, types, value);
+    console.log(`✅ Signature generated: ${userOp.signature.slice(0, 42)}...`);
+    return userOp;
+  } catch (error) {
+    console.error('❌ EIP-712 signing failed:', error.message);
+    console.error('❌ DO NOT USE FALLBACK - FIX THE REAL PROBLEM');
+    throw error;  // Don't fall back - fix the real issue
   }
-
+}
  // =======================================================================
 // FIXED: SEND USEROP WITH NAMED ABI AND IMPROVED ERROR HANDLING
 // =======================================================================
@@ -3239,78 +3195,72 @@ async initialize() {
   await this.checkContractCycleCount();
 
 // =====================================================================
-// ULTIMATE FIXED BOOTSTRAP - WITH ALLOWANCE CHECK & BOTH OPTIONS
+// ULTIMATE FIXED BOOTSTRAP - STOP WASTING GAS
 // =====================================================================
 
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 ULTIMATE FIXED BOOTSTRAP - 100% SUCCESS RATE            ║
+║  🚀 BOOTSTRAP WITH FIXED SIGNATURE                           ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Step 1: Check paymaker allowance                          ║
-║  • Step 2: Option 1 - Paymaster (if allowance > 0)          ║
-║  • Step 3: Option 2 - SCW direct (fallback)                 ║
-║  • Nonce: Fresh from EntryPoint each attempt                 ║
-║  • Signature: Fresh for each UserOp                          ║
+║  • Step 1: Check paymaster state                             ║
+║  • Step 2: Only try paymaster if it's working                ║
+║  • Step 3: Skip SCW direct if paymaster fails with AA33      ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   // =====================================================================
-  // STEP 1: CHECK PAYMASTER ALLOWANCE
+  // STEP 1: CHECK PAYMASTER STATE
   // =====================================================================
   
-  console.log('\n🔍 CHECKING PAYMASTER ALLOWANCE...');
+  console.log('\n🔍 CHECKING PAYMASTER STATE...');
   
-  const bwaeziContract = new ethers.Contract(
-    LIVE.TOKENS.BWAEZI,
-    ['function allowance(address owner, address spender) view returns (uint256)'],
+  const paymasterContract = new ethers.Contract(
+    LIVE.PAYMASTER_A,
+    [
+      'function paused() view returns (bool)',
+      'function scw() view returns (address)'
+    ],
     this.provider
   );
   
-  const allowance = await bwaeziContract.allowance(LIVE.SCW_ADDRESS, LIVE.PAYMASTER_A);
-  console.log(`📊 Paymaster A allowance: ${ethers.formatEther(allowance)} BWAEZI`);
-  
-  let usePaymaster = allowance > 0n;
-  
-  if (!usePaymaster) {
-    console.log(`
-⚠️⚠️⚠️ WARNING: Paymaster has NO allowance! ⚠️⚠️⚠️
-
-The paymaster validation will fail with AA33 because:
-require(allowance > 0, "no allowance") will revert.
-
-To use paymaster (Option 1), run this from SCW:
-await (await ethers.getContractAt("IERC20", "${LIVE.TOKENS.BWAEZI}"))
-    .approve("${LIVE.PAYMASTER_A}", ethers.MaxUint256);
-
-Proceeding with Option 2 only (SCW direct payment)...
+  let paymasterWorking = false;
+  try {
+    const [paused, scwAddress] = await Promise.all([
+      paymasterContract.paused(),
+      paymasterContract.scw()
+    ]);
+    
+    console.log(`📊 Paymaster:
+      • Paused: ${paused ? '❌' : '✅'}
+      • SCW: ${scwAddress} ${scwAddress.toLowerCase() === LIVE.SCW_ADDRESS.toLowerCase() ? '✅' : '❌'}
     `);
-  } else {
-    console.log('✅ Paymaster has allowance - Option 1 is available!');
+    
+    paymasterWorking = !paused && scwAddress.toLowerCase() === LIVE.SCW_ADDRESS.toLowerCase();
+    
+  } catch (error) {
+    console.log(`❌ Cannot read paymaster state: ${error.message}`);
   }
 
   // =====================================================================
-  // BUILD COMMON USEROP COMPONENTS
+  // STEP 2: BUILD USEROP
   // =====================================================================
   
-  // Build the bootstrap calldata
   const warehouseInterface = new ethers.Interface([
     'function executeBulletproofBootstrap(uint256) external'
   ]);
   const bootstrapCalldata = warehouseInterface.encodeFunctionData(
     'executeBulletproofBootstrap', 
-    [ethers.parseEther("1")]  // 1 wei - symbolic
+    [ethers.parseEther("1")]
   );
 
-  // Encode SCW.execute()
   const scwCalldata = this.aa.scwInterface.encodeFunctionData('execute', [
     LIVE.WAREHOUSE_CONTRACT,
     0n,
     bootstrapCalldata
   ]);
 
-  // Get fresh nonce from EntryPoint
   const entryPoint = new ethers.Contract(
     LIVE.ENTRY_POINT,
     ['function getNonce(address,uint192) view returns (uint256)'],
@@ -3320,28 +3270,25 @@ Proceeding with Option 2 only (SCW direct payment)...
   const baseNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
   console.log(`📊 Current EntryPoint nonce: ${baseNonce.toString()}`);
 
-  // Get fee data
   const feeData = await this.provider.getFeeData();
   const baseFee = feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
   const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei');
 
-  // OPTIMIZED GAS LIMITS
   const callGasLimit = 1_200_000n;
   const verificationGasLimitPaymaster = 500_000n;
-  const verificationGasLimitSCW = 300_000n;
   const preVerificationGas = 200_000n;
 
   // =====================================================================
-  // STEP 2: OPTION 1 - WITH PAYMASTER (if allowance exists)
+  // STEP 3: OPTION 1 - WITH PAYMASTER (if working)
   // =====================================================================
   
   let success = false;
   let txHash = null;
+  let errorType = null;
   
-  if (usePaymaster) {
+  if (paymasterWorking) {
     console.log('\n📌 OPTION 1: Attempting with Paymaster A...');
     
-    // Format paymasterAndData properly - address + empty bytes
     const paymasterAndData = ethers.solidityPacked(
       ['address', 'bytes'],
       [LIVE.PAYMASTER_A, '0x']
@@ -3363,94 +3310,74 @@ Proceeding with Option 2 only (SCW direct payment)...
 
     try {
       console.log(`📤 Sending with paymaster using nonce ${baseNonce.toString()}...`);
-      const signed = await this.aa.signUserOp(userOpWithPaymaster);
-      txHash = await this.aa.sendUserOpDirect(signed);
+      const signed = await this.signUserOp(userOpWithPaymaster);
+      txHash = await this.sendUserOpDirect(signed);
       
       console.log(`✅✅✅ OPTION 1 SUCCESSFUL! ✅✅✅`);
-      console.log(`Tx: ${txHash}`);
-      console.log(`Nonce: ${baseNonce.toString()}`);
-      console.log(`Method: Paymaster-sponsored (gas paid in BWAEZI)`);
-      
       success = true;
       
     } catch (error) {
-      console.log(`⚠️ Option 1 failed: ${error.message}`);
+      errorType = error.message.includes('AA33') ? 'AA33' : 
+                  error.message.includes('AA24') ? 'AA24' : 'OTHER';
       
-      if (error.message.includes('AA33')) {
-        console.log(`   🔍 AA33: Paymaster validation failed - check paymaster contract`);
-        console.log(`   • Verify paymaster is not paused`);
-        console.log(`   • Verify paymaster's SCW address matches: ${LIVE.SCW_ADDRESS}`);
-        console.log(`   • Allowance is ${ethers.formatEther(allowance)} BWAEZI (sufficient)`);
+      console.log(`⚠️ Option 1 failed with ${errorType}`);
+      
+      if (errorType === 'AA33') {
+        console.log(`
+❌❌❌ PAYMASTER VALIDATION FAILED (AA33)
+   This will NEVER work until paymaster contract is fixed.
+   STOPPING - don't waste gas on Option 2.
+   
+   FIX THE PAYMASTER FIRST:
+   1. Check if paymaster is paused
+   2. Verify paymaster SCW address matches ${LIVE.SCW_ADDRESS}
+   3. Ensure paymaster has ETH deposit (it does: 0.0021 ETH)
+        `);
+        throw new Error('Paymaster validation failed - fix paymaster first');
       }
     }
   }
 
   // =====================================================================
-  // STEP 3: OPTION 2 - WITHOUT PAYMASTER (SCW pays gas) - CORRECTED
+  // STEP 4: OPTION 2 - ONLY IF PAYMASTER ISN'T WORKING AND ERROR ISN'T AA33
   // =====================================================================
   
-  if (!success) {
+  if (!success && errorType !== 'AA33') {
     console.log('\n📌 OPTION 2: Attempting SCW direct payment...');
 
-    // --- CRITICAL FIX: Get a fresh nonce AND create a NEW signature ---
     const freshNonceForOption2 = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
     console.log(`📊 Fresh nonce for Option 2: ${freshNonceForOption2.toString()}`);
 
-    // Check SCW ETH balance
     const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
     console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
 
-    const estimatedGasCost = (baseFee + basePriority) *
-                            (callGasLimit + verificationGasLimitSCW + preVerificationGas);
-    console.log(`📊 Estimated gas cost: ${ethers.formatEther(estimatedGasCost)} ETH`);
-
-    if (scwBalance < estimatedGasCost) {
-      console.log(`❌ INSUFFICIENT SCW BALANCE!`);
-      console.log(`   Please send at least ${ethers.formatEther(estimatedGasCost)} ETH to SCW: ${LIVE.SCW_ADDRESS}`);
-      throw new Error('Insufficient SCW balance for gas');
-    }
-
-    // --- Create a BRAND NEW UserOp object for Option 2 ---
     const userOpWithoutPaymaster = {
       sender: LIVE.SCW_ADDRESS,
-      nonce: freshNonceForOption2,       // ← Use the fresh nonce
+      nonce: freshNonceForOption2,
       initCode: '0x',
-      callData: scwCalldata,              // ← Same calldata, that's fine
+      callData: scwCalldata,
       callGasLimit: callGasLimit,
-      verificationGasLimit: verificationGasLimitSCW,
+      verificationGasLimit: 300_000n,
       preVerificationGas: preVerificationGas,
       maxFeePerGas: baseFee,
       maxPriorityFeePerGas: basePriority,
-      paymasterAndData: '0x',             // ← NO paymaster
-      signature: '0x'                      // ← Start with empty signature
+      paymasterAndData: '0x',
+      signature: '0x'
     };
 
     try {
       console.log(`📤 Sending with SCW paying gas using nonce ${freshNonceForOption2.toString()}...`);
-
-      // --- CRITICAL FIX: Sign the NEW UserOp, not the old one ---
-      const signedUserOpForOption2 = await this.aa.signUserOp(userOpWithoutPaymaster);
-
-      txHash = await this.aa.sendUserOpDirect(signedUserOpForOption2);
+      const signedUserOpForOption2 = await this.signUserOp(userOpWithoutPaymaster);
+      txHash = await this.sendUserOpDirect(signedUserOpForOption2);
 
       console.log(`✅✅✅ OPTION 2 SUCCESSFUL! ✅✅✅`);
       console.log(`Tx: ${txHash}`);
       console.log(`Nonce: ${freshNonceForOption2.toString()}`);
-      console.log(`Method: SCW direct payment`);
-
+      
       success = true;
 
     } catch (error) {
       console.error(`❌ Option 2 failed:`, error.message);
-      
-      if (error.message.includes('AA21')) {
-        console.log(`   🔍 AA21: SCW doesn't have enough ETH for gas`);
-        console.log(`   Balance: ${ethers.formatEther(scwBalance)} ETH`);
-        console.log(`   Need: ~${ethers.formatEther(estimatedGasCost)} ETH`);
-      } else if (error.message.includes('AA24')) {
-        console.log(`   🔍 AA24: Signature error - but we created a fresh signature`);
-        console.log(`   This indicates an issue with the signUserOp method itself`);
-      }
     }
   }
 
@@ -3460,51 +3387,11 @@ Proceeding with Option 2 only (SCW direct payment)...
   
   if (success) {
     this.bootstrapCompleted = true;
-    
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ CONTRACT IS NOW SELF-AUTOMATING ✅✅✅               ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Transaction: ${txHash.slice(0, 20)}...${txHash.slice(-8)}           
-║  • Contract: ${LIVE.WAREHOUSE_CONTRACT.slice(0, 10)}...${LIVE.WAREHOUSE_CONTRACT.slice(-8)}       
-║  • Status: BOOTSTRAPPED                                      ║
-║  • Next cycles: Contract handles automatically               ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
-    
-    // Wait a bit and check cycle count
-    console.log('⏳ Waiting 30 seconds for first cycle...');
-    await sleep(30000);
-    
-    try {
-      const warehouseView = new ethers.Contract(
-        LIVE.WAREHOUSE_CONTRACT,
-        ['function cycleCount() view returns (uint256)'],
-        this.provider
-      );
-      const newCycleCount = await warehouseView.cycleCount();
-      console.log(`📊 Contract cycle count: ${newCycleCount.toString()}`);
-    } catch (e) {
-      // Ignore
-    }
-    
-  } else {
-    console.error(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ❌❌❌ BOOTSTRAP FAILED ❌❌❌                               ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Both options failed                                       ║
-║  • Paymaster allowance: ${ethers.formatEther(allowance)} BWAEZI         ║
-║  • SCW balance: ${ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS))} ETH       ║
-║                                                              ║
-║  Next steps:                                                 ║
-║  1. Check if paymaster is paused or has wrong SCW address   ║
-║  2. Ensure SCW has sufficient ETH for gas                    ║
-║  3. Verify signUserOp method includes all UserOp fields      ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-    
-    throw new Error('Bootstrap failed - check logs above');
   }
 }
    
