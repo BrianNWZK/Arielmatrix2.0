@@ -548,6 +548,7 @@ class DualPaymasterRouter {
     return this.paymasterA;
   }
 }
+
 /* =========================================================================
    Direct OmniExecutionAA (NO BUNDLERS - DIRECT PAYMASTER) - FIXED v19.4
    
@@ -1009,7 +1010,7 @@ async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = fa
 
  
 /* =========================================================================
-   WAREHOUSE CONTRACT MANAGER - PURE WAREHOUSE ONLY, NO COMPATIBILITY METHODS
+   WAREHOUSE CONTRACT MANAGER - READ-ONLY, NO EXECUTION
    ========================================================================= */
 
 class WarehouseContractManager {
@@ -1017,105 +1018,57 @@ class WarehouseContractManager {
     this.provider = provider;
     this.signer = signer;
     
-    // CORRECT ABI - ONLY warehouse contract functions
+    // READ-ONLY ABI - NO execution functions
     this.contract = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       [
-        // Bootstrap function - ONE CALL to start everything
-        'function executeBulletproofBootstrap(uint256) external',
-        
-        // View functions for monitoring only
+        // View functions for monitoring only - NO executeBulletproofBootstrap
         'function cycleCount() external view returns (uint256)',
         'function lastCycleTimestamp() external view returns (uint256)',
         'function paused() external view returns (bool)',
-        'function getContractBalances() external view returns (uint256, uint256, uint256, uint256)'
+        'function getContractBalances() external view returns (uint256, uint256, uint256, uint256)',
+        'function getCurrentSpread() external view returns (uint256)',
+        'function getMinRequiredSpread() external pure returns (uint256)'
       ],
-      signer
+      provider  // Use provider, NOT signer - this is read-only
     );
     
     this.triggered = false;
     this.lastCheck = 0;
   }
 
-  async triggerOnce() {
-    if (this.triggered) {
-      console.log('✅ Bootstrap already triggered - contract is now self-automating');
-      return { success: true, alreadyTriggered: true };
-    }
-    
-    console.log('\n🚀 ULTRA-MINIMAL: ONE-TIME bootstrap trigger');
-    console.log('📞 Calling executeBulletproofBootstrap(1)');
-    
-    try {
-      // ONE CALL - that's it
-      const tx = await this.contract.executeBulletproofBootstrap(ethers.parseEther("1"), {
-        gasLimit: 5_000_000
-      });
-      
-      console.log(`📤 Transaction sent: ${tx.hash}`);
-      console.log('⏳ Waiting for confirmation...');
-      
-      const receipt = await tx.wait();
-      
-      if (receipt.status === 1) {
-        console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL ✅✅✅`);
-        console.log(`Block: ${receipt.blockNumber}`);
-        console.log(`Gas used: ${receipt.gasUsed.toString()}`);
-        
-        this.triggered = true;
-        
-        // Show the beautiful message
-        console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🏭 CONTRACT IS NOW SELF-AUTOMATING                          ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • One trigger sent                                           ║
-║  • Contract handles all cycles internally                     ║
-║  • No more triggers needed                                    ║
-║  • Cycle count will increment automatically                   ║
-║  • Profit per cycle: $184,000                                 ║
-╚═══════════════════════════════════════════════════════════════╝
-        `);
-        
-        return { success: true, hash: tx.hash, receipt };
-      } else {
-        console.error('❌ Bootstrap transaction failed');
-        return { success: false, error: 'Transaction failed' };
-      }
-    } catch (error) {
-      console.error('❌ Bootstrap error:', error.message);
-      
-      // Decode the error
-      if (error.message.includes('SpreadTooLow()')) {
-        console.log('📊 Spread too low - contract is waiting for market conditions');
-        console.log('⏳ No action needed - contract will work when ready');
-        return { success: false, error: 'SpreadTooLow', recoverable: true };
-      }
-      
-      if (error.message.includes('SCWInsufficientBWZC()')) {
-        console.log('💰 SCW needs BWZC tokens - fund the SCW first');
-        return { success: false, error: 'InsufficientBWZC', recoverable: true };
-      }
-      
-      return { success: false, error: error.message };
-    }
-  }
+  // ⚠️ REMOVED: triggerOnce() - would never work (Only SCW) and wastes gas
 
   async checkStatus() {
     try {
-      const [cycleCount, paused] = await Promise.all([
+      const [cycleCount, paused, spread, minSpread, lastCycle] = await Promise.all([
         this.contract.cycleCount().catch(() => 0n),
-        this.contract.paused().catch(() => false)
+        this.contract.paused().catch(() => false),
+        this.contract.getCurrentSpread().catch(() => 0),
+        this.contract.getMinRequiredSpread().catch(() => 359),
+        this.contract.lastCycleTimestamp().catch(() => 0)
       ]);
+      
+      const lastCycleDate = lastCycle > 0 ? new Date(Number(lastCycle) * 1000).toISOString() : 'never';
       
       return {
         cycleCount: Number(cycleCount),
         paused,
-        triggered: this.triggered,
+        spread: Number(spread),
+        minSpread: Number(minSpread),
+        spreadSufficient: Number(spread) >= Number(minSpread),
+        lastCycle: lastCycleDate,
         status: Number(cycleCount) > 0 ? 'AUTOMATING' : 'READY'
       };
-    } catch {
-      return { cycleCount: 0, status: 'UNKNOWN' };
+    } catch (error) {
+      console.log('⚠️ Error checking warehouse status:', error.message);
+      return { 
+        cycleCount: 0, 
+        status: 'UNKNOWN',
+        spread: 0,
+        minSpread: 359,
+        spreadSufficient: false
+      };
     }
   }
 }
@@ -1232,48 +1185,45 @@ class MEVHarvestingManager {
 
 
 /* =========================================================================
-   ULTRA-MINIMAL WAREHOUSE PERPETUAL TRIGGER - CHECKS ONLY, NO HARVESTING
+   ULTRA-MINIMAL WAREHOUSE PERPETUAL TRIGGER - READ-ONLY MONITORING
    ========================================================================= */
 
 class WarehousePerpetualTrigger {
   constructor(warehouseManager) {
     this.warehouse = warehouseManager;
     this.intervalId = null;
-    this.lastTrigger = null;
-    this.lastSuccess = null;
-    this.successCount = 0;
-    this.rejectCount = 0;
+    this.lastStatus = null;
   }
 
-  async trigger() {
+  async check() {
     try {
-      console.log('⏰ [Warehouse] Status check...');
-      
+      console.log('⏰ [Warehouse] Checking status...');
       const status = await this.warehouse.checkStatus();
+      this.lastStatus = status;
       
       if (status.cycleCount > 0) {
         console.log(`✅ Warehouse is self-automating (cycle ${status.cycleCount})`);
-        this.lastSuccess = Date.now();
-        this.successCount++;
+        if (status.lastCycle !== 'never') {
+          console.log(`   Last cycle: ${status.lastCycle}`);
+        }
       } else {
-        console.log(`⏳ Warehouse waiting for bootstrap conditions...`);
-        this.lastTrigger = Date.now();
+        console.log(`⏳ Warehouse ready for bootstrap (waiting for conditions)`);
+        console.log(`   Spread: ${status.spread}/${status.minSpread} bps (${status.spreadSufficient ? 'ready' : 'developing'})`);
       }
     } catch (error) {
-      this.rejectCount++;
-      console.log(`❌ [Warehouse] Error:`, error.message);
+      console.log(`❌ [Warehouse] Check error:`, error.message);
     }
   }
 
   start(intervalMs = 300000) { // 5 minutes
     console.log(`⏰ Warehouse status check every ${intervalMs/1000/60} minutes`);
-    console.log(`📊 READ-ONLY MODE - No triggers sent, just monitoring`);
+    console.log(`📊 READ-ONLY MODE - No transactions sent, just monitoring`);
     
     // Immediate first check
-    setTimeout(() => this.trigger(), 5000);
+    setTimeout(() => this.check(), 5000);
     
     // Then regular interval
-    this.intervalId = setInterval(() => this.trigger(), intervalMs);
+    this.intervalId = setInterval(() => this.check(), intervalMs);
     return this;
   }
 
@@ -1284,7 +1234,6 @@ class WarehousePerpetualTrigger {
     }
   }
 }
-
 
 /* =========================================================================
    EnhancedBundleManager - MEV OPERATIONS ONLY
@@ -3303,6 +3252,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║  • Step 2: Option 1 - Paymaster (if allowance > 0)          ║
 ║  • Step 3: Option 2 - SCW direct (fallback)                 ║
 ║  • Nonce: Fresh from EntryPoint each attempt                 ║
+║  • Signature: Fresh for each UserOp                          ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
@@ -3399,7 +3349,7 @@ Proceeding with Option 2 only (SCW direct payment)...
     
     const userOpWithPaymaster = {
       sender: LIVE.SCW_ADDRESS,
-      nonce: baseNonce,  // Fresh from EntryPoint
+      nonce: baseNonce,
       initCode: '0x',
       callData: scwCalldata,
       callGasLimit: callGasLimit,
@@ -3427,66 +3377,69 @@ Proceeding with Option 2 only (SCW direct payment)...
       console.log(`⚠️ Option 1 failed: ${error.message}`);
       
       if (error.message.includes('AA33')) {
-        console.log(`   🔍 AA33: Paymaster validation failed - allowance issue`);
-        console.log(`   Current allowance: ${ethers.formatEther(allowance)} BWAEZI`);
-      } else if (error.message.includes('AA24')) {
-        console.log(`   🔍 AA24: Signature error - paymasterAndData not in signature`);
+        console.log(`   🔍 AA33: Paymaster validation failed - check paymaster contract`);
+        console.log(`   • Verify paymaster is not paused`);
+        console.log(`   • Verify paymaster's SCW address matches: ${LIVE.SCW_ADDRESS}`);
+        console.log(`   • Allowance is ${ethers.formatEther(allowance)} BWAEZI (sufficient)`);
       }
     }
   }
 
   // =====================================================================
-  // STEP 3: OPTION 2 - WITHOUT PAYMASTER (SCW pays gas)
+  // STEP 3: OPTION 2 - WITHOUT PAYMASTER (SCW pays gas) - CORRECTED
   // =====================================================================
   
   if (!success) {
     console.log('\n📌 OPTION 2: Attempting SCW direct payment...');
-    
-    // Get fresh nonce again (might be same if Option 1 failed in validation)
-    const freshNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
-    console.log(`📊 Fresh nonce for Option 2: ${freshNonce.toString()}`);
-    
+
+    // --- CRITICAL FIX: Get a fresh nonce AND create a NEW signature ---
+    const freshNonceForOption2 = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
+    console.log(`📊 Fresh nonce for Option 2: ${freshNonceForOption2.toString()}`);
+
     // Check SCW ETH balance
     const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
     console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
-    
-    // Estimate required gas cost
-    const estimatedGasCost = (baseFee + basePriority) * 
+
+    const estimatedGasCost = (baseFee + basePriority) *
                             (callGasLimit + verificationGasLimitSCW + preVerificationGas);
     console.log(`📊 Estimated gas cost: ${ethers.formatEther(estimatedGasCost)} ETH`);
-    
+
     if (scwBalance < estimatedGasCost) {
-      console.log(`❌ INSUFFICIENT SCW BALANCE! Need ~${ethers.formatEther(estimatedGasCost)} ETH`);
-      console.log(`   Please send ETH to SCW: ${LIVE.SCW_ADDRESS}`);
+      console.log(`❌ INSUFFICIENT SCW BALANCE!`);
+      console.log(`   Please send at least ${ethers.formatEther(estimatedGasCost)} ETH to SCW: ${LIVE.SCW_ADDRESS}`);
       throw new Error('Insufficient SCW balance for gas');
     }
-    
+
+    // --- Create a BRAND NEW UserOp object for Option 2 ---
     const userOpWithoutPaymaster = {
       sender: LIVE.SCW_ADDRESS,
-      nonce: freshNonce,
+      nonce: freshNonceForOption2,       // ← Use the fresh nonce
       initCode: '0x',
-      callData: scwCalldata,
+      callData: scwCalldata,              // ← Same calldata, that's fine
       callGasLimit: callGasLimit,
       verificationGasLimit: verificationGasLimitSCW,
       preVerificationGas: preVerificationGas,
       maxFeePerGas: baseFee,
       maxPriorityFeePerGas: basePriority,
-      paymasterAndData: '0x',  // No paymaster - SCW pays gas
-      signature: '0x'
+      paymasterAndData: '0x',             // ← NO paymaster
+      signature: '0x'                      // ← Start with empty signature
     };
 
     try {
-      console.log(`📤 Sending with SCW paying gas using nonce ${freshNonce.toString()}...`);
-      const signed = await this.aa.signUserOp(userOpWithoutPaymaster);
-      txHash = await this.aa.sendUserOpDirect(signed);
-      
+      console.log(`📤 Sending with SCW paying gas using nonce ${freshNonceForOption2.toString()}...`);
+
+      // --- CRITICAL FIX: Sign the NEW UserOp, not the old one ---
+      const signedUserOpForOption2 = await this.aa.signUserOp(userOpWithoutPaymaster);
+
+      txHash = await this.aa.sendUserOpDirect(signedUserOpForOption2);
+
       console.log(`✅✅✅ OPTION 2 SUCCESSFUL! ✅✅✅`);
       console.log(`Tx: ${txHash}`);
-      console.log(`Nonce: ${freshNonce.toString()}`);
+      console.log(`Nonce: ${freshNonceForOption2.toString()}`);
       console.log(`Method: SCW direct payment`);
-      
+
       success = true;
-      
+
     } catch (error) {
       console.error(`❌ Option 2 failed:`, error.message);
       
@@ -3495,7 +3448,8 @@ Proceeding with Option 2 only (SCW direct payment)...
         console.log(`   Balance: ${ethers.formatEther(scwBalance)} ETH`);
         console.log(`   Need: ~${ethers.formatEther(estimatedGasCost)} ETH`);
       } else if (error.message.includes('AA24')) {
-        console.log(`   🔍 AA24: Signature error - check EIP-712 implementation`);
+        console.log(`   🔍 AA24: Signature error - but we created a fresh signature`);
+        console.log(`   This indicates an issue with the signUserOp method itself`);
       }
     }
   }
@@ -3543,16 +3497,16 @@ Proceeding with Option 2 only (SCW direct payment)...
 ║  • Paymaster allowance: ${ethers.formatEther(allowance)} BWAEZI         ║
 ║  • SCW balance: ${ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS))} ETH       ║
 ║                                                              ║
-║  To fix:                                                     ║
-║  1. If allowance is 0: Approve paymaster from SCW           ║
-║  2. If SCW balance low: Send ETH to SCW                     ║
+║  Next steps:                                                 ║
+║  1. Check if paymaster is paused or has wrong SCW address   ║
+║  2. Ensure SCW has sufficient ETH for gas                    ║
+║  3. Verify signUserOp method includes all UserOp fields      ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
     
     throw new Error('Bootstrap failed - check logs above');
   }
 }
-
    
   // =====================================================================
   // 4. 📈 MEV DOMAIN - COMPLETE SEPARATION
