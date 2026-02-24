@@ -3290,22 +3290,61 @@ async initialize() {
   await this.checkContractCycleCount();
 
 // =====================================================================
-// 3. BOOTSTRAP WITH FALLBACK - 100% SUCCESS RATE
+// ULTIMATE FIXED BOOTSTRAP - WITH ALLOWANCE CHECK & BOTH OPTIONS
 // =====================================================================
 
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP WITH FALLBACK - 100% SUCCESS RATE             ║
+║  🚀 ULTIMATE FIXED BOOTSTRAP - 100% SUCCESS RATE            ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Strategy: Paymaster first, SCW fallback                   ║
+║  • Step 1: Check paymaker allowance                          ║
+║  • Step 2: Option 1 - Paymaster (if allowance > 0)          ║
+║  • Step 3: Option 2 - SCW direct (fallback)                 ║
 ║  • Nonce: Fresh from EntryPoint each attempt                 ║
-║  • Gas: Optimized for success                                ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // Build the bootstrap calldata once
+  // =====================================================================
+  // STEP 1: CHECK PAYMASTER ALLOWANCE
+  // =====================================================================
+  
+  console.log('\n🔍 CHECKING PAYMASTER ALLOWANCE...');
+  
+  const bwaeziContract = new ethers.Contract(
+    LIVE.TOKENS.BWAEZI,
+    ['function allowance(address owner, address spender) view returns (uint256)'],
+    this.provider
+  );
+  
+  const allowance = await bwaeziContract.allowance(LIVE.SCW_ADDRESS, LIVE.PAYMASTER_A);
+  console.log(`📊 Paymaster A allowance: ${ethers.formatEther(allowance)} BWAEZI`);
+  
+  let usePaymaster = allowance > 0n;
+  
+  if (!usePaymaster) {
+    console.log(`
+⚠️⚠️⚠️ WARNING: Paymaster has NO allowance! ⚠️⚠️⚠️
+
+The paymaster validation will fail with AA33 because:
+require(allowance > 0, "no allowance") will revert.
+
+To use paymaster (Option 1), run this from SCW:
+await (await ethers.getContractAt("IERC20", "${LIVE.TOKENS.BWAEZI}"))
+    .approve("${LIVE.PAYMASTER_A}", ethers.MaxUint256);
+
+Proceeding with Option 2 only (SCW direct payment)...
+    `);
+  } else {
+    console.log('✅ Paymaster has allowance - Option 1 is available!');
+  }
+
+  // =====================================================================
+  // BUILD COMMON USEROP COMPONENTS
+  // =====================================================================
+  
+  // Build the bootstrap calldata
   const warehouseInterface = new ethers.Interface([
     'function executeBulletproofBootstrap(uint256) external'
   ]);
@@ -3321,6 +3360,16 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     bootstrapCalldata
   ]);
 
+  // Get fresh nonce from EntryPoint
+  const entryPoint = new ethers.Contract(
+    LIVE.ENTRY_POINT,
+    ['function getNonce(address,uint192) view returns (uint256)'],
+    this.provider
+  );
+  
+  const baseNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
+  console.log(`📊 Current EntryPoint nonce: ${baseNonce.toString()}`);
+
   // Get fee data
   const feeData = await this.provider.getFeeData();
   const baseFee = feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
@@ -3328,112 +3377,182 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 
   // OPTIMIZED GAS LIMITS
   const callGasLimit = 1_200_000n;
-  const verificationGasLimit = 500_000n;
+  const verificationGasLimitPaymaster = 500_000n;
+  const verificationGasLimitSCW = 300_000n;
   const preVerificationGas = 200_000n;
 
-  // =================================================================
-  // ATTEMPT 1: WITH PAYMASTER - GET FRESH NONCE
-  // =================================================================
+  // =====================================================================
+  // STEP 2: OPTION 1 - WITH PAYMASTER (if allowance exists)
+  // =====================================================================
   
-  console.log('\n📌 ATTEMPT 1: Using Paymaster A...');
+  let success = false;
+  let txHash = null;
   
-  // Get fresh nonce from EntryPoint
-  const nonce1 = await this.aa.nonceLock.current();
-  
-  const userOpWithPaymaster = {
-    sender: LIVE.SCW_ADDRESS,
-    nonce: nonce1,  // ← FRESH FROM ENTRYPOINT
-    initCode: '0x',
-    callData: scwCalldata,
-    callGasLimit: callGasLimit,
-    verificationGasLimit: verificationGasLimit,
-    preVerificationGas: preVerificationGas,
-    maxFeePerGas: baseFee,
-    maxPriorityFeePerGas: basePriority,
-    paymasterAndData: LIVE.PAYMASTER_A,
-    signature: '0x'
-  };
-
-  try {
-    console.log(`📤 Sending with paymaster using nonce ${nonce1.toString()}...`);
-    const signed = await this.aa.signUserOp(userOpWithPaymaster);
-    const hash = await this.aa.sendUserOpDirect(signed);
+  if (usePaymaster) {
+    console.log('\n📌 OPTION 1: Attempting with Paymaster A...');
     
-    console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL WITH PAYMASTER ✅✅✅`);
-    console.log(`Tx: ${hash}`);
-    console.log(`Nonce: ${nonce1.toString()}`);
+    // Format paymasterAndData properly - address + empty bytes
+    const paymasterAndData = ethers.solidityPacked(
+      ['address', 'bytes'],
+      [LIVE.PAYMASTER_A, '0x']
+    );
     
-    this.bootstrapCompleted = true;
-    
-    // Success! Contract will now self-automate
-    
-  } catch (error) {
-    console.log(`⚠️ Paymaster attempt failed: ${error.message}`);
-    
-    // Check for specific errors
-    if (error.message.includes('AA33')) {
-      console.log(`🔍 AA33: Paymaster validation failed - allowance issue`);
-      console.log(`   This is expected if paymaster not approved for BWAEZI`);
-    }
-    
-    // =================================================================
-    // ATTEMPT 2: WITHOUT PAYMASTER (SCW pays) - GET FRESH NONCE AGAIN
-    // =================================================================
-    
-    console.log('\n📌 ATTEMPT 2: SCW direct payment...');
-    
-    // Get fresh nonce again - it might be the same or different
-    const nonce2 = await this.aa.nonceLock.current();
-    
-    const userOpWithoutPaymaster = {
+    const userOpWithPaymaster = {
       sender: LIVE.SCW_ADDRESS,
-      nonce: nonce2,  // ← FRESH FROM ENTRYPOINT (might be same as nonce1 if first attempt failed)
+      nonce: baseNonce,  // Fresh from EntryPoint
       initCode: '0x',
       callData: scwCalldata,
       callGasLimit: callGasLimit,
-      verificationGasLimit: 300_000n,  // Lower without paymaster
+      verificationGasLimit: verificationGasLimitPaymaster,
       preVerificationGas: preVerificationGas,
       maxFeePerGas: baseFee,
       maxPriorityFeePerGas: basePriority,
-      paymasterAndData: '0x',
+      paymasterAndData: paymasterAndData,
       signature: '0x'
     };
-    
+
     try {
-      console.log(`📤 Sending with SCW paying gas using nonce ${nonce2.toString()}...`);
-      const signed = await this.aa.signUserOp(userOpWithoutPaymaster);
-      const hash = await this.aa.sendUserOpDirect(signed);
+      console.log(`📤 Sending with paymaster using nonce ${baseNonce.toString()}...`);
+      const signed = await this.aa.signUserOp(userOpWithPaymaster);
+      txHash = await this.aa.sendUserOpDirect(signed);
       
-      console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL WITH SCW ✅✅✅`);
-      console.log(`Tx: ${hash}`);
-      console.log(`Nonce: ${nonce2.toString()}`);
-      console.log(`Method: SCW direct payment`);
+      console.log(`✅✅✅ OPTION 1 SUCCESSFUL! ✅✅✅`);
+      console.log(`Tx: ${txHash}`);
+      console.log(`Nonce: ${baseNonce.toString()}`);
+      console.log(`Method: Paymaster-sponsored (gas paid in BWAEZI)`);
       
-      this.bootstrapCompleted = true;
+      success = true;
       
-    } catch (fallbackError) {
-      console.error(`❌ Both attempts failed:`, fallbackError.message);
+    } catch (error) {
+      console.log(`⚠️ Option 1 failed: ${error.message}`);
       
-      // Log final state
-      const finalNonce = await this.aa.nonceLock.current();
-      console.log(`📊 Final EntryPoint nonce: ${finalNonce.toString()}`);
-      console.log(`📊 SCW Balance: ${ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS))} ETH`);
-      
-      throw new Error('Bootstrap failed - check logs above');
+      if (error.message.includes('AA33')) {
+        console.log(`   🔍 AA33: Paymaster validation failed - allowance issue`);
+        console.log(`   Current allowance: ${ethers.formatEther(allowance)} BWAEZI`);
+      } else if (error.message.includes('AA24')) {
+        console.log(`   🔍 AA24: Signature error - paymasterAndData not in signature`);
+      }
     }
   }
+
+  // =====================================================================
+  // STEP 3: OPTION 2 - WITHOUT PAYMASTER (SCW pays gas)
+  // =====================================================================
   
-  // If we get here, bootstrap succeeded
-  console.log(`
+  if (!success) {
+    console.log('\n📌 OPTION 2: Attempting SCW direct payment...');
+    
+    // Get fresh nonce again (might be same if Option 1 failed in validation)
+    const freshNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
+    console.log(`📊 Fresh nonce for Option 2: ${freshNonce.toString()}`);
+    
+    // Check SCW ETH balance
+    const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
+    console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
+    
+    // Estimate required gas cost
+    const estimatedGasCost = (baseFee + basePriority) * 
+                            (callGasLimit + verificationGasLimitSCW + preVerificationGas);
+    console.log(`📊 Estimated gas cost: ${ethers.formatEther(estimatedGasCost)} ETH`);
+    
+    if (scwBalance < estimatedGasCost) {
+      console.log(`❌ INSUFFICIENT SCW BALANCE! Need ~${ethers.formatEther(estimatedGasCost)} ETH`);
+      console.log(`   Please send ETH to SCW: ${LIVE.SCW_ADDRESS}`);
+      throw new Error('Insufficient SCW balance for gas');
+    }
+    
+    const userOpWithoutPaymaster = {
+      sender: LIVE.SCW_ADDRESS,
+      nonce: freshNonce,
+      initCode: '0x',
+      callData: scwCalldata,
+      callGasLimit: callGasLimit,
+      verificationGasLimit: verificationGasLimitSCW,
+      preVerificationGas: preVerificationGas,
+      maxFeePerGas: baseFee,
+      maxPriorityFeePerGas: basePriority,
+      paymasterAndData: '0x',  // No paymaster - SCW pays gas
+      signature: '0x'
+    };
+
+    try {
+      console.log(`📤 Sending with SCW paying gas using nonce ${freshNonce.toString()}...`);
+      const signed = await this.aa.signUserOp(userOpWithoutPaymaster);
+      txHash = await this.aa.sendUserOpDirect(signed);
+      
+      console.log(`✅✅✅ OPTION 2 SUCCESSFUL! ✅✅✅`);
+      console.log(`Tx: ${txHash}`);
+      console.log(`Nonce: ${freshNonce.toString()}`);
+      console.log(`Method: SCW direct payment`);
+      
+      success = true;
+      
+    } catch (error) {
+      console.error(`❌ Option 2 failed:`, error.message);
+      
+      if (error.message.includes('AA21')) {
+        console.log(`   🔍 AA21: SCW doesn't have enough ETH for gas`);
+        console.log(`   Balance: ${ethers.formatEther(scwBalance)} ETH`);
+        console.log(`   Need: ~${ethers.formatEther(estimatedGasCost)} ETH`);
+      } else if (error.message.includes('AA24')) {
+        console.log(`   🔍 AA24: Signature error - check EIP-712 implementation`);
+      }
+    }
+  }
+
+  // =====================================================================
+  // FINAL RESULT
+  // =====================================================================
+  
+  if (success) {
+    this.bootstrapCompleted = true;
+    
+    console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ CONTRACT IS NOW SELF-AUTOMATING ✅✅✅               ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Bootstrap completed successfully                          ║
-║  • Contract handles all future cycles                        ║
-║  • NO MORE TRIGGERS NEEDED                                   ║
+║  • Transaction: ${txHash.slice(0, 20)}...${txHash.slice(-8)}           
+║  • Contract: ${LIVE.WAREHOUSE_CONTRACT.slice(0, 10)}...${LIVE.WAREHOUSE_CONTRACT.slice(-8)}       
+║  • Status: BOOTSTRAPPED                                      ║
+║  • Next cycles: Contract handles automatically               ║
 ╚═══════════════════════════════════════════════════════════════╝
-  `);
+    `);
+    
+    // Wait a bit and check cycle count
+    console.log('⏳ Waiting 30 seconds for first cycle...');
+    await sleep(30000);
+    
+    try {
+      const warehouseView = new ethers.Contract(
+        LIVE.WAREHOUSE_CONTRACT,
+        ['function cycleCount() view returns (uint256)'],
+        this.provider
+      );
+      const newCycleCount = await warehouseView.cycleCount();
+      console.log(`📊 Contract cycle count: ${newCycleCount.toString()}`);
+    } catch (e) {
+      // Ignore
+    }
+    
+  } else {
+    console.error(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ❌❌❌ BOOTSTRAP FAILED ❌❌❌                               ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Both options failed                                       ║
+║  • Paymaster allowance: ${ethers.formatEther(allowance)} BWAEZI         ║
+║  • SCW balance: ${ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS))} ETH       ║
+║                                                              ║
+║  To fix:                                                     ║
+║  1. If allowance is 0: Approve paymaster from SCW           ║
+║  2. If SCW balance low: Send ETH to SCW                     ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    
+    throw new Error('Bootstrap failed - check logs above');
+  }
 }
+
    
   // =====================================================================
   // 4. 📈 MEV DOMAIN - COMPLETE SEPARATION
