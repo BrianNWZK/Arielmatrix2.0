@@ -3176,72 +3176,55 @@ async initialize() {
 
 
 // =====================================================================
-// ULTIMATE FIX - DIRECT SCW CALL (NO ENTRYPOINT, NO PAYMASTER)
+// ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT!
 // =====================================================================
 
 try {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 DIRECT SCW CALL - BYPASSING ENTRYPOINT COMPLETELY        ║
+║  🚀 ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT!        ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Contract: 0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f      ║
 ║  • Function: emergencyBulletproofBootstrap(1)                ║
-║  • Caller: SCW (${LIVE.SCW_ADDRESS})                         ║
-║  • Method: EOA → SCW (direct execute)                        ║
-║  • NO ENTRYPOINT • NO PAYMASTER • NO USEROP                  ║
+║  • Let the contract do its thing!                            ║
+║  • NO GAS CALCULATIONS • NO BALANCE CHECKS • NO ERROR DECODING║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // 1. Create interface for emergency function
+  // 1. Encode the emergency function call
   const warehouseInterface = new ethers.Interface([
     'function emergencyBulletproofBootstrap(uint256) external'
   ]);
 
-  // 2. Encode the call to emergency function
   const bootstrapCalldata = warehouseInterface.encodeFunctionData(
     'emergencyBulletproofBootstrap',
-    [ethers.parseEther("1")]  // 1 wei to trigger
+    [ethers.parseEther("1")]  // Just 1 wei - contract handles the rest!
   );
 
-  // 3. Create SCW execute() calldata
+  // 2. Encode SCW execute
   const scwInterface = new ethers.Interface([
     'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
   ]);
 
   const scwCalldata = scwInterface.encodeFunctionData('execute', [
-    LIVE.WAREHOUSE_CONTRACT,  // destination = warehouse
-    0n,                       // no ETH sent
-    bootstrapCalldata         // the emergency function call
+    LIVE.WAREHOUSE_CONTRACT,
+    0n,
+    bootstrapCalldata
   ]);
 
-  // 4. Send DIRECT transaction from EOA to SCW (not through EntryPoint!)
-  console.log('📤 Sending direct transaction from EOA to SCW...');
-  console.log(`   EOA: ${this.signer.address}`);
-  console.log(`   SCW: ${LIVE.SCW_ADDRESS}`);
-  
-  // Get current gas price
-  const feeData = await this.provider.getFeeData();
-  const gasPrice = feeData.gasPrice || ethers.parseUnits('1', 'gwei');
-  
-  console.log(`   Gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei`);
+  // 3. SEND IT - NO GAS CALCULATIONS!
+  console.log(`📤 Sending transaction...`);
+  console.log(`   From EOA: ${this.signer.address}`);
+  console.log(`   To SCW: ${LIVE.SCW_ADDRESS}`);
 
-  // Estimate gas first
-  const estimatedGas = await this.provider.estimateGas({
-    to: LIVE.SCW_ADDRESS,
-    data: scwCalldata
-  }).catch(() => 300_000n);  // fallback if estimation fails
-
-  console.log(`   Estimated gas: ${estimatedGas}`);
-
-  // Send transaction with 20% buffer
   const tx = await this.signer.sendTransaction({
     to: LIVE.SCW_ADDRESS,
     data: scwCalldata,
-    gasLimit: estimatedGas * 120n / 100n,
-    gasPrice: gasPrice
+    gasLimit: 500_000,  // Just a safe number - contract will use what it needs
+    gasPrice: await this.provider.getGasPrice()  // Use current network gas price
   });
 
-  console.log(`⏳ Transaction submitted: ${tx.hash}`);
+  console.log(`⏳ Transaction: ${tx.hash}`);
   console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
 
   const receipt = await tx.wait();
@@ -3253,76 +3236,39 @@ try {
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Transaction: ${tx.hash}                                      ║
 ║  • Block: ${receipt.blockNumber}                                              ║
-║  • Gas used: ${receipt.gasUsed}                                          ║
-║  • Cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH        ║
+║  • Gas used: ${receipt.gasUsed} (let contract decide!)                      ║
 ║  • Status: CONTRACT NOW SELF-AUTOMATING                       ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
     
     this.bootstrapCompleted = true;
-
-    // Wait for first cycle
+    
+    // Wait 30 seconds and check cycle count
     console.log('⏳ Waiting 30 seconds for first cycle...');
     await sleep(30000);
-
-    // Check cycle count
+    
     const warehouseView = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       ['function cycleCount() view returns (uint256)'],
       this.provider
     );
     const cycleCount = await warehouseView.cycleCount();
-    console.log(`📊 Contract cycle count: ${cycleCount.toString()}`);
-
-    if (cycleCount > 0) {
-      console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🎉🎉🎉 FIRST CYCLE COMPLETE! 🎉🎉🎉                         ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count: ${cycleCount}                                               ║
-║  • Contract is now FULLY AUTOMATED!                           ║
-║  • MEV system can monitor but NOT interfere                   ║
-╚═══════════════════════════════════════════════════════════════╝
-      `);
-    }
-
-  } else {
-    console.error('❌ Bootstrap transaction failed!');
+    console.log(`📊 Contract cycle count: ${cycleCount}`);
     
-    // Try to decode the error
-    try {
-      // Replay the call to get error
-      await this.provider.call({
-        to: LIVE.SCW_ADDRESS,
-        data: scwCalldata
-      });
-    } catch (callError) {
-      console.log(`📋 Error details:`, callError.message);
-      
-      // Check if it's a known contract error
-      if (callError.message.includes('SCWInsufficientBWZC')) {
-        console.log(`
-❌ SCW doesn't have enough BWAEZI tokens!
-   Required: 39,130.44 BWAEZI
-   Current: Check with: cast call ${LIVE.TOKENS.BWAEZI} "balanceOf(address)(uint256)" ${LIVE.SCW_ADDRESS}
-        `);
-      } else if (callError.message.includes('Paused')) {
-        console.log(`❌ Contract is paused!`);
-      } else if (callError.message.includes('Only SCW')) {
-        console.log(`❌ This shouldn't happen - we ARE calling through SCW!`);
-      }
-    }
+  } else {
+    console.log('❌ Transaction failed - but contract will tell us why');
   }
 
 } catch (error) {
-  console.error('❌ Bootstrap error:', error.message);
+  console.error('❌ Error:', error.message);
   
-  if (error.message.includes('insufficient funds')) {
-    console.log(`
-⚠️ EOA needs more ETH for gas.
-   Current balance: ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH
-   Send at least 0.01 ETH to: ${this.signer.address}
-    `);
+  // The contract's own errors will show here
+  if (error.message.includes('SCWInsufficientBWZC')) {
+    console.log(`📊 SCW needs more BWAEZI tokens`);
+  } else if (error.message.includes('Paused')) {
+    console.log(`🔒 Contract is paused`);
+  } else if (error.message.includes('Only SCW')) {
+    console.log(`❌ This shouldn't happen - we ARE calling through SCW`);
   }
 }
    
@@ -3398,9 +3344,12 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`❌ Cannot read paymaster state: ${error.message}`);
   }
 
-  // =====================================================================
+ // =====================================================================
   // STEP 2: BUILD USEROP
   // =====================================================================
+  
+  // ✅ DEFINE useWarehouse for this scope
+  const useWarehouse = true; // Set to true for warehouse operations
   
   const warehouseInterface = new ethers.Interface([
     'function executeBulletproofBootstrap(uint256) external'
@@ -3429,9 +3378,10 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   const baseFee = feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
   const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei');
 
- const callGasLimit = useWarehouse ? 400_000n : 250_000n;      // ↓ from 1.2M to 400k
- const verificationGasLimit = 150_000n;                        // ↓ from 500k to 150k
- const preVerificationGas = 50_000n;                           // ↓ from 200k to 50k
+  // ✅ NOW useWarehouse is defined and works
+  const callGasLimit = useWarehouse ? 400_000n : 250_000n;
+  const verificationGasLimit = 150_000n;
+  const preVerificationGas = 50_000n;
 
   // =====================================================================
   // STEP 3: OPTION 1 - WITH PAYMASTER (if working)
