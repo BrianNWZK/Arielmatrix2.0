@@ -3176,84 +3176,95 @@ async initialize() {
 
 
 // =====================================================================
-// CALL THE NEW EMERGENCY BOOTSTRAP FUNCTION (NO SPREAD CHECK)
+// ULTIMATE FIX - DIRECT SCW CALL (NO ENTRYPOINT, NO PAYMASTER)
 // =====================================================================
 
 try {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 CALLING EMERGENCY BOOTSTRAP - NO SPREAD CHECK!           ║
+║  🚀 DIRECT SCW CALL - BYPASSING ENTRYPOINT COMPLETELY        ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • New Contract: 0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f  ║
+║  • Contract: 0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f      ║
 ║  • Function: emergencyBulletproofBootstrap(1)                ║
-║  • Spread check: REMOVED ✅                                  ║
-║  • Gas price: 0.06 gwei (ULTRA CHEAP)                        ║
-║  • Gas limit: 300,000 (safe)                                 ║
-║  • Max cost: ~0.000018 ETH (less than $0.001)                ║
+║  • Caller: SCW (${LIVE.SCW_ADDRESS})                         ║
+║  • Method: EOA → SCW (direct execute)                        ║
+║  • NO ENTRYPOINT • NO PAYMASTER • NO USEROP                  ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // Update LIVE config to use new contract
-  LIVE.WAREHOUSE_CONTRACT = "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f";
-  
+  // 1. Create interface for emergency function
   const warehouseInterface = new ethers.Interface([
-    'function emergencyBulletproofBootstrap(uint256) external'  // Note: new function name!
+    'function emergencyBulletproofBootstrap(uint256) external'
   ]);
-  
+
+  // 2. Encode the call to emergency function
   const bootstrapCalldata = warehouseInterface.encodeFunctionData(
-    'emergencyBulletproofBootstrap',  // ← USING THE NEW FUNCTION
-    [ethers.parseEther("1")]  // Just 1 wei to trigger
+    'emergencyBulletproofBootstrap',
+    [ethers.parseEther("1")]  // 1 wei to trigger
   );
 
+  // 3. Create SCW execute() calldata
   const scwInterface = new ethers.Interface([
     'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
   ]);
-  
+
   const scwCalldata = scwInterface.encodeFunctionData('execute', [
-    LIVE.WAREHOUSE_CONTRACT,
-    0n,
-    bootstrapCalldata
+    LIVE.WAREHOUSE_CONTRACT,  // destination = warehouse
+    0n,                       // no ETH sent
+    bootstrapCalldata         // the emergency function call
   ]);
 
-  // Check SCW balance first
-  const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-  console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
+  // 4. Send DIRECT transaction from EOA to SCW (not through EntryPoint!)
+  console.log('📤 Sending direct transaction from EOA to SCW...');
+  console.log(`   EOA: ${this.signer.address}`);
+  console.log(`   SCW: ${LIVE.SCW_ADDRESS}`);
   
-  if (scwBalance < ethers.parseEther('0.0001')) {
-    console.log(`⚠️ SCW has very little ETH, but at 0.06 gwei it only needs ~0.000018 ETH`);
-  }
+  // Get current gas price
+  const feeData = await this.provider.getFeeData();
+  const gasPrice = feeData.gasPrice || ethers.parseUnits('1', 'gwei');
+  
+  console.log(`   Gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei`);
 
-  // SEND TRANSACTION - LEGACY TYPE FOR MAX COMPATIBILITY
+  // Estimate gas first
+  const estimatedGas = await this.provider.estimateGas({
+    to: LIVE.SCW_ADDRESS,
+    data: scwCalldata
+  }).catch(() => 300_000n);  // fallback if estimation fails
+
+  console.log(`   Estimated gas: ${estimatedGas}`);
+
+  // Send transaction with 20% buffer
   const tx = await this.signer.sendTransaction({
     to: LIVE.SCW_ADDRESS,
     data: scwCalldata,
-    gasLimit: 300_000,                    // Safe limit
-    gasPrice: ethers.parseUnits('0.06', 'gwei')  // Ultra cheap
+    gasLimit: estimatedGas * 120n / 100n,
+    gasPrice: gasPrice
   });
 
   console.log(`⏳ Transaction submitted: ${tx.hash}`);
   console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-  
+
   const receipt = await tx.wait();
-  
+
   if (receipt.status === 1) {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ CONTRACT BOOTSTRAPPED! ✅✅✅                        ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Transaction: ${tx.hash}                                      ║
+║  • Block: ${receipt.blockNumber}                                              ║
 ║  • Gas used: ${receipt.gasUsed}                                          ║
-║  • Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH        ║
+║  • Cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH        ║
 ║  • Status: CONTRACT NOW SELF-AUTOMATING                       ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
     
     this.bootstrapCompleted = true;
-    
+
     // Wait for first cycle
     console.log('⏳ Waiting 30 seconds for first cycle...');
     await sleep(30000);
-    
+
     // Check cycle count
     const warehouseView = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
@@ -3262,7 +3273,7 @@ try {
     );
     const cycleCount = await warehouseView.cycleCount();
     console.log(`📊 Contract cycle count: ${cycleCount.toString()}`);
-    
+
     if (cycleCount > 0) {
       console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -3274,43 +3285,43 @@ try {
 ╚═══════════════════════════════════════════════════════════════╝
       `);
     }
-    
+
   } else {
-    console.error('❌ Bootstrap transaction failed');
+    console.error('❌ Bootstrap transaction failed!');
     
-    // Decode error
+    // Try to decode the error
     try {
-      const warehouseView = new ethers.Contract(
-        LIVE.WAREHOUSE_CONTRACT,
-        ['function getCurrentSpread() view returns (uint256)'],
-        this.provider
-      );
-      const spread = await warehouseView.getCurrentSpread();
-      console.log(`📊 Current spread: ${spread} bps`);
+      // Replay the call to get error
+      await this.provider.call({
+        to: LIVE.SCW_ADDRESS,
+        data: scwCalldata
+      });
+    } catch (callError) {
+      console.log(`📋 Error details:`, callError.message);
       
-      if (spread < 359) {
+      // Check if it's a known contract error
+      if (callError.message.includes('SCWInsufficientBWZC')) {
         console.log(`
-⏳ This is weird - emergency function should ignore spread!
-But spread is ${spread}/359 bps. Something else failed.
+❌ SCW doesn't have enough BWAEZI tokens!
+   Required: 39,130.44 BWAEZI
+   Current: Check with: cast call ${LIVE.TOKENS.BWAEZI} "balanceOf(address)(uint256)" ${LIVE.SCW_ADDRESS}
         `);
+      } else if (callError.message.includes('Paused')) {
+        console.log(`❌ Contract is paused!`);
+      } else if (callError.message.includes('Only SCW')) {
+        console.log(`❌ This shouldn't happen - we ARE calling through SCW!`);
       }
-    } catch (e) {
-      // Ignore
     }
   }
-  
+
 } catch (error) {
   console.error('❌ Bootstrap error:', error.message);
   
-  if (error.message.includes('SpreadTooLow')) {
+  if (error.message.includes('insufficient funds')) {
     console.log(`
-❌ This shouldn't happen - emergency function removes spread check!
-Check that you're calling emergencyBulletproofBootstrap, not the original.
-    `);
-  } else if (error.message.includes('insufficient funds')) {
-    console.log(`
-⚠️ Insufficient funds error at 0.06 gwei? This should cost <0.00002 ETH.
-Check EOA balance: ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH
+⚠️ EOA needs more ETH for gas.
+   Current balance: ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH
+   Send at least 0.01 ETH to: ${this.signer.address}
     `);
   }
 }
