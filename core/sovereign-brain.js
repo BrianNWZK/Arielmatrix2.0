@@ -3176,32 +3176,32 @@ async initialize() {
 
 
 // =====================================================================
-// FIXED DIRECT BOOTSTRAP - USING CURRENT LOW GAS PRICES
+// CALL THE NEW EMERGENCY BOOTSTRAP FUNCTION (NO SPREAD CHECK)
 // =====================================================================
 
 try {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🔥 DIRECT CONTRACT BOOTSTRAP - LOW GAS MODE                 ║
+║  🚀 CALLING EMERGENCY BOOTSTRAP - NO SPREAD CHECK!           ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Contract: ${LIVE.WAREHOUSE_CONTRACT}                              ║
-║  • SCW: ${LIVE.SCW_ADDRESS}                                      ║
-║  • Current gas price: 0.06 gwei (VERY CHEAP)                  ║
-║  • EOA balance: 0.0023 ETH (MORE THAN ENOUGH)                 ║
+║  • New Contract: 0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f  ║
+║  • Function: emergencyBulletproofBootstrap(1)                ║
+║  • Spread check: REMOVED ✅                                  ║
+║  • Gas price: 0.06 gwei (ULTRA CHEAP)                        ║
+║  • Gas limit: 300,000 (safe)                                 ║
+║  • Max cost: ~0.000018 ETH (less than $0.001)                ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // Get actual current gas price
-  const feeData = await this.provider.getFeeData();
-  const currentGasPrice = feeData.gasPrice || ethers.parseUnits('0.06', 'gwei');
-  console.log(`📊 Current network gas price: ${ethers.formatUnits(currentGasPrice, 'gwei')} gwei`);
-
+  // Update LIVE config to use new contract
+  LIVE.WAREHOUSE_CONTRACT = "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f";
+  
   const warehouseInterface = new ethers.Interface([
-    'function executeBulletproofBootstrap(uint256) external'
+    'function emergencyBulletproofBootstrap(uint256) external'  // Note: new function name!
   ]);
   
   const bootstrapCalldata = warehouseInterface.encodeFunctionData(
-    'executeBulletproofBootstrap', 
+    'emergencyBulletproofBootstrap',  // ← USING THE NEW FUNCTION
     [ethers.parseEther("1")]  // Just 1 wei to trigger
   );
 
@@ -3215,78 +3215,88 @@ try {
     bootstrapCalldata
   ]);
 
-  // Estimate actual gas needed
-  console.log('📊 Estimating gas for transaction...');
-  const estimatedGas = await this.provider.estimateGas({
+  // Check SCW balance first
+  const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
+  console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
+  
+  if (scwBalance < ethers.parseEther('0.0001')) {
+    console.log(`⚠️ SCW has very little ETH, but at 0.06 gwei it only needs ~0.000018 ETH`);
+  }
+
+  // SEND TRANSACTION - LEGACY TYPE FOR MAX COMPATIBILITY
+  const tx = await this.signer.sendTransaction({
     to: LIVE.SCW_ADDRESS,
-    data: scwCalldata
-  }).catch(() => 150_000n); // Fallback if estimation fails
-  
-  console.log(`📊 Estimated gas: ${estimatedGas.toString()}`);
+    data: scwCalldata,
+    gasLimit: 300_000,                    // Safe limit
+    gasPrice: ethers.parseUnits('0.06', 'gwei')  // Ultra cheap
+  });
 
-  // Calculate actual cost with 50% safety buffer
-  const gasLimit = estimatedGas * 150n / 100n; // Add 50% buffer
-  const maxFeePerGas = currentGasPrice * 200n / 100n; // 2x current price as safety
+  console.log(`⏳ Transaction submitted: ${tx.hash}`);
+  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
   
-  const estimatedCost = gasLimit * maxFeePerGas;
-  console.log(`📊 Estimated max cost: ${ethers.formatEther(estimatedCost)} ETH`);
-  console.log(`📊 EOA balance: ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH`);
-
-  if (estimatedCost > await this.provider.getBalance(this.signer.address)) {
+  const receipt = await tx.wait();
+  
+  if (receipt.status === 1) {
     console.log(`
-⚠️ Warning: Estimated cost exceeds balance, but provider check is too conservative.
-   Forcing transaction with lower gas limit...
-    `);
-    
-    // Force with lower values - at 0.06 gwei, 150k gas = 0.000009 ETH
-    const forcedGasLimit = 150_000n;
-    const forcedGasPrice = ethers.parseUnits('0.1', 'gwei'); // 0.1 gwei (still very cheap)
-    
-    console.log(`📤 Sending with forced values:
-      • Gas limit: ${forcedGasLimit}
-      • Gas price: 0.1 gwei
-      • Max cost: ${ethers.formatEther(forcedGasLimit * forcedGasPrice)} ETH
-    `);
-    
-    const tx = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,
-      data: scwCalldata,
-      gasLimit: forcedGasLimit,
-      gasPrice: forcedGasPrice  // Use gasPrice instead of maxFeePerGas for simpler tx
-    });
-
-    console.log(`⏳ Transaction submitted: ${tx.hash}`);
-    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-    
-    const receipt = await tx.wait();
-    
-    if (receipt.status === 1) {
-      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ CONTRACT BOOTSTRAPPED! ✅✅✅                        ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Transaction: ${tx.hash}                                      ║
-║  • Gas used: ${receipt.gasUsed.toString()}                                          ║
+║  • Gas used: ${receipt.gasUsed}                                          ║
 ║  • Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH        ║
-║  • EOA balance remaining: ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH ║
+║  • Status: CONTRACT NOW SELF-AUTOMATING                       ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    
+    this.bootstrapCompleted = true;
+    
+    // Wait for first cycle
+    console.log('⏳ Waiting 30 seconds for first cycle...');
+    await sleep(30000);
+    
+    // Check cycle count
+    const warehouseView = new ethers.Contract(
+      LIVE.WAREHOUSE_CONTRACT,
+      ['function cycleCount() view returns (uint256)'],
+      this.provider
+    );
+    const cycleCount = await warehouseView.cycleCount();
+    console.log(`📊 Contract cycle count: ${cycleCount.toString()}`);
+    
+    if (cycleCount > 0) {
+      console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🎉🎉🎉 FIRST CYCLE COMPLETE! 🎉🎉🎉                         ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Cycle count: ${cycleCount}                                               ║
+║  • Contract is now FULLY AUTOMATED!                           ║
+║  • MEV system can monitor but NOT interfere                   ║
 ╚═══════════════════════════════════════════════════════════════╝
       `);
-      
-      this.bootstrapCompleted = true;
     }
+    
   } else {
-    // Normal path with realistic values
-    const tx = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,
-      data: scwCalldata,
-      gasLimit: gasLimit,
-      maxFeePerGas: maxFeePerGas,
-      maxPriorityFeePerGas: ethers.parseUnits('0.01', 'gwei')
-    });
-
-    console.log(`⏳ Transaction submitted: ${tx.hash}`);
-    const receipt = await tx.wait();
-    // ... success handling
+    console.error('❌ Bootstrap transaction failed');
+    
+    // Decode error
+    try {
+      const warehouseView = new ethers.Contract(
+        LIVE.WAREHOUSE_CONTRACT,
+        ['function getCurrentSpread() view returns (uint256)'],
+        this.provider
+      );
+      const spread = await warehouseView.getCurrentSpread();
+      console.log(`📊 Current spread: ${spread} bps`);
+      
+      if (spread < 359) {
+        console.log(`
+⏳ This is weird - emergency function should ignore spread!
+But spread is ${spread}/359 bps. Something else failed.
+        `);
+      }
+    } catch (e) {
+      // Ignore
+    }
   }
   
 } catch (error) {
@@ -3294,37 +3304,14 @@ try {
   
   if (error.message.includes('SpreadTooLow')) {
     console.log(`
-⏳ Spread too low - this is NORMAL.
-📊 Contract will bootstrap when spread reaches 359 bps.
-✅ No action needed - contract is waiting.
+❌ This shouldn't happen - emergency function removes spread check!
+Check that you're calling emergencyBulletproofBootstrap, not the original.
     `);
   } else if (error.message.includes('insufficient funds')) {
     console.log(`
-⚠️ Provider balance check too conservative.
-    Current balance: 0.0023 ETH
-    Actual cost at 0.06 gwei: ~0.000009 ETH
-    This SHOULD work. Trying one more time with absolute minimum...
+⚠️ Insufficient funds error at 0.06 gwei? This should cost <0.00002 ETH.
+Check EOA balance: ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH
     `);
-    
-    // ULTIMATE FALLBACK - absolute minimum values
-    try {
-      const tx = await this.signer.sendTransaction({
-        to: LIVE.SCW_ADDRESS,
-        data: scwCalldata,
-        gasLimit: 100_000n,
-        gasPrice: ethers.parseUnits('0.06', 'gwei')
-      });
-      
-      console.log(`⏳ Final attempt: ${tx.hash}`);
-      const receipt = await tx.wait();
-      
-      if (receipt.status === 1) {
-        console.log(`✅✅✅ BOOTSTRAP SUCCESS WITH MINIMUM GAS!`);
-        this.bootstrapCompleted = true;
-      }
-    } catch (finalError) {
-      console.error('❌ Final attempt failed:', finalError.message);
-    }
   }
 }
    
