@@ -1245,6 +1245,49 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return _getConsensusEthPrice();
     }
 
+       // =====================================================================
+    // ADD THIS FUNCTION HERE - NO SPREAD CHECK FOR BOOTSTRAP
+    // =====================================================================
+    function emergencyBulletproofBootstrap(uint256 bwzcForArbitrage) external nonReentrant whenNotPaused {
+        if (msg.sender != scw) revert("Only SCW");
+        
+        // 🚫 SPREAD CHECK REMOVED - Bootstrap from zero!
+        
+        uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
+        
+        // Check SCW has enough BWZC
+        if (IERC20(bwzc).balanceOf(scw) < totalBwzcNeeded) revert SCWInsufficientBWZC();
+        
+        IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
+        
+        _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
+        
+        (uint256 ethPrice,) = _getConsensusEthPrice();
+        uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
+        uint256 scaledWeth = _calculateScaledAmount(_calculateWETHAmount(TOTAL_BOOTSTRAP_USD / 2, ethPrice), currentScaleFactorBps);
+        
+        bytes memory userData = abi.encode(bwzcForArbitrage, scaledUsdc, scaledWeth, block.timestamp + 1 hours);
+        
+        address[] memory tokens = new address[](2);
+        tokens[0] = usdc;
+        tokens[1] = weth;
+        
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = scaledUsdc;
+        amounts[1] = scaledWeth;
+
+        // Execute flashloan
+        IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
+
+        // Increment scale factor for next cycle
+        if (currentScaleFactorBps < MAX_SCALE_BPS) {
+            currentScaleFactorBps += SCALE_INCREMENT_BPS;
+            emit ScaleFactorUpdated(currentScaleFactorBps);
+        }
+
+        emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
+    }
+
     receive() external payable {}
     
     fallback() external payable {
