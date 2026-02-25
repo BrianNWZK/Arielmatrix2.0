@@ -3,7 +3,7 @@
  *
  * SOVEREIGN ORCHESTRATION ENGINE v19.0 — "Sovereign MEV + Warehouse Integration"
  * - Preserves ALL v17.0 features with enhanced warehouse integration
- * - Wires MEV with Contract Address: 0x8c659BD828FFc5c8B07E3583142629551184D36E
+ * - Wires MEV with Contract Address: 0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f
  * - Implements dual paymaster wiring (A/B rotation) - NO BUNDLERS
  * - Enhanced bundle pipeline with contract execution hooks
  * - Strict nonce/ordering preserved
@@ -11,7 +11,7 @@
  * - Schedules 2-4 bundles per block with anti-bot hardening
  *
  * OPERATIONAL SEGREGATION:
- * - Warehouse Contract (0x8c659BD828FFc5c8B07E3583142629551184D36E):
+ * - Warehouse Contract (0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f):
  *   CONTRACT_OPERATIONS = ALL LOADS ["bootstrap_4M_flashloan", "balancer_uni_arbitrage", "v3_nft_fee_harvest", "pool_deepening_3pct"]
  *   
  * - MEV System:
@@ -62,7 +62,7 @@ const LIVE = {
   ACTIVE_PAYMASTER: 'A', // Rotates based on health
   
   // WAREHOUSE CONTRACT (CRITICAL INTEGRATION)
-  WAREHOUSE_CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x8c659BD828FFc5c8B07E3583142629551184D36E'),
+  WAREHOUSE_CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f'),
 
   TOKENS: {
     BWAEZI: addrStrict(process.env.BWAEZI_ADDRESS || '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'),
@@ -188,7 +188,7 @@ const LIVE = {
 
   // WAREHOUSE SPECIFIC CONFIGURATION
   WAREHOUSE: {
-    CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x8c659BD828FFc5c8B07E3583142629551184D36E'),
+    CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f'),
     
     // OPERATIONAL SEGREGATION
     CONTRACT_OPERATIONS: [
@@ -258,7 +258,7 @@ console.log(`
 ║         SOVEREIGN MEV v19.0 - OPERATIONAL SEPARATION         ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                                                               ║
-║  WAREHOUSE CONTRACT (0x8c659BD828FFc5c8B07E3583142629551184D36E):║
+║  WAREHOUSE CONTRACT (0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f):║
 ║  • Handles ALL flash loans & capital-intensive operations    ║
 ║  • Bootstrap, arbitrage with leverage, pool deepening        ║
 ║  • V3 NFT fee harvesting (capital safe)                      ║
