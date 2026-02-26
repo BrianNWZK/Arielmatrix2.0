@@ -3176,7 +3176,7 @@ async initialize() {
 
 
 // =====================================================================
-// ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT!
+// ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT! (FIXED)
 // =====================================================================
 
 try {
@@ -3212,16 +3212,20 @@ try {
     bootstrapCalldata
   ]);
 
-  // 3. SEND IT - NO GAS CALCULATIONS!
+  // 3. SEND IT - USING SIMPLE GAS PRICE (ethers v6 compatible)
   console.log(`📤 Sending transaction...`);
   console.log(`   From EOA: ${this.signer.address}`);
   console.log(`   To SCW: ${LIVE.SCW_ADDRESS}`);
 
+  // Get fee data the CORRECT way for ethers v6
+  const feeData = await this.provider.getFeeData();
+  const gasPrice = feeData.gasPrice || ethers.parseUnits('1', 'gwei');
+
   const tx = await this.signer.sendTransaction({
     to: LIVE.SCW_ADDRESS,
     data: scwCalldata,
-    gasLimit: 500_000,  // Just a safe number - contract will use what it needs
-    gasPrice: await this.provider.getGasPrice()  // Use current network gas price
+    gasLimit: 500_000,  // Just a safe number
+    gasPrice: gasPrice  // Fixed: using gasPrice from feeData
   });
 
   console.log(`⏳ Transaction: ${tx.hash}`);
@@ -3233,30 +3237,9 @@ try {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ CONTRACT BOOTSTRAPPED! ✅✅✅                        ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Transaction: ${tx.hash}                                      ║
-║  • Block: ${receipt.blockNumber}                                              ║
-║  • Gas used: ${receipt.gasUsed} (let contract decide!)                      ║
-║  • Status: CONTRACT NOW SELF-AUTOMATING                       ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
-    
     this.bootstrapCompleted = true;
-    
-    // Wait 30 seconds and check cycle count
-    console.log('⏳ Waiting 30 seconds for first cycle...');
-    await sleep(30000);
-    
-    const warehouseView = new ethers.Contract(
-      LIVE.WAREHOUSE_CONTRACT,
-      ['function cycleCount() view returns (uint256)'],
-      this.provider
-    );
-    const cycleCount = await warehouseView.cycleCount();
-    console.log(`📊 Contract cycle count: ${cycleCount}`);
-    
-  } else {
-    console.log('❌ Transaction failed - but contract will tell us why');
   }
 
 } catch (error) {
@@ -3295,213 +3278,9 @@ console.log('\n📈 Continuing with MEV system initialization...');
   // =====================================================================
   await this.checkContractCycleCount();
 
-// =====================================================================
-// ULTIMATE FIXED BOOTSTRAP - STOP WASTING GAS
-// =====================================================================
-
-if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
-  
-  console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP WITH FIXED SIGNATURE                           ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Step 1: Check paymaster state                             ║
-║  • Step 2: Only try paymaster if it's working                ║
-║  • Step 3: Skip SCW direct if paymaster fails with AA33      ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
 
   // =====================================================================
-  // STEP 1: CHECK PAYMASTER STATE
-  // =====================================================================
-  
-  console.log('\n🔍 CHECKING PAYMASTER STATE...');
-  
-  const paymasterContract = new ethers.Contract(
-    LIVE.PAYMASTER_A,
-    [
-      'function paused() view returns (bool)',
-      'function scw() view returns (address)'
-    ],
-    this.provider
-  );
-  
-  let paymasterWorking = false;
-  try {
-    const [paused, scwAddress] = await Promise.all([
-      paymasterContract.paused(),
-      paymasterContract.scw()
-    ]);
-    
-    console.log(`📊 Paymaster:
-      • Paused: ${paused ? '❌' : '✅'}
-      • SCW: ${scwAddress} ${scwAddress.toLowerCase() === LIVE.SCW_ADDRESS.toLowerCase() ? '✅' : '❌'}
-    `);
-    
-    paymasterWorking = !paused && scwAddress.toLowerCase() === LIVE.SCW_ADDRESS.toLowerCase();
-    
-  } catch (error) {
-    console.log(`❌ Cannot read paymaster state: ${error.message}`);
-  }
-
- // =====================================================================
-  // STEP 2: BUILD USEROP
-  // =====================================================================
-  
-  // ✅ DEFINE useWarehouse for this scope
-  const useWarehouse = true; // Set to true for warehouse operations
-  
-  const warehouseInterface = new ethers.Interface([
-    'function executeBulletproofBootstrap(uint256) external'
-  ]);
-  const bootstrapCalldata = warehouseInterface.encodeFunctionData(
-    'executeBulletproofBootstrap', 
-    [ethers.parseEther("1")]
-  );
-
-  const scwCalldata = this.aa.scwInterface.encodeFunctionData('execute', [
-    LIVE.WAREHOUSE_CONTRACT,
-    0n,
-    bootstrapCalldata
-  ]);
-
-  const entryPoint = new ethers.Contract(
-    LIVE.ENTRY_POINT,
-    ['function getNonce(address,uint192) view returns (uint256)'],
-    this.provider
-  );
-  
-  const baseNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
-  console.log(`📊 Current EntryPoint nonce: ${baseNonce.toString()}`);
-
-  const feeData = await this.provider.getFeeData();
-  const baseFee = feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
-  const basePriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei');
-
-  // ✅ NOW useWarehouse is defined and works
-  const callGasLimit = useWarehouse ? 400_000n : 250_000n;
-  const verificationGasLimit = 150_000n;
-  const preVerificationGas = 50_000n;
-
-  // =====================================================================
-  // STEP 3: OPTION 1 - WITH PAYMASTER (if working)
-  // =====================================================================
-  
-  let success = false;
-  let txHash = null;
-  let errorType = null;
-  
-  if (paymasterWorking) {
-    console.log('\n📌 OPTION 1: Attempting with Paymaster A...');
-    
-    const paymasterAndData = ethers.solidityPacked(
-      ['address', 'bytes'],
-      [LIVE.PAYMASTER_A, '0x']
-    );
-    
-    const userOpWithPaymaster = {
-      sender: LIVE.SCW_ADDRESS,
-      nonce: baseNonce,
-      initCode: '0x',
-      callData: scwCalldata,
-      callGasLimit: callGasLimit,
-      verificationGasLimit: verificationGasLimitPaymaster,
-      preVerificationGas: preVerificationGas,
-      maxFeePerGas: baseFee,
-      maxPriorityFeePerGas: basePriority,
-      paymasterAndData: paymasterAndData,
-      signature: '0x'
-    };
-
-    try {
-      console.log(`📤 Sending with paymaster using nonce ${baseNonce.toString()}...`);
-      const signed = await this.signUserOp(userOpWithPaymaster);
-      txHash = await this.sendUserOpDirect(signed);
-      
-      console.log(`✅✅✅ OPTION 1 SUCCESSFUL! ✅✅✅`);
-      success = true;
-      
-    } catch (error) {
-      errorType = error.message.includes('AA33') ? 'AA33' : 
-                  error.message.includes('AA24') ? 'AA24' : 'OTHER';
-      
-      console.log(`⚠️ Option 1 failed with ${errorType}`);
-      
-      if (errorType === 'AA33') {
-        console.log(`
-❌❌❌ PAYMASTER VALIDATION FAILED (AA33)
-   This will NEVER work until paymaster contract is fixed.
-   STOPPING - don't waste gas on Option 2.
-   
-   FIX THE PAYMASTER FIRST:
-   1. Check if paymaster is paused
-   2. Verify paymaster SCW address matches ${LIVE.SCW_ADDRESS}
-   3. Ensure paymaster has ETH deposit (it does: 0.0021 ETH)
-        `);
-        throw new Error('Paymaster validation failed - fix paymaster first');
-      }
-    }
-  }
-
-  // =====================================================================
-  // STEP 4: OPTION 2 - ONLY IF PAYMASTER ISN'T WORKING AND ERROR ISN'T AA33
-  // =====================================================================
-  
-  if (!success && errorType !== 'AA33') {
-    console.log('\n📌 OPTION 2: Attempting SCW direct payment...');
-
-    const freshNonceForOption2 = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
-    console.log(`📊 Fresh nonce for Option 2: ${freshNonceForOption2.toString()}`);
-
-    const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-    console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
-
-    const userOpWithoutPaymaster = {
-      sender: LIVE.SCW_ADDRESS,
-      nonce: freshNonceForOption2,
-      initCode: '0x',
-      callData: scwCalldata,
-      callGasLimit: callGasLimit,
-      verificationGasLimit: 300_000n,
-      preVerificationGas: preVerificationGas,
-      maxFeePerGas: baseFee,
-      maxPriorityFeePerGas: basePriority,
-      paymasterAndData: '0x',
-      signature: '0x'
-    };
-
-    try {
-      console.log(`📤 Sending with SCW paying gas using nonce ${freshNonceForOption2.toString()}...`);
-      const signedUserOpForOption2 = await this.signUserOp(userOpWithoutPaymaster);
-      txHash = await this.sendUserOpDirect(signedUserOpForOption2);
-
-      console.log(`✅✅✅ OPTION 2 SUCCESSFUL! ✅✅✅`);
-      console.log(`Tx: ${txHash}`);
-      console.log(`Nonce: ${freshNonceForOption2.toString()}`);
-      
-      success = true;
-
-    } catch (error) {
-      console.error(`❌ Option 2 failed:`, error.message);
-    }
-  }
-
-  // =====================================================================
-  // FINAL RESULT
-  // =====================================================================
-  
-  if (success) {
-    this.bootstrapCompleted = true;
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ CONTRACT IS NOW SELF-AUTOMATING ✅✅✅               ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-  }
-}
-   
-  // =====================================================================
-  // 4. 📈 MEV DOMAIN - COMPLETE SEPARATION
+  // 3. 📈 MEV DOMAIN - COMPLETE SEPARATION
   // =====================================================================
   this.dexRegistry = new DexAdapterRegistry(this.provider);
   this.oracles = new OracleAggregator(this.provider);
@@ -3527,7 +3306,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   this.gov.setStake(this.signer.address, LIVE.GOVERNANCE.MIN_STAKE_BWAEZI);
   
   // =====================================================================
-  // 5. BUNDLE MANAGEMENT - MEV ONLY
+  // 4. BUNDLE MANAGEMENT - MEV ONLY
   // =====================================================================
   this.bundleManager = new EnhancedBundleManager(
     this.aa, 
@@ -3540,7 +3319,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   this.blockCoordinator.start();
 
   // =====================================================================
-  // 6. 🌐 HYBRID HARVESTING SYSTEM - ACTIVATE
+  // 5. 🌐 HYBRID HARVESTING SYSTEM - ACTIVATE
   // =====================================================================
   this.harvestSafety = new HarvestSafetyOverride();
   console.log('✅ Harvest Safety Override initialized');
@@ -3593,7 +3372,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log('✅ Hybrid harvesting scheduled (every 30 minutes)');
   
   // =====================================================================
-  // 7. START MONITORING
+  // 6. START MONITORING
   // =====================================================================
   this._startMonitoring();
   this._startHeartbeat();
