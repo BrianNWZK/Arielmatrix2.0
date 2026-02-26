@@ -3174,7 +3174,58 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
+// =====================================================================
+// COMPLETE PRE-BOOTSTRAP CHECKS
+// =====================================================================
+console.log('\n🔍 Running pre-bootstrap checks...');
 
+const warehouseView = new ethers.Contract(
+  LIVE.WAREHOUSE_CONTRACT,
+  [
+    'function paused() view returns (bool)',
+    'function currentScaleFactorBps() view returns (uint256)',
+    'function getConsensusEthPrice() view returns (uint256 price, uint8 confidence)'
+  ],
+  this.provider
+);
+
+// 1. Check if paused
+const paused = await warehouseView.paused();
+console.log(`📊 Contract paused: ${paused}`);
+if (paused) throw new Error('Contract is paused');
+
+// 2. Check scale factor
+const scaleFactor = await warehouseView.currentScaleFactorBps();
+console.log(`📊 Current scale factor: ${scaleFactor} bps`);
+
+// 3. Check ETH price (tests oracle consensus)
+try {
+  const [ethPrice, confidence] = await warehouseView.getConsensusEthPrice();
+  console.log(`📊 ETH price: $${ethers.formatUnits(ethPrice, 8)} (confidence: ${confidence})`);
+} catch (e) {
+  console.log('❌ Oracle consensus failed - Chainlink feeds may be down');
+  throw new Error('Oracle issue - try again later');
+}
+
+// 4. Check SCW BWAEZI balance
+const bwaeziContract = new ethers.Contract(
+  LIVE.TOKENS.BWAEZI,
+  ['function balanceOf(address) view returns (uint256)'],
+  this.provider
+);
+const scwBwaeziBalance = await bwaeziContract.balanceOf(LIVE.SCW_ADDRESS);
+const totalBwzcNeeded = ethers.parseEther("170212"); // ~170,212 BWAEZI
+console.log(`📊 SCW BWAEZI balance: ${ethers.formatEther(scwBwaeziBalance)}`);
+console.log(`📊 Required for bootstrap: ${ethers.formatEther(totalBwzcNeeded)}`);
+console.log(`   ${scwBwaeziBalance >= totalBwzcNeeded ? '✅ Sufficient' : '❌ INSUFFICIENT'}`);
+
+if (scwBwaeziBalance < totalBwzcNeeded) {
+  throw new Error('Insufficient BWAEZI in SCW');
+}
+
+console.log('✅ All checks passed! Proceeding with bootstrap...');
+
+   
 // =====================================================================
 // ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT! (FIXED)
 // =====================================================================
