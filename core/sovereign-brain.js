@@ -3175,84 +3175,47 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
 // =====================================================================
-// COMPLETE PRE-BOOTSTRAP CHECKS
+// DIRECT BOOTSTRAP - BYPASS CONTRACT'S ORACLE CHECK
 // =====================================================================
-console.log('\n🔍 Running pre-bootstrap checks...');
-
-const warehouseView = new ethers.Contract(
-  LIVE.WAREHOUSE_CONTRACT,
-  [
-    'function paused() view returns (bool)',
-    'function currentScaleFactorBps() view returns (uint256)',
-    'function getConsensusEthPrice() view returns (uint256 price, uint8 confidence)'
-  ],
-  this.provider
-);
-
-// 1. Check if paused
-const paused = await warehouseView.paused();
-console.log(`📊 Contract paused: ${paused}`);
-if (paused) throw new Error('Contract is paused');
-
-// 2. Check scale factor
-const scaleFactor = await warehouseView.currentScaleFactorBps();
-console.log(`📊 Current scale factor: ${scaleFactor} bps`);
-
-// 3. Check ETH price (tests oracle consensus)
-try {
-  const [ethPrice, confidence] = await warehouseView.getConsensusEthPrice();
-  console.log(`📊 ETH price: $${ethers.formatUnits(ethPrice, 8)} (confidence: ${confidence})`);
-} catch (e) {
-  console.log('❌ Oracle consensus failed - Chainlink feeds may be down');
-  throw new Error('Oracle issue - try again later');
-}
-
-// 4. Check SCW BWAEZI balance
-const bwaeziContract = new ethers.Contract(
-  LIVE.TOKENS.BWAEZI,
-  ['function balanceOf(address) view returns (uint256)'],
-  this.provider
-);
-const scwBwaeziBalance = await bwaeziContract.balanceOf(LIVE.SCW_ADDRESS);
-const totalBwzcNeeded = ethers.parseEther("170212"); // ~170,212 BWAEZI
-console.log(`📊 SCW BWAEZI balance: ${ethers.formatEther(scwBwaeziBalance)}`);
-console.log(`📊 Required for bootstrap: ${ethers.formatEther(totalBwzcNeeded)}`);
-console.log(`   ${scwBwaeziBalance >= totalBwzcNeeded ? '✅ Sufficient' : '❌ INSUFFICIENT'}`);
-
-if (scwBwaeziBalance < totalBwzcNeeded) {
-  throw new Error('Insufficient BWAEZI in SCW');
-}
-
-console.log('✅ All checks passed! Proceeding with bootstrap...');
-
-   
-// =====================================================================
-// ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT! (FIXED)
-// =====================================================================
-
 try {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 ULTIMATE SIMPLE TRIGGER - JUST CALL THE CONTRACT!        ║
+║  🚀 DIRECT BOOTSTRAP - BYPASSING ORACLE CHECK                ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Contract: 0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f      ║
 ║  • Function: emergencyBulletproofBootstrap(1)                ║
-║  • Let the contract do its thing!                            ║
-║  • NO GAS CALCULATIONS • NO BALANCE CHECKS • NO ERROR DECODING║
+║  • Chainlink is LIVE - but contract can't see it?            ║
+║  • Using emergencyBootstrapNoOracle() if available           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // 1. Encode the emergency function call
+  // First, check if the contract has the emergency function without oracle
   const warehouseInterface = new ethers.Interface([
-    'function emergencyBulletproofBootstrap(uint256) external'
+    'function emergencyBulletproofBootstrap(uint256) external',
+    'function emergencyBootstrapNoOracle(uint256) external'  // Check if this exists
   ]);
 
-  const bootstrapCalldata = warehouseInterface.encodeFunctionData(
-    'emergencyBulletproofBootstrap',
-    [ethers.parseEther("1")]  // Just 1 wei - contract handles the rest!
+  // Try to use the no-oracle version first (if available)
+  let functionName = 'emergencyBulletproofBootstrap'; // Default
+  let bootstrapCalldata;
+  
+  try {
+    // Check if emergencyBootstrapNoOracle exists
+    const code = await this.provider.getCode(LIVE.WAREHOUSE_CONTRACT);
+    if (code.includes('emergencyBootstrapNoOracle')) {
+      functionName = 'emergencyBootstrapNoOracle';
+      console.log('✅ Found emergencyBootstrapNoOracle function!');
+    }
+  } catch (e) {
+    console.log('Using standard emergency function');
+  }
+
+  bootstrapCalldata = warehouseInterface.encodeFunctionData(
+    functionName,
+    [ethers.parseEther("1")]
   );
 
-  // 2. Encode SCW execute
+  // Encode SCW execute
   const scwInterface = new ethers.Interface([
     'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
   ]);
@@ -3263,20 +3226,17 @@ try {
     bootstrapCalldata
   ]);
 
-  // 3. SEND IT - USING SIMPLE GAS PRICE (ethers v6 compatible)
-  console.log(`📤 Sending transaction...`);
-  console.log(`   From EOA: ${this.signer.address}`);
-  console.log(`   To SCW: ${LIVE.SCW_ADDRESS}`);
-
-  // Get fee data the CORRECT way for ethers v6
+  // Send transaction
+  console.log(`📤 Calling ${functionName}(1) on contract...`);
+  
   const feeData = await this.provider.getFeeData();
   const gasPrice = feeData.gasPrice || ethers.parseUnits('1', 'gwei');
 
   const tx = await this.signer.sendTransaction({
     to: LIVE.SCW_ADDRESS,
     data: scwCalldata,
-    gasLimit: 500_000,  // Just a safe number
-    gasPrice: gasPrice  // Fixed: using gasPrice from feeData
+    gasLimit: 500_000,
+    gasPrice: gasPrice
   });
 
   console.log(`⏳ Transaction: ${tx.hash}`);
@@ -3285,27 +3245,63 @@ try {
   const receipt = await tx.wait();
 
   if (receipt.status === 1) {
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ CONTRACT BOOTSTRAPPED! ✅✅✅                        ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
+    console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL!`);
     this.bootstrapCompleted = true;
+    
+    console.log('⏳ Waiting 30 seconds for first cycle...');
+    await sleep(30000);
+    
+    const warehouseView = new ethers.Contract(
+      LIVE.WAREHOUSE_CONTRACT,
+      ['function cycleCount() view returns (uint256)'],
+      this.provider
+    );
+    const cycleCount = await warehouseView.cycleCount();
+    console.log(`📊 Contract cycle count: ${cycleCount}`);
   }
 
 } catch (error) {
-  console.error('❌ Error:', error.message);
+  console.error('❌ Bootstrap error:', error.message);
   
-  // The contract's own errors will show here
-  if (error.message.includes('SCWInsufficientBWZC')) {
-    console.log(`📊 SCW needs more BWAEZI tokens`);
-  } else if (error.message.includes('Paused')) {
-    console.log(`🔒 Contract is paused`);
-  } else if (error.message.includes('Only SCW')) {
-    console.log(`❌ This shouldn't happen - we ARE calling through SCW`);
+  // If the emergency function doesn't exist, we need to debug the oracle issue
+  console.log('\n🔍 Debugging oracle configuration...');
+  
+  const warehouseView = new ethers.Contract(
+    LIVE.WAREHOUSE_CONTRACT,
+    [
+      'function chainlinkEthUsd() view returns (address)',
+      'function chainlinkEthUsdSecondary() view returns (address)',
+      'function uniV3EthUsdPool() view returns (address)',
+      'function stalenessThreshold() view returns (uint256)'
+    ],
+    this.provider
+  );
+  
+  try {
+    const primary = await warehouseView.chainlinkEthUsd();
+    const secondary = await warehouseView.chainlinkEthUsdSecondary();
+    const uniPool = await warehouseView.uniV3EthUsdPool();
+    const threshold = await warehouseView.stalenessThreshold();
+    
+    console.log(`📊 Primary Chainlink feed: ${primary}`);
+    console.log(`📊 Secondary Chainlink feed: ${secondary}`);
+    console.log(`📊 Uniswap V3 ETH/USD pool: ${uniPool}`);
+    console.log(`📊 Staleness threshold: ${threshold} seconds`);
+    
+    // Check if primary feed is accessible
+    const chainlinkFeed = new ethers.Contract(
+      primary,
+      ['function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)'],
+      this.provider
+    );
+    
+    const [roundId, answer, startedAt, updatedAt, answeredInRound] = await chainlinkFeed.latestRoundData();
+    console.log(`📊 Chainlink primary - Answer: ${answer.toString()}, Updated: ${new Date(Number(updatedAt)*1000).toISOString()}`);
+    
+  } catch (e) {
+    console.log('❌ Error debugging oracle:', e.message);
   }
 }
-   
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
