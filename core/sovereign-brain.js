@@ -3177,6 +3177,7 @@ async initialize() {
 
 // =====================================================================
 // ULTIMATE BOOTSTRAP - FIXES ORACLE FOR NOW AND FOREVER
+// WITH PROPER CONFIRMATION & RPC HEALTH CHECKS
 // =====================================================================
 async function ultimateBootstrap() {
   try {
@@ -3198,6 +3199,24 @@ async function ultimateBootstrap() {
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
+    // =====================================================================
+    // RPC HEALTH CHECK
+    // =====================================================================
+    console.log('\n🔍 Checking RPC health...');
+    
+    const network = await this.provider.getNetwork();
+    const blockNumber = await this.provider.getBlockNumber();
+    console.log(`   ✅ Connected to network: ${network.name} (chainId: ${network.chainId})`);
+    console.log(`   ✅ Current block: ${blockNumber}`);
+    
+    // Check signer balance
+    const balance = await this.provider.getBalance(this.signer.address);
+    console.log(`   ✅ Signer balance: ${ethers.formatEther(balance)} ETH`);
+    
+    if (balance < ethers.parseEther('0.01')) {
+      throw new Error(`Insufficient EOA balance: ${ethers.formatEther(balance)} ETH (need 0.01 ETH)`);
+    }
+
     const warehouseContract = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       [
@@ -3213,10 +3232,19 @@ async function ultimateBootstrap() {
         'function paused() view returns (bool)',
         'function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)',
         'function getCurrentSpread() view returns (uint256)',
-        'function getMinRequiredSpread() view returns (uint256)'
+        'function getMinRequiredSpread() view returns (uint256)',
+        'function cycleCount() view returns (uint256)'
       ],
       this.signer
     );
+
+    // Check if already bootstrapped
+    const currentCycleCount = await warehouseContract.cycleCount();
+    if (currentCycleCount > 0) {
+      console.log(`\n✅ Contract already bootstrapped! Cycle count: ${currentCycleCount}`);
+      this.bootstrapCompleted = true;
+      return;
+    }
 
     // =====================================================================
     // PHASE 1: PRE-BOOTSTRAP ORACLE FIXES
@@ -3228,8 +3256,10 @@ async function ultimateBootstrap() {
     const paused = await warehouseContract.paused();
     if (paused) {
       console.log('⚠️ Contract is paused - unpausing...');
-      await warehouseContract.adminSetPaused(false);
-      console.log('✅ Contract unpaused');
+      const unpauseTx = await warehouseContract.adminSetPaused(false);
+      console.log(`   ⏳ Unpause tx: ${unpauseTx.hash}`);
+      await unpauseTx.wait();
+      console.log('   ✅ Contract unpaused');
     }
 
     // FIX 1: Set secondary oracle feed
@@ -3242,12 +3272,29 @@ async function ultimateBootstrap() {
     console.log(`   Secondary: ${secondary}`);
 
     if (secondary === '0x0000000000000000000000000000000000000000') {
+      console.log('   ⚠️ Secondary not set - sending transaction...');
+      
       const secondaryKey = ethers.encodeBytes32String('chainlinkEthUsdSecondary');
       const primaryFeed = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
 
-      const tx1 = await warehouseContract.adminSetAddress(secondaryKey, primaryFeed);
-      console.log(`   ⏳ Tx: ${tx1.hash}`);
-      await tx1.wait();
+      const tx1 = await warehouseContract.adminSetAddress(secondaryKey, primaryFeed, {
+        gasLimit: 150_000,
+        gasPrice: ethers.parseUnits('0.1', 'gwei')
+      });
+      
+      console.log(`   ⏳ Tx hash: ${tx1.hash}`);
+      console.log(`   🔍 https://etherscan.io/tx/${tx1.hash}`);
+      console.log(`   ⏳ Waiting for confirmation (this may take 30-60 seconds)...`);
+      
+      // Wait with timeout
+      const receipt1 = await Promise.race([
+        tx1.wait(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Transaction timeout after 60 seconds')), 60000)
+        )
+      ]);
+      
+      console.log(`   ✅ Confirmed in block ${receipt1.blockNumber}`);
       
       secondary = await warehouseContract.chainlinkEthUsdSecondary();
       console.log(`   ✅ Secondary now: ${secondary}`);
@@ -3262,11 +3309,27 @@ async function ultimateBootstrap() {
     console.log(`   Current: ${threshold} seconds`);
     
     if (threshold > 600) {
+      console.log(`   ⚠️ Threshold too high - reducing to 600s...`);
+      
       const thresholdKey = ethers.encodeBytes32String('stalenessThreshold');
       
-      const tx2 = await warehouseContract.adminSetParameter(thresholdKey, 600);
-      console.log(`   ⏳ Tx: ${tx2.hash}`);
-      await tx2.wait();
+      const tx2 = await warehouseContract.adminSetParameter(thresholdKey, 600, {
+        gasLimit: 150_000,
+        gasPrice: ethers.parseUnits('0.1', 'gwei')
+      });
+      
+      console.log(`   ⏳ Tx hash: ${tx2.hash}`);
+      console.log(`   🔍 https://etherscan.io/tx/${tx2.hash}`);
+      console.log(`   ⏳ Waiting for confirmation...`);
+      
+      const receipt2 = await Promise.race([
+        tx2.wait(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Transaction timeout after 60 seconds')), 60000)
+        )
+      ]);
+      
+      console.log(`   ✅ Confirmed in block ${receipt2.blockNumber}`);
       
       const newThreshold = await warehouseContract.stalenessThreshold();
       console.log(`   ✅ Staleness now: ${newThreshold}s`);
@@ -3295,6 +3358,24 @@ async function ultimateBootstrap() {
     console.log('\n🚀 PHASE 2: Bootstrap Execution');
     console.log('===============================');
 
+    // Check SCW BWAEZI balance first (optional but good to verify)
+    const bwaeziContract = new ethers.Contract(
+      LIVE.TOKENS.BWAEZI,
+      ['function balanceOf(address) view returns (uint256)'],
+      this.provider
+    );
+    
+    const scwBalance = await bwaeziContract.balanceOf(LIVE.SCW_ADDRESS);
+    const requiredBalance = ethers.parseEther('39130.44');
+    
+    console.log(`📊 SCW BWAEZI balance: ${ethers.formatEther(scwBalance)}`);
+    
+    if (scwBalance < requiredBalance) {
+      console.log(`   ⚠️ Balance lower than recommended (${ethers.formatEther(requiredBalance)} recommended)`);
+    } else {
+      console.log(`   ✅ Balance sufficient`);
+    }
+
     const warehouseInterface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
     ]);
@@ -3316,7 +3397,7 @@ async function ultimateBootstrap() {
 
     // Use current gas price with conservative limit
     const feeData = await this.provider.getFeeData();
-    const gasPrice = feeData.gasPrice || ethers.parseUnits('0.06', 'gwei');
+    const gasPrice = feeData.gasPrice || ethers.parseUnits('0.1', 'gwei');
     const gasLimit = 500_000n;
 
     console.log(`📤 Sending bootstrap transaction...`);
@@ -3333,8 +3414,14 @@ async function ultimateBootstrap() {
 
     console.log(`⏳ Transaction: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+    console.log(`⏳ Waiting for bootstrap confirmation (this may take 30-60 seconds)...`);
 
-    const receipt = await tx.wait();
+    const receipt = await Promise.race([
+      tx.wait(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Bootstrap transaction timeout after 120 seconds')), 120000)
+      )
+    ]);
 
     if (receipt.status === 1) {
       console.log(`
@@ -3378,6 +3465,13 @@ async function ultimateBootstrap() {
         console.log(`   ✅ First cycle COMPLETE!`);
       } else {
         console.log(`   ⚠️ No cycle yet - waiting longer...`);
+        
+        // Wait another minute
+        console.log('⏳ Waiting additional 60 seconds...');
+        await new Promise(resolve => setTimeout(resolve, 60000));
+        
+        const newCycleCount = await warehouseView.cycleCount();
+        console.log(`📊 Cycle count after 90s: ${newCycleCount}`);
       }
 
       // Check spread
@@ -3401,7 +3495,7 @@ async function ultimateBootstrap() {
       } catch (e) {
         console.log(`⚠️ Oracle issue after bootstrap: ${e.message}`);
         console.log(`   • This could affect future cycles`);
-        console.log(`   • Consider adding price override function`);
+        console.log(`   • Consider setting fixed price override`);
       }
 
       if (cycleCount > 0) {
@@ -3411,25 +3505,41 @@ async function ultimateBootstrap() {
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Bootstrap: SUCCESSFUL                                     ║
 ║  • First cycle: COMPLETE (${cycleCount})                                   ║
-║  • Oracle: ${confidence ? 'HEALTHY' : 'MONITOR'}                                        ║
 ║  • Contract: SELF-AUTOMATING                                  ║
 ║                                                               ║
 ║  Next steps:                                                 ║
 ║  1. Monitor cycles over next few hours                       ║
 ║  2. Check spread development                                 ║
-║  3. Watch for arbitrage opportunities                        ║
+║  3. MEV system will handle arbitrage                         ║
 ╚═══════════════════════════════════════════════════════════════╝
         `);
       }
 
     } else {
       console.log('❌ Bootstrap transaction failed');
+      
+      // Try to get revert reason
+      try {
+        const callResult = await this.provider.call({
+          to: LIVE.SCW_ADDRESS,
+          data: scwCalldata
+        });
+        console.log('Call result:', callResult);
+      } catch (callError) {
+        console.log('Revert reason:', callError.message);
+      }
     }
 
   } catch (error) {
     console.error('❌ Error:', error.message);
     
-    if (error.message.includes('OracleConsensusFailed')) {
+    if (error.message.includes('timeout')) {
+      console.log(`
+⚠️ Transaction timed out - but may still confirm.
+   Check Etherscan for the transaction hash.
+   If confirmed after timeout, the bootstrap may have succeeded.
+      `);
+    } else if (error.message.includes('OracleConsensusFailed')) {
       console.log(`
 ⚠️ Oracle consensus failed DURING bootstrap.
    This is OK - emergency function bypasses it.
@@ -3438,13 +3548,14 @@ async function ultimateBootstrap() {
     } else if (error.message.includes('insufficient funds')) {
       console.log(`
 ⚠️ EOA needs more ETH for gas.
-   Send at least 0.01 ETH to: ${this.signer.address}
+   Send at least 0.0001 ETH to: ${this.signer.address}
       `);
-    } else if (error.message.includes('SCWInsufficientBWZC')) {
+    } else if (error.message.includes('nonce')) {
+      const currentNonce = await this.provider.getTransactionCount(this.signer.address);
       console.log(`
-⚠️ SCW BWAEZI balance too low.
-   Current: Check with Etherscan
-   Required: ~39,130.44 BWAEZI
+⚠️ Nonce issue detected. Current nonce: ${currentNonce}
+   Your previous transaction may be stuck.
+   Wait 5 minutes for it to clear or use a higher gas price.
       `);
     }
   }
@@ -3452,8 +3563,6 @@ async function ultimateBootstrap() {
 
 // Execute
 await ultimateBootstrap.call(this);
-
-   
 
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
