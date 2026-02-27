@@ -3434,6 +3434,173 @@ async function ultimateBootstrap() {
 await ultimateBootstrap.call(this);
 
 
+
+// =====================================================================
+// 🔍 PASTE THE DEBUG FUNCTION RIGHT HERE - AFTER BOOTSTRAP EXECUTION
+// =====================================================================
+async function debugBootstrapFailure() {
+  try {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🔍 DEBUGGING FAILED BOOTSTRAP TRANSACTION                   ║
+╠═══════════════════════════════════════════════════════════════╣
+║  Tx: 0xe8a3e4ab3df00d0c54b9cb056532b21f9930404e7482a9c1b3f4a94f264582bf ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+
+    // Recreate the failed call to get revert reason
+    const warehouseInterface = new ethers.Interface([
+      'function emergencyBulletproofBootstrap(uint256) external'
+    ]);
+
+    const bootstrapCalldata = warehouseInterface.encodeFunctionData(
+      'emergencyBulletproofBootstrap',
+      [ethers.parseEther("1")]
+    );
+
+    const scwInterface = new ethers.Interface([
+      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+
+    const scwCalldata = scwInterface.encodeFunctionData('execute', [
+      LIVE.WAREHOUSE_CONTRACT,
+      0n,
+      bootstrapCalldata
+    ]);
+
+    // Simulate the call to get revert reason
+    console.log('🔍 Simulating transaction to get revert reason...');
+    
+    try {
+      await this.provider.call({
+        to: LIVE.SCW_ADDRESS,
+        data: scwCalldata
+      });
+      console.log('✅ Simulation succeeded (unexpected - tx should have worked)');
+    } catch (simError) {
+      console.log('❌ Simulation failed with:');
+      console.log(simError.message);
+      
+      // Try to decode the revert reason
+      if (simError.message.includes('0x')) {
+        const revertData = simError.message.match(/0x[a-fA-F0-9]+/)?.[0];
+        if (revertData) {
+          try {
+            // Try to decode as custom error
+            const iface = new ethers.Interface([
+              'error SpreadTooLow()',
+              'error SCWInsufficientBWZC()',
+              'error Paused()',
+              'error SwapFailed()',
+              'error OracleConsensusFailed()',
+              'error DeviationTooHigh()',
+              'error UniswapV3QueryFailed()',
+              'error InsufficientBalancerLiquidity()'
+            ]);
+            
+            const decoded = iface.parseError(revertData);
+            if (decoded) {
+              console.log(`\n📋 REVERT REASON: ${decoded.name}`);
+              console.log(`   Args:`, decoded.args);
+            } else {
+              console.log('Unknown custom error');
+            }
+          } catch {
+            console.log('Could not decode custom error');
+          }
+        }
+      }
+    }
+
+    // Check contract state
+    console.log('\n📊 Checking contract state...');
+    
+    const warehouseView = new ethers.Contract(
+      LIVE.WAREHOUSE_CONTRACT,
+      [
+        'function paused() view returns (bool)',
+        'function cycleCount() view returns (uint256)',
+        'function getCurrentSpread() view returns (uint256)',
+        'function getMinRequiredSpread() view returns (uint256)',
+        'function chainlinkEthUsdSecondary() view returns (address)',
+        'function stalenessThreshold() view returns (uint256)',
+        'function BALANCER_PRICE_USD() view returns (uint256)',
+        'function UNIV3_TARGET_PRICE_USD() view returns (uint256)'
+      ],
+      this.provider
+    );
+
+    const [
+      paused, 
+      cycleCount, 
+      spread, 
+      minSpread,
+      secondary,
+      threshold,
+      balancerPrice,
+      univ3Target
+    ] = await Promise.all([
+      warehouseView.paused(),
+      warehouseView.cycleCount(),
+      warehouseView.getCurrentSpread(),
+      warehouseView.getMinRequiredSpread(),
+      warehouseView.chainlinkEthUsdSecondary(),
+      warehouseView.stalenessThreshold(),
+      warehouseView.BALANCER_PRICE_USD(),
+      warehouseView.UNIV3_TARGET_PRICE_USD()
+    ]);
+
+    console.log(`   • Paused: ${paused}`);
+    console.log(`   • Cycle count: ${cycleCount}`);
+    console.log(`   • Spread: ${spread}/${minSpread} bps`);
+    console.log(`   • Secondary oracle: ${secondary}`);
+    console.log(`   • Staleness threshold: ${threshold}s`);
+    console.log(`   • Balancer price: ${balancerPrice}`);
+    console.log(`   • UniV3 target: ${univ3Target}`);
+
+    // Check SCW BWAEZI balance
+    const bwaeziContract = new ethers.Contract(
+      LIVE.TOKENS.BWAEZI,
+      ['function balanceOf(address) view returns (uint256)'],
+      this.provider
+    );
+    
+    const scwBalance = await bwaeziContract.balanceOf(LIVE.SCW_ADDRESS);
+    const requiredBalance = ethers.parseEther('39130.44');
+    
+    console.log(`\n💰 SCW BWAEZI balance: ${ethers.formatEther(scwBalance)}`);
+    console.log(`   Required: ${ethers.formatEther(requiredBalance)}`);
+    
+    if (scwBalance < requiredBalance) {
+      console.log(`   ❌ INSUFFICIENT BALANCE! Need ${ethers.formatEther(requiredBalance - scwBalance)} more`);
+    } else {
+      console.log(`   ✅ Balance sufficient`);
+    }
+
+    // Try to get ETH price to see if oracle works
+    try {
+      const priceView = new ethers.Contract(
+        LIVE.WAREHOUSE_CONTRACT,
+        ['function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)'],
+        this.provider
+      );
+      
+      const [price, confidence] = await priceView.getConsensusEthPrice();
+      console.log(`\n📡 Oracle working! ETH price: $${ethers.formatEther(price)}`);
+      console.log(`   Confidence: ${confidence} sources`);
+    } catch (e) {
+      console.log(`\n📡 Oracle error: ${e.message}`);
+    }
+
+  } catch (error) {
+    console.error('Debug error:', error.message);
+  }
+}
+
+// Execute debug
+await debugBootstrapFailure.call(this);
+   
+
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
