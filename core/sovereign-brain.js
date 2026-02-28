@@ -549,6 +549,8 @@ class DualPaymasterRouter {
   }
 }
 
+
+
 /* =========================================================================
    Direct OmniExecutionAA (NO BUNDLERS - DIRECT PAYMASTER) - FIXED v19.4
    
@@ -594,6 +596,66 @@ class DirectOmniExecutionAA {
     }
   }
 
+
+// =======================================================================
+// BOOTSTRAP-SPECIFIC METHOD - NO PAYMASTER, DIRECT SCW PAYMENT
+// =======================================================================
+async executeBootstrapDirect(target, calldata, description = 'bootstrap') {
+  // Get fresh nonce from EntryPoint
+  const nonce = await this.nonceLock.acquire();
+  
+  // Encode SCW.execute()
+  const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
+    target,
+    0n,
+    calldata
+  ]);
+  
+  console.log(`📊 Bootstrap - No paymaster, SCW pays gas directly`);
+  
+  const feeData = await this.provider.getFeeData();
+  
+  // Conservative gas limits for bootstrap
+  const callGasLimit = 800_000n;
+  const verificationGasLimit = 300_000n;
+  const preVerificationGas = 100_000n;
+  
+  const userOp = {
+    sender: this.scw,
+    nonce: nonce,
+    initCode: '0x',
+    callData: scwCalldata,
+    callGasLimit: callGasLimit,
+    verificationGasLimit: verificationGasLimit,
+    preVerificationGas: preVerificationGas,
+    maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei'),
+    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'),
+    paymasterAndData: '0x',  // ← CRITICAL: NO PAYMASTER!
+    signature: '0x'
+  };
+  
+  console.log(`📦 Bootstrap UserOp built:`);
+  console.log(`  • nonce: ${nonce.toString()}`);
+  console.log(`  • callGasLimit: ${callGasLimit}`);
+  console.log(`  • paymasterAndData: NONE`);
+  
+  // Sign the UserOp using your existing signUserOp method
+  const signed = await this.signUserOp(userOp);
+  
+  // Send using your existing sendUserOpDirect method
+  const txHash = await this.sendUserOpDirect(signed);
+  
+  this.nonceLock.release();
+  
+  return {
+    userOpHash: txHash,
+    desc: description,
+    nonce: nonce.toString(),
+    paymasterUsed: 'none'
+  };
+}
+
+   
  // =======================================================================
 // FIXED: PROPER EIP-712 SIGNING WITH NO FALLBACK
 // =======================================================================
@@ -3175,29 +3237,27 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
 // =====================================================================
-// FIXED BOOTSTRAP - USING EXISTING buildAndSendUserOp METHOD
+// 🚀 BOOTSTRAP - USING DEDICATED BOOTSTRAP METHOD (NO PAYMASTER)
 // =====================================================================
 await this.checkContractCycleCount();
 
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP - USING buildAndSendUserOp (NO PAYMASTER)      ║
+║  🚀 BOOTSTRAP - DEDICATED METHOD (NO PAYMASTER)              ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Using your existing AA class method                        ║
+║  • Using executeBootstrapDirect method                        ║
 ║  • SCW pays gas directly                                      ║
 ║  • No paymaster during bootstrap                              ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // =================================================================
-  // CHECK SCW ETH BALANCE
-  // =================================================================
+  // Check SCW ETH balance
   const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
   console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
 
   // Estimate required gas (conservative)
-  const estimatedGas = ethers.parseEther('0.0015'); // ~$3 at current prices
+  const estimatedGas = ethers.parseEther('0.0015');
   
   if (scwBalance < estimatedGas) {
     console.error(`❌ INSUFFICIENT SCW BALANCE!`);
@@ -3207,19 +3267,11 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     throw new Error('Insufficient SCW balance for gas');
   }
 
-  // =================================================================
-  // CREATE AA INSTANCE (needed for buildAndSendUserOp)
-  // =================================================================
-  
   // Create AA instance WITHOUT paymaster for bootstrap
-  // We'll pass null for paymasterRouter since we're not using it
+  // Pass null for paymasterRouter since we're not using it
   this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
   
-  // =================================================================
-  // BUILD BOOTSTRAP CALLLDATA
-  // =================================================================
-  
-  // Use emergency version with NO spread check
+  // Build bootstrap calldata using emergency function (no spread check)
   const warehouseInterface = new ethers.Interface([
     'function emergencyBulletproofBootstrap(uint256) external'
   ]);
@@ -3229,31 +3281,19 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     [ethers.parseEther("1")]  // 1 wei - symbolic amount
   );
 
-  // =================================================================
-  // USE buildAndSendUserOp - THIS METHOD EXISTS IN YOUR CLASS!
-  // =================================================================
-  
   try {
-    console.log('\n📤 Calling buildAndSendUserOp for bootstrap...');
+    console.log('\n📤 Calling executeBootstrapDirect...');
     
-    // This method already handles:
-    // - Getting fresh nonce
-    // - Building the UserOp
-    // - Signing with EIP-712
-    // - Sending via EntryPoint
-    // - Releasing nonce
-    
-    const result = await this.aa.buildAndSendUserOp(
+    const result = await this.aa.executeBootstrapDirect(
       LIVE.WAREHOUSE_CONTRACT,
       bootstrapCalldata,
-      'warehouse_bootstrap',
-      true  // useWarehouse = true (affects gas limits)
+      'warehouse_bootstrap'
     );
     
     console.log(`\n✅✅✅ BOOTSTRAP TRANSACTION SENT! ✅✅✅`);
     console.log(`Tx: ${result.userOpHash}`);
     console.log(`Nonce: ${result.nonce}`);
-    console.log(`Method: buildAndSendUserOp (SCW direct payment)`);
+    console.log(`Method: executeBootstrapDirect (SCW direct payment)`);
     
     this.bootstrapCompleted = true;
     
@@ -3301,13 +3341,16 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     } else if (error.message.includes('AA24')) {
       console.error(`
 🔍 AA24 ERROR: Signature error
-   • Check signUserOp method - type name should be "UserOperation"
+   • Your signUserOp method looks correct now
+   • Check that chainId matches (should be 1 for mainnet)
       `);
     }
     
     throw error;
   }
 }
+
+
 
 // =====================================================================
 // CONTINUE WITH NORMAL INITIALIZATION
