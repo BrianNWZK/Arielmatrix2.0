@@ -3176,117 +3176,125 @@ async initialize() {
 
 
 // =====================================================================
-// FINAL BOOTSTRAP - PREVENT REPLACEMENT
+// FINAL BOOTSTRAP - WITH ORACLE HEALTH CHECK + RETRY (POLISHED)
 // =====================================================================
-async function finalBootstrapNoReplace() {
+async function finalBootstrap() {
   try {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 FINAL BOOTSTRAP - PREVENT REPLACEMENT                    ║
+║ 🚀 FINAL BOOTSTRAP - ORACLE HEALTH CHECK + RETRY              ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
-    // First check if already bootstrapped
     const warehouse = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
-      ['function cycleCount() view returns (uint256)'],
+      ['function cycleCount() view returns (uint256)',
+       'function getConsensusEthPrice() view returns (uint256,uint8)'],
       this.provider
     );
-    
+
+    // Step 1: Already bootstrapped check
     const currentCycle = await warehouse.cycleCount();
-    if (currentCycle > 0) {
-      console.log(`✅ Contract already bootstrapped! Cycle count: ${currentCycle}`);
+    if (currentCycle > 0n) {
+      console.log(`✅ Already bootstrapped! Cycle count: ${currentCycle}`);
       return;
     }
 
-    // Get current gas price and use HIGHER amount
-    const feeData = await this.provider.getFeeData();
-    const gasPrice = feeData.gasPrice * 200n / 100n; // DOUBLE the current price
+    // Step 2: Wait for oracle to settle
+    console.log('\n⏳ Waiting 60 seconds for oracle feeds to become fresh...');
+    await new Promise(r => setTimeout(r, 60000));
 
-    console.log(`\n📊 Current gas price: ${ethers.formatUnits(feeData.gasPrice, 'gwei')} gwei`);
-    console.log(`📊 Using gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei (2x)`);
-    console.log(`📊 Max cost: ${ethers.formatEther(500_000n * gasPrice)} ETH`);
+    // Step 3: Oracle health check (retry up to 3 times)
+    console.log('\n🔍 Checking oracle health (max 3 attempts)...');
+    let oracleHealthy = false;
+    let price, confidence;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const result = await warehouse.getConsensusEthPrice();
+        price = result[0];
+        confidence = result[1];
+        console.log(`Attempt ${attempt}: Price $${ethers.formatEther(price)}, Confidence ${confidence}`);
+        if (price > 1000n * 10n**18n && confidence >= 2) { // $1000+ with decent confidence
+          oracleHealthy = true;
+          break;
+        }
+      } catch (e) {
+        console.log(`Attempt ${attempt} failed: ${e.message}`);
+      }
+      await new Promise(r => setTimeout(r, 15000)); // 15s between attempts
+    }
 
+    if (!oracleHealthy) {
+      throw new Error('Oracle still unhealthy after retries - aborting to prevent revert');
+    }
+
+    console.log(`✅ Oracle confirmed healthy! Price: $${ethers.formatEther(price)}`);
+
+    // Step 4: Bootstrap
+    console.log('\n🚀 Sending bootstrap transaction...');
     const scwInterface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
     ]);
-
     const warehouseInterface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
     ]);
-
     const bootstrapCalldata = warehouseInterface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
-      [ethers.parseEther("1")] // 1 wei to trigger
+      [ethers.parseEther("1")]
     );
-
     const scwCalldata = scwInterface.encodeFunctionData('execute', [
       LIVE.WAREHOUSE_CONTRACT,
       0n,
       bootstrapCalldata
     ]);
 
-    // Get fresh nonce
+    const feeData = await this.provider.getFeeData();
+    const gasPrice = feeData.gasPrice * 200n / 100n; // 2x current price
     const nonce = await this.signer.getNonce();
-    console.log(`📊 Using nonce: ${nonce}`);
-
-    console.log(`\n📤 Sending bootstrap transaction to SCW...`);
-    console.log(`   • To: ${LIVE.SCW_ADDRESS}`);
-    console.log(`   • Method: execute → emergencyBulletproofBootstrap(1)`);
 
     const tx = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,  // ← CRITICAL - goes to SCW, not warehouse
+      to: LIVE.SCW_ADDRESS,
       data: scwCalldata,
       gasLimit: 500_000n,
-      gasPrice: gasPrice,
-      nonce: nonce
+      gasPrice,
+      nonce
     });
 
-    console.log(`\n⏳ Tx: ${tx.hash}`);
+    console.log(`⏳ Tx: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-    
-    console.log(`⏳ Waiting for confirmation...`);
+
     const receipt = await tx.wait();
-    
+
     if (receipt.status === 1) {
-      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅`);
-      console.log(`   Block: ${receipt.blockNumber}`);
-      console.log(`   Gas used: ${receipt.gasUsed}`);
-      
-      // Wait for first cycle
-      console.log(`\n⏳ Waiting 2 minutes for first cycle...`);
+      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL!`);
+      console.log(`Block: ${receipt.blockNumber}, Gas used: ${receipt.gasUsed}`);
+
+      console.log('\n⏳ Waiting 2 minutes for first cycle...');
       await new Promise(resolve => setTimeout(resolve, 120000));
-      
+
       const newCycle = await warehouse.cycleCount();
-      console.log(`📊 Cycle count: ${newCycle}`);
-      
-      if (newCycle > 0) {
+      console.log(`📊 Cycle count now: ${newCycle}`);
+
+      if (newCycle > 0n) {
         console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🎉🎉🎉 CONTRACT IS NOW SELF-AUTOMATING! 🎉🎉🎉              ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • First cycle complete: ${newCycle}                                         ║
-║  • All admin fixes applied                                   ║
-║  • No more triggers needed                                   ║
-║  • Bot now in READ-ONLY mode                                 ║
+║ 🎉🎉🎉 CONTRACT IS NOW SELF-AUTOMATING! 🎉🎉🎉 ║
 ╚═══════════════════════════════════════════════════════════════╝
         `);
       }
     } else {
-      console.log('❌ Bootstrap transaction failed');
+      console.log('❌ Bootstrap failed - check Etherscan');
     }
-
   } catch (error) {
     console.error('❌ Error:', error.message);
-    
     if (error.code === 'TRANSACTION_REPLACED') {
-      console.log(`\n✅ Transaction was replaced - check ${error.replacement.hash}`);
+      console.log(`\n⚠️ Tx replaced - check new hash: ${error.replacement.hash}`);
     }
   }
 }
 
 // Execute
-await finalBootstrapNoReplace.call(this);
+await finalBootstrap.call(this);
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
