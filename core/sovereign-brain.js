@@ -606,7 +606,7 @@ async signUserOp(userOp) {
 
   // CORRECT TYPES for EntryPoint v0.6
   const types = {
-    UserOp: [  // ← CRITICAL: Must be "UserOp", not "UserOperation"
+     UserOperation: [  
       { name: 'sender', type: 'address' },
       { name: 'nonce', type: 'uint256' },
       { name: 'initCode', type: 'bytes' },
@@ -3175,19 +3175,18 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
 // =====================================================================
-// 🚀 BOOTSTRAP - SCW DIRECT PAYMENT (NO PAYMASTER)
+// FIXED BOOTSTRAP - USING EXISTING buildAndSendUserOp METHOD
 // =====================================================================
-
 await this.checkContractCycleCount();
 
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP - SCW DIRECT PAYMENT (NO PAYMASTER)            ║
+║  🚀 BOOTSTRAP - USING buildAndSendUserOp (NO PAYMASTER)      ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Paymaster BYPASSED - avoids chicken-and-egg               ║
-║  • SCW pays gas directly from ETH balance                    ║
-║  • After success, Paymaster works forever                    ║
+║  • Using your existing AA class method                        ║
+║  • SCW pays gas directly                                      ║
+║  • No paymaster during bootstrap                              ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
@@ -3198,7 +3197,6 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
 
   // Estimate required gas (conservative)
-  const feeData = await this.provider.getFeeData();
   const estimatedGas = ethers.parseEther('0.0015'); // ~$3 at current prices
   
   if (scwBalance < estimatedGas) {
@@ -3209,6 +3207,14 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     throw new Error('Insufficient SCW balance for gas');
   }
 
+  // =================================================================
+  // CREATE AA INSTANCE (needed for buildAndSendUserOp)
+  // =================================================================
+  
+  // Create AA instance WITHOUT paymaster for bootstrap
+  // We'll pass null for paymasterRouter since we're not using it
+  this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
+  
   // =================================================================
   // BUILD BOOTSTRAP CALLLDATA
   // =================================================================
@@ -3223,79 +3229,31 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     [ethers.parseEther("1")]  // 1 wei - symbolic amount
   );
 
-  // Encode SCW.execute()
-  const scwInterface = new ethers.Interface([
-    'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-  ]);
-  
-  const scwExecuteCalldata = scwInterface.encodeFunctionData('execute', [
-    LIVE.WAREHOUSE_CONTRACT,
-    0n,
-    bootstrapCalldata
-  ]);
-
   // =================================================================
-  // GET FRESH NONCE FROM ENTRYPOINT
-  // =================================================================
-  
-  const entryPoint = new ethers.Contract(
-    LIVE.ENTRY_POINT,
-    ['function getNonce(address,uint192) view returns (uint256)'],
-    this.provider
-  );
-  
-  const currentNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
-  console.log(`📊 EntryPoint nonce: ${currentNonce.toString()}`);
-
-  // =================================================================
-  // CREATE AA INSTANCE (needed for signing and sending)
-  // =================================================================
-  
-  // Create AA instance WITHOUT paymaster for bootstrap
-  // We'll pass null for paymasterRouter since we're not using it
-  this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
-  
-  // =================================================================
-  // BUILD USEROP WITH NO PAYMASTER
-  // =================================================================
-  
-  const userOp = {
-    sender: LIVE.SCW_ADDRESS,
-    nonce: currentNonce,
-    initCode: '0x',
-    callData: scwExecuteCalldata,
-    callGasLimit: 800_000n,
-    verificationGasLimit: 300_000n,
-    preVerificationGas: 100_000n,
-    maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei'),
-    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'),
-    paymasterAndData: '0x',  // ← CRITICAL: NO PAYMASTER!
-    signature: '0x'
-  };
-
-  console.log('\n📦 Bootstrap UserOp (NO PAYMASTER):');
-  console.log(`  • sender: ${userOp.sender}`);
-  console.log(`  • nonce: ${userOp.nonce.toString()}`);
-  console.log(`  • callGasLimit: ${userOp.callGasLimit.toString()}`);
-  console.log(`  • paymasterAndData: NONE (SCW pays gas)`);
-
-  // =================================================================
-  // SIGN AND SEND USING AA INSTANCE
+  // USE buildAndSendUserOp - THIS METHOD EXISTS IN YOUR CLASS!
   // =================================================================
   
   try {
-    console.log('\n✍️ Signing UserOp with EIP-712...');
-    const signedUserOp = await this.aa.signUserOp(userOp);
+    console.log('\n📤 Calling buildAndSendUserOp for bootstrap...');
     
-    console.log('📤 Sending bootstrap transaction via EntryPoint...');
+    // This method already handles:
+    // - Getting fresh nonce
+    // - Building the UserOp
+    // - Signing with EIP-712
+    // - Sending via EntryPoint
+    // - Releasing nonce
     
-    // Use the AA instance's sendUserOpDirect method
-    const txHash = await this.aa.sendUserOpDirect(signedUserOp);
+    const result = await this.aa.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      bootstrapCalldata,
+      'warehouse_bootstrap',
+      true  // useWarehouse = true (affects gas limits)
+    );
     
     console.log(`\n✅✅✅ BOOTSTRAP TRANSACTION SENT! ✅✅✅`);
-    console.log(`Tx: ${txHash}`);
-    console.log(`Nonce: ${currentNonce.toString()}`);
-    console.log(`Method: SCW direct payment (Paymaster bypassed)`);
+    console.log(`Tx: ${result.userOpHash}`);
+    console.log(`Nonce: ${result.nonce}`);
+    console.log(`Method: buildAndSendUserOp (SCW direct payment)`);
     
     this.bootstrapCompleted = true;
     
@@ -3343,7 +3301,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     } else if (error.message.includes('AA24')) {
       console.error(`
 🔍 AA24 ERROR: Signature error
-   • Check signUserOp method includes all fields
+   • Check signUserOp method - type name should be "UserOperation"
       `);
     }
     
@@ -3351,7 +3309,21 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   }
 }
 
+// =====================================================================
+// CONTINUE WITH NORMAL INITIALIZATION
+// =====================================================================
 
+console.log('\n📈 Continuing with MEV system initialization...');
+
+// 1. PAYMASTER & AA (recreate with paymaster now that bootstrap is done)
+this.paymasterRouter = new DualPaymasterRouter(this.provider, this.signer);
+console.log('💰 Ensuring paymasters have minimum 0.00035 ETH deposit...');
+await this.paymasterRouter.ensurePaymasterFunded('0.00035');
+await this.paymasterRouter.updateHealth();
+console.log('✅ Active paymaster:', this.paymasterRouter.active);
+
+// Recreate AA with paymaster for normal operations
+this.aa = new DirectOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
