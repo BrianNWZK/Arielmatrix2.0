@@ -3174,15 +3174,14 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
-
 // =====================================================================
-  // 🚀 BOOTSTRAP - SCW DIRECT PAYMENT (NO PAYMASTER)
-  // =====================================================================
-  
-  await this.checkContractCycleCount();
-  
-  if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
-    console.log(`
+// 🚀 BOOTSTRAP - SCW DIRECT PAYMENT (NO PAYMASTER)
+// =====================================================================
+
+await this.checkContractCycleCount();
+
+if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  🚀 BOOTSTRAP - SCW DIRECT PAYMENT (NO PAYMASTER)            ║
 ╠═══════════════════════════════════════════════════════════════╣
@@ -3190,134 +3189,135 @@ async initialize() {
 ║  • SCW pays gas directly from ETH balance                    ║
 ║  • After success, Paymaster works forever                    ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
+  `);
 
-    // =================================================================
-    // CHECK SCW ETH BALANCE
-    // =================================================================
-    const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-    console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
+  // =================================================================
+  // CHECK SCW ETH BALANCE
+  // =================================================================
+  const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
+  console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
 
-    // Estimate required gas (conservative)
-    const feeData = await this.provider.getFeeData();
-    const estimatedGas = ethers.parseEther('0.0015'); // ~$3 at current prices
-    
-    if (scwBalance < estimatedGas) {
-      console.error(`❌ INSUFFICIENT SCW BALANCE!`);
-      console.error(`   Need at least ${ethers.formatEther(estimatedGas)} ETH`);
-      console.error(`   Current: ${ethers.formatEther(scwBalance)} ETH`);
-      console.error(`   Send ETH to SCW: ${LIVE.SCW_ADDRESS}`);
-      throw new Error('Insufficient SCW balance for gas');
-    }
+  // Estimate required gas (conservative)
+  const feeData = await this.provider.getFeeData();
+  const estimatedGas = ethers.parseEther('0.0015'); // ~$3 at current prices
+  
+  if (scwBalance < estimatedGas) {
+    console.error(`❌ INSUFFICIENT SCW BALANCE!`);
+    console.error(`   Need at least ${ethers.formatEther(estimatedGas)} ETH`);
+    console.error(`   Current: ${ethers.formatEther(scwBalance)} ETH`);
+    console.error(`   Send ETH to SCW: ${LIVE.SCW_ADDRESS}`);
+    throw new Error('Insufficient SCW balance for gas');
+  }
 
-    // =================================================================
-    // BUILD BOOTSTRAP CALLLDATA
-    // =================================================================
-    
-    // Use emergency version with NO spread check
-    const warehouseInterface = new ethers.Interface([
-      'function emergencyBulletproofBootstrap(uint256) external'
-    ]);
-    
-    const bootstrapCalldata = warehouseInterface.encodeFunctionData(
-      'emergencyBulletproofBootstrap', 
-      [ethers.parseEther("1")]  // 1 wei - symbolic amount
-    );
+  // =================================================================
+  // BUILD BOOTSTRAP CALLLDATA
+  // =================================================================
+  
+  // Use emergency version with NO spread check
+  const warehouseInterface = new ethers.Interface([
+    'function emergencyBulletproofBootstrap(uint256) external'
+  ]);
+  
+  const bootstrapCalldata = warehouseInterface.encodeFunctionData(
+    'emergencyBulletproofBootstrap', 
+    [ethers.parseEther("1")]  // 1 wei - symbolic amount
+  );
 
-    // Encode SCW.execute()
-    const scwInterface = new ethers.Interface([
-      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-    ]);
-    
-    const scwExecuteCalldata = scwInterface.encodeFunctionData('execute', [
-      LIVE.WAREHOUSE_CONTRACT,
-      0n,
-      bootstrapCalldata
-    ]);
+  // Encode SCW.execute()
+  const scwInterface = new ethers.Interface([
+    'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+  ]);
+  
+  const scwExecuteCalldata = scwInterface.encodeFunctionData('execute', [
+    LIVE.WAREHOUSE_CONTRACT,
+    0n,
+    bootstrapCalldata
+  ]);
 
-    // =================================================================
-    // GET FRESH NONCE FROM ENTRYPOINT
-    // =================================================================
-    
-    const entryPoint = new ethers.Contract(
-      LIVE.ENTRY_POINT,
-      ['function getNonce(address,uint192) view returns (uint256)'],
-      this.provider
-    );
-    
-    const currentNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
-    console.log(`📊 EntryPoint nonce: ${currentNonce.toString()}`);
+  // =================================================================
+  // GET FRESH NONCE FROM ENTRYPOINT
+  // =================================================================
+  
+  const entryPoint = new ethers.Contract(
+    LIVE.ENTRY_POINT,
+    ['function getNonce(address,uint192) view returns (uint256)'],
+    this.provider
+  );
+  
+  const currentNonce = await entryPoint.getNonce(LIVE.SCW_ADDRESS, 0);
+  console.log(`📊 EntryPoint nonce: ${currentNonce.toString()}`);
 
-    // =================================================================
-    // BUILD USEROP WITH NO PAYMASTER
-    // =================================================================
-    
-    const userOp = {
-      sender: LIVE.SCW_ADDRESS,
-      nonce: currentNonce,
-      initCode: '0x',
-      callData: scwExecuteCalldata,
-      callGasLimit: 800_000n,
-      verificationGasLimit: 300_000n,
-      preVerificationGas: 100_000n,
-      maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei'),
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'),
-      paymasterAndData: '0x',  // ← CRITICAL: NO PAYMASTER!
-      signature: '0x'
-    };
+  // =================================================================
+  // CREATE AA INSTANCE (needed for signing and sending)
+  // =================================================================
+  
+  // Create AA instance WITHOUT paymaster for bootstrap
+  // We'll pass null for paymasterRouter since we're not using it
+  this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
+  
+  // =================================================================
+  // BUILD USEROP WITH NO PAYMASTER
+  // =================================================================
+  
+  const userOp = {
+    sender: LIVE.SCW_ADDRESS,
+    nonce: currentNonce,
+    initCode: '0x',
+    callData: scwExecuteCalldata,
+    callGasLimit: 800_000n,
+    verificationGasLimit: 300_000n,
+    preVerificationGas: 100_000n,
+    maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei'),
+    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'),
+    paymasterAndData: '0x',  // ← CRITICAL: NO PAYMASTER!
+    signature: '0x'
+  };
 
-    console.log('\n📦 Bootstrap UserOp (NO PAYMASTER):');
-    console.log(`  • sender: ${userOp.sender}`);
-    console.log(`  • nonce: ${userOp.nonce.toString()}`);
-    console.log(`  • callGasLimit: ${userOp.callGasLimit.toString()}`);
-    console.log(`  • paymasterAndData: NONE (SCW pays gas)`);
+  console.log('\n📦 Bootstrap UserOp (NO PAYMASTER):');
+  console.log(`  • sender: ${userOp.sender}`);
+  console.log(`  • nonce: ${userOp.nonce.toString()}`);
+  console.log(`  • callGasLimit: ${userOp.callGasLimit.toString()}`);
+  console.log(`  • paymasterAndData: NONE (SCW pays gas)`);
 
-    // =================================================================
-    // CREATE AA INSTANCE (needed for signing)
-    // =================================================================
+  // =================================================================
+  // SIGN AND SEND USING AA INSTANCE
+  // =================================================================
+  
+  try {
+    console.log('\n✍️ Signing UserOp with EIP-712...');
+    const signedUserOp = await this.aa.signUserOp(userOp);
     
-    // Create minimal AA instance just for signing
-    this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
+    console.log('📤 Sending bootstrap transaction via EntryPoint...');
     
-    // =================================================================
-    // SIGN AND SEND
-    // =================================================================
+    // Use the AA instance's sendUserOpDirect method
+    const txHash = await this.aa.sendUserOpDirect(signedUserOp);
+    
+    console.log(`\n✅✅✅ BOOTSTRAP TRANSACTION SENT! ✅✅✅`);
+    console.log(`Tx: ${txHash}`);
+    console.log(`Nonce: ${currentNonce.toString()}`);
+    console.log(`Method: SCW direct payment (Paymaster bypassed)`);
+    
+    this.bootstrapCompleted = true;
+    
+    // Wait for first cycle with timeout
+    console.log('\n⏳ Waiting 2 minutes for first cycle to complete...');
     
     try {
-      console.log('\n✍️ Signing UserOp with EIP-712...');
-      const signedUserOp = await this.aa.signUserOp(userOp);
-      
-      console.log('📤 Sending bootstrap transaction via EntryPoint...');
-      
-      // Send via EntryPoint
-      const txHash = await this.sendUserOpDirect(signedUserOp);
-      
-      console.log(`\n✅✅✅ BOOTSTRAP TRANSACTION SENT! ✅✅✅`);
-      console.log(`Tx: ${txHash}`);
-      console.log(`Nonce: ${currentNonce.toString()}`);
-      console.log(`Method: SCW direct payment (Paymaster bypassed)`);
-      
-      this.bootstrapCompleted = true;
-      
-      // Wait for first cycle with timeout
-      console.log('\n⏳ Waiting 2 minutes for first cycle to complete...');
-      
-      try {
-        await Promise.race([
-          sleep(120000),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout after 2 minutes')), 130000)
-          )
-        ]);
-      } catch (timeoutError) {
-        console.log('⚠️ Timeout waiting - checking cycle count anyway...');
-      }
-      
-      // Check updated cycle count
-      await this.checkContractCycleCount();
-      
-      if (this.contractCycleCount > 0) {
-        console.log(`
+      await Promise.race([
+        sleep(120000),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout after 2 minutes')), 130000)
+        )
+      ]);
+    } catch (timeoutError) {
+      console.log('⚠️ Timeout waiting - checking cycle count anyway...');
+    }
+    
+    // Check updated cycle count
+    await this.checkContractCycleCount();
+    
+    if (this.contractCycleCount > 0) {
+      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉                         ║
 ╠═══════════════════════════════════════════════════════════════╣
@@ -3326,30 +3326,31 @@ async initialize() {
 ║  • Contract is self-automating                               ║
 ║  • Bot now in READ-ONLY mode                                 ║
 ╚═══════════════════════════════════════════════════════════════╝
-        `);
-      } else {
-        console.log('\n⚠️ Cycle count still 0 - but bootstrap tx sent successfully');
-        console.log('   Contract will auto-cycle when spread develops');
-      }
-      
-    } catch (error) {
-      console.error('❌ Bootstrap failed:', error.message);
-      
-      if (error.message.includes('AA21')) {
-        console.error(`
+      `);
+    } else {
+      console.log('\n⚠️ Cycle count still 0 - but bootstrap tx sent successfully');
+      console.log('   Contract will auto-cycle when spread develops');
+    }
+    
+  } catch (error) {
+    console.error('❌ Bootstrap failed:', error.message);
+    
+    if (error.message.includes('AA21')) {
+      console.error(`
 🔍 AA21 ERROR: SCW doesn't have enough ETH for gas
    • Send more ETH to SCW: ${LIVE.SCW_ADDRESS}
-        `);
-      } else if (error.message.includes('AA24')) {
-        console.error(`
+      `);
+    } else if (error.message.includes('AA24')) {
+      console.error(`
 🔍 AA24 ERROR: Signature error
    • Check signUserOp method includes all fields
-        `);
-      }
-      
-      throw error;
+      `);
     }
+    
+    throw error;
   }
+}
+
 
    
 // THEN continue with normal MEV initialization...
