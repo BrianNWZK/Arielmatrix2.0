@@ -3176,47 +3176,37 @@ async initialize() {
 
 
 // =====================================================================
-// FINAL BOOTSTRAP - WITH REPLACEMENT HANDLING
+// FINAL BOOTSTRAP - PREVENT REPLACEMENT
 // =====================================================================
-async function finalBootstrap() {
+async function finalBootstrapNoReplace() {
   try {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 FINAL BOOTSTRAP - WITH REPLACEMENT HANDLING              ║
+║  🚀 FINAL BOOTSTRAP - PREVENT REPLACEMENT                    ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
-    // First verify oracle is working
+    // First check if already bootstrapped
     const warehouse = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
-      [
-        'function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)',
-        'function cycleCount() view returns (uint256)'
-      ],
-      this.signer
+      ['function cycleCount() view returns (uint256)'],
+      this.provider
     );
-
-    // Test oracle (non-critical - just for info)
-    try {
-      const result = await warehouse.getConsensusEthPrice();
-      const price = Array.isArray(result) ? result[0] : result.price;
-      const confidence = Array.isArray(result) ? result[1] : result.confidence;
-      console.log(`✅ Oracle working!`);
-      console.log(`   • ETH Price: $${ethers.formatEther(price)}`);
-      console.log(`   • Confidence: ${confidence} sources`);
-    } catch (e) {
-      console.log(`⚠️ Oracle test failed (non-critical) – proceeding anyway.`);
-    }
-
-    // Check if already bootstrapped
+    
     const currentCycle = await warehouse.cycleCount();
     if (currentCycle > 0) {
-      console.log(`\n✅ Contract already bootstrapped! Cycle count: ${currentCycle}`);
-      this.bootstrapCompleted = true;
+      console.log(`✅ Contract already bootstrapped! Cycle count: ${currentCycle}`);
       return;
     }
 
-    // Call bootstrap with higher gas price
+    // Get current gas price and use HIGHER amount
+    const feeData = await this.provider.getFeeData();
+    const gasPrice = feeData.gasPrice * 200n / 100n; // DOUBLE the current price
+
+    console.log(`\n📊 Current gas price: ${ethers.formatUnits(feeData.gasPrice, 'gwei')} gwei`);
+    console.log(`📊 Using gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei (2x)`);
+    console.log(`📊 Max cost: ${ethers.formatEther(500_000n * gasPrice)} ETH`);
+
     const scwInterface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
     ]);
@@ -3227,7 +3217,7 @@ async function finalBootstrap() {
 
     const bootstrapCalldata = warehouseInterface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
-      [ethers.parseEther("1")]
+      [ethers.parseEther("1")] // 1 wei to trigger
     );
 
     const scwCalldata = scwInterface.encodeFunctionData('execute', [
@@ -3236,80 +3226,67 @@ async function finalBootstrap() {
       bootstrapCalldata
     ]);
 
-    // Use 20% higher gas price to ensure inclusion
-    const feeData = await this.provider.getFeeData();
-    const gasPrice = feeData.gasPrice * 120n / 100n;
+    // Get fresh nonce
+    const nonce = await this.signer.getNonce();
+    console.log(`📊 Using nonce: ${nonce}`);
 
-    console.log('\n📤 Sending bootstrap transaction...');
-    console.log(`   • Gas limit: 500,000`);
-    console.log(`   • Gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei`);
-    console.log(`   • Nonce: ${await this.signer.getNonce()}`);
+    console.log(`\n📤 Sending bootstrap transaction to SCW...`);
+    console.log(`   • To: ${LIVE.SCW_ADDRESS}`);
+    console.log(`   • Method: execute → emergencyBulletproofBootstrap(1)`);
 
     const tx = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,
+      to: LIVE.SCW_ADDRESS,  // ← CRITICAL - goes to SCW, not warehouse
       data: scwCalldata,
       gasLimit: 500_000n,
-      gasPrice: gasPrice
+      gasPrice: gasPrice,
+      nonce: nonce
     });
 
-    console.log(`⏳ Tx: ${tx.hash}`);
+    console.log(`\n⏳ Tx: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
     
-    // Wait for confirmation with replacement handling
+    console.log(`⏳ Waiting for confirmation...`);
     const receipt = await tx.wait();
     
     if (receipt.status === 1) {
-      await handleBootstrapSuccess.call(this, receipt, warehouse);
+      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅`);
+      console.log(`   Block: ${receipt.blockNumber}`);
+      console.log(`   Gas used: ${receipt.gasUsed}`);
+      
+      // Wait for first cycle
+      console.log(`\n⏳ Waiting 2 minutes for first cycle...`);
+      await new Promise(resolve => setTimeout(resolve, 120000));
+      
+      const newCycle = await warehouse.cycleCount();
+      console.log(`📊 Cycle count: ${newCycle}`);
+      
+      if (newCycle > 0) {
+        console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🎉🎉🎉 CONTRACT IS NOW SELF-AUTOMATING! 🎉🎉🎉              ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • First cycle complete: ${newCycle}                                         ║
+║  • All admin fixes applied                                   ║
+║  • No more triggers needed                                   ║
+║  • Bot now in READ-ONLY mode                                 ║
+╚═══════════════════════════════════════════════════════════════╝
+        `);
+      }
     } else {
       console.log('❌ Bootstrap transaction failed');
     }
 
   } catch (error) {
-    // Check if error is a transaction replacement
-    if (error.code === 'TRANSACTION_REPLACED' && error.receipt?.status === 1) {
-      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL (via replacement)!`);
-      console.log(`   Replacement tx: ${error.replacement.hash}`);
-      await handleBootstrapSuccess.call(this, error.receipt, warehouse);
-    } else {
-      console.error('❌ Bootstrap error:', error.message);
+    console.error('❌ Error:', error.message);
+    
+    if (error.code === 'TRANSACTION_REPLACED') {
+      console.log(`\n✅ Transaction was replaced - check ${error.replacement.hash}`);
     }
   }
 }
 
-// Helper function to handle successful bootstrap
-async function handleBootstrapSuccess(receipt, warehouse) {
-  console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL!`);
-  console.log(`   Block: ${receipt.blockNumber}`);
-  console.log(`   Gas used: ${receipt.gasUsed}`);
-
-  // Mark as completed
-  this.bootstrapCompleted = true;
-
-  // Wait for first cycle
-  console.log(`\n⏳ Waiting 2 minutes for first cycle...`);
-  await new Promise(resolve => setTimeout(resolve, 120000));
-
-  // Check cycle count
-  const cycleCount = await warehouse.cycleCount();
-  console.log(`📊 Contract cycle count: ${cycleCount}`);
-
-  if (cycleCount > 0) {
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🎉🎉🎉 CONTRACT IS NOW SELF-AUTOMATING! 🎉🎉🎉              ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • First cycle complete: ${cycleCount}                                         ║
-║  • No more triggers needed                                   ║
-║  • Bot now in READ-ONLY monitoring mode                      ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-  } else {
-    console.log('⚠️ First cycle not yet complete - will monitor automatically');
-  }
-}
-
 // Execute
-await finalBootstrap.call(this);
+await finalBootstrapNoReplace.call(this);
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
