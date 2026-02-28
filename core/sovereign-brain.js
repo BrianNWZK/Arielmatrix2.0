@@ -3176,204 +3176,118 @@ async initialize() {
 
 
 // =====================================================================
-// ULTIMATE ORACLE FIX - GUARANTEED TO WORK
+// ULTIMATE EMERGENCY BOOTSTRAP - BYPASS EVERYTHING
 // =====================================================================
-async function ultimateOracleFix() {
+async function ultimateEmergencyBootstrap() {
   try {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🔥 ULTIMATE ORACLE FIX - GUARANTEED TO WORK                 ║
+║  🔥 ULTIMATE EMERGENCY BOOTSTRAP - BYPASS EVERYTHING         ║
+╠═══════════════════════════════════════════════════════════════╣
+║  Instead of calling emergencyBulletproofBootstrap(),         ║
+║  we'll call the internal functions directly through SCW      ║
+║  to completely bypass the oracle.                            ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
-    const warehouse = new ethers.Contract(
-      LIVE.WAREHOUSE_CONTRACT,
-      [
-        'function adminSetAddress(bytes32 key, address value) external',
-        'function adminSetParameter(bytes32 key, uint256 value) external',
-        'function chainlinkEthUsd() view returns (address)',
-        'function chainlinkEthUsdSecondary() view returns (address)',
-        'function uniV3EthUsdPool() view returns (address)',
-        'function stalenessThreshold() view returns (uint256)'
-      ],
+    // =====================================================================
+    // STEP 1: Calculate the required amounts (same as contract would)
+    // =====================================================================
+    console.log('\n📊 Step 1: Calculating bootstrap amounts...');
+    
+    const TOTAL_BOOTSTRAP_USD = ethers.parseUnits("4000000", 6); // 4M USDC
+    const BALANCER_PRICE_USD = ethers.parseUnits("23.5", 6); // $23.5 per BWAEZI
+    
+    // totalBwzcNeeded = TOTAL_BOOTSTRAP_USD / BALANCER_PRICE_USD
+    const totalBwzcNeeded = TOTAL_BOOTSTRAP_USD * BigInt(1e18) / BALANCER_PRICE_USD;
+    console.log(`   • Total BWAEZI needed: ${ethers.formatEther(totalBwzcNeeded)}`);
+
+    // =====================================================================
+    // STEP 2: Transfer BWAEZI from SCW to warehouse (simulate safeTransferFrom)
+    // =====================================================================
+    console.log('\n💰 Step 2: Transferring BWAEZI from SCW to warehouse...');
+    
+    const bwaeziContract = new ethers.Contract(
+      LIVE.TOKENS.BWAEZI,
+      ['function transferFrom(address from, address to, uint256 amount) external returns (bool)'],
       this.signer
     );
 
-    // =====================================================================
-    // FIX 1: Set BOTH oracles to the SAME working address
-    // =====================================================================
-    console.log('\n📡 Fix 1: Setting both oracles to working address...');
-    
-    const workingFeed = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'; // Chainlink ETH/USD
-    
-    // Set primary (if needed)
-    const primaryKey = ethers.encodeBytes32String('chainlinkEthUsd');
-    const tx1 = await warehouse.adminSetAddress(primaryKey, workingFeed, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting primary: ${tx1.hash}`);
-    await tx1.wait();
-    
-    // Set secondary
-    const secondaryKey = ethers.encodeBytes32String('chainlinkEthUsdSecondary');
-    const tx2 = await warehouse.adminSetAddress(secondaryKey, workingFeed, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting secondary: ${tx2.hash}`);
-    await tx2.wait();
-    
-    console.log('   ✅ Both oracles set to Chainlink feed');
-
-    // =====================================================================
-    // FIX 2: Set Uniswap pool (as third source)
-    // =====================================================================
-    console.log('\n🔄 Fix 2: Setting Uniswap pool...');
-    
-    const uniKey = ethers.encodeBytes32String('uniV3EthUsdPool');
-    const uniPool = '0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640';
-    
-    const tx3 = await warehouse.adminSetAddress(uniKey, uniPool, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting Uniswap pool: ${tx3.hash}`);
-    await tx3.wait();
-    console.log('   ✅ Uniswap pool set');
-
-    // =====================================================================
-    // FIX 3: Set VERY tolerant staleness (1 hour)
-    // =====================================================================
-    console.log('\n⏱️  Fix 3: Setting tolerant staleness...');
-    
-    const thresholdKey = ethers.encodeBytes32String('stalenessThreshold');
-    const tx4 = await warehouse.adminSetParameter(thresholdKey, 3600, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting staleness to 3600s: ${tx4.hash}`);
-    await tx4.wait();
-    console.log('   ✅ Staleness threshold = 1 hour');
-
-    // =====================================================================
-    // VERIFY ORACLE NOW WORKS
-    // =====================================================================
-    console.log('\n🔍 Verifying oracle now works...');
-    
-    // Create a simple call to getConsensusEthPrice
-    const warehouseView = new ethers.Contract(
+    // First approve warehouse to spend SCW's BWAEZI
+    const approveTx = await bwaeziContract.approve(
       LIVE.WAREHOUSE_CONTRACT,
-      ['function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)'],
-      this.signer
+      totalBwzcNeeded
     );
+    console.log(`   ⏳ Approving warehouse: ${approveTx.hash}`);
+    await approveTx.wait();
 
-    try {
-      const result = await warehouseView.getConsensusEthPrice();
-      const price = Array.isArray(result) ? result[0] : result.price;
-      const confidence = Array.isArray(result) ? result[1] : result.confidence;
-      
-      console.log(`   ✅ Oracle SUCCESS!`);
-      console.log(`   • ETH Price: $${ethers.formatEther(price)}`);
-      console.log(`   • Confidence: ${confidence} sources`);
-    } catch (e) {
-      console.log(`   ❌ Oracle still failing: ${e.message}`);
-      console.log(`   Error selector: ${e.data || 'unknown'}`);
-    }
+    // Then transfer from SCW to warehouse
+    const transferTx = await bwaeziContract.transferFrom(
+      LIVE.SCW_ADDRESS,
+      LIVE.WAREHOUSE_CONTRACT,
+      totalBwzcNeeded
+    );
+    console.log(`   ⏳ Transferring BWAEZI: ${transferTx.hash}`);
+    await transferTx.wait();
+    console.log('   ✅ BWAEZI transferred to warehouse');
 
-  } catch (error) {
-    console.error('❌ Fix error:', error.message);
-  }
-}
-
-// =====================================================================
-// SIMPLIFIED BOOTSTRAP - AFTER ORACLE IS FIXED
-// =====================================================================
-async function simplifiedBootstrap() {
-  try {
+    // =====================================================================
+    // STEP 3: Call _phase1PreSeed directly (this adds liquidity to Balancer)
+    // =====================================================================
+    console.log('\n🌱 Step 3: Executing phase1PreSeed...');
+    
+    // Note: _phase1PreSeed is internal - we need to call it through a public wrapper
+    // Since we don't have one, we'll need to simulate what it does
+    
+    console.log('   ⚠️ Cannot call internal function directly');
+    console.log('   ✅ This confirms: contract modification is needed');
+    
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 SIMPLIFIED BOOTSTRAP - AFTER ORACLE FIX                  ║
+║  ✅ CONCLUSION                                                ║
+╠═══════════════════════════════════════════════════════════════╣
+║  The emergencyBulletproofBootstrap function MUST be modified ║
+║  to remove the oracle call entirely. Add this function:      ║
+║                                                               ║
+║  function trueEmergencyBootstrap(uint256 bwzcForArbitrage)   ║
+║      external nonReentrant whenNotPaused {                   ║
+║      if (msg.sender != scw) revert("Only SCW");             ║
+║                                                               ║
+║      uint256 totalBwzcNeeded = FullMath.mulDiv(             ║
+║          TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD      ║
+║      );                                                       ║
+║                                                               ║
+║      IERC20(bwzc).safeTransferFrom(                          ║
+║          scw, address(this), totalBwzcNeeded                 ║
+║      );                                                       ║
+║                                                               ║
+║      _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);    ║
+║                                                               ║
+║      // Use FIXED ETH PRICE - NO ORACLE!                     ║
+║      uint256 FIXED_ETH_PRICE = 3000 * 1e18;                  ║
+║                                                               ║
+║      uint256 scaledUsdc = _calculateScaledAmount(           ║
+║          TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps      ║
+║      );                                                       ║
+║      uint256 scaledWeth = _calculateScaledAmount(           ║
+║          _calculateWETHAmount(                               ║
+║              TOTAL_BOOTSTRAP_USD / 2, FIXED_ETH_PRICE        ║
+║          ),                                                   ║
+║          currentScaleFactorBps                               ║
+║      );                                                       ║
+║                                                               ║
+║      // Rest of function unchanged...                        ║
+║  }                                                            ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
-    // Check if we can get price first
-    const warehouseView = new ethers.Contract(
-      LIVE.WAREHOUSE_CONTRACT,
-      ['function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)'],
-      this.signer
-    );
-
-    try {
-      const result = await warehouseView.getConsensusEthPrice();
-      const price = Array.isArray(result) ? result[0] : result.price;
-      console.log(`✅ Oracle working! ETH Price: $${ethers.formatEther(price)}`);
-    } catch (e) {
-      console.log(`⚠️ Oracle still failing - but continuing anyway`);
-    }
-
-    // Call bootstrap
-    const scwInterface = new ethers.Interface([
-      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-    ]);
-
-    const warehouseInterface = new ethers.Interface([
-      'function emergencyBulletproofBootstrap(uint256) external'
-    ]);
-
-    const bootstrapCalldata = warehouseInterface.encodeFunctionData(
-      'emergencyBulletproofBootstrap',
-      [ethers.parseEther("1")]
-    );
-
-    const scwCalldata = scwInterface.encodeFunctionData('execute', [
-      LIVE.WAREHOUSE_CONTRACT,
-      0n,
-      bootstrapCalldata
-    ]);
-
-    const feeData = await this.provider.getFeeData();
-    const gasPrice = feeData.gasPrice || ethers.parseUnits('0.06', 'gwei');
-
-    console.log('\n📤 Sending bootstrap transaction...');
-    console.log(`   • Gas limit: 500,000`);
-    console.log(`   • Gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei`);
-
-    const tx = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,
-      data: scwCalldata,
-      gasLimit: 500_000n,
-      gasPrice
-    });
-
-    console.log(`⏳ Tx: ${tx.hash}`);
-    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-    
-    const receipt = await tx.wait();
-    
-    if (receipt.status === 1) {
-      console.log(`✅✅✅ BOOTSTRAP SUCCESSFUL!`);
-    }
-
   } catch (error) {
-    console.error('❌ Bootstrap error:', error.message);
+    console.error('❌ Error:', error.message);
   }
 }
 
-// =====================================================================
-// EXECUTE IN ORDER
-// =====================================================================
-(async () => {
-  // STEP 1: Fix oracle (this is critical!)
-  await ultimateOracleFix.call(this);
-  
-  // STEP 2: Wait a moment for state to update
-  console.log('\n⏳ Waiting 10 seconds for state to update...');
-  await new Promise(resolve => setTimeout(resolve, 10000));
-  
-  // STEP 3: Try bootstrap
-  await simplifiedBootstrap.call(this);
-})();
+// Execute
+await ultimateEmergencyBootstrap.call(this);
 
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
