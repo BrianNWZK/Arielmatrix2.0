@@ -3176,238 +3176,47 @@ async initialize() {
 
 
 // =====================================================================
-// COMPLETE ADMIN FIXES - NO REDEPLOY NEEDED
-// RUN THIS ONCE, PROBLEMS SOLVED FOREVER
+// FINAL BOOTSTRAP - WITH REPLACEMENT HANDLING
 // =====================================================================
-async function permanentAdminFixes() {
+async function finalBootstrap() {
   try {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🔧 PERMANENT ADMIN FIXES - NO REDEPLOY REQUIRED             ║
-╠═══════════════════════════════════════════════════════════════╣
-║  FIX 1: Set independent secondary oracle (Coinbase)          ║
-║  FIX 2: Set Uniswap pool as third source                     ║
-║  FIX 3: Relax staleness threshold (900s)                     ║
-║  FIX 4: Lower scale factor to bypass spread (500 bps)        ║
-║  FIX 5: Verify all fixes and oracle health                   ║
+║  🚀 FINAL BOOTSTRAP - WITH REPLACEMENT HANDLING              ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
+    // First verify oracle is working
     const warehouse = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
       [
-        // Admin functions
-        'function adminSetAddress(bytes32 key, address value) external',
-        'function adminSetParameter(bytes32 key, uint256 value) external',
-        'function adminSetPaused(bool paused) external',
-        
-        // View functions
-        'function chainlinkEthUsd() view returns (address)',
-        'function chainlinkEthUsdSecondary() view returns (address)',
-        'function uniV3EthUsdPool() view returns (address)',
-        'function stalenessThreshold() view returns (uint256)',
-        'function currentScaleFactorBps() view returns (uint256)',
-        'function paused() view returns (bool)',
-        'function balBWUSDCId() view returns (bytes32)',
-        'function balBWWETHId() view returns (bytes32)',
-        'function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)'
+        'function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)',
+        'function cycleCount() view returns (uint256)'
       ],
       this.signer
     );
 
-    // =====================================================================
-    // FIX 1: Set independent secondary oracle (Coinbase)
-    // =====================================================================
-    console.log('\n📡 FIX 1: Setting independent secondary oracle...');
-    
-    const secondaryKey = ethers.encodeBytes32String('chainlinkEthUsdSecondary');
-    const coinbaseFeed = '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c'; // Coinbase ETH/USD
-    
-    const tx1 = await warehouse.adminSetAddress(secondaryKey, coinbaseFeed, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting Coinbase feed: ${tx1.hash}`);
-    await tx1.wait();
-    
-    const secondary = await warehouse.chainlinkEthUsdSecondary();
-    console.log(`   ✅ Secondary oracle: ${secondary} (Coinbase)`);
-
-    // =====================================================================
-    // FIX 2: Set Uniswap pool as third source
-    // =====================================================================
-    console.log('\n🔄 FIX 2: Setting Uniswap pool as third source...');
-    
-    const uniKey = ethers.encodeBytes32String('uniV3EthUsdPool');
-    const uniPool = '0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640'; // ETH/USDC 0.05%
-    
-    const tx2 = await warehouse.adminSetAddress(uniKey, uniPool, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting Uniswap pool: ${tx2.hash}`);
-    await tx2.wait();
-    
-    const uniswapPool = await warehouse.uniV3EthUsdPool();
-    console.log(`   ✅ Uniswap pool: ${uniswapPool}`);
-
-    // =====================================================================
-    // FIX 3: Relax staleness threshold to 900 seconds (15 minutes)
-    // =====================================================================
-    console.log('\n⏱️  FIX 3: Relaxing staleness threshold...');
-    
-    const thresholdKey = ethers.encodeBytes32String('stalenessThreshold');
-    
-    const tx3 = await warehouse.adminSetParameter(thresholdKey, 900, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting staleness to 900s: ${tx3.hash}`);
-    await tx3.wait();
-    
-    const threshold = await warehouse.stalenessThreshold();
-    console.log(`   ✅ Staleness threshold: ${threshold}s (15 minutes)`);
-
-    // =====================================================================
-    // FIX 4: Lower scale factor to bypass spread requirement
-    // =====================================================================
-    console.log('\n📊 FIX 4: Lowering scale factor to bypass spread...');
-    
-    const scaleKey = ethers.encodeBytes32String('currentScaleFactorBps');
-    
-    const tx4 = await warehouse.adminSetParameter(scaleKey, 500, {
-      gasLimit: 150_000,
-      gasPrice: ethers.parseUnits('0.06', 'gwei')
-    });
-    console.log(`   ⏳ Setting scale factor to 500 bps: ${tx4.hash}`);
-    await tx4.wait();
-    
-    const scale = await warehouse.currentScaleFactorBps();
-    console.log(`   ✅ Scale factor: ${scale} bps (5% of normal trade size)`);
-
-    // =====================================================================
-    // FIX 5: Verify all fixes and test oracle
-    // =====================================================================
-    console.log('\n🔍 FIX 5: Verifying all fixes and testing oracle...');
-    
-    // Wait a moment for state to update
-    console.log('   ⏳ Waiting 5 seconds for state to update...');
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    // Get all current values
-    const [
-      primary,
-      secondaryNow,
-      uniswapNow,
-      thresholdNow,
-      scaleNow,
-      balUSDC,
-      balWETH
-    ] = await Promise.all([
-      warehouse.chainlinkEthUsd(),
-      warehouse.chainlinkEthUsdSecondary(),
-      warehouse.uniV3EthUsdPool(),
-      warehouse.stalenessThreshold(),
-      warehouse.currentScaleFactorBps(),
-      warehouse.balBWUSDCId(),
-      warehouse.balBWWETHId()
-    ]);
-
-    console.log(`\n📊 Current Configuration:`);
-    console.log(`   • Primary Chainlink: ${primary}`);
-    console.log(`   • Secondary Coinbase: ${secondaryNow}`);
-    console.log(`   • Uniswap pool: ${uniswapNow}`);
-    console.log(`   • Staleness threshold: ${thresholdNow}s`);
-    console.log(`   • Scale factor: ${scaleNow} bps`);
-    console.log(`   • Balancer USDC pool: ${balUSDC}`);
-    console.log(`   • Balancer WETH pool: ${balWETH}`);
-
-    // Test oracle
-    console.log('\n📡 Testing oracle with 3 sources...');
-    
-    try {
-      // Get consensus price - handle both array and object returns
-      const result = await warehouse.getConsensusEthPrice();
-      
-      let price, confidence;
-      if (Array.isArray(result)) {
-        price = result[0];
-        confidence = result[1];
-      } else {
-        price = result.price || result[0];
-        confidence = result.confidence || result[1];
-      }
-      
-      console.log(`   ✅ Oracle SUCCESS!`);
-      console.log(`   • ETH Price: $${ethers.formatEther(price)}`);
-      console.log(`   • Confidence: ${confidence} sources`);
-      console.log(`   • Sources: Chainlink, Coinbase, Uniswap`);
-      
-    } catch (e) {
-      console.log(`   ⚠️ Oracle test failed: ${e.message}`);
-      
-      // Try to decode the error
-      if (e.message.includes('0x9d565d4e')) {
-        console.log(`   • Error: OracleConsensusFailed() - still no valid sources`);
-        console.log(`   • This suggests feeds are still not returning data`);
-      } else if (e.message.includes('0x4e487b71')) {
-        console.log(`   • Error: Panic - likely divide by zero in calculations`);
-        console.log(`   • This means valid sources = 0`);
-      }
-    }
-
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅ ALL ADMIN FIXES APPLIED                                   ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Oracle: 3 independent sources configured                   ║
-║  • Staleness: ${thresholdNow}s tolerance                                 ║
-║  • Spread: Effectively bypassed (scale=${scaleNow})                     ║
-║  • Pools: Already correct from deployment                     ║
-║                                                               ║
-║  NEXT: Run emergency bootstrap - it should succeed!          ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-
-  } catch (error) {
-    console.error('❌ Error applying fixes:', error.message);
-    
-    if (error.message.includes('InvalidAddressKey')) {
-      console.log('\n⚠️ Key string mismatch! Common alternatives:');
-      console.log('   • Try: "chainlinkSecondary" instead of "chainlinkEthUsdSecondary"');
-      console.log('   • Try: "secondaryChainlink"');
-      console.log('   • Try: "uniPool" instead of "uniV3EthUsdPool"');
-    }
-  }
-}
-
-// =====================================================================
-// SIMPLIFIED BOOTSTRAP - AFTER ADMIN FIXES
-// =====================================================================
-async function bootstrapAfterFixes() {
-  try {
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP AFTER ADMIN FIXES                               ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-
-    // Quick oracle test first
-    const warehouse = new ethers.Contract(
-      LIVE.WAREHOUSE_CONTRACT,
-      ['function getConsensusEthPrice() external returns (uint256 price, uint8 confidence)'],
-      this.signer
-    );
-
+    // Test oracle (non-critical - just for info)
     try {
       const result = await warehouse.getConsensusEthPrice();
       const price = Array.isArray(result) ? result[0] : result.price;
-      console.log(`✅ Oracle working! ETH Price: $${ethers.formatEther(price)}`);
+      const confidence = Array.isArray(result) ? result[1] : result.confidence;
+      console.log(`✅ Oracle working!`);
+      console.log(`   • ETH Price: $${ethers.formatEther(price)}`);
+      console.log(`   • Confidence: ${confidence} sources`);
     } catch (e) {
-      console.log(`⚠️ Oracle still failing - but emergency function may still work`);
+      console.log(`⚠️ Oracle test failed (non-critical) – proceeding anyway.`);
     }
 
-    // Call emergency bootstrap
+    // Check if already bootstrapped
+    const currentCycle = await warehouse.cycleCount();
+    if (currentCycle > 0) {
+      console.log(`\n✅ Contract already bootstrapped! Cycle count: ${currentCycle}`);
+      this.bootstrapCompleted = true;
+      return;
+    }
+
+    // Call bootstrap with higher gas price
     const scwInterface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
     ]);
@@ -3427,68 +3236,81 @@ async function bootstrapAfterFixes() {
       bootstrapCalldata
     ]);
 
+    // Use 20% higher gas price to ensure inclusion
     const feeData = await this.provider.getFeeData();
-    const gasPrice = feeData.gasPrice || ethers.parseUnits('0.06', 'gwei');
+    const gasPrice = feeData.gasPrice * 120n / 100n;
 
     console.log('\n📤 Sending bootstrap transaction...');
     console.log(`   • Gas limit: 500,000`);
     console.log(`   • Gas price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei`);
+    console.log(`   • Nonce: ${await this.signer.getNonce()}`);
 
     const tx = await this.signer.sendTransaction({
       to: LIVE.SCW_ADDRESS,
       data: scwCalldata,
       gasLimit: 500_000n,
-      gasPrice
+      gasPrice: gasPrice
     });
 
     console.log(`⏳ Tx: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
     
+    // Wait for confirmation with replacement handling
     const receipt = await tx.wait();
     
     if (receipt.status === 1) {
-      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL!`);
-      
-      // Check cycle count
-      const cycleView = new ethers.Contract(
-        LIVE.WAREHOUSE_CONTRACT,
-        ['function cycleCount() view returns (uint256)'],
-        this.provider
-      );
-      
-      console.log('⏳ Waiting 30 seconds for first cycle...');
-      await new Promise(resolve => setTimeout(resolve, 30000));
-      
-      const cycleCount = await cycleView.cycleCount();
-      console.log(`📊 Cycle count: ${cycleCount}`);
-      
-      if (cycleCount > 0) {
-        console.log(`🎉 First cycle complete! Contract is now self-automating!`);
-      }
+      await handleBootstrapSuccess.call(this, receipt, warehouse);
     } else {
       console.log('❌ Bootstrap transaction failed');
     }
 
   } catch (error) {
-    console.error('❌ Bootstrap error:', error.message);
+    // Check if error is a transaction replacement
+    if (error.code === 'TRANSACTION_REPLACED' && error.receipt?.status === 1) {
+      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL (via replacement)!`);
+      console.log(`   Replacement tx: ${error.replacement.hash}`);
+      await handleBootstrapSuccess.call(this, error.receipt, warehouse);
+    } else {
+      console.error('❌ Bootstrap error:', error.message);
+    }
   }
 }
 
-// =====================================================================
-// EXECUTION ORDER
-// =====================================================================
-(async () => {
-  // STEP 1: Apply all admin fixes
-  await permanentAdminFixes.call(this);
-  
-  // STEP 2: Wait for state to propagate
-  console.log('\n⏳ Waiting 10 seconds for state to propagate...');
-  await new Promise(resolve => setTimeout(resolve, 10000));
-  
-  // STEP 3: Run bootstrap
-  await bootstrapAfterFixes.call(this);
-})();
+// Helper function to handle successful bootstrap
+async function handleBootstrapSuccess(receipt, warehouse) {
+  console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL!`);
+  console.log(`   Block: ${receipt.blockNumber}`);
+  console.log(`   Gas used: ${receipt.gasUsed}`);
 
+  // Mark as completed
+  this.bootstrapCompleted = true;
+
+  // Wait for first cycle
+  console.log(`\n⏳ Waiting 2 minutes for first cycle...`);
+  await new Promise(resolve => setTimeout(resolve, 120000));
+
+  // Check cycle count
+  const cycleCount = await warehouse.cycleCount();
+  console.log(`📊 Contract cycle count: ${cycleCount}`);
+
+  if (cycleCount > 0) {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🎉🎉🎉 CONTRACT IS NOW SELF-AUTOMATING! 🎉🎉🎉              ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • First cycle complete: ${cycleCount}                                         ║
+║  • No more triggers needed                                   ║
+║  • Bot now in READ-ONLY monitoring mode                      ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+  } else {
+    console.log('⚠️ First cycle not yet complete - will monitor automatically');
+  }
+}
+
+// Execute
+await finalBootstrap.call(this);
+   
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
