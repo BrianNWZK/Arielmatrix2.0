@@ -418,23 +418,29 @@ async getFeeData() {
 }
 
 class QuorumRPC {
-  constructor(registry, quorumSize=LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks=2){
-    this.registry=registry; this.quorumSize=Math.max(1, quorumSize); this.toleranceBlocks=toleranceBlocks;
+  constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
+    this.registry = registry;
+    this.quorumSize = Math.max(1, quorumSize);
+    this.toleranceBlocks = toleranceBlocks;
     const urls = registry.rpcUrls.slice(0, quorumSize);
     const network = ethers.Network.from({ name: LIVE.NETWORK.name, chainId: LIVE.NETWORK.chainId });
     this.providers = urls.map(u => new ethers.JsonRpcProvider(u, network, { staticNetwork: network }));
-    this.lastForkAlert=null;
+    this.lastForkAlert = null;
   }
-  async forkCheck(){
+
+  async forkCheck() {
     try {
-      const heads=await Promise.all(this.providers.map(p=>p.getBlockNumber()));
-      const min=Math.min(...heads), max=Math.max(...heads);
+      const heads = await Promise.all(this.providers.map(p => p.getBlockNumber()));
+      const min = Math.min(...heads), max = Math.max(...heads);
       const diverged = (max - min) > this.toleranceBlocks;
-      if (diverged) this.lastForkAlert={ at: nowTs(), heads };
+      if (diverged) this.lastForkAlert = { at: nowTs(), heads };
       return { diverged, heads, lastForkAlert: this.lastForkAlert };
-    } catch { return { diverged:false, heads:[], lastForkAlert:this.lastForkAlert }; }
+    } catch {
+      return { diverged: false, heads: [], lastForkAlert: this.lastForkAlert };
+    }
   }
 }
+
 
 /* =========================================================================
    Anti-bot shield (entropy jitter, signature salt, replay guards)
