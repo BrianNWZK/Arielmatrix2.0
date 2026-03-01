@@ -127,7 +127,7 @@ const LIVE = {
 
   RISK: {
     CIRCUIT_BREAKERS: { ENABLED:true, MAX_CONSEC_LOSSES_USD:Number(process.env.MAX_CONSEC_LOSSES_USD || '700'), MAX_NEG_EV_TRADES:Number(process.env.MAX_NEG_EV_TRADES || '2'), GLOBAL_KILL_SWITCH:false, WINDOW_MS: Number(process.env.CB_WINDOW_MS || 15*60_000) },
-    ADAPTIVE_DEGRADATION: { ENABLED:true, HIGH_GAS_GWEI:Number(process.env.HIGH_GAS_GWEI || 150), DOWNSIZE_FACTOR:Number(process.env.DOWNSIZE_FACTOR || 0.5), LOW_LIQUIDITY_NORM:Number(process.env.LOW_LIQUIDITY_NORM || 0.05), DISPERSION_HALT_PCT:Number(process.env.DISPERSION_HALT_PCT || 5.0), HALT_COOLDOWN_MS:Number(process.env.HALT_COOLDOWN_MS || 5*60_000) },
+    ADAPTIVE_DEGRADATION: { ENABLED:true, HIGH_GAS_GWEI: Number(process.env.HIGH_GAS_GWEI || 0.5), DOWNSIZE_FACTOR:Number(process.env.DOWNSIZE_FACTOR || 0.5), LOW_LIQUIDITY_NORM:Number(process.env.LOW_LIQUIDITY_NORM || 0.05), DISPERSION_HALT_PCT:Number(process.env.DISPERSION_HALT_PCT || 5.0), HALT_COOLDOWN_MS:Number(process.env.HALT_COOLDOWN_MS || 5*60_000) },
     COMPETITION: { ENABLED:true, MAX_PRIORITY_FEE_GWEI:Number(process.env.MAX_PRIORITY_FEE_GWEI || 6), RANDOMIZE_SPLITS:true, BUDGET_PER_MINUTE_USD:Number(process.env.BUDGET_PER_MINUTE_USD || 250000), COST_AWARE_SLIP_BIAS:Number(process.env.COST_AWARE_SLIP_BIAS || 0.002) },
     INFRA: { ENABLED:true, MAX_PROVIDER_LATENCY_MS:Number(process.env.MAX_PROVIDER_LATENCY_MS || 2000), STALE_BLOCK_THRESHOLD:Number(process.env.STALE_BLOCK_THRESHOLD || 3), QUORUM_SIZE:Number(process.env.QUORUM_SIZE || 3), BACKOFF_BASE_MS:Number(process.env.BACKOFF_BASE_MS || 1000) },
     BUDGETS: { MINUTE_USD:Number(process.env.BUDGET_MINUTE_USD || 250000), HOUR_USD:Number(process.env.BUDGET_HOUR_USD || 2000000), DAY_USD:Number(process.env.BUDGET_DAY_USD || 8_000_000) },
@@ -392,24 +392,31 @@ class EnhancedRPCManager {
       if (best && best.provider !== this.sticky) this.sticky = best.provider;
     }, 30000);
   }
-  getProvider() { if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized'); return this.sticky; }
-  async getFeeData() {
-    try {
-      const fd = await this.getProvider().getFeeData();
-      return {
-        maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits(String(process.env.FALLBACK_MAX_FEE_GWEI || '30'), 'gwei'),
-        maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits(String(process.env.FALLBACK_MAX_PRIORITY_FEE_GWEI || '2'), 'gwei'),
-        gasPrice: fd.gasPrice || ethers.parseUnits(String(process.env.FALLBACK_GAS_PRICE_GWEI || '25'), 'gwei')
-      };
-    } catch {
-      return {
-        maxFeePerGas: ethers.parseUnits(String(process.env.FALLBACK_MAX_FEE_GWEI || '30'), 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits(String(process.env.FALLBACK_MAX_PRIORITY_FEE_GWEI || '2'), 'gwei'),
-        gasPrice: ethers.parseUnits(String(process.env.FALLBACK_GAS_PRICE_GWEI || '25'), 'gwei')
-      };
-    }
+
+  getProvider() { 
+  if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized'); 
+  return this.sticky; 
+}
+
+async getFeeData() {
+  try {
+    const fd = await this.getProvider().getFeeData();
+    return {
+      // Use real network values, fallback to 0.25 gwei for current low-gas environment
+      maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('0.25', 'gwei'),
+      maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei'),
+      gasPrice: fd.gasPrice || ethers.parseUnits('0.25', 'gwei')
+    };
+  } catch {
+    // Fallback to safe low values for current network conditions
+    return {
+      maxFeePerGas: ethers.parseUnits('0.25', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('0.02', 'gwei'),
+      gasPrice: ethers.parseUnits('0.25', 'gwei')
+    };
   }
 }
+
 class QuorumRPC {
   constructor(registry, quorumSize=LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks=2){
     this.registry=registry; this.quorumSize=Math.max(1, quorumSize); this.toleranceBlocks=toleranceBlocks;
@@ -552,14 +559,8 @@ class DualPaymasterRouter {
 
 
 /* =========================================================================
-   Direct OmniExecutionAA (NO BUNDLERS - DIRECT PAYMASTER) - FIXED v19.4
-   
-   ✅ PROPER EIP-712 SIGNING - Fixes "cannot encode object" error
-   ✅ PROPER AA EXECUTION WITH CORRECT SIGNING
-   ✅ FALLBACK support - For wallets without EIP-712
-   ✅ DEBUG capabilities - Built-in troubleshooting
+   FIXED: DirectOmniExecutionAA - PROPER EIP-712 SIGNING + SENDING
    ========================================================================= */
-
 class DirectOmniExecutionAA {
   constructor(signer, provider, paymasterRouter) {
     this.signer = signer;
@@ -578,131 +579,87 @@ class DirectOmniExecutionAA {
     this.shield = new AntiBotShield();
   }
 
-  encodeExecute(to, value, data) {
-    const iface = new ethers.Interface(['function execute(address,uint256,bytes)']);
-    return iface.encodeFunctionData('execute', [to, value, data]);
-  }
+  // =======================================================================
+  // FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
+  // =======================================================================
+  async signUserOp(userOp) {
+    // Ensure all fields are properly formatted
+    const cleanUserOp = {
+      sender: userOp.sender,
+      nonce: userOp.nonce,
+      initCode: userOp.initCode || '0x',
+      callData: userOp.callData || '0x',
+      callGasLimit: userOp.callGasLimit,
+      verificationGasLimit: userOp.verificationGasLimit,
+      preVerificationGas: userOp.preVerificationGas,
+      maxFeePerGas: userOp.maxFeePerGas,
+      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+      paymasterAndData: userOp.paymasterAndData || '0x',
+      signature: '0x'  // CRITICAL: empty for signing
+    };
 
-  async getEntryPointDeposit(account) {
+    console.log('🔍 Signing UserOp:', {
+      sender: cleanUserOp.sender,
+      nonce: cleanUserOp.nonce.toString(),
+      callData: cleanUserOp.callData.slice(0, 50) + '...',
+      paymasterAndData: cleanUserOp.paymasterAndData === '0x' ? 'none' : 'present'
+    });
+
+    // CORRECT TYPES for EntryPoint v0.6 - MUST be "UserOperation"
+    const types = {
+      UserOperation: [
+        { name: 'sender', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'initCode', type: 'bytes' },
+        { name: 'callData', type: 'bytes' },
+        { name: 'callGasLimit', type: 'uint256' },
+        { name: 'verificationGasLimit', type: 'uint256' },
+        { name: 'preVerificationGas', type: 'uint256' },
+        { name: 'maxFeePerGas', type: 'uint256' },
+        { name: 'maxPriorityFeePerGas', type: 'uint256' },
+        { name: 'paymasterAndData', type: 'bytes' },
+        { name: 'signature', type: 'bytes' }
+      ]
+    };
+
+    const domain = {
+      name: 'EntryPoint',
+      version: '0.6.0',
+      chainId: LIVE.NETWORK.chainId, // Should be 1 for mainnet
+      verifyingContract: this.entryPoint
+    };
+
+    console.log('✍️ EIP-712 Domain:', domain);
+    console.log('✍️ Types:', Object.keys(types));
+
     try {
-      const entryPoint = new ethers.Contract(
-        this.entryPoint,
-        ['function getDeposit(address) view returns (uint256)'],
-        this.provider
-      );
-      return await entryPoint.getDeposit(account);
-    } catch {
-      return 0n;
+      // Sign the typed data
+      const signature = await this.signer.signTypedData(domain, types, cleanUserOp);
+      console.log(`✅ Signature: ${signature.slice(0, 42)}...`);
+      
+      // Return COMPLETE UserOp with signature
+      return {
+        ...userOp,
+        signature
+      };
+    } catch (error) {
+      console.error('❌ Signing failed:', error.message);
+      throw error;
     }
   }
 
-
+  // =======================================================================
+// FIXED: SEND USEROP VIA ENTRYPOINT
 // =======================================================================
-// BOOTSTRAP-SPECIFIC METHOD - NO PAYMASTER, DIRECT SCW PAYMENT
-// =======================================================================
-async executeBootstrapDirect(target, calldata, description = 'bootstrap') {
-  // Get fresh nonce from EntryPoint
-  const nonce = await this.nonceLock.acquire();
-  
-  // Encode SCW.execute()
-  const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
-    target,
-    0n,
-    calldata
-  ]);
-  
-  console.log(`📊 Bootstrap - No paymaster, SCW pays gas directly`);
-  
-  const feeData = await this.provider.getFeeData();
-  
-  // Conservative gas limits for bootstrap
-  const callGasLimit = 800_000n;
-  const verificationGasLimit = 300_000n;
-  const preVerificationGas = 100_000n;
-  
-  const userOp = {
-    sender: this.scw,
-    nonce: nonce,
-    initCode: '0x',
-    callData: scwCalldata,
-    callGasLimit: callGasLimit,
-    verificationGasLimit: verificationGasLimit,
-    preVerificationGas: preVerificationGas,
-    maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei'),
-    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei'),
-    paymasterAndData: '0x',  // ← CRITICAL: NO PAYMASTER!
-    signature: '0x'
-  };
-  
-  console.log(`📦 Bootstrap UserOp built:`);
-  console.log(`  • nonce: ${nonce.toString()}`);
-  console.log(`  • callGasLimit: ${callGasLimit}`);
-  console.log(`  • paymasterAndData: NONE`);
-  
-  // Sign the UserOp using your existing signUserOp method
-  const signed = await this.signUserOp(userOp);
-  
-  // Send using your existing sendUserOpDirect method
-  const txHash = await this.sendUserOpDirect(signed);
-  
-  this.nonceLock.release();
-  
-  return {
-    userOpHash: txHash,
-    desc: description,
-    nonce: nonce.toString(),
-    paymasterUsed: 'none'
-  };
-}
+async sendUserOp(userOp) {
+  const ENTRY_POINT_ABI = [
+    "function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address payable beneficiary) external"
+  ];
 
-   
-// =======================================================================
-// FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
-// =======================================================================
-async signUserOp(userOp) {
-  // Ensure all fields are properly formatted
-  userOp.initCode = userOp.initCode || '0x';
-  userOp.callData = userOp.callData || '0x';
-  userOp.paymasterAndData = userOp.paymasterAndData || '0x';
+  const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
 
-  // Debug logging
-  console.log('🔍 Raw UserOp before signing:', {
-    sender: userOp.sender,
-    nonce: userOp.nonce?.toString?.(),
-    callData: userOp.callData?.slice(0, 50) + '...',
-    paymasterAndData: userOp.paymasterAndData === '0x' ? 'none' : userOp.paymasterAndData?.slice(0, 20) + '...'
-  });
-
-  // =====================================================================
-  // CRITICAL: CORRECT EIP-712 TYPES FOR ENTRYPOINT v0.6
-  // =====================================================================
-  const types = {
-    UserOp: [  // ← MUST be "UserOp", not "UserOperation"
-      { name: 'sender', type: 'address' },
-      { name: 'nonce', type: 'uint256' },
-      { name: 'initCode', type: 'bytes' },
-      { name: 'callData', type: 'bytes' },
-      { name: 'callGasLimit', type: 'uint256' },
-      { name: 'verificationGasLimit', type: 'uint256' },
-      { name: 'preVerificationGas', type: 'uint256' },
-      { name: 'maxFeePerGas', type: 'uint256' },
-      { name: 'maxPriorityFeePerGas', type: 'uint256' },
-      { name: 'paymasterAndData', type: 'bytes' },
-      { name: 'signature', type: 'bytes' }  // ← MUST include signature field
-    ]
-  };
-
-  const domain = {
-    name: 'EntryPoint',
-    version: '0.6.0',
-    chainId: LIVE.NETWORK.chainId,
-    verifyingContract: this.entryPoint
-  };
-
-  // =====================================================================
-  // CRITICAL: Value MUST include ALL fields with EMPTY signature
-  // =====================================================================
-  const value = {
+  // Format UserOp for RPC
+  const userOpForRPC = {
     sender: userOp.sender,
     nonce: userOp.nonce,
     initCode: userOp.initCode,
@@ -713,273 +670,145 @@ async signUserOp(userOp) {
     maxFeePerGas: userOp.maxFeePerGas,
     maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
     paymasterAndData: userOp.paymasterAndData,
-    signature: '0x'  // ← Empty signature in the signed data
+    signature: userOp.signature
   };
 
-  console.log('✍️ Signing UserOp with EIP-712...');
-  console.log('Domain:', domain);
-  console.log('Types:', types);
-  console.log('Value:', value);
+  console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
 
+  // 🔑 Insert dynamic gas estimation here
+  let outerGasLimit = userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas + 100_000n;
   try {
-    userOp.signature = await this.signer.signTypedData(domain, types, value);
-    console.log(`✅ Signature generated: ${userOp.signature.slice(0, 42)}...`);
-    return userOp;
-  } catch (error) {
-    console.error('❌ EIP-712 signing failed:', error.message);
-    throw error;  // Don't fall back - we need proper signatures
+    outerGasLimit = await entryPoint.estimateGas.handleOps([userOpForRPC], this.signer.address) * 115n / 100n;
+    console.log(`Estimated handleOps gas: ${outerGasLimit}`);
+  } catch (e) {
+    console.warn('Estimation failed, using fallback:', outerGasLimit.toString());
+  }
+
+  const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
+    gasLimit: outerGasLimit
+  });
+
+  console.log(`⏳ Transaction: ${tx.hash}`);
+  const receipt = await tx.wait();
+
+  if (receipt.status === 1) {
+    console.log(`✅ UserOp executed in block ${receipt.blockNumber}`);
+    return tx.hash;
+  } else {
+    throw new Error(`UserOp failed (status ${receipt.status})`);
   }
 }
-   
- // =======================================================================
-// FIXED: SEND USEROP WITH NAMED ABI AND IMPROVED ERROR HANDLING
-// =======================================================================
-async sendUserOpDirect(userOp) {
-  // CRITICAL: Use named tuple ABI for Ethers v6 compatibility
-  const ENTRY_POINT_ABI = [
-    {
-      "inputs": [
-        {
-          "components": [
-            { "name": "sender", "type": "address" },
-            { "name": "nonce", "type": "uint256" },
-            { "name": "initCode", "type": "bytes" },
-            { "name": "callData", "type": "bytes" },
-            { "name": "callGasLimit", "type": "uint256" },
-            { "name": "verificationGasLimit", "type": "uint256" },
-            { "name": "preVerificationGas", "type": "uint256" },
-            { "name": "maxFeePerGas", "type": "uint256" },
-            { "name": "maxPriorityFeePerGas", "type": "uint256" },
-            { "name": "paymasterAndData", "type": "bytes" },
-            { "name": "signature", "type": "bytes" }
-          ],
-          "name": "ops",
-          "type": "tuple[]"
-        },
-        { "name": "beneficiary", "type": "address" }
-      ],
-      "name": "handleOps",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    }
-  ];
 
-  const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
-  
-  try {
-    console.log(`📤 Sending UserOp with nonce ${userOp.nonce.toString()}`);
+  // =======================================================================
+  // BOOTSTRAP METHOD - NO PAYMASTER
+  // =======================================================================
+  async executeBootstrapDirect(target, calldata) {
+    const nonce = await this.nonceLock.acquire();
     
-    // Log the UserOp details for debugging
-    console.log(`📊 UserOp details:`);
-    console.log(`  • sender: ${userOp.sender}`);
-    console.log(`  • nonce: ${userOp.nonce.toString()}`);
-    console.log(`  • callGasLimit: ${userOp.callGasLimit.toString()}`);
-    console.log(`  • verificationGasLimit: ${userOp.verificationGasLimit.toString()}`);
-    console.log(`  • maxFeePerGas: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
-    console.log(`  • paymaster: ${userOp.paymasterAndData === '0x' ? 'none' : userOp.paymasterAndData.slice(0, 42)}`);
+    const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
+      target,
+      0n,
+      calldata
+    ]);
+
+    const feeData = await this.provider.getFeeData();
     
-    // Convert to proper format for RPC
-    const userOpForRPC = {
-      sender: userOp.sender,
-      nonce: ethers.toBeHex(userOp.nonce),
-      initCode: userOp.initCode,
-      callData: userOp.callData,
-      callGasLimit: ethers.toBeHex(userOp.callGasLimit),
-      verificationGasLimit: ethers.toBeHex(userOp.verificationGasLimit),
-      preVerificationGas: ethers.toBeHex(userOp.preVerificationGas),
-      maxFeePerGas: ethers.toBeHex(userOp.maxFeePerGas),
-      maxPriorityFeePerGas: ethers.toBeHex(userOp.maxPriorityFeePerGas),
-      paymasterAndData: userOp.paymasterAndData,
-      signature: userOp.signature
+    // REALISTIC GAS PRICES for current network
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
+
+    // Bootstrap-specific gas limits
+    const callGasLimit = 650_000n;
+    const verificationGasLimit = 180_000n;
+    const preVerificationGas = 65_000n;
+
+    // Verify SCW has enough ETH
+    const scwBalance = await this.provider.getBalance(this.scw);
+    const estimatedCost = (maxFeePerGas + maxPriorityFeePerGas) * 
+                         (callGasLimit + verificationGasLimit + preVerificationGas);
+    
+    console.log(`💰 SCW balance: ${ethers.formatEther(scwBalance)} ETH`);
+    console.log(`💰 Estimated cost: ${ethers.formatEther(estimatedCost)} ETH`);
+
+    if (scwBalance < estimatedCost * 110n / 100n) {
+      throw new Error(`Insufficient SCW balance for gas`);
+    }
+
+    const userOp = {
+      sender: this.scw,
+      nonce,
+      initCode: '0x',
+      callData: scwCalldata,
+      callGasLimit,
+      verificationGasLimit,
+      preVerificationGas,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
+      paymasterAndData: '0x',
+      signature: '0x'
     };
+
+    const signed = await this.signUserOp(userOp);
+    const txHash = await this.sendUserOp(signed);
     
-    // Estimate gas first to catch issues early
-    let gasLimit = 2_500_000n;
-    try {
-      console.log(`📊 Estimating gas...`);
-      const estimatedGas = await entryPoint.handleOps.estimateGas([userOpForRPC], this.signer.address);
-      gasLimit = estimatedGas * 120n / 100n; // Add 20% buffer
-      console.log(`  • Estimated: ${estimatedGas.toString()}, using: ${gasLimit.toString()}`);
-    } catch (estimateError) {
-      console.log(`⚠️ Gas estimation failed, using fallback: ${gasLimit.toString()}`);
-      // Log the estimate error for debugging
-      if (estimateError.message.includes('AA31')) {
-        console.error(`🔍 AA31: Paymaster deposit too low - check gas limits and deposit`);
-      } else if (estimateError.message.includes('AA24')) {
-        console.error(`🔍 AA24: Signature error - check EIP-712 signing includes paymaster`);
-      } else if (estimateError.message.includes('AA21')) {
-        console.error(`🔍 AA21: Didn't pay prefund - paymaster deposit issue`);
-      }
-    }
+    this.nonceLock.release();
     
-    const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
-      gasLimit: gasLimit
-    });
-    
-    console.log(`⏳ Transaction submitted: ${tx.hash}`);
-    console.log(`🔍 View on Etherscan: https://etherscan.io/tx/${tx.hash}`);
-    
-    const receipt = await tx.wait();
-    
-    if (receipt.status === 1) {
-      console.log(`✅✅✅ UserOp executed successfully ✅✅✅`);
-      console.log(`📊 Transaction hash: ${tx.hash}`);
-      console.log(`📊 Block: ${receipt.blockNumber}`);
-      console.log(`📊 Gas used: ${receipt.gasUsed.toString()}`);
-      console.log(`📊 Gas price: ${ethers.formatUnits(receipt.gasPrice, 'gwei')} gwei`);
-      console.log(`📊 Total cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
-      return tx.hash;
-    } else {
-      console.error(`❌ UserOp execution failed with status ${receipt.status}`);
-      console.error(`📊 Transaction failed: ${tx.hash}`);
-      throw new Error(`UserOp execution failed (receipt status ${receipt.status})`);
-    }
-    
-  } catch (error) {
-    console.error('❌ UserOp execution failed:', error.message);
-    
-    // Enhanced error decoding
-    if (error.message.includes('AA31')) {
-      console.error(`🔍 AA31 ERROR: Paymaster deposit too low`);
-      console.error(`   • Paymaster deposit: 0.0021 ETH`);
-      console.error(`   • Required prefund: Calculate from gas limits`);
-      console.error(`   • Fix: Reduce gas limits or increase paymaster deposit`);
-    } else if (error.message.includes('AA24')) {
-      console.error(`🔍 AA24 ERROR: Signature error`);
-      console.error(`   • Check that paymasterAndData is included in EIP-712 signing`);
-      console.error(`   • Verify all UserOp fields are correctly formatted`);
-    } else if (error.message.includes('AA21')) {
-      console.error(`🔍 AA21 ERROR: Didn't pay prefund`);
-      console.error(`   • Paymaster deposit may be too low or stale`);
-      console.error(`   • Try using SCW direct payment as fallback`);
-    } else if (error.message.includes('AA33')) {
-      console.error(`🔍 AA33 ERROR: Paymaster validation failed`);
-      console.error(`   • Paymaster's validatePaymasterUserOp reverted`);
-      console.error(`   • Check paymaster contract for allowance/balance issues`);
-    }
-    
-    // Try to simulate for better error message
-    try {
-      console.log(`\n📋 Attempting simulation for detailed error...`);
-      const userOpForRPC = {
-        sender: userOp.sender,
-        nonce: ethers.toBeHex(userOp.nonce),
-        initCode: userOp.initCode,
-        callData: userOp.callData,
-        callGasLimit: ethers.toBeHex(userOp.callGasLimit),
-        verificationGasLimit: ethers.toBeHex(userOp.verificationGasLimit),
-        preVerificationGas: ethers.toBeHex(userOp.preVerificationGas),
-        maxFeePerGas: ethers.toBeHex(userOp.maxFeePerGas),
-        maxPriorityFeePerGas: ethers.toBeHex(userOp.maxPriorityFeePerGas),
-        paymasterAndData: userOp.paymasterAndData,
-        signature: userOp.signature
-      };
-      await entryPoint.handleOps.staticCall([userOpForRPC], this.signer.address);
-    } catch (simError) {
-      console.error(`📋 Simulation error:`, simError.message);
-      
-      // Decode simulation error if possible
-      if (simError.message.includes('AA31')) {
-        console.error(`   → This is a deposit issue - try SCW direct payment`);
-      } else if (simError.message.includes('AA24')) {
-        console.error(`   → This is a signature issue - check EIP-712 encoding`);
-      }
-    }
-    
-    // Release nonce on failure (critical fix)
-    try {
-      this.nonceLock.release();
-      console.log(`✅ Nonce released after failure`);
-    } catch (releaseError) {
-      // Ignore release errors
-    }
-    
-    throw error;
+    return {
+      userOpHash: txHash,
+      nonce: nonce.toString()
+    };
   }
-}
-   
-// =======================================================================
-// FIXED: BUILD AND SEND USEROP - OPTIMIZED GAS LIMITS
-// =======================================================================
-async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = false) {
-  const nonce = await this.nonceLock.acquire();
-  
-  // Encode SCW.execute()
-  const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
-    target,
-    0n,
-    calldata
-  ]);
-  
-  const paymaster = await this.paymasterRouter.getOptimalPaymaster();
-  
-  // ===================================================================
-  // CRITICAL FIX: Properly format paymasterAndData
-  // Format: address + empty bytes (for paymaster-specific data)
-  // Using solidityPacked to ensure correct ABI encoding
-  // ===================================================================
-  const paymasterAndData = ethers.solidityPacked(
-    ['address', 'bytes'],
-    [paymaster, '0x']
-  );
-  
-  console.log(`📊 Paymaster details:`);
-  console.log(`  • Address: ${paymaster}`);
-  console.log(`  • Formatted: ${paymasterAndData}`);
-  console.log(`  • Deposit on-chain: 0.0021 ETH (verified)`);
-  
-  const feeData = await this.provider.getFeeData();
-  
-  // OPTIMIZED GAS PRICES - Reasonable for current network conditions
-  const baseFee = ethers.parseUnits('20', 'gwei');      // 20 gwei max fee
-  const basePriority = ethers.parseUnits('1.5', 'gwei'); // 1.5 gwei priority fee
-  
-  // OPTIMIZED GAS LIMITS - Prevents AA31 "deposit too low"
-  // Warehouse operations need more gas, standard ops need less
- const callGasLimit = useWarehouse ? 400_000n : 250_000n;      // ↓ from 1.2M to 400k
- const verificationGasLimit = 150_000n;                        // ↓ from 500k to 150k
- const preVerificationGas = 50_000n;                           // ↓ from 200k to 50k
-  
-  // Calculate required prefund with optimized limits
-  const requiredPrefund = (baseFee + basePriority) * (callGasLimit + verificationGasLimit + preVerificationGas);
-  console.log(`  • Required prefund: ${ethers.formatEther(requiredPrefund)} ETH`);
-  console.log(`  • Paymaster has: 0.0021 ETH (${requiredPrefund <= ethers.parseEther('0.0021') ? '✅ sufficient' : '❌ insufficient'})`);
-  
-  const userOp = {
-    sender: this.scw,
-    nonce: nonce,
-    initCode: '0x',
-    callData: scwCalldata,
-    callGasLimit: callGasLimit,
-    verificationGasLimit: verificationGasLimit,
-    preVerificationGas: preVerificationGas,
-    maxFeePerGas: baseFee,
-    maxPriorityFeePerGas: basePriority,
-    paymasterAndData: paymasterAndData,
-    signature: '0x'
-  };
-  
-  console.log(`📦 UserOp built with optimized gas:`);
-  console.log(`  • callGasLimit: ${callGasLimit} (${useWarehouse ? 'warehouse' : 'standard'})`);
-  console.log(`  • verificationGasLimit: ${verificationGasLimit}`);
-  console.log(`  • preVerificationGas: ${preVerificationGas}`);
-  console.log(`  • maxFeePerGas: ${ethers.formatUnits(baseFee, 'gwei')} gwei`);
-  
-  // Your existing signUserOp method is perfect - no changes needed
-  const signed = await this.signUserOp(userOp);
-  const hash = await this.sendUserOpDirect(signed);
-  
-  this.nonceLock.release();
-  
-  console.log(`✅ ${description} | Nonce: ${nonce.toString()} | Hash: ${hash.slice(0, 10)}...`);
-  
-  return {
-    userOpHash: hash,
-    desc: description,
-    nonce: nonce.toString(),
-    paymasterUsed: paymaster
-  };
+
+  // Keep your existing methods but remove any duplicate signUserOp
+  async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = false) {
+    // Your existing implementation but using the fixed signUserOp and sendUserOp
+    const nonce = await this.nonceLock.acquire();
+    
+    const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
+      target,
+      0n,
+      calldata
+    ]);
+
+    const paymaster = this.paymasterRouter ? await this.paymasterRouter.getOptimalPaymaster() : null;
+    const paymasterAndData = paymaster ? ethers.solidityPacked(
+      ['address', 'bytes'], [paymaster, '0x']
+    ) : '0x';
+
+    const feeData = await this.provider.getFeeData();
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
+
+    const callGasLimit = useWarehouse ? 400_000n : 250_000n;
+    const verificationGasLimit = 150_000n;
+    const preVerificationGas = 50_000n;
+
+    const userOp = {
+      sender: this.scw,
+      nonce,
+      initCode: '0x',
+      callData: scwCalldata,
+      callGasLimit,
+      verificationGasLimit,
+      preVerificationGas,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
+      paymasterAndData,
+      signature: '0x'
+    };
+
+    const signed = await this.signUserOp(userOp);
+    const hash = await this.sendUserOp(signed);
+    
+    this.nonceLock.release();
+    
+    return {
+      userOpHash: hash,
+      desc: description,
+      nonce: nonce.toString(),
+      paymasterUsed: paymaster || 'none'
+    };
+  }
 }
    
   // =======================================================================
@@ -3295,9 +3124,8 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log('\n📤 Calling executeBootstrapDirect...');
     
     const result = await this.aa.executeBootstrapDirect(
-      LIVE.WAREHOUSE_CONTRACT,
-      bootstrapCalldata,
-      'warehouse_bootstrap'
+  LIVE.WAREHOUSE_CONTRACT,
+  bootstrapCalldata
     );
     
     console.log(`\n✅✅✅ BOOTSTRAP TRANSACTION SENT! ✅✅✅`);
@@ -4048,5 +3876,4 @@ export {
   HarvestSafetyOverride
   
 };
-
 
