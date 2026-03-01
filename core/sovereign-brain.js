@@ -584,6 +584,30 @@ class DirectOmniExecutionAA {
     this.shield = new AntiBotShield();
   }
 
+// =======================================================================
+  // WAREHOUSE BOOTSTRAP
+  // =======================================================================
+  async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
+    console.log('📤 Building warehouse bootstrap transaction...');
+    
+    const warehouseInterface = new ethers.Interface([
+      'function executeBulletproofBootstrap(uint256) external'
+    ]);
+    
+    const warehouseCalldata = warehouseInterface.encodeFunctionData(
+      'executeBulletproofBootstrap', 
+      [bwzcAmount]
+    );
+    
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      warehouseCalldata,
+      'warehouse_bootstrap',
+      true
+    );
+  }
+
+   
   // =======================================================================
   // FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
   // =======================================================================
@@ -816,29 +840,7 @@ async sendUserOp(userOp) {
   }
 }
    
-  // =======================================================================
-  // WAREHOUSE BOOTSTRAP
-  // =======================================================================
-  async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
-    console.log('📤 Building warehouse bootstrap transaction...');
-    
-    const warehouseInterface = new ethers.Interface([
-      'function executeBulletproofBootstrap(uint256) external'
-    ]);
-    
-    const warehouseCalldata = warehouseInterface.encodeFunctionData(
-      'executeBulletproofBootstrap', 
-      [bwzcAmount]
-    );
-    
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      warehouseCalldata,
-      'warehouse_bootstrap',
-      true
-    );
-  }
-
+ 
   // =======================================================================
   // WAREHOUSE HARVEST
   // =======================================================================
