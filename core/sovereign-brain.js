@@ -656,19 +656,28 @@ async executeBootstrapDirect(target, calldata, description = 'bootstrap') {
 }
 
    
- // =======================================================================
-// FIXED: PROPER EIP-712 SIGNING WITH NO FALLBACK
+// =======================================================================
+// FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
 // =======================================================================
 async signUserOp(userOp) {
   // Ensure all fields are properly formatted
   userOp.initCode = userOp.initCode || '0x';
   userOp.callData = userOp.callData || '0x';
   userOp.paymasterAndData = userOp.paymasterAndData || '0x';
-  userOp.signature = '0x';  // Start with empty signature
 
-  // CORRECT TYPES for EntryPoint v0.6
+  // Debug logging
+  console.log('🔍 Raw UserOp before signing:', {
+    sender: userOp.sender,
+    nonce: userOp.nonce?.toString?.(),
+    callData: userOp.callData?.slice(0, 50) + '...',
+    paymasterAndData: userOp.paymasterAndData === '0x' ? 'none' : userOp.paymasterAndData?.slice(0, 20) + '...'
+  });
+
+  // =====================================================================
+  // CRITICAL: CORRECT EIP-712 TYPES FOR ENTRYPOINT v0.6
+  // =====================================================================
   const types = {
-     UserOperation: [  
+    UserOp: [  // ← MUST be "UserOp", not "UserOperation"
       { name: 'sender', type: 'address' },
       { name: 'nonce', type: 'uint256' },
       { name: 'initCode', type: 'bytes' },
@@ -690,7 +699,9 @@ async signUserOp(userOp) {
     verifyingContract: this.entryPoint
   };
 
-  // CORRECT VALUE - includes ALL fields with signature empty
+  // =====================================================================
+  // CRITICAL: Value MUST include ALL fields with EMPTY signature
+  // =====================================================================
   const value = {
     sender: userOp.sender,
     nonce: userOp.nonce,
@@ -702,7 +713,7 @@ async signUserOp(userOp) {
     maxFeePerGas: userOp.maxFeePerGas,
     maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
     paymasterAndData: userOp.paymasterAndData,
-    signature: '0x'  // ← Empty signature in signed data
+    signature: '0x'  // ← Empty signature in the signed data
   };
 
   console.log('✍️ Signing UserOp with EIP-712...');
@@ -711,16 +722,15 @@ async signUserOp(userOp) {
   console.log('Value:', value);
 
   try {
-    // Use signTypedData directly - NO FALLBACK
     userOp.signature = await this.signer.signTypedData(domain, types, value);
     console.log(`✅ Signature generated: ${userOp.signature.slice(0, 42)}...`);
     return userOp;
   } catch (error) {
     console.error('❌ EIP-712 signing failed:', error.message);
-    console.error('❌ DO NOT USE FALLBACK - FIX THE REAL PROBLEM');
-    throw error;  // Don't fall back - fix the real issue
+    throw error;  // Don't fall back - we need proper signatures
   }
 }
+   
  // =======================================================================
 // FIXED: SEND USEROP WITH NAMED ABI AND IMPROVED ERROR HANDLING
 // =======================================================================
