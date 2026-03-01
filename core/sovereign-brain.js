@@ -399,23 +399,22 @@ class EnhancedRPCManager {
 }
 
 async getFeeData() {
-  try {
-    const fd = await this.getProvider().getFeeData();
-    return {
-      // Use real network values, fallback to 0.25 gwei for current low-gas environment
-      maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('0.25', 'gwei'),
-      maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei'),
-      gasPrice: fd.gasPrice || ethers.parseUnits('0.25', 'gwei')
-    };
-  } catch {
-    // Fallback to safe low values for current network conditions
-    return {
-      maxFeePerGas: ethers.parseUnits('0.25', 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits('0.02', 'gwei'),
-      gasPrice: ethers.parseUnits('0.25', 'gwei')
-    };
+    try {
+      const fd = await this.getProvider().getFeeData();
+      return {
+        maxFeePerGas: fd.maxFeePerGas || ethers.parseUnits('0.25', 'gwei'),
+        maxPriorityFeePerGas: fd.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei'),
+        gasPrice: fd.gasPrice || ethers.parseUnits('0.25', 'gwei')
+      };
+    } catch {
+      return {
+        maxFeePerGas: ethers.parseUnits('0.25', 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits('0.02', 'gwei'),
+        gasPrice: ethers.parseUnits('0.25', 'gwei')
+      };
+    }
   }
-}
+} // ← EnhancedRPCManager class ends here
 
 class QuorumRPC {
   constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
