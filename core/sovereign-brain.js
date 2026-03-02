@@ -625,7 +625,7 @@ class DirectOmniExecutionAA {
     );
   }
   
- // =======================================================================
+// =======================================================================
 // FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
 // =======================================================================
 async signUserOp(userOp) {
@@ -640,8 +640,8 @@ async signUserOp(userOp) {
     preVerificationGas: userOp.preVerificationGas,
     maxFeePerGas: userOp.maxFeePerGas,
     maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-    paymasterAndData: userOp.paymasterAndData || '0x',
-    signature: '0x'  // CRITICAL: empty for signing
+    paymasterAndData: userOp.paymasterAndData || '0x'
+    // ← NOTICE: signature field is COMPLETELY OMITTED from the data to sign
   };
 
   console.log('🔍 Signing UserOp:', {
@@ -651,9 +651,9 @@ async signUserOp(userOp) {
     paymasterAndData: cleanUserOp.paymasterAndData === '0x' ? 'none' : 'present'
   });
 
-  // CORRECT TYPES for EntryPoint v0.6
+  // CORRECT TYPES for EntryPoint v0.6 - MUST be "UserOp" (capital O, lowercase p)
   const types = {
-    UserOperation: [
+    UserOp: [  // ← CRITICAL: Must be "UserOp", not "UserOperation"!
       { name: 'sender', type: 'address' },
       { name: 'nonce', type: 'uint256' },
       { name: 'initCode', type: 'bytes' },
@@ -665,7 +665,6 @@ async signUserOp(userOp) {
       { name: 'maxPriorityFeePerGas', type: 'uint256' },
       { name: 'paymasterAndData', type: 'bytes' }
       // ← NOTICE: signature is OMITTED from types!
-      // The signature field is NOT part of the EIP-712 typed data
     ]
   };
 
