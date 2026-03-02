@@ -485,6 +485,11 @@ class StrictOrderingNonce {
     return await this.current();
   }
  
+  // ✅ ADD THIS METHOD - Returns current nonce without acquiring lock
+  async getNonce() {
+    return await this.current();
+  }
+ 
   release() {
     // Only release lock, NEVER increment nonce
     this.locked = false;
@@ -604,112 +609,135 @@ class DirectOmniExecutionAA {
     );
   }
   
-  // =======================================================================
-  // FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
-  // =======================================================================
-  async signUserOp(userOp) {
-    // Ensure all fields are properly formatted
-    const cleanUserOp = {
-      sender: userOp.sender,
-      nonce: userOp.nonce,
-      initCode: userOp.initCode || '0x',
-      callData: userOp.callData || '0x',
-      callGasLimit: userOp.callGasLimit,
-      verificationGasLimit: userOp.verificationGasLimit,
-      preVerificationGas: userOp.preVerificationGas,
-      maxFeePerGas: userOp.maxFeePerGas,
-      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-      paymasterAndData: userOp.paymasterAndData || '0x',
-      signature: '0x' // CRITICAL: empty for signing
+ // =======================================================================
+// FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
+// =======================================================================
+async signUserOp(userOp) {
+  // Ensure all fields are properly formatted
+  const cleanUserOp = {
+    sender: userOp.sender,
+    nonce: userOp.nonce,
+    initCode: userOp.initCode || '0x',
+    callData: userOp.callData || '0x',
+    callGasLimit: userOp.callGasLimit,
+    verificationGasLimit: userOp.verificationGasLimit,
+    preVerificationGas: userOp.preVerificationGas,
+    maxFeePerGas: userOp.maxFeePerGas,
+    maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+    paymasterAndData: userOp.paymasterAndData || '0x',
+    signature: '0x'  // CRITICAL: empty for signing
+  };
+
+  console.log('🔍 Signing UserOp:', {
+    sender: cleanUserOp.sender,
+    nonce: cleanUserOp.nonce.toString(),
+    callData: cleanUserOp.callData.slice(0, 50) + '...',
+    paymasterAndData: cleanUserOp.paymasterAndData === '0x' ? 'none' : 'present'
+  });
+
+  // CORRECT TYPES for EntryPoint v0.6
+  const types = {
+    UserOperation: [
+      { name: 'sender', type: 'address' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'initCode', type: 'bytes' },
+      { name: 'callData', type: 'bytes' },
+      { name: 'callGasLimit', type: 'uint256' },
+      { name: 'verificationGasLimit', type: 'uint256' },
+      { name: 'preVerificationGas', type: 'uint256' },
+      { name: 'maxFeePerGas', type: 'uint256' },
+      { name: 'maxPriorityFeePerGas', type: 'uint256' },
+      { name: 'paymasterAndData', type: 'bytes' }
+      // ← NOTICE: signature is OMITTED from types!
+      // The signature field is NOT part of the EIP-712 typed data
+    ]
+  };
+
+  const domain = {
+    name: 'EntryPoint',
+    version: '0.6.0',
+    chainId: LIVE.NETWORK.chainId,
+    verifyingContract: this.entryPoint
+  };
+
+  console.log('✍️ EIP-712 Domain:', domain);
+  console.log('✍️ Types:', Object.keys(types));
+
+  try {
+    // Sign the typed data - signature field is NOT included in what we sign
+    const signature = await this.signer.signTypedData(domain, types, cleanUserOp);
+    console.log(`✅ Signature: ${signature.slice(0, 42)}...`);
+    
+    // Return COMPLETE UserOp with signature added back
+    return {
+      ...userOp,
+      signature
     };
-    console.log('🔍 Signing UserOp:', {
-      sender: cleanUserOp.sender,
-      nonce: cleanUserOp.nonce.toString(),
-      callData: cleanUserOp.callData.slice(0, 50) + '...',
-      paymasterAndData: cleanUserOp.paymasterAndData === '0x' ? 'none' : 'present'
-    });
-    // CORRECT TYPES for EntryPoint v0.6 - MUST be "UserOperation"
-    const types = {
-      UserOperation: [
-        { name: 'sender', type: 'address' },
-        { name: 'nonce', type: 'uint256' },
-        { name: 'initCode', type: 'bytes' },
-        { name: 'callData', type: 'bytes' },
-        { name: 'callGasLimit', type: 'uint256' },
-        { name: 'verificationGasLimit', type: 'uint256' },
-        { name: 'preVerificationGas', type: 'uint256' },
-        { name: 'maxFeePerGas', type: 'uint256' },
-        { name: 'maxPriorityFeePerGas', type: 'uint256' },
-        { name: 'paymasterAndData', type: 'bytes' },
-        { name: 'signature', type: 'bytes' }
-      ]
-    };
-    const domain = {
-      name: 'EntryPoint',
-      version: '0.6.0',
-      chainId: LIVE.NETWORK.chainId, // Should be 1 for mainnet
-      verifyingContract: this.entryPoint
-    };
-    console.log('✍️ EIP-712 Domain:', domain);
-    console.log('✍️ Types:', Object.keys(types));
-    try {
-      // Sign the typed data
-      const signature = await this.signer.signTypedData(domain, types, cleanUserOp);
-      console.log(`✅ Signature: ${signature.slice(0, 42)}...`);
-     
-      // Return COMPLETE UserOp with signature
-      return {
-        ...userOp,
-        signature
-      };
-    } catch (error) {
-      console.error('❌ Signing failed:', error.message);
-      throw error;
-    }
+  } catch (error) {
+    console.error('❌ Signing failed:', error.message);
+    throw error;
   }
+}
   // =======================================================================
-  // FIXED: SEND USEROP VIA ENTRYPOINT
-  // =======================================================================
-  async sendUserOp(userOp) {
-    const ENTRY_POINT_ABI = [
-      "function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address payable beneficiary) external"
-    ];
-    const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
-    // Format UserOp for RPC
-    const userOpForRPC = {
-      sender: userOp.sender,
-      nonce: userOp.nonce,
-      initCode: userOp.initCode,
-      callData: userOp.callData,
-      callGasLimit: userOp.callGasLimit,
-      verificationGasLimit: userOp.verificationGasLimit,
-      preVerificationGas: userOp.preVerificationGas,
-      maxFeePerGas: userOp.maxFeePerGas,
-      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-      paymasterAndData: userOp.paymasterAndData,
-      signature: userOp.signature
-    };
-    console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
-    // 🔑 Insert dynamic gas estimation here
-    let outerGasLimit = userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas + 100_000n;
-    try {
-      outerGasLimit = await entryPoint.estimateGas.handleOps([userOpForRPC], this.signer.address) * 115n / 100n;
-      console.log(`Estimated handleOps gas: ${outerGasLimit}`);
-    } catch (e) {
-      console.warn('Estimation failed, using fallback:', outerGasLimit.toString());
-    }
-    const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
-      gasLimit: outerGasLimit
-    });
-    console.log(`⏳ Transaction: ${tx.hash}`);
-    const receipt = await tx.wait();
-    if (receipt.status === 1) {
-      console.log(`✅ UserOp executed in block ${receipt.blockNumber}`);
-      return tx.hash;
-    } else {
-      throw new Error(`UserOp failed (status ${receipt.status})`);
-    }
+// FIXED: SEND USEROP VIA ENTRYPOINT
+// =======================================================================
+async sendUserOp(userOp) {
+  const ENTRY_POINT_ABI = [
+    "function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address payable beneficiary) external"
+  ];
+
+  const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
+  
+  // Format UserOp for RPC
+  const userOpForRPC = {
+    sender: userOp.sender,
+    nonce: userOp.nonce,
+    initCode: userOp.initCode,
+    callData: userOp.callData,
+    callGasLimit: userOp.callGasLimit,
+    verificationGasLimit: userOp.verificationGasLimit,
+    preVerificationGas: userOp.preVerificationGas,
+    maxFeePerGas: userOp.maxFeePerGas,
+    maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+    paymasterAndData: userOp.paymasterAndData,
+    signature: userOp.signature
+  };
+
+  console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
+  
+  // Calculate gas limit for the handleOps transaction
+  const totalUserOpGas = userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas;
+  
+  // The handleOps transaction gas limit should be totalUserOpGas + overhead
+  // Overhead is typically 50,000-100,000 gas for one UserOp
+  let gasLimit = totalUserOpGas + 100_000n;
+  
+  // Try to estimate for better accuracy
+  try {
+    const estimated = await entryPoint.handleOps.estimateGas([userOpForRPC], this.signer.address);
+    gasLimit = estimated * 115n / 100n; // Add 15% buffer
+    console.log(`  • Estimated gas: ${estimated.toString()}`);
+  } catch (e) {
+    console.log(`  • Using fallback gas: ${gasLimit.toString()}`);
   }
+
+  console.log(`  • Gas limit: ${gasLimit.toString()}`);
+  console.log(`  • Max fee: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
+
+  const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
+    gasLimit: gasLimit
+  });
+
+  console.log(`⏳ Transaction: ${tx.hash}`);
+  const receipt = await tx.wait();
+
+  if (receipt.status === 1) {
+    console.log(`✅ UserOp executed in block ${receipt.blockNumber}`);
+    return tx.hash;
+  } else {
+    throw new Error(`UserOp failed (status ${receipt.status})`);
+  }
+}
   // =======================================================================
   // BOOTSTRAP METHOD - NO PAYMASTER
   // =======================================================================
