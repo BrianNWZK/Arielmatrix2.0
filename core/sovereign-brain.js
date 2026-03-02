@@ -407,17 +407,19 @@ async getFeeData() {
         gasPrice: fd.gasPrice || ethers.parseUnits('0.25', 'gwei')
       };
     } catch {
-     return {
+      return {
         maxFeePerGas: ethers.parseUnits('0.25', 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('0.02', 'gwei'),
         gasPrice: ethers.parseUnits('0.25', 'gwei')
       };
     }
-  };   // ←←← ADD THIS SEMICOLON (or just a blank line + newline)
+  }
+}   // ←←← THIS CLOSING BRACE WAS MISSING! Add it here
 
- //
-   
-export class QuorumRPC {
+/* =========================================================================
+   QuorumRPC – fork detection & multi-provider quorum
+   ========================================================================= */
+  export class QuorumRPC {
   constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
