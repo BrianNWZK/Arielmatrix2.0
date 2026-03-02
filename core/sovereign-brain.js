@@ -407,13 +407,13 @@ async getFeeData() {
         gasPrice: fd.gasPrice || ethers.parseUnits('0.25', 'gwei')
       };
     } catch {
-      return {
+     return {
         maxFeePerGas: ethers.parseUnits('0.25', 'gwei'),
         maxPriorityFeePerGas: ethers.parseUnits('0.02', 'gwei'),
         gasPrice: ethers.parseUnits('0.25', 'gwei')
       };
     }
-  }
+  };   // ←←← ADD THIS SEMICOLON (or just a blank line + newline)
 
 
 class QuorumRPC {
