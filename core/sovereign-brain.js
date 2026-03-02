@@ -392,12 +392,10 @@ class EnhancedRPCManager {
       if (best && best.provider !== this.sticky) this.sticky = best.provider;
     }, 30000);
   }
-
-  getProvider() { 
-  if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized'); 
-  return this.sticky; 
+  getProvider() {
+  if (!this.initialized || !this.sticky) throw new Error('RPC manager not initialized');
+  return this.sticky;
 }
-
 async getFeeData() {
     try {
       const fd = await this.getProvider().getFeeData();
@@ -414,8 +412,7 @@ async getFeeData() {
       };
     }
   }
-}   // ←←← THIS CLOSING BRACE WAS MISSING! Add it here
-
+} // ←←← THIS CLOSING BRACE WAS MISSING! Add it here
 /* =========================================================================
    QuorumRPC – fork detection & multi-provider quorum
    ========================================================================= */
@@ -429,7 +426,6 @@ async getFeeData() {
     this.providers = urls.map(u => new ethers.JsonRpcProvider(u, network, { staticNetwork: network }));
     this.lastForkAlert = null;
   }
-
   async forkCheck() {
     try {
       const heads = await Promise.all(this.providers.map(p => p.getBlockNumber()));
@@ -442,8 +438,6 @@ async getFeeData() {
     }
   }
 }
-
-
 /* =========================================================================
    Anti-bot shield (entropy jitter, signature salt, replay guards)
    ========================================================================= */
@@ -454,49 +448,48 @@ class AntiBotShield {
   seen(key){ return this.replaySet.has(key); }
   gasBump(base){ return (base * BigInt(10000 + LIVE.BUNDLE.GAS_BUMP_BPS)) / 10000n; }
 }
-
 /* =========================================================================
    FIXED: StrictOrderingNonce - Always fetches from EntryPoint, never caches
    ========================================================================= */
 class StrictOrderingNonce {
-  constructor(provider, entryPoint, scw) { 
-    this.provider = provider; 
-    this.entryPoint = entryPoint; 
-    this.scw = scw; 
-    this.locked = false; 
-    this.lastNonce = null; 
-    this.lockTs = 0; 
+  constructor(provider, entryPoint, scw) {
+    this.provider = provider;
+    this.entryPoint = entryPoint;
+    this.scw = scw;
+    this.locked = false;
+    this.lastNonce = null;
+    this.lockTs = 0;
   }
-  
+ 
   async current() {
     // ALWAYS fetch fresh from EntryPoint - never use cached value
     const c = new ethers.Contract(this.entryPoint, [
       'function getNonce(address,uint192) view returns (uint256)'
     ], this.provider);
-    
+   
     const n = await c.getNonce(this.scw, 0);
     console.log(`📊 EntryPoint nonce: ${n.toString()}`);
-    this.lastNonce = n; 
+    this.lastNonce = n;
     return n;
   }
-  
+ 
   async acquire() {
     const now = nowTs();
     // Remove the lock check - we want fresh nonce every time
     // if (this.locked && (now - this.lockTs) < LIVE.BUNDLE.NONCE_LOCK_MS) throw new Error('nonce locked');
-    
-    this.locked = true; 
-    this.lockTs = now; 
-    
+   
+    this.locked = true;
+    this.lockTs = now;
+   
     // ALWAYS get fresh nonce
     return await this.current();
   }
-  
-  release() { 
+ 
+  release() {
     // Only release lock, NEVER increment nonce
-    this.locked = false; 
+    this.locked = false;
   }
-  
+ 
   // Only call this on SUCCESSFUL transactions
   incrementOnSuccess() {
     // This should be called ONLY after confirmed successful execution
@@ -505,11 +498,9 @@ class StrictOrderingNonce {
     }
   }
 }
-
 /* =========================================================================
    ULTRA-MINIMAL DualPaymasterRouter - NO DEPOSIT CHECKS, JUST TRUST THE FUNDING
    ========================================================================= */
-
 class DualPaymasterRouter {
   constructor(provider, signer) {
     this.provider = provider;
@@ -520,18 +511,16 @@ class DualPaymasterRouter {
     this.health = { A: 100, B: 100 };
     this.lastSwitch = nowTs();
     this.minSwitchInterval = 300000; // 5 minutes
-    
+   
     // SIMPLE ABI - just check if paused
     this.paymasterAbi = ['function paused() external view returns (bool)'];
   }
-
   // SKIP deposit checks - we already funded them via separate transactions
   async ensurePaymasterFunded(minDepositEth = '0.00035') {
     console.log(`💰 Paymasters should already be funded via previous transactions`);
     console.log(`✅ Trusting that paymasters have sufficient deposits`);
     return true;
   }
-
   async checkHealth(paymaster) {
     try {
       const contract = new ethers.Contract(paymaster, this.paymasterAbi, this.provider);
@@ -541,31 +530,23 @@ class DualPaymasterRouter {
       return { healthy: true }; // Assume healthy if check fails
     }
   }
-
   async updateHealth() {
     const [healthA, healthB] = await Promise.all([
       this.checkHealth(this.paymasterA),
       this.checkHealth(this.paymasterB)
     ]);
-
     this.health.A = healthA.healthy ? 100 : 50;
     this.health.B = healthB.healthy ? 100 : 50;
-
     return { healthA, healthB, active: this.active };
   }
-
   getActivePaymaster() {
     return this.active === 'A' ? this.paymasterA : this.paymasterB;
   }
-
   async getOptimalPaymaster() {
     // Always return paymaster A (it's funded)
     return this.paymasterA;
   }
 }
-
-
-
 /* =========================================================================
    FIXED: DirectOmniExecutionAA - PROPER EIP-712 SIGNING + SENDING
    ========================================================================= */
@@ -574,34 +555,33 @@ class DirectOmniExecutionAA {
     this.signer = signer;
     this.provider = provider;
     this.paymasterRouter = paymasterRouter;
-    
+   
     this.scw = LIVE.SCW_ADDRESS;
     this.entryPoint = LIVE.ENTRY_POINT;
-    
+   
     // SCW interface with execute function
     this.scwInterface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
     ]);
-    
+   
     this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
     this.shield = new AntiBotShield();
   }
-
 // =======================================================================
   // WAREHOUSE BOOTSTRAP
   // =======================================================================
   async executeWarehouseBootstrap(bwzcAmount = ethers.parseEther("1")) {
     console.log('📤 Building warehouse bootstrap transaction...');
-    
+   
     const warehouseInterface = new ethers.Interface([
       'function executeBulletproofBootstrap(uint256) external'
     ]);
-    
+   
     const warehouseCalldata = warehouseInterface.encodeFunctionData(
-      'executeBulletproofBootstrap', 
+      'executeBulletproofBootstrap',
       [bwzcAmount]
     );
-    
+   
     return await this.buildAndSendUserOp(
       LIVE.WAREHOUSE_CONTRACT,
       warehouseCalldata,
@@ -609,15 +589,13 @@ class DirectOmniExecutionAA {
       true
     );
   }
-
-
     // =======================================================================
   // WAREHOUSE HARVEST
   // =======================================================================
   async executeWarehouseHarvest() {
     const iface = new ethers.Interface(['function harvestAllFees() external returns (uint256,uint256,uint256)']);
     const calldata = iface.encodeFunctionData('harvestAllFees', []);
-    
+   
     return await this.buildAndSendUserOp(
       LIVE.WAREHOUSE_CONTRACT,
       calldata,
@@ -625,8 +603,7 @@ class DirectOmniExecutionAA {
       true
     );
   }
-
-   
+  
   // =======================================================================
   // FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6
   // =======================================================================
@@ -643,16 +620,14 @@ class DirectOmniExecutionAA {
       maxFeePerGas: userOp.maxFeePerGas,
       maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
       paymasterAndData: userOp.paymasterAndData || '0x',
-      signature: '0x'  // CRITICAL: empty for signing
+      signature: '0x' // CRITICAL: empty for signing
     };
-
     console.log('🔍 Signing UserOp:', {
       sender: cleanUserOp.sender,
       nonce: cleanUserOp.nonce.toString(),
       callData: cleanUserOp.callData.slice(0, 50) + '...',
       paymasterAndData: cleanUserOp.paymasterAndData === '0x' ? 'none' : 'present'
     });
-
     // CORRECT TYPES for EntryPoint v0.6 - MUST be "UserOperation"
     const types = {
       UserOperation: [
@@ -669,22 +644,19 @@ class DirectOmniExecutionAA {
         { name: 'signature', type: 'bytes' }
       ]
     };
-
     const domain = {
       name: 'EntryPoint',
       version: '0.6.0',
       chainId: LIVE.NETWORK.chainId, // Should be 1 for mainnet
       verifyingContract: this.entryPoint
     };
-
     console.log('✍️ EIP-712 Domain:', domain);
     console.log('✍️ Types:', Object.keys(types));
-
     try {
       // Sign the typed data
       const signature = await this.signer.signTypedData(domain, types, cleanUserOp);
       console.log(`✅ Signature: ${signature.slice(0, 42)}...`);
-      
+     
       // Return COMPLETE UserOp with signature
       return {
         ...userOp,
@@ -695,93 +667,79 @@ class DirectOmniExecutionAA {
       throw error;
     }
   }
-
   // =======================================================================
-// FIXED: SEND USEROP VIA ENTRYPOINT
-// =======================================================================
-async sendUserOp(userOp) {
-  const ENTRY_POINT_ABI = [
-    "function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address payable beneficiary) external"
-  ];
-
-  const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
-
-  // Format UserOp for RPC
-  const userOpForRPC = {
-    sender: userOp.sender,
-    nonce: userOp.nonce,
-    initCode: userOp.initCode,
-    callData: userOp.callData,
-    callGasLimit: userOp.callGasLimit,
-    verificationGasLimit: userOp.verificationGasLimit,
-    preVerificationGas: userOp.preVerificationGas,
-    maxFeePerGas: userOp.maxFeePerGas,
-    maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-    paymasterAndData: userOp.paymasterAndData,
-    signature: userOp.signature
-  };
-
-  console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
-
-  // 🔑 Insert dynamic gas estimation here
-  let outerGasLimit = userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas + 100_000n;
-  try {
-    outerGasLimit = await entryPoint.estimateGas.handleOps([userOpForRPC], this.signer.address) * 115n / 100n;
-    console.log(`Estimated handleOps gas: ${outerGasLimit}`);
-  } catch (e) {
-    console.warn('Estimation failed, using fallback:', outerGasLimit.toString());
+  // FIXED: SEND USEROP VIA ENTRYPOINT
+  // =======================================================================
+  async sendUserOp(userOp) {
+    const ENTRY_POINT_ABI = [
+      "function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address payable beneficiary) external"
+    ];
+    const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
+    // Format UserOp for RPC
+    const userOpForRPC = {
+      sender: userOp.sender,
+      nonce: userOp.nonce,
+      initCode: userOp.initCode,
+      callData: userOp.callData,
+      callGasLimit: userOp.callGasLimit,
+      verificationGasLimit: userOp.verificationGasLimit,
+      preVerificationGas: userOp.preVerificationGas,
+      maxFeePerGas: userOp.maxFeePerGas,
+      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+      paymasterAndData: userOp.paymasterAndData,
+      signature: userOp.signature
+    };
+    console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
+    // 🔑 Insert dynamic gas estimation here
+    let outerGasLimit = userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas + 100_000n;
+    try {
+      outerGasLimit = await entryPoint.estimateGas.handleOps([userOpForRPC], this.signer.address) * 115n / 100n;
+      console.log(`Estimated handleOps gas: ${outerGasLimit}`);
+    } catch (e) {
+      console.warn('Estimation failed, using fallback:', outerGasLimit.toString());
+    }
+    const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
+      gasLimit: outerGasLimit
+    });
+    console.log(`⏳ Transaction: ${tx.hash}`);
+    const receipt = await tx.wait();
+    if (receipt.status === 1) {
+      console.log(`✅ UserOp executed in block ${receipt.blockNumber}`);
+      return tx.hash;
+    } else {
+      throw new Error(`UserOp failed (status ${receipt.status})`);
+    }
   }
-
-  const tx = await entryPoint.handleOps([userOpForRPC], this.signer.address, {
-    gasLimit: outerGasLimit
-  });
-
-  console.log(`⏳ Transaction: ${tx.hash}`);
-  const receipt = await tx.wait();
-
-  if (receipt.status === 1) {
-    console.log(`✅ UserOp executed in block ${receipt.blockNumber}`);
-    return tx.hash;
-  } else {
-    throw new Error(`UserOp failed (status ${receipt.status})`);
-  }
-}
-
   // =======================================================================
   // BOOTSTRAP METHOD - NO PAYMASTER
   // =======================================================================
   async executeBootstrapDirect(target, calldata) {
     const nonce = await this.nonceLock.acquire();
-    
+   
     const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
       target,
       0n,
       calldata
     ]);
-
     const feeData = await this.provider.getFeeData();
-    
+   
     // REALISTIC GAS PRICES for current network
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
-
     // Bootstrap-specific gas limits
     const callGasLimit = 650_000n;
     const verificationGasLimit = 180_000n;
     const preVerificationGas = 65_000n;
-
     // Verify SCW has enough ETH
     const scwBalance = await this.provider.getBalance(this.scw);
-    const estimatedCost = (maxFeePerGas + maxPriorityFeePerGas) * 
+    const estimatedCost = (maxFeePerGas + maxPriorityFeePerGas) *
                          (callGasLimit + verificationGasLimit + preVerificationGas);
-    
+   
     console.log(`💰 SCW balance: ${ethers.formatEther(scwBalance)} ETH`);
     console.log(`💰 Estimated cost: ${ethers.formatEther(estimatedCost)} ETH`);
-
     if (scwBalance < estimatedCost * 110n / 100n) {
       throw new Error(`Insufficient SCW balance for gas`);
     }
-
     const userOp = {
       sender: this.scw,
       nonce,
@@ -795,42 +753,36 @@ async sendUserOp(userOp) {
       paymasterAndData: '0x',
       signature: '0x'
     };
-
     const signed = await this.signUserOp(userOp);
     const txHash = await this.sendUserOp(signed);
-    
+   
     this.nonceLock.release();
-    
+   
     return {
       userOpHash: txHash,
       nonce: nonce.toString()
     };
   }
-
   // Keep your existing methods but remove any duplicate signUserOp
   async buildAndSendUserOp(target, calldata, description = 'op', useWarehouse = false) {
     // Your existing implementation but using the fixed signUserOp and sendUserOp
     const nonce = await this.nonceLock.acquire();
-    
+   
     const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
       target,
       0n,
       calldata
     ]);
-
     const paymaster = this.paymasterRouter ? await this.paymasterRouter.getOptimalPaymaster() : null;
     const paymasterAndData = paymaster ? ethers.solidityPacked(
       ['address', 'bytes'], [paymaster, '0x']
     ) : '0x';
-
     const feeData = await this.provider.getFeeData();
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
-
     const callGasLimit = useWarehouse ? 400_000n : 250_000n;
     const verificationGasLimit = 150_000n;
     const preVerificationGas = 50_000n;
-
     const userOp = {
       sender: this.scw,
       nonce,
@@ -844,12 +796,11 @@ async sendUserOp(userOp) {
       paymasterAndData,
       signature: '0x'
     };
-
     const signed = await this.signUserOp(userOp);
     const hash = await this.sendUserOp(signed);
-    
+   
     this.nonceLock.release();
-    
+   
     return {
       userOpHash: hash,
       desc: description,
@@ -857,17 +808,13 @@ async sendUserOp(userOp) {
       paymasterUsed: paymaster || 'none'
     };
   }
-}
-   
-
-
   // =======================================================================
   // ADD V3 POSITION
   // =======================================================================
   async addV3PositionToWarehouse(tokenId) {
     const iface = new ethers.Interface(['function addUniswapV3Position(uint256) external']);
     const calldata = iface.encodeFunctionData('addUniswapV3Position', [tokenId]);
-    
+   
     return await this.buildAndSendUserOp(
       LIVE.WAREHOUSE_CONTRACT,
       calldata,
@@ -875,18 +822,15 @@ async sendUserOp(userOp) {
       true
     );
   }
-}
-
- 
+} // ← Close the class here
 /* =========================================================================
    WAREHOUSE CONTRACT MANAGER - READ-ONLY, NO EXECUTION
    ========================================================================= */
-
 class WarehouseContractManager {
   constructor(provider, signer) {
     this.provider = provider;
     this.signer = signer;
-    
+   
     // READ-ONLY ABI - NO execution functions
     this.contract = new ethers.Contract(
       LIVE.WAREHOUSE_CONTRACT,
@@ -899,15 +843,13 @@ class WarehouseContractManager {
         'function getCurrentSpread() external view returns (uint256)',
         'function getMinRequiredSpread() external pure returns (uint256)'
       ],
-      provider  // Use provider, NOT signer - this is read-only
+      provider // Use provider, NOT signer - this is read-only
     );
-    
+   
     this.triggered = false;
     this.lastCheck = 0;
   }
-
   // ⚠️ REMOVED: triggerOnce() - would never work (Only SCW) and wastes gas
-
   async checkStatus() {
     try {
       const [cycleCount, paused, spread, minSpread, lastCycle] = await Promise.all([
@@ -917,9 +859,9 @@ class WarehouseContractManager {
         this.contract.getMinRequiredSpread().catch(() => 359),
         this.contract.lastCycleTimestamp().catch(() => 0)
       ]);
-      
+     
       const lastCycleDate = lastCycle > 0 ? new Date(Number(lastCycle) * 1000).toISOString() : 'never';
-      
+     
       return {
         cycleCount: Number(cycleCount),
         paused,
@@ -931,8 +873,8 @@ class WarehouseContractManager {
       };
     } catch (error) {
       console.log('⚠️ Error checking warehouse status:', error.message);
-      return { 
-        cycleCount: 0, 
+      return {
+        cycleCount: 0,
         status: 'UNKNOWN',
         spread: 0,
         minSpread: 359,
@@ -941,18 +883,15 @@ class WarehouseContractManager {
     }
   }
 }
-
 /* =========================================================================
    MEV HARVESTING MANAGER - For NON-WAREHOUSE protocols (SCW-owned positions)
    ========================================================================= */
-
 class MEVHarvestingManager {
   constructor(provider, signer, dexRegistry) {
     this.provider = provider;
     this.signer = signer;
     this.dexRegistry = dexRegistry;
   }
-
   async getSCWV3Positions() {
     try {
       // Query SCW's owned V3 NFT positions
@@ -965,16 +904,16 @@ class MEVHarvestingManager {
         ],
         this.provider
       );
-      
+     
       const balance = await positionManager.balanceOf(LIVE.SCW_ADDRESS);
       const positions = [];
-      
+     
       for (let i = 0; i < balance; i++) {
         const tokenId = await positionManager.tokenOfOwnerByIndex(LIVE.SCW_ADDRESS, i);
-        
+       
         // Get position details to check if it's harvestable
         const position = await positionManager.positions(tokenId);
-        
+       
         positions.push({
           tokenId,
           token0: position[2],
@@ -983,34 +922,33 @@ class MEVHarvestingManager {
           liquidity: position[7]
         });
       }
-      
+     
       return positions;
     } catch (error) {
       console.log('⚠️ Could not fetch SCW V3 positions:', error.message);
       return [];
     }
   }
-
   async harvestUniswapV3Fees(tokenId) {
     try {
       console.log(`🌾 Harvesting V3 fees for token ${tokenId}...`);
-      
+     
       const positionManager = new ethers.Contract(
         LIVE.DEXES.UNISWAP_V3.positionManager,
         ['function collect((uint256,address,uint128,uint128)) returns (uint256,uint256)'],
         this.signer
       );
-      
+     
       const collectParams = {
         tokenId: tokenId,
         recipient: LIVE.SCW_ADDRESS,
         amount0Max: ethers.MaxUint128,
         amount1Max: ethers.MaxUint128
       };
-      
+     
       const tx = await positionManager.collect(collectParams);
       const receipt = await tx.wait();
-      
+     
       return {
         success: true,
         tokenId,
@@ -1021,81 +959,72 @@ class MEVHarvestingManager {
       return { success: false, error: error.message };
     }
   }
-
   async harvestSushiFees(poolAddress) {
     try {
       // SushiSwap fee harvesting logic
       // This would depend on how Sushi fees are structured
       console.log(`🌾 Harvesting Sushi fees for pool ${poolAddress}...`);
-      
+     
       return { success: false, error: 'Sushi harvesting not implemented' };
     } catch (error) {
       return { success: false, error: error.message };
     }
   }
-
   async harvestAllMEVPositions() {
     const results = {
       v3Harvests: [],
       sushiHarvests: []
     };
-    
+   
     // Harvest V3 positions
     const v3Positions = await this.getSCWV3Positions();
     for (const position of v3Positions) {
       const result = await this.harvestUniswapV3Fees(position.tokenId);
       results.v3Harvests.push(result);
     }
-    
+   
     return results;
   }
 }
-
-
-
 /* =========================================================================
    ULTRA-MINIMAL WAREHOUSE PERPETUAL TRIGGER - READ-ONLY MONITORING
    ========================================================================= */
-
 class WarehousePerpetualTrigger {
   constructor(warehouseManager) {
     this.warehouse = warehouseManager;
     this.intervalId = null;
     this.lastStatus = null;
   }
-
   async check() {
     try {
       console.log('⏰ [Warehouse] Checking status...');
       const status = await this.warehouse.checkStatus();
       this.lastStatus = status;
-      
+     
       if (status.cycleCount > 0) {
         console.log(`✅ Warehouse is self-automating (cycle ${status.cycleCount})`);
         if (status.lastCycle !== 'never') {
-          console.log(`   Last cycle: ${status.lastCycle}`);
+          console.log(` Last cycle: ${status.lastCycle}`);
         }
       } else {
         console.log(`⏳ Warehouse ready for bootstrap (waiting for conditions)`);
-        console.log(`   Spread: ${status.spread}/${status.minSpread} bps (${status.spreadSufficient ? 'ready' : 'developing'})`);
+        console.log(` Spread: ${status.spread}/${status.minSpread} bps (${status.spreadSufficient ? 'ready' : 'developing'})`);
       }
     } catch (error) {
       console.log(`❌ [Warehouse] Check error:`, error.message);
     }
   }
-
   start(intervalMs = 300000) { // 5 minutes
     console.log(`⏰ Warehouse status check every ${intervalMs/1000/60} minutes`);
     console.log(`📊 READ-ONLY MODE - No transactions sent, just monitoring`);
-    
+   
     // Immediate first check
     setTimeout(() => this.check(), 5000);
-    
+   
     // Then regular interval
     this.intervalId = setInterval(() => this.check(), intervalMs);
     return this;
   }
-
   stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
@@ -1103,7 +1032,6 @@ class WarehousePerpetualTrigger {
     }
   }
 }
-
 /* =========================================================================
    EnhancedBundleManager - MEV OPERATIONS ONLY
    ========================================================================= */
@@ -1112,69 +1040,65 @@ class EnhancedBundleManager {
     this.aa = aaExec;
     this.relays = relayRouter;
     this.rpc = rpcManager;
-    
+   
     this.pending = []; // MEV operations ONLY
     this.maxPerBlock = LIVE.BUNDLE.MAX_PER_BLOCK;
     this.minPerBlock = LIVE.BUNDLE.MIN_PER_BLOCK;
     this.shield = new AntiBotShield();
   }
-
   async initialize() {
     // No state monitoring
     // No warehouse auto-cycle
     console.log('✅ Bundle Manager: MEV operations only');
     return this;
   }
-
   enqueue(router, calldata, desc = 'op', priority = 50) {
     const key = ethers.keccak256(
       ethers.solidityPacked(['address','bytes','string'], [router, calldata, desc])
     );
-    
+   
     if (this.shield.seen(key)) return false;
     this.shield.markReplay(key);
-    
-    this.pending.push({ 
-      router, 
-      calldata, 
-      desc, 
-      priority, 
-      ts: nowTs() 
+   
+    this.pending.push({
+      router,
+      calldata,
+      desc,
+      priority,
+      ts: nowTs()
     });
-    
+   
     this.pending.sort((a,b)=> b.priority - a.priority || a.ts - b.ts);
     return true;
   }
-
   drainForBlock() {
     const count = Math.max(
-      this.minPerBlock, 
+      this.minPerBlock,
       Math.min(this.maxPerBlock, this.pending.length)
     );
-    
+   
     const selected = this.pending.slice(0, count);
     this.pending = this.pending.slice(count);
-    
+   
     return selected;
   }
-
   async buildRawTxs(ops) {
     const built = [];
     for (const op of ops) {
       try {
         const res = await this.aa.buildAndSendUserOp(
-          op.router, 
-          op.calldata, 
+          op.router,
+          op.calldata,
           op.desc
         );
-        
-        built.push({ 
-          rawTx: res.userOpHash, 
-          desc: op.desc, 
+       
+        built.push({
+          rawTx: res.userOpHash,
+          desc: op.desc,
           nonce: res.nonce,
           paymaster: res.paymasterUsed
         });
-        
+       
         await sleep(jitterMs(100, 350));
       } catch (e) {
         console.error(`Failed to build operation ${op.desc}:`, e.message);
@@ -1183,20 +1107,18 @@ class EnhancedBundleManager {
     }
     return built;
   }
-
   async dispatchBundles(ops) {
     const rawTxs = await this.buildRawTxs(ops);
     const broadcasts = [];
-    
+   
     for (const tx of rawTxs) {
       const res = await this.relays.broadcastBundle(tx);
       broadcasts.push({ tx, relays: res });
       await sleep(jitterMs(50, 200));
     }
-    
+   
     return broadcasts;
   }
-
   getQueueStats() {
     return {
       pendingCount: this.pending.length,
@@ -1208,8 +1130,6 @@ class EnhancedBundleManager {
     };
   }
 }
-
-
 /* =========================================================================
    EnhancedArbitrageEngine - MEV ONLY, NO WAREHOUSE
    ========================================================================= */
@@ -1218,45 +1138,42 @@ class EnhancedArbitrageEngine {
     this.provider = provider;
     this.dexRegistry = dexRegistry;
     this.oracles = oracles;
-    
+   
     console.log('✅ MEV Arbitrage Engine: Flashloan handling DISABLED (handled by contract only)');
   }
-
   // ⚠️ CRITICAL: THIS METHOD IS GONE:
   // ❌ findWarehouseOpportunities() - DELETED - Contract decides, not bot
-
   // ✅ Keep MEV-only methods
   async findCrossDex(scw, aaExec) {
     const amountInUSDC = ethers.parseUnits('1000', 6);
     const adapters = ['UNISWAP_V3','UNISWAP_V2','SUSHI_V2','ONE_INCH_V5','PARASWAP'];
     const quotes = [];
-    
+   
     for (const name of adapters) {
       const a = this.dexRegistry.getAdapter(name);
       const q = await a.getQuote(LIVE.TOKENS.USDC, LIVE.TOKENS.BWAEZI, amountInUSDC);
       if (q) quotes.push({ name, out: q.amountOut });
     }
-    
+   
     if (quotes.length < 2) return { executed: false, reason: 'no_quotes' };
-    
+   
     quotes.sort((a,b)=> Number(b.out - a.out));
     const best = quotes[0], worst = quotes[quotes.length-1];
     const edgeUSDC = Number(best.out - worst.out) / 1e6;
-    
+   
     if (edgeUSDC < LIVE.ARBITRAGE.MIN_PROFIT_USD) {
       return { executed: false, reason: 'low_edge' };
     }
-
     const bestAdapter = this.dexRegistry.getAdapter(best.name);
     const calldataObj = await bestAdapter.buildSwapCalldata(
-      LIVE.TOKENS.USDC, 
-      LIVE.TOKENS.BWAEZI, 
-      amountInUSDC, 
+      LIVE.TOKENS.USDC,
+      LIVE.TOKENS.BWAEZI,
+      amountInUSDC,
       scw
     );
-    
+   
     if (!calldataObj) return { executed: false, reason: 'no_calldata' };
-    
+   
     return {
       executed: true,
       route: best.name,
@@ -1266,33 +1183,32 @@ class EnhancedArbitrageEngine {
       desc: `mev_arb_${best.name}`
     };
   }
-
   async findStatArb(scw, aaExec) {
     const twap = await this.oracles.v3TwapUSD(LIVE.TOKENS.BWAEZI, LIVE.TOKENS.USDC);
     const spotUSDC = await this.oracles.getTokenUsd(
-      LIVE.TOKENS.BWAEZI, 
-      LIVE.TOKENS.USDC, 
+      LIVE.TOKENS.BWAEZI,
+      LIVE.TOKENS.USDC,
       LIVE.POOLS.FEE_TIER_DEFAULT
     );
-    
+   
     if (!twap || !spotUSDC) return { executed: false, reason: 'no_oracle' };
-    
+   
     const spot = Number(spotUSDC)/1e6;
     const dev = (spot - twap) / Math.max(1e-9, twap);
-    
+   
     if (Math.abs(dev) < 0.01) return { executed: false, reason: 'no_deviation' };
-    
+   
     const amountInUSDC = ethers.parseUnits('1500', 6);
     const adapter = this.dexRegistry.getAdapter('UNISWAP_V3');
     const calldataObj = await adapter.buildSwapCalldata(
-      LIVE.TOKENS.USDC, 
-      LIVE.TOKENS.BWAEZI, 
-      amountInUSDC, 
+      LIVE.TOKENS.USDC,
+      LIVE.TOKENS.BWAEZI,
+      amountInUSDC,
       scw
     );
-    
+   
     if (!calldataObj) return { executed: false, reason: 'no_calldata' };
-    
+   
     return {
       executed: true,
       route: 'UNISWAP_V3',
@@ -1302,23 +1218,20 @@ class EnhancedArbitrageEngine {
       desc: 'mev_stat_arb_buy_BW'
     };
   }
-  
+ 
   // ❌ getSCWBWZCBalance() - DELETED - Contract handles this
-  
+ 
   // ❌ ALL other warehouse methods - DELETED
 }
-
-
-
 /* =========================================================================
    HYBRID HARVESTING ARCHITECTURE v1.1 (Enhanced Sushi Protection)
    ========================================================================= */
 class HybridHarvestOrchestrator {
     constructor(warehouseContract, mevHarvester, provider) {
-        this.warehouse = warehouseContract;  // Already perfected for BWAEZI pools
-        this.mevHarvester = mevHarvester;    // MEV V19 for all other pools
+        this.warehouse = warehouseContract; // Already perfected for BWAEZI pools
+        this.mevHarvester = mevHarvester; // MEV V19 for all other pools
         this.provider = provider;
-        
+       
         // BWAEZI pool addresses (from LIVE config) - ALL INCLUDED
         this.bwaeziPools = new Set([
             LIVE.POOLS.BWAEZI_USDC_3000.toLowerCase(),
@@ -1330,21 +1243,21 @@ class HybridHarvestOrchestrator {
             LIVE.POOLS.BALANCER_BW_USDC.toLowerCase(),
             LIVE.POOLS.BALANCER_BW_WETH.toLowerCase()
         ]);
-        
+       
         // SUSHI SPECIFIC PROTECTION
         this.sushiPools = new Set([
             LIVE.POOLS.SUSHI_BW_USDC.toLowerCase(),
             LIVE.POOLS.SUSHI_BW_WETH.toLowerCase()
         ]);
-        
+       
         this.sushiRouter = LIVE.DEXES.SUSHI_V2.router.toLowerCase();
         this.sushiFactory = LIVE.DEXES.SUSHI_V2.factory.toLowerCase();
-        
+       
         // Token addresses
         this.bwaezi = LIVE.TOKENS.BWAEZI.toLowerCase();
         this.usdc = LIVE.TOKENS.USDC.toLowerCase();
         this.weth = LIVE.TOKENS.WETH.toLowerCase();
-        
+       
         this.harvestStats = {
             contractHarvests: 0,
             mevHarvests: 0,
@@ -1354,48 +1267,48 @@ class HybridHarvestOrchestrator {
             sushiProtections: 0,
             sushiReroutes: 0
         };
-        
+       
         // Initialize safety validator
         this.safetyValidator = new HarvestSafetyOverride();
     }
-    
+   
     // NOVEL: Determine harvest routing based on pool composition
     async shouldRouteToContract(poolAddress, tokenA, tokenB, dexType = '') {
         const poolLower = poolAddress.toLowerCase();
         const tokenALower = tokenA.toLowerCase();
         const tokenBLower = tokenB.toLowerCase();
-        
+       
         // 🚨 CRITICAL SAFETY RULE 0: SUSHI ALWAYS GOES TO CONTRACT
         if (dexType === 'SUSHI_V2' || this.sushiPools.has(poolLower)) {
-            return { 
-                route: 'CONTRACT', 
-                reason: 'SUSHI_V2_SAFETY_PROTOCOL', 
+            return {
+                route: 'CONTRACT',
+                reason: 'SUSHI_V2_SAFETY_PROTOCOL',
                 priority: 95,
                 flags: ['SUSHI_SAFETY', 'CAPITAL_PROTECTED']
             };
         }
-        
+       
         // RULE 1: Is this a known BWAEZI pool?
         if (this.bwaeziPools.has(poolLower)) {
-            return { 
-                route: 'CONTRACT', 
-                reason: 'BWAEZI_POOL_OPTIMIZED', 
+            return {
+                route: 'CONTRACT',
+                reason: 'BWAEZI_POOL_OPTIMIZED',
                 priority: 100,
                 flags: ['BWAEZI_OPTIMIZED']
             };
         }
-        
+       
         // RULE 2: Does pool contain BWAEZI?
         const containsBwaezi = tokenALower === this.bwaezi || tokenBLower === this.bwaezi;
         if (containsBwaezi) {
-            return { 
-                route: 'CONTRACT', 
-                reason: 'CONTAINS_BWAEZI_SAFE', 
+            return {
+                route: 'CONTRACT',
+                reason: 'CONTAINS_BWAEZI_SAFE',
                 priority: 90,
                 flags: ['BWAEZI_CONTAINING']
             };
         }
-        
+       
         // RULE 3: Is this a SUSHI router? (Never harvest directly)
         if (poolLower === this.sushiRouter || poolLower === this.sushiFactory) {
             return {
@@ -1405,13 +1318,13 @@ class HybridHarvestOrchestrator {
                 flags: ['SUSHI_DIRECT_BLOCK']
             };
         }
-        
+       
         // RULE 4: Is this a USDC/WETH pair? (Let contract handle if it's in our list)
         const isUsdcWethPair = (
             (tokenALower === this.usdc && tokenBLower === this.weth) ||
             (tokenALower === this.weth && tokenBLower === this.usdc)
         );
-        
+       
         if (isUsdcWethPair) {
             // Check if this pool is managed by contract (V3 positions)
             const isContractManaged = await this.isContractManagedPool(poolAddress);
@@ -1422,28 +1335,28 @@ class HybridHarvestOrchestrator {
                 flags: isContractManaged ? ['CONTRACT_MANAGED'] : ['MEV_OPTIMIZED']
             };
         }
-        
+       
         // DEFAULT: MEV handles all other pools
-        return { 
-            route: 'MEV', 
-            reason: 'NON_BWAEZI_POOL', 
+        return {
+            route: 'MEV',
+            reason: 'NON_BWAEZI_POOL',
             priority: 60,
             flags: ['MEV_SAFE']
         };
     }
-    
+   
     async isContractManagedPool(poolAddress) {
         try {
             // Check if this pool has V3 NFT positions in contract
             const positions = await this.warehouse.getV3Positions();
-            
+           
             // In production, you'd check each position's pool
             return positions.length > 0;
         } catch {
             return false;
         }
     }
-    
+   
     // NOVEL: Unified harvest interface with safety validation
     async harvestAllFees(positionData = []) {
         const results = {
@@ -1455,16 +1368,16 @@ class HybridHarvestOrchestrator {
             totalFeesUSD: 0,
             safetyChecks: 0
         };
-        
+       
         // Validate all positions before processing
         const validatedPositions = await this.validatePositions(positionData);
-        
+       
         for (const position of validatedPositions.valid) {
             const { poolAddress, tokenA, tokenB, positionId, dexType, metadata } = position;
-            
+           
             // Determine optimal routing
             const routing = await this.shouldRouteToContract(poolAddress, tokenA, tokenB, dexType);
-            
+           
             // 🚨 SPECIAL HANDLING FOR SUSHI BLOCKED ROUTES
             if (routing.route === 'BLOCKED') {
                 results.blockedOperations++;
@@ -1477,14 +1390,14 @@ class HybridHarvestOrchestrator {
                 });
                 continue;
             }
-            
+           
             // Perform safety check on the operation
             const safetyCheck = await this.performSafetyCheck(position, routing);
             results.safetyChecks++;
-            
+           
             if (!safetyCheck.allowed) {
                 results.blockedOperations++;
-                
+               
                 // 🚨 AUTO-REROUTE FOR SUSHI SAFETY
                 if (safetyCheck.action === 'AUTOMATIC_REROUTE') {
                     routing.route = 'CONTRACT';
@@ -1503,7 +1416,7 @@ class HybridHarvestOrchestrator {
                     continue;
                 }
             }
-            
+           
             try {
                 if (routing.route === 'CONTRACT') {
                     // Contract handles BWAEZI pools (already safe)
@@ -1515,11 +1428,11 @@ class HybridHarvestOrchestrator {
                         priority: routing.priority,
                         flags: routing.flags
                     });
-                    
+                   
                     if (contractResult.feesUSD) {
                         results.totalFeesUSD += contractResult.feesUSD;
                     }
-                    
+                   
                     // Track Sushi protections
                     if (dexType === 'SUSHI_V2') {
                         this.harvestStats.sushiProtections++;
@@ -1534,7 +1447,7 @@ class HybridHarvestOrchestrator {
                         priority: routing.priority,
                         flags: routing.flags
                     });
-                    
+                   
                     if (mevResult.feesUSD) {
                         results.totalFeesUSD += mevResult.feesUSD;
                     }
@@ -1549,20 +1462,20 @@ class HybridHarvestOrchestrator {
                 });
             }
         }
-        
+       
         // Execute batch harvests if needed
         if (results.contractResults.length > 0) {
             const batchResult = await this.triggerContractBatchHarvest(results.contractResults);
             results.batchResult = batchResult;
         }
-        
+       
         // Update stats
         this.harvestStats.contractHarvests += results.contractResults.length;
         this.harvestStats.mevHarvests += results.mevResults.length;
         this.harvestStats.totalFeesUSD += results.totalFeesUSD;
         this.harvestStats.lastHarvest = Date.now();
         this.harvestStats.blocksProcessed++;
-        
+       
         return {
             summary: {
                 totalPositions: positionData.length,
@@ -1576,11 +1489,11 @@ class HybridHarvestOrchestrator {
             details: results
         };
     }
-    
+   
     async validatePositions(positions) {
         const valid = [];
         const invalid = [];
-        
+       
         for (const position of positions) {
             try {
                 // Basic validation
@@ -1588,7 +1501,7 @@ class HybridHarvestOrchestrator {
                     invalid.push({ ...position, reason: 'Missing required fields' });
                     continue;
                 }
-            
+           
                 // Validate pool address format
                 try {
                     ethers.getAddress(position.poolAddress);
@@ -1598,32 +1511,32 @@ class HybridHarvestOrchestrator {
                     invalid.push({ ...position, reason: 'Invalid address format' });
                     continue;
                 }
-                
+               
                 // 🚨 SPECIAL VALIDATION FOR SUSHI
                 if (position.dexType === 'SUSHI_V2') {
                     // Additional Sushi-specific validation
                     if (position.operationType && position.operationType.includes('removeLiquidity')) {
-                        invalid.push({ 
-                            ...position, 
+                        invalid.push({
+                            ...position,
                             reason: 'SUSHI_REMOVE_LIQUIDITY_BLOCKED_AT_VALIDATION',
                             severity: 'CRITICAL'
                         });
                         continue;
                     }
                 }
-                
+               
                 valid.push(position);
             } catch (error) {
                 invalid.push({ ...position, reason: `Validation error: ${error.message}` });
             }
         }
-        
+       
         return { valid, invalid };
     }
-    
+   
     async performSafetyCheck(position, routing) {
         const { dexType, poolAddress, operationType } = position;
-        
+       
         // 🚨 SUSHI-SPECIFIC SAFETY CHECKS
         if (dexType === 'SUSHI_V2') {
             // Check if MEV is attempting to harvest from Sushi pool
@@ -1636,7 +1549,7 @@ class HybridHarvestOrchestrator {
                     flags: ['SUSHI_SAFETY_REROUTE']
                 };
             }
-            
+           
             // Check for Sushi-specific dangerous operations
             if (operationType && this.isSushiDangerousOperation(operationType)) {
                 return {
@@ -1648,7 +1561,7 @@ class HybridHarvestOrchestrator {
                 };
             }
         }
-        
+       
         // Check if this is a known dangerous operation
         if (this.isDangerousOperation(dexType, operationType)) {
             return {
@@ -1658,7 +1571,7 @@ class HybridHarvestOrchestrator {
                 recommendation: 'Use contract-based harvesting instead'
             };
         }
-        
+       
         // Check if MEV is attempting to harvest from BWAEZI pool
         if (routing.route === 'MEV' && this.bwaeziPools.has(poolAddress.toLowerCase())) {
             return {
@@ -1668,14 +1581,14 @@ class HybridHarvestOrchestrator {
                 action: 'AUTOMATIC_REROUTE'
             };
         }
-        
+       
         return {
             allowed: true,
             reason: 'SAFE_OPERATION',
             severity: 'LOW'
         };
     }
-    
+   
     isDangerousOperation(dexType, operationType) {
         const dangerousCombinations = [
             { dex: 'UNISWAP_V2', op: 'removeLiquidity' },
@@ -1687,12 +1600,12 @@ class HybridHarvestOrchestrator {
             { dex: 'BALANCER', op: 'exitPool' },
             { dex: 'BALANCER', op: 'withdraw' }
         ];
-        
-        return dangerousCombinations.some(d => 
+       
+        return dangerousCombinations.some(d =>
             d.dex === dexType && operationType && operationType.includes(d.op)
         );
     }
-    
+   
     isSushiDangerousOperation(operationType) {
         const sushiDangerous = [
             'removeLiquidity',
@@ -1701,23 +1614,23 @@ class HybridHarvestOrchestrator {
             'removeLiquidityWithPermit',
             'removeLiquidityETHWithPermit'
         ];
-        
+       
         return sushiDangerous.some(op => operationType.includes(op));
     }
-    
+   
     async executeContractHarvest(position, routing) {
         try {
             const { poolAddress, positionId, dexType } = position;
-            
+           
             // 🚨 SUSHI-SPECIFIC LOGGING
             if (dexType === 'SUSHI_V2') {
                 console.log(`🔒 Sushi protection activated for pool: ${poolAddress}`);
             }
-            
+           
             if (dexType === 'UNISWAP_V3' && positionId) {
                 // Add to contract's V3 position tracking
                 const result = await this.warehouse.addV3Position(positionId);
-                
+               
                 return {
                     success: true,
                     method: 'ADD_V3_POSITION',
@@ -1729,13 +1642,13 @@ class HybridHarvestOrchestrator {
             } else {
                 // Trigger contract harvest for other pool types
                 const harvestResult = await this.warehouse.harvestFees();
-                
+               
                 return {
                     success: harvestResult.success,
                     method: 'CONTRACT_HARVEST',
                     txHash: harvestResult.txHash,
                     safety: 'CONTRACT_ISOLATED',
-                    feesUSD: harvestResult.fees ? 
+                    feesUSD: harvestResult.fees ?
                         (harvestResult.fees.usdc + harvestResult.fees.weth * 3000) : 0,
                     details: harvestResult,
                     sushiProtected: dexType === 'SUSHI_V2'
@@ -1750,14 +1663,14 @@ class HybridHarvestOrchestrator {
             };
         }
     }
-    
+   
     async estimateV3Fees(positionId) {
         return 500; // Mock estimate
     }
-    
+   
     async executeMEVHarvest(position, routing) {
         const { dexType, poolAddress, tokenA, tokenB } = position;
-        
+       
         // 🚨 SUSHI SAFETY CHECK (should never reach here for Sushi)
         if (dexType === 'SUSHI_V2') {
             return {
@@ -1768,9 +1681,9 @@ class HybridHarvestOrchestrator {
                 flags: ['SUSHI_MEV_LAYER_ERROR']
             };
         }
-        
+       
         // MEV HARVESTING RULES FOR NON-BWAEZI POOLS:
-        
+       
         // RULE 1: Never harvest from V2/Sushi/Balancer for ANY token pair
         const unsafeDexes = ['UNISWAP_V2', 'SUSHI_V2', 'BALANCER'];
         if (unsafeDexes.includes(dexType)) {
@@ -1781,7 +1694,7 @@ class HybridHarvestOrchestrator {
                 safety: 'BLOCKED'
             };
         }
-        
+       
         // RULE 2: Only allow harvesting from safe protocols
         if (dexType === 'UNISWAP_V3') {
             // Safe: V3 NFT positions
@@ -1794,19 +1707,19 @@ class HybridHarvestOrchestrator {
                 details: fees
             };
         }
-        
+       
         if (dexType === 'ONE_INCH_V5' || dexType === 'PARASWAP') {
             // Aggregators: Safe reward collection
             const rewards = await this.harvestAggregatorFees(position);
             return {
                 success: true,
                 method: 'CLAIM_AGGREGATOR_REWARDS',
-                feesUSD: rewards.amountUSD || 0,
                 safety: 'NO_LIQUIDITY_REMOVAL',
+                amountUSD: rewards.amountUSD || 0,
                 details: rewards
             };
         }
-        
+       
         // DEFAULT: No harvesting for unknown protocols
         return {
             success: false,
@@ -1815,7 +1728,7 @@ class HybridHarvestOrchestrator {
             safety: 'UNKNOWN'
         };
     }
-    
+   
     async collectV3Fees(position) {
         try {
             return {
@@ -1832,10 +1745,10 @@ class HybridHarvestOrchestrator {
             };
         }
     }
-    
+   
     async harvestAggregatorFees(position) {
         const { dexType, poolAddress } = position;
-        
+       
         if (dexType === 'ONE_INCH_V5') {
             return {
                 success: true,
@@ -1845,7 +1758,7 @@ class HybridHarvestOrchestrator {
                 note: '1inch has separate reward contracts'
             };
         }
-        
+       
         if (dexType === 'PARASWAP') {
             return {
                 success: true,
@@ -1855,35 +1768,35 @@ class HybridHarvestOrchestrator {
                 note: 'Paraswap PSP rewards system'
             };
         }
-        
+       
         return {
             success: false,
             reason: 'UNKNOWN_AGGREGATOR_FEE_METHOD'
         };
     }
-    
+   
     async triggerContractBatchHarvest(contractResults) {
         try {
             console.log('Triggering contract batch harvest for BWAEZI pools...');
-            
+           
             // Separate Sushi from other operations
             const sushiOperations = contractResults.filter(r => r.flags && r.flags.includes('SUSHI_SAFETY'));
             const otherOperations = contractResults.filter(r => !(r.flags && r.flags.includes('SUSHI_SAFETY')));
-            
+           
             // Execute Sushi operations with special logging
             if (sushiOperations.length > 0) {
                 console.log(`🔒 Executing ${sushiOperations.length} Sushi-protected harvests`);
             }
-            
+           
             // Group by priority
             const highPriority = otherOperations.filter(r => r.priority >= 90);
             const mediumPriority = otherOperations.filter(r => r.priority >= 70 && r.priority < 90);
-            
+           
             // Execute high priority first
             if (highPriority.length > 0) {
                 console.log(`Executing ${highPriority.length} high priority harvests`);
             }
-            
+           
             return {
                 success: true,
                 batches: 1 + (sushiOperations.length > 0 ? 1 : 0),
@@ -1899,11 +1812,11 @@ class HybridHarvestOrchestrator {
             };
         }
     }
-    
+   
     // NOVEL: Smart fee detection across all positions
     async detectAllFeePositions() {
         const positions = [];
-        
+       
         // 1. Get contract-managed V3 positions
         try {
             const contractV3Positions = await this.warehouse.getV3Positions();
@@ -1919,24 +1832,24 @@ class HybridHarvestOrchestrator {
         } catch (error) {
             console.error('Failed to get contract V3 positions:', error);
         }
-        
+       
         // 2. Detect Sushi positions (always contract)
         const sushiPositions = await this.detectSushiPositions();
         positions.push(...sushiPositions);
-        
+       
         // 3. Detect MEV-managed positions (non-BWAEZI pools)
         const mevPositions = await this.detectMEVPositions();
         positions.push(...mevPositions);
-        
+       
         // 4. Sort by priority
         positions.sort((a, b) => (b.priority || 0) - (a.priority || 0));
-        
+       
         return positions;
     }
-    
+   
     async detectSushiPositions() {
         const positions = [];
-        
+       
         // Sushi BWAEZI/USDC pool
         positions.push({
             source: 'SUSHI_BWAEZI_USDC',
@@ -1948,7 +1861,7 @@ class HybridHarvestOrchestrator {
             priority: 95,
             flags: ['SUSHI_SAFETY', 'BWAEZI_CONTAINING']
         });
-        
+       
         // Sushi BWAEZI/WETH pool
         positions.push({
             source: 'SUSHI_BWAEZI_WETH',
@@ -1960,13 +1873,13 @@ class HybridHarvestOrchestrator {
             priority: 95,
             flags: ['SUSHI_SAFETY', 'BWAEZI_CONTAINING']
         });
-        
+       
         return positions;
     }
-    
+   
     async detectMEVPositions() {
         const positions = [];
-        
+       
         positions.push({
             source: 'MEV_V3_OTHER',
             poolAddress: LIVE.POOLS.UNIV2_BW_USDC,
@@ -1976,7 +1889,7 @@ class HybridHarvestOrchestrator {
             route: 'MEV',
             priority: 70
         });
-        
+       
         positions.push({
             source: 'MEV_1INCH_STAKING',
             poolAddress: LIVE.DEXES.ONE_INCH_V5.router,
@@ -1984,15 +1897,15 @@ class HybridHarvestOrchestrator {
             route: 'MEV',
             priority: 65
         });
-        
+       
         return positions;
     }
-    
+   
     getHarvestPolicy() {
         return {
             version: 'v1.1',
             lastUpdated: Date.now(),
-            
+           
             // CONTRACT DOMAIN (PERFECTED)
             contractHandles: [
                 'All BWAEZI-containing pools',
@@ -2001,7 +1914,7 @@ class HybridHarvestOrchestrator {
                 'Balancer BWAEZI pools',
                 'Any pool with capital liquidation risk'
             ],
-            
+           
             // MEV DOMAIN (RESTRICTED)
             mevHandles: [
                 'Non-BWAEZI Uniswap V3 NFT positions',
@@ -2009,7 +1922,7 @@ class HybridHarvestOrchestrator {
                 'Protocol fee collection (separate contracts)',
                 'Staking rewards (no liquidity removal)'
             ],
-            
+           
             // STRICTLY FORBIDDEN (ALL SYSTEMS)
             forbidden: [
                 'V2 removeLiquidity functions',
@@ -2021,7 +1934,7 @@ class HybridHarvestOrchestrator {
                 'Balancer exitPool for harvesting',
                 'Any function that removes principal capital'
             ],
-            
+           
             // SUSHI SPECIFIC PROTECTIONS
             sushiProtections: [
                 'All Sushi pools route to contract automatically',
@@ -2029,7 +1942,7 @@ class HybridHarvestOrchestrator {
                 'Auto-reroute from MEV to Contract',
                 'Special validation for Sushi operations'
             ],
-            
+           
             safetyGuarantees: [
                 'Zero capital liquidation risk',
                 'Contract handles all risky pools',
@@ -2037,7 +1950,7 @@ class HybridHarvestOrchestrator {
                 'MEV only touches isolated fee contracts',
                 'Complete separation of concerns'
             ],
-            
+           
             performanceTargets: {
                 minEfficiency: 85,
                 maxBlockedOperations: 5,
@@ -2046,23 +1959,21 @@ class HybridHarvestOrchestrator {
             }
         };
     }
-    
+   
     getStats() {
         return {
             ...this.harvestStats,
-            efficiency: this.harvestStats.blocksProcessed > 0 ? 
-                ((this.harvestStats.contractHarvests + this.harvestStats.mevHarvests) / 
+            efficiency: this.harvestStats.blocksProcessed > 0 ?
+                ((this.harvestStats.contractHarvests + this.harvestStats.mevHarvests) /
                  (this.harvestStats.blocksProcessed * 10)) * 100 : 0,
             avgContractHarvests: this.harvestStats.contractHarvests / Math.max(1, this.harvestStats.blocksProcessed),
             avgMEVHarvests: this.harvestStats.mevHarvests / Math.max(1, this.harvestStats.blocksProcessed),
-            sushiProtectionRate: this.harvestStats.contractHarvests > 0 ? 
+            sushiProtectionRate: this.harvestStats.contractHarvests > 0 ?
                 (this.harvestStats.sushiProtections / this.harvestStats.contractHarvests) * 100 : 0,
             policy: this.getHarvestPolicy()
         };
     }
 }
-
-
 
 /* =========================================================================
    HARVEST SAFETY OVERRIDE v1.1 (Enhanced Sushi Protection)
