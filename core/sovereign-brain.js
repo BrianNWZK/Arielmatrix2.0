@@ -172,7 +172,7 @@ const LIVE = {
     HEALTH_CHECK_INTERVAL: Number(process.env.PAYMASTER_HEALTH_CHECK || 60000)
   },
 
-  PUBLIC_RPC_ENDPOINTS: (process.env.PUBLIC_RPC_ENDPOINTS || 'https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth,https://eth.llamarpc.com').split(',').map(s=>s.trim()),
+  PUBLIC_RPC_ENDPOINTS: (process.env.PUBLIC_RPC_ENDPOINTS || 'https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth,https://ethereum-mainnet-rpc.allthatnode.com').split(',').map(s=>s.trim()),
 
   PRIVATE_RELAYS: (process.env.PRIVATE_RELAYS || 'https://relay1.example,https://relay2.example,https://relay3.example').split(',').map(s=>s.trim()),
 
