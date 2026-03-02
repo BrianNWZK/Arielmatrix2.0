@@ -417,7 +417,7 @@ async getFeeData() {
 
  //
    
-class QuorumRPC {
+export class QuorumRPC {
   constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
