@@ -460,44 +460,60 @@ class StrictOrderingNonce {
     this.lastNonce = null;
     this.lockTs = 0;
   }
- 
+
+  /**
+   * Fetch the current nonce directly from EntryPoint (always fresh, no cache)
+   */
   async current() {
-    // ALWAYS fetch fresh from EntryPoint - never use cached value
     const c = new ethers.Contract(this.entryPoint, [
       'function getNonce(address,uint192) view returns (uint256)'
     ], this.provider);
-   
+
     const n = await c.getNonce(this.scw, 0);
     console.log(`📊 EntryPoint nonce: ${n.toString()}`);
     this.lastNonce = n;
     return n;
   }
- 
+
+  /**
+   * Acquire lock + force fresh nonce fetch every single time
+   */
   async acquire() {
     const now = nowTs();
-    // Remove the lock check - we want fresh nonce every time
-    // if (this.locked && (now - this.lockTs) < LIVE.BUNDLE.NONCE_LOCK_MS) throw new Error('nonce locked');
-   
+
+    // Optional: keep short lock if you want to prevent concurrent calls
+    // if (this.locked && (now - this.lockTs) < LIVE.BUNDLE.NONCE_LOCK_MS) {
+    //   throw new Error('nonce locked');
+    // }
+
     this.locked = true;
     this.lockTs = now;
-   
-    // ALWAYS get fresh nonce
-    return await this.current();
+
+    // FORCE fresh nonce fetch BEFORE returning
+    await this.current();  // refreshes this.lastNonce
+
+    return this.lastNonce;
   }
- 
-  // ✅ ADD THIS METHOD - Returns current nonce without acquiring lock
+
+  /**
+   * Just get current nonce without acquiring lock (useful for logging/checks)
+   */
   async getNonce() {
     return await this.current();
   }
- 
+
+  /**
+   * Release the lock (does NOT increment nonce)
+   */
   release() {
-    // Only release lock, NEVER increment nonce
     this.locked = false;
   }
- 
-  // Only call this on SUCCESSFUL transactions
+
+  /**
+   * Increment local nonce only after confirmed success
+   * (optional safety — most people increment after tx confirmation)
+   */
   incrementOnSuccess() {
-    // This should be called ONLY after confirmed successful execution
     if (this.lastNonce !== null) {
       this.lastNonce = this.lastNonce + 1n;
     }
