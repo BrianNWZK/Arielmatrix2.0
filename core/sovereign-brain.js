@@ -414,7 +414,7 @@ async getFeeData() {
       };
     }
   }
-} // ← EnhancedRPCManager class ends here
+
 
 class QuorumRPC {
   constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
@@ -603,6 +603,22 @@ class DirectOmniExecutionAA {
       LIVE.WAREHOUSE_CONTRACT,
       warehouseCalldata,
       'warehouse_bootstrap',
+      true
+    );
+  }
+
+
+    // =======================================================================
+  // WAREHOUSE HARVEST
+  // =======================================================================
+  async executeWarehouseHarvest() {
+    const iface = new ethers.Interface(['function harvestAllFees() external returns (uint256,uint256,uint256)']);
+    const calldata = iface.encodeFunctionData('harvestAllFees', []);
+    
+    return await this.buildAndSendUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      calldata,
+      'warehouse_harvest',
       true
     );
   }
@@ -840,21 +856,7 @@ async sendUserOp(userOp) {
   }
 }
    
- 
-  // =======================================================================
-  // WAREHOUSE HARVEST
-  // =======================================================================
-  async executeWarehouseHarvest() {
-    const iface = new ethers.Interface(['function harvestAllFees() external returns (uint256,uint256,uint256)']);
-    const calldata = iface.encodeFunctionData('harvestAllFees', []);
-    
-    return await this.buildAndSendUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      calldata,
-      'warehouse_harvest',
-      true
-    );
-  }
+
 
   // =======================================================================
   // ADD V3 POSITION
