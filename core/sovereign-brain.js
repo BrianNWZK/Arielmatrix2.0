@@ -415,7 +415,8 @@ async getFeeData() {
     }
   };   // ←←← ADD THIS SEMICOLON (or just a blank line + newline)
 
-
+ //
+   
 class QuorumRPC {
   constructor(registry, quorumSize = LIVE.RISK.INFRA.QUORUM_SIZE || 3, toleranceBlocks = 2) {
     this.registry = registry;
