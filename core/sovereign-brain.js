@@ -3034,13 +3034,42 @@ class ProductionSovereignCore {
     this.lastCycleCheck = 0;
     this.contractCycleCount = 0;
   }
-
-
 async initialize() {
   await this.rpc.init();
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
+// In ProductionSovereignCore.initialize(), add this BEFORE bootstrap attempts:
+
+// =====================================================================
+// 🛑 CIRCUIT BREAKER - PREVENT GAS WASTE
+// =====================================================================
+const MAX_FAILED_ATTEMPTS = 3;
+const failedAttemptsFile = './bootstrap_failures.json';
+
+let failedAttempts = 0;
+try {
+  if (fs.existsSync(failedAttemptsFile)) {
+    failedAttempts = JSON.parse(fs.readFileSync(failedAttemptsFile, 'utf8')).count;
+  }
+} catch {}
+
+if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+  console.error(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🛑 STOPPING - TOO MANY FAILED ATTEMPTS                      ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Failed attempts: ${failedAttempts}                                         ║
+║  • Gas wasted: ~${(failedAttempts * 0.000025).toFixed(6)} ETH                        ║
+║                                                              ║
+║  FIX NEEDED: Change "UserOperation" to "UserOp" in          ║
+║  signUserOp method!                                          ║
+╚═══════════════════════════════════════════════════════════════╝
+  `);
+  return; // Stop initialization
+}
+
+   
 // =====================================================================
 // 🚀 BOOTSTRAP - USING DEDICATED BOOTSTRAP METHOD (NO PAYMASTER)
 // =====================================================================
