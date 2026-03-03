@@ -3224,24 +3224,32 @@ console.log('\n📈 Continuing with MEV system initialization...');
 
   console.log('✅ Hybrid harvesting scheduled (every 30 minutes)');
   
-  // =====================================================================
-  // 6. START MONITORING
-  // =====================================================================
-  this._startMonitoring();
+ // =====================================================================
+// 6. START MONITORING
+// =====================================================================
+this._startMonitoring();
+
+// Only start heartbeat if bootstrap already completed
+if (this.bootstrapCompleted) {
   this._startHeartbeat();
-  
-  console.log(`
+  console.log('✅ Heartbeat started - MEV system active');
+} else {
+  console.log('⏳ Heartbeat paused - waiting for bootstrap');
+  // Don't start heartbeat until bootstrap succeeds
+}
+
+console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅ SOVEREIGN MEV BRAIN FULLY OPERATIONAL                    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Paymasters: FUNDED (0.00035 ETH min)                      ║
 ║  • Bootstrap: ${this.bootstrapCompleted ? 'COMPLETED' : 'PENDING'}                                 ║
-║  • MEV System: ACTIVE                                        ║
+║  • MEV System: ${this.bootstrapCompleted ? 'ACTIVE' : 'PAUSED'}                                        ║
 ║  • Contract: SELF-AUTOMATING                                 ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
   
-  return this;
+ return this;
 }
 
    
@@ -3477,85 +3485,7 @@ async _startHeartbeat() {
 }
    
       
-      // =================================================================
-      // 📈 MEV OPERATIONS
-      // =================================================================
-      
-     if (decision && decision.action === 'arbitrage') {
-        this.profitVerifier.declare();
-        
-        const [crossDexResult, statArbResult] = await Promise.allSettled([
-          this.arb.findCrossDex(LIVE.SCW_ADDRESS, this.aa),
-          this.arb.findStatArb(LIVE.SCW_ADDRESS, this.aa)
-        ]);
-        
-        if (crossDexResult.status === 'fulfilled' && crossDexResult.value.executed) {
-          const res = crossDexResult.value;
-          this._safeEnqueue(res.router, res.calldata, res.desc, decision.priority);
-          
-          const evUSD = res.profitEdgeUSD || 0;
-          this.profitVerifier.record(evUSD);
-          this.health.record(evUSD);
-          
-          if (evUSD > 0) {
-            this.stats.tradesExecuted++;
-            this.stats.totalRevenueUSD += evUSD;
-            this.stats.currentDayUSD += evUSD;
-          }
-        }
-        
-        if (statArbResult.status === 'fulfilled' && statArbResult.value.executed) {
-          const res = statArbResult.value;
-          this._safeEnqueue(res.router, res.calldata, res.desc, decision.priority);
-          
-          const budget = this.dynamicBudgetAdjust(liquidityNorm, gasGwei, sense.risk.dispersionPct);
-          const evUSD = (res.deviationPct || 0) / 100 * budget;
-          
-          if (evUSD > 0) {
-            this.profitVerifier.record(evUSD);
-            this.health.record(evUSD);
-            this.stats.tradesExecuted++;
-            this.stats.totalRevenueUSD += evUSD;
-            this.stats.currentDayUSD += evUSD;
-          }
-        }
-      } 
-      else if (decision.action === 'peg_defense') {
-        const devAbs = Math.abs(decision.params.deviation);
-        const baseUSDC = Math.min(LIVE.PEG.MAX_DEFENSE_USDC, Math.max(250, Math.round(devAbs * 1000)));
-        
-        const amountInUSDC = ethers.parseUnits(String(baseUSDC), 6);
-        const adapter = this.dexRegistry.getAdapter('UNISWAP_V3');
-        const built = await adapter.buildSwapCalldata(
-          LIVE.TOKENS.USDC, 
-          LIVE.TOKENS.BWAEZI, 
-          amountInUSDC, 
-          LIVE.SCW_ADDRESS
-        );
-        
-        if (built) {
-          this._safeEnqueue(built.router, built.calldata, 'peg_defense', decision.priority);
-          this.stats.pegActions++;
-        }
-      }
-
-      if (this.health.runawayTriggered()) {
-        console.warn('⚠️ Circuit breaker triggered - cooling down');
-      }
-      
-    } catch (e) {
-      const errorMsg = e.shortMessage || e.message || 'Unknown heartbeat error';
-      if (!errorMsg.includes('cannot encode object') && 
-          !errorMsg.includes('unnamed components') && 
-          !errorMsg.includes('invalid BytesLike')) {
-        console.debug('Heartbeat:', errorMsg);
-      }
-    }
-  }, LIVE.ARBITRAGE.CHECK_INTERVAL_MS);
-}
-
-
-   
+     
   // =======================================================================
   // 📊 STATISTICS - PURE OBSERVATION, NO DECISIONS
   // =======================================================================
