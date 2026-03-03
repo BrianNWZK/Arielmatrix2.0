@@ -770,9 +770,10 @@ async sendUserOp(userOp) {
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
     // Bootstrap-specific gas limits
-    const callGasLimit = 650_000n;
-    const verificationGasLimit = 180_000n;
-    const preVerificationGas = 65_000n;
+   const callGasLimit = 100_000n;        // ↓ from 650k
+   const verificationGasLimit = 50_000n;  // ↓ from 180k
+   const preVerificationGas = 20_000n;    // ↓ from 65k
+   const gasLimit = 170_000n;             // Total: 170k (like your successful txs)
     // Verify SCW has enough ETH
     const scwBalance = await this.provider.getBalance(this.scw);
     const estimatedCost = (maxFeePerGas + maxPriorityFeePerGas) *
