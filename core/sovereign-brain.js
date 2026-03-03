@@ -3481,7 +3481,7 @@ async _startHeartbeat() {
       // 📈 MEV OPERATIONS
       // =================================================================
       
-      if (decision.action === 'arbitrage') {
+     if (decision && decision.action === 'arbitrage') {
         this.profitVerifier.declare();
         
         const [crossDexResult, statArbResult] = await Promise.allSettled([
