@@ -3039,167 +3039,74 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
-// In ProductionSovereignCore.initialize(), add this BEFORE bootstrap attempts:
-
 // =====================================================================
-// 🛑 CIRCUIT BREAKER - PREVENT GAS WASTE
-// =====================================================================
-const MAX_FAILED_ATTEMPTS = 3;
-const failedAttemptsFile = './bootstrap_failures.json';
-
-let failedAttempts = 0;
-try {
-  if (fs.existsSync(failedAttemptsFile)) {
-    failedAttempts = JSON.parse(fs.readFileSync(failedAttemptsFile, 'utf8')).count;
-  }
-} catch {}
-
-if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
-  console.error(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🛑 STOPPING - TOO MANY FAILED ATTEMPTS                      ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Failed attempts: ${failedAttempts}                                         ║
-║  • Gas wasted: ~${(failedAttempts * 0.000025).toFixed(6)} ETH                        ║
-║                                                              ║
-║  FIX NEEDED: Change "UserOperation" to "UserOp" in          ║
-║  signUserOp method!                                          ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
-  return; // Stop initialization
-}
-
-   
-// =====================================================================
-// 🚀 BOOTSTRAP - USING DEDICATED BOOTSTRAP METHOD (NO PAYMASTER)
+// 🚀 ONE-TIME BOOTSTRAP - NO RETRIES, NO CHECKS, JUST SEND
 // =====================================================================
 await this.checkContractCycleCount();
 
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP - DEDICATED METHOD (NO PAYMASTER)              ║
+║  🚀 ONE-TIME BOOTSTRAP TRIGGER                                ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Using executeBootstrapDirect method                        ║
-║  • SCW pays gas directly                                      ║
-║  • No paymaster during bootstrap                              ║
+║  • Sending ONE transaction                                    ║
+║  • NO retries                                                 ║
+║  • NO checks                                                  ║
+║  • Just send and wait                                         ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // Check SCW ETH balance
-  const scwBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-  console.log(`📊 SCW ETH balance: ${ethers.formatEther(scwBalance)} ETH`);
-
-  // Estimate required gas (conservative)
-  const estimatedGas = ethers.parseEther('0.0015');
-  
-  if (scwBalance < estimatedGas) {
-    console.error(`❌ INSUFFICIENT SCW BALANCE!`);
-    console.error(`   Need at least ${ethers.formatEther(estimatedGas)} ETH`);
-    console.error(`   Current: ${ethers.formatEther(scwBalance)} ETH`);
-    console.error(`   Send ETH to SCW: ${LIVE.SCW_ADDRESS}`);
-    throw new Error('Insufficient SCW balance for gas');
-  }
-
-  // Create AA instance WITHOUT paymaster for bootstrap
-  // Pass null for paymasterRouter since we're not using it
+  // Create AA instance WITHOUT paymaster
   this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
   
-  // Build bootstrap calldata using emergency function (no spread check)
+  // Build bootstrap calldata
   const warehouseInterface = new ethers.Interface([
     'function emergencyBulletproofBootstrap(uint256) external'
   ]);
   
   const bootstrapCalldata = warehouseInterface.encodeFunctionData(
     'emergencyBulletproofBootstrap', 
-    [ethers.parseEther("1")]  // 1 wei - symbolic amount
+    [ethers.parseEther("1")]
   );
 
   try {
-    console.log('\n📤 Calling executeBootstrapDirect...');
+    console.log('\n📤 Sending ONE bootstrap transaction...');
     
     const result = await this.aa.executeBootstrapDirect(
-  LIVE.WAREHOUSE_CONTRACT,
-  bootstrapCalldata
+      LIVE.WAREHOUSE_CONTRACT,
+      bootstrapCalldata
     );
     
-    console.log(`\n✅✅✅ BOOTSTRAP TRANSACTION SENT! ✅✅✅`);
+    console.log(`\n✅✅✅ TRANSACTION SENT! ✅✅✅`);
     console.log(`Tx: ${result.userOpHash}`);
     console.log(`Nonce: ${result.nonce}`);
-    console.log(`Method: executeBootstrapDirect (SCW direct payment)`);
+    console.log(`\n⏳ Now waiting for contract to respond...`);
+    console.log(`   This may take 1-2 minutes for first cycle.`);
+    console.log(`   NO further transactions will be sent.`);
     
     this.bootstrapCompleted = true;
     
-    // Wait for first cycle with timeout
-    console.log('\n⏳ Waiting 2 minutes for first cycle to complete...');
+    // ONE wait - then report whatever happened
+    console.log('\n⏳ Waiting 2 minutes...');
+    await sleep(120000);
     
-    try {
-      await Promise.race([
-        sleep(120000),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout after 2 minutes')), 130000)
-        )
-      ]);
-    } catch (timeoutError) {
-      console.log('⚠️ Timeout waiting - checking cycle count anyway...');
-    }
-    
-    // Check updated cycle count
     await this.checkContractCycleCount();
     
     if (this.contractCycleCount > 0) {
-      console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉                         ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count: ${this.contractCycleCount}                                            ║
-║  • Paymaster can NOW be used (liquidity exists)              ║
-║  • Contract is self-automating                               ║
-║  • Bot now in READ-ONLY mode                                 ║
-╚═══════════════════════════════════════════════════════════════╝
-      `);
+      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL! Cycle count: ${this.contractCycleCount}`);
     } else {
-      console.log('\n⚠️ Cycle count still 0 - but bootstrap tx sent successfully');
-      console.log('   Contract will auto-cycle when spread develops');
+      console.log(`\n⚠️ Cycle count still 0 - but transaction was sent.`);
+      console.log(`   Contract will auto-cycle when ready.`);
+      console.log(`   NO MORE TRANSACTIONS WILL BE SENT.`);
     }
     
   } catch (error) {
-    console.error('❌ Bootstrap failed:', error.message);
-    
-    if (error.message.includes('AA21')) {
-      console.error(`
-🔍 AA21 ERROR: SCW doesn't have enough ETH for gas
-   • Send more ETH to SCW: ${LIVE.SCW_ADDRESS}
-      `);
-    } else if (error.message.includes('AA24')) {
-      console.error(`
-🔍 AA24 ERROR: Signature error
-   • Your signUserOp method looks correct now
-   • Check that chainId matches (should be 1 for mainnet)
-      `);
-    }
-    
-    throw error;
+    console.error('❌ Transaction failed:', error.message);
+    console.log(`\n🛑 ONE ATTEMPT COMPLETE - NOT RETRYING.`);
   }
+} else {
+  console.log('✅ Already bootstrapped or attempted.');
 }
-
-
-
-// =====================================================================
-// CONTINUE WITH NORMAL INITIALIZATION
-// =====================================================================
-
-console.log('\n📈 Continuing with MEV system initialization...');
-
-// 1. PAYMASTER & AA (recreate with paymaster now that bootstrap is done)
-this.paymasterRouter = new DualPaymasterRouter(this.provider, this.signer);
-console.log('💰 Ensuring paymasters have minimum 0.00035 ETH deposit...');
-await this.paymasterRouter.ensurePaymasterFunded('0.00035');
-await this.paymasterRouter.updateHealth();
-console.log('✅ Active paymaster:', this.paymasterRouter.active);
-
-// Recreate AA with paymaster for normal operations
-this.aa = new DirectOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
@@ -3358,9 +3265,7 @@ async checkPaymasterStatus() {
     }
   }
 }
-
-
-   
+  
   async checkContractCycleCount() {
     try {
       const contract = new ethers.Contract(
@@ -3510,29 +3415,66 @@ _safeUserOpFields(userOp) {
 // START HEARTBEAT - FIXED WITH SAFEGUARDS
 // =======================================================================
 async _startHeartbeat() {
+  // This runs every 15 seconds - FREE! No transactions!
   setInterval(async () => {
     try {
-      if (!this.kernel || !this.arb || !this.bundleManager) return;
+      if (!this.kernel || !this.arb) return;
       
-      const feeData = await this.rpc.getFeeData();
-      const gasGwei = Number(ethers.formatUnits(feeData.maxFeePerGas || feeData.gasPrice || 0n, 'gwei'));
-
+      // Just update market data - NO TRANSACTIONS
       const sense = await this.kernel.sense({
         provider: this.provider,
         scw: LIVE.SCW_ADDRESS,
         tokens: LIVE.TOKENS,
         feeTier: LIVE.POOLS.FEE_TIER_DEFAULT
       });
-
-      const liquidityNorm = clamp01((Number(sense.liquidity.liqUSDC.liq) + Number(sense.liquidity.liqWETH.liq)) / 1e9);
-      const oracleStale = sense.oracleMeta.ethStale === true;
       
-      if (this.health.marketStressHalt(sense.risk.dispersionPct, liquidityNorm, gasGwei, oracleStale)) {
-        return;
-      }
-
+      // Store opportunity but DON'T enqueue yet
       const decision = this.kernel.decide();
-
+      
+      if (decision.action === 'arbitrage') {
+        // Find the opportunity but DON'T ENQUEUE
+        const crossDexResult = await this.arb.findCrossDex(LIVE.SCW_ADDRESS, this.aa);
+        
+        if (crossDexResult.executed) {
+          // Calculate if profit > gas cost
+          const profitUSD = crossDexResult.profitEdgeUSD || 0;
+          const estimatedGasUSD = 0.005; // ~$0.005 per tx
+          
+          if (profitUSD > estimatedGasUSD * 2) { // Only if profitable
+            // Store for later execution
+            this.pendingProfitableTrades = this.pendingProfitableTrades || [];
+            this.pendingProfitableTrades.push({
+              ...crossDexResult,
+              timestamp: Date.now(),
+              profitUSD
+            });
+            console.log(`📈 Profitable opportunity found: $${profitUSD.toFixed(2)} (stored)`);
+          }
+        }
+      }
+      
+    } catch (e) {
+      // Silent fail - checking should never cost gas
+    }
+  }, 15000); // Check every 15 seconds - FREE!
+  
+  // SEPARATE timer - only executes when profitable (once per hour max)
+  setInterval(async () => {
+    if (!this.pendingProfitableTrades?.length) return;
+    
+    // Sort by profit, take best one
+    const bestTrade = this.pendingProfitableTrades.sort((a,b) => b.profitUSD - a.profitUSD)[0];
+    
+    console.log(`🚀 Executing best trade: $${bestTrade.profitUSD.toFixed(2)} profit`);
+    
+    // Execute ONE trade
+    this._safeEnqueue(bestTrade.router, bestTrade.calldata, bestTrade.desc, 100);
+    
+    // Clear pending
+    this.pendingProfitableTrades = [];
+    
+  }, 3600000); // Execute at most once per hour
+}
    
       
       // =================================================================
