@@ -1,79 +1,39 @@
 import { ethers } from "ethers";
-
-// Configuration - Using public RPC that works
-const RPC_URL = "https://ethereum-rpc.publicnode.com"; // ✅ Works without API key
-
-const PRIVATE_KEY = "YOUR_PRIVATE_KEY"; // Your EOA private key (0xd8e1Fa4d...)
-
-const ENTRY_POINT = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789";
-const PAYMASTER_ADDRESS = "0x4e073AAA36Cd51fD37298F87E3Fce8437a08DD71"; // Your paymaster
-const RECIPIENT = "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA"; // Your EOA
+import dotenv from "dotenv";
+dotenv.config();
 
 async function main() {
+  // Connect to Ethereum mainnet using a fast public RPC
+  // LlamaNodes and Ankr are generally reliable and low-latency
+  const provider = new ethers.JsonRpcProvider("https://eth.llamarpc.com");
+  // Load your funded EOA (make sure PRIVATE_KEY is in .env)
+  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+  // Paymaster address
+  const paymasterAddress = "0x4e073AAA36Cd51fD37298F87E3Fce8437a08DD71";
+  console.log("EOA:", wallet.address);
+  console.log("Paymaster:", paymasterAddress);
+  // ABI with the exact function name from your contract
+  const abi = [
+    "function withdrawDepositTo(address payable withdrawAddress, uint256 amount) external"
+  ];
+  const contract = new ethers.Contract(paymasterAddress, abi, wallet);
   try {
-    // Connect to provider
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-    
-    console.log("🔄 Withdrawing 0.0021 ETH from EntryPoint deposit...");
-    console.log(`   Paymaster: ${PAYMASTER_ADDRESS}`);
-    console.log(`   Recipient: ${RECIPIENT}`);
-    console.log(`   Connected as: ${wallet.address}`);
-    
-    // Check current balance in EntryPoint
-    const entryPoint = new ethers.Contract(
-      ENTRY_POINT,
-      ["function balanceOf(address account) view returns (uint256)"],
-      provider
-    );
-    
-    const currentDeposit = await entryPoint.balanceOf(PAYMASTER_ADDRESS);
-    console.log(`💰 Current EntryPoint deposit: ${ethers.formatEther(currentDeposit)} ETH`);
-    
-    if (currentDeposit < ethers.parseEther("0.0021")) {
-      console.log("❌ Deposit is less than 0.0021 ETH!");
-      return;
-    }
-    
-    // Amount to withdraw
-    const amount = ethers.parseEther("0.0021"); // 2100000000000000 wei
-    
-    console.log(`\n📤 Sending withdrawal transaction...`);
-    
-    // Withdraw from EntryPoint to paymaster
-    const entryPointWithdraw = new ethers.Contract(
-      ENTRY_POINT,
-      ["function withdrawTo(address payable withdrawAddress, uint256 withdrawAmount) external"],
-      wallet
-    );
-    
-    const tx = await entryPointWithdraw.withdrawTo(PAYMASTER_ADDRESS, amount);
-    
-    console.log(`⏳ Transaction sent: ${tx.hash}`);
-    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-    
-    // Wait for confirmation
+    console.log("Sending withdrawal...");
+    // Estimate gas to avoid underfunding
+    const gasEstimate = await contract.estimateGas.withdrawDepositTo(wallet.address, amount);
+    console.log(`Estimated gas: ${gasEstimate.toString()}`);
+    // Send transaction
+    const tx = await contract.withdrawDepositTo(wallet.address, amount, { gasLimit: gasEstimate });
+    console.log("Tx sent:", tx.hash);
     const receipt = await tx.wait();
-    
     if (receipt.status === 1) {
-      console.log(`\n✅✅✅ WITHDRAWAL SUCCESSFUL! ✅✅✅`);
-      console.log(`   Block: ${receipt.blockNumber}`);
-      console.log(`   Gas used: ${receipt.gasUsed.toString()}`);
-      
-      // Check new balance
-      const newDeposit = await entryPoint.balanceOf(PAYMASTER_ADDRESS);
-      console.log(`💰 New EntryPoint deposit: ${ethers.formatEther(newDeposit)} ETH`);
-      
-      console.log(`\n📌 0.0021 ETH has been moved from EntryPoint to your paymaster.`);
-      console.log(`   It is now in the paymaster contract at: ${PAYMASTER_ADDRESS}`);
-      
+      console.log(`✅ Confirmed in block: ${receipt.blockNumber}`);
+      console.log(`✅ Withdrawn ${ethers.formatEther(amount)} ETH to ${wallet.address}`);
     } else {
-      console.log(`❌ Transaction failed`);
+      console.error("❌ Transaction reverted");
     }
-    
   } catch (error) {
-    console.error("❌ Error:", error.message);
+    console.error("❌ Withdrawal failed:", error.message);
   }
 }
-
 main();
