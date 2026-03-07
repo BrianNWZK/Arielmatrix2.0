@@ -651,23 +651,23 @@ class DualPaymasterRouter {
 /* =========================================================================
    FIXED: DirectOmniExecutionAA - PROPER EIP-712 SIGNING + SENDING
    ========================================================================= */
-class DirectOmniExecutionAA {
-  constructor(signer, provider, paymasterRouter) {
-    this.signer = signer;
-    this.provider = provider;
-    this.paymasterRouter = paymasterRouter;
-   
-    this.scw = LIVE.SCW_ADDRESS;
-    this.entryPoint = LIVE.ENTRY_POINT;
-   
-    // SCW interface with execute function
-    this.scwInterface = new ethers.Interface([
-      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-    ]);
-   
-    this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
-    this.shield = new AntiBotShield();
-  }
+constructor(signer, provider, paymasterRouter, rpcManager) {
+  this.signer = signer;
+  this.provider = provider;
+  this.paymasterRouter = paymasterRouter;
+  this.rpc = rpcManager;  // ← CRITICAL: Store the RPC manager!
+  
+  this.scw = LIVE.SCW_ADDRESS;
+  this.entryPoint = LIVE.ENTRY_POINT;
+  
+  // SCW interface with execute function
+  this.scwInterface = new ethers.Interface([
+    'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+  ]);
+  
+  this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
+  this.shield = new AntiBotShield();
+}
 // =======================================================================
   // WAREHOUSE BOOTSTRAP
   // =======================================================================
@@ -819,9 +819,10 @@ async sendUserOp(userOp) {
   console.log(`  • Gas limit: ${gasLimit.toString()}`);
   console.log(`  • Max fee: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
 
- const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+// Use the genius RPC fallback with the stored rpc manager
+const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
   const tempEntryPoint = new ethers.Contract(
-    LIVE.ENTRY_POINT,
+    this.entryPoint,
     ["function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address payable beneficiary) external"],
     tempWallet
   );
@@ -3144,8 +3145,8 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // Create AA instance WITHOUT paymaster
-  this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null);
+ // Create AA instance WITHOUT paymaster for bootstrap - PASS THE RPC MANAGER!
+this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null, this.rpc);
   
   // Build bootstrap calldata
   const warehouseInterface = new ethers.Interface([
@@ -3211,8 +3212,8 @@ console.log('\n📈 Continuing with MEV system initialization...');
   await this.paymasterRouter.updateHealth();
   console.log('✅ Active paymaster:', this.paymasterRouter.active);
   
-  // IMPORTANT: Use the FIXED DirectOmniExecutionAA class
-  this.aa = new DirectOmniExecutionAA(this.signer, this.provider, this.paymasterRouter);
+ // Recreate AA with paymaster for normal operations - PASS THE RPC MANAGER!
+this.aa = new DirectOmniExecutionAA(this.signer, this.provider, this.paymasterRouter, this.rpc);
   
   // =====================================================================
   // 2. CHECK CURRENT CYCLE COUNT
