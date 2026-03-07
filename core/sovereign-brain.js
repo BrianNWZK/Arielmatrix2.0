@@ -3118,6 +3118,26 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
+
+async checkPaymasterStatus() {
+    if (!this.paymasterRouter) return;
+    
+    console.log('\n📊 Paymaster Status:');
+    
+    for (const paymaster of [LIVE.PAYMASTER_A, LIVE.PAYMASTER_B]) {
+      try {
+        const deposit = await this.paymasterRouter.getEntryPointDeposit(paymaster);
+        const health = await this.paymasterRouter.checkHealth(paymaster);
+        
+        console.log(`  ${paymaster.slice(0,10)}...:`);
+        console.log(`    • Deposit: ${ethers.formatEther(deposit)} ETH`);
+        console.log(`    • Health: ${health.healthy ? '✅' : '❌'}`);
+      } catch (error) {
+        console.log(`  ${paymaster.slice(0,10)}...: ❌ Error - ${error.message}`);
+      }
+    }
+  }
+
 // =====================================================================
 // 🚀 ONE-TIME BOOTSTRAP - NO RETRIES, NO CHECKS, JUST SEND
 // =====================================================================
