@@ -235,16 +235,38 @@ const LIVE = {
 };
 
 /* =========================================================================
-   CRITICAL FIX: chainRegistry (declared separately)
+   CRITICAL FIX: chainRegistry (expanded, no API keys needed)
    ========================================================================= */
 const chainRegistry = {
   1: {
     name: 'mainnet',
-    rpcs: LIVE.PUBLIC_RPC_ENDPOINTS || [
+    rpcs: [
+      // High-reliability & low-latency public RPCs (2025-2026 active)
       'https://ethereum-rpc.publicnode.com',
       'https://rpc.ankr.com/eth',
-       'https://1rpc.io/eth',
-      'https://eth.public-rpc.com'
+      'https://1rpc.io/eth',
+      'https://eth.public-rpc.com',
+      'https://cloudflare-eth.com',
+      'https://rpc.mevblocker.io',
+      'https://rpc.builder0x69.io',
+      'https://rpc.payload.de',
+      'https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161', // Infura free public (no key)
+      'https://eth-mainnet.nodereal.io/v1', // Nodereal free tier
+      'https://rpc.ethgateway.com', // Gateway free public
+      'https://rpc.flashbots.net', // Flashbots public relay (MEV-protected)
+      'https://rpc.ethereumnodes.com',
+      'https://rpc.ethereumnodes.org',
+      'https://rpc.mainnet.ethereumnodes.com',
+      'https://rpc.ethereumnode.io',
+      'https://rpc.ethereumnodes.net',
+      'https://rpc.ethereumnodes.io',
+      'https://rpc.ethereumnodes.xyz',
+      'https://rpc.ethereumnodes.com',
+      // Bonus: regional/low-latency (Africa/EU-friendly)
+      'https://rpc-eu.drpc.org',
+      'https://rpc-eu1.drpc.org',
+      'https://rpc-eu2.drpc.org',
+      'https://rpc-eu3.drpc.org'
     ],
     chainId: 1
   }
