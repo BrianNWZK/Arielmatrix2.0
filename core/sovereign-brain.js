@@ -454,67 +454,49 @@ class EnhancedRPCManager {
   }
   
   // =======================================================================
-  // GENIUS FIX: Parallel RPC with intelligent fallback
+  // GENIUS FIX V3: Robust RPC fallback with logging and gas buffer
   // =======================================================================
-  async sendTransactionWithFallback(txFunction, timeoutMs = 10000) {
+  async sendTransactionWithFallback(txFunction, timeoutMs = 15000) {
     if (!this.initialized) throw new Error('RPC manager not initialized');
     
-    const providers = this.providers;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    console.log("⏩ Skipping Flashbots (requires bundle formatting)");
+    
+    const liveProviders = this.providers.filter(p => p && p.url);
+    if (liveProviders.length === 0) throw new Error("No healthy RPC providers available");
 
-    // Try Flashbots first for maximum reliability (optional but genius)
-    try {
-      console.log("🚀 Attempting Flashbots private relay...");
-      const flashbotsProvider = new ethers.JsonRpcProvider('https://rpc.flashbots.net', null, { 
-        timeout: 5000,
-        staticNetwork: true 
-      });
-      const flashbotsWallet = new ethers.Wallet(process.env.PRIVATE_KEY, flashbotsProvider);
-      const result = await txFunction(flashbotsWallet);
-      clearTimeout(timeout);
-      return result;
-    } catch (e) {
-      console.log("⚠️ Flashbots failed, trying public RPCs in parallel...");
-    }
+    console.log(`🔄 Attempting with ${liveProviders.length} RPCs sequentially...`);
 
-    try {
-      // Parallel race - try all providers simultaneously
-      const results = await Promise.any(
-        providers.map(async (p) => {
-          // Create a fresh provider for each attempt with shorter timeout
-          const fastProvider = new ethers.JsonRpcProvider(p.url, null, {
-            timeout: 5000,
-            staticNetwork: true
-          });
-          const tempWallet = new ethers.Wallet(process.env.PRIVATE_KEY, fastProvider);
-          return await txFunction(tempWallet);
-        })
-      );
-      clearTimeout(timeout);
-      return results;
-    } catch (e) {
-      clearTimeout(timeout);
-      console.log("⚠️ Parallel RPCs failed, trying sequential fallback...");
-      
-      // Sequential fallback with longer timeouts
-      for (const p of providers) {
-        try {
-          const fallbackProvider = new ethers.JsonRpcProvider(p.url, null, { 
-            timeout: 15000,
+    for (const p of liveProviders) {
+      try {
+        console.log(`  → Trying ${p.url}...`);
+        
+        const txPromise = (async () => {
+          const tempProvider = new ethers.JsonRpcProvider(p.url, null, { 
+            timeout: 10000,
             staticNetwork: true 
           });
-          const fallbackWallet = new ethers.Wallet(process.env.PRIVATE_KEY, fallbackProvider);
-          return await txFunction(fallbackWallet);
-        } catch (err) {
-          console.log(`⚠️ Provider ${p.url} failed, trying next...`);
-          continue;
-        }
+          const tempWallet = new ethers.Wallet(process.env.PRIVATE_KEY, tempProvider);
+          return await txFunction(tempWallet);
+        })();
+
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`⏱️ Timeout after ${timeoutMs/1000}s`)), timeoutMs);
+        });
+
+        const result = await Promise.race([txPromise, timeoutPromise]);
+        
+        console.log(`✅✅ SUCCESS with ${p.url}`);
+        return result;
+        
+      } catch (err) {
+        console.log(`  ❌ ${p.url} failed: ${err.message.slice(0, 100)}`);
       }
-      throw new Error("All RPC providers failed");
     }
+    
+    throw new Error("❌ All RPC providers failed - check RPC list and network connectivity");
   }
-} // ← Closing brace for the class
+} // ← Correct closing brace for the class
+
 /* =========================================================================
    QuorumRPC – fork detection & multi-provider quorum
    ========================================================================= */
@@ -523,7 +505,7 @@ class EnhancedRPCManager {
     this.registry = registry;
     this.quorumSize = Math.max(1, quorumSize);
     this.toleranceBlocks = toleranceBlocks;
-    const urls = registry.rpcUrls.slice(0, quorumSize);
+    const urls = registry.rpcs.slice(0, quorumSize);
     const network = ethers.Network.from({ name: LIVE.NETWORK.name, chainId: LIVE.NETWORK.chainId });
     this.providers = urls.map(u => new ethers.JsonRpcProvider(u, network, { staticNetwork: network }));
     this.lastForkAlert = null;
