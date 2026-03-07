@@ -651,23 +651,24 @@ class DualPaymasterRouter {
 /* =========================================================================
    FIXED: DirectOmniExecutionAA - PROPER EIP-712 SIGNING + SENDING
    ========================================================================= */
-constructor(signer, provider, paymasterRouter, rpcManager) {
-  this.signer = signer;
-  this.provider = provider;
-  this.paymasterRouter = paymasterRouter;
-  this.rpc = rpcManager;  // ← CRITICAL: Store the RPC manager!
-  
-  this.scw = LIVE.SCW_ADDRESS;
-  this.entryPoint = LIVE.ENTRY_POINT;
-  
-  // SCW interface with execute function
-  this.scwInterface = new ethers.Interface([
-    'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-  ]);
-  
-  this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
-  this.shield = new AntiBotShield();
-}
+ class DirectOmniExecutionAA {
+  constructor(signer, provider, paymasterRouter, rpcManager) {
+    this.signer = signer;
+    this.provider = provider;
+    this.paymasterRouter = paymasterRouter;
+    this.rpc = rpcManager;  // ✅ now defined
+
+    this.scw = LIVE.SCW_ADDRESS;
+    this.entryPoint = LIVE.ENTRY_POINT;
+
+    // SCW interface with execute function
+    this.scwInterface = new ethers.Interface([
+      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+
+    this.nonceLock = new StrictOrderingNonce(provider, this.entryPoint, this.scw);
+    this.shield = new AntiBotShield();
+  }
 // =======================================================================
   // WAREHOUSE BOOTSTRAP
   // =======================================================================
