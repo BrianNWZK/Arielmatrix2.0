@@ -3148,45 +3148,104 @@ this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null, this.rpc);
     [ethers.parseEther("1")]
   );
 
+ try {
+  // Get the UserOp from executeBootstrapDirect first
+  const userOp = await this.aa.buildBootstrapUserOp(
+    LIVE.WAREHOUSE_CONTRACT,
+    bootstrapCalldata
+  );
+
+  // =====================================================================
+  // FINAL BOOTSTRAP - FIXED ENCODING + NAMED ABI
+  // =====================================================================
+  console.log('\n📤 Sending UserOp (final fixed version)...');
+  const ENTRY_POINT_ABI = [
+    "struct UserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,uint256 callGasLimit,uint256 verificationGasLimit,uint256 preVerificationGas,uint256 maxFeePerGas,uint256 maxPriorityFeePerGas,bytes paymasterAndData,bytes signature)",
+    "function handleOps(UserOperation[] calldata ops, address payable beneficiary) external"
+  ];
+  const entryPoint = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, this.signer);
+  console.log(' • Preparing UserOp tuple...');
+  // Use named object — ethers v6 will map automatically
+  const userOpForBroadcast = {
+    sender: userOp.sender.toLowerCase(),
+    nonce: userOp.nonce,
+    initCode: userOp.initCode || '0x',
+    callData: userOp.callData || '0x',
+    callGasLimit: userOp.callGasLimit,
+    verificationGasLimit: userOp.verificationGasLimit,
+    preVerificationGas: userOp.preVerificationGas,
+    maxFeePerGas: userOp.maxFeePerGas,
+    maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
+    paymasterAndData: userOp.paymasterAndData || '0x',
+    signature: userOp.signature || '0x'
+  };
+  console.log(' • Signature length:', userOp.signature.length);
+  console.log(' • Nonce:', userOp.nonce.toString());
+  // Gas estimation with buffer
+  let gasLimit = 1_000_000n;
   try {
-    console.log('\n📤 Sending ONE bootstrap transaction...');
-    
-    const result = await this.aa.executeBootstrapDirect(
-      LIVE.WAREHOUSE_CONTRACT,
-      bootstrapCalldata
-    );
-    
-    console.log(`\n✅✅✅ TRANSACTION SENT! ✅✅✅`);
-    console.log(`Tx: ${result.userOpHash}`);
-    console.log(`Nonce: ${result.nonce}`);
-    console.log(`\n⏳ Now waiting for contract to respond...`);
-    console.log(`   This may take 1-2 minutes for first cycle.`);
-    console.log(`   NO further transactions will be sent.`);
-    
-    this.bootstrapCompleted = true;
-    
-    // ONE wait - then report whatever happened
-    console.log('\n⏳ Waiting 2 minutes...');
-    await sleep(120000);
-    
-    await this.checkContractCycleCount();
-    
-    if (this.contractCycleCount > 0) {
-      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL! Cycle count: ${this.contractCycleCount}`);
-    } else {
-      console.log(`\n⚠️ Cycle count still 0 - but transaction was sent.`);
-      console.log(`   Contract will auto-cycle when ready.`);
-      console.log(`   NO MORE TRANSACTIONS WILL BE SENT.`);
-    }
-    
-  } catch (error) {
-    console.error('❌ Transaction failed:', error.message);
-    console.log(`\n🛑 ONE ATTEMPT COMPLETE - NOT RETRYING.`);
+    console.log(' • Estimating gas...');
+    const estimated = await entryPoint.handleOps.estimateGas([userOpForBroadcast], this.signer.address);
+    gasLimit = estimated * 130n / 100n; // 30% buffer
+    console.log(` • Estimated gas: ${estimated.toString()}`);
+  } catch (e) {
+    console.log(` • Estimation failed: ${e.message}`);
+    console.log(` • Using fallback gas: ${gasLimit.toString()}`);
   }
-} else {
-  console.log('✅ Already bootstrapped or attempted.');
+  console.log(` • Final gas limit: ${gasLimit.toString()}`);
+  console.log(` • Max fee: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
+  // Send via your RPC fallback
+  const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+    const tempEntryPoint = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
+    return await tempEntryPoint.handleOps([userOpForBroadcast], tempWallet.address, {
+      gasLimit
+    });
+  });
+  console.log(`✅ TRANSACTION SENT! ✅`);
+  console.log(`Tx: ${tx.hash}`);
+  console.log(`View: https://etherscan.io/tx/${tx.hash}`);
+  const receipt = await tx.wait();
+  if (receipt.status === 1) {
+    console.log(`\n🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉`);
+    console.log(`Block: ${receipt.blockNumber}`);
+    console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+    this.bootstrapCompleted = true;
+    // Wait for first cycle with timeout
+    console.log('\n⏳ Waiting 2 minutes for first cycle to complete...');
+    try {
+      await Promise.race([
+        sleep(120000),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout after 2 minutes')), 130000)
+        )
+      ]);
+    } catch (timeoutError) {
+      console.log('⚠️ Timeout waiting - checking cycle count anyway...');
+    }
+    // Check updated cycle count
+    await this.checkContractCycleCount();
+    if (this.contractCycleCount > 0) {
+      console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║ 🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉 ║
+╠═══════════════════════════════════════════════════════════════╣
+║ • Cycle count: ${this.contractCycleCount} ║
+║ • Paymaster can NOW be used (liquidity exists) ║
+║ • Contract is self-automating ║
+║ • Bot now in READ-ONLY mode ║
+╚═══════════════════════════════════════════════════════════════╝
+      `);
+    } else {
+      console.log('\n⚠️ Cycle count still 0 - but bootstrap tx sent successfully');
+      console.log(' Contract will auto-cycle when spread develops');
+    }
+  } else {
+    console.log(`\n❌ Transaction reverted - check Etherscan for details`);
+    console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+  }
+} catch (error) {
+  console.error('❌ Bootstrap failed:', error.message);
 }
-   
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
