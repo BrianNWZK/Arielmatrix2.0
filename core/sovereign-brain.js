@@ -779,7 +779,7 @@ async signUserOp(userOp) {
   }
 }
   // =======================================================================
-// FIXED: SEND USEROP VIA ENTRYPOINT
+// FIXED: SEND USEROP VIA ENTRYPOINT WITH GAS ESTIMATION + RPC FALLBACK
 // =======================================================================
 async sendUserOp(userOp) {
   const ENTRY_POINT_ABI = [
@@ -805,44 +805,54 @@ async sendUserOp(userOp) {
 
   console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
   
-  // Calculate gas limit for the handleOps transaction
+  // Calculate base gas limit
   const totalUserOpGas = userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas;
-  
-  // The handleOps transaction gas limit should be totalUserOpGas + overhead
-  // Overhead is typically 50,000-100,000 gas for one UserOp
-  let gasLimit = totalUserOpGas + 100_000n;
+  let gasLimit = totalUserOpGas + 100_000n; // Fallback: total + 100k buffer
   
   // Try to estimate for better accuracy
   try {
+    console.log(`  • Estimating gas...`);
     const estimated = await entryPoint.handleOps.estimateGas([userOpForRPC], this.signer.address);
-    gasLimit = estimated * 115n / 100n; // Add 15% buffer
+    gasLimit = estimated * 120n / 100n; // Add 20% buffer for safety
     console.log(`  • Estimated gas: ${estimated.toString()}`);
   } catch (e) {
     console.log(`  • Using fallback gas: ${gasLimit.toString()}`);
+    // Log the estimation error for debugging
+    if (e.message.includes('AA31')) {
+      console.log(`    ⚠️ AA31: Paymaster deposit too low`);
+    } else if (e.message.includes('AA24')) {
+      console.log(`    ⚠️ AA24: Signature error - check EIP-712 encoding`);
+    }
   }
 
   console.log(`  • Gas limit: ${gasLimit.toString()}`);
   console.log(`  • Max fee: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
 
-// Use the genius RPC fallback with the stored rpc manager
-const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-  const tempEntryPoint = new ethers.Contract(
-    this.entryPoint,
-    ["function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address payable beneficiary) external"],
-    tempWallet
-  );
-  return await tempEntryPoint.handleOps([userOpForRPC], tempWallet.address, {
-    gasLimit: gasLimit
+  // Use the genius RPC fallback with the stored rpc manager
+  const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+    const tempEntryPoint = new ethers.Contract(
+      this.entryPoint,
+      ["function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address payable beneficiary) external"],
+      tempWallet
+    );
+    return await tempEntryPoint.handleOps([userOpForRPC], tempWallet.address, {
+      gasLimit: gasLimit
+    });
   });
-});
 
   console.log(`⏳ Transaction: ${tx.hash}`);
+  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+  
   const receipt = await tx.wait();
 
   if (receipt.status === 1) {
-    console.log(`✅ UserOp executed in block ${receipt.blockNumber}`);
+    console.log(`✅✅✅ UserOp executed successfully! ✅✅✅`);
+    console.log(`  • Block: ${receipt.blockNumber}`);
+    console.log(`  • Gas used: ${receipt.gasUsed.toString()}`);
+    console.log(`  • Gas price: ${ethers.formatUnits(receipt.gasPrice, 'gwei')} gwei`);
     return tx.hash;
   } else {
+    console.error(`❌ UserOp execution failed with status ${receipt.status}`);
     throw new Error(`UserOp failed (status ${receipt.status})`);
   }
 }
