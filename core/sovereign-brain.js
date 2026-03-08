@@ -3205,20 +3205,20 @@ this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null, this.rpc);
 ];
   const entryPoint = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, this.signer);
   console.log(' • Preparing UserOp tuple...');
-   // Use positional array to match unnamed tuple ABI
-  const userOpForBroadcast = [
-    userOp.sender.toLowerCase(),
-    userOp.nonce,
-    userOp.initCode || '0x',
-    userOp.callData || '0x',
-    userOp.callGasLimit,
-    userOp.verificationGasLimit,
-    userOp.preVerificationGas,
-    userOp.maxFeePerGas,
-    userOp.maxPriorityFeePerGas,
-    userOp.paymasterAndData || '0x',
-    userOp.signature || '0x'
-  ];
+   // Use positional array with ALL numbers converted to hex
+const userOpForBroadcast = [
+  userOp.sender.toLowerCase(),
+  ethers.toBeHex(userOp.nonce),                    // ← Convert to hex!
+  userOp.initCode || '0x',
+  userOp.callData || '0x',
+  ethers.toBeHex(userOp.callGasLimit),             // ← Convert to hex!
+  ethers.toBeHex(userOp.verificationGasLimit),     // ← Convert to hex!
+  ethers.toBeHex(userOp.preVerificationGas),       // ← Convert to hex!
+  ethers.toBeHex(userOp.maxFeePerGas),             // ← Convert to hex!
+  ethers.toBeHex(userOp.maxPriorityFeePerGas),     // ← Convert to hex!
+  userOp.paymasterAndData || '0x',
+  userOp.signature
+];
   console.log(' • Signature length:', userOp.signature.length);
   console.log(' • Nonce:', userOp.nonce.toString());
   // Gas estimation with buffer
