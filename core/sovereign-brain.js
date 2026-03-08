@@ -3205,20 +3205,20 @@ this.aa = new DirectOmniExecutionAA(this.signer, this.provider, null, this.rpc);
 ];
   const entryPoint = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, this.signer);
   console.log(' • Preparing UserOp tuple...');
-  // Use named object — ethers v6 will map automatically
-  const userOpForBroadcast = {
-    sender: userOp.sender.toLowerCase(),
-    nonce: userOp.nonce,
-    initCode: userOp.initCode || '0x',
-    callData: userOp.callData || '0x',
-    callGasLimit: userOp.callGasLimit,
-    verificationGasLimit: userOp.verificationGasLimit,
-    preVerificationGas: userOp.preVerificationGas,
-    maxFeePerGas: userOp.maxFeePerGas,
-    maxPriorityFeePerGas: userOp.maxPriorityFeePerGas,
-    paymasterAndData: userOp.paymasterAndData || '0x',
-    signature: userOp.signature || '0x'
-  };
+   // Use positional array to match unnamed tuple ABI
+  const userOpForBroadcast = [
+    userOp.sender.toLowerCase(),
+    userOp.nonce,
+    userOp.initCode || '0x',
+    userOp.callData || '0x',
+    userOp.callGasLimit,
+    userOp.verificationGasLimit,
+    userOp.preVerificationGas,
+    userOp.maxFeePerGas,
+    userOp.maxPriorityFeePerGas,
+    userOp.paymasterAndData || '0x',
+    userOp.signature || '0x'
+  ];
   console.log(' • Signature length:', userOp.signature.length);
   console.log(' • Nonce:', userOp.nonce.toString());
   // Gas estimation with buffer
