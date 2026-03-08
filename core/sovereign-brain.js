@@ -3389,7 +3389,8 @@ console.log(`
   
  return this;
 }
- 
+}  // ← ADD THIS SECOND CLOSING BRACE 
+   
 async checkPaymasterStatus() {
   if (!this.paymasterRouter) return;
   
