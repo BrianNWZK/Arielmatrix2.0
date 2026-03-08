@@ -831,6 +831,48 @@ async sendUserOp(userOp) {
     throw new Error(`UserOp failed (status ${receipt.status})`);
   }
 }
+
+
+// =======================================================================
+// HELPER: Build UserOp without sending (for final bootstrap)
+// =======================================================================
+async buildBootstrapUserOp(target, calldata) {
+  const nonce = await this.nonceLock.acquire();
+  
+  const scwCalldata = this.scwInterface.encodeFunctionData('execute', [
+    target,
+    0n,
+    calldata
+  ]);
+  
+  const feeData = await this.provider.getFeeData();
+  
+  const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
+  
+  const callGasLimit = 100_000n;
+  const verificationGasLimit = 50_000n;
+  const preVerificationGas = 20_000n;
+  
+  const userOp = {
+    sender: this.scw,
+    nonce,
+    initCode: '0x',
+    callData: scwCalldata,
+    callGasLimit,
+    verificationGasLimit,
+    preVerificationGas,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    paymasterAndData: '0x',
+    signature: '0x'
+  };
+  
+  const signed = await this.signUserOp(userOp);
+  this.nonceLock.release();
+  
+  return signed;
+}
   // =======================================================================
   // BOOTSTRAP METHOD - NO PAYMASTER
   // =======================================================================
