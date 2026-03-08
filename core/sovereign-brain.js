@@ -3234,35 +3234,14 @@ const userOpForBroadcast = [
   }
   console.log(` • Final gas limit: ${gasLimit.toString()}`);
   console.log(` • Max fee: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
-  // Send via your RPC fallback
-const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-  const tempEntryPoint = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
-
-  // =====================================================================
-  // 🔍 DEBUG - UserOp Array Before Send
-  // =====================================================================
-  console.log('\n=== 🔍 DEBUG - UserOp Array Before Send ===');
-  console.log('Array length:', userOpForBroadcast.length);           // MUST be 11
-  console.log('Position 0 (sender):', userOpForBroadcast[0]);
-  console.log('Position 1 (nonce):', userOpForBroadcast[1]);
-  console.log('Position 2 (initCode):', (userOpForBroadcast[2] || '0x').slice(0, 50) + '...');
-  console.log('Position 3 (callData):', (userOpForBroadcast[3] || '0x').slice(0, 50) + '...');
-  console.log('Position 4 (callGasLimit):', userOpForBroadcast[4]);
-  console.log('Position 5 (verificationGasLimit):', userOpForBroadcast[5]);
-  console.log('Position 6 (preVerificationGas):', userOpForBroadcast[6]);
-  console.log('Position 7 (maxFeePerGas):', userOpForBroadcast[7]);
-  console.log('Position 8 (maxPriorityFeePerGas):', userOpForBroadcast[8]);
-  console.log('Position 9 (paymasterAndData):', userOpForBroadcast[9] === '0x' ? 'none' : userOpForBroadcast[9].slice(0, 30) + '...');
-  console.log('Position 10 (signature):', userOpForBroadcast[10] ? userOpForBroadcast[10].slice(0, 50) + '...' : 'MISSING!');
-  console.log('Signature type:', typeof userOpForBroadcast[10]);
-  console.log('Signature starts with 0x?', userOpForBroadcast[10]?.startsWith('0x') ? '✅ YES' : '❌ NO');
-  console.log('Signature length:', userOpForBroadcast[10]?.length || 'missing');
-  console.log('========================================\n');
-
-  return await tempEntryPoint.handleOps([userOpForBroadcast], tempWallet.address, {
-    gasLimit
+    // Broadcast via your RPC fallback
+  const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+    const tempEntryPoint = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
+    return await tempEntryPoint.handleOps([userOpForBroadcast], tempWallet.address, {
+      gasLimit
+    });
   });
-});
+ 
   console.log(`✅ TRANSACTION SENT! ✅`);
   console.log(`Tx: ${tx.hash}`);
   console.log(`View: https://etherscan.io/tx/${tx.hash}`);
