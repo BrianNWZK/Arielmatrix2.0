@@ -783,17 +783,6 @@ async signUserOp(userOp) {
   }
 }
 
-// =======================================================================
-// FIXED: SEND USEROP - ALL NUMBERS MUST BE HEX STRINGS
-// =======================================================================
-async sendUserOp(userOp) {
-  const ENTRY_POINT_ABI = [
-    "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address payable beneficiary) external"
-  ];
-  const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
-
-  console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
-
  // =======================================================================
 // FIXED: SEND USEROP - USE POSITIONAL ARRAY FOR UNNAMED TUPLE
 // =======================================================================
