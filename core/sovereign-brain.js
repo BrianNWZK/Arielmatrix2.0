@@ -784,7 +784,7 @@ async signUserOp(userOp) {
 }
 
 // =======================================================================
-// FIXED: SEND USEROP VIA ENTRYPOINT WITH GAS ESTIMATION + RPC FALLBACK
+// FIXED: SEND USEROP - ALL NUMBERS MUST BE HEX STRINGS
 // =======================================================================
 async sendUserOp(userOp) {
   const ENTRY_POINT_ABI = [
@@ -795,18 +795,19 @@ async sendUserOp(userOp) {
   console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
 
   // =====================================================================
-  // CRITICAL: Convert ALL numbers to hex for the RPC call
+  // CRITICAL: Convert ALL numbers to hex strings for the RPC call
+  // The EntryPoint expects hex strings, not BigInts!
   // =====================================================================
   const userOpTuple = [
     userOp.sender.toLowerCase(),
-    ethers.toBeHex(userOp.nonce),
+    ethers.toBeHex(userOp.nonce),                    // ← Convert to hex!
     userOp.initCode || '0x',
     userOp.callData || '0x',
-    ethers.toBeHex(userOp.callGasLimit),
-    ethers.toBeHex(userOp.verificationGasLimit),
-    ethers.toBeHex(userOp.preVerificationGas),
-    ethers.toBeHex(userOp.maxFeePerGas),
-    ethers.toBeHex(userOp.maxPriorityFeePerGas),
+    ethers.toBeHex(userOp.callGasLimit),             // ← Convert to hex!
+    ethers.toBeHex(userOp.verificationGasLimit),     // ← Convert to hex!
+    ethers.toBeHex(userOp.preVerificationGas),       // ← Convert to hex!
+    ethers.toBeHex(userOp.maxFeePerGas),             // ← Convert to hex!
+    ethers.toBeHex(userOp.maxPriorityFeePerGas),     // ← Convert to hex!
     userOp.paymasterAndData || '0x',
     userOp.signature
   ];
@@ -814,52 +815,40 @@ async sendUserOp(userOp) {
   console.log('=== DEBUG - UserOp Array Before Send ===');
   console.log('Array length:', userOpTuple.length);
   console.log('Position 0 (sender):', userOpTuple[0]);
-  console.log('Position 1 (nonce):', userOpTuple[1]);
+  console.log('Position 1 (nonce):', userOpTuple[1]);        // ← Should be hex like "0x213"
+  console.log('Position 4 (callGasLimit):', userOpTuple[4]); // ← Should be hex like "0x186a0"
   console.log('Position 10 (signature):', userOpTuple[10]?.slice(0, 50) + '...');
-  console.log('Signature type:', typeof userOpTuple[10]);
-  console.log('Signature starts with 0x?', userOpTuple[10]?.startsWith('0x'));
-  console.log('Signature length:', userOpTuple[10]?.length || 'missing');
   console.log('========================================');
 
   // Gas estimation
-  let gasLimit = 1_000_000n; // fallback
+  let gasLimit = 1_000_000n;
   try {
     console.log(`  • Estimating gas...`);
     const estimated = await entryPoint.handleOps.estimateGas([userOpTuple], this.signer.address);
-    gasLimit = estimated * 150n / 100n; // 50% buffer for safety
+    gasLimit = estimated * 150n / 100n;
     console.log(`  • Estimated gas: ${estimated.toString()}`);
   } catch (e) {
     console.log(`  • Using fallback gas: ${gasLimit.toString()}`);
-    if (e.message.includes('AA31')) console.log(`    ⚠️ AA31: Paymaster deposit too low`);
-    if (e.message.includes('AA24')) console.log(`    ⚠️ AA24: Signature error`);
   }
 
-  console.log(`  • Gas limit: ${gasLimit.toString()}`);
-  console.log(`  • Max fee: ${ethers.formatUnits(userOp.maxFeePerGas, 'gwei')} gwei`);
-
-  // Broadcast via your RPC fallback
+  // Broadcast
   const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
     const tempEntryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, tempWallet);
     return await tempEntryPoint.handleOps([userOpTuple], tempWallet.address, {
-      gasLimit: gasLimit
+      gasLimit
     });
   });
 
   console.log(`⏳ Tx: ${tx.hash}`);
-  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-
   const receipt = await tx.wait();
+  
   if (receipt.status === 1) {
     console.log(`✅✅✅ UserOp executed successfully! ✅✅✅`);
-    console.log(`  • Block: ${receipt.blockNumber}`);
-    console.log(`  • Gas used: ${receipt.gasUsed.toString()}`);
     return tx.hash;
   } else {
-    console.error(`❌ UserOp failed with status ${receipt.status}`);
     throw new Error(`UserOp failed (status ${receipt.status})`);
   }
 }
-
 // =======================================================================
 // HELPER: Build UserOp without sending (for final bootstrap)
 // =======================================================================
