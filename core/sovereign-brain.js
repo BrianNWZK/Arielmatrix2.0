@@ -183,7 +183,7 @@ const LIVE = {
     PARALLEL_SIM_SLOTS: Number(process.env.PARALLEL_SIM_SLOTS || 4),
     NONCE_LOCK_MS: Number(process.env.NONCE_LOCK_MS || 8000),
     GAS_BUMP_BPS: Number(process.env.GAS_BUMP_BPS || 150), // +1.5% bump
-    SIGNATURE_SALT: process.env.SIGNATURE_SALT || 'sovereign-v19-salt'
+    SIGNATURE_SALT: '',  // Empty string for standard ECDSA signatures
   },
 
   // WAREHOUSE SPECIFIC CONFIGURATION
