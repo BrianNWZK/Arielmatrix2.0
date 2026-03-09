@@ -796,7 +796,6 @@ async sendUserOp(userOp) {
 
   // =====================================================================
   // CRITICAL: Convert ALL numbers to hex strings for the RPC call
-  // The EntryPoint expects hex strings, not BigInts!
   // =====================================================================
   const userOpTuple = [
     userOp.sender.toLowerCase(),
@@ -812,13 +811,14 @@ async sendUserOp(userOp) {
     userOp.signature
   ];
 
-  console.log('=== DEBUG - UserOp Array Before Send ===');
-  console.log('Array length:', userOpTuple.length);
-  console.log('Position 0 (sender):', userOpTuple[0]);
-  console.log('Position 1 (nonce):', userOpTuple[1]);        // ← Should be hex like "0x213"
-  console.log('Position 4 (callGasLimit):', userOpTuple[4]); // ← Should be hex like "0x186a0"
-  console.log('Position 10 (signature):', userOpTuple[10]?.slice(0, 50) + '...');
-  console.log('========================================');
+  // =====================================================================
+  // DEBUG - Verify hex conversion
+  // =====================================================================
+  console.log('=== 🔍 HEX CONVERSION DEBUG ===');
+  console.log('nonce (hex):', userOpTuple[1]);
+  console.log('callGasLimit (hex):', userOpTuple[4]);
+  console.log('maxFeePerGas (hex):', userOpTuple[7]);
+  console.log('===============================');
 
   // Gas estimation
   let gasLimit = 1_000_000n;
@@ -863,7 +863,7 @@ async buildBootstrapUserOp(target, calldata) {
   
   const feeData = await this.provider.getFeeData();
   
-  // Get raw values (keep as BigInt for now)
+  // Get raw values
   const rawNonce = nonce;
   const rawCallGasLimit = 100_000n;
   const rawVerificationGasLimit = 50_000n;
@@ -871,10 +871,36 @@ async buildBootstrapUserOp(target, calldata) {
   const rawMaxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
   const rawMaxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
   
-  // Create UserOp with BigInt values
-  const userOp = {
+  // =====================================================================
+  // CRITICAL: Convert ALL numbers to hex strings BEFORE signing
+  // The EntryPoint expects hex strings in the typed data hash
+  // =====================================================================
+  const userOpForSigning = {
     sender: this.scw,
-    nonce: rawNonce,
+    nonce: ethers.toBeHex(rawNonce),                          // ← HEX!
+    initCode: '0x',
+    callData: scwCalldata,
+    callGasLimit: ethers.toBeHex(rawCallGasLimit),           // ← HEX!
+    verificationGasLimit: ethers.toBeHex(rawVerificationGasLimit), // ← HEX!
+    preVerificationGas: ethers.toBeHex(rawPreVerificationGas),     // ← HEX!
+    maxFeePerGas: ethers.toBeHex(rawMaxFeePerGas),           // ← HEX!
+    maxPriorityFeePerGas: ethers.toBeHex(rawMaxPriorityFeePerGas), // ← HEX!
+    paymasterAndData: '0x'
+  };
+
+  console.log('🔍 Signing with HEX values:', {
+    nonce: userOpForSigning.nonce,
+    callGasLimit: userOpForSigning.callGasLimit,
+    maxFeePerGas: userOpForSigning.maxFeePerGas
+  });
+
+  // Sign the UserOp (with hex values)
+  const signature = await this.signUserOp(userOpForSigning);
+  
+  // Return COMPLETE UserOp with original BigInt values for sending
+  const finalUserOp = {
+    sender: this.scw,
+    nonce: rawNonce,                    // Back to BigInt for sending
     initCode: '0x',
     callData: scwCalldata,
     callGasLimit: rawCallGasLimit,
@@ -883,14 +909,11 @@ async buildBootstrapUserOp(target, calldata) {
     maxFeePerGas: rawMaxFeePerGas,
     maxPriorityFeePerGas: rawMaxPriorityFeePerGas,
     paymasterAndData: '0x',
-    signature: '0x'
+    signature
   };
-  
-  // Sign it (signUserOp will handle hex conversion internally if needed)
-  const signed = await this.signUserOp(userOp);
+
   this.nonceLock.release();
-  
-  return signed;
+  return finalUserOp;
 }
   // =======================================================================
   // BOOTSTRAP METHOD - NO PAYMASTER
