@@ -722,9 +722,12 @@ async signUserOp(userOp) {
     paymasterAndData: cleanUserOp.paymasterAndData === '0x' ? 'none' : 'present'
   });
 
-  // CORRECT TYPES for EntryPoint v0.6 - MUST be "UserOp" (capital O, lowercase p)
+  // =====================================================================
+  // CRITICAL: CORRECT TYPES for EntryPoint v0.6
+  // The type MUST be "UserOperation" (capital O) - this is what EntryPoint expects!
+  // =====================================================================
   const types = {
-    UserOperation: [  // ← CRITICAL: Must be "UserOp", not "UserOperation"!
+    UserOperation: [  // ← CORRECT: Must be "UserOperation", not "UserOp"!
       { name: 'sender', type: 'address' },
       { name: 'nonce', type: 'uint256' },
       { name: 'initCode', type: 'bytes' },
@@ -750,8 +753,23 @@ async signUserOp(userOp) {
   console.log('✍️ Types:', Object.keys(types));
 
   try {
-    // Sign the typed data - signature field is NOT included in what we sign
-    const signature = await this.signer.signTypedData(domain, types, cleanUserOp);
+    // Get raw signature
+    let signature = await this.signer.signTypedData(domain, types, cleanUserOp);
+    
+    // =====================================================================
+    // CRITICAL: Normalize v value (must be 27 or 28 / 0x1b or 0x1c)
+    // =====================================================================
+    const signatureBytes = ethers.getBytes(signature);
+    const v = signatureBytes[64];
+    
+    console.log('Raw v value:', v);
+    
+    if (v < 27) {
+      signatureBytes[64] = v + 27;
+      signature = ethers.hexlify(signatureBytes);
+      console.log(`🔄 Fixed v: ${v} → ${signatureBytes[64]}`);
+    }
+    
     console.log(`✅ Signature: ${signature.slice(0, 42)}...`);
     
     // Return COMPLETE UserOp with signature added back
@@ -764,10 +782,10 @@ async signUserOp(userOp) {
     throw error;
   }
 }
-  // =======================================================================
-// FIXED: SEND USEROP VIA ENTRYPOINT WITH GAS ESTIMATION + RPC FALLBACK + PROPER TUPLE ENCODING
-// =======================================================================
 
+// =======================================================================
+// FIXED: SEND USEROP VIA ENTRYPOINT WITH GAS ESTIMATION + RPC FALLBACK
+// =======================================================================
 async sendUserOp(userOp) {
   const ENTRY_POINT_ABI = [
     "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address payable beneficiary) external"
@@ -776,22 +794,32 @@ async sendUserOp(userOp) {
 
   console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
 
-  // Positional tuple array (required for unnamed components)
+  // =====================================================================
+  // CRITICAL: Convert ALL numbers to hex for the RPC call
+  // =====================================================================
   const userOpTuple = [
-    userOp.sender || '0x0000000000000000000000000000000000000000',
-    userOp.nonce || 0n,
+    userOp.sender.toLowerCase(),
+    ethers.toBeHex(userOp.nonce),
     userOp.initCode || '0x',
     userOp.callData || '0x',
-    userOp.callGasLimit || 0n,
-    userOp.verificationGasLimit || 0n,
-    userOp.preVerificationGas || 0n,
-    userOp.maxFeePerGas || 0n,
-    userOp.maxPriorityFeePerGas || 0n,
+    ethers.toBeHex(userOp.callGasLimit),
+    ethers.toBeHex(userOp.verificationGasLimit),
+    ethers.toBeHex(userOp.preVerificationGas),
+    ethers.toBeHex(userOp.maxFeePerGas),
+    ethers.toBeHex(userOp.maxPriorityFeePerGas),
     userOp.paymasterAndData || '0x',
-    userOp.signature || '0x'
+    userOp.signature
   ];
 
-  console.log('UserOp tuple:', userOpTuple.map(v => v.toString ? v.toString() : v));
+  console.log('=== DEBUG - UserOp Array Before Send ===');
+  console.log('Array length:', userOpTuple.length);
+  console.log('Position 0 (sender):', userOpTuple[0]);
+  console.log('Position 1 (nonce):', userOpTuple[1]);
+  console.log('Position 10 (signature):', userOpTuple[10]?.slice(0, 50) + '...');
+  console.log('Signature type:', typeof userOpTuple[10]);
+  console.log('Signature starts with 0x?', userOpTuple[10]?.startsWith('0x'));
+  console.log('Signature length:', userOpTuple[10]?.length || 'missing');
+  console.log('========================================');
 
   // Gas estimation
   let gasLimit = 1_000_000n; // fallback
@@ -846,27 +874,30 @@ async buildBootstrapUserOp(target, calldata) {
   
   const feeData = await this.provider.getFeeData();
   
-  const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
-  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
+  // Get raw values (keep as BigInt for now)
+  const rawNonce = nonce;
+  const rawCallGasLimit = 100_000n;
+  const rawVerificationGasLimit = 50_000n;
+  const rawPreVerificationGas = 20_000n;
+  const rawMaxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
+  const rawMaxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
   
-  const callGasLimit = 100_000n;
-  const verificationGasLimit = 50_000n;
-  const preVerificationGas = 20_000n;
-  
+  // Create UserOp with BigInt values
   const userOp = {
     sender: this.scw,
-    nonce,
+    nonce: rawNonce,
     initCode: '0x',
     callData: scwCalldata,
-    callGasLimit,
-    verificationGasLimit,
-    preVerificationGas,
-    maxFeePerGas,
-    maxPriorityFeePerGas,
+    callGasLimit: rawCallGasLimit,
+    verificationGasLimit: rawVerificationGasLimit,
+    preVerificationGas: rawPreVerificationGas,
+    maxFeePerGas: rawMaxFeePerGas,
+    maxPriorityFeePerGas: rawMaxPriorityFeePerGas,
     paymasterAndData: '0x',
     signature: '0x'
   };
   
+  // Sign it (signUserOp will handle hex conversion internally if needed)
   const signed = await this.signUserOp(userOp);
   this.nonceLock.release();
   
