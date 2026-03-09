@@ -783,78 +783,7 @@ async signUserOp(userOp) {
   }
 }
 
-// =======================================================================
-// FIXED: SEND USEROP - USE POSITIONAL ARRAY FOR UNNAMED TUPLE
-// =======================================================================
-async sendUserOp(userOp) {
-  const ENTRY_POINT_ABI = [
-    "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address payable beneficiary) external"
-  ];
-  const entryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, this.signer);
 
-  console.log(`📤 Sending UserOp (nonce: ${userOp.nonce.toString()})`);
-
-  // =====================================================================
-  // CRITICAL: Use POSITIONAL ARRAY for unnamed tuple
-  // The ABI expects an array of values in specific order, NOT a named object
-  // =====================================================================
-  const userOpTuple = [
-    userOp.sender.toLowerCase(),
-    ethers.toBeHex(userOp.nonce),                    // ← Must be hex!
-    userOp.initCode || '0x',
-    userOp.callData || '0x',
-    ethers.toBeHex(userOp.callGasLimit),             // ← Must be hex!
-    ethers.toBeHex(userOp.verificationGasLimit),     // ← Must be hex!
-    ethers.toBeHex(userOp.preVerificationGas),       // ← Must be hex!
-    ethers.toBeHex(userOp.maxFeePerGas),             // ← Must be hex!
-    ethers.toBeHex(userOp.maxPriorityFeePerGas),     // ← Must be hex!
-    userOp.paymasterAndData || '0x',
-    userOp.signature
-  ];
-
-  // =====================================================================
-  // DEBUG - Verify the tuple format
-  // =====================================================================
-  console.log('=== 🔍 UserOp Tuple Before Send ===');
-  console.log('Tuple length:', userOpTuple.length);
-  console.log('Position 0 (sender):', userOpTuple[0]);
-  console.log('Position 1 (nonce):', userOpTuple[1]);        // Should be "0x0213"
-  console.log('Position 4 (callGasLimit):', userOpTuple[4]); // Should be "0x0186a0"
-  console.log('Position 7 (maxFeePerGas):', userOpTuple[7]); // Should be "0x0b036a35"
-  console.log('Position 10 (signature):', userOpTuple[10]?.slice(0, 50) + '...');
-  console.log('====================================');
-
-  // Gas estimation
-  let gasLimit = 1_000_000n;
-  try {
-    console.log(`  • Estimating gas...`);
-    const estimated = await entryPoint.handleOps.estimateGas([userOpTuple], this.signer.address);
-    gasLimit = estimated * 150n / 100n;
-    console.log(`  • Estimated gas: ${estimated.toString()}`);
-  } catch (e) {
-    console.log(`  • Using fallback gas: ${gasLimit.toString()}`);
-    console.log(`  • Error: ${e.message}`);
-  }
-
-  // Broadcast
-  const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-    const tempEntryPoint = new ethers.Contract(this.entryPoint, ENTRY_POINT_ABI, tempWallet);
-    return await tempEntryPoint.handleOps([userOpTuple], tempWallet.address, {
-      gasLimit
-    });
-  });
-
-  console.log(`⏳ Tx: ${tx.hash}`);
-  const receipt = await tx.wait();
-  
-  if (receipt.status === 1) {
-    console.log(`✅✅✅ UserOp executed successfully! ✅✅✅`);
-    return tx.hash;
-  } else {
-    throw new Error(`UserOp failed (status ${receipt.status})`);
-  }
-}
-    
 // =======================================================================
 // HELPER: Build UserOp without sending (for final bootstrap)
 // =======================================================================
