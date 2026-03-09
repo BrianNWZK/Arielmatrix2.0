@@ -783,7 +783,7 @@ async signUserOp(userOp) {
   }
 }
 
- // =======================================================================
+// =======================================================================
 // FIXED: SEND USEROP - USE POSITIONAL ARRAY FOR UNNAMED TUPLE
 // =======================================================================
 async sendUserOp(userOp) {
@@ -820,10 +820,8 @@ async sendUserOp(userOp) {
   console.log('Position 0 (sender):', userOpTuple[0]);
   console.log('Position 1 (nonce):', userOpTuple[1]);        // Should be "0x0213"
   console.log('Position 4 (callGasLimit):', userOpTuple[4]); // Should be "0x0186a0"
-  console.log('Position 7 (maxFeePerGas):', userOpTuple[7]); // Should be "0x175d0fd9"
+  console.log('Position 7 (maxFeePerGas):', userOpTuple[7]); // Should be "0x0b036a35"
   console.log('Position 10 (signature):', userOpTuple[10]?.slice(0, 50) + '...');
-  console.log('Signature type:', typeof userOpTuple[10]);
-  console.log('Signature starts with 0x?', userOpTuple[10]?.startsWith('0x'));
   console.log('====================================');
 
   // Gas estimation
@@ -856,6 +854,7 @@ async sendUserOp(userOp) {
     throw new Error(`UserOp failed (status ${receipt.status})`);
   }
 }
+    
 // =======================================================================
 // HELPER: Build UserOp without sending (for final bootstrap)
 // =======================================================================
