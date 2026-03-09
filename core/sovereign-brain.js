@@ -210,7 +210,7 @@ const LIVE = {
     ],
     
     // Financial parameters from contract
-    CYCLES_PER_DAY: 10,
+    CYCLES_PER_DAY: 120,
     PROFIT_PER_CYCLE_USD: 184000,
     DEEPENING_PERCENT_BPS: 300, // 3%
     FEES_TO_EOA_BPS: 1500, // 15%
@@ -229,7 +229,7 @@ const LIVE = {
     BAL_BW_WETH_ID: process.env.BAL_BW_WETH_ID || '',
     
     // Safety thresholds
-    MAX_BWZC_BOOTSTRAP: 39130440000000000000000n, // 39,130.44 BWZC in wei
+    MAX_BWZC_BOOTSTRAP: 170212766000000000000000n, // 170,212.77 BWZC
     MIN_SCW_BALANCE_BWZC: 30000000000000000000000n // 30,000 BWZC minimum
   }
 };
