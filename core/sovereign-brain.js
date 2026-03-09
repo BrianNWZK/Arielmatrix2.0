@@ -724,7 +724,7 @@ async signUserOp(userOp) {
 
   // CORRECT TYPES for EntryPoint v0.6 - MUST be "UserOp" (capital O, lowercase p)
   const types = {
-    UserOp: [  // ← CRITICAL: Must be "UserOp", not "UserOperation"!
+    UserOperation: [  // ← CRITICAL: Must be "UserOp", not "UserOperation"!
       { name: 'sender', type: 'address' },
       { name: 'nonce', type: 'uint256' },
       { name: 'initCode', type: 'bytes' },
