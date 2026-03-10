@@ -3102,114 +3102,143 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
-// =====================================================================
-// 🚀 FINAL ONE-TIME BOOTSTRAP — emergencyBulletproofBootstrap (NO SPREAD CHECK)
-// =====================================================================
-console.log(`
+
+  // =====================================================================
+  // CRITICAL FIX: CREATE AA FIRST - BEFORE ANY BOOTSTRAP CODE
+  // =====================================================================
+  this.aa = new DirectOmniExecutionAA(
+    this.signer, 
+    this.provider, 
+    null,  // No paymaster for bootstrap
+    this.rpc
+  );
+  console.log("🛠️ AA instance created (bootstrap mode - no paymaster)");
+
+  // =====================================================================
+  // 🚀 FINAL ONE-TIME BOOTSTRAP — emergencyBulletproofBootstrap (NO SPREAD CHECK)
+  // =====================================================================
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap   ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║ • Uses emergency function (bypasses spread check)            ║
+║ • AA already initialized - ready to sign                     ║
 ║ • Correct EIP-712 + tuple array + hex encoding               ║
 ║ • Single transaction — then contract self-automates          ║
 ╚═══════════════════════════════════════════════════════════════╝
-`);
+  `);
 
-await this.checkContractCycleCount();
+  await this.checkContractCycleCount();
 
-if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
-  // Build warehouse calldata (emergency version)
-  const warehouseIface = new ethers.Interface([
-    'function emergencyBulletproofBootstrap(uint256) external'
-  ]);
-  const warehouseCalldata = warehouseIface.encodeFunctionData(
-    'emergencyBulletproofBootstrap',
-    [ethers.parseEther("1")]
-  );
+  if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
+    // Build warehouse calldata (emergency version)
+    const warehouseIface = new ethers.Interface([
+      'function emergencyBulletproofBootstrap(uint256) external'
+    ]);
+    const warehouseCalldata = warehouseIface.encodeFunctionData(
+      'emergencyBulletproofBootstrap',
+      [ethers.parseEther("1")]
+    );
 
-  // Wrap in SCW.execute (required because sender = SCW)
-  const scwIface = new ethers.Interface([
-    'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-  ]);
-  const scwCalldata = scwIface.encodeFunctionData('execute', [
-    LIVE.WAREHOUSE_CONTRACT,
-    0n,
-    warehouseCalldata
-  ]);
+    // Wrap in SCW.execute (required because sender = SCW)
+    const scwIface = new ethers.Interface([
+      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+    const scwCalldata = scwIface.encodeFunctionData('execute', [
+      LIVE.WAREHOUSE_CONTRACT,
+      0n,
+      warehouseCalldata
+    ]);
 
-  // Fresh nonce + fee data
-  const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
-    'function getNonce(address,uint192) view returns (uint256)'
-  ], this.provider);
-  const nonce = await ep.getNonce(LIVE.SCW_ADDRESS, 0);
+    // Fresh nonce + fee data
+    const ep = new ethers.Contract(LIVE.ENTRY_POINT, [
+      'function getNonce(address,uint192) view returns (uint256)'
+    ], this.provider);
+    const nonce = await ep.getNonce(LIVE.SCW_ADDRESS, 0);
 
-  const feeData = await this.provider.getFeeData();
-  const maxFee = feeData.maxFeePerGas || ethers.parseUnits('25', 'gwei');
-  const maxPriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei');
+    const feeData = await this.provider.getFeeData();
+    const maxFee = feeData.maxFeePerGas || ethers.parseUnits('25', 'gwei');
+    const maxPriority = feeData.maxPriorityFeePerGas || ethers.parseUnits('1.5', 'gwei');
 
-  // Base UserOp
-  let userOp = {
-    sender: LIVE.SCW_ADDRESS,
-    nonce: nonce,
-    initCode: '0x',
-    callData: scwCalldata,
-    callGasLimit: 450_000n,
-    verificationGasLimit: 180_000n,
-    preVerificationGas: 60_000n,
-    maxFeePerGas: maxFee,
-    maxPriorityFeePerGas: maxPriority,
-    paymasterAndData: '0x',
-    signature: '0x'
-  };
+    // Base UserOp
+    let userOp = {
+      sender: LIVE.SCW_ADDRESS,
+      nonce: nonce,
+      initCode: '0x',
+      callData: scwCalldata,
+      callGasLimit: 450_000n,
+      verificationGasLimit: 180_000n,
+      preVerificationGas: 60_000n,
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: maxPriority,
+      paymasterAndData: '0x',
+      signature: '0x'
+    };
 
-  // SCW ETH balance check
-  const scwBal = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-  const estCost = (maxFee + maxPriority) * 700_000n;
-  if (scwBal < estCost) {
-    throw new Error(`❌ SCW has insufficient ETH. Need ~${ethers.formatEther(estCost)} ETH`);
-  }
+    // SCW ETH balance check
+    const scwBal = await this.provider.getBalance(LIVE.SCW_ADDRESS);
+    const estCost = (maxFee + maxPriority) * 700_000n;
+    if (scwBal < estCost) {
+      throw new Error(`❌ SCW has insufficient ETH. Need ~${ethers.formatEther(estCost)} ETH`);
+    }
 
-  // SIGN (using the fixed method above)
-  const signedUserOp = await this.aa.signUserOp(userOp);
+    // SIGN (using the AA instance we created above)
+    const signedUserOp = await this.aa.signUserOp(userOp);
 
-  // Build EXACT tuple array for handleOps
-  const userOpTuple = [
-    signedUserOp.sender.toLowerCase(),
-    ethers.toBeHex(signedUserOp.nonce),
-    signedUserOp.initCode || '0x',
-    signedUserOp.callData || '0x',
-    ethers.toBeHex(signedUserOp.callGasLimit),
-    ethers.toBeHex(signedUserOp.verificationGasLimit),
-    ethers.toBeHex(signedUserOp.preVerificationGas),
-    ethers.toBeHex(signedUserOp.maxFeePerGas),
-    ethers.toBeHex(signedUserOp.maxPriorityFeePerGas),
-    signedUserOp.paymasterAndData || '0x',
-    signedUserOp.signature
-  ];
+    // Build EXACT tuple array for handleOps
+    const userOpTuple = [
+      signedUserOp.sender.toLowerCase(),
+      ethers.toBeHex(signedUserOp.nonce),
+      signedUserOp.initCode || '0x',
+      signedUserOp.callData || '0x',
+      ethers.toBeHex(signedUserOp.callGasLimit),
+      ethers.toBeHex(signedUserOp.verificationGasLimit),
+      ethers.toBeHex(signedUserOp.preVerificationGas),
+      ethers.toBeHex(signedUserOp.maxFeePerGas),
+      ethers.toBeHex(signedUserOp.maxPriorityFeePerGas),
+      signedUserOp.paymasterAndData || '0x',
+      signedUserOp.signature
+    ];
 
-  const entryPointContract = new ethers.Contract(
-    LIVE.ENTRY_POINT,
-    ['function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
-    this.signer
-  );
+    const entryPointContract = new ethers.Contract(
+      LIVE.ENTRY_POINT,
+      ['function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[], address) external'],
+      this.signer
+    );
 
-  console.log('📤 Broadcasting final tuple to EntryPoint...');
-  const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-    const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, entryPointContract.interface, tempWallet);
-    return await tempEP.handleOps([userOpTuple], tempWallet.address, { gasLimit: 800_000n });
-  });
+    console.log('📤 Broadcasting final tuple to EntryPoint...');
+    const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+      const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, entryPointContract.interface, tempWallet);
+      return await tempEP.handleOps([userOpTuple], tempWallet.address, { gasLimit: 800_000n });
+    });
 
-  console.log(`✅ TX SENT: ${tx.hash}`);
-  const receipt = await tx.wait();
+    console.log(`✅ TX SENT: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+    
+    const receipt = await tx.wait();
 
-  if (receipt.status === 1) {
-    console.log(`🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
-    this.bootstrapCompleted = true;
-    await this.checkContractCycleCount();
+    if (receipt.status === 1) {
+      console.log(`🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
+      this.bootstrapCompleted = true;
+      await this.checkContractCycleCount();
+      
+      console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                          ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Cycle count: ${this.contractCycleCount}                                            ║
+║  • Contract is now self-automating                           ║
+║  • Bot will now start MEV operations                         ║
+╚═══════════════════════════════════════════════════════════════╝
+      `);
+    } else {
+      throw new Error('Transaction reverted');
+    }
   } else {
-    throw new Error('Transaction reverted');
+    console.log('✅ Contract already bootstrapped or bootstrap marked complete');
+    this.bootstrapCompleted = true;
   }
-}
+
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
