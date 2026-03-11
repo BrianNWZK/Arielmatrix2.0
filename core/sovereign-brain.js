@@ -3103,128 +3103,152 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
 // =====================================================================
-  // CRITICAL: CREATE AA FIRST - BEFORE ANY BOOTSTRAP CODE
-  // =====================================================================
-  console.log("🛠️ Creating AA instance (bootstrap mode - no paymaster)...");
-  this.aa = new DirectOmniExecutionAA(
-    this.signer, 
-    this.provider, 
-    null,  // No paymaster for bootstrap
-    this.rpc
-  );
-  
-  // Verify the method exists (defensive programming)
-  if (typeof this.aa.buildBootstrapUserOp !== 'function') {
-    throw new Error('CRITICAL: buildBootstrapUserOp method missing from AA class');
-  }
-  console.log("✅ AA instance created and verified");
+// CRITICAL: CREATE AA FIRST - BEFORE ANY BOOTSTRAP CODE
+// =====================================================================
+console.log("🛠️ Creating AA instance (bootstrap mode - no paymaster)...");
+this.aa = new DirectOmniExecutionAA(
+  this.signer, 
+  this.provider, 
+  null,  // No paymaster for bootstrap
+  this.rpc
+);
 
-  // =====================================================================
-  // CHECK CYCLE COUNT
-  // =====================================================================
-  await this.checkContractCycleCount();
+// Verify the method exists (defensive programming)
+if (typeof this.aa.buildBootstrapUserOp !== 'function') {
+  throw new Error('CRITICAL: buildBootstrapUserOp method missing from AA class');
+}
+console.log("✅ AA instance created and verified");
 
-  // =====================================================================
-  // 🚀 BOOTSTRAP LOGIC - NOW this.aa EXISTS AND HAS THE METHOD
-  // =====================================================================
-  if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
-    console.log(`
+// =====================================================================
+// CHECK CYCLE COUNT
+// =====================================================================
+await this.checkContractCycleCount();
+
+// =====================================================================
+// 🚀 BOOTSTRAP LOGIC - NOW this.aa EXISTS AND HAS THE METHOD
+// =====================================================================
+if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║ • AA already initialized - method exists                      ║
+║ • Using TUPLE format for EntryPoint                           ║
 ║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
+  `);
 
-    try {
-      // Build warehouse calldata
-      const warehouseIface = new ethers.Interface([
-        'function emergencyBulletproofBootstrap(uint256) external'
-      ]);
-      const warehouseCalldata = warehouseIface.encodeFunctionData(
-        'emergencyBulletproofBootstrap',
-        [ethers.parseEther("1")]
-      );
+  try {
+    // Build warehouse calldata
+    const warehouseIface = new ethers.Interface([
+      'function emergencyBulletproofBootstrap(uint256) external'
+    ]);
+    const warehouseCalldata = warehouseIface.encodeFunctionData(
+      'emergencyBulletproofBootstrap',
+      [ethers.parseEther("1")]
+    );
 
-      // USE THE EXISTING AA INSTANCE - NOT NULL!
-      console.log('📦 Building UserOp with buildBootstrapUserOp()...');
-      const finalUserOp = await this.aa.buildBootstrapUserOp(
-        LIVE.WAREHOUSE_CONTRACT,
-        warehouseCalldata
-      );
+    // USE THE EXISTING AA INSTANCE - NOT NULL!
+    console.log('📦 Building UserOp with buildBootstrapUserOp()...');
+    const finalUserOp = await this.aa.buildBootstrapUserOp(
+      LIVE.WAREHOUSE_CONTRACT,
+      warehouseCalldata
+    );
 
-      console.log('📦 UserOp built:', {
-        nonce: finalUserOp.nonce.toString(),
-        callGasLimit: finalUserOp.callGasLimit.toString(),
-        signatureLength: finalUserOp.signature.length
+    // =====================================================================
+    // CRITICAL FIX 1: Normalize signature to hex string
+    // =====================================================================
+    let signature = finalUserOp.signature;
+    if (typeof signature !== 'string') {
+      signature = ethers.hexlify(signature);
+      console.log(`🔧 Normalized signature from Uint8Array to hex string`);
+    }
+
+    console.log('📦 UserOp built:', {
+      nonce: finalUserOp.nonce.toString(),
+      callGasLimit: finalUserOp.callGasLimit.toString(),
+      signatureLength: signature.length,
+      signatureType: typeof signature
+    });
+
+    // =====================================================================
+    // CRITICAL FIX 2: Use TUPLE ARRAY format, NOT object
+    // EntryPoint expects: (address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[]
+    // =====================================================================
+    const userOpTuple = [
+      finalUserOp.sender,                                   // address
+      ethers.toBeHex(finalUserOp.nonce),                    // uint256 as hex
+      finalUserOp.initCode || '0x',                          // bytes
+      finalUserOp.callData || '0x',                          // bytes
+      ethers.toBeHex(finalUserOp.callGasLimit),              // uint256 as hex
+      ethers.toBeHex(finalUserOp.verificationGasLimit),      // uint256 as hex
+      ethers.toBeHex(finalUserOp.preVerificationGas),        // uint256 as hex
+      ethers.toBeHex(finalUserOp.maxFeePerGas),              // uint256 as hex
+      ethers.toBeHex(finalUserOp.maxPriorityFeePerGas),      // uint256 as hex
+      finalUserOp.paymasterAndData || '0x',                  // bytes
+      signature                                              // bytes (hex string)
+    ];
+
+    // Debug log to verify formats
+    console.log('📤 UserOp Tuple fields:');
+    console.log(`  • sender: ${userOpTuple[0]} (${typeof userOpTuple[0]})`);
+    console.log(`  • nonce: ${userOpTuple[1]} (${typeof userOpTuple[1]})`);
+    console.log(`  • callGasLimit: ${userOpTuple[4]} (${typeof userOpTuple[4]})`);
+    console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
+
+    // =====================================================================
+    // CRITICAL FIX 3: Use minimal ABI that matches tuple format
+    // =====================================================================
+    const ENTRY_POINT_ABI = [
+      "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
+    ];
+
+    const entryPointContract = new ethers.Contract(
+      LIVE.ENTRY_POINT,
+      ENTRY_POINT_ABI,
+      this.signer
+    );
+
+    console.log('📤 Broadcasting to EntryPoint with TUPLE format...');
+    
+    const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+      const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
+      return await tempEP.handleOps([userOpTuple], tempWallet.address, {
+        gasLimit: 800_000n
       });
+    });
 
-      // Build RPC-ready UserOp
-      const userOpForRPC = {
-        sender: finalUserOp.sender,
-        nonce: ethers.toBeHex(finalUserOp.nonce),
-        initCode: finalUserOp.initCode || '0x',
-        callData: finalUserOp.callData || '0x',
-        callGasLimit: ethers.toBeHex(finalUserOp.callGasLimit),
-        verificationGasLimit: ethers.toBeHex(finalUserOp.verificationGasLimit),
-        preVerificationGas: ethers.toBeHex(finalUserOp.preVerificationGas),
-        maxFeePerGas: ethers.toBeHex(finalUserOp.maxFeePerGas),
-        maxPriorityFeePerGas: ethers.toBeHex(finalUserOp.maxPriorityFeePerGas),
-        paymasterAndData: finalUserOp.paymasterAndData || '0x',
-        signature: finalUserOp.signature
-      };
+    console.log(`✅ TX SENT: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
 
-      const ENTRY_POINT_ABI = [
-        "function handleOps(tuple(address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address beneficiary) external"
-      ];
+    const receipt = await tx.wait();
 
-      const entryPointContract = new ethers.Contract(
-        LIVE.ENTRY_POINT,
-        ENTRY_POINT_ABI,
-        this.signer
-      );
-
-      console.log('📤 Broadcasting to EntryPoint...');
+    if (receipt.status === 1) {
+      console.log(`🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
+      this.bootstrapCompleted = true;
+      await this.checkContractCycleCount();
       
-      const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-        const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
-        return await tempEP.handleOps([userOpForRPC], tempWallet.address, {
-          gasLimit: 800_000n
-        });
-      });
-
-      console.log(`✅ TX SENT: ${tx.hash}`);
-      console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-
-      const receipt = await tx.wait();
-
-      if (receipt.status === 1) {
-        console.log(`🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
-        this.bootstrapCompleted = true;
-        await this.checkContractCycleCount();
-        
-        console.log(`
+      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Cycle count: ${this.contractCycleCount}                    ║
 ║  • Contract is now self-automating                            ║
 ╚═══════════════════════════════════════════════════════════════╝
-        `);
-      } else {
-        throw new Error('Transaction reverted');
-      }
-    } catch (error) {
-      console.error('❌ Bootstrap failed:', error.message);
-      if (error.message.includes('buildBootstrapUserOp')) {
-        console.error('🔍 CRITICAL: buildBootstrapUserOp method check failed even after creation');
-        console.error('   This indicates the AA instance was created but method is missing');
-        console.error('   Check your DirectOmniExecutionAA class definition');
-      }
-      throw error; // Let the deployment fail - don't retry infinitely
+      `);
+    } else {
+      throw new Error('Transaction reverted');
     }
+  } catch (error) {
+    console.error('❌ Bootstrap failed:', error.message);
+    if (error.message.includes('buildBootstrapUserOp')) {
+      console.error('🔍 CRITICAL: buildBootstrapUserOp method check failed even after creation');
+      console.error('   This indicates the AA instance was created but method is missing');
+      console.error('   Check your DirectOmniExecutionAA class definition');
+    }
+    throw error; // Let the deployment fail - don't retry infinitely
   }
+}
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
