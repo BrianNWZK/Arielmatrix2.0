@@ -3102,7 +3102,6 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
-
 // =====================================================================
   // CRITICAL: CREATE AA FIRST - BEFORE ANY BOOTSTRAP CODE
   // =====================================================================
@@ -3131,10 +3130,10 @@ async initialize() {
   if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap   ║
+║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • AA already initialized - method exists                     ║
-║ • Single transaction — then contract self-automates          ║
+║ • AA already initialized - method exists                      ║
+║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
 
@@ -3207,9 +3206,9 @@ async initialize() {
         
         console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                          
+║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count: ${this.contractCycleCount}                                            
+║  • Cycle count: ${this.contractCycleCount}                    ║
 ║  • Contract is now self-automating                            ║
 ╚═══════════════════════════════════════════════════════════════╝
         `);
@@ -3226,8 +3225,6 @@ async initialize() {
       throw error; // Let the deployment fail - don't retry infinitely
     }
   }
-
-
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
