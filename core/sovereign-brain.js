@@ -3197,26 +3197,34 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
 
     // =====================================================================
-    // CRITICAL FIX 3: Use minimal ABI that matches tuple format
-    // =====================================================================
-    const ENTRY_POINT_ABI = [
-      "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
-    ];
+// CRITICAL FIX 3: Use minimal ABI that matches tuple format
+// =====================================================================
+const ENTRY_POINT_ABI = [
+  "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
+];
 
-    const entryPointContract = new ethers.Contract(
-      LIVE.ENTRY_POINT,
-      ENTRY_POINT_ABI,
-      this.signer
-    );
+const entryPointContract = new ethers.Contract(
+  LIVE.ENTRY_POINT,
+  ENTRY_POINT_ABI,
+  this.signer
+);
 
-    console.log('📤 Broadcasting to EntryPoint with TUPLE format...');
-    
-    const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-      const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
-      return await tempEP.handleOps([userOpTuple], tempWallet.address, {
-        gasLimit: 800_000n
-      });
-    });
+console.log('📤 Broadcasting to EntryPoint with TUPLE format...');
+
+// =====================================================================
+// CRITICAL FIX: Create ops array FIRST, then pass it
+// =====================================================================
+const opsArray = [userOpTuple];  // This is the array of operations
+
+console.log('📤 Ops array created with length:', opsArray.length);
+
+const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+  const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
+  // Pass the array directly, not wrapped in another array
+  return await tempEP.handleOps(opsArray, tempWallet.address, {
+    gasLimit: 800_000n
+  });
+});
 
     console.log(`✅ TX SENT: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
