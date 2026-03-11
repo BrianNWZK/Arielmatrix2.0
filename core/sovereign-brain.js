@@ -3103,17 +3103,6 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
 
-  // =====================================================================
-  // CRITICAL FIX: CREATE AA FIRST - BEFORE ANY BOOTSTRAP CODE
-  // =====================================================================
-  this.aa = new DirectOmniExecutionAA(
-    this.signer, 
-    this.provider, 
-    null,  // No paymaster for bootstrap
-    this.rpc
-  );
-  console.log("🛠️ AA instance created (bootstrap mode - no paymaster)");
-
  // =====================================================================
 // 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap
 // =====================================================================
@@ -3146,8 +3135,8 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 
   console.log('📦 UserOp built:', {
     nonce: finalUserOp.nonce.toString(),
-    callGasLimit: finalUserOp.callGasLimit.toString(),
-    signature: finalUserOp.signature.slice(0, 66) + '...'
+    callGasLimit: finalUserOp.callGasLimit.toString()
+    // signature logging removed - it's causing errors
   });
 
   // =====================================================================
