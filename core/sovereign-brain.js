@@ -3133,7 +3133,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║ • AA already initialized - method exists                      ║
-║ • Using TUPLE format for EntryPoint                           ║
+║ • Using MANUAL ABI ENCODING (bypasses ethers inference)       ║
 ║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
@@ -3197,41 +3197,72 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
 
     // =====================================================================
-    // FIX 3: Use populateTransaction for bulletproof encoding
+    // ULTIMATE FIX: Manual ABI encoding (bypasses all ethers inference)
     // =====================================================================
-    const ENTRY_POINT_ABI = [
-      "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
-    ];
+    console.log('📤 Building raw transaction with manual ABI encoding...');
 
-    const entryPointContract = new ethers.Contract(
-      LIVE.ENTRY_POINT,
-      ENTRY_POINT_ABI,
-      this.signer
+    // Get the ABI coder
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+
+    // Step 1: Encode the ops array as a tuple array
+    const encodedOps = abiCoder.encode(
+      [{
+        type: 'tuple[]',
+        components: [
+          { name: 'sender', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'initCode', type: 'bytes' },
+          { name: 'callData', type: 'bytes' },
+          { name: 'callGasLimit', type: 'uint256' },
+          { name: 'verificationGasLimit', type: 'uint256' },
+          { name: 'preVerificationGas', type: 'uint256' },
+          { name: 'maxFeePerGas', type: 'uint256' },
+          { name: 'maxPriorityFeePerGas', type: 'uint256' },
+          { name: 'paymasterAndData', type: 'bytes' },
+          { name: 'signature', type: 'bytes' }
+        ]
+      }],
+      [[userOpTuple]]  // Double array: array of tuples
     );
 
-    console.log('📤 Broadcasting to EntryPoint with TUPLE format...');
+    // Step 2: Encode the beneficiary address
+    const encodedBeneficiary = abiCoder.encode(['address'], [this.signer.address]);
 
-    // Build ops array explicitly
-    const opsArray = [userOpTuple];
+    // Step 3: Get the function selector for handleOps
+    const functionSelector = ethers.id(
+      "handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[],address)"
+    ).slice(0, 10);
 
-    console.log('📤 Ops array created with length:', opsArray.length);
+    // Step 4: Combine to create full calldata
+    const callData = functionSelector + encodedOps.slice(2) + encodedBeneficiary.slice(2);
 
-    // Populate transaction data (this guarantees perfect ABI encoding)
-    const popTx = await entryPointContract.handleOps.populateTransaction(
-      opsArray,
-      this.signer.address
-    );
+    // Step 5: Get fresh fee data
+    const feeData = await this.provider.getFeeData();
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
-    // Add transaction fields
-    popTx.gasLimit = 1_000_000n;  // Increased for safety
-    popTx.from = this.signer.address;
-    popTx.type = 2; // EIP-1559
+    // Step 6: Build the complete transaction object
+    const txObj = {
+      to: LIVE.ENTRY_POINT,
+      data: callData,
+      gasLimit: 1_200_000n,  // Increased for safety
+      maxFeePerGas: maxFeePerGas,
+      maxPriorityFeePerGas: maxPriorityFeePerGas,
+      type: 2,  // EIP-1559
+      chainId: LIVE.NETWORK.chainId,
+      nonce: await this.signer.getNonce()
+    };
 
-    console.log('📤 Transaction data populated, sending via RPC fallback...');
+    console.log('📤 Raw transaction built:', {
+      to: txObj.to,
+      dataLength: txObj.data.length,
+      gasLimit: txObj.gasLimit.toString(),
+      nonce: txObj.nonce
+    });
 
-    // Send raw transaction using your robust fallback
+    // Step 7: Send the raw transaction
     const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-      return await tempWallet.sendTransaction(popTx);
+      return await tempWallet.sendTransaction(txObj);
     });
 
     console.log(`✅ TX SENT: ${tx.hash}`);
