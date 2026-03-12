@@ -3197,34 +3197,42 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
 
     // =====================================================================
-// CRITICAL FIX 3: Use minimal ABI that matches tuple format
-// =====================================================================
-const ENTRY_POINT_ABI = [
-  "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
-];
+    // CRITICAL FIX 3: Use populateTransaction for bulletproof encoding
+    // =====================================================================
+    const ENTRY_POINT_ABI = [
+      "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
+    ];
 
-const entryPointContract = new ethers.Contract(
-  LIVE.ENTRY_POINT,
-  ENTRY_POINT_ABI,
-  this.signer
-);
+    const entryPointContract = new ethers.Contract(
+      LIVE.ENTRY_POINT,
+      ENTRY_POINT_ABI,
+      this.signer
+    );
 
-console.log('📤 Broadcasting to EntryPoint with TUPLE format...');
+    console.log('📤 Broadcasting to EntryPoint with TUPLE format...');
 
-// =====================================================================
-// CRITICAL FIX: Create ops array FIRST, then pass it
-// =====================================================================
-const opsArray = [userOpTuple];  // This is the array of operations
+    // Build ops array explicitly
+    const opsArray = [userOpTuple];
 
-console.log('📤 Ops array created with length:', opsArray.length);
+    console.log('📤 Ops array created with length:', opsArray.length);
 
-const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-  const tempEP = new ethers.Contract(LIVE.ENTRY_POINT, ENTRY_POINT_ABI, tempWallet);
-  // Pass the array directly, not wrapped in another array
-  return await tempEP.handleOps(opsArray, tempWallet.address, {
-    gasLimit: 800_000n
-  });
-});
+    // Populate transaction data (this guarantees perfect ABI encoding)
+    const popTx = await entryPointContract.handleOps.populateTransaction(
+      opsArray,
+      this.signer.address
+    );
+
+    // Add transaction fields
+    popTx.gasLimit = 800_000n;
+    popTx.from = this.signer.address;
+    popTx.type = 2; // EIP-1559
+
+    console.log('📤 Transaction data populated, sending via RPC fallback...');
+
+    // Send raw transaction using your robust fallback
+    const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
+      return await tempWallet.sendTransaction(popTx);
+    });
 
     console.log(`✅ TX SENT: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
