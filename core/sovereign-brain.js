@@ -3145,7 +3145,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     ]);
     const warehouseCalldata = warehouseIface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
-      [ethers.parseEther("1")]
+      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // Use the full amount from config
     );
 
     // USE THE EXISTING AA INSTANCE - NOT NULL!
@@ -3156,7 +3156,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     );
 
     // =====================================================================
-    // CRITICAL FIX 1: Normalize signature to hex string
+    // FIX 1: Normalize signature to hex string
     // =====================================================================
     let signature = finalUserOp.signature;
     if (typeof signature !== 'string') {
@@ -3172,7 +3172,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     });
 
     // =====================================================================
-    // CRITICAL FIX 2: Use TUPLE ARRAY format, NOT object
+    // FIX 2: Use TUPLE ARRAY format, NOT object
     // EntryPoint expects: (address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[]
     // =====================================================================
     const userOpTuple = [
@@ -3197,7 +3197,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
 
     // =====================================================================
-    // CRITICAL FIX 3: Use populateTransaction for bulletproof encoding
+    // FIX 3: Use populateTransaction for bulletproof encoding
     // =====================================================================
     const ENTRY_POINT_ABI = [
       "function handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[] ops, address beneficiary) external"
@@ -3223,7 +3223,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     );
 
     // Add transaction fields
-    popTx.gasLimit = 800_000n;
+    popTx.gasLimit = 1_000_000n;  // Increased for safety
     popTx.from = this.signer.address;
     popTx.type = 2; // EIP-1559
 
