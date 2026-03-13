@@ -3102,161 +3102,94 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
-// =====================================================================
-// CRITICAL: CREATE AA FIRST - BEFORE ANY BOOTSTRAP CODE
-// =====================================================================
-console.log("🛠️ Creating AA instance (bootstrap mode - no paymaster)...");
-this.aa = new DirectOmniExecutionAA(
-  this.signer, 
-  this.provider, 
-  null,  // No paymaster for bootstrap
-  this.rpc
-);
-
-// Verify the method exists (defensive programming)
-if (typeof this.aa.buildBootstrapUserOp !== 'function') {
-  throw new Error('CRITICAL: buildBootstrapUserOp method missing from AA class');
-}
-console.log("✅ AA instance created and verified");
-
-// =====================================================================
-// CHECK CYCLE COUNT
-// =====================================================================
-await this.checkContractCycleCount();
-
-// =====================================================================
-// 🚀 BOOTSTRAP LOGIC - NOW this.aa EXISTS AND HAS THE METHOD
+ // =====================================================================
+// DIRECT SCW TRIGGER — Based on bytecode analysis
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
+║ 🚀 DIRECT SCW TRIGGER — emergencyBulletproofBootstrap         ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • AA already initialized - method exists                      ║
-║ • Using DIRECT HEX TRANSMISSION (bypasses all validation)     ║
-║ • Single transaction — then contract self-automates           ║
+║ • Target: SCW (0x59bE70F1...)                                ║
+║ • SCW.execute() → Warehouse contract                         ║
+║ • Based on verified bytecode analysis                        ║
+║ • Single transaction — then contract self-automates          ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
-    // Build warehouse calldata
+    // =====================================================================
+    // Step 1: Encode the warehouse bootstrap call
+    // =====================================================================
     const warehouseIface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
     ]);
     const warehouseCalldata = warehouseIface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
-      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // Use the full amount from config
-    );
-
-    // USE THE EXISTING AA INSTANCE - NOT NULL!
-    console.log('📦 Building UserOp with buildBootstrapUserOp()...');
-    const finalUserOp = await this.aa.buildBootstrapUserOp(
-      LIVE.WAREHOUSE_CONTRACT,
-      warehouseCalldata
+      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // ~170,212.77 BWZC
     );
 
     // =====================================================================
-    // NOTE: buildBootstrapUserOp now returns a flat array, not an object
-    // finalUserOp[0] = sender
-    // finalUserOp[1] = nonce (BigInt)
-    // finalUserOp[2] = initCode
-    // finalUserOp[3] = callData
-    // finalUserOp[4] = callGasLimit (BigInt)
-    // finalUserOp[5] = verificationGasLimit (BigInt)
-    // finalUserOp[6] = preVerificationGas (BigInt)
-    // finalUserOp[7] = maxFeePerGas (BigInt)
-    // finalUserOp[8] = maxPriorityFeePerGas (BigInt)
-    // finalUserOp[9] = paymasterAndData
-    // finalUserOp[10] = signature (hex string)
+    // Step 2: Encode SCW.execute() to call the warehouse
     // =====================================================================
-
-    console.log('📦 UserOp built:', {
-      nonce: finalUserOp[1].toString(),
-      callGasLimit: finalUserOp[4].toString(),
-      signatureLength: finalUserOp[10].length,
-      signatureType: typeof finalUserOp[10]
-    });
+    const scwIface = new ethers.Interface([
+      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+    const scwCalldata = scwIface.encodeFunctionData('execute', [
+      LIVE.WAREHOUSE_CONTRACT,  // dest
+      0n,                       // value
+      warehouseCalldata         // func
+    ]);
 
     // =====================================================================
-    // FIX 2: Use TUPLE ARRAY format, NOT object
-    // EntryPoint expects: (address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[]
+    // Step 3: Verify SCW has enough BWZC (from contract check)
     // =====================================================================
-    const userOpTuple = [
-      finalUserOp[0],                                   // sender (address)
-      ethers.toBeHex(finalUserOp[1]),                    // nonce (uint256 as hex)
-      finalUserOp[2] || '0x',                            // initCode (bytes)
-      finalUserOp[3] || '0x',                            // callData (bytes)
-      ethers.toBeHex(finalUserOp[4]),                    // callGasLimit (uint256 as hex)
-      ethers.toBeHex(finalUserOp[5]),                    // verificationGasLimit (uint256 as hex)
-      ethers.toBeHex(finalUserOp[6]),                    // preVerificationGas (uint256 as hex)
-      ethers.toBeHex(finalUserOp[7]),                    // maxFeePerGas (uint256 as hex)
-      ethers.toBeHex(finalUserOp[8]),                    // maxPriorityFeePerGas (uint256 as hex)
-      finalUserOp[9] || '0x',                            // paymasterAndData (bytes)
-      finalUserOp[10]                                    // signature (bytes) - already hex string!
-    ];
-
-    // Debug log to verify formats
-    console.log('📤 UserOp Tuple fields:');
-    console.log(`  • sender: ${userOpTuple[0]} (${typeof userOpTuple[0]})`);
-    console.log(`  • nonce: ${userOpTuple[1]} (${typeof userOpTuple[1]})`);
-    console.log(`  • callGasLimit: ${userOpTuple[4]} (${typeof userOpTuple[4]})`);
-    console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
-
-    // =====================================================================
-    // ULTIMATE FIX: Manual ABI encoding + Direct Hex Transmission
-    // =====================================================================
-    console.log('📤 Building raw transaction with manual ABI encoding...');
-
-    // Get the ABI coder
-    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-
-    // Step 1: Encode the ops array as a tuple array
-    const encodedOps = abiCoder.encode(
-      [{
-        type: 'tuple[]',
-        components: [
-          { name: 'sender', type: 'address' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'initCode', type: 'bytes' },
-          { name: 'callData', type: 'bytes' },
-          { name: 'callGasLimit', type: 'uint256' },
-          { name: 'verificationGasLimit', type: 'uint256' },
-          { name: 'preVerificationGas', type: 'uint256' },
-          { name: 'maxFeePerGas', type: 'uint256' },
-          { name: 'maxPriorityFeePerGas', type: 'uint256' },
-          { name: 'paymasterAndData', type: 'bytes' },
-          { name: 'signature', type: 'bytes' }
-        ]
-      }],
-      [[userOpTuple]]  // Double array: array of tuples
+    const bwzcToken = new ethers.Contract(
+      LIVE.TOKENS.BWAEZI,
+      ['function balanceOf(address) view returns (uint256)'],
+      this.provider
     );
+    const scwBwzcBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
+    const requiredBwzc = LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP;  // ~170,212.77 BWZC
+    
+    console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBwzcBalance)} BWZC`);
+    console.log(`💰 Required for bootstrap: ${ethers.formatEther(requiredBwzc)} BWZC`);
+    
+    if (scwBwzcBalance < requiredBwzc) {
+      throw new Error(`SCW needs ${ethers.formatEther(requiredBwzc)} BWZC. Current: ${ethers.formatEther(scwBwzcBalance)}`);
+    }
 
-    // Step 2: Encode the beneficiary address
-    const encodedBeneficiary = abiCoder.encode(['address'], [this.signer.address]);
+    // =====================================================================
+    // Step 4: Verify SCW has ETH for gas
+    // =====================================================================
+    const scwEthBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
+    const estimatedGas = ethers.parseEther("0.001");  // ~$2 at current prices
+    
+    console.log(`💰 SCW ETH balance: ${ethers.formatEther(scwEthBalance)} ETH`);
+    
+    if (scwEthBalance < estimatedGas) {
+      throw new Error(`SCW needs at least 0.001 ETH for gas. Current: ${ethers.formatEther(scwEthBalance)}`);
+    }
 
-    // Step 3: Get the function selector for handleOps
-    const functionSelector = ethers.id(
-      "handleOps((address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[],address)"
-    ).slice(0, 10);
-
-    // Step 4: Combine to create full calldata
-    const callData = functionSelector + encodedOps.slice(2) + encodedBeneficiary.slice(2);
-
+    // =====================================================================
     // Step 5: Get fresh fee data
+    // =====================================================================
     const feeData = await this.provider.getFeeData();
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
-    // Step 6: Build the transaction object
+    // =====================================================================
+    // Step 6: Build transaction targeting SCW directly
+    // =====================================================================
     const txObj = {
-      to: LIVE.ENTRY_POINT,
-      data: callData,
+      to: LIVE.SCW_ADDRESS,  // ← CRITICAL: Target SCW, not EntryPoint
+      data: scwCalldata,
       gasLimit: 1_200_000n,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
       chainId: LIVE.NETWORK.chainId,
-      nonce: await this.signer.getNonce()
+      nonce: await this.signer.getNonce()  // EOA nonce
     };
 
     console.log('📤 Transaction object built:', {
@@ -3267,18 +3200,14 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     });
 
     // =====================================================================
-    // FINAL OVERRIDE: SIGN AND SEND RAW HEX (BYPASSES ALL ETHERS VALIDATION)
+    // Step 7: Sign and broadcast
     // =====================================================================
-    console.log('☢️ EMERGENCY BYPASS: Signing raw transaction to kill BytesLike error...');
-
-    // Sign the transaction manually - creates raw hex string
+    console.log('✍️ Signing transaction...');
     const signedTx = await this.signer.signTransaction(txObj);
     console.log('📤 Raw signed transaction created. Length:', signedTx.length);
 
-    // Broadcast raw hex directly - no validation possible
     const txResponse = await this.provider.broadcastTransaction(signedTx);
-
-    console.log(`✅ BOOTSTRAP BROADCASTED: ${txResponse.hash}`);
+    console.log(`✅ TRANSACTION SENT: ${txResponse.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${txResponse.hash}`);
 
     const receipt = await txResponse.wait();
@@ -3301,14 +3230,10 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     }
   } catch (error) {
     console.error('❌ Bootstrap failed:', error.message);
-    if (error.message.includes('buildBootstrapUserOp')) {
-      console.error('🔍 CRITICAL: buildBootstrapUserOp method check failed even after creation');
-      console.error('   This indicates the AA instance was created but method is missing');
-      console.error('   Check your DirectOmniExecutionAA class definition');
-    }
-    throw error; // Let the deployment fail - don't retry infinitely
+    throw error;
   }
-}
+}  
+
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
