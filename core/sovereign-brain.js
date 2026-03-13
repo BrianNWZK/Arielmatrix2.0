@@ -697,10 +697,10 @@ class DualPaymasterRouter {
   }
   
 // =======================================================================
-// FIXED: PROPER EIP-712 SIGNING FOR ENTRYPOINT v0.6 (EXACT SPEC)
+// FIXED: PROPER EIP-712 SIGNING (RETURNS HEX STRING ONLY)
 // =======================================================================
 async signUserOp(userOp) {
-  // 1. Clean UserOp — NO signature field (per ERC-4337 spec)
+  // Clean UserOp — NO signature field (per ERC-4337 spec)
   const cleanUserOp = {
     sender: userOp.sender,
     nonce: userOp.nonce,
@@ -715,7 +715,7 @@ async signUserOp(userOp) {
   };
 
   const types = {
-    UserOperation: [  // ← MUST be "UserOperation" (capital O)
+    UserOperation: [  // MUST be "UserOperation" (capital O)
       { name: 'sender', type: 'address' },
       { name: 'nonce', type: 'uint256' },
       { name: 'initCode', type: 'bytes' },
@@ -747,10 +747,11 @@ async signUserOp(userOp) {
   }
 
   console.log(`✅ Signature (65 bytes): ${signature.slice(0, 66)}...`);
-  return { ...userOp, signature };
+  return signature; // ← RETURN ONLY THE SIGNATURE STRING, NOT THE WHOLE USEROP
 }
+
 // =======================================================================
-// HELPER: Build UserOp without sending (for final bootstrap)
+// HELPER: Build UserOp tuple for manual encoding
 // =======================================================================
 async buildBootstrapUserOp(target, calldata) {
   const nonce = await this.nonceLock.acquire();
@@ -763,7 +764,7 @@ async buildBootstrapUserOp(target, calldata) {
   
   const feeData = await this.provider.getFeeData();
   
-  // Get raw values
+  // Get raw values (BigInt)
   const rawNonce = nonce;
   const rawCallGasLimit = 100_000n;
   const rawVerificationGasLimit = 50_000n;
@@ -771,20 +772,17 @@ async buildBootstrapUserOp(target, calldata) {
   const rawMaxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('0.25', 'gwei');
   const rawMaxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits('0.02', 'gwei');
   
-  // =====================================================================
-  // CRITICAL: Convert ALL numbers to hex strings BEFORE signing
-  // The EntryPoint expects hex strings in the typed data hash
-  // =====================================================================
+  // Create signing version with hex values
   const userOpForSigning = {
     sender: this.scw,
-    nonce: ethers.toBeHex(rawNonce),                          // ← HEX!
+    nonce: ethers.toBeHex(rawNonce),
     initCode: '0x',
     callData: scwCalldata,
-    callGasLimit: ethers.toBeHex(rawCallGasLimit),           // ← HEX!
-    verificationGasLimit: ethers.toBeHex(rawVerificationGasLimit), // ← HEX!
-    preVerificationGas: ethers.toBeHex(rawPreVerificationGas),     // ← HEX!
-    maxFeePerGas: ethers.toBeHex(rawMaxFeePerGas),           // ← HEX!
-    maxPriorityFeePerGas: ethers.toBeHex(rawMaxPriorityFeePerGas), // ← HEX!
+    callGasLimit: ethers.toBeHex(rawCallGasLimit),
+    verificationGasLimit: ethers.toBeHex(rawVerificationGasLimit),
+    preVerificationGas: ethers.toBeHex(rawPreVerificationGas),
+    maxFeePerGas: ethers.toBeHex(rawMaxFeePerGas),
+    maxPriorityFeePerGas: ethers.toBeHex(rawMaxPriorityFeePerGas),
     paymasterAndData: '0x'
   };
 
@@ -794,26 +792,28 @@ async buildBootstrapUserOp(target, calldata) {
     maxFeePerGas: userOpForSigning.maxFeePerGas
   });
 
-  // Sign the UserOp (with hex values)
+  // Get signature as hex string
   const signature = await this.signUserOp(userOpForSigning);
   
-  // Return COMPLETE UserOp with original BigInt values for sending
-  const finalUserOp = {
-    sender: this.scw,
-    nonce: rawNonce,                    // Back to BigInt for sending
-    initCode: '0x',
-    callData: scwCalldata,
-    callGasLimit: rawCallGasLimit,
-    verificationGasLimit: rawVerificationGasLimit,
-    preVerificationGas: rawPreVerificationGas,
-    maxFeePerGas: rawMaxFeePerGas,
-    maxPriorityFeePerGas: rawMaxPriorityFeePerGas,
-    paymasterAndData: '0x',
-    signature
-  };
-
   this.nonceLock.release();
-  return finalUserOp;
+  
+  // =====================================================================
+  // RETURN TUPLE ARRAY DIRECTLY - NOT AN OBJECT
+  // This matches what the manual ABI encoder expects
+  // =====================================================================
+  return [
+    this.scw,                          // sender (address)
+    rawNonce,                          // nonce (uint256)
+    '0x',                              // initCode (bytes)
+    scwCalldata,                       // callData (bytes)
+    rawCallGasLimit,                   // callGasLimit (uint256)
+    rawVerificationGasLimit,           // verificationGasLimit (uint256)
+    rawPreVerificationGas,             // preVerificationGas (uint256)
+    rawMaxFeePerGas,                   // maxFeePerGas (uint256)
+    rawMaxPriorityFeePerGas,           // maxPriorityFeePerGas (uint256)
+    '0x',                              // paymasterAndData (bytes)
+    signature                          // signature (bytes) - now a hex string!
+  ];
 }
   // =======================================================================
   // BOOTSTRAP METHOD - NO PAYMASTER
