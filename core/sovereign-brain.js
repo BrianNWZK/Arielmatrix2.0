@@ -3103,23 +3103,22 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
  // =====================================================================
-// DIRECT SCW TRIGGER — Based on bytecode analysis
+// FINAL BOOTSTRAP TRANSACTION (Approval Already Complete)
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 DIRECT SCW TRIGGER — emergencyBulletproofBootstrap         ║
+║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • Target: SCW (0x59bE70F1...)                                ║
-║ • SCW.execute() → Warehouse contract                         ║
-║ • Based on verified bytecode analysis                        ║
-║ • Single transaction — then contract self-automates          ║
+║ • Approval already confirmed (tx: 0x09d401f5...)              ║
+║ • SCW.execute() → Warehouse contract                          ║
+║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
     // =====================================================================
-    // Step 1: Encode the warehouse bootstrap call
+    // Encode the warehouse bootstrap call
     // =====================================================================
     const warehouseIface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
@@ -3130,66 +3129,36 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     );
 
     // =====================================================================
-    // Step 2: Encode SCW.execute() to call the warehouse
+    // Encode SCW.execute() to call the warehouse
     // =====================================================================
     const scwIface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
     ]);
     const scwCalldata = scwIface.encodeFunctionData('execute', [
-      LIVE.WAREHOUSE_CONTRACT,  // dest
-      0n,                       // value
-      warehouseCalldata         // func
+      LIVE.WAREHOUSE_CONTRACT,
+      0n,
+      warehouseCalldata
     ]);
 
     // =====================================================================
-    // Step 3: Verify SCW has enough BWZC (from contract check)
-    // =====================================================================
-    const bwzcToken = new ethers.Contract(
-      LIVE.TOKENS.BWAEZI,
-      ['function balanceOf(address) view returns (uint256)'],
-      this.provider
-    );
-    const scwBwzcBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
-    const requiredBwzc = LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP;  // ~170,212.77 BWZC
-    
-    console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBwzcBalance)} BWZC`);
-    console.log(`💰 Required for bootstrap: ${ethers.formatEther(requiredBwzc)} BWZC`);
-    
-    if (scwBwzcBalance < requiredBwzc) {
-      throw new Error(`SCW needs ${ethers.formatEther(requiredBwzc)} BWZC. Current: ${ethers.formatEther(scwBwzcBalance)}`);
-    }
-
-    // =====================================================================
-    // Step 4: Verify SCW has ETH for gas
-    // =====================================================================
-    const scwEthBalance = await this.provider.getBalance(LIVE.SCW_ADDRESS);
-    const estimatedGas = ethers.parseEther("0.001");  // ~$2 at current prices
-    
-    console.log(`💰 SCW ETH balance: ${ethers.formatEther(scwEthBalance)} ETH`);
-    
-    if (scwEthBalance < estimatedGas) {
-      throw new Error(`SCW needs at least 0.001 ETH for gas. Current: ${ethers.formatEther(scwEthBalance)}`);
-    }
-
-    // =====================================================================
-    // Step 5: Get fresh fee data
+    // Get fresh fee data
     // =====================================================================
     const feeData = await this.provider.getFeeData();
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
     // =====================================================================
-    // Step 6: Build transaction targeting SCW directly
+    // Build transaction targeting SCW directly
     // =====================================================================
     const txObj = {
-      to: LIVE.SCW_ADDRESS,  // ← CRITICAL: Target SCW, not EntryPoint
+      to: LIVE.SCW_ADDRESS,
       data: scwCalldata,
-     gasLimit: 400_000n,  // ← CHANGE THIS LINE (was 1_200_000n)
+      gasLimit: 800_000n,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
       chainId: LIVE.NETWORK.chainId,
-      nonce: await this.signer.getNonce()  // EOA nonce
+      nonce: await this.signer.getNonce()
     };
 
     console.log('📤 Transaction object built:', {
@@ -3200,20 +3169,20 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     });
 
     // =====================================================================
-    // Step 7: Sign and broadcast
+    // Sign and broadcast
     // =====================================================================
     console.log('✍️ Signing transaction...');
     const signedTx = await this.signer.signTransaction(txObj);
     console.log('📤 Raw signed transaction created. Length:', signedTx.length);
 
     const txResponse = await this.provider.broadcastTransaction(signedTx);
-    console.log(`✅ TRANSACTION SENT: ${txResponse.hash}`);
+    console.log(`✅ BOOTSTRAP SENT: ${txResponse.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${txResponse.hash}`);
 
     const receipt = await txResponse.wait();
 
     if (receipt.status === 1) {
-      console.log(`🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
+      console.log(`\n🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
       this.bootstrapCompleted = true;
       await this.checkContractCycleCount();
       
@@ -3226,14 +3195,13 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ╚═══════════════════════════════════════════════════════════════╝
       `);
     } else {
-      throw new Error('Transaction reverted');
+      throw new Error('Bootstrap transaction reverted');
     }
   } catch (error) {
     console.error('❌ Bootstrap failed:', error.message);
     throw error;
   }
-}  
-
+}
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
