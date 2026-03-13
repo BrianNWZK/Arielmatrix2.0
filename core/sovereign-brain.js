@@ -3156,19 +3156,25 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     );
 
     // =====================================================================
-    // FIX 1: Normalize signature to hex string
+    // NOTE: buildBootstrapUserOp now returns a flat array, not an object
+    // finalUserOp[0] = sender
+    // finalUserOp[1] = nonce (BigInt)
+    // finalUserOp[2] = initCode
+    // finalUserOp[3] = callData
+    // finalUserOp[4] = callGasLimit (BigInt)
+    // finalUserOp[5] = verificationGasLimit (BigInt)
+    // finalUserOp[6] = preVerificationGas (BigInt)
+    // finalUserOp[7] = maxFeePerGas (BigInt)
+    // finalUserOp[8] = maxPriorityFeePerGas (BigInt)
+    // finalUserOp[9] = paymasterAndData
+    // finalUserOp[10] = signature (hex string)
     // =====================================================================
-    let signature = finalUserOp.signature;
-    if (typeof signature !== 'string') {
-      signature = ethers.hexlify(signature);
-      console.log(`🔧 Normalized signature from Uint8Array to hex string`);
-    }
 
     console.log('📦 UserOp built:', {
-      nonce: finalUserOp.nonce.toString(),
-      callGasLimit: finalUserOp.callGasLimit.toString(),
-      signatureLength: signature.length,
-      signatureType: typeof signature
+      nonce: finalUserOp[1].toString(),
+      callGasLimit: finalUserOp[4].toString(),
+      signatureLength: finalUserOp[10].length,
+      signatureType: typeof finalUserOp[10]
     });
 
     // =====================================================================
@@ -3176,17 +3182,17 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     // EntryPoint expects: (address,uint256,bytes,bytes,uint256,uint256,uint256,uint256,uint256,bytes,bytes)[]
     // =====================================================================
     const userOpTuple = [
-      finalUserOp.sender,                                   // address
-      ethers.toBeHex(finalUserOp.nonce),                    // uint256 as hex
-      finalUserOp.initCode || '0x',                          // bytes
-      finalUserOp.callData || '0x',                          // bytes
-      ethers.toBeHex(finalUserOp.callGasLimit),              // uint256 as hex
-      ethers.toBeHex(finalUserOp.verificationGasLimit),      // uint256 as hex
-      ethers.toBeHex(finalUserOp.preVerificationGas),        // uint256 as hex
-      ethers.toBeHex(finalUserOp.maxFeePerGas),              // uint256 as hex
-      ethers.toBeHex(finalUserOp.maxPriorityFeePerGas),      // uint256 as hex
-      finalUserOp.paymasterAndData || '0x',                  // bytes
-      signature                                              // bytes (hex string)
+      finalUserOp[0],                                   // sender (address)
+      ethers.toBeHex(finalUserOp[1]),                    // nonce (uint256 as hex)
+      finalUserOp[2] || '0x',                            // initCode (bytes)
+      finalUserOp[3] || '0x',                            // callData (bytes)
+      ethers.toBeHex(finalUserOp[4]),                    // callGasLimit (uint256 as hex)
+      ethers.toBeHex(finalUserOp[5]),                    // verificationGasLimit (uint256 as hex)
+      ethers.toBeHex(finalUserOp[6]),                    // preVerificationGas (uint256 as hex)
+      ethers.toBeHex(finalUserOp[7]),                    // maxFeePerGas (uint256 as hex)
+      ethers.toBeHex(finalUserOp[8]),                    // maxPriorityFeePerGas (uint256 as hex)
+      finalUserOp[9] || '0x',                            // paymasterAndData (bytes)
+      finalUserOp[10]                                    // signature (bytes) - already hex string!
     ];
 
     // Debug log to verify formats
