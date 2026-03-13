@@ -3133,7 +3133,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║ • AA already initialized - method exists                      ║
-║ • Using MANUAL ABI ENCODING (bypasses ethers inference)       ║
+║ • Using DIRECT HEX TRANSMISSION (bypasses all validation)     ║
 ║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
@@ -3197,7 +3197,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     console.log(`  • signature: ${userOpTuple[10].substring(0, 50)}... (${typeof userOpTuple[10]})`);
 
     // =====================================================================
-    // ULTIMATE FIX: Manual ABI encoding (bypasses all ethers inference)
+    // ULTIMATE FIX: Manual ABI encoding + Direct Hex Transmission
     // =====================================================================
     console.log('📤 Building raw transaction with manual ABI encoding...');
 
@@ -3241,34 +3241,41 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
-    // Step 6: Build the complete transaction object
+    // Step 6: Build the transaction object
     const txObj = {
       to: LIVE.ENTRY_POINT,
       data: callData,
-      gasLimit: 1_200_000n,  // Increased for safety
+      gasLimit: 1_200_000n,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
-      type: 2,  // EIP-1559
+      type: 2,
       chainId: LIVE.NETWORK.chainId,
       nonce: await this.signer.getNonce()
     };
 
-    console.log('📤 Raw transaction built:', {
+    console.log('📤 Transaction object built:', {
       to: txObj.to,
       dataLength: txObj.data.length,
       gasLimit: txObj.gasLimit.toString(),
       nonce: txObj.nonce
     });
 
-    // Step 7: Send the raw transaction
-    const tx = await this.rpc.sendTransactionWithFallback(async (tempWallet) => {
-      return await tempWallet.sendTransaction(txObj);
-    });
+    // =====================================================================
+    // FINAL OVERRIDE: SIGN AND SEND RAW HEX (BYPASSES ALL ETHERS VALIDATION)
+    // =====================================================================
+    console.log('☢️ EMERGENCY BYPASS: Signing raw transaction to kill BytesLike error...');
 
-    console.log(`✅ TX SENT: ${tx.hash}`);
-    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+    // Sign the transaction manually - creates raw hex string
+    const signedTx = await this.signer.signTransaction(txObj);
+    console.log('📤 Raw signed transaction created. Length:', signedTx.length);
 
-    const receipt = await tx.wait();
+    // Broadcast raw hex directly - no validation possible
+    const txResponse = await this.provider.broadcastTransaction(signedTx);
+
+    console.log(`✅ BOOTSTRAP BROADCASTED: ${txResponse.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${txResponse.hash}`);
+
+    const receipt = await txResponse.wait();
 
     if (receipt.status === 1) {
       console.log(`🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
