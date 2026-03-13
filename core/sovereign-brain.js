@@ -3184,7 +3184,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     const txObj = {
       to: LIVE.SCW_ADDRESS,  // ← CRITICAL: Target SCW, not EntryPoint
       data: scwCalldata,
-      gasLimit: 1_200_000n,
+     gasLimit: 400_000n,  // ← CHANGE THIS LINE (was 1_200_000n)
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
