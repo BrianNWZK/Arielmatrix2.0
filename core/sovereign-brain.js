@@ -3102,13 +3102,15 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
+// =====================================================================
 // Add at the VERY TOP of your initialize() function
+// =====================================================================
 if (this.bootstrapCompleted) {
   console.log('✅ Bootstrap already completed, skipping...');
   return;
 }
 
-// Add a flag to prevent retries
+// Add a flag to prevent infinite retries
 const MAX_RETRIES = 1;
 if (!this.bootstrapAttempted) {
   this.bootstrapAttempted = true;
@@ -3116,8 +3118,13 @@ if (!this.bootstrapAttempted) {
   console.log('⏰ Bootstrap already attempted, stopping retry loop');
   process.exit(0); // Exit the process
 }
-   
- // =====================================================================
+
+// =====================================================================
+// CHECK CYCLE COUNT
+// =====================================================================
+await this.checkContractCycleCount();
+
+// =====================================================================
 // FINAL BOOTSTRAP TRANSACTION (Approval Already Complete)
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
@@ -3126,7 +3133,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║ • Approval already confirmed (tx: 0x09d401f5...)              ║
-║ • SCW.execute() → Warehouse contract                          ║
+║ • Using DIRECT sendTransaction() to prevent data loss         ║
 ║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
@@ -3149,7 +3156,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     const scwIface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
     ]);
-    const scwCalldata = scwIface.encodeFunctionData('execute', [
+    const finalCalldata = scwIface.encodeFunctionData('execute', [
       LIVE.WAREHOUSE_CONTRACT,
       0n,
       warehouseCalldata
@@ -3163,34 +3170,22 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
     // =====================================================================
-    // Build transaction targeting SCW directly
+    // SEND DIRECTLY - NO MANUAL SIGNING (PREVENTS DATA LOSS)
     // =====================================================================
-    const txObj = {
+    console.log('📤 Sending transaction directly via signer...');
+    console.log(`📤 Calldata length: ${finalCalldata.length}`);
+    console.log(`📤 Calldata preview: ${finalCalldata.substring(0, 100)}...`);
+
+    const txResponse = await this.signer.sendTransaction({
       to: LIVE.SCW_ADDRESS,
-      data: scwCalldata,
-      gasLimit: 800_000n,
+      data: finalCalldata,
+      gasLimit: 1_000_000n,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
-      chainId: LIVE.NETWORK.chainId,
-      nonce: await this.signer.getNonce()
-    };
-
-    console.log('📤 Transaction object built:', {
-      to: txObj.to,
-      dataLength: txObj.data.length,
-      gasLimit: txObj.gasLimit.toString(),
-      nonce: txObj.nonce
+      chainId: LIVE.NETWORK.chainId
     });
 
-    // =====================================================================
-    // Sign and broadcast
-    // =====================================================================
-    console.log('✍️ Signing transaction...');
-    const signedTx = await this.signer.signTransaction(txObj);
-    console.log('📤 Raw signed transaction created. Length:', signedTx.length);
-
-    const txResponse = await this.provider.broadcastTransaction(signedTx);
     console.log(`✅ BOOTSTRAP SENT: ${txResponse.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${txResponse.hash}`);
 
@@ -3217,6 +3212,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     throw error;
   }
 }
+
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
