@@ -3110,14 +3110,14 @@ async initialize() {
 // =====================================================================
 // CIRCUIT BREAKER - PREVENT INFINITE RETRIES
 // =====================================================================
-const fs = require('fs');
 const STATE_FILE = './bootstrap-state.json';
 
 // Check persistent state
-if (fs.existsSync(STATE_FILE)) {
-  const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  if (state.attempted) {
-    console.log(`
+try {
+  if (fs.existsSync(STATE_FILE)) {
+    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    if (state.attempted) {
+      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  🛑 CIRCUIT BREAKER ACTIVE - PREVIOUS ATTEMPT DETECTED       ║
 ╠═══════════════════════════════════════════════════════════════╣
@@ -3126,17 +3126,24 @@ if (fs.existsSync(STATE_FILE)) {
 ║  • No further bootstrap attempts will be made               ║
 ║  • System continuing in monitoring mode only                ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
-    return;
+      `);
+      return;
+    }
   }
+} catch (e) {
+  console.log('📁 No previous state found, proceeding...');
 }
 
 // Mark as attempted before starting
-fs.writeFileSync(STATE_FILE, JSON.stringify({
-  attempted: true,
-  timestamp: Date.now(),
-  completed: false
-}));
+try {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({
+    attempted: true,
+    timestamp: Date.now(),
+    completed: false
+  }));
+} catch (e) {
+  console.log('⚠️ Could not write state file, continuing anyway...');
+}
 
 // In-memory circuit breaker for this process
 if (!global.bootstrapAttempts) {
@@ -3156,7 +3163,7 @@ if (global.bootstrapAttempts > MAX_BOOTSTRAP_ATTEMPTS) {
 ║  • Moving to monitoring mode only                           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
-  return;
+  // Continue with monitoring but don't attempt bootstrap
 }
 
 // =====================================================================
@@ -3189,6 +3196,11 @@ console.log(`
 // INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
 // =====================================================================
 async function institutionalBypassBootstrap() {
+  // Only proceed if we haven't exceeded max attempts
+  if (global.bootstrapAttempts > MAX_BOOTSTRAP_ATTEMPTS) {
+    return;
+  }
+
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ⚡ INSTITUTIONAL OVERRIDE SEQUENCE + JIT APPROVAL            ║
@@ -3269,11 +3281,13 @@ async function institutionalBypassBootstrap() {
     if (currentCycle > 0n) {
       console.log('   ✅ Already bootstrapped');
       // Mark as completed in state file
-      fs.writeFileSync(STATE_FILE, JSON.stringify({
-        attempted: true,
-        timestamp: Date.now(),
-        completed: true
-      }));
+      try {
+        fs.writeFileSync(STATE_FILE, JSON.stringify({
+          attempted: true,
+          timestamp: Date.now(),
+          completed: true
+        }));
+      } catch (e) {}
       return;
     }
     console.log('   ✅ Cycle 0 - ready for bootstrap');
@@ -3398,11 +3412,13 @@ async function institutionalBypassBootstrap() {
 
     if (finalCycle > 0n) {
       // Mark as completed in state file
-      fs.writeFileSync(STATE_FILE, JSON.stringify({
-        attempted: true,
-        timestamp: Date.now(),
-        completed: true
-      }));
+      try {
+        fs.writeFileSync(STATE_FILE, JSON.stringify({
+          attempted: true,
+          timestamp: Date.now(),
+          completed: true
+        }));
+      } catch (e) {}
       
       console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
