@@ -3103,7 +3103,7 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
 // INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
-// WITH CIRCUIT BREAKER TO PREVENT INFINITE RETRIES
+// WITH CIRCUIT BREAKER AND LITERAL KEY VERIFICATION
 // =====================================================================
 
 // =====================================================================
@@ -3205,7 +3205,7 @@ console.log(`
 `);
 
 // =====================================================================
-// ORACLE ADJUSTMENT - ALREADY COMPLETED
+// ORACLE PERIMETER ADJUSTMENT - ALREADY COMPLETED
 // =====================================================================
 console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -3218,7 +3218,7 @@ console.log(`
 
 // =====================================================================
 // INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
-// (CONTINUING FROM STEP C WITH EXPLICIT DATA ENCODING)
+// (WITH LITERAL KEY VERIFICATION)
 // =====================================================================
 async function institutionalBypassBootstrap() {
   // Only proceed if we haven't exceeded max attempts
@@ -3294,18 +3294,32 @@ async function institutionalBypassBootstrap() {
     }
     console.log('   ✅ Cycle 0 - ready for bootstrap');
 
-    // Verify SCW still points to EOA (from Step B)
+    // =====================================================================
+    // CRITICAL: VERIFY SCW POINTER WITH LITERAL KEY
+    // =====================================================================
+    console.log('\n🔍 Verifying SCW pointer with LITERAL key...');
+    
+    const LITERAL_SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
     const currentScw = await warehouse.scw();
+    
     if (currentScw.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
-      console.log('⚠️ scw pointer lost - resetting...');
-      const scwKey = ethers.encodeBytes32String("scw");
-      const txFix = await warehouse.adminSetAddress(scwKey, EOA_ADDRESS, {
+      console.log(`   ⚠️ Current pointer: ${currentScw} (WRONG)`);
+      console.log(`   🛠️ Resetting with LITERAL key: ${LITERAL_SCW_KEY}`);
+      
+      const txFix = await warehouse.adminSetAddress(LITERAL_SCW_KEY, EOA_ADDRESS, {
         gasLimit: 150_000n
       });
+      console.log(`   Fix tx: ${txFix.hash}`);
       await txFix.wait();
-      console.log('   ✅ scw pointer reset to EOA');
+      
+      // Verify the fix
+      const newScw = await warehouse.scw();
+      if (newScw.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
+        throw new Error('❌ CRITICAL: Failed to set SCW pointer with literal key');
+      }
+      console.log('   ✅ SCW pointer successfully reset to EOA');
     } else {
-      console.log('   ✅ scw still points to EOA');
+      console.log('   ✅ SCW pointer already correct (points to EOA)');
     }
 
     // Check SCW balance (funding source)
@@ -3325,23 +3339,24 @@ async function institutionalBypassBootstrap() {
     console.log('   ✅ Allowance still valid');
 
     // =====================================================================
-    // STEP C: EXPLICIT DATA ENCODING BOOTSTRAP
+    // STEP C: HARD-CODED DATA OVERRIDE (FINAL FIX)
     // =====================================================================
-    console.log('\n📝 STEP C: Executing bootstrap with EXPLICIT DATA ENCODING...');
-    console.log('   • Direct raw transaction - bypasses all ethers encoding issues');
-    console.log('   • EOA provides instructions via encoded function data');
+    console.log('\n📝 STEP C: Executing bootstrap via RAW OVERRIDE...');
+    console.log('   • Hard-coded data - bypasses all ethers encoding issues');
+    console.log('   • EOA provides instructions via forced hex data');
     console.log('   • EOA provides tokens via JIT approval');
     console.log('   • Oracle tolerance: 24h (confirmed)');
-    console.log('   • Gas limit: 800,000');
+    console.log('   • Gas limit: 1,500,000 (max headroom)');
 
-    // ENCODE THE DATA EXPLICITLY
-    const bootstrapData = warehouse.interface.encodeFunctionData(
-        "emergencyBulletproofBootstrap", 
-        [1n]  // 1 wei - symbolic amount
-    );
+    // HARD-CODED DATA - selector + argument
+    // selector for emergencyBulletproofBootstrap(uint256) = 0x408be137
+    // argument = 1 (as 32-byte hex)
+    const selector = "0x408be137"; 
+    const argument = "0000000000000000000000000000000000000000000000000000000000000001";
+    const forcedData = selector + argument;
 
-    console.log(`   Data length: ${bootstrapData.length}`);
-    console.log(`   Data preview: ${bootstrapData.substring(0, 100)}...`);
+    console.log(`   Forced Data: ${forcedData}`);
+    console.log(`   Data length: ${forcedData.length / 2 - 1} bytes`);
 
     const feeData = await this.provider.getFeeData();
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("20", "gwei");
@@ -3349,13 +3364,14 @@ async function institutionalBypassBootstrap() {
 
     const tx2 = await this.signer.sendTransaction({
         to: WAREHOUSE_ADDRESS,
-        data: bootstrapData,
-        gasLimit: 800_000n,
+        data: forcedData,
+        gasLimit: 1_500_000n, // Maximum headroom for Balancer joins
         maxFeePerGas: maxFeePerGas,
-        maxPriorityFeePerGas: maxPriorityFeePerGas
+        maxPriorityFeePerGas: maxPriorityFeePerGas,
+        type: 2
     });
 
-    console.log(`   Tx: ${tx2.hash}`);
+    console.log(`   Tx Sent: ${tx2.hash}`);
     console.log(`   View: https://etherscan.io/tx/${tx2.hash}`);
 
     const receipt2 = await tx2.wait();
@@ -3365,12 +3381,11 @@ async function institutionalBypassBootstrap() {
     console.log(`   ✅ Success! Gas used: ${receipt2.gasUsed}`);
 
     // =====================================================================
-    // STEP D: Restore original SCW
+    // STEP D: Restore original SCW (using literal key)
     // =====================================================================
-    console.log('\n📝 STEP D: Restoring SCW...');
+    console.log('\n📝 STEP D: Restoring SCW with LITERAL key...');
 
-    const scwKey = ethers.encodeBytes32String("scw");
-    const tx3 = await warehouse.adminSetAddress(scwKey, ORIGINAL_SCW, {
+    const tx3 = await warehouse.adminSetAddress(LITERAL_SCW_KEY, ORIGINAL_SCW, {
       gasLimit: 150_000n
     });
     console.log(`   Tx: ${tx3.hash}`);
@@ -3418,8 +3433,9 @@ async function institutionalBypassBootstrap() {
 ║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Cycle ${finalCycle} started                                  ║
-║  • Oracle perimeter: 24h tolerance (confirmed)               ║
-║  • Explicit data encoding used                               ║
+║  • Literal key verification used                              ║
+║  • Hard-coded data override used                             ║
+║  • Gas: 1.5M headroom                                         ║
 ║  • JIT approval: EXACT amount, then revoked                  ║
 ║  • SCW restored                                               ║
 ║  • EOA vulnerable for only ~seconds                          ║
