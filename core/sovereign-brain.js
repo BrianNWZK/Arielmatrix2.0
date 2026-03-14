@@ -3116,159 +3116,201 @@ if (!this.bootstrapAttempted) {
   this.bootstrapAttempted = true;
 } else {
   console.log('⏰ Bootstrap already attempted, stopping retry loop');
-  process.exit(0); // Exit the process
+  process.exit(0);
 }
 
 // =====================================================================
-// DIAGNOSTIC CHECKS - RUN THIS BEFORE BOOTSTRAP
+// CHECK CYCLE COUNT
 // =====================================================================
-console.log('\n🔍 Running comprehensive diagnostics...\n');
+await this.checkContractCycleCount();
 
-try {
-  // =====================================================================
-  // CHECK 1: SCW Balance & Allowance
-  // =====================================================================
-  const bwzc = new ethers.Contract(
-    LIVE.TOKENS.BWAEZI,
-    [
-      'function allowance(address,address) view returns (uint256)',
-      'function balanceOf(address) view returns (uint256)'
-    ],
-    this.provider
-  );
-
-  const scwBalance = await bwzc.balanceOf(LIVE.SCW_ADDRESS);
-  const allowance = await bwzc.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
-  
-  console.log('📊 CHECK 1 - Balance & Allowance:');
-  console.log(`   SCW BWZC balance: ${ethers.formatEther(scwBalance)}`);
-  console.log(`   SCW → Warehouse allowance: ${ethers.formatEther(allowance)}`);
-  console.log(`   Required: ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)}`);
-  console.log(`   Balance sufficient: ${scwBalance >= LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP ? '✅' : '❌'}`);
-  console.log(`   Allowance sufficient: ${allowance >= LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP ? '✅' : '❌'}`);
-
-  // =====================================================================
-  // CHECK 2: Probe SCW Wrapper Functions
-  // =====================================================================
-  console.log('\n📊 CHECK 2 - SCW Wrapper Function Probe:');
-  
-  const probe = async (signature) => {
-    try {
-      const iface = new ethers.Interface([signature]);
-      const funcName = signature.split('(')[0].split(' ').pop();
-      const data = iface.encodeFunctionData(funcName, [LIVE.WAREHOUSE_CONTRACT, 0n, '0x']);
-      await this.provider.call({
-        to: LIVE.SCW_ADDRESS,
-        data,
-        from: LIVE.SCW_ADDRESS,  // Simulate SCW calling itself
-        gasLimit: 200_000
-      });
-      console.log(`   ✅ ${funcName}() - SUCCESS`);
-      return funcName;
-    } catch (e) {
-      const errorMsg = e.error?.message || e.data || e.message || 'Unknown';
-      console.log(`   ❌ ${signature.split(' ')[1]} - FAILED: ${errorMsg.substring(0, 100)}`);
-      return null;
-    }
-  };
-
-  const workingFunction = await probe('function execute(address,uint256,bytes) external returns (bytes memory)') ||
-                          await probe('function call(address,uint256,bytes) external returns (bytes memory)') ||
-                          await probe('function forward(address,uint256,bytes) external returns (bytes memory)') ||
-                          await probe('function execTransaction(address,uint256,bytes,uint8) external returns (bool)');
-
-  // =====================================================================
-  // CHECK 3: Warehouse State
-  // =====================================================================
-  console.log('\n📊 CHECK 3 - Warehouse State:');
-  
-  const warehouseContract = new ethers.Contract(
-    LIVE.WAREHOUSE_CONTRACT,
-    [
-      'function paused() view returns (bool)',
-      'function cycleCount() view returns (uint256)',
-      'function stalenessThreshold() view returns (uint256)',
-      'function getCurrentSpread() view returns (uint256)',
-      'function getMinRequiredSpread() view returns (uint256)'
-    ],
-    this.provider
-  );
+// =====================================================================
+// FINAL RECOVERY SEQUENCE - Unpause + Bootstrap
+// =====================================================================
+if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
+  console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║ 🚀 FINAL RECOVERY SEQUENCE — Unpause + Bootstrap             ║
+╠═══════════════════════════════════════════════════════════════╣
+║ • Step 1: Force unpause Warehouse (if paused)                ║
+║ • Step 2: SCW.execute() → Warehouse bootstrap                ║
+║ • Single sequence — then contract self-automates              ║
+╚═══════════════════════════════════════════════════════════════╝
+  `);
 
   try {
-    const paused = await warehouseContract.paused();
-    console.log(`   Paused: ${paused ? '❌' : '✅'}`);
-  } catch { console.log('   Paused: ⚠️ Not readable'); }
-  
-  try {
-    const cycleCount = await warehouseContract.cycleCount();
-    console.log(`   Cycle count: ${cycleCount}`);
-  } catch { console.log('   Cycle count: ⚠️ Not readable'); }
-  
-  try {
-    const spread = await warehouseContract.getCurrentSpread();
-    const minSpread = await warehouseContract.getMinRequiredSpread();
-    console.log(`   Current spread: ${spread} bps`);
-    console.log(`   Min required spread: ${minSpread} bps`);
-    console.log(`   Spread sufficient: ${spread >= minSpread ? '✅' : '❌'}`);
-  } catch { console.log('   Spread: ⚠️ Not readable'); }
+    // =====================================================================
+    // Step 0: Setup Contracts and Interfaces
+    // =====================================================================
+    const warehouse = new ethers.Contract(
+      LIVE.WAREHOUSE_CONTRACT,
+      [
+        'function paused() view returns (bool)',
+        'function unpause() external',
+        'function adminSetPaused(bool) external',
+        'function owner() view returns (address)'
+      ],
+      this.signer
+    );
 
-  // =====================================================================
-  // CHECK 4: Simulate Bootstrap Call to Get Revert Reason
-  // =====================================================================
-  console.log('\n📊 CHECK 4 - Simulating Bootstrap Call (to get revert reason):');
-  
-  if (workingFunction) {
-    try {
-      const scwIface = new ethers.Interface([`function ${workingFunction}(address,uint256,bytes) external returns (bytes memory)`]);
-      const warehouseIface = new ethers.Interface(['function emergencyBulletproofBootstrap(uint256) external']);
+    const scwIface = new ethers.Interface([
+      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+
+    const warehouseIface = new ethers.Interface([
+      'function emergencyBulletproofBootstrap(uint256) external'
+    ]);
+
+    const feeData = await this.provider.getFeeData();
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+
+    // =====================================================================
+    // Step 1: Clear the Pause Blocker
+    // =====================================================================
+    console.log('\n📝 STEP 1: Checking Warehouse pause state...');
+    
+    const isPaused = await warehouse.paused();
+    console.log(`Warehouse paused: ${isPaused}`);
+    
+    if (isPaused) {
+      console.log("🔓 Warehouse is currently PAUSED. Attempting to unpause...");
       
-      const innerData = warehouseIface.encodeFunctionData('emergencyBulletproofBootstrap', [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]);
-      const data = scwIface.encodeFunctionData(workingFunction, [LIVE.WAREHOUSE_CONTRACT, 0n, innerData]);
-      
-      await this.provider.call({
-        to: LIVE.SCW_ADDRESS,
-        data,
-        from: LIVE.SCW_ADDRESS,  // Simulate SCW calling itself
-        gasLimit: 1_500_000
-      });
-      console.log('   ✅ Simulation succeeded (unexpected)');
-    } catch (err) {
-      console.log('   ❌ Simulation failed with revert data:');
-      const hex = err.data || err.error?.data || err.message;
-      console.log(`   Raw revert payload: ${hex}`);
-      
-      // Try to decode standard Error(string)
-      if (typeof hex === 'string' && hex.includes('0x08c379a0')) {
+      // Try standard unpause first
+      try {
+        console.log('   Trying warehouse.unpause()...');
+        const unpauseTx = await warehouse.unpause();
+        console.log(`   Unpause tx sent: ${unpauseTx.hash}`);
+        await unpauseTx.wait();
+        console.log('   ✅ Unpause confirmed');
+      } catch (e) {
+        console.log('   Standard unpause failed, trying adminSetPaused(false)...');
         try {
-          const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-          const reasonHex = '0x' + hex.slice(10 + 64);  // Skip selector and offset
-          const reason = abiCoder.decode(['string'], reasonHex)[0];
-          console.log(`   ✅ Decoded revert reason: "${reason}"`);
-        } catch (e) {
-          console.log('   ⚠️ Could not decode revert reason');
+          const adminTx = await warehouse.adminSetPaused(false);
+          console.log(`   Admin unpause tx sent: ${adminTx.hash}`);
+          await adminTx.wait();
+          console.log('   ✅ Admin unpause confirmed');
+        } catch (e2) {
+          console.log('   Direct unpause failed, trying via SCW...');
+          
+          // If direct calls fail, try via SCW (if SCW is owner)
+          const owner = await warehouse.owner();
+          console.log(`   Warehouse owner: ${owner}`);
+          
+          if (owner.toLowerCase() === LIVE.SCW_ADDRESS.toLowerCase()) {
+            console.log('   SCW is owner - sending unpause via SCW...');
+            
+            const unpauseData = warehouseIface.encodeFunctionData('adminSetPaused', [false]);
+            const scwUnpauseData = scwIface.encodeFunctionData('execute', [
+              LIVE.WAREHOUSE_CONTRACT,
+              0n,
+              unpauseData
+            ]);
+            
+            const scwTx = await this.signer.sendTransaction({
+              to: LIVE.SCW_ADDRESS,
+              data: scwUnpauseData,
+              gasLimit: 200_000n,
+              maxFeePerGas: maxFeePerGas,
+              maxPriorityFeePerGas: maxPriorityFeePerGas,
+              type: 2,
+              chainId: LIVE.NETWORK.chainId
+            });
+            
+            console.log(`   SCW unpause tx sent: ${scwTx.hash}`);
+            await scwTx.wait();
+            console.log('   ✅ SCW unpause confirmed');
+          } else {
+            throw new Error(`Cannot unpause - owner is ${owner} and direct calls failed`);
+          }
         }
       }
-      // Check for custom error signatures from SECOND FLASHCONTRACT.txt
-      else if (hex.includes('0x170e304b')) {
-        console.log('   ✅ Decoded revert reason: "SCWInsufficientBWZC()"');
-      } else if (hex.includes('0xbfb9b8e4')) {
-        console.log('   ✅ Decoded revert reason: "OnlySCW()"');
-      } else if (hex.includes('0x9e87fac8')) {
-        console.log('   ✅ Decoded revert reason: "Paused()"');
-      } else if (hex.includes('0x9a3020f8')) {
-        console.log('   ✅ Decoded revert reason: "OracleConsensusFailed()"');
-      } else if (hex.includes('0x7f59ebf0')) {
-        console.log('   ✅ Decoded revert reason: "SpreadTooLow()"');
+      
+      // Verify unpause worked
+      const finalPaused = await warehouse.paused();
+      if (finalPaused) {
+        throw new Error('❌ Failed to unpause Warehouse');
       }
+      console.log('✅ Warehouse UNPAUSED successfully');
+    } else {
+      console.log('✅ Warehouse already unpaused. Proceeding...');
     }
-  } else {
-    console.log('   ⚠️ No working SCW wrapper function found');
-  }
 
-  console.log('\n✅ Diagnostics complete. Please paste these results.');
-  
-} catch (error) {
-  console.error('❌ Diagnostic error:', error.message);
+    // =====================================================================
+    // Step 2: Construct and Execute the Bootstrap via SCW
+    // =====================================================================
+    console.log('\n📝 STEP 2: Constructing SCW Execute payload...');
+    
+    // Verify SCW balance before proceeding
+    const bwzcToken = new ethers.Contract(
+      LIVE.TOKENS.BWAEZI,
+      ['function balanceOf(address) view returns (uint256)'],
+      this.provider
+    );
+    
+    const scwBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
+    console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBalance)}`);
+    
+    if (scwBalance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
+      throw new Error(`❌ SCW balance insufficient. Need ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)}`);
+    }
+
+    const innerCall = warehouseIface.encodeFunctionData('emergencyBulletproofBootstrap', [
+      LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP
+    ]);
+
+    const outerCall = scwIface.encodeFunctionData('execute', [
+      LIVE.WAREHOUSE_CONTRACT,
+      0n,
+      innerCall
+    ]);
+
+    console.log(`📤 Calldata length: ${outerCall.length}`);
+    console.log(`📤 Calldata preview: ${outerCall.substring(0, 100)}...`);
+
+    console.log("📡 Sending Bootstrap Transaction...");
+    const tx = await this.signer.sendTransaction({
+      to: LIVE.SCW_ADDRESS,
+      data: outerCall,
+      gasLimit: 2_000_000n, // Ample overhead for Flashloan + SCW Proxy logic
+      maxFeePerGas: maxFeePerGas,
+      maxPriorityFeePerGas: maxPriorityFeePerGas,
+      type: 2,
+      chainId: LIVE.NETWORK.chainId
+    });
+
+    console.log(`🔥 Transaction Broadcast: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+
+    const receipt = await tx.wait();
+
+    if (receipt.status === 1) {
+      console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║ ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
+╠═══════════════════════════════════════════════════════════════╣
+║ • State: UNPAUSED                                             ║
+║ • Logic: INITIALIZED                                          ║
+║ • Cycle: 1 (Flashloan Active)                                 ║
+╚═══════════════════════════════════════════════════════════════╝
+      `);
+      
+      this.bootstrapCompleted = true;
+      await this.checkContractCycleCount();
+    } else {
+      throw new Error('Bootstrap transaction reverted');
+    }
+
+  } catch (error) {
+    console.error("❌ Critical Failure in Sequence:");
+    console.error(error.message);
+    
+    // Check for the specific SCW Revert String if it fails again
+    if (error.data) {
+       console.log("Raw Error Data for Decoding:", error.data);
+    }
+    throw error;
+  }
 }
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
