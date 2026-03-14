@@ -3120,158 +3120,155 @@ if (!this.bootstrapAttempted) {
 }
 
 // =====================================================================
-// COMPLETE BOOTSTRAP SEQUENCE — SCW Approves + Calls (Using 'call')
+// DIAGNOSTIC CHECKS - RUN THIS BEFORE BOOTSTRAP
 // =====================================================================
-if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
-  console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP SEQUENCE — SCW Approves + Calls           ║
-╠═══════════════════════════════════════════════════════════════╣
-║ • Using universal 'call()' selector for SCW compatibility    ║
-║ • Step 1: SCW approves Warehouse to spend BWZC               ║
-║ • Step 2: SCW triggers Warehouse bootstrap                   ║
-║ • This satisfies the 'transferFrom' allowance requirement    ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
+console.log('\n🔍 Running comprehensive diagnostics...\n');
+
+try {
+  // =====================================================================
+  // CHECK 1: SCW Balance & Allowance
+  // =====================================================================
+  const bwzc = new ethers.Contract(
+    LIVE.TOKENS.BWAEZI,
+    [
+      'function allowance(address,address) view returns (uint256)',
+      'function balanceOf(address) view returns (uint256)'
+    ],
+    this.provider
+  );
+
+  const scwBalance = await bwzc.balanceOf(LIVE.SCW_ADDRESS);
+  const allowance = await bwzc.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
+  
+  console.log('📊 CHECK 1 - Balance & Allowance:');
+  console.log(`   SCW BWZC balance: ${ethers.formatEther(scwBalance)}`);
+  console.log(`   SCW → Warehouse allowance: ${ethers.formatEther(allowance)}`);
+  console.log(`   Required: ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)}`);
+  console.log(`   Balance sufficient: ${scwBalance >= LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP ? '✅' : '❌'}`);
+  console.log(`   Allowance sufficient: ${allowance >= LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP ? '✅' : '❌'}`);
+
+  // =====================================================================
+  // CHECK 2: Probe SCW Wrapper Functions
+  // =====================================================================
+  console.log('\n📊 CHECK 2 - SCW Wrapper Function Probe:');
+  
+  const probe = async (signature) => {
+    try {
+      const iface = new ethers.Interface([signature]);
+      const funcName = signature.split('(')[0].split(' ').pop();
+      const data = iface.encodeFunctionData(funcName, [LIVE.WAREHOUSE_CONTRACT, 0n, '0x']);
+      await this.provider.call({
+        to: LIVE.SCW_ADDRESS,
+        data,
+        from: LIVE.SCW_ADDRESS,  // Simulate SCW calling itself
+        gasLimit: 200_000
+      });
+      console.log(`   ✅ ${funcName}() - SUCCESS`);
+      return funcName;
+    } catch (e) {
+      const errorMsg = e.error?.message || e.data || e.message || 'Unknown';
+      console.log(`   ❌ ${signature.split(' ')[1]} - FAILED: ${errorMsg.substring(0, 100)}`);
+      return null;
+    }
+  };
+
+  const workingFunction = await probe('function execute(address,uint256,bytes) external returns (bytes memory)') ||
+                          await probe('function call(address,uint256,bytes) external returns (bytes memory)') ||
+                          await probe('function forward(address,uint256,bytes) external returns (bytes memory)') ||
+                          await probe('function execTransaction(address,uint256,bytes,uint8) external returns (bool)');
+
+  // =====================================================================
+  // CHECK 3: Warehouse State
+  // =====================================================================
+  console.log('\n📊 CHECK 3 - Warehouse State:');
+  
+  const warehouseContract = new ethers.Contract(
+    LIVE.WAREHOUSE_CONTRACT,
+    [
+      'function paused() view returns (bool)',
+      'function cycleCount() view returns (uint256)',
+      'function stalenessThreshold() view returns (uint256)',
+      'function getCurrentSpread() view returns (uint256)',
+      'function getMinRequiredSpread() view returns (uint256)'
+    ],
+    this.provider
+  );
 
   try {
-    // =====================================================================
-    // UNIVERSAL SCW INTERFACE — Uses 'call' instead of 'execute'
-    // =====================================================================
-    const scwIface = new ethers.Interface([
-      'function call(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-    ]);
-    
-    const feeData = await this.provider.getFeeData();
-    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
-    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+    const paused = await warehouseContract.paused();
+    console.log(`   Paused: ${paused ? '❌' : '✅'}`);
+  } catch { console.log('   Paused: ⚠️ Not readable'); }
+  
+  try {
+    const cycleCount = await warehouseContract.cycleCount();
+    console.log(`   Cycle count: ${cycleCount}`);
+  } catch { console.log('   Cycle count: ⚠️ Not readable'); }
+  
+  try {
+    const spread = await warehouseContract.getCurrentSpread();
+    const minSpread = await warehouseContract.getMinRequiredSpread();
+    console.log(`   Current spread: ${spread} bps`);
+    console.log(`   Min required spread: ${minSpread} bps`);
+    console.log(`   Spread sufficient: ${spread >= minSpread ? '✅' : '❌'}`);
+  } catch { console.log('   Spread: ⚠️ Not readable'); }
 
-    // =====================================================================
-    // STEP 1: SCW Approves Warehouse to Spend BWZC
-    // =====================================================================
-    console.log('\n📝 STEP 1: Sending approval transaction FROM THE SCW...');
-    
-    // Check current allowance first (optional but helpful)
-    const bwzcToken = new ethers.Contract(
-      LIVE.TOKENS.BWAEZI,
-      ['function allowance(address owner, address spender) view returns (uint256)'],
-      this.provider
-    );
-    
-    const currentAllowance = await bwzcToken.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
-    console.log(`💰 Current SCW → Warehouse allowance: ${ethers.formatEther(currentAllowance)} BWZC`);
-    
-    if (currentAllowance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
-      console.log('📝 Allowance insufficient, sending approval transaction...');
+  // =====================================================================
+  // CHECK 4: Simulate Bootstrap Call to Get Revert Reason
+  // =====================================================================
+  console.log('\n📊 CHECK 4 - Simulating Bootstrap Call (to get revert reason):');
+  
+  if (workingFunction) {
+    try {
+      const scwIface = new ethers.Interface([`function ${workingFunction}(address,uint256,bytes) external returns (bytes memory)`]);
+      const warehouseIface = new ethers.Interface(['function emergencyBulletproofBootstrap(uint256) external']);
       
-      const bwzcIface = new ethers.Interface([
-        'function approve(address spender, uint256 amount) external returns (bool)'
-      ]);
+      const innerData = warehouseIface.encodeFunctionData('emergencyBulletproofBootstrap', [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]);
+      const data = scwIface.encodeFunctionData(workingFunction, [LIVE.WAREHOUSE_CONTRACT, 0n, innerData]);
       
-      const approveCalldata = bwzcIface.encodeFunctionData('approve', [
-        LIVE.WAREHOUSE_CONTRACT,
-        ethers.MaxUint256  // Approve max for simplicity
-      ]);
-      
-      const scwApproveCalldata = scwIface.encodeFunctionData('call', [
-        LIVE.TOKENS.BWAEZI,  // BWZC token address
-        0n,
-        approveCalldata
-      ]);
-      
-      console.log('📤 Sending approval transaction...');
-      const approveTx = await this.signer.sendTransaction({
+      await this.provider.call({
         to: LIVE.SCW_ADDRESS,
-        data: scwApproveCalldata,
-        gasLimit: 200_000n,
-        maxFeePerGas: maxFeePerGas,
-        maxPriorityFeePerGas: maxPriorityFeePerGas,
-        type: 2,
-        chainId: LIVE.NETWORK.chainId
+        data,
+        from: LIVE.SCW_ADDRESS,  // Simulate SCW calling itself
+        gasLimit: 1_500_000
       });
-
-      console.log(`✅ Approval TX sent: ${approveTx.hash}`);
-      console.log(`🔍 View: https://etherscan.io/tx/${approveTx.hash}`);
+      console.log('   ✅ Simulation succeeded (unexpected)');
+    } catch (err) {
+      console.log('   ❌ Simulation failed with revert data:');
+      const hex = err.data || err.error?.data || err.message;
+      console.log(`   Raw revert payload: ${hex}`);
       
-      await approveTx.wait();
-      console.log('✅ Approval confirmed');
-      
-      // Verify allowance after approval
-      const newAllowance = await bwzcToken.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
-      console.log(`💰 New allowance: ${ethers.formatEther(newAllowance)} BWZC`);
-    } else {
-      console.log('✅ Allowance already sufficient, skipping approval step');
+      // Try to decode standard Error(string)
+      if (typeof hex === 'string' && hex.includes('0x08c379a0')) {
+        try {
+          const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+          const reasonHex = '0x' + hex.slice(10 + 64);  // Skip selector and offset
+          const reason = abiCoder.decode(['string'], reasonHex)[0];
+          console.log(`   ✅ Decoded revert reason: "${reason}"`);
+        } catch (e) {
+          console.log('   ⚠️ Could not decode revert reason');
+        }
+      }
+      // Check for custom error signatures from SECOND FLASHCONTRACT.txt
+      else if (hex.includes('0x170e304b')) {
+        console.log('   ✅ Decoded revert reason: "SCWInsufficientBWZC()"');
+      } else if (hex.includes('0xbfb9b8e4')) {
+        console.log('   ✅ Decoded revert reason: "OnlySCW()"');
+      } else if (hex.includes('0x9e87fac8')) {
+        console.log('   ✅ Decoded revert reason: "Paused()"');
+      } else if (hex.includes('0x9a3020f8')) {
+        console.log('   ✅ Decoded revert reason: "OracleConsensusFailed()"');
+      } else if (hex.includes('0x7f59ebf0')) {
+        console.log('   ✅ Decoded revert reason: "SpreadTooLow()"');
+      }
     }
-
-    // =====================================================================
-    // STEP 2: Bootstrap Transaction (Now with proper allowance)
-    // =====================================================================
-    console.log('\n📝 STEP 2: Sending bootstrap transaction...');
-    
-    // Verify SCW balance before proceeding
-    const scwBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
-    console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBalance)} BWZC`);
-    console.log(`💰 Required for bootstrap: ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)} BWZC`);
-    
-    if (scwBalance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
-      throw new Error(`❌ SCW balance insufficient. Need ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)} BWZC`);
-    }
-    
-    const warehouseIface = new ethers.Interface([
-      'function emergencyBulletproofBootstrap(uint256) external'
-    ]);
-    
-    const warehouseCalldata = warehouseIface.encodeFunctionData(
-      'emergencyBulletproofBootstrap',
-      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]
-    );
-    
-    const scwBootstrapCalldata = scwIface.encodeFunctionData('call', [
-      LIVE.WAREHOUSE_CONTRACT,
-      0n,
-      warehouseCalldata
-    ]);
-    
-    console.log('📤 Sending bootstrap transaction...');
-    console.log(`📤 Calldata length: ${scwBootstrapCalldata.length}`);
-    console.log(`📤 Calldata preview: ${scwBootstrapCalldata.substring(0, 100)}...`);
-    
-    const bootstrapTx = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,
-      data: scwBootstrapCalldata,
-      gasLimit: 1_500_000n,  // Higher for flashloan complex logic
-      maxFeePerGas: maxFeePerGas,
-      maxPriorityFeePerGas: maxPriorityFeePerGas,
-      type: 2,
-      chainId: LIVE.NETWORK.chainId
-    });
-
-    console.log(`✅ Bootstrap TX sent: ${bootstrapTx.hash}`);
-    console.log(`🔍 View: https://etherscan.io/tx/${bootstrapTx.hash}`);
-
-    const receipt = await bootstrapTx.wait();
-
-    if (receipt.status === 1) {
-      console.log(`\n🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
-      this.bootstrapCompleted = true;
-      await this.checkContractCycleCount();
-      
-      console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count: ${this.contractCycleCount}                    ║
-║  • Balancer Flashloan should appear in internal txs           ║
-║  • Contract is now self-automating                            ║
-╚═══════════════════════════════════════════════════════════════╝
-      `);
-    } else {
-      throw new Error('Bootstrap transaction reverted');
-    }
-  } catch (error) {
-    console.error('❌ Bootstrap failed:', error.message);
-    throw error;
+  } else {
+    console.log('   ⚠️ No working SCW wrapper function found');
   }
+
+  console.log('\n✅ Diagnostics complete. Please paste these results.');
+  
+} catch (error) {
+  console.error('❌ Diagnostic error:', error.message);
 }
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
