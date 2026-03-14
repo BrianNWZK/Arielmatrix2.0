@@ -3102,358 +3102,60 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
-// WITH CIRCUIT BREAKER AND LITERAL KEY VERIFICATION
+// ONE-SHOT LITERAL-KEY BOOTSTRAP - FINAL ATTEMPT
 // =====================================================================
 
-// =====================================================================
-// CIRCUIT BREAKER - PREVENT INFINITE RETRIES
-// =====================================================================
-const STATE_FILE = './bootstrap-state.json';
+console.log("Starting FINAL bootstrap fix...");
 
-// Check persistent state
-try {
-  if (fs.existsSync(STATE_FILE)) {
-    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    if (state.attempted) {
-      console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🛑 CIRCUIT BREAKER ACTIVE - PREVIOUS ATTEMPT DETECTED       ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Previous attempt at: ${new Date(state.timestamp).toISOString()}      ║
-║  • Status: ${state.completed ? 'SUCCESS' : 'FAILED'}                      ║
-║  • No further bootstrap attempts will be made               ║
-║  • System continuing in monitoring mode only                ║
-╚═══════════════════════════════════════════════════════════════╝
-      `);
-      return;
-    }
-  }
-} catch (e) {
-  console.log('📁 No previous state found, proceeding...');
+const WAREHOUSE = "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f";
+const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000"; // correct "scw" padded
+
+const warehouse = new ethers.Contract(WAREHOUSE, [
+  'function adminSetAddress(bytes32 key, address value) external',
+  'function emergencyBulletproofBootstrap(uint256) external'
+], this.signer);
+
+const EOA = await this.signer.getAddress();
+
+// 1. Set scw = EOA with literal key
+console.log("1. Setting scw → EOA...");
+const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
+  gasLimit: 200_000n
+});
+console.log(`Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
+await txSet.wait();
+console.log("Set confirmed");
+
+// 2. Bootstrap immediately (in same script/process)
+console.log("\n2. Calling emergencyBulletproofBootstrap...");
+const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
+  gasLimit: 2_000_000n,          // ample for flashloan + liquidity ops
+  maxFeePerGas: ethers.parseUnits("40", "gwei"),
+  maxPriorityFeePerGas: ethers.parseUnits("2", "gwei")
+});
+console.log(`Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
+
+const receipt = await txBoot.wait();
+if (receipt.status !== 1) {
+  console.error("Bootstrap reverted - gas used:", receipt.gasUsed.toString());
+  throw new Error("Revert");
 }
+console.log(`Success! Gas used: ${receipt.gasUsed}`);
 
-// Mark as attempted before starting
-try {
-  fs.writeFileSync(STATE_FILE, JSON.stringify({
-    attempted: true,
-    timestamp: Date.now(),
-    completed: false
-  }));
-} catch (e) {
-  console.log('⚠️ Could not write state file, continuing anyway...');
-}
+// 3. Restore original SCW
+console.log("\n3. Restoring original SCW...");
+const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2", {
+  gasLimit: 150_000n
+});
+await txRestore.wait();
+console.log("Pointer restored");
 
-// In-memory circuit breaker for this process
-if (!global.bootstrapAttempts) {
-  global.bootstrapAttempts = 0;
-}
-global.bootstrapAttempts++;
-
-const MAX_BOOTSTRAP_ATTEMPTS = 1;
-console.log(`🔄 Bootstrap attempt #${global.bootstrapAttempts}`);
-
-if (global.bootstrapAttempts > MAX_BOOTSTRAP_ATTEMPTS) {
-  console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🛑 MAX RETRIES REACHED - STOPPING BOOTSTRAP LOOP           ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Attempts: ${global.bootstrapAttempts}                                      ║
-║  • Moving to monitoring mode only                           ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
-  // Continue with monitoring but don't attempt bootstrap
-}
-
-// =====================================================================
-// VERIFIED ADDRESSES FROM YOUR CONFIG (NO GUESSING)
-// =====================================================================
-const VERIFIED_ADDRESSES = {
-  WAREHOUSE: "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f",
-  SCW: "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2",
-  BWAEZI: "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2",
-  USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-  WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-  ENTRY_POINT: "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
-  PAYMASTER_A: "0x4e073AAA36Cd51fD37298F87E3Fce8437a08DD71",
-  PAYMASTER_B: "0x79a515d5a085d2B86AFf104eC9C8C2152C9549C0"
-};
-
+// Done
 console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  ✅ VERIFIED ADDRESSES (FROM LIVE CONFIG)                     ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Warehouse: ${VERIFIED_ADDRESSES.WAREHOUSE.slice(0, 10)}...${VERIFIED_ADDRESSES.WAREHOUSE.slice(-8)}      ║
-║  SCW: ${VERIFIED_ADDRESSES.SCW.slice(0, 10)}...${VERIFIED_ADDRESSES.SCW.slice(-8)}                ║
-║  BWAEZI: ${VERIFIED_ADDRESSES.BWAEZI.slice(0, 10)}...${VERIFIED_ADDRESSES.BWAEZI.slice(-8)}          ║
-║  USDC: ${VERIFIED_ADDRESSES.USDC.slice(0, 10)}...${VERIFIED_ADDRESSES.USDC.slice(-8)}              ║
-║  WETH: ${VERIFIED_ADDRESSES.WETH.slice(0, 10)}...${VERIFIED_ADDRESSES.WETH.slice(-8)}              ║
+║ FINAL BOOTSTRAP COMPLETE - CHECK CYCLE COUNT NOW              ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
-
-// =====================================================================
-// CONTINUING FROM COMPLETED STEPS A & B
-// =====================================================================
-console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅ STEPS A & B ALREADY COMPLETED                             ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Step A: JIT Approval - SUCCESS (0x4e1f769ce9...)          ║
-║  • Step B: scw = EOA - SUCCESS (0xc824f4a5c2...)             ║
-║  • Continuing from Step C                                     ║
-╚═══════════════════════════════════════════════════════════════╝
-`);
-
-// =====================================================================
-// ORACLE PERIMETER ADJUSTMENT - ALREADY COMPLETED
-// =====================================================================
-console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅ ORACLE PERIMETER ADJUSTMENT COMPLETED                     ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Staleness Threshold set to 24h - SUCCESS                  ║
-║  • Tx: 0x54b0426b5b9ee7ad1d489e5686d05e2d86254e86e6fcf165c7  ║
-╚═══════════════════════════════════════════════════════════════╝
-`);
-
-// =====================================================================
-// INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
-// (WITH LITERAL KEY VERIFICATION)
-// =====================================================================
-async function institutionalBypassBootstrap() {
-  // Only proceed if we haven't exceeded max attempts
-  if (global.bootstrapAttempts > MAX_BOOTSTRAP_ATTEMPTS) {
-    return;
-  }
-
-  try {
-    // =====================================================================
-    // CONFIGURATION (USING VERIFIED ADDRESSES)
-    // =====================================================================
-    const WAREHOUSE_ADDRESS = VERIFIED_ADDRESSES.WAREHOUSE;
-    const ORIGINAL_SCW = VERIFIED_ADDRESSES.SCW;
-    const BWZC_ADDRESS = VERIFIED_ADDRESSES.BWAEZI;
-    const REQUIRED_BWZC = LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP; // ~170,212.77 BWZC
-    const EOA_ADDRESS = await this.signer.getAddress();
-
-    console.log(`📋 Configuration:`);
-    console.log(`   Warehouse: ${WAREHOUSE_ADDRESS}`);
-    console.log(`   Original SCW: ${ORIGINAL_SCW}`);
-    console.log(`   Your EOA: ${EOA_ADDRESS}`);
-    console.log(`   Required BWZC: ${ethers.formatEther(REQUIRED_BWZC)}`);
-
-    // =====================================================================
-    // SETUP CONTRACTS
-    // =====================================================================
-    const warehouse = new ethers.Contract(
-      WAREHOUSE_ADDRESS,
-      [
-        'function emergencyBulletproofBootstrap(uint256) external',
-        'function adminSetAddress(bytes32 key, address value) external',
-        'function adminSetParameter(bytes32 key, uint256 value) external',
-        'function scw() view returns (address)',
-        'function cycleCount() view returns (uint256)',
-        'function paused() view returns (bool)'
-      ],
-      this.signer
-    );
-
-    const bwzc = new ethers.Contract(
-      BWZC_ADDRESS,
-      [
-        'function balanceOf(address) view returns (uint256)',
-        'function allowance(address owner, address spender) view returns (uint256)',
-        'function approve(address spender, uint256 amount) external returns (bool)'
-      ],
-      this.signer
-    );
-
-    // =====================================================================
-    // PRE-FLIGHT CHECKS
-    // =====================================================================
-    console.log('\n🔍 Pre-flight checks...');
-
-    // Check paused
-    const isPaused = await warehouse.paused();
-    if (isPaused) throw new Error('❌ Warehouse is paused');
-    console.log('   ✅ Not paused');
-
-    // Check cycle
-    const currentCycle = await warehouse.cycleCount();
-    if (currentCycle > 0n) {
-      console.log('   ✅ Already bootstrapped');
-      // Mark as completed in state file
-      try {
-        fs.writeFileSync(STATE_FILE, JSON.stringify({
-          attempted: true,
-          timestamp: Date.now(),
-          completed: true
-        }));
-      } catch (e) {}
-      return;
-    }
-    console.log('   ✅ Cycle 0 - ready for bootstrap');
-
-    // =====================================================================
-    // CRITICAL: VERIFY SCW POINTER WITH LITERAL KEY
-    // =====================================================================
-    console.log('\n🔍 Verifying SCW pointer with LITERAL key...');
-    
-    const LITERAL_SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-    const currentScw = await warehouse.scw();
-    
-    if (currentScw.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
-      console.log(`   ⚠️ Current pointer: ${currentScw} (WRONG)`);
-      console.log(`   🛠️ Resetting with LITERAL key: ${LITERAL_SCW_KEY}`);
-      
-      const txFix = await warehouse.adminSetAddress(LITERAL_SCW_KEY, EOA_ADDRESS, {
-        gasLimit: 150_000n
-      });
-      console.log(`   Fix tx: ${txFix.hash}`);
-      await txFix.wait();
-      
-      // Verify the fix
-      const newScw = await warehouse.scw();
-      if (newScw.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
-        throw new Error('❌ CRITICAL: Failed to set SCW pointer with literal key');
-      }
-      console.log('   ✅ SCW pointer successfully reset to EOA');
-    } else {
-      console.log('   ✅ SCW pointer already correct (points to EOA)');
-    }
-
-    // Check SCW balance (funding source)
-    const scwBalance = await bwzc.balanceOf(ORIGINAL_SCW);
-    console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBalance)}`);
-    if (scwBalance < REQUIRED_BWZC) {
-      throw new Error(`❌ SCW needs ${ethers.formatEther(REQUIRED_BWZC)} BWZC. Has: ${ethers.formatEther(scwBalance)}`);
-    }
-    console.log('   ✅ SCW balance sufficient');
-
-    // Verify allowance (from Step A)
-    const allowance = await bwzc.allowance(EOA_ADDRESS, WAREHOUSE_ADDRESS);
-    console.log(`💰 EOA → Warehouse allowance: ${ethers.formatEther(allowance)} BWZC`);
-    if (allowance < REQUIRED_BWZC) {
-      throw new Error('❌ Allowance lost - need to rerun Step A');
-    }
-    console.log('   ✅ Allowance still valid');
-
-    // =====================================================================
-    // STEP C: HARD-CODED DATA OVERRIDE (FINAL FIX)
-    // =====================================================================
-    console.log('\n📝 STEP C: Executing bootstrap via RAW OVERRIDE...');
-    console.log('   • Hard-coded data - bypasses all ethers encoding issues');
-    console.log('   • EOA provides instructions via forced hex data');
-    console.log('   • EOA provides tokens via JIT approval');
-    console.log('   • Oracle tolerance: 24h (confirmed)');
-    console.log('   • Gas limit: 1,500,000 (max headroom)');
-
-    // HARD-CODED DATA - selector + argument
-    // selector for emergencyBulletproofBootstrap(uint256) = 0x408be137
-    // argument = 1 (as 32-byte hex)
-    const selector = "0x408be137"; 
-    const argument = "0000000000000000000000000000000000000000000000000000000000000001";
-    const forcedData = selector + argument;
-
-    console.log(`   Forced Data: ${forcedData}`);
-    console.log(`   Data length: ${forcedData.length / 2 - 1} bytes`);
-
-    const feeData = await this.provider.getFeeData();
-    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("20", "gwei");
-    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei");
-
-    const tx2 = await this.signer.sendTransaction({
-        to: WAREHOUSE_ADDRESS,
-        data: forcedData,
-        gasLimit: 1_500_000n, // Maximum headroom for Balancer joins
-        maxFeePerGas: maxFeePerGas,
-        maxPriorityFeePerGas: maxPriorityFeePerGas,
-        type: 2
-    });
-
-    console.log(`   Tx Sent: ${tx2.hash}`);
-    console.log(`   View: https://etherscan.io/tx/${tx2.hash}`);
-
-    const receipt2 = await tx2.wait();
-    if (receipt2.status !== 1) {
-        throw new Error('❌ Bootstrap failed');
-    }
-    console.log(`   ✅ Success! Gas used: ${receipt2.gasUsed}`);
-
-    // =====================================================================
-    // STEP D: Restore original SCW (using literal key)
-    // =====================================================================
-    console.log('\n📝 STEP D: Restoring SCW with LITERAL key...');
-
-    const tx3 = await warehouse.adminSetAddress(LITERAL_SCW_KEY, ORIGINAL_SCW, {
-      gasLimit: 150_000n
-    });
-    console.log(`   Tx: ${tx3.hash}`);
-    await tx3.wait();
-
-    const finalScw = await warehouse.scw();
-    if (finalScw.toLowerCase() !== ORIGINAL_SCW.toLowerCase()) {
-      throw new Error('❌ Failed to restore scw');
-    }
-    console.log('   ✅ scw restored');
-
-    // =====================================================================
-    // STEP E: Revoke EOA approval (set to 0)
-    // =====================================================================
-    console.log('\n📝 STEP E: Revoking EOA approval...');
-    
-    const revokeTx = await bwzc.approve(WAREHOUSE_ADDRESS, 0n, {
-      gasLimit: 100_000n
-    });
-    console.log(`   Revoke tx: ${revokeTx.hash}`);
-    await revokeTx.wait();
-    
-    const finalAllowance = await bwzc.allowance(EOA_ADDRESS, WAREHOUSE_ADDRESS);
-    console.log(`   Final allowance: ${ethers.formatEther(finalAllowance)} BWZC`);
-    console.log('   ✅ Approval revoked - EOA now safe');
-
-    // =====================================================================
-    // FINAL VERIFICATION
-    // =====================================================================
-    const finalCycle = await warehouse.cycleCount();
-    console.log(`\n📊 Final cycle count: ${finalCycle}`);
-
-    if (finalCycle > 0n) {
-      // Mark as completed in state file
-      try {
-        fs.writeFileSync(STATE_FILE, JSON.stringify({
-          attempted: true,
-          timestamp: Date.now(),
-          completed: true
-        }));
-      } catch (e) {}
-      
-      console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle ${finalCycle} started                                  ║
-║  • Literal key verification used                              ║
-║  • Hard-coded data override used                             ║
-║  • Gas: 1.5M headroom                                         ║
-║  • JIT approval: EXACT amount, then revoked                  ║
-║  • SCW restored                                               ║
-║  • EOA vulnerable for only ~seconds                          ║
-║  • System self-automating                                     ║
-╚═══════════════════════════════════════════════════════════════╝
-      `);
-    }
-
-  } catch (error) {
-    console.error('\n❌ Error:', error.message);
-    throw error;
-  }
-}
-
-// Execute with circuit breaker protection
-if (global.bootstrapAttempts <= MAX_BOOTSTRAP_ATTEMPTS) {
-  await institutionalBypassBootstrap.bind(this)();
-}
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
