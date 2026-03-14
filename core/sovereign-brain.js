@@ -3101,7 +3101,6 @@ async initialize() {
   await this.rpc.init();
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
-
 // =====================================================================
 // INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
 // WITH CIRCUIT BREAKER TO PREVENT INFINITE RETRIES
@@ -3193,29 +3192,27 @@ console.log(`
 `);
 
 // =====================================================================
+// CONTINUING FROM COMPLETED STEPS A & B
+// =====================================================================
+console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅ STEPS A & B ALREADY COMPLETED                             ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Step A: JIT Approval - SUCCESS (0x4e1f769ce9...)          ║
+║  • Step B: scw = EOA - SUCCESS (0xc824f4a5c2...)             ║
+║  • Continuing from Step C                                     ║
+╚═══════════════════════════════════════════════════════════════╝
+`);
+
+// =====================================================================
 // INSTITUTIONAL PERFECTION: EMERGENCY BYPASS + JIT APPROVAL
+// (CONTINUING FROM STEP C)
 // =====================================================================
 async function institutionalBypassBootstrap() {
   // Only proceed if we haven't exceeded max attempts
   if (global.bootstrapAttempts > MAX_BOOTSTRAP_ATTEMPTS) {
     return;
   }
-
-  console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ⚡ INSTITUTIONAL OVERRIDE SEQUENCE + JIT APPROVAL            ║
-╠═══════════════════════════════════════════════════════════════╣
-║  PATH 1: Just-In-Time Safety Maneuver                         ║
-║  • SCW funded: 30M BWZC + ETH for gas                         ║
-║  • Step A: EOA approves EXACT bootstrap amount to Warehouse   ║
-║  • Step B: Temporarily set scw = EOA                          ║
-║  • Step C: EOA calls emergencyBulletproofBootstrap            ║
-║  • Step D: Restore original scw pointer                       ║
-║  • Step E: EOA revokes approval (set to 0)                    ║
-║  • System self-automates forever                              ║
-║  • EOA vulnerable for only seconds                            ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
 
   try {
     // =====================================================================
@@ -3239,12 +3236,10 @@ async function institutionalBypassBootstrap() {
     const warehouse = new ethers.Contract(
       WAREHOUSE_ADDRESS,
       [
-        'function adminSetAddress(bytes32 key, address value) external',
         'function emergencyBulletproofBootstrap(uint256) external',
         'function scw() view returns (address)',
         'function cycleCount() view returns (uint256)',
-        'function paused() view returns (bool)',
-        'function owner() view returns (address)'
+        'function paused() view returns (bool)'
       ],
       this.signer
     );
@@ -3253,8 +3248,8 @@ async function institutionalBypassBootstrap() {
       BWZC_ADDRESS,
       [
         'function balanceOf(address) view returns (uint256)',
-        'function approve(address spender, uint256 amount) external returns (bool)',
-        'function allowance(address owner, address spender) view returns (uint256)'
+        'function allowance(address owner, address spender) view returns (uint256)',
+        'function approve(address spender, uint256 amount) external returns (bool)'
       ],
       this.signer
     );
@@ -3263,13 +3258,6 @@ async function institutionalBypassBootstrap() {
     // PRE-FLIGHT CHECKS
     // =====================================================================
     console.log('\n🔍 Pre-flight checks...');
-
-    // Check warehouse owner
-    const owner = await warehouse.owner();
-    if (owner.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
-      throw new Error('❌ Your EOA is not the warehouse owner!');
-    }
-    console.log('   ✅ Owner verified');
 
     // Check paused
     const isPaused = await warehouse.paused();
@@ -3292,6 +3280,13 @@ async function institutionalBypassBootstrap() {
     }
     console.log('   ✅ Cycle 0 - ready for bootstrap');
 
+    // Verify SCW still points to EOA (from Step B)
+    const currentScw = await warehouse.scw();
+    if (currentScw.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
+      throw new Error('❌ scw pointer lost - need to rerun Step B');
+    }
+    console.log('   ✅ scw still points to EOA');
+
     // Check SCW balance (funding source)
     const scwBalance = await bwzc.balanceOf(ORIGINAL_SCW);
     console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBalance)}`);
@@ -3300,67 +3295,31 @@ async function institutionalBypassBootstrap() {
     }
     console.log('   ✅ SCW balance sufficient');
 
-    // Check EOA balance (for JIT approval - tokens will flow through EOA)
-    const eoaBalance = await bwzc.balanceOf(EOA_ADDRESS);
-    console.log(`💰 EOA BWZC balance: ${ethers.formatEther(eoaBalance)}`);
-    if (eoaBalance < REQUIRED_BWZC) {
-      throw new Error(`❌ Need ${ethers.formatEther(REQUIRED_BWZC)} BWZC on EOA for JIT approval`);
+    // Verify allowance (from Step A)
+    const allowance = await bwzc.allowance(EOA_ADDRESS, WAREHOUSE_ADDRESS);
+    console.log(`💰 EOA → Warehouse allowance: ${ethers.formatEther(allowance)} BWZC`);
+    if (allowance < REQUIRED_BWZC) {
+      throw new Error('❌ Allowance lost - need to rerun Step A');
     }
-    console.log('   ✅ EOA balance sufficient');
+    console.log('   ✅ Allowance still valid');
 
     // =====================================================================
-    // STEP A: JIT Approval - EOA approves EXACT bootstrap amount
+    // STEP C: Bootstrap directly from EOA (OPTIMIZED GAS)
     // =====================================================================
-    console.log('\n📝 STEP A: JIT Approval - EOA approving exact amount...');
-    
-    const currentAllowance = await bwzc.allowance(EOA_ADDRESS, WAREHOUSE_ADDRESS);
-    console.log(`   Current allowance: ${ethers.formatEther(currentAllowance)} BWZC`);
-    
-    if (currentAllowance < REQUIRED_BWZC) {
-      const approveTx = await bwzc.approve(WAREHOUSE_ADDRESS, REQUIRED_BWZC, {
-        gasLimit: 100_000n
-      });
-      console.log(`   Approval tx: ${approveTx.hash}`);
-      await approveTx.wait();
-      
-      const newAllowance = await bwzc.allowance(EOA_ADDRESS, WAREHOUSE_ADDRESS);
-      console.log(`   New allowance: ${ethers.formatEther(newAllowance)} BWZC`);
-      console.log('   ✅ Exact approval granted');
-    } else {
-      console.log('   ⚠️ Allowance already sufficient, skipping approval');
-    }
-
-    // =====================================================================
-    // STEP B: Temporarily set scw = EOA
-    // =====================================================================
-    console.log('\n📝 STEP B: Setting scw → EOA...');
-    
-    const scwKey = ethers.encodeBytes32String("scw");
-    console.log(`   Using key: ${scwKey}`);
-
-    const tx1 = await warehouse.adminSetAddress(scwKey, EOA_ADDRESS, {
-      gasLimit: 150_000n
-    });
-    console.log(`   Tx: ${tx1.hash}`);
-    await tx1.wait();
-
-    const updatedScw = await warehouse.scw();
-    if (updatedScw.toLowerCase() !== EOA_ADDRESS.toLowerCase()) {
-      throw new Error('❌ Failed to update scw');
-    }
-    console.log('   ✅ scw now points to EOA');
-
-    // =====================================================================
-    // STEP C: Bootstrap directly from EOA
-    // =====================================================================
-    console.log('\n📝 STEP C: Executing bootstrap...');
+    console.log('\n📝 STEP C: Executing bootstrap with optimized gas...');
     console.log('   • EOA provides instructions');
     console.log('   • EOA provides tokens via JIT approval');
-    
+    console.log('   • Gas limit: 500,000 (was 2,500,000)');
+    console.log('   • Estimated cost: ~0.005-0.01 ETH');
+
+    const feeData = await this.provider.getFeeData();
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("20", "gwei");
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei");
+
     const tx2 = await warehouse.emergencyBulletproofBootstrap(1n, {
-      gasLimit: 2_500_000n,
-      maxFeePerGas: ethers.parseUnits("50", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("2", "gwei")
+      gasLimit: 500_000n,  // ← REDUCED FROM 2.5M
+      maxFeePerGas: maxFeePerGas,
+      maxPriorityFeePerGas: maxPriorityFeePerGas
     });
 
     console.log(`   Tx: ${tx2.hash}`);
@@ -3377,6 +3336,7 @@ async function institutionalBypassBootstrap() {
     // =====================================================================
     console.log('\n📝 STEP D: Restoring SCW...');
 
+    const scwKey = ethers.encodeBytes32String("scw");
     const tx3 = await warehouse.adminSetAddress(scwKey, ORIGINAL_SCW, {
       gasLimit: 150_000n
     });
