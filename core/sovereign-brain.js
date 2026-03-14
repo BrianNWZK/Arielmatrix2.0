@@ -3120,41 +3120,103 @@ if (!this.bootstrapAttempted) {
 }
 
 // =====================================================================
-// FINAL BOOTSTRAP — VIA SCW (With Owner Check)
+// COMPLETE BOOTSTRAP SEQUENCE — SCW Approves + Calls (Using 'call')
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP — VIA SCW (With Owner Check)              ║
+║ 🚀 FINAL BOOTSTRAP SEQUENCE — SCW Approves + Calls           ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • Verifying SCW owner before sending                         ║
-║ • SCW.execute() → Warehouse contract                         ║
-║ • Approval already confirmed (tx: 0x09d401f5...)              ║
+║ • Using universal 'call()' selector for SCW compatibility    ║
+║ • Step 1: SCW approves Warehouse to spend BWZC               ║
+║ • Step 2: SCW triggers Warehouse bootstrap                   ║
+║ • This satisfies the 'transferFrom' allowance requirement    ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
     // =====================================================================
-    // STEP 1: Check SCW Owner
+    // UNIVERSAL SCW INTERFACE — Uses 'call' instead of 'execute'
     // =====================================================================
-    const scwContract = new ethers.Contract(
-      LIVE.SCW_ADDRESS,
-      ['function owner() view returns (address)'],
+    const scwIface = new ethers.Interface([
+      'function call(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+    
+    const feeData = await this.provider.getFeeData();
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
+
+    // =====================================================================
+    // STEP 1: SCW Approves Warehouse to Spend BWZC
+    // =====================================================================
+    console.log('\n📝 STEP 1: Sending approval transaction FROM THE SCW...');
+    
+    // Check current allowance first (optional but helpful)
+    const bwzcToken = new ethers.Contract(
+      LIVE.TOKENS.BWAEZI,
+      ['function allowance(address owner, address spender) view returns (uint256)'],
       this.provider
     );
     
-    const scwOwner = await scwContract.owner();
-    console.log(`🔍 SCW Owner: ${scwOwner}`);
-    console.log(`🔍 Your EOA: ${this.signer.address}`);
+    const currentAllowance = await bwzcToken.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
+    console.log(`💰 Current SCW → Warehouse allowance: ${ethers.formatEther(currentAllowance)} BWZC`);
     
-    if (scwOwner.toLowerCase() !== this.signer.address.toLowerCase()) {
-      throw new Error(`❌ Your EOA is not the SCW owner. SCW owner is: ${scwOwner}`);
+    if (currentAllowance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
+      console.log('📝 Allowance insufficient, sending approval transaction...');
+      
+      const bwzcIface = new ethers.Interface([
+        'function approve(address spender, uint256 amount) external returns (bool)'
+      ]);
+      
+      const approveCalldata = bwzcIface.encodeFunctionData('approve', [
+        LIVE.WAREHOUSE_CONTRACT,
+        ethers.MaxUint256  // Approve max for simplicity
+      ]);
+      
+      const scwApproveCalldata = scwIface.encodeFunctionData('call', [
+        LIVE.TOKENS.BWAEZI,  // BWZC token address
+        0n,
+        approveCalldata
+      ]);
+      
+      console.log('📤 Sending approval transaction...');
+      const approveTx = await this.signer.sendTransaction({
+        to: LIVE.SCW_ADDRESS,
+        data: scwApproveCalldata,
+        gasLimit: 200_000n,
+        maxFeePerGas: maxFeePerGas,
+        maxPriorityFeePerGas: maxPriorityFeePerGas,
+        type: 2,
+        chainId: LIVE.NETWORK.chainId
+      });
+
+      console.log(`✅ Approval TX sent: ${approveTx.hash}`);
+      console.log(`🔍 View: https://etherscan.io/tx/${approveTx.hash}`);
+      
+      await approveTx.wait();
+      console.log('✅ Approval confirmed');
+      
+      // Verify allowance after approval
+      const newAllowance = await bwzcToken.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
+      console.log(`💰 New allowance: ${ethers.formatEther(newAllowance)} BWZC`);
+    } else {
+      console.log('✅ Allowance already sufficient, skipping approval step');
     }
-    console.log('✅ EOA is authorized to call SCW.execute()');
 
     // =====================================================================
-    // STEP 2: Encode the warehouse bootstrap call
+    // STEP 2: Bootstrap Transaction (Now with proper allowance)
     // =====================================================================
+    console.log('\n📝 STEP 2: Sending bootstrap transaction...');
+    
+    // Verify SCW balance before proceeding
+    const scwBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
+    console.log(`💰 SCW BWZC balance: ${ethers.formatEther(scwBalance)} BWZC`);
+    console.log(`💰 Required for bootstrap: ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)} BWZC`);
+    
+    if (scwBalance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
+      throw new Error(`❌ SCW balance insufficient. Need ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)} BWZC`);
+    }
+    
     const warehouseIface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
     ]);
@@ -3163,48 +3225,31 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
       'emergencyBulletproofBootstrap',
       [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]
     );
-
-    // =====================================================================
-    // STEP 3: Encode SCW.execute() to call the warehouse
-    // =====================================================================
-    const scwIface = new ethers.Interface([
-      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-    ]);
     
-    const finalCalldata = scwIface.encodeFunctionData('execute', [
+    const scwBootstrapCalldata = scwIface.encodeFunctionData('call', [
       LIVE.WAREHOUSE_CONTRACT,
       0n,
       warehouseCalldata
     ]);
-
-    // =====================================================================
-    // STEP 4: Get fresh fee data
-    // =====================================================================
-    const feeData = await this.provider.getFeeData();
-    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
-    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
-
-    // =====================================================================
-    // STEP 5: SEND TO SCW
-    // =====================================================================
-    console.log('📤 Sending transaction to SCW (authorized owner)...');
-    console.log(`📤 Calldata length: ${finalCalldata.length}`);
-    console.log(`📤 Calldata preview: ${finalCalldata.substring(0, 100)}...`);
-
-    const txResponse = await this.signer.sendTransaction({
+    
+    console.log('📤 Sending bootstrap transaction...');
+    console.log(`📤 Calldata length: ${scwBootstrapCalldata.length}`);
+    console.log(`📤 Calldata preview: ${scwBootstrapCalldata.substring(0, 100)}...`);
+    
+    const bootstrapTx = await this.signer.sendTransaction({
       to: LIVE.SCW_ADDRESS,
-      data: finalCalldata,
-      gasLimit: 1_500_000n,
+      data: scwBootstrapCalldata,
+      gasLimit: 1_500_000n,  // Higher for flashloan complex logic
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
       chainId: LIVE.NETWORK.chainId
     });
 
-    console.log(`✅ BOOTSTRAP SENT: ${txResponse.hash}`);
-    console.log(`🔍 View: https://etherscan.io/tx/${txResponse.hash}`);
+    console.log(`✅ Bootstrap TX sent: ${bootstrapTx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${bootstrapTx.hash}`);
 
-    const receipt = await txResponse.wait();
+    const receipt = await bootstrapTx.wait();
 
     if (receipt.status === 1) {
       console.log(`\n🎉 BOOTSTRAP SUCCESS — Contract is now SELF-AUTOMATING`);
@@ -3216,6 +3261,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Cycle count: ${this.contractCycleCount}                    ║
+║  • Balancer Flashloan should appear in internal txs           ║
 ║  • Contract is now self-automating                            ║
 ╚═══════════════════════════════════════════════════════════════╝
       `);
