@@ -3120,19 +3120,15 @@ if (!this.bootstrapAttempted) {
 }
 
 // =====================================================================
-// CHECK CYCLE COUNT
-// =====================================================================
-await this.checkContractCycleCount();
-
-// =====================================================================
-// FINAL BOOTSTRAP TRANSACTION — DIRECT WAREHOUSE CALL
+// FINAL BOOTSTRAP — VIA SCW (The ONLY path that works)
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP TRIGGER — DIRECT WAREHOUSE CALL           ║
+║ 🚀 FINAL BOOTSTRAP — VIA SCW (Warehouse requires SCW caller) ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • SCW bypassed - calling Warehouse directly                  ║
+║ • Contract requires: msg.sender == scw                       ║
+║ • SCW.execute() → Warehouse contract                         ║
 ║ • Approval already confirmed (tx: 0x09d401f5...)              ║
 ║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -3140,7 +3136,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 
   try {
     // =====================================================================
-    // Encode the warehouse bootstrap call (NO SCW EXECUTE!)
+    // STEP 1: Encode the warehouse bootstrap call
     // =====================================================================
     const warehouseIface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
@@ -3148,27 +3144,40 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     
     const warehouseCalldata = warehouseIface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
-      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // ~170,212.77 BWZC
+      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // 170,212.77 BWZC
     );
 
     // =====================================================================
-    // Get fresh fee data
+    // STEP 2: Encode SCW.execute() to call the warehouse
+    // =====================================================================
+    const scwIface = new ethers.Interface([
+      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
+    ]);
+    
+    const finalCalldata = scwIface.encodeFunctionData('execute', [
+      LIVE.WAREHOUSE_CONTRACT,
+      0n,
+      warehouseCalldata
+    ]);
+
+    // =====================================================================
+    // STEP 3: Get fresh fee data
     // =====================================================================
     const feeData = await this.provider.getFeeData();
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
     // =====================================================================
-    // SEND DIRECTLY TO WAREHOUSE CONTRACT
+    // STEP 4: SEND TO SCW (NOT WAREHOUSE!)
     // =====================================================================
-    console.log('📤 Sending transaction directly to Warehouse contract...');
-    console.log(`📤 Calldata length: ${warehouseCalldata.length}`);
-    console.log(`📤 Calldata preview: ${warehouseCalldata.substring(0, 100)}...`);
+    console.log('📤 Sending transaction to SCW (which will call Warehouse)...');
+    console.log(`📤 Calldata length: ${finalCalldata.length}`);
+    console.log(`📤 Calldata preview: ${finalCalldata.substring(0, 100)}...`);
 
     const txResponse = await this.signer.sendTransaction({
-      to: LIVE.WAREHOUSE_CONTRACT,  // ← DIRECT TO WAREHOUSE, NOT SCW!
-      data: warehouseCalldata,       // ← JUST THE WAREHOUSE FUNCTION
-      gasLimit: 1_000_000n,
+      to: LIVE.SCW_ADDRESS,  // ← CRITICAL: Send to SCW, not Warehouse
+      data: finalCalldata,
+      gasLimit: 1_500_000n,   // Higher for flashloan complex logic
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
@@ -3190,6 +3199,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Cycle count: ${this.contractCycleCount}                    ║
+║  • Balancer Flashloan should appear in internal txs           ║
 ║  • Contract is now self-automating                            ║
 ╚═══════════════════════════════════════════════════════════════╝
       `);
@@ -3201,8 +3211,6 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     throw error;
   }
 }
-
-
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
