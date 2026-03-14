@@ -3125,42 +3125,31 @@ if (!this.bootstrapAttempted) {
 await this.checkContractCycleCount();
 
 // =====================================================================
-// FINAL BOOTSTRAP TRANSACTION (Approval Already Complete)
+// FINAL BOOTSTRAP TRANSACTION — DIRECT WAREHOUSE CALL
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP TRIGGER — emergencyBulletproofBootstrap    ║
+║ 🚀 FINAL BOOTSTRAP TRIGGER — DIRECT WAREHOUSE CALL           ║
 ╠═══════════════════════════════════════════════════════════════╣
+║ • SCW bypassed - calling Warehouse directly                  ║
 ║ • Approval already confirmed (tx: 0x09d401f5...)              ║
-║ • Using DIRECT sendTransaction() to prevent data loss         ║
 ║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
     // =====================================================================
-    // Encode the warehouse bootstrap call
+    // Encode the warehouse bootstrap call (NO SCW EXECUTE!)
     // =====================================================================
     const warehouseIface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
     ]);
+    
     const warehouseCalldata = warehouseIface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
       [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // ~170,212.77 BWZC
     );
-
-    // =====================================================================
-    // Encode SCW.execute() to call the warehouse
-    // =====================================================================
-    const scwIface = new ethers.Interface([
-      'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
-    ]);
-    const finalCalldata = scwIface.encodeFunctionData('execute', [
-      LIVE.WAREHOUSE_CONTRACT,
-      0n,
-      warehouseCalldata
-    ]);
 
     // =====================================================================
     // Get fresh fee data
@@ -3170,15 +3159,15 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
     // =====================================================================
-    // SEND DIRECTLY - NO MANUAL SIGNING (PREVENTS DATA LOSS)
+    // SEND DIRECTLY TO WAREHOUSE CONTRACT
     // =====================================================================
-    console.log('📤 Sending transaction directly via signer...');
-    console.log(`📤 Calldata length: ${finalCalldata.length}`);
-    console.log(`📤 Calldata preview: ${finalCalldata.substring(0, 100)}...`);
+    console.log('📤 Sending transaction directly to Warehouse contract...');
+    console.log(`📤 Calldata length: ${warehouseCalldata.length}`);
+    console.log(`📤 Calldata preview: ${warehouseCalldata.substring(0, 100)}...`);
 
     const txResponse = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,
-      data: finalCalldata,
+      to: LIVE.WAREHOUSE_CONTRACT,  // ← DIRECT TO WAREHOUSE, NOT SCW!
+      data: warehouseCalldata,       // ← JUST THE WAREHOUSE FUNCTION
       gasLimit: 1_000_000n,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
@@ -3212,6 +3201,7 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     throw error;
   }
 }
+
 
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
