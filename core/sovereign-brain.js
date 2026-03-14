@@ -3120,23 +3120,40 @@ if (!this.bootstrapAttempted) {
 }
 
 // =====================================================================
-// FINAL BOOTSTRAP — VIA SCW (The ONLY path that works)
+// FINAL BOOTSTRAP — VIA SCW (With Owner Check)
 // =====================================================================
 if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 FINAL BOOTSTRAP — VIA SCW (Warehouse requires SCW caller) ║
+║ 🚀 FINAL BOOTSTRAP — VIA SCW (With Owner Check)              ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • Contract requires: msg.sender == scw                       ║
+║ • Verifying SCW owner before sending                         ║
 ║ • SCW.execute() → Warehouse contract                         ║
 ║ • Approval already confirmed (tx: 0x09d401f5...)              ║
-║ • Single transaction — then contract self-automates           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
     // =====================================================================
-    // STEP 1: Encode the warehouse bootstrap call
+    // STEP 1: Check SCW Owner
+    // =====================================================================
+    const scwContract = new ethers.Contract(
+      LIVE.SCW_ADDRESS,
+      ['function owner() view returns (address)'],
+      this.provider
+    );
+    
+    const scwOwner = await scwContract.owner();
+    console.log(`🔍 SCW Owner: ${scwOwner}`);
+    console.log(`🔍 Your EOA: ${this.signer.address}`);
+    
+    if (scwOwner.toLowerCase() !== this.signer.address.toLowerCase()) {
+      throw new Error(`❌ Your EOA is not the SCW owner. SCW owner is: ${scwOwner}`);
+    }
+    console.log('✅ EOA is authorized to call SCW.execute()');
+
+    // =====================================================================
+    // STEP 2: Encode the warehouse bootstrap call
     // =====================================================================
     const warehouseIface = new ethers.Interface([
       'function emergencyBulletproofBootstrap(uint256) external'
@@ -3144,11 +3161,11 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     
     const warehouseCalldata = warehouseIface.encodeFunctionData(
       'emergencyBulletproofBootstrap',
-      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]  // 170,212.77 BWZC
+      [LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP]
     );
 
     // =====================================================================
-    // STEP 2: Encode SCW.execute() to call the warehouse
+    // STEP 3: Encode SCW.execute() to call the warehouse
     // =====================================================================
     const scwIface = new ethers.Interface([
       'function execute(address dest, uint256 value, bytes calldata func) external returns (bytes memory)'
@@ -3161,23 +3178,23 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
     ]);
 
     // =====================================================================
-    // STEP 3: Get fresh fee data
+    // STEP 4: Get fresh fee data
     // =====================================================================
     const feeData = await this.provider.getFeeData();
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("50", "gwei");
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei");
 
     // =====================================================================
-    // STEP 4: SEND TO SCW (NOT WAREHOUSE!)
+    // STEP 5: SEND TO SCW
     // =====================================================================
-    console.log('📤 Sending transaction to SCW (which will call Warehouse)...');
+    console.log('📤 Sending transaction to SCW (authorized owner)...');
     console.log(`📤 Calldata length: ${finalCalldata.length}`);
     console.log(`📤 Calldata preview: ${finalCalldata.substring(0, 100)}...`);
 
     const txResponse = await this.signer.sendTransaction({
-      to: LIVE.SCW_ADDRESS,  // ← CRITICAL: Send to SCW, not Warehouse
+      to: LIVE.SCW_ADDRESS,
       data: finalCalldata,
-      gasLimit: 1_500_000n,   // Higher for flashloan complex logic
+      gasLimit: 1_500_000n,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2,
@@ -3199,7 +3216,6 @@ if (this.contractCycleCount === 0 && !this.bootstrapCompleted) {
 ║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Cycle count: ${this.contractCycleCount}                    ║
-║  • Balancer Flashloan should appear in internal txs           ║
 ║  • Contract is now self-automating                            ║
 ╚═══════════════════════════════════════════════════════════════╝
       `);
