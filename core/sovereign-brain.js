@@ -3102,6 +3102,21 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 
+// Add at the VERY TOP of your initialize() function
+if (this.bootstrapCompleted) {
+  console.log('✅ Bootstrap already completed, skipping...');
+  return;
+}
+
+// Add a flag to prevent retries
+const MAX_RETRIES = 1;
+if (!this.bootstrapAttempted) {
+  this.bootstrapAttempted = true;
+} else {
+  console.log('⏰ Bootstrap already attempted, stopping retry loop');
+  process.exit(0); // Exit the process
+}
+   
  // =====================================================================
 // FINAL BOOTSTRAP TRANSACTION (Approval Already Complete)
 // =====================================================================
