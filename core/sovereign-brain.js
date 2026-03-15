@@ -3102,89 +3102,145 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// FINAL ONE-TIME BOOTSTRAP - NO FS, NO REQUIRE, RENDER-SAFE
+// CIRCUIT BREAKER - PREVENT INFINITE RETRIES (RENDER-SAFE)
 // =====================================================================
-// Runs exactly once per process start — no file lock needed
-// To force retry: restart the Render service (or change env var)
+// In-memory flag only - no fs/require needed
+if (!global.bootstrapState) {
+  global.bootstrapState = {
+    stepCAttempted: false,
+    stepCTimestamp: 0,
+    stepCSuccess: false
+  };
+}
 
-let bootstrapAlreadyRun = false; // in-memory flag (reset on process restart)
-
-if (bootstrapAlreadyRun) {
+// Check if Step C already attempted in this process
+if (global.bootstrapState.stepCAttempted) {
+  const timeSince = Date.now() - global.bootstrapState.stepCTimestamp;
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🛑 BOOTSTRAP ALREADY EXECUTED IN THIS PROCESS - SKIPPING ║
+║  🛑 CIRCUIT BREAKER ACTIVE                                    ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Step C already attempted ${Math.floor(timeSince/1000)}s ago                     ║
+║  • Success: ${global.bootstrapState.stepCSuccess ? 'YES' : 'NO'}                                                ║
+║  • NO FURTHER BOOTSTRAP ATTEMPTS IN THIS PROCESS             ║
+║  • System continuing in monitoring mode only                 ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
-  // continue with normal MEV monitoring
+  // Skip Step C but continue with monitoring
 } else {
-  bootstrapAlreadyRun = true; // lock forever in this run
+  // Mark as attempted before starting
+  global.bootstrapState.stepCAttempted = true;
+  global.bootstrapState.stepCTimestamp = Date.now();
+
+  // =====================================================================
+  // STEP C ONLY - EMERGENCY BOOTSTRAP (A & B COMPLETED)
+  // =====================================================================
+  console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║ 🚀 STEP C: EMERGENCY BOOTSTRAP EXECUTION                      ║
+╠═══════════════════════════════════════════════════════════════╣
+║ • A: JIT Approval - COMPLETE                                  ║
+║ • B: scw = EOA - COMPLETE (0x3d372629...)                     ║
+║ • C: Emergency Bootstrap - EXECUTING NOW                      ║
+║ • HARD-CODED DATA (bypasses encoding issues)                  ║
+║ • CIRCUIT BREAKER: Single attempt only                        ║
+╚═══════════════════════════════════════════════════════════════╝
+  `);
 
   try {
-    console.log("\n🚀 FINAL one-time bootstrap attempt starting...");
-
-    const WAREHOUSE = LIVE.WAREHOUSE_CONTRACT;
-    const ORIGINAL_SCW = LIVE.SCW_ADDRESS;
-    const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-
-    const warehouse = new ethers.Contract(WAREHOUSE, [
-      'function adminSetAddress(bytes32 key, address value) external',
-      'function emergencyBulletproofBootstrap(uint256) external'
-    ], this.signer);
+    // HARD-CODED DATA - selector + argument (1)
+    // emergencyBulletproofBootstrap(uint256) = 0x408be137
+    // argument = 1 (as 32-byte hex)
+    const HARD_CODED_DATA = "0x408be1370000000000000000000000000000000000000000000000000000000000000001";
+    
+    console.log(`📤 Sending bootstrap with hard-coded data...`);
+    console.log(`   Data: ${HARD_CODED_DATA}`);
+    console.log(`   To: ${LIVE.WAREHOUSE_CONTRACT}`);
+    console.log(`   Gas: 1,500,000 (max headroom for Balancer joins)`);
 
     const feeData = await this.provider.getFeeData();
-    const maxFee = feeData.maxFeePerGas || ethers.parseUnits("1", "gwei");
-    const prioFee = maxFee * 80n / 100n;
+    const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("20", "gwei");
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei");
 
-    console.log(`Live fees → max: ${ethers.formatUnits(maxFee, "gwei")} gwei`);
-
-    // 1. Force set pointer
-    console.log("\n1. Setting scw → EOA...");
-    const txSet = await warehouse.adminSetAddress(LITERAL_KEY, await this.signer.getAddress(), {
-      gasLimit: 150_000n,
-      maxFeePerGas: maxFee,
-      maxPriorityFeePerGas: prioFee
+    const tx = await this.signer.sendTransaction({
+      to: LIVE.WAREHOUSE_CONTRACT,
+      data: HARD_CODED_DATA,
+      gasLimit: 1_500_000n,
+      maxFeePerGas: maxFeePerGas,
+      maxPriorityFeePerGas: maxPriorityFeePerGas,
+      type: 2
     });
-    console.log(`Set tx: ${txSet.hash}`);
-    await txSet.wait();
-    console.log("✅ Pointer set");
 
-    // 2. Bootstrap
-    console.log("\n2. Calling emergencyBulletproofBootstrap...");
-    const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
-      gasLimit: 800_000n,
-      maxFeePerGas: maxFee,
-      maxPriorityFeePerGas: prioFee
-    });
-    console.log(`Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
-
-    const receipt = await txBoot.wait();
-    if (receipt.status !== 1) {
-      throw new Error(`Reverted - gas used: ${receipt.gasUsed}`);
-    }
-
-    console.log(`✅ Success! Gas used: ${receipt.gasUsed}`);
-
-    // 3. Restore
-    console.log("\n3. Restoring original SCW...");
-    await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
-      gasLimit: 150_000n,
-      maxFeePerGas: maxFee,
-      maxPriorityFeePerGas: prioFee
-    }).then(t => t.wait());
-    console.log("✅ Restored");
-
-    console.log(`
+    console.log(`✅ TX SENT: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+    console.log(`⏳ Waiting for confirmation (this may take 30-60 seconds)...`);
+    
+    const receipt = await tx.wait();
+    
+    if (receipt.status === 1) {
+      console.log(`\n✅✅✅ STEP C SUCCESSFUL! ✅✅✅`);
+      console.log(`   Gas used: ${receipt.gasUsed}`);
+      console.log(`   Block: ${receipt.blockNumber}`);
+      
+      // Mark success in circuit breaker
+      global.bootstrapState.stepCSuccess = true;
+      
+      // Now execute Steps D & E
+      console.log(`\n📝 STEP D: Restoring SCW...`);
+      const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+      const warehouse = new ethers.Contract(LIVE.WAREHOUSE_CONTRACT, [
+        'function adminSetAddress(bytes32 key, address value) external'
+      ], this.signer);
+      
+      const restoreTx = await warehouse.adminSetAddress(LITERAL_KEY, LIVE.SCW_ADDRESS, {
+        gasLimit: 150_000n,
+        maxFeePerGas: maxFeePerGas,
+        maxPriorityFeePerGas: maxPriorityFeePerGas
+      });
+      console.log(`   Restore tx: ${restoreTx.hash}`);
+      await restoreTx.wait();
+      console.log(`   ✅ SCW restored`);
+      
+      console.log(`\n📝 STEP E: Revoking approval...`);
+      const bwzc = new ethers.Contract(LIVE.TOKENS.BWAEZI, [
+        'function approve(address spender, uint256 amount) external returns (bool)'
+      ], this.signer);
+      
+      const revokeTx = await bwzc.approve(LIVE.WAREHOUSE_CONTRACT, 0n, {
+        gasLimit: 100_000n,
+        maxFeePerGas: maxFeePerGas,
+        maxPriorityFeePerGas: maxPriorityFeePerGas
+      });
+      console.log(`   Revoke tx: ${revokeTx.hash}`);
+      await revokeTx.wait();
+      
+      // Verify revocation
+      const finalAllowance = await bwzc.allowance(await this.signer.getAddress(), LIVE.WAREHOUSE_CONTRACT);
+      console.log(`   Final allowance: ${ethers.formatEther(finalAllowance)} BWZC`);
+      console.log(`   ✅ Approval revoked - EOA now safe`);
+      
+      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ ✅ BOOTSTRAP COMPLETE - ONE-TIME ONLY COMPLETE ║
+║  ✅✅✅ BOOTSTRAP COMPLETE! ✅✅✅                             ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Step C: Bootstrap - SUCCESS                                ║
+║  • Step D: SCW Restored - SUCCESS                             ║
+║  • Step E: Approval Revoked - SUCCESS                         ║
+║  • Contract now self-automating                               ║
+║  • Circuit breaker: No further attempts                       ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
-
-  } catch (err) {
-    console.error("\n❌ BOOTSTRAP FAILED:", err.message || err);
-    if (err.transactionHash) {
-      console.log(`Failed tx: https://etherscan.io/tx/${err.transactionHash}`);
+      `);
+      
+    } else {
+      throw new Error('Transaction reverted');
     }
-    console.log("No retry will occur in this process run");
+  } catch (error) {
+    console.error('\n❌ Step C failed:', error.message);
+    if (error.transactionHash) {
+      console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+    }
+    console.log('\n⚠️ Circuit breaker active - no retry will occur in this process');
+    // Don't rethrow - let the bot continue in monitoring mode
   }
 }
 // THEN continue with normal MEV initialization...
