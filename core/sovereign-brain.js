@@ -3102,10 +3102,10 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// ONE-SHOT LITERAL-KEY BOOTSTRAP - FINAL ATTEMPT (OPTIMIZED GAS)
+// ONE-SHOT LITERAL-KEY BOOTSTRAP - FINAL ATTEMPT (FIXED FEES)
 // =====================================================================
 
-console.log("Starting FINAL bootstrap fix with OPTIMIZED GAS...");
+console.log("Starting FINAL bootstrap fix with CORRECTED FEES...");
 
 const WAREHOUSE = "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f";
 const ORIGINAL_SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
@@ -3113,67 +3113,97 @@ const LITERAL_KEY = "0x736377000000000000000000000000000000000000000000000000000
 
 const warehouse = new ethers.Contract(WAREHOUSE, [
   'function adminSetAddress(bytes32 key, address value) external',
-  'function emergencyBulletproofBootstrap(uint256) external'
+  'function emergencyBulletproofBootstrap(uint256) external',
+  'function scw() view returns (address)'
 ], this.signer);
 
 const EOA = await this.signer.getAddress();
 
-// Get current network gas prices
+// =====================================================================
+// DYNAMIC FEE ALIGNMENT - CRITICAL FIX
+// =====================================================================
 const feeData = await this.provider.getFeeData();
-const baseFee = feeData.maxFeePerGas || ethers.parseUnits("0.5", "gwei");
-const priorityFee = ethers.parseUnits("0.1", "gwei");
+// Add 20% buffer to market rates to ensure success
+const marketFee = (feeData.maxFeePerGas * 120n) / 100n;
+// CRITICAL: Priority fee MUST be <= maxFee
+const priorityFee = marketFee;  // Set equal to satisfy constraint
 
-console.log(`📊 Current network gas: ${ethers.formatUnits(baseFee, 'gwei')} Gwei`);
+console.log(`📊 Current network gas:`);
+console.log(`   • Base network fee: ${ethers.formatUnits(feeData.maxFeePerGas || 0n, 'gwei')} Gwei`);
+console.log(`   • Adjusted with 20% buffer: ${ethers.formatUnits(marketFee, 'gwei')} Gwei`);
+console.log(`   • Priority fee (equal to max): ${ethers.formatUnits(priorityFee, 'gwei')} Gwei`);
 
-// 1. Set scw = EOA with literal key
-console.log("\n1. Setting scw → EOA...");
-const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
-  gasLimit: 150_000n,
-  maxFeePerGas: baseFee,
-  maxPriorityFeePerGas: priorityFee
-});
-console.log(`Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
-await txSet.wait();
-console.log("✅ Set confirmed");
+// =====================================================================
+// CHECK SCW POINTER (Avoid double-setting)
+// =====================================================================
+console.log("\n1. Checking current SCW pointer...");
+const currentScw = await warehouse.scw();
+console.log(`   Current scw: ${currentScw}`);
+console.log(`   Target EOA: ${EOA}`);
 
-// 2. Bootstrap with realistic gas
-console.log("\n2. Calling emergencyBulletproofBootstrap with OPTIMIZED GAS...");
-console.log(`   • Gas price: ${ethers.formatUnits(baseFee, 'gwei')} Gwei`);
+if (currentScw.toLowerCase() !== EOA.toLowerCase()) {
+  console.log("   🛠️ Pointer needs alignment - setting scw → EOA...");
+  const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
+    gasLimit: 150_000n,
+    maxFeePerGas: marketFee,
+    maxPriorityFeePerGas: priorityFee
+  });
+  console.log(`   Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
+  await txSet.wait();
+  console.log("   ✅ Pointer set confirmed");
+} else {
+  console.log("   ✅ Pointer already correct - skipping");
+}
+
+// =====================================================================
+// BOOTSTRAP
+// =====================================================================
+console.log("\n2. Calling emergencyBulletproofBootstrap...");
+console.log(`   • Max fee: ${ethers.formatUnits(marketFee, 'gwei')} Gwei`);
 console.log(`   • Gas limit: 800,000`);
-console.log(`   • Estimated cost: ~${ethers.formatEther(baseFee * 800000n)} ETH`);
+console.log(`   • Estimated max cost: ${ethers.formatEther(marketFee * 800000n)} ETH`);
 
 const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
-  gasLimit: 800_000n,          // Reduced from 2M
-  maxFeePerGas: baseFee,
+  gasLimit: 800_000n,
+  maxFeePerGas: marketFee,
   maxPriorityFeePerGas: priorityFee
 });
-console.log(`Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
+console.log(`   Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
 
 const receipt = await txBoot.wait();
 if (receipt.status !== 1) {
   console.error("❌ Bootstrap reverted - gas used:", receipt.gasUsed.toString());
   throw new Error("Revert");
 }
-console.log(`✅ Success! Gas used: ${receipt.gasUsed}`);
+console.log(`   ✅ Success! Gas used: ${receipt.gasUsed}`);
+console.log(`   Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
 
-// 3. Restore original SCW
+// =====================================================================
+// RESTORE ORIGINAL SCW
+// =====================================================================
 console.log("\n3. Restoring original SCW...");
 const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
   gasLimit: 150_000n,
-  maxFeePerGas: baseFee,
+  maxFeePerGas: marketFee,
   maxPriorityFeePerGas: priorityFee
 });
 await txRestore.wait();
-console.log("✅ Pointer restored");
+console.log("   ✅ Pointer restored");
 
-// Done
+// =====================================================================
+// FINAL VERIFICATION
+// =====================================================================
+const finalCycle = await warehouse.cycleCount().catch(() => "unknown");
+console.log(`\n📊 Final cycle count: ${finalCycle}`);
+
 console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ✅✅✅ FINAL BOOTSTRAP COMPLETE! ✅✅✅                        ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Gas price: ${ethers.formatUnits(baseFee, 'gwei')} Gwei (market rate)       ║
-║  • Total cost: ~${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH     ║
-║  • Check cycle count on dashboard                            ║
+║  • Gas used: ${receipt.gasUsed}                                         ║
+║  • Total cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH           ║
+║  • Cycle count: ${finalCycle}                                           ║
+║  • System self-automating                                     ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
 // THEN continue with normal MEV initialization...
