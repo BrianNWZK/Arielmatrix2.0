@@ -3143,17 +3143,166 @@ if (global.bootstrapState.stepCAttempted) {
 ║ • B: scw = EOA - COMPLETE (0x3d372629...)                     ║
 ║ • C: Emergency Bootstrap - EXECUTING NOW                      ║
 ║ • HARD-CODED DATA (bypasses encoding issues)                  ║
+║ • FULL DIAGNOSTICS ENABLED                                    ║
 ║ • CIRCUIT BREAKER: Single attempt only                        ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
-    // HARD-CODED DATA - selector + argument (1)
-    // emergencyBulletproofBootstrap(uint256) = 0x408be137
-    // argument = 1 (as 32-byte hex)
+    // =====================================================================
+    // DIAGNOSTIC 1: Verify SCW Pointer with Hard-coded Literal Key
+    // =====================================================================
+    console.log('\n🔍 DIAGNOSTIC 1: Verifying SCW pointer...');
+    const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+    const warehouse = new ethers.Contract(LIVE.WAREHOUSE_CONTRACT, [
+      'function scw() view returns (address)',
+      'function adminSetAddress(bytes32 key, address value) external',
+      'function paused() view returns (bool)',
+      'function cycleCount() view returns (uint256)',
+      'function getConsensusEthPrice() external returns (uint256, uint8)',
+      'function stalenessThreshold() view returns (uint256)' // Added to verify the update
+    ], this.signer);
+
+    const currentScw = await warehouse.scw();
+    const eoaAddress = await this.signer.getAddress();
+    console.log(`   Current SCW pointer: ${currentScw}`);
+    console.log(`   Your EOA address: ${eoaAddress}`);
+
+    if (currentScw.toLowerCase() !== eoaAddress.toLowerCase()) {
+      console.log('   ⚠️ SCW pointer mismatch! Resetting with hard-coded key...');
+      
+      const resetTx = await warehouse.adminSetAddress(LITERAL_KEY, eoaAddress, {
+        gasLimit: 150_000n
+      });
+      console.log(`   Reset tx: ${resetTx.hash}`);
+      await resetTx.wait();
+      
+      // Verify the fix
+      const newScw = await warehouse.scw();
+      if (newScw.toLowerCase() !== eoaAddress.toLowerCase()) {
+        throw new Error('❌ CRITICAL: Failed to set SCW pointer');
+      }
+      console.log('   ✅ SCW pointer successfully reset to EOA');
+    } else {
+      console.log('   ✅ SCW pointer already correct (points to EOA)');
+    }
+
+    // =====================================================================
+    // DIAGNOSTIC 1.5: Verify Staleness Threshold (24h)
+    // =====================================================================
+    console.log('\n🔍 DIAGNOSTIC 1.5: Verifying staleness threshold...');
+    const staleness = await warehouse.stalenessThreshold();
+    console.log(`   Staleness threshold: ${staleness}s (${staleness/3600}h)`);
+    
+    if (staleness < 86400) {
+      console.log(`   ⚠️ Staleness is only ${staleness/3600}h, not 24h`);
+    } else {
+      console.log(`   ✅ Staleness correctly set to 24h (86400s)`);
+    }
+
+    // =====================================================================
+    // DIAGNOSTIC 2: Check Contract State
+    // =====================================================================
+    console.log('\n🔍 DIAGNOSTIC 2: Checking contract state...');
+    
+    const isPaused = await warehouse.paused();
+    console.log(`   Paused: ${isPaused ? 'YES' : 'NO'}`);
+    if (isPaused) throw new Error('❌ Warehouse is paused');
+
+    const currentCycle = await warehouse.cycleCount();
+    console.log(`   Current cycle: ${currentCycle}`);
+    if (currentCycle > 0n) {
+      console.log('   ✅ Already bootstrapped - no action needed');
+      global.bootstrapState.stepCSuccess = true;
+      return;
+    }
+
+    // =====================================================================
+    // DIAGNOSTIC 3: Check BWZC Balance and Allowance
+    // =====================================================================
+    console.log('\n🔍 DIAGNOSTIC 3: Checking BWZC state...');
+    
+    const bwzc = new ethers.Contract(LIVE.TOKENS.BWAEZI, [
+      'function balanceOf(address) view returns (uint256)',
+      'function allowance(address owner, address spender) view returns (uint256)'
+    ], this.signer);
+
+    const eoaBalance = await bwzc.balanceOf(eoaAddress);
+    console.log(`   Your EOA BWZC balance: ${ethers.formatEther(eoaBalance)}`);
+    
+    const allowance = await bwzc.allowance(eoaAddress, LIVE.WAREHOUSE_CONTRACT);
+    console.log(`   EOA → Warehouse allowance: ${ethers.formatEther(allowance)}`);
+    
+    if (eoaBalance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
+      throw new Error(`❌ Insufficient BWZC balance. Need ${ethers.formatEther(LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP)}`);
+    }
+    
+    if (allowance < LIVE.WAREHOUSE.MAX_BWZC_BOOTSTRAP) {
+      console.log('   ⚠️ Allowance too low - JIT approval may have failed');
+      // You could re-approve here if needed
+    } else {
+      console.log('   ✅ Allowance sufficient');
+    }
+
+    // =====================================================================
+    // DIAGNOSTIC 4: Check Oracle Health (Now with 24h staleness)
+    // =====================================================================
+    console.log('\n🔍 DIAGNOSTIC 4: Checking oracle health (24h staleness)...');
+    
+    try {
+      const [oraclePrice, oracleConfidence] = await warehouse.getConsensusEthPrice();
+      console.log(`   Oracle price: ${oraclePrice}`);
+      console.log(`   Oracle confidence: ${oracleConfidence}/3`);
+      console.log(`   ✅ Oracle is healthy with 24h tolerance`);
+    } catch (oracleError) {
+      console.log(`   ❌ Oracle check failed: ${oracleError.message}`);
+      console.log(`   This indicates oracle issues despite 24h staleness`);
+    }
+
+    // =====================================================================
+    // DIAGNOSTIC 5: Simulate the Call (to get exact revert reason)
+    // =====================================================================
+    console.log('\n🔍 DIAGNOSTIC 5: Simulating bootstrap call...');
+    
     const HARD_CODED_DATA = "0x408be1370000000000000000000000000000000000000000000000000000000000000001";
     
-    console.log(`📤 Sending bootstrap with hard-coded data...`);
+    try {
+      await this.provider.call({
+        to: LIVE.WAREHOUSE_CONTRACT,
+        data: HARD_CODED_DATA
+      });
+      console.log('   ✅ Simulation succeeded - transaction should work');
+    } catch (simError) {
+      console.log('   ❌ Simulation failed with:');
+      console.log(`   ${simError.message}`);
+      
+      // Try to decode revert reason
+      if (simError.data) {
+        const revertHex = simError.data.toString();
+        console.log(`   Revert data: ${revertHex.substring(0, 100)}...`);
+        
+        if (revertHex.includes('Only SCW')) {
+          console.log('   🔍 ERROR: SCW pointer is still wrong');
+        } else if (revertHex.includes('SCWInsufficientBWZC')) {
+          console.log('   🔍 ERROR: SCW needs more BWZC tokens');
+        } else if (revertHex.includes('SpreadTooLow')) {
+          console.log('   🔍 ERROR: Market spread too low - may need to wait');
+        } else if (revertHex.includes('OracleConsensusFailed')) {
+          console.log('   🔍 ERROR: Oracle consensus failed - price feeds issue');
+        } else if (revertHex.includes('InsufficientBalancerLiquidity')) {
+          console.log('   🔍 ERROR: Balancer pools lack liquidity');
+        } else if (revertHex.includes('SwapFailed')) {
+          console.log('   🔍 ERROR: DEX swap failed during arbitrage');
+        } else {
+          console.log('   🔍 Unknown error - check contract');
+        }
+      }
+    }
+
+    // =====================================================================
+    // STEP C: Execute Bootstrap (if diagnostics passed)
+    // =====================================================================
+    console.log(`\n📤 Sending bootstrap with hard-coded data...`);
     console.log(`   Data: ${HARD_CODED_DATA}`);
     console.log(`   To: ${LIVE.WAREHOUSE_CONTRACT}`);
     console.log(`   Gas: 1,500,000 (max headroom for Balancer joins)`);
@@ -3187,10 +3336,6 @@ if (global.bootstrapState.stepCAttempted) {
       
       // Now execute Steps D & E
       console.log(`\n📝 STEP D: Restoring SCW...`);
-      const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-      const warehouse = new ethers.Contract(LIVE.WAREHOUSE_CONTRACT, [
-        'function adminSetAddress(bytes32 key, address value) external'
-      ], this.signer);
       
       const restoreTx = await warehouse.adminSetAddress(LITERAL_KEY, LIVE.SCW_ADDRESS, {
         gasLimit: 150_000n,
@@ -3202,9 +3347,6 @@ if (global.bootstrapState.stepCAttempted) {
       console.log(`   ✅ SCW restored`);
       
       console.log(`\n📝 STEP E: Revoking approval...`);
-      const bwzc = new ethers.Contract(LIVE.TOKENS.BWAEZI, [
-        'function approve(address spender, uint256 amount) external returns (bool)'
-      ], this.signer);
       
       const revokeTx = await bwzc.approve(LIVE.WAREHOUSE_CONTRACT, 0n, {
         gasLimit: 100_000n,
