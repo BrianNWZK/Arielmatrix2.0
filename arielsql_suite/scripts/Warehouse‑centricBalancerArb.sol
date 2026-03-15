@@ -1084,52 +1084,65 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
 }
 
     function calculatePreciseBootstrap() public returns (uint256 totalBwzcNeeded, uint256 usdcLoanAmount, uint256 wethLoanAmount) {
-        totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-        usdcLoanAmount = TOTAL_BOOTSTRAP_USD / 2;
-        
-        (uint256 ethPrice,) = _getConsensusEthPrice();
-        wethLoanAmount = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice);
+    totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
+    usdcLoanAmount = TOTAL_BOOTSTRAP_USD / 2;
+    
+    // Try to get real ETH price, fallback to $2000 if oracle fails
+    uint256 ethPrice;
+    try this.getConsensusEthPrice() returns (uint256 price, uint8) {
+        ethPrice = price;
+    } catch {
+        ethPrice = 2000e18; // $2000 fallback
     }
     
+    wethLoanAmount = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice);
+}
+
+    
     function executeBulletproofBootstrap(uint256 bwzcForArbitrage) external nonReentrant whenNotPaused {
-        if (msg.sender != scw) revert("Only SCW");
-        if (_calculateCurrentSpread() < _calculateMinRequiredSpread()) revert SpreadTooLow();
-        
-        uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-        IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
-        
-        _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
-        
-        (uint256 ethPrice,) = _getConsensusEthPrice();
-        uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
-        uint256 scaledWeth = _calculateScaledAmount(_calculateWETHAmount(TOTAL_BOOTSTRAP_USD / 2, ethPrice), currentScaleFactorBps);
-        
-        bytes memory userData = abi.encode(bwzcForArbitrage, scaledUsdc, scaledWeth, block.timestamp + 1 hours);
-        
-        address[] memory tokens = new address[](2);
-        tokens[0] = usdc;
-        tokens[1] = weth;
-        
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = scaledUsdc;
-        amounts[1] = scaledWeth;
+    if (msg.sender != scw) revert("Only SCW");
+    if (_calculateCurrentSpread() < _calculateMinRequiredSpread()) revert SpreadTooLow();
+    
+    uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
+    IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
+    
+    _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
+    
+    // Try to get real ETH price, fallback to $2000 if oracle fails
+    uint256 ethPrice;
+    try this.getConsensusEthPrice() returns (uint256 price, uint8) {
+        ethPrice = price;
+    } catch {
+        ethPrice = 2000e18; // $2000 fallback for bootstrap
+    }
+    
+    uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
+    uint256 scaledWeth = _calculateScaledAmount(_calculateWETHAmount(TOTAL_BOOTSTRAP_USD / 2, ethPrice), currentScaleFactorBps);
+    
+    bytes memory userData = abi.encode(bwzcForArbitrage, scaledUsdc, scaledWeth, block.timestamp + 1 hours);
+    
+    address[] memory tokens = new address[](2);
+    tokens[0] = usdc;
+    tokens[1] = weth;
+    
+    uint256[] memory amounts = new uint256[](2);
+    amounts[0] = scaledUsdc;
+    amounts[1] = scaledWeth;
 
-        try IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData) {
-            // Success handled in callback
-        } catch {
-            revert SwapFailed();
-        }
-
-        if (currentScaleFactorBps < MAX_SCALE_BPS) {
-            currentScaleFactorBps += SCALE_INCREMENT_BPS;
-            emit ScaleFactorUpdated(currentScaleFactorBps);
-        } else {
-            revert ScaleLimitReached();
-        }
-
-        emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
+    try IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData) {
+        // Success handled in callback
+    } catch {
+        revert SwapFailed();
     }
 
+    if (currentScaleFactorBps < MAX_SCALE_BPS) {
+        currentScaleFactorBps += SCALE_INCREMENT_BPS;
+        emit ScaleFactorUpdated(currentScaleFactorBps);
+    }
+
+    emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
+}
+   
     function addUniswapV3Position(uint256 tokenId, bool isUsdcPosition) external onlyOwner {
         (, , address token0, address token1, , , , , , , , ) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
         
@@ -1250,12 +1263,12 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     }
 
       // =====================================================================
-// ULTIMATE BOOTSTRAP FUNCTION - WORKS WITH ZERO LIQUIDITY
-// =====================================================================
-function emergencyBulletproofBootstrap(
+     // ULTIMATE BOOTSTRAP FUNCTION - WORKS WITH ZERO LIQUIDITY
+    // =====================================================================
+    function emergencyBulletproofBootstrap(
     uint256 bwzcForArbitrage,
     uint256 ethPrice           // Only need ETH price as hint
-) external nonReentrant whenNotPaused {
+  ) external nonReentrant whenNotPaused {
     // Allow EOA OR SCW (makes testing easier)
     if (msg.sender != owner() && msg.sender != scw) revert("Not authorized");
     
