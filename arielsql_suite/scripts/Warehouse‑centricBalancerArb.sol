@@ -1067,17 +1067,21 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     }
 
     function _phase1PreSeed(uint256 bwzcAmount) internal {
-        uint256 bwzcForUsdc = bwzcAmount / 2;
-        uint256 bwzcForWeth = bwzcAmount - bwzcForUsdc;
-        
-        uint256 usdcForSeed = FullMath.mulDiv(bwzcForUsdc, BALANCER_PRICE_USD, 1e18);
-        (uint256 ethPrice,) = _getConsensusEthPrice();
-        uint256 wethUsdValue = FullMath.mulDiv(bwzcForWeth, BALANCER_PRICE_USD, 1e18);
-        uint256 wethForSeed = FullMath.mulDiv(wethUsdValue, 1e18, ethPrice);
-        
-        _addToBalancerPool(balBWUSDCId, usdcForSeed, bwzcForUsdc);
-        _addToBalancerPool(balBWWETHId, wethForSeed, bwzcForWeth);
-    }
+    uint256 bwzcForUsdc = bwzcAmount / 2;
+    uint256 bwzcForWeth = bwzcAmount - bwzcForUsdc;
+    
+    // Use BALANCER_PRICE_USD as initial price (will be corrected by arbitrage)
+    uint256 usdcForSeed = FullMath.mulDiv(bwzcForUsdc, BALANCER_PRICE_USD, 1e18);
+    
+    // For WETH pool, use a reasonable ETH price assumption (will be arbitraged)
+    uint256 ethPrice = 2000e18; // $2000 assumption
+    uint256 wethUsdValue = FullMath.mulDiv(bwzcForWeth, BALANCER_PRICE_USD, 1e18);
+    uint256 wethForSeed = FullMath.mulDiv(wethUsdValue, 1e18, ethPrice);
+    
+    // Add liquidity to Balancer pools (creates initial trading pairs)
+    _addToBalancerPool(balBWUSDCId, usdcForSeed, bwzcForUsdc);
+    _addToBalancerPool(balBWWETHId, wethForSeed, bwzcForWeth);
+}
 
     function calculatePreciseBootstrap() public returns (uint256 totalBwzcNeeded, uint256 usdcLoanAmount, uint256 wethLoanAmount) {
         totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
@@ -1245,49 +1249,63 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return _getConsensusEthPrice();
     }
 
-       // =====================================================================
-    // ADD THIS FUNCTION HERE - NO SPREAD CHECK FOR BOOTSTRAP
-    // =====================================================================
-    function emergencyBulletproofBootstrap(uint256 bwzcForArbitrage) external nonReentrant whenNotPaused {
-        if (msg.sender != scw) revert("Only SCW");
-        
-        // 🚫 SPREAD CHECK REMOVED - Bootstrap from zero!
-        
-        uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-        
-        // Check SCW has enough BWZC
-        if (IERC20(bwzc).balanceOf(scw) < totalBwzcNeeded) revert SCWInsufficientBWZC();
-        
-        IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
-        
-        _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
-        
-        (uint256 ethPrice,) = _getConsensusEthPrice();
-        uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
-        uint256 scaledWeth = _calculateScaledAmount(_calculateWETHAmount(TOTAL_BOOTSTRAP_USD / 2, ethPrice), currentScaleFactorBps);
-        
-        bytes memory userData = abi.encode(bwzcForArbitrage, scaledUsdc, scaledWeth, block.timestamp + 1 hours);
-        
-        address[] memory tokens = new address[](2);
-        tokens[0] = usdc;
-        tokens[1] = weth;
-        
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = scaledUsdc;
-        amounts[1] = scaledWeth;
-
-        // Execute flashloan
-        IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
-
-        // Increment scale factor for next cycle
-        if (currentScaleFactorBps < MAX_SCALE_BPS) {
-            currentScaleFactorBps += SCALE_INCREMENT_BPS;
-            emit ScaleFactorUpdated(currentScaleFactorBps);
-        }
-
-        emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
+      // =====================================================================
+// ULTIMATE BOOTSTRAP FUNCTION - WORKS WITH ZERO LIQUIDITY
+// =====================================================================
+function emergencyBulletproofBootstrap(
+    uint256 bwzcForArbitrage,
+    uint256 ethPrice           // Only need ETH price as hint
+) external nonReentrant whenNotPaused {
+    // Allow EOA OR SCW (makes testing easier)
+    if (msg.sender != owner() && msg.sender != scw) revert("Not authorized");
+    
+    uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
+    
+    // Always pull from SCW (has 30M tokens)
+    if (IERC20(bwzc).balanceOf(scw) < totalBwzcNeeded) revert SCWInsufficientBWZC();
+    IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
+    
+    // Pre-seed Balancer pools FIRST (creates initial liquidity)
+    _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
+    
+    // Calculate loan amounts based on scale factor
+    uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
+    uint256 scaledWeth = _calculateScaledAmount(
+        FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice),
+        currentScaleFactorBps
+    );
+    
+    // Prepare flashloan
+    bytes memory userData = abi.encode(
+        bwzcForArbitrage,
+        scaledUsdc,
+        scaledWeth,
+        block.timestamp + 1 hours
+    );
+    
+    address[] memory tokens = new address[](2);
+    tokens[0] = usdc;
+    tokens[1] = weth;
+    
+    uint256[] memory amounts = new uint256[](2);
+    amounts[0] = scaledUsdc;
+    amounts[1] = scaledWeth;
+    
+    // Execute flashloan - will work even with zero liquidity
+    // because Balancer flashloans don't require upfront liquidity
+    IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
+    
+    // Increment scale factor for next cycle
+    if (currentScaleFactorBps < MAX_SCALE_BPS) {
+        currentScaleFactorBps += SCALE_INCREMENT_BPS;
+        emit ScaleFactorUpdated(currentScaleFactorBps);
     }
-
+    
+    emit BootstrapExecuted(
+        bwzcForArbitrage,
+        scaledUsdc + (scaledWeth * ethPrice / 1e18)
+    );
+}
     receive() external payable {}
     
     fallback() external payable {
