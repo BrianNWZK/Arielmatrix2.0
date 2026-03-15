@@ -3102,13 +3102,14 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// ONE-SHOT LITERAL-KEY BOOTSTRAP - FINAL ATTEMPT
+// ONE-SHOT LITERAL-KEY BOOTSTRAP - FINAL ATTEMPT (OPTIMIZED GAS)
 // =====================================================================
 
-console.log("Starting FINAL bootstrap fix...");
+console.log("Starting FINAL bootstrap fix with OPTIMIZED GAS...");
 
 const WAREHOUSE = "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f";
-const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000"; // correct "scw" padded
+const ORIGINAL_SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
 
 const warehouse = new ethers.Contract(WAREHOUSE, [
   'function adminSetAddress(bytes32 key, address value) external',
@@ -3117,43 +3118,62 @@ const warehouse = new ethers.Contract(WAREHOUSE, [
 
 const EOA = await this.signer.getAddress();
 
+// Get current network gas prices
+const feeData = await this.provider.getFeeData();
+const baseFee = feeData.maxFeePerGas || ethers.parseUnits("0.5", "gwei");
+const priorityFee = ethers.parseUnits("0.1", "gwei");
+
+console.log(`📊 Current network gas: ${ethers.formatUnits(baseFee, 'gwei')} Gwei`);
+
 // 1. Set scw = EOA with literal key
-console.log("1. Setting scw → EOA...");
+console.log("\n1. Setting scw → EOA...");
 const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
-  gasLimit: 200_000n
+  gasLimit: 150_000n,
+  maxFeePerGas: baseFee,
+  maxPriorityFeePerGas: priorityFee
 });
 console.log(`Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
 await txSet.wait();
-console.log("Set confirmed");
+console.log("✅ Set confirmed");
 
-// 2. Bootstrap immediately (in same script/process)
-console.log("\n2. Calling emergencyBulletproofBootstrap...");
+// 2. Bootstrap with realistic gas
+console.log("\n2. Calling emergencyBulletproofBootstrap with OPTIMIZED GAS...");
+console.log(`   • Gas price: ${ethers.formatUnits(baseFee, 'gwei')} Gwei`);
+console.log(`   • Gas limit: 800,000`);
+console.log(`   • Estimated cost: ~${ethers.formatEther(baseFee * 800000n)} ETH`);
+
 const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
-  gasLimit: 2_000_000n,          // ample for flashloan + liquidity ops
-  maxFeePerGas: ethers.parseUnits("40", "gwei"),
-  maxPriorityFeePerGas: ethers.parseUnits("2", "gwei")
+  gasLimit: 800_000n,          // Reduced from 2M
+  maxFeePerGas: baseFee,
+  maxPriorityFeePerGas: priorityFee
 });
 console.log(`Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
 
 const receipt = await txBoot.wait();
 if (receipt.status !== 1) {
-  console.error("Bootstrap reverted - gas used:", receipt.gasUsed.toString());
+  console.error("❌ Bootstrap reverted - gas used:", receipt.gasUsed.toString());
   throw new Error("Revert");
 }
-console.log(`Success! Gas used: ${receipt.gasUsed}`);
+console.log(`✅ Success! Gas used: ${receipt.gasUsed}`);
 
 // 3. Restore original SCW
 console.log("\n3. Restoring original SCW...");
-const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2", {
-  gasLimit: 150_000n
+const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
+  gasLimit: 150_000n,
+  maxFeePerGas: baseFee,
+  maxPriorityFeePerGas: priorityFee
 });
 await txRestore.wait();
-console.log("Pointer restored");
+console.log("✅ Pointer restored");
 
 // Done
 console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ FINAL BOOTSTRAP COMPLETE - CHECK CYCLE COUNT NOW              ║
+║  ✅✅✅ FINAL BOOTSTRAP COMPLETE! ✅✅✅                        ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Gas price: ${ethers.formatUnits(baseFee, 'gwei')} Gwei (market rate)       ║
+║  • Total cost: ~${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH     ║
+║  • Check cycle count on dashboard                            ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
 // THEN continue with normal MEV initialization...
