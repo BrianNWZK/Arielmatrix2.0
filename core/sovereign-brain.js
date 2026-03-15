@@ -3102,110 +3102,152 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// ONE-SHOT LITERAL-KEY BOOTSTRAP - FINAL ATTEMPT (FIXED FEES)
+// FINAL ONE-TIME BOOTSTRAP - SAFE, NO RETRIES
 // =====================================================================
+// Place this AFTER your normal cycle/paused checks
 
-console.log("Starting FINAL bootstrap fix with CORRECTED FEES...");
+const STATE_FILE = './bootstrap-final-lock.json';
 
-const WAREHOUSE = "0x01f6d3880080F5115F17Fcd11c43fb28C6cb773f";
-const ORIGINAL_SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+// Check if we already attempted - EXIT IMMEDIATELY if true
+if (require('fs').existsSync(STATE_FILE)) {
+  console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🛑 BOOTSTRAP ALREADY ATTEMPTED - SKIPPING PERMANENTLY       ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Found lock file - previous attempt detected               ║
+║  • No further attempts will be made                          ║
+║  • Delete ${STATE_FILE} to force retry (not recommended)      ║
+╚═══════════════════════════════════════════════════════════════╝
+  `);
+  return; // Exit the bootstrap block, continue with MEV monitoring
+}
 
-const warehouse = new ethers.Contract(WAREHOUSE, [
-  'function adminSetAddress(bytes32 key, address value) external',
-  'function emergencyBulletproofBootstrap(uint256) external',
-  'function scw() view returns (address)'
-], this.signer);
+try {
+  console.log("\n🚀 Running FINAL one-time bootstrap attempt (will lock after)...");
 
-const EOA = await this.signer.getAddress();
+  const WAREHOUSE = LIVE.WAREHOUSE_CONTRACT;
+  const ORIGINAL_SCW = LIVE.SCW_ADDRESS;
+  const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+  const EOA = await this.signer.getAddress();
 
-// =====================================================================
-// DYNAMIC FEE ALIGNMENT - CRITICAL FIX
-// =====================================================================
-const feeData = await this.provider.getFeeData();
-// Add 20% buffer to market rates to ensure success
-const marketFee = (feeData.maxFeePerGas * 120n) / 100n;
-// CRITICAL: Priority fee MUST be <= maxFee
-const priorityFee = marketFee;  // Set equal to satisfy constraint
+  const warehouse = new ethers.Contract(WAREHOUSE, [
+    'function adminSetAddress(bytes32 key, address value) external',
+    'function emergencyBulletproofBootstrap(uint256) external',
+    'function scw() view returns (address)',
+    'function cycleCount() view returns (uint256)'
+  ], this.signer);
 
-console.log(`📊 Current network gas:`);
-console.log(`   • Base network fee: ${ethers.formatUnits(feeData.maxFeePerGas || 0n, 'gwei')} Gwei`);
-console.log(`   • Adjusted with 20% buffer: ${ethers.formatUnits(marketFee, 'gwei')} Gwei`);
-console.log(`   • Priority fee (equal to max): ${ethers.formatUnits(priorityFee, 'gwei')} Gwei`);
+  // Get live fees
+  const feeData = await this.provider.getFeeData();
+  const baseFee = feeData.maxFeePerGas || ethers.parseUnits("1", "gwei");
+  // Priority fee must be <= max fee
+  const priorityFee = baseFee * 80n / 100n; // 80% of base fee
 
-// =====================================================================
-// CHECK SCW POINTER (Avoid double-setting)
-// =====================================================================
-console.log("\n1. Checking current SCW pointer...");
-const currentScw = await warehouse.scw();
-console.log(`   Current scw: ${currentScw}`);
-console.log(`   Target EOA: ${EOA}`);
+  console.log(`📊 Network gas: ${ethers.formatUnits(baseFee, 'gwei')} Gwei`);
 
-if (currentScw.toLowerCase() !== EOA.toLowerCase()) {
-  console.log("   🛠️ Pointer needs alignment - setting scw → EOA...");
-  const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
-    gasLimit: 150_000n,
-    maxFeePerGas: marketFee,
+  // Check current cycle
+  const currentCycle = await warehouse.cycleCount();
+  console.log(`📊 Current cycle: ${currentCycle}`);
+
+  // 1. Check/Set SCW pointer
+  const currentScw = await warehouse.scw();
+  if (currentScw.toLowerCase() !== EOA.toLowerCase()) {
+    console.log("\n1. Setting scw → EOA...");
+    const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
+      gasLimit: 150_000n,
+      maxFeePerGas: baseFee,
+      maxPriorityFeePerGas: priorityFee
+    });
+    console.log(`   Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
+    await txSet.wait();
+    console.log("   ✅ Pointer set");
+  } else {
+    console.log("\n1. ✅ SCW pointer already correct");
+  }
+
+  // 2. SIMULATE first (no gas spent)
+  console.log("\n2. Simulating bootstrap call (zero gas)...");
+  try {
+    await warehouse.emergencyBulletproofBootstrap.staticCall(1n, {
+      from: EOA
+    });
+    console.log("   ✅ Simulation passed!");
+  } catch (simError) {
+    console.log("   ❌ Simulation failed - will not send real transaction");
+    console.log("   Revert reason:", simError.reason || simError.message || "Unknown");
+    
+    // Lock the file so we never try again
+    require('fs').writeFileSync(STATE_FILE, JSON.stringify({ 
+      attempted: true, 
+      success: false, 
+      reason: simError.message,
+      timestamp: new Date().toISOString() 
+    }));
+    console.log("   🔒 Lock file created - no future attempts");
+    return; // Exit bootstrap block
+  }
+
+  // 3. Send actual bootstrap (only if simulation passed)
+  console.log("\n3. Sending bootstrap transaction...");
+  const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
+    gasLimit: 800_000n,
+    maxFeePerGas: baseFee,
     maxPriorityFeePerGas: priorityFee
   });
-  console.log(`   Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
-  await txSet.wait();
-  console.log("   ✅ Pointer set confirmed");
-} else {
-  console.log("   ✅ Pointer already correct - skipping");
-}
+  console.log(`   Tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
 
-// =====================================================================
-// BOOTSTRAP
-// =====================================================================
-console.log("\n2. Calling emergencyBulletproofBootstrap...");
-console.log(`   • Max fee: ${ethers.formatUnits(marketFee, 'gwei')} Gwei`);
-console.log(`   • Gas limit: 800,000`);
-console.log(`   • Estimated max cost: ${ethers.formatEther(marketFee * 800000n)} ETH`);
+  const receipt = await txBoot.wait();
+  if (receipt.status !== 1) {
+    throw new Error(`Bootstrap reverted - gas used: ${receipt.gasUsed}`);
+  }
 
-const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
-  gasLimit: 800_000n,
-  maxFeePerGas: marketFee,
-  maxPriorityFeePerGas: priorityFee
-});
-console.log(`   Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
+  console.log(`   ✅ Success! Gas used: ${receipt.gasUsed}`);
+  console.log(`   Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
 
-const receipt = await txBoot.wait();
-if (receipt.status !== 1) {
-  console.error("❌ Bootstrap reverted - gas used:", receipt.gasUsed.toString());
-  throw new Error("Revert");
-}
-console.log(`   ✅ Success! Gas used: ${receipt.gasUsed}`);
-console.log(`   Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
+  // 4. Restore original SCW
+  console.log("\n4. Restoring original SCW...");
+  const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
+    gasLimit: 150_000n,
+    maxFeePerGas: baseFee,
+    maxPriorityFeePerGas: priorityFee
+  });
+  await txRestore.wait();
+  console.log("   ✅ SCW restored");
 
-// =====================================================================
-// RESTORE ORIGINAL SCW
-// =====================================================================
-console.log("\n3. Restoring original SCW...");
-const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
-  gasLimit: 150_000n,
-  maxFeePerGas: marketFee,
-  maxPriorityFeePerGas: priorityFee
-});
-await txRestore.wait();
-console.log("   ✅ Pointer restored");
+  // Create success lock file
+  require('fs').writeFileSync(STATE_FILE, JSON.stringify({ 
+    attempted: true, 
+    success: true,
+    cycle: currentCycle + 1,
+    timestamp: new Date().toISOString() 
+  }));
 
-// =====================================================================
-// FINAL VERIFICATION
-// =====================================================================
-const finalCycle = await warehouse.cycleCount().catch(() => "unknown");
-console.log(`\n📊 Final cycle count: ${finalCycle}`);
-
-console.log(`
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ FINAL BOOTSTRAP COMPLETE! ✅✅✅                        ║
+║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Gas used: ${receipt.gasUsed}                                         ║
-║  • Total cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH           ║
-║  • Cycle count: ${finalCycle}                                           ║
-║  • System self-automating                                     ║
+║  • Cycle count should now be ${currentCycle + 1}                             ║
+║  • SCW restored                                                ║
+║  • Lock file created - no future attempts                     ║
+║  • System self-automating                                      ║
 ╚═══════════════════════════════════════════════════════════════╝
-`);
+  `);
+
+} catch (error) {
+  console.error("\n❌ FATAL ERROR:", error.message || error);
+  if (error.transactionHash) {
+    console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+  }
+  
+  // Lock file prevents future attempts even on failure
+  require('fs').writeFileSync(STATE_FILE, JSON.stringify({ 
+    attempted: true, 
+    success: false, 
+    error: error.message,
+    timestamp: new Date().toISOString() 
+  }));
+  console.log("\n🔒 Lock file created - no future bootstrap attempts will be made");
+}
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
