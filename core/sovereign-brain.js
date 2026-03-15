@@ -3133,16 +3133,17 @@ if (global.bootstrapState.stepCAttempted) {
   global.bootstrapState.stepCTimestamp = Date.now();
 
   // =====================================================================
-  // STEP C ONLY - EMERGENCY BOOTSTRAP (A & B COMPLETED)
+  // STEP C-2: ORACLE RECOVERY + FINAL BOOTSTRAP
   // =====================================================================
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 STEP C: EMERGENCY BOOTSTRAP EXECUTION                      ║
+║ 🚀 STEP C-2: ORACLE RECOVERY + BOOTSTRAP                      ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║ • A: JIT Approval - COMPLETE                                  ║
 ║ • B: scw = EOA - COMPLETE                                     ║
-║ • C: Emergency Bootstrap - EXECUTING NOW                      ║
-║ • HARD-CODED DATA + FULL DIAGNOSTICS                          ║
+║ • C-2: Oracle Recovery + Bootstrap - EXECUTING NOW            ║
+║ • HARD-CODED DATA + 48h STALENESS                             ║
+║ • REALISTIC GAS PRICES (no exaggeration)                      ║
 ║ • CIRCUIT BREAKER: Single attempt only                        ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
@@ -3158,7 +3159,9 @@ if (global.bootstrapState.stepCAttempted) {
       'function scw() view returns (address)',
       'function paused() view returns (bool)',
       'function cycleCount() view returns (uint256)',
-      'function getConsensusEthPrice() external returns (uint256, uint8)'
+      'function getConsensusEthPrice() external returns (uint256, uint8)',
+      'function adminSetParameter(bytes32 key, uint256 value) external',
+      'function stalenessThreshold() view returns (uint256)'
     ], this.signer);
 
     const bwzc = new ethers.Contract(LIVE.TOKENS.BWAEZI, [
@@ -3200,43 +3203,74 @@ if (global.bootstrapState.stepCAttempted) {
     }
 
     // =====================================================================
-    // DIAGNOSTIC 4: Oracle Health (24h staleness)
+    // STEP C-2a: Oracle Recovery - Set Staleness to 48 Hours
     // =====================================================================
-    try {
-      const [oraclePrice] = await warehouse.getConsensusEthPrice();
-      console.log(`📡 Oracle: ${oraclePrice ? 'HEALTHY' : 'CHECKING...'}`);
-    } catch (e) {
-      console.log(`📡 Oracle: UNAVAILABLE (may still work)`);
+    console.log(`\n📡 Oracle Recovery: Setting staleness to 48 hours...`);
+    
+    // The parameter key for staleness threshold - using the literal key from your contract
+    const STALENESS_KEY = ethers.encodeBytes32String("stalenessThreshold");
+    const FORTY_EIGHT_HOURS = 172800n; // 48 hours in seconds
+    
+    console.log(`   Key: ${STALENESS_KEY}`);
+    console.log(`   Value: ${FORTY_EIGHT_HOURS}s (48 hours)`);
+    
+    const updateTx = await warehouse.adminSetParameter(STALENESS_KEY, FORTY_EIGHT_HOURS, {
+      gasLimit: 150_000n
+    });
+    console.log(`   Update tx: ${updateTx.hash}`);
+    await updateTx.wait();
+    
+    // Verify the update
+    const newStaleness = await warehouse.stalenessThreshold();
+    console.log(`   New staleness: ${newStaleness}s (${Number(newStaleness)/3600}h)`);
+    
+    if (newStaleness < FORTY_EIGHT_HOURS) {
+      console.log(`   ⚠️ Staleness update may not have worked`);
+    } else {
+      console.log(`   ✅ Staleness successfully set to 48h`);
     }
 
     // =====================================================================
-    // STEP C: Execute Bootstrap
+    // STEP C-2b: Execute Bootstrap with Current Gas Prices
     // =====================================================================
-    console.log(`\n📤 Sending bootstrap transaction...`);
+    console.log(`\n📤 Sending emergency bootstrap with 48h staleness...`);
     
+    // Get current gas prices from the network
     const feeData = await this.provider.getFeeData();
+    
+    // Use realistic values - current network conditions
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("20", "gwei");
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei");
+
+    console.log(`   Max fee: ${ethers.formatUnits(maxFeePerGas, 'gwei')} gwei`);
+    console.log(`   Priority fee: ${ethers.formatUnits(maxPriorityFeePerGas, 'gwei')} gwei`);
+    console.log(`   Gas limit: 1,500,000 (standard for complex operations)`);
 
     const tx = await this.signer.sendTransaction({
       to: LIVE.WAREHOUSE_CONTRACT,
       data: HARD_CODED_DATA,
       gasLimit: 1_500_000n,
       maxFeePerGas: maxFeePerGas,
-      maxPriorityFeePerGas: maxFeePerGas * 10n / 100n,
+      maxPriorityFeePerGas: maxPriorityFeePerGas,
       type: 2
     });
 
-    console.log(`✅ TX: ${tx.hash}`);
-    console.log(`🔍 https://etherscan.io/tx/${tx.hash}`);
+    console.log(`✅ TX SENT: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+    console.log(`⏳ Waiting for confirmation (this may take 30-60 seconds)...`);
     
     const receipt = await tx.wait();
     
     if (receipt.status === 1) {
-      console.log(`\n✅✅✅ BOOTSTRAP SUCCESS! Gas: ${receipt.gasUsed}`);
+      console.log(`\n✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅`);
+      console.log(`   Gas used: ${receipt.gasUsed}`);
+      console.log(`   Block: ${receipt.blockNumber}`);
+      
+      // Mark success in circuit breaker
       global.bootstrapState.stepCSuccess = true;
       
-      // Steps D & E (clean versions)
-      console.log(`\n🔧 Restoring SCW...`);
+      // Steps D & E - Restore SCW and Revoke Approval
+      console.log(`\n🔧 STEP D: Restoring SCW...`);
       const warehouseAdmin = new ethers.Contract(LIVE.WAREHOUSE_CONTRACT, [
         'function adminSetAddress(bytes32 key, address value) external'
       ], this.signer);
@@ -3244,15 +3278,21 @@ if (global.bootstrapState.stepCAttempted) {
       const restoreTx = await warehouseAdmin.adminSetAddress(LITERAL_KEY, LIVE.SCW_ADDRESS, {
         gasLimit: 150_000n
       });
+      console.log(`   Restore tx: ${restoreTx.hash}`);
       await restoreTx.wait();
-      console.log(`✅ SCW restored`);
+      console.log(`   ✅ SCW restored`);
       
-      console.log(`\n🔧 Revoking approval...`);
+      console.log(`\n🔧 STEP E: Revoking approval...`);
       const revokeTx = await bwzc.approve(LIVE.WAREHOUSE_CONTRACT, 0n, {
         gasLimit: 100_000n
       });
+      console.log(`   Revoke tx: ${revokeTx.hash}`);
       await revokeTx.wait();
-      console.log(`✅ Approval revoked`);
+      
+      // Verify revocation
+      const finalAllowance = await bwzc.allowance(eoaAddress, LIVE.WAREHOUSE_CONTRACT);
+      console.log(`   Final allowance: ${ethers.formatEther(finalAllowance)} BWZC`);
+      console.log(`   ✅ Approval revoked - EOA now safe`);
       
       console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -3262,13 +3302,15 @@ if (global.bootstrapState.stepCAttempted) {
 ║  • Circuit breaker: No further attempts                       ║
 ╚═══════════════════════════════════════════════════════════════╝
       `);
+    } else {
+      throw new Error('Bootstrap transaction reverted');
     }
   } catch (error) {
     console.error('\n❌ Bootstrap failed:', error.message);
     if (error.transactionHash) {
       console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
     }
-    console.log('\n⚠️ Circuit breaker active - no retry will occur');
+    console.log('\n⚠️ Circuit breaker active - no retry will occur in this process');
   }
 }
 // THEN continue with normal MEV initialization...
