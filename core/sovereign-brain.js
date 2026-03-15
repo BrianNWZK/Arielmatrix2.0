@@ -3102,151 +3102,90 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// FINAL ONE-TIME BOOTSTRAP - SAFE, NO RETRIES
+// FINAL ONE-TIME BOOTSTRAP - NO FS, NO REQUIRE, RENDER-SAFE
 // =====================================================================
-// Place this AFTER your normal cycle/paused checks
+// Runs exactly once per process start — no file lock needed
+// To force retry: restart the Render service (or change env var)
 
-const STATE_FILE = './bootstrap-final-lock.json';
+let bootstrapAlreadyRun = false; // in-memory flag (reset on process restart)
 
-// Check if we already attempted - EXIT IMMEDIATELY if true
-if (require('fs').existsSync(STATE_FILE)) {
+if (bootstrapAlreadyRun) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🛑 BOOTSTRAP ALREADY ATTEMPTED - SKIPPING PERMANENTLY       ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Found lock file - previous attempt detected               ║
-║  • No further attempts will be made                          ║
-║  • Delete ${STATE_FILE} to force retry (not recommended)      ║
+║ 🛑 BOOTSTRAP ALREADY EXECUTED IN THIS PROCESS - SKIPPING ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
-  return; // Exit the bootstrap block, continue with MEV monitoring
-}
+  // continue with normal MEV monitoring
+} else {
+  bootstrapAlreadyRun = true; // lock forever in this run
 
-try {
-  console.log("\n🚀 Running FINAL one-time bootstrap attempt (will lock after)...");
-
-  const WAREHOUSE = LIVE.WAREHOUSE_CONTRACT;
-  const ORIGINAL_SCW = LIVE.SCW_ADDRESS;
-  const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-  const EOA = await this.signer.getAddress();
-
-  const warehouse = new ethers.Contract(WAREHOUSE, [
-    'function adminSetAddress(bytes32 key, address value) external',
-    'function emergencyBulletproofBootstrap(uint256) external',
-    'function scw() view returns (address)',
-    'function cycleCount() view returns (uint256)'
-  ], this.signer);
-
-  // Get live fees
-  const feeData = await this.provider.getFeeData();
-  const baseFee = feeData.maxFeePerGas || ethers.parseUnits("1", "gwei");
-  // Priority fee must be <= max fee
-  const priorityFee = baseFee * 80n / 100n; // 80% of base fee
-
-  console.log(`📊 Network gas: ${ethers.formatUnits(baseFee, 'gwei')} Gwei`);
-
-  // Check current cycle
-  const currentCycle = await warehouse.cycleCount();
-  console.log(`📊 Current cycle: ${currentCycle}`);
-
-  // 1. Check/Set SCW pointer
-  const currentScw = await warehouse.scw();
-  if (currentScw.toLowerCase() !== EOA.toLowerCase()) {
-    console.log("\n1. Setting scw → EOA...");
-    const txSet = await warehouse.adminSetAddress(LITERAL_KEY, EOA, {
-      gasLimit: 150_000n,
-      maxFeePerGas: baseFee,
-      maxPriorityFeePerGas: priorityFee
-    });
-    console.log(`   Set tx: ${txSet.hash} → https://etherscan.io/tx/${txSet.hash}`);
-    await txSet.wait();
-    console.log("   ✅ Pointer set");
-  } else {
-    console.log("\n1. ✅ SCW pointer already correct");
-  }
-
-  // 2. SIMULATE first (no gas spent)
-  console.log("\n2. Simulating bootstrap call (zero gas)...");
   try {
-    await warehouse.emergencyBulletproofBootstrap.staticCall(1n, {
-      from: EOA
+    console.log("\n🚀 FINAL one-time bootstrap attempt starting...");
+
+    const WAREHOUSE = LIVE.WAREHOUSE_CONTRACT;
+    const ORIGINAL_SCW = LIVE.SCW_ADDRESS;
+    const LITERAL_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+
+    const warehouse = new ethers.Contract(WAREHOUSE, [
+      'function adminSetAddress(bytes32 key, address value) external',
+      'function emergencyBulletproofBootstrap(uint256) external'
+    ], this.signer);
+
+    const feeData = await this.provider.getFeeData();
+    const maxFee = feeData.maxFeePerGas || ethers.parseUnits("1", "gwei");
+    const prioFee = maxFee * 80n / 100n;
+
+    console.log(`Live fees → max: ${ethers.formatUnits(maxFee, "gwei")} gwei`);
+
+    // 1. Force set pointer
+    console.log("\n1. Setting scw → EOA...");
+    const txSet = await warehouse.adminSetAddress(LITERAL_KEY, await this.signer.getAddress(), {
+      gasLimit: 150_000n,
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: prioFee
     });
-    console.log("   ✅ Simulation passed!");
-  } catch (simError) {
-    console.log("   ❌ Simulation failed - will not send real transaction");
-    console.log("   Revert reason:", simError.reason || simError.message || "Unknown");
-    
-    // Lock the file so we never try again
-    require('fs').writeFileSync(STATE_FILE, JSON.stringify({ 
-      attempted: true, 
-      success: false, 
-      reason: simError.message,
-      timestamp: new Date().toISOString() 
-    }));
-    console.log("   🔒 Lock file created - no future attempts");
-    return; // Exit bootstrap block
-  }
+    console.log(`Set tx: ${txSet.hash}`);
+    await txSet.wait();
+    console.log("✅ Pointer set");
 
-  // 3. Send actual bootstrap (only if simulation passed)
-  console.log("\n3. Sending bootstrap transaction...");
-  const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
-    gasLimit: 800_000n,
-    maxFeePerGas: baseFee,
-    maxPriorityFeePerGas: priorityFee
-  });
-  console.log(`   Tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
+    // 2. Bootstrap
+    console.log("\n2. Calling emergencyBulletproofBootstrap...");
+    const txBoot = await warehouse.emergencyBulletproofBootstrap(1n, {
+      gasLimit: 800_000n,
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: prioFee
+    });
+    console.log(`Bootstrap tx: ${txBoot.hash} → https://etherscan.io/tx/${txBoot.hash}`);
 
-  const receipt = await txBoot.wait();
-  if (receipt.status !== 1) {
-    throw new Error(`Bootstrap reverted - gas used: ${receipt.gasUsed}`);
-  }
+    const receipt = await txBoot.wait();
+    if (receipt.status !== 1) {
+      throw new Error(`Reverted - gas used: ${receipt.gasUsed}`);
+    }
 
-  console.log(`   ✅ Success! Gas used: ${receipt.gasUsed}`);
-  console.log(`   Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
+    console.log(`✅ Success! Gas used: ${receipt.gasUsed}`);
 
-  // 4. Restore original SCW
-  console.log("\n4. Restoring original SCW...");
-  const txRestore = await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
-    gasLimit: 150_000n,
-    maxFeePerGas: baseFee,
-    maxPriorityFeePerGas: priorityFee
-  });
-  await txRestore.wait();
-  console.log("   ✅ SCW restored");
+    // 3. Restore
+    console.log("\n3. Restoring original SCW...");
+    await warehouse.adminSetAddress(LITERAL_KEY, ORIGINAL_SCW, {
+      gasLimit: 150_000n,
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: prioFee
+    }).then(t => t.wait());
+    console.log("✅ Restored");
 
-  // Create success lock file
-  require('fs').writeFileSync(STATE_FILE, JSON.stringify({ 
-    attempted: true, 
-    success: true,
-    cycle: currentCycle + 1,
-    timestamp: new Date().toISOString() 
-  }));
-
-  console.log(`
+    console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  ✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅                           ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count should now be ${currentCycle + 1}                             ║
-║  • SCW restored                                                ║
-║  • Lock file created - no future attempts                     ║
-║  • System self-automating                                      ║
+║ ✅ BOOTSTRAP COMPLETE - ONE-TIME ONLY COMPLETE ║
 ╚═══════════════════════════════════════════════════════════════╝
-  `);
+    `);
 
-} catch (error) {
-  console.error("\n❌ FATAL ERROR:", error.message || error);
-  if (error.transactionHash) {
-    console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+  } catch (err) {
+    console.error("\n❌ BOOTSTRAP FAILED:", err.message || err);
+    if (err.transactionHash) {
+      console.log(`Failed tx: https://etherscan.io/tx/${err.transactionHash}`);
+    }
+    console.log("No retry will occur in this process run");
   }
-  
-  // Lock file prevents future attempts even on failure
-  require('fs').writeFileSync(STATE_FILE, JSON.stringify({ 
-    attempted: true, 
-    success: false, 
-    error: error.message,
-    timestamp: new Date().toISOString() 
-  }));
-  console.log("\n🔒 Lock file created - no future bootstrap attempts will be made");
 }
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
