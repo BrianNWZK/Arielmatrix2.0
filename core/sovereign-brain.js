@@ -3161,7 +3161,8 @@ if (global.bootstrapState.stepCAttempted) {
       'function cycleCount() view returns (uint256)',
       'function getConsensusEthPrice() external returns (uint256, uint8)',
       'function adminSetParameter(bytes32 key, uint256 value) external',
-      'function stalenessThreshold() view returns (uint256)'
+      'function stalenessThreshold() view returns (uint256)',
+      'function adminSetAddress(bytes32 key, address value) external'
     ], this.signer);
 
     const bwzc = new ethers.Contract(LIVE.TOKENS.BWAEZI, [
@@ -3207,7 +3208,6 @@ if (global.bootstrapState.stepCAttempted) {
     // =====================================================================
     console.log(`\n📡 Oracle Recovery: Setting staleness to 48 hours...`);
     
-    // The parameter key for staleness threshold - using the literal key from your contract
     const STALENESS_KEY = ethers.encodeBytes32String("stalenessThreshold");
     const FORTY_EIGHT_HOURS = 172800n; // 48 hours in seconds
     
@@ -3231,14 +3231,58 @@ if (global.bootstrapState.stepCAttempted) {
     }
 
     // =====================================================================
+    // DIAGNOSTIC 4: Verify SCW Storage Variable (CRITICAL)
+    // =====================================================================
+    console.log(`\n🔍 DIAGNOSTIC 4: Verifying SCW storage variable...`);
+    
+    const scwFromStorage = await warehouse.scw();
+    console.log(`   SCW from storage: ${scwFromStorage}`);
+    console.log(`   Your EOA: ${eoaAddress}`);
+
+    if (scwFromStorage.toLowerCase() !== eoaAddress.toLowerCase()) {
+      console.log(`   ❌ CRITICAL: SCW storage variable mismatch!`);
+      
+      // Try alternative key formats
+      const alternativeKeys = [
+        "0x7363770000000000000000000000000000000000000000000000000000000000", // literal "scw"
+        ethers.encodeBytes32String("scw"),
+        ethers.id("scw")
+      ];
+      
+      let keyFound = false;
+      for (const key of alternativeKeys) {
+        try {
+          console.log(`   🔧 Trying key: ${key}`);
+          const setTx = await warehouse.adminSetAddress(key, eoaAddress, {
+            gasLimit: 150_000n
+          });
+          console.log(`   Set tx: ${setTx.hash}`);
+          await setTx.wait();
+          
+          const newScw = await warehouse.scw();
+          if (newScw.toLowerCase() === eoaAddress.toLowerCase()) {
+            console.log(`   ✅ Success! SCW pointer updated with key: ${key}`);
+            keyFound = true;
+            break;
+          }
+        } catch (e) {
+          console.log(`   ❌ Failed with key: ${key}`);
+        }
+      }
+      
+      if (!keyFound) {
+        throw new Error('❌ CRITICAL: Could not update SCW pointer with any key format');
+      }
+    } else {
+      console.log(`   ✅ SCW storage variable correctly points to EOA`);
+    }
+
+    // =====================================================================
     // STEP C-2b: Execute Bootstrap with Current Gas Prices
     // =====================================================================
     console.log(`\n📤 Sending emergency bootstrap with 48h staleness...`);
     
-    // Get current gas prices from the network
     const feeData = await this.provider.getFeeData();
-    
-    // Use realistic values - current network conditions
     const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("20", "gwei");
     const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei");
 
@@ -3271,11 +3315,8 @@ if (global.bootstrapState.stepCAttempted) {
       
       // Steps D & E - Restore SCW and Revoke Approval
       console.log(`\n🔧 STEP D: Restoring SCW...`);
-      const warehouseAdmin = new ethers.Contract(LIVE.WAREHOUSE_CONTRACT, [
-        'function adminSetAddress(bytes32 key, address value) external'
-      ], this.signer);
       
-      const restoreTx = await warehouseAdmin.adminSetAddress(LITERAL_KEY, LIVE.SCW_ADDRESS, {
+      const restoreTx = await warehouse.adminSetAddress(LITERAL_KEY, LIVE.SCW_ADDRESS, {
         gasLimit: 150_000n
       });
       console.log(`   Restore tx: ${restoreTx.hash}`);
@@ -3289,7 +3330,6 @@ if (global.bootstrapState.stepCAttempted) {
       console.log(`   Revoke tx: ${revokeTx.hash}`);
       await revokeTx.wait();
       
-      // Verify revocation
       const finalAllowance = await bwzc.allowance(eoaAddress, LIVE.WAREHOUSE_CONTRACT);
       console.log(`   Final allowance: ${ethers.formatEther(finalAllowance)} BWZC`);
       console.log(`   ✅ Approval revoked - EOA now safe`);
