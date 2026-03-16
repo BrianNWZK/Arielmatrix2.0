@@ -3106,15 +3106,21 @@ async initialize() {
 // =====================================================================
 console.log('\n🔍 DIAGNOSTIC: Verifying Token Contract Alignment...');
 
-// Extend your contract interface to include bwzc() getter
+// Extend your contract interface to include all needed getters
 const warehouse = new ethers.Contract(
   LIVE.WAREHOUSE_CONTRACT,
   [
     'function emergencyBulletproofBootstrap(uint256 bwzcForArbitrage, uint256 ethPrice) external',
     'function cycleCount() view returns (uint256)',
     'function scw() view returns (address)',
-    'function bwzc() view returns (address)',           // Add this
+    'function bwzc() view returns (address)',
+    'function vault() view returns (address)',
+    'function usdc() view returns (address)',
+    'function weth() view returns (address)',
+    'function balBWUSDCId() view returns (bytes32)',
+    'function balBWWETHId() view returns (bytes32)',
     'function adminSetAddress(bytes32 key, address value) external',
+    'function adminSetPoolId(bytes32 key, bytes32 value) external',
     'function owner() view returns (address)'
   ],
   this.signer
@@ -3129,11 +3135,10 @@ console.log(`   Actual BWAEZI Token:     ${EXPECTED_BWZC}`);
 if (currentBwzcInContract.toLowerCase() !== EXPECTED_BWZC.toLowerCase()) {
   console.log('⚠️  TOKEN MISMATCH DETECTED! Re-pointing contract...');
   
-  // Try multiple key formats to ensure success
   const keyFormats = [
-    ethers.id("bwzc"),                          // bytes32 hash
-    ethers.encodeBytes32String("bwzc"),          // encoded bytes32
-    "0x62777a6300000000000000000000000000000000000000000000000000000000" // literal "bwzc"
+    ethers.id("bwzc"),
+    ethers.encodeBytes32String("bwzc"),
+    "0x62777a6300000000000000000000000000000000000000000000000000000000"
   ];
   
   let fixSuccess = false;
@@ -3146,7 +3151,6 @@ if (currentBwzcInContract.toLowerCase() !== EXPECTED_BWZC.toLowerCase()) {
       console.log(`   Fix TX: ${fixTx.hash}`);
       await fixTx.wait();
       
-      // Verify the fix
       const newBwzc = await warehouse.bwzc();
       if (newBwzc.toLowerCase() === EXPECTED_BWZC.toLowerCase()) {
         console.log(`   ✅ Token pointer updated with key: ${key}`);
@@ -3189,6 +3193,103 @@ if (allowance < ethers.parseUnits("170212.766", 18)) {
   console.log('   await bwzcToken.connect(scwSigner).approve(warehouseAddress, ethers.MaxUint256)');
   throw new Error('❌ Allowance insufficient for new contract');
 }
+
+// =====================================================================
+// NEW DIAGNOSTIC: Check Balancer Vault Configuration
+// =====================================================================
+console.log('\n🔍 DIAGNOSTIC: Checking Balancer Vault configuration...');
+
+const EXPECTED_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
+const EXPECTED_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const EXPECTED_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+const vaultAddress = await warehouse.vault();
+const usdcAddress = await warehouse.usdc();
+const wethAddress = await warehouse.weth();
+
+console.log(`   Contract.vault = ${vaultAddress}`);
+console.log(`   Expected Vault = ${EXPECTED_VAULT}`);
+console.log(`   Contract.usdc = ${usdcAddress}`);
+console.log(`   Contract.weth = ${wethAddress}`);
+
+if (vaultAddress.toLowerCase() !== EXPECTED_VAULT.toLowerCase()) {
+  console.log('⚠️  VAULT MISMATCH DETECTED! Updating...');
+  
+  const VAULT_KEY = ethers.id("vault");
+  const fixTx = await warehouse.adminSetAddress(VAULT_KEY, EXPECTED_VAULT, {
+    gasLimit: 100_000n
+  });
+  console.log(`   Fix TX: ${fixTx.hash}`);
+  await fixTx.wait();
+  console.log('✅ Vault address updated');
+}
+
+if (usdcAddress.toLowerCase() !== EXPECTED_USDC.toLowerCase()) {
+  console.log('⚠️  USDC MISMATCH DETECTED! Updating...');
+  
+  const USDC_KEY = ethers.id("usdc");
+  const fixTx = await warehouse.adminSetAddress(USDC_KEY, EXPECTED_USDC, {
+    gasLimit: 100_000n
+  });
+  console.log(`   Fix TX: ${fixTx.hash}`);
+  await fixTx.wait();
+  console.log('✅ USDC address updated');
+}
+
+if (wethAddress.toLowerCase() !== EXPECTED_WETH.toLowerCase()) {
+  console.log('⚠️  WETH MISMATCH DETECTED! Updating...');
+  
+  const WETH_KEY = ethers.id("weth");
+  const fixTx = await warehouse.adminSetAddress(WETH_KEY, EXPECTED_WETH, {
+    gasLimit: 100_000n
+  });
+  console.log(`   Fix TX: ${fixTx.hash}`);
+  await fixTx.wait();
+  console.log('✅ WETH address updated');
+}
+
+// =====================================================================
+// NEW DIAGNOSTIC: Check Balancer Pool IDs
+// =====================================================================
+console.log('\n🔍 DIAGNOSTIC: Checking Balancer Pool IDs...');
+
+const EXPECTED_BAL_USDC_ID = "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706";
+const EXPECTED_BAL_WETH_ID = "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707";
+
+const balUsdcPoolId = await warehouse.balBWUSDCId();
+const balWethPoolId = await warehouse.balBWWETHId();
+
+console.log(`   Balancer USDC pool ID: ${balUsdcPoolId}`);
+console.log(`   Expected USDC pool ID: ${EXPECTED_BAL_USDC_ID}`);
+console.log(`   Balancer WETH pool ID: ${balWethPoolId}`);
+console.log(`   Expected WETH pool ID: ${EXPECTED_BAL_WETH_ID}`);
+
+if (balUsdcPoolId !== EXPECTED_BAL_USDC_ID) {
+  console.log('⚠️  USDC POOL ID MISMATCH! Updating...');
+  
+  const fixTx = await warehouse.adminSetPoolId(
+    ethers.id("balBWUSDCId"),
+    EXPECTED_BAL_USDC_ID,
+    { gasLimit: 100_000n }
+  );
+  console.log(`   Fix TX: ${fixTx.hash}`);
+  await fixTx.wait();
+  console.log('✅ USDC pool ID updated');
+}
+
+if (balWethPoolId !== EXPECTED_BAL_WETH_ID) {
+  console.log('⚠️  WETH POOL ID MISMATCH! Updating...');
+  
+  const fixTx = await warehouse.adminSetPoolId(
+    ethers.id("balBWWETHId"),
+    EXPECTED_BAL_WETH_ID,
+    { gasLimit: 100_000n }
+  );
+  console.log(`   Fix TX: ${fixTx.hash}`);
+  await fixTx.wait();
+  console.log('✅ WETH pool ID updated');
+}
+
 // =====================================================================
 // UPDATED BOOTSTRAP FOR NEW CONTRACT (0x39539214246390bA6F852c519b6AB4DC45dF0469)
 // WITH LOW GAS PRICES (Current network: ~0.05 gwei)
@@ -3222,108 +3323,12 @@ if (global.bootstrapState.attempted) {
 ║ • Using emergencyBulletproofBootstrap()                       ║
 ║ • ETH Price: $2000 (passed directly, no oracle)               ║
 ║ • LOW GAS PRICES (current network: ~0.05 gwei)                ║
-║ • WITH SCW ADDRESS DIAGNOSTIC                                 ║
+║ • FULL DIAGNOSTICS ENABLED                                    ║
 ║ • Single attempt only                                         ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   try {
-    const warehouse = new ethers.Contract(
-      LIVE.WAREHOUSE_CONTRACT,
-      [
-        'function emergencyBulletproofBootstrap(uint256 bwzcForArbitrage, uint256 ethPrice) external',
-        'function cycleCount() view returns (uint256)',
-        'function scw() view returns (address)',
-        'function adminSetAddress(bytes32 key, address value) external',
-        'function owner() view returns (address)'
-      ],
-      this.signer
-    );
-
-    // =====================================================================
-    // DIAGNOSTIC: Check SCW address in new contract
-    // =====================================================================
-    console.log('\n🔍 DIAGNOSTIC: Checking SCW address configuration...');
-    
-    const contractScw = await warehouse.scw();
-    const contractOwner = await warehouse.owner();
-    const yourScw = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-    const yourEoa = await this.signer.getAddress();
-    
-    console.log(`   Contract.scw = ${contractScw}`);
-    console.log(`   Contract.owner = ${contractOwner}`);
-    console.log(`   Your SCW (token holder) = ${yourScw}`);
-    console.log(`   Your EOA (sender) = ${yourEoa}`);
-
-    // Check if we need to update the SCW address
-    if (contractScw.toLowerCase() !== yourScw.toLowerCase()) {
-      console.log('   ⚠️ SCW address mismatch! Updating...');
-      
-      // Try multiple key formats to ensure success
-      const keyFormats = [
-        ethers.id("scw"),                          // bytes32 hash
-        "0x7363770000000000000000000000000000000000000000000000000000000000", // literal "scw"
-        ethers.encodeBytes32String("scw")          // encoded bytes32
-      ];
-      
-      let updateSuccess = false;
-      for (const key of keyFormats) {
-        try {
-          console.log(`   Trying key: ${key}`);
-          const updateTx = await warehouse.adminSetAddress(key, yourScw, {
-            gasLimit: 100_000n // Low gas for simple admin call
-          });
-          console.log(`   Update tx: ${updateTx.hash}`);
-          await updateTx.wait();
-          
-          const newScw = await warehouse.scw();
-          if (newScw.toLowerCase() === yourScw.toLowerCase()) {
-            console.log(`   ✅ SCW address successfully updated with key: ${key}`);
-            updateSuccess = true;
-            break;
-          }
-        } catch (e) {
-          console.log(`   ❌ Failed with key: ${key}`);
-        }
-      }
-      
-      if (!updateSuccess) {
-        throw new Error('❌ CRITICAL: Could not update SCW address with any key format');
-      }
-    } else {
-      console.log('   ✅ SCW address is correct');
-    }
-
-    // =====================================================================
-    // Check BWZC allowance from SCW to warehouse
-    // =====================================================================
-    console.log('\n🔍 Checking BWZC allowance...');
-    
-    const bwzc = new ethers.Contract(
-      "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2",
-      [
-        'function allowance(address owner, address spender) view returns (uint256)',
-        'function balanceOf(address) view returns (uint256)'
-      ],
-      this.signer
-    );
-    
-    const scwBalance = await bwzc.balanceOf(yourScw);
-    const allowance = await bwzc.allowance(yourScw, LIVE.WAREHOUSE_CONTRACT);
-    
-    console.log(`   SCW BWZC balance: ${ethers.formatEther(scwBalance)}`);
-    console.log(`   SCW → Warehouse allowance: ${ethers.formatEther(allowance)}`);
-    
-    if (scwBalance < ethers.parseUnits("170212.766", 18)) {
-      throw new Error('❌ SCW balance insufficient');
-    }
-    
-    if (allowance < ethers.parseUnits("170212.766", 18)) {
-      console.log('   ⚠️ Allowance too low! You need to approve the warehouse from the SCW');
-      console.log('   Please run: await bwzc.connect(scwSigner).approve(warehouseAddress, ethers.MaxUint256)');
-      throw new Error('❌ Allowance insufficient');
-    }
-
     // Check current cycle
     const currentCycle = await warehouse.cycleCount();
     console.log(`\n📊 Current cycle: ${currentCycle}`);
