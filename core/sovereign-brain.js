@@ -3101,7 +3101,94 @@ async initialize() {
   await this.rpc.init();
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
+// =====================================================================
+// FINAL TOKEN ALIGNMENT FIX - Add these functions to your contract ABI
+// =====================================================================
+console.log('\n🔍 DIAGNOSTIC: Verifying Token Contract Alignment...');
 
+// Extend your contract interface to include bwzc() getter
+const warehouse = new ethers.Contract(
+  LIVE.WAREHOUSE_CONTRACT,
+  [
+    'function emergencyBulletproofBootstrap(uint256 bwzcForArbitrage, uint256 ethPrice) external',
+    'function cycleCount() view returns (uint256)',
+    'function scw() view returns (address)',
+    'function bwzc() view returns (address)',           // Add this
+    'function adminSetAddress(bytes32 key, address value) external',
+    'function owner() view returns (address)'
+  ],
+  this.signer
+);
+
+const EXPECTED_BWZC = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
+const currentBwzcInContract = await warehouse.bwzc();
+
+console.log(`   Contract's BWZC pointer: ${currentBwzcInContract}`);
+console.log(`   Actual BWAEZI Token:     ${EXPECTED_BWZC}`);
+
+if (currentBwzcInContract.toLowerCase() !== EXPECTED_BWZC.toLowerCase()) {
+  console.log('⚠️  TOKEN MISMATCH DETECTED! Re-pointing contract...');
+  
+  // Try multiple key formats to ensure success
+  const keyFormats = [
+    ethers.id("bwzc"),                          // bytes32 hash
+    ethers.encodeBytes32String("bwzc"),          // encoded bytes32
+    "0x62777a6300000000000000000000000000000000000000000000000000000000" // literal "bwzc"
+  ];
+  
+  let fixSuccess = false;
+  for (const key of keyFormats) {
+    try {
+      console.log(`   Trying key: ${key}`);
+      const fixTx = await warehouse.adminSetAddress(key, EXPECTED_BWZC, {
+        gasLimit: 100_000n
+      });
+      console.log(`   Fix TX: ${fixTx.hash}`);
+      await fixTx.wait();
+      
+      // Verify the fix
+      const newBwzc = await warehouse.bwzc();
+      if (newBwzc.toLowerCase() === EXPECTED_BWZC.toLowerCase()) {
+        console.log(`   ✅ Token pointer updated with key: ${key}`);
+        fixSuccess = true;
+        break;
+      }
+    } catch (e) {
+      console.log(`   ❌ Failed with key: ${key}`);
+    }
+  }
+  
+  if (!fixSuccess) {
+    throw new Error('❌ CRITICAL: Could not update token address');
+  }
+} else {
+  console.log('✅ Token alignment is correct.');
+}
+
+// =====================================================================
+// VERIFY SCW HAS APPROVED THE NEW CONTRACT
+// =====================================================================
+console.log('\n🔍 Verifying allowance for NEW contract...');
+
+const bwzcToken = new ethers.Contract(
+  EXPECTED_BWZC,
+  [
+    'function allowance(address owner, address spender) view returns (uint256)',
+    'function approve(address spender, uint256 amount) external returns (bool)'
+  ],
+  this.signer
+);
+
+const scwAddress = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+const allowance = await bwzcToken.allowance(scwAddress, LIVE.WAREHOUSE_CONTRACT);
+console.log(`   SCW → New Warehouse allowance: ${ethers.formatEther(allowance)} BWZC`);
+
+if (allowance < ethers.parseUnits("170212.766", 18)) {
+  console.log('⚠️  Allowance missing for new contract!');
+  console.log('   You need to run this transaction from the SCW:');
+  console.log('   await bwzcToken.connect(scwSigner).approve(warehouseAddress, ethers.MaxUint256)');
+  throw new Error('❌ Allowance insufficient for new contract');
+}
 // =====================================================================
 // UPDATED BOOTSTRAP FOR NEW CONTRACT (0x39539214246390bA6F852c519b6AB4DC45dF0469)
 // WITH LOW GAS PRICES (Current network: ~0.05 gwei)
