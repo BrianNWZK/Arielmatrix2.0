@@ -3279,34 +3279,35 @@ try {
   // =====================================================================
   // GET NONCE AND EXECUTE SEQUENCE
   // =====================================================================
-  const nonce = await signer.getNonce();
-  console.log(`\n📊 Starting nonce: ${nonce}`);
 
-  // Prepare all three transactions
-  console.log('\n📝 Preparing transactions...');
+const BOOTSTRAP_GAS_PRICE = ethers.parseUnits("1.0", "gwei"); 
+const TIP = ethers.parseUnits("0.2", "gwei"); // Priority fee to entice builders
 
-  const tx1 = await warehouseWrite.adminSetAddress.populateTransaction(SCW_KEY, EOA, {
-    gasLimit: 200_000n,
-    maxFeePerGas: ethers.parseUnits("0.4", "gwei"),
+const tx1 = await warehouseWrite.adminSetAddress.populateTransaction(SCW_KEY, EOA, {
+    gasLimit: 250_000n, 
+    maxFeePerGas: BOOTSTRAP_GAS_PRICE,
+    maxPriorityFeePerGas: TIP,
     nonce: nonce
-  });
+});
 
-  const tx2 = await warehouseWrite.emergencyBulletproofBootstrap.populateTransaction(
+const tx2 = await warehouseWrite.emergencyBulletproofBootstrap.populateTransaction(
     REQUIRED_AMOUNT,
     ETH_PRICE,
     {
-      gasLimit: 2_500_000n,
-      maxFeePerGas: ethers.parseUnits("0.6", "gwei"),
-      nonce: nonce + 1
+        gasLimit: 3_000_000n, // Extra cushion for complex arithmetic
+        maxFeePerGas: BOOTSTRAP_GAS_PRICE,
+        maxPriorityFeePerGas: TIP,
+        nonce: nonce + 1
     }
-  );
+);
 
-  const tx3 = await warehouseWrite.adminSetAddress.populateTransaction(SCW_KEY, SCW, {
-    gasLimit: 200_000n,
-    maxFeePerGas: ethers.parseUnits("0.2", "gwei"),
+const tx3 = await warehouseWrite.adminSetAddress.populateTransaction(SCW_KEY, SCW, {
+    gasLimit: 250_000n,
+    maxFeePerGas: BOOTSTRAP_GAS_PRICE,
+    maxPriorityFeePerGas: TIP,
     nonce: nonce + 2
-  });
-
+});
+   
   // Sign and broadcast all three
   console.log('\n🔥 Broadcasting atomic sequence...');
 
