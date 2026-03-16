@@ -3102,20 +3102,30 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// STEP 1: RESTORE SCW POINTER FIRST (CRITICAL)
+// USE EXISTING CONFIG VALUES (NO NEW VARIABLES NEEDED)
+// =====================================================================
+const WAREHOUSE_ADDR = LIVE.WAREHOUSE_CONTRACT; // From your config
+const BWAEZI_ADDR = LIVE.TOKENS.BWAEZI; // From your config
+const SCW_ADDR = LIVE.SCW_ADDRESS; // From your config
+const EOA_ADDR = await this.signer.getAddress(); // Dynamic
+const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+
+// Amounts
+const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
+const ETH_PRICE = ethers.parseUnits("2000", 18);
+
+// =====================================================================
+// STEP 1: RESTORE SCW POINTER FIRST
 // =====================================================================
 console.log("\n🔧 STEP 1: Restoring scw pointer → SCW...");
 
 const warehouse = new ethers.Contract(
-  WAREHOUSE,
+  WAREHOUSE_ADDR,
   ['function adminSetAddress(bytes32 key, address value) external'],
-  signer
+  this.signer
 );
 
-const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-const SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-
-const tx1 = await warehouse.adminSetAddress(SCW_KEY, SCW, {
+const tx1 = await warehouse.adminSetAddress(SCW_KEY, SCW_ADDR, {
   gasLimit: 200_000n,
   maxFeePerGas: ethers.parseUnits("0.5", "gwei")
 });
@@ -3132,21 +3142,18 @@ const warehouseIface = new ethers.Interface([
   "function emergencyBulletproofBootstrap(uint256, uint256) external"
 ]);
 
-const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
-const ETH_PRICE = ethers.parseUnits("2000", 18);
-
 const bootstrapData = warehouseIface.encodeFunctionData(
   "emergencyBulletproofBootstrap", 
   [BUFFERED_AMOUNT, ETH_PRICE]
 );
 
 const scwContract = new ethers.Contract(
-  SCW,
+  SCW_ADDR,
   ["function execute(address to, uint256 value, bytes data) returns (bytes)"],
-  signer
+  this.signer
 );
 
-const tx2 = await scwContract.execute(WAREHOUSE, 0, bootstrapData, {
+const tx2 = await scwContract.execute(WAREHOUSE_ADDR, 0, bootstrapData, {
   gasLimit: 3_500_000n,
   maxFeePerGas: ethers.parseUnits("1.5", "gwei")
 });
@@ -3160,12 +3167,12 @@ console.log("   ✅ Bootstrap complete");
 console.log("\n🔒 STEP 3: Revoking EOA approval...");
 
 const token = new ethers.Contract(
-  BWAEZI,
+  BWAEZI_ADDR,
   ['function approve(address spender, uint256 amount) external returns (bool)'],
-  signer
+  this.signer
 );
 
-const tx3 = await token.approve(WAREHOUSE, 0n, {
+const tx3 = await token.approve(WAREHOUSE_ADDR, 0n, {
   gasLimit: 100_000n,
   maxFeePerGas: ethers.parseUnits("0.5", "gwei")
 });
