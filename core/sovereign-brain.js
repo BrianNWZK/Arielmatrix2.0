@@ -3102,302 +3102,175 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// FINAL TOKEN ALIGNMENT FIX - Add these functions to your contract ABI
-// =====================================================================
-console.log('\n🔍 DIAGNOSTIC: Verifying Token Contract Alignment...');
-
-// Extend your contract interface to include all needed getters
-const warehouse = new ethers.Contract(
-  LIVE.WAREHOUSE_CONTRACT,
-  [
-    'function emergencyBulletproofBootstrap(uint256 bwzcForArbitrage, uint256 ethPrice) external',
-    'function cycleCount() view returns (uint256)',
-    'function scw() view returns (address)',
-    'function bwzc() view returns (address)',
-    'function vault() view returns (address)',
-    'function usdc() view returns (address)',
-    'function weth() view returns (address)',
-    'function balBWUSDCId() view returns (bytes32)',
-    'function balBWWETHId() view returns (bytes32)',
-    'function adminSetAddress(bytes32 key, address value) external',
-    'function adminSetPoolId(bytes32 key, bytes32 value) external',
-    'function owner() view returns (address)'
-  ],
-  this.signer
-);
-
-const EXPECTED_BWZC = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
-const currentBwzcInContract = await warehouse.bwzc();
-
-console.log(`   Contract's BWZC pointer: ${currentBwzcInContract}`);
-console.log(`   Actual BWAEZI Token:     ${EXPECTED_BWZC}`);
-
-if (currentBwzcInContract.toLowerCase() !== EXPECTED_BWZC.toLowerCase()) {
-  console.log('⚠️  TOKEN MISMATCH DETECTED! Re-pointing contract...');
-  
-  const keyFormats = [
-    ethers.id("bwzc"),
-    ethers.encodeBytes32String("bwzc"),
-    "0x62777a6300000000000000000000000000000000000000000000000000000000"
-  ];
-  
-  let fixSuccess = false;
-  for (const key of keyFormats) {
-    try {
-      console.log(`   Trying key: ${key}`);
-      const fixTx = await warehouse.adminSetAddress(key, EXPECTED_BWZC, {
-        gasLimit: 100_000n
-      });
-      console.log(`   Fix TX: ${fixTx.hash}`);
-      await fixTx.wait();
-      
-      const newBwzc = await warehouse.bwzc();
-      if (newBwzc.toLowerCase() === EXPECTED_BWZC.toLowerCase()) {
-        console.log(`   ✅ Token pointer updated with key: ${key}`);
-        fixSuccess = true;
-        break;
-      }
-    } catch (e) {
-      console.log(`   ❌ Failed with key: ${key}`);
-    }
-  }
-  
-  if (!fixSuccess) {
-    throw new Error('❌ CRITICAL: Could not update token address');
-  }
-} else {
-  console.log('✅ Token alignment is correct.');
-}
-
-// =====================================================================
-// VERIFY SCW HAS APPROVED THE NEW CONTRACT
-// =====================================================================
-console.log('\n🔍 Verifying allowance for NEW contract...');
-
-const bwzcToken = new ethers.Contract(
-  EXPECTED_BWZC,
-  [
-    'function allowance(address owner, address spender) view returns (uint256)',
-    'function approve(address spender, uint256 amount) external returns (bool)'
-  ],
-  this.signer
-);
-
-const scwAddress = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-const allowance = await bwzcToken.allowance(scwAddress, LIVE.WAREHOUSE_CONTRACT);
-console.log(`   SCW → New Warehouse allowance: ${ethers.formatEther(allowance)} BWZC`);
-
-if (allowance < ethers.parseUnits("170212.766", 18)) {
-  console.log('⚠️  Allowance missing for new contract!');
-  console.log('   You need to run this transaction from the SCW:');
-  console.log('   await bwzcToken.connect(scwSigner).approve(warehouseAddress, ethers.MaxUint256)');
-  throw new Error('❌ Allowance insufficient for new contract');
-}
-
-// =====================================================================
-// NEW DIAGNOSTIC: Check Balancer Vault Configuration
-// =====================================================================
-console.log('\n🔍 DIAGNOSTIC: Checking Balancer Vault configuration...');
-
-const EXPECTED_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
-const EXPECTED_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const EXPECTED_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-
-const vaultAddress = await warehouse.vault();
-const usdcAddress = await warehouse.usdc();
-const wethAddress = await warehouse.weth();
-
-console.log(`   Contract.vault = ${vaultAddress}`);
-console.log(`   Expected Vault = ${EXPECTED_VAULT}`);
-console.log(`   Contract.usdc = ${usdcAddress}`);
-console.log(`   Contract.weth = ${wethAddress}`);
-
-if (vaultAddress.toLowerCase() !== EXPECTED_VAULT.toLowerCase()) {
-  console.log('⚠️  VAULT MISMATCH DETECTED! Updating...');
-  
-  const VAULT_KEY = ethers.id("vault");
-  const fixTx = await warehouse.adminSetAddress(VAULT_KEY, EXPECTED_VAULT, {
-    gasLimit: 100_000n
-  });
-  console.log(`   Fix TX: ${fixTx.hash}`);
-  await fixTx.wait();
-  console.log('✅ Vault address updated');
-}
-
-if (usdcAddress.toLowerCase() !== EXPECTED_USDC.toLowerCase()) {
-  console.log('⚠️  USDC MISMATCH DETECTED! Updating...');
-  
-  const USDC_KEY = ethers.id("usdc");
-  const fixTx = await warehouse.adminSetAddress(USDC_KEY, EXPECTED_USDC, {
-    gasLimit: 100_000n
-  });
-  console.log(`   Fix TX: ${fixTx.hash}`);
-  await fixTx.wait();
-  console.log('✅ USDC address updated');
-}
-
-if (wethAddress.toLowerCase() !== EXPECTED_WETH.toLowerCase()) {
-  console.log('⚠️  WETH MISMATCH DETECTED! Updating...');
-  
-  const WETH_KEY = ethers.id("weth");
-  const fixTx = await warehouse.adminSetAddress(WETH_KEY, EXPECTED_WETH, {
-    gasLimit: 100_000n
-  });
-  console.log(`   Fix TX: ${fixTx.hash}`);
-  await fixTx.wait();
-  console.log('✅ WETH address updated');
-}
-
-// =====================================================================
-// NEW DIAGNOSTIC: Check Balancer Pool IDs
-// =====================================================================
-console.log('\n🔍 DIAGNOSTIC: Checking Balancer Pool IDs...');
-
-const EXPECTED_BAL_USDC_ID = "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706";
-const EXPECTED_BAL_WETH_ID = "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707";
-
-const balUsdcPoolId = await warehouse.balBWUSDCId();
-const balWethPoolId = await warehouse.balBWWETHId();
-
-console.log(`   Balancer USDC pool ID: ${balUsdcPoolId}`);
-console.log(`   Expected USDC pool ID: ${EXPECTED_BAL_USDC_ID}`);
-console.log(`   Balancer WETH pool ID: ${balWethPoolId}`);
-console.log(`   Expected WETH pool ID: ${EXPECTED_BAL_WETH_ID}`);
-
-if (balUsdcPoolId !== EXPECTED_BAL_USDC_ID) {
-  console.log('⚠️  USDC POOL ID MISMATCH! Updating...');
-  
-  const fixTx = await warehouse.adminSetPoolId(
-    ethers.id("balBWUSDCId"),
-    EXPECTED_BAL_USDC_ID,
-    { gasLimit: 100_000n }
-  );
-  console.log(`   Fix TX: ${fixTx.hash}`);
-  await fixTx.wait();
-  console.log('✅ USDC pool ID updated');
-}
-
-if (balWethPoolId !== EXPECTED_BAL_WETH_ID) {
-  console.log('⚠️  WETH POOL ID MISMATCH! Updating...');
-  
-  const fixTx = await warehouse.adminSetPoolId(
-    ethers.id("balBWWETHId"),
-    EXPECTED_BAL_WETH_ID,
-    { gasLimit: 100_000n }
-  );
-  console.log(`   Fix TX: ${fixTx.hash}`);
-  await fixTx.wait();
-  console.log('✅ WETH pool ID updated');
-}
-
-// =====================================================================
-// UPDATED BOOTSTRAP FOR NEW CONTRACT (0x39539214246390bA6F852c519b6AB4DC45dF0469)
-// WITH LOW GAS PRICES (Current network: ~0.05 gwei)
+// FINAL SEQUENCE: Temporary SCW Pointer Swap + Bootstrap + Restore
+// WITH CIRCUIT BREAKERS TO PREVENT REPEATS
 // =====================================================================
 
-// Update your LIVE config with the new contract address
-LIVE.WAREHOUSE_CONTRACT = "0x39539214246390bA6F852c519b6AB4DC45dF0469";
-
 // =====================================================================
-// CIRCUIT BREAKER - PREVENT INFINITE RETRIES
+// CIRCUIT BREAKER 1: Global process lock (in-memory)
 // =====================================================================
-if (!global.bootstrapState) {
-  global.bootstrapState = {
-    attempted: false,
+if (!global.bootstrapFinalSequence) {
+  global.bootstrapFinalSequence = {
+    executed: false,
     timestamp: 0,
     success: false
   };
 }
 
-if (global.bootstrapState.attempted) {
-  console.log('🛑 Bootstrap already attempted, skipping...');
-} else {
-  global.bootstrapState.attempted = true;
-  global.bootstrapState.timestamp = Date.now();
-
+if (global.bootstrapFinalSequence.executed) {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║ 🚀 BOOTSTRAP WITH NEW CONTRACT                                ║
+║  🛑 CIRCUIT BREAKER ACTIVE                                    ║
 ╠═══════════════════════════════════════════════════════════════╣
-║ • New Contract: 0x39539214246390bA6F852c519b6AB4DC45dF0469   ║
-║ • Using emergencyBulletproofBootstrap()                       ║
-║ • ETH Price: $2000 (passed directly, no oracle)               ║
-║ • LOW GAS PRICES (current network: ~0.05 gwei)                ║
-║ • FULL DIAGNOSTICS ENABLED                                    ║
-║ • Single attempt only                                         ║
+║  • Bootstrap sequence already executed at                     ║
+║    ${new Date(global.bootstrapFinalSequence.timestamp).toISOString()}          ║
+║  • Success: ${global.bootstrapFinalSequence.success ? 'YES' : 'NO'}                                          ║
+║  • NO FURTHER ATTEMPTS WILL BE MADE                          ║
+║  • System continuing in monitoring mode only                 ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
+  // Skip entirely - no gas spent
+} else {
+  // Mark as executed immediately to prevent any repeats
+  global.bootstrapFinalSequence.executed = true;
+  global.bootstrapFinalSequence.timestamp = Date.now();
+
+  // =====================================================================
+  // CIRCUIT BREAKER 2: Check cycle count before starting
+  // =====================================================================
+  const warehouse = new ethers.Contract(
+    "0x39539214246390bA6F852c519b6AB4DC45dF0469",
+    [
+      'function cycleCount() view returns (uint256)',
+      'function scw() view returns (address)',
+      'function adminSetAddress(bytes32 key, address value) external',
+      'function emergencyBulletproofBootstrap(uint256, uint256) external'
+    ],
+    this.signer
+  );
+
+  const currentCycle = await warehouse.cycleCount();
+  console.log(`📊 Current cycle: ${currentCycle}`);
+
+  if (currentCycle > 0n) {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ✅ BOOTSTRAP ALREADY COMPLETE - SKIPPING                     ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Cycle count: ${currentCycle}                                               ║
+║  • No gas wasted                                              ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    global.bootstrapFinalSequence.success = true;
+    return;
+  }
+
+  const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+  const officialScw = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+  const EOA = await this.signer.getAddress();
+
+  // =====================================================================
+  // CIRCUIT BREAKER 3: Verify EOA balance before proceeding
+  // =====================================================================
+  const bwzc = new ethers.Contract("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2", [
+    'function balanceOf(address) view returns (uint256)'
+  ], this.provider);
+
+  const eoaBalance = await bwzc.balanceOf(EOA);
+  console.log(`💰 EOA BWAEZI balance: ${ethers.formatEther(eoaBalance)}`);
+
+  const REQUIRED_AMOUNT = ethers.parseUnits("170212.766", 18);
+  if (eoaBalance < REQUIRED_AMOUNT) {
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  ⚠️ INSUFFICIENT BALANCE - SKIPPING TO PREVENT GAS WASTE      ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Required: ${ethers.formatEther(REQUIRED_AMOUNT)} BWAEZI                   ║
+║  • Current: ${ethers.formatEther(eoaBalance)} BWAEZI                         ║
+║  • Transfer tokens from SCW to EOA first                      ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+    return; // Exit without spending gas
+  }
 
   try {
-    // Check current cycle
-    const currentCycle = await warehouse.cycleCount();
-    console.log(`\n📊 Current cycle: ${currentCycle}`);
+    // =====================================================================
+    // STEP 1: Point scw storage → EOA (temporary)
+    // =====================================================================
+    console.log("\n1️⃣ Temporarily setting scw → EOA...");
+    const txPointer = await warehouse.adminSetAddress(SCW_KEY, EOA, {
+      gasLimit: 200_000n,
+      maxFeePerGas: ethers.parseUnits("0.1", "gwei")
+    });
+    console.log("   Pointer tx:", txPointer.hash);
+    await txPointer.wait();
 
-    if (currentCycle === 0n) {
-      // Calculate required BWZC (170,212.766)
-      const BWZC_AMOUNT = ethers.parseUnits("170212.766", 18);
-      const ETH_PRICE = ethers.parseUnits("2000", 18); // $2000 estimate
+    // Verify the pointer
+    const newScw = await warehouse.scw();
+    console.log(`   ✅ scw now = ${newScw}`);
 
-      console.log(`\n💰 Bootstrap parameters:`);
-      console.log(`   BWZC amount: ${ethers.formatEther(BWZC_AMOUNT)}`);
-      console.log(`   ETH price: $${ethers.formatEther(ETH_PRICE)}`);
-
-      // =====================================================================
-      // GET CURRENT LOW GAS PRICES - NO EXAGGERATION
-      // =====================================================================
-      const feeData = await this.provider.getFeeData();
-      
-      // Use actual network prices, with reasonable minimums
-      const maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits("0.1", "gwei");
-      const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.parseUnits("0.01", "gwei");
-
-      console.log(`\n⛽ Gas prices (current network):`);
-      console.log(`   Max fee: ${ethers.formatUnits(maxFeePerGas, 'gwei')} gwei`);
-      console.log(`   Priority fee: ${ethers.formatUnits(maxPriorityFeePerGas, 'gwei')} gwei`);
-      
-      // Estimate total cost
-      const estimatedCost = maxFeePerGas * 2_000_000n;
-      console.log(`   Estimated total: ${ethers.formatEther(estimatedCost)} ETH (~$${Number(ethers.formatEther(estimatedCost)) * 2000})`);
-
-      // Execute bootstrap
-      console.log(`\n📤 Calling emergencyBulletproofBootstrap...`);
-      
-      const tx = await warehouse.emergencyBulletproofBootstrap(
-        BWZC_AMOUNT,
-        ETH_PRICE,
-        {
-          gasLimit: 2_000_000n, // Keep gas limit reasonable for complex operation
-          maxFeePerGas: maxFeePerGas,
-          maxPriorityFeePerGas: maxPriorityFeePerGas
-        }
-      );
-
-      console.log(`✅ TX SENT: ${tx.hash}`);
-      console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-
-      const receipt = await tx.wait();
-      
-      if (receipt.status === 1) {
-        console.log(`\n🎉✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅🎉`);
-        console.log(`   Gas used: ${receipt.gasUsed}`);
-        console.log(`   Actual cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
-        
-        const newCycle = await warehouse.cycleCount();
-        console.log(`   New cycle count: ${newCycle}`);
-        
-        global.bootstrapState.success = true;
-      } else {
-        throw new Error('Transaction reverted');
+    // =====================================================================
+    // STEP 2: Bootstrap — contract will now pull from EOA
+    // =====================================================================
+    console.log("\n2️⃣ Launching bootstrap...");
+    const txBoot = await warehouse.emergencyBulletproofBootstrap(
+      REQUIRED_AMOUNT, 
+      ethers.parseUnits("2000", 18),
+      { 
+        gasLimit: 2_500_000n,
+        maxFeePerGas: ethers.parseUnits("0.1", "gwei")
       }
+    );
+    console.log("   Bootstrap tx:", txBoot.hash);
+    const receipt = await txBoot.wait();
+
+    if (receipt.status === 1) {
+      console.log("\n✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅");
+      global.bootstrapFinalSequence.success = true;
+      
+      const newCycle = await warehouse.cycleCount();
+      console.log(`   New cycle count: ${newCycle}`);
     } else {
-      console.log('✅ Already bootstrapped');
-      global.bootstrapState.success = true;
+      throw new Error(`Bootstrap reverted - gas used: ${receipt.gasUsed}`);
     }
+
+    // =====================================================================
+    // STEP 3: Restore original SCW pointer
+    // =====================================================================
+    console.log("\n3️⃣ Restoring original SCW pointer...");
+    const txRestore = await warehouse.adminSetAddress(SCW_KEY, officialScw, {
+      gasLimit: 200_000n,
+      maxFeePerGas: ethers.parseUnits("0.1", "gwei")
+    });
+    console.log("   Restore tx:", txRestore.hash);
+    await txRestore.wait();
+
+    console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║  🎉 SEQUENCE COMPLETE!                                        ║
+╠═══════════════════════════════════════════════════════════════╣
+║  • Cycle count: ${await warehouse.cycleCount()}                                            ║
+║  • Contract now self-automating                               ║
+║  • Circuit breaker active - no repeats                        ║
+╚═══════════════════════════════════════════════════════════════╝
+    `);
+
   } catch (error) {
-    console.error('\n❌ Bootstrap failed:', error.message);
-    if (error.transactionHash) {
-      console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+    console.error('\n❌ Bootstrap sequence failed:', error.message);
+    
+    // CRITICAL: Always restore SCW pointer even if bootstrap fails
+    try {
+      console.log("\n🔄 Emergency: Restoring original SCW pointer...");
+      await warehouse.adminSetAddress(SCW_KEY, officialScw, {
+        gasLimit: 200_000n
+      });
+      console.log("✅ SCW restored");
+    } catch (restoreError) {
+      console.error("⚠️ Could not restore SCW:", restoreError.message);
     }
+    
+    // Circuit breaker already triggered - no retries
+    console.log('\n⚠️ Circuit breaker active - no retry will occur');
   }
 }
 // THEN continue with normal MEV initialization...
