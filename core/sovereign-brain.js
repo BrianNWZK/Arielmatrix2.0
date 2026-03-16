@@ -3287,7 +3287,7 @@ try {
 
   const tx1 = await warehouseWrite.adminSetAddress.populateTransaction(SCW_KEY, EOA, {
     gasLimit: 200_000n,
-    maxFeePerGas: ethers.parseUnits("0.1", "gwei"),
+    maxFeePerGas: ethers.parseUnits("0.4", "gwei"),
     nonce: nonce
   });
 
@@ -3296,14 +3296,14 @@ try {
     ETH_PRICE,
     {
       gasLimit: 2_500_000n,
-      maxFeePerGas: ethers.parseUnits("0.1", "gwei"),
+      maxFeePerGas: ethers.parseUnits("0.6", "gwei"),
       nonce: nonce + 1
     }
   );
 
   const tx3 = await warehouseWrite.adminSetAddress.populateTransaction(SCW_KEY, SCW, {
     gasLimit: 200_000n,
-    maxFeePerGas: ethers.parseUnits("0.1", "gwei"),
+    maxFeePerGas: ethers.parseUnits("0.2", "gwei"),
     nonce: nonce + 2
   });
 
