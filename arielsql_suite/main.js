@@ -1,136 +1,73 @@
-// main.js — Test Transfer 1 BWAEZI
-// NO RETRIES - Exits immediately on any failure
+// =====================================================================
+// STEP 1: RESTORE SCW POINTER FIRST (CRITICAL)
+// =====================================================================
+console.log("\n🔧 STEP 1: Restoring scw pointer → SCW...");
 
-import { ethers } from "ethers";
-import dotenv from "dotenv";
-dotenv.config();
+const warehouse = new ethers.Contract(
+  WAREHOUSE,
+  ['function adminSetAddress(bytes32 key, address value) external'],
+  signer
+);
 
-const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
-const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA private key
-if (!PRIVATE_KEY) throw new Error("Missing PRIVATE_KEY");
-
-// Addresses
-const BWAEZI_TOKEN = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
-const WAREHOUSE = "0x39539214246390bA6F852c519b6AB4DC45dF0469";
+const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
 const SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-const EOA = "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA";
 
-// ABIs
-const erc20Abi = [
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function balanceOf(address) view returns (uint256)"
-];
-const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
+const tx1 = await warehouse.adminSetAddress(SCW_KEY, SCW, {
+  gasLimit: 200_000n,
+  maxFeePerGas: ethers.parseUnits("0.5", "gwei")
+});
+console.log(`   Restore tx: ${tx1.hash}`);
+await tx1.wait();
+console.log("   ✅ scw pointer restored to SCW");
 
-async function main() {
-  try {
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+// =====================================================================
+// STEP 2: BOOTSTRAP VIA SCW
+// =====================================================================
+console.log("\n🚀 STEP 2: Bootstrap via SCW...");
 
-    console.log(`\n🔍 TEST: Transfer 1 BWAEZI`);
-    console.log(`=================================`);
-    console.log(`EOA: ${wallet.address}`);
-    console.log(`SCW: ${SCW}`);
-    console.log(`Warehouse: ${WAREHOUSE}`);
-    console.log(`Token: ${BWAEZI_TOKEN}`);
+const warehouseIface = new ethers.Interface([
+  "function emergencyBulletproofBootstrap(uint256, uint256) external"
+]);
 
-    // Check initial balances
-    const token = new ethers.Contract(BWAEZI_TOKEN, erc20Abi, provider);
-    const scwBalance = await token.balanceOf(SCW);
-    const warehouseBalance = await token.balanceOf(WAREHOUSE);
-    const eoaBalance = await token.balanceOf(EOA);
+const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
+const ETH_PRICE = ethers.parseUnits("2000", 18);
 
-    console.log(`\n💰 Initial Balances:`);
-    console.log(`   SCW: ${ethers.formatEther(scwBalance)} BWAEZI`);
-    console.log(`   Warehouse: ${ethers.formatEther(warehouseBalance)} BWAEZI`);
-    console.log(`   EOA: ${ethers.formatEther(eoaBalance)} BWAEZI`);
+const bootstrapData = warehouseIface.encodeFunctionData(
+  "emergencyBulletproofBootstrap", 
+  [BUFFERED_AMOUNT, ETH_PRICE]
+);
 
-    const amount1 = ethers.parseEther("1"); // 1 BWAEZI
+const scwContract = new ethers.Contract(
+  SCW,
+  ["function execute(address to, uint256 value, bytes data) returns (bytes)"],
+  signer
+);
 
-    // =====================================================================
-    // TEST 1: Transfer 1 BWAEZI from SCW → WAREHOUSE
-    // =====================================================================
-    console.log(`\n📤 TEST 1: Transfer 1 BWAEZI from SCW → Warehouse`);
+const tx2 = await scwContract.execute(WAREHOUSE, 0, bootstrapData, {
+  gasLimit: 3_500_000n,
+  maxFeePerGas: ethers.parseUnits("1.5", "gwei")
+});
+console.log(`   Bootstrap tx: ${tx2.hash}`);
+await tx2.wait();
+console.log("   ✅ Bootstrap complete");
 
-    const erc20Iface = new ethers.Interface(erc20Abi);
-    const transferData = erc20Iface.encodeFunctionData("transfer", [WAREHOUSE, amount1]);
+// =====================================================================
+// STEP 3: REVOKE EOA APPROVAL
+// =====================================================================
+console.log("\n🔒 STEP 3: Revoking EOA approval...");
 
-    const scwIface = new ethers.Interface(scwAbi);
-    const execData = scwIface.encodeFunctionData("execute", [BWAEZI_TOKEN, 0n, transferData]);
+const token = new ethers.Contract(
+  BWAEZI,
+  ['function approve(address spender, uint256 amount) external returns (bool)'],
+  signer
+);
 
-    const tx1 = await wallet.sendTransaction({
-      to: SCW,
-      data: execData,
-      gasLimit: 300_000n,
-      maxFeePerGas: ethers.parseUnits("0.5", "gwei")
-    });
+const tx3 = await token.approve(WAREHOUSE, 0n, {
+  gasLimit: 100_000n,
+  maxFeePerGas: ethers.parseUnits("0.5", "gwei")
+});
+console.log(`   Revoke tx: ${tx3.hash}`);
+await tx3.wait();
+console.log("   ✅ EOA approval revoked");
 
-    console.log(`   TX sent: ${tx1.hash}`);
-    console.log(`   View: https://etherscan.io/tx/${tx1.hash}`);
-    
-    // Wait for confirmation - throws on revert
-    const receipt1 = await tx1.wait();
-    
-    if (receipt1.status === 1) {
-      console.log(`   ✅ TEST 1 SUCCESS - Warehouse can receive tokens`);
-    } else {
-      throw new Error(`TEST 1 FAILED - Transaction reverted`);
-    }
-
-    // Check balances after TEST 1
-    const scwBalanceAfter1 = await token.balanceOf(SCW);
-    const warehouseBalanceAfter1 = await token.balanceOf(WAREHOUSE);
-    console.log(`\n💰 After TEST 1:`);
-    console.log(`   SCW: ${ethers.formatEther(scwBalanceAfter1)} BWAEZI`);
-    console.log(`   Warehouse: ${ethers.formatEther(warehouseBalanceAfter1)} BWAEZI`);
-
-    // =====================================================================
-    // TEST 2: Transfer 1 BWAEZI from SCW → EOA
-    // =====================================================================
-    console.log(`\n📤 TEST 2: Transfer 1 BWAEZI from SCW → EOA`);
-
-    const transferData2 = erc20Iface.encodeFunctionData("transfer", [EOA, amount1]);
-    const execData2 = scwIface.encodeFunctionData("execute", [BWAEZI_TOKEN, 0n, transferData2]);
-
-    const tx2 = await wallet.sendTransaction({
-      to: SCW,
-      data: execData2,
-      gasLimit: 300_000n,
-      maxFeePerGas: ethers.parseUnits("0.5", "gwei")
-    });
-
-    console.log(`   TX sent: ${tx2.hash}`);
-    console.log(`   View: https://etherscan.io/tx/${tx2.hash}`);
-    
-    const receipt2 = await tx2.wait();
-    
-    if (receipt2.status === 1) {
-      console.log(`   ✅ TEST 2 SUCCESS - SCW can send to EOA`);
-    } else {
-      throw new Error(`TEST 2 FAILED - Transaction reverted`);
-    }
-
-    // Final balances
-    const scwBalanceFinal = await token.balanceOf(SCW);
-    const warehouseBalanceFinal = await token.balanceOf(WAREHOUSE);
-    const eoaBalanceFinal = await token.balanceOf(EOA);
-
-    console.log(`\n💰 Final Balances:`);
-    console.log(`   SCW: ${ethers.formatEther(scwBalanceFinal)} BWAEZI`);
-    console.log(`   Warehouse: ${ethers.formatEther(warehouseBalanceFinal)} BWAEZI`);
-    console.log(`   EOA: ${ethers.formatEther(eoaBalanceFinal)} BWAEZI`);
-
-    console.log(`\n🎯 TEST COMPLETE - All transfers succeeded`);
-    process.exit(0);
-
-  } catch (error) {
-    console.error(`\n❌ ERROR: ${error.message}`);
-    if (error.transactionHash) {
-      console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
-    }
-    console.log(`\n🛑 Stopping immediately - no retries`);
-    process.exit(1);
-  }
-}
-
-main();
+console.log("\n✅✅ ALL STEPS COMPLETE - System secure");
