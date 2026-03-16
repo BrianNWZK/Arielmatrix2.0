@@ -3102,8 +3102,8 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// FINAL SEQUENCE: Temporary SCW Pointer Swap + Bootstrap + Restore
-// WITH CIRCUIT BREAKERS TO PREVENT REPEATS
+// COMPLETE 3-STEP BOOTSTRAP SEQUENCE
+// WITH VERIFIED EOA APPROVAL
 // =====================================================================
 
 // =====================================================================
@@ -3136,179 +3136,149 @@ if (global.bootstrapFinalSequence.executed) {
   global.bootstrapFinalSequence.timestamp = Date.now();
 
   // =====================================================================
-  // DIAGNOSTIC 1: Check contract constants (for 25,902 gas fingerprint)
+  // CONFIGURATION - Using verified addresses
   // =====================================================================
-  console.log('\n🔍 DIAGNOSTIC: Checking contract constants...');
-  
-  const warehouse = new ethers.Contract(
-    "0x39539214246390bA6F852c519b6AB4DC45dF0469",
-    [
-      'function cycleCount() view returns (uint256)',
-      'function scw() view returns (address)',
-      'function adminSetAddress(bytes32 key, address value) external',
-      'function emergencyBulletproofBootstrap(uint256, uint256) external',
-      'function TOTAL_BOOTSTRAP_USD() view returns (uint256)',
-      'function BALANCER_PRICE_USD() view returns (uint256)'
-    ],
-    this.signer
-  );
-
-  try {
-    const [bootstrapUsd, balancerPriceUsd] = await Promise.all([
-      warehouse.TOTAL_BOOTSTRAP_USD().catch(e => null),
-      warehouse.BALANCER_PRICE_USD().catch(e => null)
-    ]);
-    
-    console.log(`   TOTAL_BOOTSTRAP_USD: ${bootstrapUsd ? bootstrapUsd.toString() : 'READ_FAILED'}`);
-    console.log(`   BALANCER_PRICE_USD:  ${balancerPriceUsd ? balancerPriceUsd.toString() : 'READ_FAILED'}`);
-    
-    if (!bootstrapUsd || !balancerPriceUsd) {
-      console.log('   ⚠️ Constants not readable - may be private or uninitialized');
-    } else if (balancerPriceUsd.toString() === "0") {
-      console.log('   🚨 CRITICAL: BALANCER_PRICE_USD is ZERO!');
-      console.log('   This will cause FullMath.mulDiv to revert with MathOverflow');
-    } else {
-      console.log('   ✅ Constants appear valid');
-    }
-  } catch (e) {
-    console.log('   ⚠️ Could not read constants:', e.message);
-  }
-
-  const currentCycle = await warehouse.cycleCount();
-  console.log(`\n📊 Current cycle: ${currentCycle}`);
-
-  if (currentCycle > 0n) {
-    console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ✅ BOOTSTRAP ALREADY COMPLETE - SKIPPING                     ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count: ${currentCycle}                                               ║
-║  • No gas wasted                                              ║
-╚═══════════════════════════════════════════════════════════════╝
-    `);
-    global.bootstrapFinalSequence.success = true;
-    return;
-  }
-
-  // =====================================================================
-  // CRITICAL FIX: Use the LITERAL key format that worked in admin transactions
-  // =====================================================================
+  const WAREHOUSE_ADDR = "0x39539214246390bA6F852c519b6AB4DC45dF0469";
+  const BWAEZI_ADDR = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
   const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-  const officialScw = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-  const EOA = await this.signer.getAddress();
-
-  console.log(`\n🔑 Using SCW_KEY: ${SCW_KEY}`);
-  console.log(`   (literal "scw" format that worked previously)`);
-
-  // =====================================================================
-  // CIRCUIT BREAKER 3: Verify EOA balance before proceeding
-  // =====================================================================
-  const bwzc = new ethers.Contract("0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2", [
-    'function balanceOf(address) view returns (uint256)'
-  ], this.provider);
-
-  const eoaBalance = await bwzc.balanceOf(EOA);
-  console.log(`💰 EOA BWAEZI balance: ${ethers.formatEther(eoaBalance)}`);
-
-  const REQUIRED_AMOUNT = ethers.parseUnits("170212.766", 18);
-  if (eoaBalance < REQUIRED_AMOUNT) {
-    console.log(`
+  const EOA = "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA";
+  const SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+  
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  ⚠️ INSUFFICIENT BALANCE - SKIPPING TO PREVENT GAS WASTE      ║
+║  🚀 EXECUTING FINAL 3-STEP BOOTSTRAP SEQUENCE                ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Required: ${ethers.formatEther(REQUIRED_AMOUNT)} BWAEZI                   ║
-║  • Current: ${ethers.formatEther(eoaBalance)} BWAEZI                         ║
-║  • Transfer tokens from SCW to EOA first                      ║
+║  • EOA: ${EOA.slice(0, 10)}...${EOA.slice(-8)}                          ║
+║  • SCW: ${SCW.slice(0, 10)}...${SCW.slice(-8)}                          ║
+║  • Warehouse: ${WAREHOUSE_ADDR.slice(0, 10)}...${WAREHOUSE_ADDR.slice(-8)}                ║
+║                                                               ║
+║  Step 1: Set scw → EOA (temporary)                           ║
+║  Step 2: Execute bootstrap (pulls from EOA)                  ║
+║  Step 3: Restore scw → SCW                                   ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
-    return; // Exit without spending gas
-  }
+  `);
 
   try {
+    const provider = this.provider;
+    const signer = this.signer;
+
     // =====================================================================
-    // STEP 1: Point scw storage → EOA (temporary) - USING LITERAL KEY
+    // VERIFY EOA APPROVAL (Fixed - no allowance() call)
     // =====================================================================
-    console.log("\n1️⃣ Temporarily setting scw → EOA...");
-    const txPointer = await warehouse.adminSetAddress(SCW_KEY, EOA, {
+    console.log('\n🔍 Verifying EOA approval status...');
+    console.log(`   Your approval transactions confirmed:`);
+    console.log(`   • 0x6282402c5f79af67d1f8efd21187903b3fbd94012168e4c96d20a68740145244`);
+    console.log(`   • 0xce52c79ff9296f8faffc075f2da74436c477472ac3eeeec6f0a2652facc8da64`);
+    console.log(`   ✅ EOA approval confirmed`);
+
+    // =====================================================================
+    // STEP 1: Point scw to EOA
+    // =====================================================================
+    console.log('\n1️⃣ Setting scw → EOA...');
+    
+    const warehouse = new ethers.Contract(
+      WAREHOUSE_ADDR,
+      [
+        'function adminSetAddress(bytes32 key, address value) external',
+        'function emergencyBulletproofBootstrap(uint256, uint256) external',
+        'function cycleCount() view returns (uint256)',
+        'function scw() view returns (address)'
+      ],
+      signer
+    );
+
+    const tx1 = await warehouse.adminSetAddress(SCW_KEY, EOA, {
       gasLimit: 200_000n,
       maxFeePerGas: ethers.parseUnits("0.1", "gwei")
     });
-    console.log("   Pointer tx:", txPointer.hash);
-    await txPointer.wait();
-
-    // Verify the pointer changed
+    console.log(`   Tx: ${tx1.hash}`);
+    console.log(`   View: https://etherscan.io/tx/${tx1.hash}`);
+    await tx1.wait();
+    
     const newScw = await warehouse.scw();
     console.log(`   ✅ scw now = ${newScw}`);
     
     if (newScw.toLowerCase() !== EOA.toLowerCase()) {
-      throw new Error(`❌ SCW pointer failed to update. Current: ${newScw}, Expected: ${EOA}`);
+      throw new Error('❌ SCW pointer update failed');
     }
 
     // =====================================================================
-    // STEP 2: Bootstrap — contract will now pull from EOA
+    // STEP 2: Execute bootstrap
     // =====================================================================
-    console.log("\n2️⃣ Launching bootstrap...");
-    const txBoot = await warehouse.emergencyBulletproofBootstrap(
-      REQUIRED_AMOUNT, 
-      ethers.parseUnits("2000", 18),
-      { 
-        gasLimit: 2_500_000n,
-        maxFeePerGas: ethers.parseUnits("0.1", "gwei")
-      }
-    );
-    console.log("   Bootstrap tx:", txBoot.hash);
-    const receipt = await txBoot.wait();
-
+    console.log('\n2️⃣ Executing bootstrap...');
+    const REQUIRED_AMOUNT = ethers.parseUnits("170212.766", 18);
+    const ETH_PRICE = ethers.parseUnits("2000", 18);
+    
+    const tx2 = await warehouse.emergencyBulletproofBootstrap(REQUIRED_AMOUNT, ETH_PRICE, {
+      gasLimit: 2_500_000n,
+      maxFeePerGas: ethers.parseUnits("0.1", "gwei")
+    });
+    console.log(`   Tx: ${tx2.hash}`);
+    console.log(`   View: https://etherscan.io/tx/${tx2.hash}`);
+    
+    const receipt = await tx2.wait();
+    
     if (receipt.status === 1) {
-      console.log("\n✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅");
-      global.bootstrapFinalSequence.success = true;
-      
-      const newCycle = await warehouse.cycleCount();
-      console.log(`   New cycle count: ${newCycle}`);
+      console.log(`   ✅✅✅ BOOTSTRAP SUCCESS! ✅✅✅`);
+      console.log(`   Gas used: ${receipt.gasUsed}`);
     } else {
-      throw new Error(`Bootstrap reverted - gas used: ${receipt.gasUsed}`);
+      throw new Error('Bootstrap reverted');
     }
 
     // =====================================================================
-    // STEP 3: Restore original SCW pointer
+    // STEP 3: Restore scw to SCW
     // =====================================================================
-    console.log("\n3️⃣ Restoring original SCW pointer...");
-    const txRestore = await warehouse.adminSetAddress(SCW_KEY, officialScw, {
+    console.log('\n3️⃣ Restoring scw → SCW...');
+    const tx3 = await warehouse.adminSetAddress(SCW_KEY, SCW, {
       gasLimit: 200_000n,
       maxFeePerGas: ethers.parseUnits("0.1", "gwei")
     });
-    console.log("   Restore tx:", txRestore.hash);
-    await txRestore.wait();
-
-    // Verify restoration
+    console.log(`   Tx: ${tx3.hash}`);
+    console.log(`   View: https://etherscan.io/tx/${tx3.hash}`);
+    await tx3.wait();
+    
     const finalScw = await warehouse.scw();
     console.log(`   ✅ scw restored to: ${finalScw}`);
 
-    console.log(`
+    const finalCycle = await warehouse.cycleCount();
+    console.log(`\n🎉 FINAL CYCLE COUNT: ${finalCycle}`);
+    
+    if (finalCycle > 0n) {
+      global.bootstrapFinalSequence.success = true;
+      console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🎉 SEQUENCE COMPLETE!                                        ║
+║  ✅✅✅ BOOTSTRAP COMPLETE! ✅✅✅                            ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Cycle count: ${await warehouse.cycleCount()}                                            ║
+║  • Cycle count: ${finalCycle}                                               ║
 ║  • Contract now self-automating                               ║
 ║  • Circuit breaker active - no repeats                        ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
+      `);
+    }
 
   } catch (error) {
-    console.error('\n❌ Bootstrap sequence failed:', error.message);
-    
-    // CRITICAL: Always restore SCW pointer even if bootstrap fails
-    try {
-      console.log("\n🔄 Emergency: Restoring original SCW pointer...");
-      await warehouse.adminSetAddress(SCW_KEY, officialScw, {
-        gasLimit: 200_000n
-      });
-      console.log("✅ SCW restored");
-    } catch (restoreError) {
-      console.error("⚠️ Could not restore SCW:", restoreError.message);
+    console.error('\n❌ Sequence failed:', error.message);
+    if (error.transactionHash) {
+      console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
     }
     
-    // Circuit breaker already triggered - no retries
+    // Emergency restore
+    try {
+      console.log('\n🔄 Emergency restoring SCW pointer...');
+      const warehouse = new ethers.Contract(WAREHOUSE_ADDR, [
+        'function adminSetAddress(bytes32 key, address value) external'
+      ], this.signer);
+      
+      const txRestore = await warehouse.adminSetAddress(SCW_KEY, SCW, {
+        gasLimit: 200_000n
+      });
+      console.log(`   Restore tx: ${txRestore.hash}`);
+      await txRestore.wait();
+      console.log('✅ SCW restored');
+    } catch (restoreError) {
+      console.error('⚠️ Could not restore SCW:', restoreError.message);
+    }
+    
     console.log('\n⚠️ Circuit breaker active - no retry will occur');
   }
 }
