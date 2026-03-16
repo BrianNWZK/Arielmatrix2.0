@@ -3102,85 +3102,71 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// USE EXISTING CONFIG VALUES (NO NEW VARIABLES NEEDED)
+// SINGLE BOOTSTRAP ATTEMPT - NO RETRIES, NO REPEATS
 // =====================================================================
-const WAREHOUSE_ADDR = LIVE.WAREHOUSE_CONTRACT; // From your config
-const BWAEZI_ADDR = LIVE.TOKENS.BWAEZI; // From your config
-const SCW_ADDR = LIVE.SCW_ADDRESS; // From your config
-const EOA_ADDR = await this.signer.getAddress(); // Dynamic
-const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
 
-// Amounts
-const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
-const ETH_PRICE = ethers.parseUnits("2000", 18);
+// Circuit breaker - prevent any retry in this process
+if (global.bootstrapAttempted) {
+  console.log("⏹️ Bootstrap already attempted in this process - exiting");
+  return;
+}
+global.bootstrapAttempted = true;
 
-// =====================================================================
-// STEP 1: RESTORE SCW POINTER FIRST
-// =====================================================================
-console.log("\n🔧 STEP 1: Restoring scw pointer → SCW...");
+try {
+  // Use realistic gas prices
+  const maxFeePerGas = ethers.parseUnits("0.4", "gwei");
+  const maxPriorityFeePerGas = ethers.parseUnits("0.05", "gwei");
+  const gasLimit = 3_500_000n;
+  
+  const totalCost = maxFeePerGas * gasLimit;
+  console.log(`💰 Estimated cost: ${ethers.formatEther(totalCost)} ETH`);
 
-const warehouse = new ethers.Contract(
-  WAREHOUSE_ADDR,
-  ['function adminSetAddress(bytes32 key, address value) external'],
-  this.signer
-);
+  const warehouseIface = new ethers.Interface([
+    "function emergencyBulletproofBootstrap(uint256, uint256) external"
+  ]);
 
-const tx1 = await warehouse.adminSetAddress(SCW_KEY, SCW_ADDR, {
-  gasLimit: 200_000n,
-  maxFeePerGas: ethers.parseUnits("0.5", "gwei")
-});
-console.log(`   Restore tx: ${tx1.hash}`);
-await tx1.wait();
-console.log("   ✅ scw pointer restored to SCW");
+  const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
+  const ETH_PRICE = ethers.parseUnits("2000", 18);
 
-// =====================================================================
-// STEP 2: BOOTSTRAP VIA SCW
-// =====================================================================
-console.log("\n🚀 STEP 2: Bootstrap via SCW...");
+  const bootstrapData = warehouseIface.encodeFunctionData(
+    "emergencyBulletproofBootstrap", 
+    [BUFFERED_AMOUNT, ETH_PRICE]
+  );
 
-const warehouseIface = new ethers.Interface([
-  "function emergencyBulletproofBootstrap(uint256, uint256) external"
-]);
+  const scwContract = new ethers.Contract(
+    LIVE.SCW_ADDRESS,
+    ["function execute(address to, uint256 value, bytes data) returns (bytes)"],
+    this.signer
+  );
 
-const bootstrapData = warehouseIface.encodeFunctionData(
-  "emergencyBulletproofBootstrap", 
-  [BUFFERED_AMOUNT, ETH_PRICE]
-);
+  console.log("🚀 Sending bootstrap transaction (single attempt)...");
+  
+  const tx = await scwContract.execute(LIVE.WAREHOUSE_CONTRACT, 0, bootstrapData, {
+    gasLimit: gasLimit,
+    maxFeePerGas: maxFeePerGas,
+    maxPriorityFeePerGas: maxPriorityFeePerGas
+  });
 
-const scwContract = new ethers.Contract(
-  SCW_ADDR,
-  ["function execute(address to, uint256 value, bytes data) returns (bytes)"],
-  this.signer
-);
+  console.log(`✅ Transaction sent: ${tx.hash}`);
+  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+  
+  // Wait for confirmation - will either succeed or throw
+  const receipt = await tx.wait();
+  
+  if (receipt.status === 1) {
+    console.log("✅✅✅ BOOTSTRAP SUCCESSFUL!");
+  } else {
+    console.log("❌ Bootstrap failed - check transaction");
+  }
 
-const tx2 = await scwContract.execute(WAREHOUSE_ADDR, 0, bootstrapData, {
-  gasLimit: 3_500_000n,
-  maxFeePerGas: ethers.parseUnits("1.5", "gwei")
-});
-console.log(`   Bootstrap tx: ${tx2.hash}`);
-await tx2.wait();
-console.log("   ✅ Bootstrap complete");
+} catch (error) {
+  console.error("❌ Error:", error.message);
+  if (error.transactionHash) {
+    console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+  }
+}
 
-// =====================================================================
-// STEP 3: REVOKE EOA APPROVAL
-// =====================================================================
-console.log("\n🔒 STEP 3: Revoking EOA approval...");
-
-const token = new ethers.Contract(
-  BWAEZI_ADDR,
-  ['function approve(address spender, uint256 amount) external returns (bool)'],
-  this.signer
-);
-
-const tx3 = await token.approve(WAREHOUSE_ADDR, 0n, {
-  gasLimit: 100_000n,
-  maxFeePerGas: ethers.parseUnits("0.5", "gwei")
-});
-console.log(`   Revoke tx: ${tx3.hash}`);
-await tx3.wait();
-console.log("   ✅ EOA approval revoked");
-
-console.log("\n✅✅ ALL STEPS COMPLETE - System secure");
+console.log("🏁 Bootstrap attempt complete - no further retries");
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
