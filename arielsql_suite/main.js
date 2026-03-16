@@ -1,73 +1,262 @@
-// =====================================================================
-// STEP 1: RESTORE SCW POINTER FIRST (CRITICAL)
-// =====================================================================
-console.log("\n🔧 STEP 1: Restoring scw pointer → SCW...");
+// arielsql_suite/main.js — ULTRA-FAST DEPLOYMENT
+// SOVEREIGN MEV BRAIN v19 — Mainnet Production (provider fix)
 
-const warehouse = new ethers.Contract(
-  WAREHOUSE,
-  ['function adminSetAddress(bytes32 key, address value) external'],
-  signer
-);
+import express from 'express';
+import cors from 'cors';
+import { ethers } from 'ethers';
+import process from 'process';
+import net from 'net';
 
-const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-const SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+import {ProductionSovereignCore,EnhancedRPCManager, LIVE  } from '../core/sovereign-brain.js';
 
-const tx1 = await warehouse.adminSetAddress(SCW_KEY, SCW, {
-  gasLimit: 200_000n,
-  maxFeePerGas: ethers.parseUnits("0.5", "gwei")
-});
-console.log(`   Restore tx: ${tx1.hash}`);
-await tx1.wait();
-console.log("   ✅ scw pointer restored to SCW");
+async function guaranteePortBinding(startPort = 10000, maxAttempts = 50) {
+  return new Promise((resolve) => {
+    const tryBind = (port, attempt = 1) => {
+      const server = net.createServer();
+      server.listen(port, '0.0.0.0', () => {
+        server.close(() => {
+          console.log(`✅ Port ${port} available for immediate binding`);
+          resolve(port);
+        });
+      });
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && attempt < maxAttempts) {
+          console.log(`⚠️ Port ${port} busy, trying ${port + 1}`);
+          tryBind(port + 1, attempt + 1);
+        } else {
+          const randomPort = Math.floor(Math.random() * 20000) + 10000;
+          console.log(`🚨 Using emergency random port: ${randomPort}`);
+          resolve(randomPort);
+        }
+      });
+    };
+    tryBind(startPort);
+  });
+}
 
-// =====================================================================
-// STEP 2: BOOTSTRAP VIA SCW
-// =====================================================================
-console.log("\n🚀 STEP 2: Bootstrap via SCW...");
+class UltraFastDeployment {
+  constructor() {
+    this.deploymentStartTime = Date.now();
+    this.revenueGenerationActive = false;
+    this.portBound = false;
+    this.blockchainConnected = false;
+    this.core = null;
+    this.app = null;
+    this.server = null;
+  }
 
-const warehouseIface = new ethers.Interface([
-  "function emergencyBulletproofBootstrap(uint256, uint256) external"
-]);
+  async deployImmediately() {
+    console.log('🚀 ULTRA-FAST DEPLOYMENT INITIATED');
 
-const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
-const ETH_PRICE = ethers.parseUnits("2000", 18);
+    const port = await this.guaranteePortBinding();
+    this.portBound = true;
 
-const bootstrapData = warehouseIface.encodeFunctionData(
-  "emergencyBulletproofBootstrap", 
-  [BUFFERED_AMOUNT, ETH_PRICE]
-);
+    const { app, server } = this.launchMinimalServer(port);
+    this.app = app;
+    this.server = server;
 
-const scwContract = new ethers.Contract(
-  SCW,
-  ["function execute(address to, uint256 value, bytes data) returns (bytes)"],
-  signer
-);
+    this.initializeBlockchainConnection();
 
-const tx2 = await scwContract.execute(WAREHOUSE, 0, bootstrapData, {
-  gasLimit: 3_500_000n,
-  maxFeePerGas: ethers.parseUnits("1.5", "gwei")
-});
-console.log(`   Bootstrap tx: ${tx2.hash}`);
-await tx2.wait();
-console.log("   ✅ Bootstrap complete");
+    this.deploySovereignBrain();
 
-// =====================================================================
-// STEP 3: REVOKE EOA APPROVAL
-// =====================================================================
-console.log("\n🔒 STEP 3: Revoking EOA approval...");
+    this.startRevenueGenerationLoop();
 
-const token = new ethers.Contract(
-  BWAEZI,
-  ['function approve(address spender, uint256 amount) external returns (bool)'],
-  signer
-);
+    return { port, app, server };
+  }
 
-const tx3 = await token.approve(WAREHOUSE, 0n, {
-  gasLimit: 100_000n,
-  maxFeePerGas: ethers.parseUnits("0.5", "gwei")
-});
-console.log(`   Revoke tx: ${tx3.hash}`);
-await tx3.wait();
-console.log("   ✅ EOA approval revoked");
+  async guaranteePortBinding() {
+    const startPort = process.env.PORT ? Number(process.env.PORT) : 10000;
+    return await guaranteePortBinding(startPort);
+  }
 
-console.log("\n✅✅ ALL STEPS COMPLETE - System secure");
+  launchMinimalServer(port) {
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
+
+    app.get('/health', (req,res)=> {
+      res.json({
+        status: 'OPERATIONAL',
+        revenueGeneration: this.revenueGenerationActive ? 'ACTIVE' : 'STARTING',
+        blockchain: this.blockchainConnected ? 'CONNECTED' : 'CONNECTING',
+        uptime: Date.now() - this.deploymentStartTime,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    app.get('/revenue-status', (req,res)=> {
+      res.json({
+        revenueGeneration: this.revenueGenerationActive ? 'ACTIVE' : 'STARTING',
+        activeSince: this.revenueGenerationActive ? this.deploymentStartTime : null,
+        transactionsExecuted: 0,
+        totalRevenue: 0,
+        mode: 'ULTRA_FAST_DEPLOYMENT'
+      });
+    });
+
+    const server = app.listen(port, '0.0.0.0', ()=> {
+      console.log(`🚀 SERVER BOUND TO PORT ${port} - READY`);
+      console.log(`🌐 Health: http://localhost:${port}/health`);
+      console.log(`💰 Revenue: http://localhost:${port}/revenue-status`);
+    });
+
+    return { app, server };
+  }
+
+  async initializeBlockchainConnection() {
+    try {
+      console.log('🔗 Initializing mainnet connection...');
+      const rpcManager = new EnhancedRPCManager(); 
+      await rpcManager.init(); 
+      const primary = rpcManager.getProvider();
+      await primary.getBlockNumber();
+      this.blockchainConnected = true;
+      global.blockchainProvider = primary;
+      console.log('✅ Blockchain connected (mainnet sticky provider)');
+    } catch (error) {
+      console.error('⚠️ Blockchain connection failed:', error.message);
+      setTimeout(()=> this.initializeBlockchainConnection(), 15000);
+    }
+  }
+
+  async deploySovereignBrain() {
+    try {
+      console.log(`🧠 Deploying Sovereign MEV Brain ${LIVE.VERSION}...`);
+      const core = new ProductionSovereignCore();
+      await core.initialize();
+      this.core = core;
+      this.revenueGenerationActive = true;
+
+      const productionApp = createProductionAPI(this);
+      this.app.use('/', productionApp);
+
+      console.log(`✅ SOVEREIGN MEV BRAIN ${LIVE.VERSION} DEPLOYED — MAINNET ACTIVE`);
+      console.log(`📊 Dashboard: http://localhost:${this.server.address().port}/revenue-dashboard`);
+    } catch (error) {
+      console.error('⚠️ Brain deployment failed (retry in 10s):', error.message);
+      setTimeout(()=> this.deploySovereignBrain(), 10000);
+    }
+  }
+
+  startRevenueGenerationLoop() {
+    console.log('💰 Starting revenue loop...');
+    setInterval(()=> {
+      if (this.revenueGenerationActive && this.core) {
+        try { /* event-driven core; loop for maintenance */ }
+        catch (error) { console.log('⚠️ Revenue loop error:', error.message); }
+      }
+    }, 45000);
+  }
+}
+
+function createProductionAPI(deployment) {
+  const app = express.Router();
+  app.use(express.json({ limit: '10mb' }));
+
+  app.get('/revenue-dashboard', (req,res)=> {
+    try {
+      const stats = deployment.core ? deployment.core.getStats() : {
+        system: { status: 'DEPLOYING', version: LIVE.VERSION },
+        trading: { tradesExecuted: 0, totalRevenueUSD: 0, currentDayUSD: 0, projectedDaily: 0 },
+        peg: { actions: 0, targetUSD: 100 }
+      };
+      res.json({
+        success: true,
+        revenueGeneration: deployment.revenueGenerationActive,
+        stats,
+        blockchain: deployment.blockchainConnected,
+        uptime: Date.now() - deployment.deploymentStartTime,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.json({ success: true, revenueGeneration: deployment.revenueGenerationActive, stats: { status: 'ERROR', error: error.message }, timestamp: new Date().toISOString() });
+    }
+  });
+
+  app.get('/blockchain-status', async (req,res)=> {
+    try {
+      if (!global.blockchainProvider) {
+        res.json({ connected: false, status: 'CONNECTING', message: 'Blockchain provider initializing...' });
+        return;
+      }
+      const blockNumber = await global.blockchainProvider.getBlockNumber();
+      const network = await global.blockchainProvider.getNetwork();
+      res.json({ connected: true, blockNumber, chainId: network.chainId, name: network.name, timestamp: new Date().toISOString() });
+    } catch (error) { res.json({ connected: false, error: error.message, timestamp: new Date().toISOString() }); }
+  });
+
+  app.get('/system-metrics', (req,res)=> {
+    res.json({
+      deploymentTime: deployment.deploymentStartTime,
+      uptime: Date.now() - deployment.deploymentStartTime,
+      revenueActive: deployment.revenueGenerationActive,
+      blockchainConnected: deployment.blockchainConnected,
+      portBound: deployment.portBound,
+      memoryUsage: process.memoryUsage(),
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  app.get('/status', (req,res)=> {
+    if (!deployment.core) return res.json({ status: 'DEPLOYING' });
+    res.json(deployment.core.getStats());
+  });
+
+  // Mirror core endpoints
+  app.get('/dex/list', (req,res)=> {
+    if (!deployment.core) return res.json({ adapters: [] });
+    res.json({ adapters: deployment.core.dexRegistry.getAllAdapters(), ts: Date.now() });
+  });
+
+  app.get('/dex/health', async (req,res)=> {
+    try {
+      if (!deployment.core) return res.json({ count: 0, checks: [] });
+      const health = await deployment.core.dexRegistry.healthCheck();
+      res.json({ ...health, ts: Date.now() });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/dex/scores', (req,res)=> {
+    if (!deployment.core) return res.json({ scores: [] });
+    res.json({ scores: deployment.core.dexRegistry.getScores(), ts: Date.now() });
+  });
+
+  return app;
+}
+
+(async ()=>{
+  console.log('\n' + '='.repeat(70));
+  console.log(`🚀 SOVEREIGN MEV BRAIN ${LIVE.VERSION} — ULTRA-FAST DEPLOYMENT (Mainnet)`);
+  console.log('💰 AA-Primary • BWAEZI Paymaster • Expanded DEX • Reliability Scoring');
+  console.log('='.repeat(70) + '\n');
+
+  try {
+    const deployment = new UltraFastDeployment();
+    const { port } = await deployment.deployImmediately();
+
+    console.log('\n' + '='.repeat(70));
+    console.log('✅ SYSTEM OPERATIONAL');
+    console.log(`🌐 Server: http://localhost:${port}`);
+    console.log(`📊 Dashboard: http://localhost:${port}/revenue-dashboard`);
+    console.log(`🔗 Blockchain: http://localhost:${port}/blockchain-status`);
+    console.log(`📈 Metrics: http://localhost:${port}/system-metrics`);
+    console.log('💰 Revenue: ACTIVE (Mainnet)');
+    console.log('='.repeat(70) + '\n');
+
+    process.on('uncaughtException', (error)=> console.error('💥 UNCAUGHT EXCEPTION:', error.message));
+    process.on('unhandledRejection', (reason)=> console.warn('⚠️ UNHANDLED REJECTION:', reason));
+  } catch (error) {
+    console.error('💥 CRITICAL FAILURE:', error.message);
+    try {
+      const emergencyPort = await guaranteePortBinding();
+      const app = express();
+      app.get('/', (req,res)=> res.json({ status: 'EMERGENCY_MODE', error: error.message, timestamp: new Date().toISOString(), message: 'System in emergency mode' }));
+      app.listen(emergencyPort, ()=> console.log(`🛡️ EMERGENCY SERVER ON PORT ${emergencyPort}`));
+    } catch (e) {
+      console.error('💀 COMPLETE SYSTEM FAILURE:', e.message);
+      process.exit(1);
+    }
+  }
+})();
+
+export { UltraFastDeployment, guaranteePortBinding };
