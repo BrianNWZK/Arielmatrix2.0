@@ -3136,21 +3136,46 @@ if (global.bootstrapFinalSequence.executed) {
   global.bootstrapFinalSequence.timestamp = Date.now();
 
   // =====================================================================
-  // CIRCUIT BREAKER 2: Check cycle count before starting
+  // DIAGNOSTIC 1: Check contract constants (for 25,902 gas fingerprint)
   // =====================================================================
+  console.log('\n🔍 DIAGNOSTIC: Checking contract constants...');
+  
   const warehouse = new ethers.Contract(
     "0x39539214246390bA6F852c519b6AB4DC45dF0469",
     [
       'function cycleCount() view returns (uint256)',
       'function scw() view returns (address)',
       'function adminSetAddress(bytes32 key, address value) external',
-      'function emergencyBulletproofBootstrap(uint256, uint256) external'
+      'function emergencyBulletproofBootstrap(uint256, uint256) external',
+      'function TOTAL_BOOTSTRAP_USD() view returns (uint256)',
+      'function BALANCER_PRICE_USD() view returns (uint256)'
     ],
     this.signer
   );
 
+  try {
+    const [bootstrapUsd, balancerPriceUsd] = await Promise.all([
+      warehouse.TOTAL_BOOTSTRAP_USD().catch(e => null),
+      warehouse.BALANCER_PRICE_USD().catch(e => null)
+    ]);
+    
+    console.log(`   TOTAL_BOOTSTRAP_USD: ${bootstrapUsd ? bootstrapUsd.toString() : 'READ_FAILED'}`);
+    console.log(`   BALANCER_PRICE_USD:  ${balancerPriceUsd ? balancerPriceUsd.toString() : 'READ_FAILED'}`);
+    
+    if (!bootstrapUsd || !balancerPriceUsd) {
+      console.log('   ⚠️ Constants not readable - may be private or uninitialized');
+    } else if (balancerPriceUsd.toString() === "0") {
+      console.log('   🚨 CRITICAL: BALANCER_PRICE_USD is ZERO!');
+      console.log('   This will cause FullMath.mulDiv to revert with MathOverflow');
+    } else {
+      console.log('   ✅ Constants appear valid');
+    }
+  } catch (e) {
+    console.log('   ⚠️ Could not read constants:', e.message);
+  }
+
   const currentCycle = await warehouse.cycleCount();
-  console.log(`📊 Current cycle: ${currentCycle}`);
+  console.log(`\n📊 Current cycle: ${currentCycle}`);
 
   if (currentCycle > 0n) {
     console.log(`
@@ -3166,13 +3191,14 @@ if (global.bootstrapFinalSequence.executed) {
   }
 
   // =====================================================================
-  // CRITICAL FIX: Use the correct key format - bytes32 hash of "scw"
+  // CRITICAL FIX: Use the LITERAL key format that worked in admin transactions
   // =====================================================================
-  const SCW_KEY = ethers.id("scw"); // This generates the proper bytes32 hash
+  const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
   const officialScw = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
   const EOA = await this.signer.getAddress();
 
   console.log(`\n🔑 Using SCW_KEY: ${SCW_KEY}`);
+  console.log(`   (literal "scw" format that worked previously)`);
 
   // =====================================================================
   // CIRCUIT BREAKER 3: Verify EOA balance before proceeding
@@ -3200,7 +3226,7 @@ if (global.bootstrapFinalSequence.executed) {
 
   try {
     // =====================================================================
-    // STEP 1: Point scw storage → EOA (temporary) - USING CORRECT KEY
+    // STEP 1: Point scw storage → EOA (temporary) - USING LITERAL KEY
     // =====================================================================
     console.log("\n1️⃣ Temporarily setting scw → EOA...");
     const txPointer = await warehouse.adminSetAddress(SCW_KEY, EOA, {
@@ -3215,7 +3241,7 @@ if (global.bootstrapFinalSequence.executed) {
     console.log(`   ✅ scw now = ${newScw}`);
     
     if (newScw.toLowerCase() !== EOA.toLowerCase()) {
-      throw new Error("❌ SCW pointer failed to update - wrong key format?");
+      throw new Error(`❌ SCW pointer failed to update. Current: ${newScw}, Expected: ${EOA}`);
     }
 
     // =====================================================================
