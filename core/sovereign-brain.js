@@ -3102,72 +3102,109 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// SINGLE BOOTSTRAP ATTEMPT - NO RETRIES, NO REPEATS
+// DIAGNOSTIC: Check ALL contract preconditions
 // =====================================================================
 
-// Circuit breaker - prevent any retry in this process
-if (global.bootstrapAttempted) {
-  console.log("⏹️ Bootstrap already attempted in this process - exiting");
-  return;
-}
-global.bootstrapAttempted = true;
+const warehouse = new ethers.Contract(
+  LIVE.WAREHOUSE_CONTRACT,
+  [
+    // View functions
+    'function TOTAL_BOOTSTRAP_USD() view returns (uint256)',
+    'function BALANCER_PRICE_USD() view returns (uint256)',
+    'function paused() view returns (bool)',
+    'function scw() view returns (address)',
+    'function owner() view returns (address)',
+    'function cycleCount() view returns (uint256)',
+    'function currentScaleFactorBps() view returns (uint256)',
+    
+    // Admin functions (if needed)
+    'function adminSetParameter(bytes32 key, uint256 value) external'
+  ],
+  this.provider
+);
 
-try {
-  // Use realistic gas prices
-  const maxFeePerGas = ethers.parseUnits("0.4", "gwei");
-  const maxPriorityFeePerGas = ethers.parseUnits("0.05", "gwei");
-  const gasLimit = 3_500_000n;
+console.log("\n🔍 CHECKING CONTRACT PRECONDITIONS:");
+console.log("=====================================");
+
+// Check 1: Constants (should be non-zero)
+const [totalUsd, balPrice] = await Promise.all([
+  warehouse.TOTAL_BOOTSTRAP_USD().catch(() => "READ_FAILED"),
+  warehouse.BALANCER_PRICE_USD().catch(() => "READ_FAILED")
+]);
+
+console.log(`\n📊 CONSTANTS:`);
+console.log(`   TOTAL_BOOTSTRAP_USD: ${totalUsd}`);
+console.log(`   BALANCER_PRICE_USD:  ${balPrice}`);
+
+if (totalUsd === "READ_FAILED" || balPrice === "READ_FAILED") {
+  console.log("   ⚠️ Constants not readable - may be private");
+} else if (totalUsd === 0n || balPrice === 0n) {
+  console.log("   ❌ CRITICAL: Constants are ZERO!");
   
-  const totalCost = maxFeePerGas * gasLimit;
-  console.log(`💰 Estimated cost: ${ethers.formatEther(totalCost)} ETH`);
-
-  const warehouseIface = new ethers.Interface([
-    "function emergencyBulletproofBootstrap(uint256, uint256) external"
-  ]);
-
-  const BUFFERED_AMOUNT = ethers.parseUnits("170220", 18);
-  const ETH_PRICE = ethers.parseUnits("2000", 18);
-
-  const bootstrapData = warehouseIface.encodeFunctionData(
-    "emergencyBulletproofBootstrap", 
-    [BUFFERED_AMOUNT, ETH_PRICE]
-  );
-
-  const scwContract = new ethers.Contract(
-    LIVE.SCW_ADDRESS,
-    ["function execute(address to, uint256 value, bytes data) returns (bytes)"],
-    this.signer
-  );
-
-  console.log("🚀 Sending bootstrap transaction (single attempt)...");
-  
-  const tx = await scwContract.execute(LIVE.WAREHOUSE_CONTRACT, 0, bootstrapData, {
-    gasLimit: gasLimit,
-    maxFeePerGas: maxFeePerGas,
-    maxPriorityFeePerGas: maxPriorityFeePerGas
-  });
-
-  console.log(`✅ Transaction sent: ${tx.hash}`);
-  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-  
-  // Wait for confirmation - will either succeed or throw
-  const receipt = await tx.wait();
-  
-  if (receipt.status === 1) {
-    console.log("✅✅✅ BOOTSTRAP SUCCESSFUL!");
-  } else {
-    console.log("❌ Bootstrap failed - check transaction");
+  // Fix if needed
+  if (totalUsd === 0n) {
+    console.log("\n🔧 Setting TOTAL_BOOTSTRAP_USD to 4,000,000...");
+    const key = ethers.encodeBytes32String("TOTAL_BOOTSTRAP_USD");
+    const tx = await warehouse.connect(this.signer).adminSetParameter(key, 4000000n * 10n**6n, {
+      gasLimit: 200_000n
+    });
+    console.log(`   Tx: ${tx.hash}`);
+    await tx.wait();
   }
-
-} catch (error) {
-  console.error("❌ Error:", error.message);
-  if (error.transactionHash) {
-    console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+  
+  if (balPrice === 0n) {
+    console.log("\n🔧 Setting BALANCER_PRICE_USD to 23,500,000...");
+    const key = ethers.encodeBytes32String("BALANCER_PRICE_USD");
+    const tx = await warehouse.connect(this.signer).adminSetParameter(key, 23500000n * 10n**6n, {
+      gasLimit: 200_000n
+    });
+    console.log(`   Tx: ${tx.hash}`);
+    await tx.wait();
   }
+} else {
+  console.log(`   ✅ Constants are valid`);
 }
 
-console.log("🏁 Bootstrap attempt complete - no further retries");
-   
+// Check 2: Contract state
+const [paused, scw, owner, cycle, scale] = await Promise.all([
+  warehouse.paused().catch(() => "READ_FAILED"),
+  warehouse.scw().catch(() => "READ_FAILED"),
+  warehouse.owner().catch(() => "READ_FAILED"),
+  warehouse.cycleCount().catch(() => "READ_FAILED"),
+  warehouse.currentScaleFactorBps().catch(() => "READ_FAILED")
+]);
+
+console.log(`\n📊 CONTRACT STATE:`);
+console.log(`   paused: ${paused}`);
+console.log(`   scw: ${scw}`);
+console.log(`   owner: ${owner}`);
+console.log(`   cycleCount: ${cycle}`);
+console.log(`   scaleFactor: ${scale}`);
+
+// Check 3: Token state
+const token = new ethers.Contract(LIVE.TOKENS.BWAEZI, [
+  'function balanceOf(address) view returns (uint256)',
+  'function allowance(address,address) view returns (uint256)'
+], this.provider);
+
+const scwBalance = await token.balanceOf(LIVE.SCW_ADDRESS);
+const allowance = await token.allowance(LIVE.SCW_ADDRESS, LIVE.WAREHOUSE_CONTRACT);
+
+console.log(`\n💰 TOKEN STATE:`);
+console.log(`   SCW BWAEZI balance: ${ethers.formatEther(scwBalance)}`);
+console.log(`   SCW → Warehouse allowance: ${ethers.formatEther(allowance)}`);
+
+// Summary
+console.log(`\n📋 SUMMARY:`);
+console.log(`=====================================`);
+if (paused === true) console.log("❌ Contract is PAUSED");
+if (scw?.toLowerCase() !== LIVE.SCW_ADDRESS.toLowerCase()) console.log("❌ SCW pointer is wrong");
+if (owner?.toLowerCase() !== this.signer.address.toLowerCase()) console.log("⚠️ Owner is not your EOA");
+if (cycle > 0) console.log("✅ Already bootstrapped");
+if (scwBalance < ethers.parseUnits("170212", 18)) console.log("❌ SCW balance insufficient");
+if (allowance < ethers.parseUnits("170212", 18)) console.log("❌ SCW allowance insufficient");
+
+console.log("\n✅ Diagnostic complete. If all checks passed, run bootstrap.");
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
