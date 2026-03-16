@@ -3104,6 +3104,7 @@ async initialize() {
 // =====================================================================
 // ATOMIC 3-STEP BOOTSTRAP SEQUENCE WITH PREFLIGHT CHECKS
 // NONCE-MANAGED, STATIC-CALL VERIFIED, CIRCUIT-BREAKER PROTECTED
+// WITH ENHANCED ERROR DECODING
 // =====================================================================
 
 // =====================================================================
@@ -3231,36 +3232,79 @@ try {
   if (allowance < REQUIRED_AMOUNT) throw new Error('Insufficient EOA allowance');
 
   // =====================================================================
-  // STATIC CALL SIMULATION (DRY RUN)
+  // STATIC CALL SIMULATION WITH ENHANCED ERROR DECODING
   // =====================================================================
   console.log('\n🧪 Dry-running bootstrap with static call...');
   
-  // Temporarily set pointer in memory for simulation
-  const dryRunWarehouse = warehouse.connect(signer);
-  
   try {
     // We need to simulate with pointer set to EOA
-    // First, temporarily set pointer (this is just for simulation)
-    await dryRunWarehouse.callStatic.emergencyBulletproofBootstrap(
+    await warehouse.callStatic.emergencyBulletproofBootstrap(
       REQUIRED_AMOUNT,
       ETH_PRICE,
       { from: EOA }
     );
     console.log('   ✅ Static call passed - bootstrap should succeed');
+    
   } catch (e) {
     console.log('   ❌ Static call failed:');
     
-    // Decode revert reason
-    if (e.data) {
-      const data = e.data;
-      if (data.startsWith('0x08c379a0')) {
-        const reason = ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + data.slice(10));
-        console.log(`   Revert reason: ${reason[0]}`);
-      } else {
-        console.log(`   Raw revert data: ${data}`);
+    // Enhanced error decoding
+    const errorData = e.data || e.error?.data || e;
+    
+    if (typeof errorData === 'string') {
+      // Try to decode as Error(string) - standard revert
+      if (errorData.startsWith('0x08c379a0')) {
+        try {
+          const reason = ethers.AbiCoder.defaultAbiCoder().decode(
+            ['string'], 
+            '0x' + errorData.slice(10)
+          );
+          console.log(`   📋 Revert reason: ${reason[0]}`);
+        } catch (decodeError) {
+          console.log(`   📋 Raw revert data: ${errorData}`);
+        }
       }
+      // Try to decode as custom error with 4-byte selector
+      else if (errorData.length >= 10) {
+        const selector = errorData.slice(0, 10);
+        console.log(`   🔍 Error selector: ${selector}`);
+        
+        // Match known error signatures from contract
+        const errors = {
+          '0x5b5b42d4': 'SCWInsufficientBWZC()',
+          '0x070f2c36': 'SpreadTooLow()',
+          '0xa0a9325a': 'OracleConsensusFailed()',
+          '0x4e487b71': 'Panic (arithmetic error)',
+          '0x08c379a0': 'Error(string) - already handled'
+        };
+        
+        if (errors[selector]) {
+          console.log(`   📋 Error: ${errors[selector]}`);
+          
+          // Try to decode custom error parameters if any
+          if (selector === '0x5b5b42d4') {
+            console.log('   🔍 This is SCWInsufficientBWZC - balance check failed');
+            console.log(`      EOA balance: ${ethers.formatEther(eoaBalance)} BWZC`);
+            console.log(`      Required: ${ethers.formatEther(REQUIRED_AMOUNT)} BWZC`);
+          } else if (selector === '0x070f2c36') {
+            console.log('   🔍 This is SpreadTooLow - spread requirement not met');
+          } else if (selector === '0xa0a9325a') {
+            console.log('   🔍 This is OracleConsensusFailed - price feed issue');
+          }
+        } else {
+          console.log(`   📋 Unknown error selector: ${selector}`);
+          console.log(`   📋 Full revert data: ${errorData}`);
+        }
+      } else {
+        console.log(`   📋 Error message: ${e.message || errorData}`);
+      }
+    } else {
+      console.log(`   📋 Error: ${e.message}`);
     }
-    console.log('   ⚠️ Cannot proceed - fix the issue first');
+    
+    console.log('\n   ⚠️ Cannot proceed - fix the issue first');
+    
+    // Log the error but don't throw - we want the script to exit gracefully
     return;
   }
 
@@ -3370,6 +3414,10 @@ try {
   if (error.message.includes('Step 2')) {
     console.log('\n⚠️ Step 2 failed - attempting emergency restore...');
     try {
+      const warehouse = new ethers.Contract(WAREHOUSE_ADDR, [
+        'function adminSetAddress(bytes32 key, address value) external'
+      ], signer);
+      
       const nonce = await signer.getNonce();
       const restoreTx = await warehouse.adminSetAddress(SCW_KEY, SCW, {
         gasLimit: 200_000n,
