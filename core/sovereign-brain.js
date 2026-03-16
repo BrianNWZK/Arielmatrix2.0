@@ -3165,9 +3165,14 @@ if (global.bootstrapFinalSequence.executed) {
     return;
   }
 
-  const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+  // =====================================================================
+  // CRITICAL FIX: Use the correct key format - bytes32 hash of "scw"
+  // =====================================================================
+  const SCW_KEY = ethers.id("scw"); // This generates the proper bytes32 hash
   const officialScw = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
   const EOA = await this.signer.getAddress();
+
+  console.log(`\n🔑 Using SCW_KEY: ${SCW_KEY}`);
 
   // =====================================================================
   // CIRCUIT BREAKER 3: Verify EOA balance before proceeding
@@ -3195,7 +3200,7 @@ if (global.bootstrapFinalSequence.executed) {
 
   try {
     // =====================================================================
-    // STEP 1: Point scw storage → EOA (temporary)
+    // STEP 1: Point scw storage → EOA (temporary) - USING CORRECT KEY
     // =====================================================================
     console.log("\n1️⃣ Temporarily setting scw → EOA...");
     const txPointer = await warehouse.adminSetAddress(SCW_KEY, EOA, {
@@ -3205,9 +3210,13 @@ if (global.bootstrapFinalSequence.executed) {
     console.log("   Pointer tx:", txPointer.hash);
     await txPointer.wait();
 
-    // Verify the pointer
+    // Verify the pointer changed
     const newScw = await warehouse.scw();
     console.log(`   ✅ scw now = ${newScw}`);
+    
+    if (newScw.toLowerCase() !== EOA.toLowerCase()) {
+      throw new Error("❌ SCW pointer failed to update - wrong key format?");
+    }
 
     // =====================================================================
     // STEP 2: Bootstrap — contract will now pull from EOA
@@ -3244,6 +3253,10 @@ if (global.bootstrapFinalSequence.executed) {
     });
     console.log("   Restore tx:", txRestore.hash);
     await txRestore.wait();
+
+    // Verify restoration
+    const finalScw = await warehouse.scw();
+    console.log(`   ✅ scw restored to: ${finalScw}`);
 
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
