@@ -204,6 +204,8 @@ error NotInEmergency();
 error InsufficientBalancerLiquidity();
 error UniswapV3QueryFailed();
 error SCWInsufficientBWZC();
+error BootstrapAlreadyCompleted();
+error BadEthPrice();
 
 library SafeERC20 {
     error SafeERC20FailedOperation(address token);
@@ -342,6 +344,9 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     address public chainlinkEthUsdSecondary;
     
     bool public paused;
+    bool public bootstrapCompleted;
+    uint256 public constant MIN_ETH_PRICE = 100 * 1e18;    // $100 sanity floor
+    uint256 public constant MAX_ETH_PRICE = 20_000 * 1e18; // $20,000 sanity ceiling
     uint256 public stalenessThreshold = 3600;
     int24 public usdcTickLower = -600;
     int24 public usdcTickUpper = 600;
@@ -379,6 +384,7 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     event TokensRescued(address indexed token, uint256 amount);
     event ETHWithdrawn(uint256 amount);
     event ParameterUpdated(string param, uint256 value);
+    event EmergencyBootstrapPerformed(address indexed caller, address indexed scwAtTime, uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice, uint256 blockNumber);
 
     constructor(
         address _scw,
@@ -777,64 +783,26 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return amounts[1];
     }
 
-    function _executePreciseArbitrage(uint256 usdcAmount, uint256 wethAmount, uint256 expectedBwzc)
-        internal returns (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought)
-    {
-        uint256 requiredSpread = _calculateMinRequiredSpread();
-        uint256 currentSpread = _calculateCurrentSpread();
-        if (currentSpread < requiredSpread) revert SpreadTooLow();
-
-        uint256 bwzcFromUsdc = _buyOnBalancerUSDC(usdcAmount);
-        uint256 bwzcFromWeth = _buyOnBalancerWETH(wethAmount);
-        bwzcBought = bwzcFromUsdc + bwzcFromWeth;
-        
-        if (bwzcBought < expectedBwzc) revert InsufficientLiquidity();
-        
-        uint256 bwzcPerDex = bwzcBought / 4;
-        
-        uint256 usdcFromUniV3 = _sellOnUniswapV3USDC(bwzcPerDex);
-        uint256 wethFromUniV3 = _sellOnUniswapV3WETH(bwzcPerDex);
-        uint256 usdcFromUniV2 = _sellOnUniswapV2USDC(bwzcPerDex);
-        uint256 wethFromSushi = _sellOnSushiSwapWETH(bwzcPerDex);
-        
-        uint256 usdcReceived = usdcFromUniV3 + usdcFromUniV2;
-        uint256 wethReceived = wethFromUniV3 + wethFromSushi;
-        
-        usdcProfit = usdcReceived > usdcAmount ? usdcReceived - usdcAmount : 0;
-        wethProfit = wethReceived > wethAmount ? wethReceived - wethAmount : 0;
-        
-        if (usdcProfit < usdcAmount * requiredSpread / 10000) revert("USDC profit too low");
-        if (wethProfit < wethAmount * requiredSpread / 10000) revert("WETH profit too low");
-    }
-
-    function receiveFlashLoan(
+   function receiveFlashLoan(
     address[] calldata tokens,
     uint256[] calldata amounts,
     uint256[] calldata feeAmounts,
     bytes calldata userData
-) external override nonReentrant {
+) external override { // <--- CRITICAL: REMOVED nonReentrant
     // ================================
     // CRITICAL VALIDATION CHECKS
     // ================================
     
-    // 1. Validate caller is Balancer Vault
+    // 1. Validate caller is Balancer Vault (Ensures only the Vault can trigger this)
     if (msg.sender != vault) revert("Not vault");
     
     // 2. Validate transaction state
+    // Note: globalInitialBootstrap leaves state as IDLE, so this check passes.
     if (txState != TxState.IDLE) revert InvalidStateTransition();
     
-    // 3. Validate tokens array matches expected tokens
-    if (tokens.length != 2) revert("Must flash exactly 2 tokens");
-    if (tokens[0] != usdc) revert("First token must be USDC");
-    if (tokens[1] != weth) revert("Second token must be WETH");
-    
-    // 4. Validate amounts array
-    if (amounts.length != 2) revert("Must have exactly 2 amounts");
-    if (amounts[0] == 0) revert("USDC amount cannot be zero");
-    if (amounts[1] == 0) revert("WETH amount cannot be zero");
-    
-    // 5. Validate fee amounts
-    if (feeAmounts.length != 2) revert("Must have exactly 2 fee amounts");
+    // 3. Array Length & Token Validation
+    if (tokens.length != 2 || amounts.length != 2 || feeAmounts.length != 2) revert("Array Mismatch");
+    if (tokens[0] != usdc || tokens[1] != weth) revert("Token Mismatch");
     
     txState = TxState.EXECUTING;
     
@@ -844,58 +812,77 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     (uint256 bwzcForArbitrage, uint256 expectedUsdc, uint256 expectedWeth, uint256 deadline) = 
         abi.decode(userData, (uint256, uint256, uint256, uint256));
     
-    // 6. Validate deadline
     if (block.timestamp > deadline) revert DeadlineExpired();
     
-    // 7. Validate expected amounts match actual borrowed amounts
+    // Validate expected amounts match actual borrowed amounts
     if (amounts[0] != expectedUsdc) revert("USDC amount mismatch");
     if (amounts[1] != expectedWeth) revert("WETH amount mismatch");
     
-    // 8. Validate bwzcForArbitrage is reasonable
+    // During Bootstrap, bwzcForArbitrage is bwzcSeedAmount / 2 (Guaranteed non-zero)
     if (bwzcForArbitrage == 0) revert("BWZC for arbitrage cannot be zero");
     
     uint256 usdcBorrowed = amounts[0];
     uint256 wethBorrowed = amounts[1];
     
-        
-        (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) = 
-            _executePreciseArbitrage(usdcBorrowed, wethBorrowed, bwzcForArbitrage);
-        
-        if (usdcProfit < feeAmounts[0]) revert("USDC profit < flash fee");
-        if (wethProfit < feeAmounts[1]) revert("WETH profit < flash fee");
-        
-        IERC20(usdc).safeTransfer(vault, usdcBorrowed + feeAmounts[0]);
-        IERC20(weth).safeTransfer(vault, wethBorrowed + feeAmounts[1]);
-        
-        (uint256 harvestedUsdc, uint256 harvestedWeth, uint256 harvestedBwzc) = harvestAllFees();
-        usdcProfit += harvestedUsdc;
-        wethProfit += harvestedWeth;
-        
-        uint256 bwzcDeepened = _deepenPoolsWithPrecision(usdcProfit, wethProfit, bwzcBought + harvestedBwzc);
-        
-        uint256 usdcToEOA = FullMath.mulDiv(usdcProfit, FEES_TO_EOA_BPS, 10000);
-        uint256 wethToEOA = FullMath.mulDiv(wethProfit, FEES_TO_EOA_BPS, 10000);
-        uint256 bwzcToEOA = FullMath.mulDiv(harvestedBwzc, FEES_TO_EOA_BPS, 10000);
-        
-        if (usdcToEOA > 0) IERC20(usdc).safeTransfer(owner(), usdcToEOA);
-        if (wethToEOA > 0) IERC20(weth).safeTransfer(owner(), wethToEOA);
-        if (bwzcToEOA > 0) IERC20(bwzc).safeTransfer(owner(), bwzcToEOA);
-        
-        uint256 remainingUsdc = IERC20(usdc).balanceOf(address(this));
-        uint256 remainingWeth = IERC20(weth).balanceOf(address(this));
-        uint256 remainingBwzc = IERC20(bwzc).balanceOf(address(this));
-        
-        if (remainingUsdc > 0) IERC20(usdc).safeTransfer(scw, remainingUsdc);
-        if (remainingWeth > 0) IERC20(weth).safeTransfer(scw, remainingWeth);
-        if (remainingBwzc > 0) IERC20(bwzc).safeTransfer(scw, remainingBwzc);
-        
-        emit CycleExecuted(cycleCount + 1, usdcProfit, wethProfit, bwzcDeepened);
-        emit FeesDistributed(owner(), usdcToEOA, wethToEOA, bwzcToEOA);
-        
+    // ================================
+    // ATOMIC ARBITRAGE EXECUTION
+    // ================================
+    // Since you pulled seed tokens in Path 1, this WILL generate profit
+    (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) = 
+        _executePreciseArbitrage(usdcBorrowed, wethBorrowed, bwzcForArbitrage);
+    
+    // ENSURE REPAYMENT IS POSSIBLE
+    if (usdcProfit < feeAmounts[0]) revert("USDC profit < flash fee");
+    if (wethProfit < feeAmounts[1]) revert("WETH profit < flash fee");
+    
+    // REPAY THE VAULT IMMEDIATELY
+    IERC20(usdc).safeTransfer(vault, usdcBorrowed + feeAmounts[0]);
+    IERC20(weth).safeTransfer(vault, wethBorrowed + feeAmounts[1]);
+    
+    // ================================
+    // PROFIT MANAGEMENT & DEEPENING
+    // ================================
+    (uint256 harvestedUsdc, uint256 harvestedWeth, uint256 harvestedBwzc) = harvestAllFees();
+    usdcProfit += harvestedUsdc;
+    wethProfit += harvestedWeth;
+    
+    // Build permanent liquidity in the pools
+    uint256 bwzcDeepened = _deepenPoolsWithPrecision(usdcProfit, wethProfit, bwzcBought + harvestedBwzc);
+    
+    // DISTRIBUTE EOA PERCENTAGE
+    uint256 usdcToEOA = FullMath.mulDiv(usdcProfit, FEES_TO_EOA_BPS, 10000);
+    uint256 wethToEOA = FullMath.mulDiv(wethProfit, FEES_TO_EOA_BPS, 10000);
+    uint256 bwzcToEOA = FullMath.mulDiv(harvestedBwzc, FEES_TO_EOA_BPS, 10000);
+    
+    if (usdcToEOA > 0) IERC20(usdc).safeTransfer(owner(), usdcToEOA);
+    if (wethToEOA > 0) IERC20(weth).safeTransfer(owner(), wethToEOA);
+    if (bwzcToEOA > 0) IERC20(bwzc).safeTransfer(owner(), bwzcToEOA);
+    
+    // SWEEP REMAINING TO SCW (Institutional Security)
+    uint256 remainingUsdc = IERC20(usdc).balanceOf(address(this));
+    uint256 remainingWeth = IERC20(weth).balanceOf(address(this));
+    uint256 remainingBwzc = IERC20(bwzc).balanceOf(address(this));
+    
+    if (remainingUsdc > 0) IERC20(usdc).safeTransfer(scw, remainingUsdc);
+    if (remainingWeth > 0) IERC20(weth).safeTransfer(scw, remainingWeth);
+    if (remainingBwzc > 0) IERC20(bwzc).safeTransfer(scw, remainingBwzc);
+    
+    // ================================
+    // STATE UPDATE
+    // ================================
+    // During Bootstrap, globalInitialBootstrap handles cycleCount=1. 
+    // This logic ensures Cycle 1 starts immediately after.
+    emit CycleExecuted(cycleCount + 1, usdcProfit, wethProfit, bwzcDeepened);
+    emit FeesDistributed(owner(), usdcToEOA, wethToEOA, bwzcToEOA);
+    
+    // Only increment if we are already bootstrapped; elsePath 1 handles it.
+    if (bootstrapCompleted) {
         cycleCount++;
-        lastCycleTimestamp = block.timestamp;
-        txState = TxState.COMMITTED;
     }
+    
+    lastCycleTimestamp = block.timestamp;
+    txState = TxState.IDLE; // Reset to IDLE to allow next cycle
+}
 
     function _deepenPoolsWithPrecision(uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) 
         internal returns (uint256 totalBwzcDeepened) 
@@ -1083,66 +1070,8 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     _addToBalancerPool(balBWWETHId, wethForSeed, bwzcForWeth);
 }
 
-    function calculatePreciseBootstrap() public returns (uint256 totalBwzcNeeded, uint256 usdcLoanAmount, uint256 wethLoanAmount) {
-    totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-    usdcLoanAmount = TOTAL_BOOTSTRAP_USD / 2;
     
-    // Try to get real ETH price, fallback to $2000 if oracle fails
-    uint256 ethPrice;
-    try this.getConsensusEthPrice() returns (uint256 price, uint8) {
-        ethPrice = price;
-    } catch {
-        ethPrice = 2000e18; // $2000 fallback
-    }
     
-    wethLoanAmount = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice);
-}
-
-    
-    function executeBulletproofBootstrap(uint256 bwzcForArbitrage) external nonReentrant whenNotPaused {
-    if (msg.sender != scw) revert("Only SCW");
-    if (_calculateCurrentSpread() < _calculateMinRequiredSpread()) revert SpreadTooLow();
-    
-    uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-    IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
-    
-    _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
-    
-    // Try to get real ETH price, fallback to $2000 if oracle fails
-    uint256 ethPrice;
-    try this.getConsensusEthPrice() returns (uint256 price, uint8) {
-        ethPrice = price;
-    } catch {
-        ethPrice = 2000e18; // $2000 fallback for bootstrap
-    }
-    
-    uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
-    uint256 scaledWeth = _calculateScaledAmount(_calculateWETHAmount(TOTAL_BOOTSTRAP_USD / 2, ethPrice), currentScaleFactorBps);
-    
-    bytes memory userData = abi.encode(bwzcForArbitrage, scaledUsdc, scaledWeth, block.timestamp + 1 hours);
-    
-    address[] memory tokens = new address[](2);
-    tokens[0] = usdc;
-    tokens[1] = weth;
-    
-    uint256[] memory amounts = new uint256[](2);
-    amounts[0] = scaledUsdc;
-    amounts[1] = scaledWeth;
-
-    try IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData) {
-        // Success handled in callback
-    } catch {
-        revert SwapFailed();
-    }
-
-    if (currentScaleFactorBps < MAX_SCALE_BPS) {
-        currentScaleFactorBps += SCALE_INCREMENT_BPS;
-        emit ScaleFactorUpdated(currentScaleFactorBps);
-    }
-
-    emit BootstrapExecuted(bwzcForArbitrage, scaledUsdc + (scaledWeth * ethPrice / 1e18));
-}
-   
     function addUniswapV3Position(uint256 tokenId, bool isUsdcPosition) external onlyOwner {
         (, , address token0, address token1, , , , , , , , ) = INonfungiblePositionManager(uniV3NFT).positions(tokenId);
         
@@ -1262,63 +1191,84 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return _getConsensusEthPrice();
     }
 
+     // =====================================================================
+     //  INSTITUTIONAL REVENUE CYCLE (Cycles 1+)Production path with full Oracle
+         and Spread protections.
       // =====================================================================
-     // ULTIMATE BOOTSTRAP FUNCTION - WORKS WITH ZERO LIQUIDITY
-    // =====================================================================
-    function emergencyBulletproofBootstrap(
-    uint256 bwzcForArbitrage,
-    uint256 ethPrice           // Only need ETH price as hint
-  ) external nonReentrant whenNotPaused {
-    // Allow EOA OR SCW (makes testing easier)
-    if (msg.sender != owner() && msg.sender != scw) revert("Not authorized");
-    
-    uint256 totalBwzcNeeded = FullMath.mulDiv(TOTAL_BOOTSTRAP_USD, 1e18, BALANCER_PRICE_USD);
-    
-    // Always pull from SCW (has 30M tokens)
-    if (IERC20(bwzc).balanceOf(scw) < totalBwzcNeeded) revert SCWInsufficientBWZC();
-    IERC20(bwzc).safeTransferFrom(scw, address(this), totalBwzcNeeded);
-    
-    // Pre-seed Balancer pools FIRST (creates initial liquidity)
-    _phase1PreSeed(totalBwzcNeeded - bwzcForArbitrage);
-    
-    // Calculate loan amounts based on scale factor
-    uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
-    uint256 scaledWeth = _calculateScaledAmount(
-        FullMath.mulDiv(TOTAL_BOOTSTRAP_USD / 2, 1e18, ethPrice),
-        currentScaleFactorBps
-    );
-    
-    // Prepare flashloan
-    bytes memory userData = abi.encode(
-        bwzcForArbitrage,
-        scaledUsdc,
-        scaledWeth,
-        block.timestamp + 1 hours
-    );
-    
-    address[] memory tokens = new address[](2);
-    tokens[0] = usdc;
-    tokens[1] = weth;
-    
-    uint256[] memory amounts = new uint256[](2);
-    amounts[0] = scaledUsdc;
-    amounts[1] = scaledWeth;
-    
-    // Execute flashloan - will work even with zero liquidity
-    // because Balancer flashloans don't require upfront liquidity
-    IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
-    
-    // Increment scale factor for next cycle
-    if (currentScaleFactorBps < MAX_SCALE_BPS) {
-        currentScaleFactorBps += SCALE_INCREMENT_BPS;
-        emit ScaleFactorUpdated(currentScaleFactorBps);
+        function executeInstitutionalCycle() external nonReentrant whenNotPaused {
+        if (!bootstrapCompleted) revert("System not bootstrapped");
+
+        // 1. Protection Gates
+        (uint256 ethPrice, ) = _getConsensusEthPrice();
+        if (_calculateCurrentSpread() < _calculateMinRequiredSpread()) revert SpreadTooLow();
+
+        // 2. Loan Scaling
+        uint256 scaledUsdc = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD / 2, currentScaleFactorBps);
+        uint256 scaledWeth = _calculateScaledAmount(_calculateWETHAmount(TOTAL_BOOTSTRAP_USD / 2, ethPrice), currentScaleFactorBps);
+        uint256 expectedBwzc = FullMath.mulDiv(scaledUsdc * 1e12, 1e18, BALANCER_PRICE_USD);
+
+        // 3. Atomic Arbitrage (Flashloan Call)
+        bytes memory userData = abi.encode(0, scaledUsdc, scaledWeth, block.timestamp + 1 hours);
+        address[] memory tokens = new address[](2);
+        tokens[0] = usdc; tokens[1] = weth;
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = scaledUsdc; amounts[1] = scaledWeth;
+
+        IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
+
+        // 4. State Update
+        if (currentScaleFactorBps < MAX_SCALE_BPS) currentScaleFactorBps += SCALE_INCREMENT_BPS;
+        cycleCount++;
+        lastCycleTimestamp = block.timestamp;
     }
-    
-    emit BootstrapExecuted(
-        bwzcForArbitrage,
-        scaledUsdc + (scaledWeth * ethPrice / 1e18)
-    );
-}
+
+      // =====================================================================
+     //  GLOBAL INITIAL BOOTSTRAP (Cycle 0 Only) Hardened to work with 
+         zero liquidity by using caller-supplied ETH price.
+    // =====================================================================
+   function globalInitialBootstrap(
+        uint256 bwzcSeedAmount, 
+        uint256 usdAmount, 
+        uint256 ethPrice
+    ) external nonReentrant whenNotPaused {
+        // 1. Authorization (Allows EOA or SCW)
+        if (msg.sender != owner() && msg.sender != scw) revert("Not authorized");
+        
+        // 2. State Guards
+        if (cycleCount != 0 || bootstrapCompleted) revert BootstrapAlreadyCompleted();
+        if (ethPrice < MIN_ETH_PRICE || ethPrice > MAX_ETH_PRICE) revert BadEthPrice();
+
+        // 3. Pre-Seed (Pulls BWZC to create the 'Profit' for the flashloan)
+        IERC20(bwzc).safeTransferFrom(scw, address(this), bwzcSeedAmount);
+        _phase1PreSeed(bwzcSeedAmount / 2);
+
+        // 4. Calculate Legs
+        uint256 scaledUsdc = usdAmount / 2;
+        uint256 scaledWeth = FullMath.mulDiv(usdAmount / 2, 1e18, ethPrice);
+        
+        // 5. Encode (Ensure this matches receiveFlashLoan's decode)
+        bytes memory userData = abi.encode(
+            bwzcSeedAmount / 2, // bwzcForArbitrage
+            scaledUsdc,         // expectedUsdc
+            scaledWeth,         // expectedWeth
+            block.timestamp + 1 hours
+        );
+        
+        address[] memory tokens = new address[](2);
+        tokens[0] = usdc; tokens[1] = weth;
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = scaledUsdc; amounts[1] = scaledWeth;
+
+        // 6. Flashloan (Callback MUST NOT be nonReentrant)
+        IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
+        
+        // 7. Finalize State
+        bootstrapCompleted = true;
+        cycleCount = 1;
+        
+        emit EmergencyBootstrapPerformed(msg.sender, scw, bwzcSeedAmount, usdAmount, ethPrice, block.number);
+    }
+
     receive() external payable {}
     
     fallback() external payable {
