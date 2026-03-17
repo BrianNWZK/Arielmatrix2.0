@@ -783,6 +783,37 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return amounts[1];
     }
 
+function _executePreciseArbitrage(uint256 usdcAmount, uint256 wethAmount, uint256 expectedBwzc)
+        internal returns (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought)
+    {
+        uint256 requiredSpread = _calculateMinRequiredSpread();
+        uint256 currentSpread = _calculateCurrentSpread();
+        if (currentSpread < requiredSpread) revert SpreadTooLow();
+
+        uint256 bwzcFromUsdc = _buyOnBalancerUSDC(usdcAmount);
+        uint256 bwzcFromWeth = _buyOnBalancerWETH(wethAmount);
+        bwzcBought = bwzcFromUsdc + bwzcFromWeth;
+        
+        if (bwzcBought < expectedBwzc) revert InsufficientLiquidity();
+        
+        uint256 bwzcPerDex = bwzcBought / 4;
+        
+        uint256 usdcFromUniV3 = _sellOnUniswapV3USDC(bwzcPerDex);
+        uint256 wethFromUniV3 = _sellOnUniswapV3WETH(bwzcPerDex);
+        uint256 usdcFromUniV2 = _sellOnUniswapV2USDC(bwzcPerDex);
+        uint256 wethFromSushi = _sellOnSushiSwapWETH(bwzcPerDex);
+        
+        uint256 usdcReceived = usdcFromUniV3 + usdcFromUniV2;
+        uint256 wethReceived = wethFromUniV3 + wethFromSushi;
+        
+        usdcProfit = usdcReceived > usdcAmount ? usdcReceived - usdcAmount : 0;
+        wethProfit = wethReceived > wethAmount ? wethReceived - wethAmount : 0;
+        
+        if (usdcProfit < usdcAmount * requiredSpread / 10000) revert("USDC profit too low");
+        if (wethProfit < wethAmount * requiredSpread / 10000) revert("WETH profit too low");
+    }
+
+
    function receiveFlashLoan(
     address[] calldata tokens,
     uint256[] calldata amounts,
@@ -1192,7 +1223,8 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     }
 
      // =====================================================================
-     //  INSTITUTIONAL REVENUE CYCLE (Cycles 1+)Production path with full Oracle  and Spread protections.  
+     //  INSTITUTIONAL REVENUE CYCLE (Cycles 1+)Production path with full Oracle
+         and Spread protections.
       // =====================================================================
         function executeInstitutionalCycle() external nonReentrant whenNotPaused {
         if (!bootstrapCompleted) revert("System not bootstrapped");
@@ -1222,7 +1254,8 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     }
 
       // =====================================================================
-     //  GLOBAL INITIAL BOOTSTRAP (Cycle 0 Only) Hardened to work with zero liquidity by using caller-supplied ETH price.
+     //  GLOBAL INITIAL BOOTSTRAP (Cycle 0 Only) Hardened to work with 
+         zero liquidity by using caller-supplied ETH price.
     // =====================================================================
    function globalInitialBootstrap(
         uint256 bwzcSeedAmount, 
