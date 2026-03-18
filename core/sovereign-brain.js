@@ -3101,56 +3101,42 @@ async initialize() {
   await this.rpc.init();
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
-// =====================================================================
-// 🚀 THE PERMANENT BYPASS - ULTRA-LEAN GAS & FIXED CHECKSUM
-// =====================================================================
-
 (async () => {
   try {
-    // 1. DYNAMIC CHECKSUM REPAIR (Solves the "F" capitalization error)
-    const rawWarehouse = "0x78043417f7e15cf29cbb52cc584e11ae33fe1542";
-    const WAREHOUSE_ADDR = ethers.getAddress(rawWarehouse.toLowerCase());
-
+    const WAREHOUSE_ADDR = ethers.getAddress("0x78043417f7e15cf29cbb52cc584e11ae33fe1542");
     const activeSigner = this.signer.connect(this.provider);
-    const warehouse = new ethers.Contract(
-      WAREHOUSE_ADDR, 
+    const warehouse = new ethers.Contract(WAREHOUSE_ADDR, 
       ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'], 
-      activeSigner
-    );
+      activeSigner);
 
-    // 2. LEAN PARAMETERS ($2200 ETH | $23.50 Peg)
+    // SCALE: $200,000 Total ($100k USDC / $100k WETH)
+    // Price: $2200 | Peg: $23.50
     const MANUAL_ETH_PRICE = ethers.parseUnits("2200.00", 18); 
-    const USD_AMOUNT = ethers.parseUnits("600000", 6);
-    const BWZC_SEED = ethers.parseUnits("25531.91", 18);
+    const USD_AMOUNT = ethers.parseUnits("200000", 6);
+    
+    // Seed: $200,000 / $23.50 = 8,510.64
+    const BWZC_SEED = ethers.parseUnits("8510.64", 18);
 
-    console.log(`⚡ ATTEMPTING BYPASS STRIKE...`);
-    console.log(`📍 Warehouse: ${WAREHOUSE_ADDR}`);
+    console.log(`⚡ EXECUTING SURGICAL BOOTSTRAP: $200,000...`);
 
-    // 3. THE "DUST-SAFE" TRANSACTION
-    // Total cost here is ~0.0016 ETH, well within your 0.0032 ETH balance.
     const tx = await warehouse.globalInitialBootstrap(
-      BWZC_SEED, 
-      USD_AMOUNT, 
-      MANUAL_ETH_PRICE,
+      BWZC_SEED, USD_AMOUNT, MANUAL_ETH_PRICE,
       {
-        gasLimit: 800000n, // Minimal trigger for Balancer + UniV3
-        maxFeePerGas: ethers.parseUnits("2.0", "gwei"), 
-        maxPriorityFeePerGas: ethers.parseUnits("1.0", "gwei")
+        gasLimit: 1200000n, // Slightly more headroom than before
+        maxFeePerGas: ethers.parseUnits("3.0", "gwei"), 
+        maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei")
       }
     );
 
-    console.log(`✅ DISPATCHED: ${tx.hash}`);
-    await tx.wait();
-    console.log("🎉 SYSTEM LIVE: CYCLE 1 INITIALIZED");
+    console.log(`✅ TX DISPATCHED: ${tx.hash}`);
+    const receipt = await tx.wait();
+    if (receipt.status === 1) console.log("🎉 SUCCESS: SYSTEM ACTIVE");
 
   } catch (e) {
-    console.error(`\n❌ LOG ERROR: ${e.message}`);
-    if (e.message.includes("checksum")) {
-        console.log("💡 Note: Ethers v6 Checksum bypass failed. Attempting direct string inject...");
-    }
+    console.error(`❌ FINAL ATTEMPT ERROR: ${e.message}`);
   }
 })();
-// THEN continue with normal MEV initialization...
+   // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
   // =====================================================================
