@@ -3102,115 +3102,64 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 FINAL BOOTSTRAP - LIVE CHAINLINK PRICE (WITH CHECKSUMMED ADDRESS)
+// DIAGNOSTIC: Check Balancer Pool Liquidity
 // =====================================================================
 
-// Circuit breaker - absolute one-time lock
-if (global.bootstrapAttempted) {
-  console.log("⏹️ Bootstrap already attempted in this process - exiting");
-  return;
-}
-global.bootstrapAttempted = true;
+const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
+const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-try {
-  console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  🚀 FINAL BOOTSTRAP - LIVE CHAINLINK PRICE                   ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Contract: 0x78043417f7E15CF29cbB52cC584e11Ae33FE1542       ║
-║  • Using LIVE Chainlink ETH price                             ║
-║  • ONE ATTEMPT ONLY - NO RETRIES                              ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
+// Your pool IDs from deployment logs
+const BAL_USDC_POOL_ID = "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706";
+const BAL_WETH_POOL_ID = "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707";
 
-  // =====================================================================
-  // 1. FETCH LIVE CHAINLINK PRICE (WITH CHECKSUMMED ADDRESS)
-  // =====================================================================
-  const CHAINLINK_ETH_USD = ethers.getAddress("0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419");
-  
-  const chainlink = new ethers.Contract(
-    CHAINLINK_ETH_USD,
-    ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
-    this.provider
-  );
-  
-  const [, priceData] = await chainlink.latestRoundData();
-  const ethPriceUSD = Number(priceData) / 1e8; // Chainlink returns 8 decimals
-  
-  // Scale to 18 decimals for the contract
-  const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
+const vault = new ethers.Contract(
+  BALANCER_VAULT,
+  ['function getPoolTokens(bytes32 poolId) view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)'],
+  this.provider
+);
 
-  console.log(`\n🔔 LIVE MARKET CALIBRATION: $${ethPriceUSD.toFixed(2)}`);
-
-  const warehouse = new ethers.Contract(
-    "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542",
-    [
-      'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
-      'function cycleCount() view returns (uint256)'
-    ],
-    this.signer
-  );
-
-  // =====================================================================
-  // 2. CHECK IF ALREADY BOOTSTRAPPED
-  // =====================================================================
-  try {
-    const currentCycle = await warehouse.cycleCount();
-    if (currentCycle > 0) {
-      console.log("\n✅ Contract already bootstrapped (cycleCount > 0) - skipping");
-      return;
-    }
-  } catch (cycleError) {
-    console.log("ℹ️ Could not read cycleCount, proceeding anyway");
-  }
-
-  // =====================================================================
-  // 3. EXECUTE BOOTSTRAP WITH LIVE PRICE
-  // =====================================================================
-  const BWZC_SEED = ethers.parseUnits("170212", 18);
-  const USD_AMOUNT = ethers.parseUnits("4000000", 6);
-
-  console.log(`\n📊 Parameters:`);
-  console.log(`   BWZC Seed: ${ethers.formatEther(BWZC_SEED)}`);
-  console.log(`   USD Amount: ${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
-  console.log(`   ETH Price: $${ethers.formatEther(SCALED_PRICE)} (live from Chainlink)`);
-
-  console.log(`\n📤 Sending Calibrated Transaction...`);
-
-  const tx = await warehouse.globalInitialBootstrap(
-    BWZC_SEED,
-    USD_AMOUNT,
-    SCALED_PRICE,
-    {
-      gasLimit: 4_500_000n,
-      maxFeePerGas: ethers.parseUnits("1.2", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("0.3", "gwei")
-    }
-  );
-
-  console.log(`✅ Transaction sent: ${tx.hash}`);
-  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-
-  const receipt = await tx.wait();
-  
-  if (receipt.status === 1) {
-    const finalCycle = await warehouse.cycleCount();
-    console.log(`\n🎉✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅🎉`);
-    console.log(`   Cycle Count: ${finalCycle}`);
-    console.log(`   Gas Used: ${receipt.gasUsed}`);
-    console.log(`   System is now LIVE - MEV revenue loop should activate`);
+// Check USDC pool
+const [usdcTokens, usdcBalances] = await vault.getPoolTokens(BAL_USDC_POOL_ID);
+console.log("\n💰 USDC Pool Balances:");
+for (let i = 0; i < usdcTokens.length; i++) {
+  const token = usdcTokens[i];
+  const balance = usdcBalances[i];
+  if (token.toLowerCase() === USDC.toLowerCase()) {
+    console.log(`   USDC: ${ethers.formatUnits(balance, 6)} USDC`);
+  } else if (token.toLowerCase() === WETH.toLowerCase()) {
+    console.log(`   WETH: ${ethers.formatEther(balance)} WETH`);
   } else {
-    console.log(`\n❌ Bootstrap failed`);
-  }
-
-} catch (error) {
-  console.error(`\n❌ Error: ${error.message}`);
-  if (error.transactionHash) {
-    console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
+    console.log(`   ${token}: ${balance}`);
   }
 }
 
-console.log(`\n🏁 Bootstrap attempt complete - no further retries`);
+// Check WETH pool
+const [wethTokens, wethBalances] = await vault.getPoolTokens(BAL_WETH_POOL_ID);
+console.log("\n💰 WETH Pool Balances:");
+for (let i = 0; i < wethTokens.length; i++) {
+  const token = wethTokens[i];
+  const balance = wethBalances[i];
+  if (token.toLowerCase() === USDC.toLowerCase()) {
+    console.log(`   USDC: ${ethers.formatUnits(balance, 6)} USDC`);
+  } else if (token.toLowerCase() === WETH.toLowerCase()) {
+    console.log(`   WETH: ${ethers.formatEther(balance)} WETH`);
+  } else {
+    console.log(`   ${token}: ${balance}`);
+  }
+}
+
+// Calculate if $4M is available
+const usdcBalance = usdcBalances[usdcTokens.findIndex(t => t.toLowerCase() === USDC.toLowerCase())];
+const usdcInMillions = Number(ethers.formatUnits(usdcBalance, 6)) / 1_000_000;
+console.log(`\n📊 USDC Pool Liquidity: ${usdcInMillions.toFixed(2)}M USDC`);
+
+if (usdcInMillions >= 4) {
+  console.log("✅ $4M USDC flashloan is AVAILABLE");
+} else {
+  console.log(`❌ Only ${usdcInMillions.toFixed(2)}M USDC available - need 4M`);
+  console.log("   Try reducing USD_AMOUNT to match available liquidity");
+}
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
