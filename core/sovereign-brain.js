@@ -3102,38 +3102,47 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 EMERGENCY BYPASS: $2200 PRICE SYNC ($600K TARGET)
+// 🚀 DUST-SAFE BOOTSTRAP - MINIMAL GAS INJECTION
 // =====================================================================
 
 (async () => {
   try {
-    const WAREHOUSE_ADDR = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
+    const WAREHOUSE_ADDR = "0x78043417F7E15CF29cbB52cC584e11Ae33FE1542";
     const activeSigner = this.signer.connect(this.provider);
     const warehouse = new ethers.Contract(WAREHOUSE_ADDR, 
       ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'], 
       activeSigner);
 
-    // 1. VERIFIED MARKET DATA
+    // PARAMETERS LOCKED AT $2200 / $23.50 PEG
     const MANUAL_ETH_PRICE = ethers.parseUnits("2200.00", 18); 
     const USD_AMOUNT = ethers.parseUnits("600000", 6);
-    const BWZC_SEED = ethers.parseUnits("25531.91", 18); // Scaled for $23.50 Peg
+    const BWZC_SEED = ethers.parseUnits("25531.91", 18);
 
-    console.log(`⚡ STRIKING AT $2200 VERIFIED PRICE...`);
+    console.log(`⚡ TRIGGERING ATOMIC BOOTSTRAP (LOW GAS MODE)...`);
 
     const tx = await warehouse.globalInitialBootstrap(
       BWZC_SEED, USD_AMOUNT, MANUAL_ETH_PRICE,
       {
-        gasLimit: 7500000n,
-        maxFeePerGas: ethers.parseUnits("15.0", "gwei"), // Ultra-Priority for Volatility
-        maxPriorityFeePerGas: ethers.parseUnits("5.0", "gwei")
+        // 800k is the "sweet spot" for a flashloan + 2-hop swap
+        gasLimit: 800000n, 
+        // Using a tight fee to match your 0.0032 ETH balance
+        maxFeePerGas: ethers.parseUnits("2.5", "gwei"), 
+        maxPriorityFeePerGas: ethers.parseUnits("1.0", "gwei")
       }
     );
 
     console.log(`✅ DISPATCHED: ${tx.hash}`);
+    console.log("⏳ Waiting for confirmation...");
     await tx.wait();
-    console.log("🎉 SYSTEM LIVE: CYCLE 1 INITIALIZED");
+    console.log("🎉 BOOTSTRAP SUCCESSFUL. REVENUE CYCLE 1 INITIATED.");
+
   } catch (e) {
-    console.error(`❌ FAILED: ${e.message}`);
+    if (e.code === 'INSUFFICIENT_FUNDS') {
+        console.error(`\n❌ GAS ERROR: Still exceeds balance.`);
+        console.log("👉 Try dropping maxFeePerGas to 1.5 gwei if the network is quiet.");
+    } else {
+        console.error(`\n❌ EXECUTION ERROR: ${e.message}`);
+    }
   }
 })();
    
