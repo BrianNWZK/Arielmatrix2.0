@@ -3102,31 +3102,29 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 INSTITUTIONAL BOOTSTRAP - PERMANENT CHECKSUM REPAIR
+// 🚀 FINAL SOVEREIGN BOOTSTRAP - SIGNER & CHECKSUM SYNC
 // =====================================================================
 
 if (global.bootstrapAttempted) return;
 global.bootstrapAttempted = true;
 
 try {
-  // 1. FORCED CHECKSUM NORMALIZATION (The Permanent Fix)
-  // These are now correctly mixed-case per ERC-55 standards.
-  const WAREHOUSE_RAW = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
-  const CHAINLINK_RAW = "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419";
-
-  // Use getAddress to resolve any v6 internal formatting conflicts
-  const WAREHOUSE = ethers.getAddress(WAREHOUSE_RAW);
-  const CHAINLINK = ethers.getAddress(CHAINLINK_RAW);
+  // 1. ENSURE SIGNER IS CONNECTED TO PROVIDER
+  const activeSigner = this.signer.connect(this.provider);
+  
+  // 2. HARD-CODED CHECKSUM NORMALIZATION
+  const WAREHOUSE_ADDR = ethers.getAddress("0x78043417f7E15CF29cbB52cC584e11Ae33FE1542");
+  const CHAINLINK_ADDR = ethers.getAddress("0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419");
 
   const warehouse = new ethers.Contract(
-    WAREHOUSE,
+    WAREHOUSE_ADDR,
     ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'],
-    this.signer
+    activeSigner
   );
 
-  // 2. ORACLE DATA FETCH
+  // 3. FETCH LIVE PRICE WITH CONNECTED PROVIDER
   const chainlink = new ethers.Contract(
-    CHAINLINK,
+    CHAINLINK_ADDR,
     ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
     this.provider
   );
@@ -3135,19 +3133,19 @@ try {
   const ethPriceUSD = Number(priceData) / 1e8;
   const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
 
-  // 3. $600K INSTITUTIONAL PARAMETERS
-  // Leg 1: $300,000 USDC | Leg 2: $300,000 WETH
+  // 4. INSTITUTIONAL $600K PARAMETERS
+  // Leg 1: $300k USDC | Leg 2: $300k WETH
   const TOTAL_USD = ethers.parseUnits("600000", 6);
-  const BWZC_SEED = ethers.parseUnits("25531.91", 18); // Pegged to $23.50
+  const BWZC_SEED = ethers.parseUnits("25531.91", 18); // Scaled for $23.50 Peg
 
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  ⚡ BOOTSTRAP INITIATED: $600,000 TOTAL LIQUIDITY             ║
+║  ⚡ SOVEREIGN STRIKE: $600,000 BOOTSTRAP                      ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Warehouse: ${WAREHOUSE}         ║
-║  • BWZC Seed: 25,531.91 ($23.50 Entry)                        ║
-║  • ETH Price: $${ethPriceUSD.toFixed(2)}                               ║
-║  • Status: CHECKSUM VALIDATED                                 ║
+║  • Warehouse: ${WAREHOUSE_ADDR}         ║
+║  • Signer: ${await activeSigner.getAddress()}                     ║
+║  • USD Target: $600,000 (Vault-Safe)                          ║
+║  • BWAEZI Seed: 25,531.91 (Ratio-Aligned)                     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
@@ -3156,26 +3154,24 @@ try {
     TOTAL_USD,
     SCALED_PRICE,
     {
-      gasLimit: 6500000n, 
-      maxFeePerGas: ethers.parseUnits("4.0", "gwei"), // High priority for FOMC
-      maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei")
+      gasLimit: 7000000n, // Maximum headroom for 8-pool atomic rebalance
+      maxFeePerGas: ethers.parseUnits("5.0", "gwei"), // Ultra-priority
+      maxPriorityFeePerGas: ethers.parseUnits("2.0", "gwei")
     }
   );
 
-  console.log(`✅ Transaction Dispatched: ${tx.hash}`);
+  console.log(`✅ TX DISPATCHED: ${tx.hash}`);
   const receipt = await tx.wait();
   
   if (receipt.status === 1) {
-    console.log(`\n🎉 BOOTSTRAP COMPLETE. Cycle Count is now 1.`);
-    console.log(`📈 MEV Revenue loop is now active.`);
+    console.log(`\n🎉 SUCCESS: Cycle 1 Active. System Unpaused.`);
   }
 
 } catch (error) {
-  // Specific error catching for better debugging
+  console.error(`\n❌ CRITICAL BOOTSTRAP ERROR:`);
+  console.error(`Reason: ${error.reason || error.message}`);
   if (error.code === 'INVALID_ARGUMENT') {
-    console.error(`\n❌ CHECKSUM STILL FAILING: Ensure the signer is valid for this network.`);
-  } else {
-    console.error(`\n❌ EXECUTION ERROR: ${error.message}`);
+      console.log("💡 Suggestion: Check if the private key in your environment is correctly formatted.");
   }
 }
 // THEN continue with normal MEV initialization...
