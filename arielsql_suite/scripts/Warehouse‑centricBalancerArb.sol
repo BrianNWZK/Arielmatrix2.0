@@ -1223,8 +1223,7 @@ function _executePreciseArbitrage(uint256 usdcAmount, uint256 wethAmount, uint25
     }
 
      // =====================================================================
-     //  INSTITUTIONAL REVENUE CYCLE (Cycles 1+)Production path with full Oracle
-         and Spread protections.
+     //  INSTITUTIONAL REVENUE CYCLE (Cycles 1+)Production path with full Oracle and Spread protections.
       // =====================================================================
         function executeInstitutionalCycle() external nonReentrant whenNotPaused {
         if (!bootstrapCompleted) revert("System not bootstrapped");
@@ -1254,8 +1253,7 @@ function _executePreciseArbitrage(uint256 usdcAmount, uint256 wethAmount, uint25
     }
 
       // =====================================================================
-     //  GLOBAL INITIAL BOOTSTRAP (Cycle 0 Only) Hardened to work with 
-         zero liquidity by using caller-supplied ETH price.
+     //  GLOBAL INITIAL BOOTSTRAP (Cycle 0 Only) Hardened to work with zero liquidity by using caller-supplied ETH price.
     // =====================================================================
    function globalInitialBootstrap(
         uint256 bwzcSeedAmount, 
