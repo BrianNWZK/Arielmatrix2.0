@@ -1,66 +1,66 @@
+// =====================================================================
+// ETH TRANSFER: SCW -> EOA (Topping up Gas)
+// =====================================================================
+
 import { ethers } from "ethers";
 import dotenv from "dotenv";
-import dotenvExpand from "dotenv-expand";
-dotenvExpand.expand(dotenv.config());
+dotenv.config();
 
-// --- CONFIG ---
-const RPC_URL = process.env.RPC_URL || "https://eth.llamarpc.com";
-const PRIVATE_KEY = process.env.SOVEREIGN_PRIVATE_KEY;
-if (!PRIVATE_KEY) throw new Error("Missing SOVEREIGN_PRIVATE_KEY");
+const RPC_URL = process.env.RPC_URL || "https://ethereum-rpc.publicnode.com";
+const PRIVATE_KEY = process.env.PRIVATE_KEY; // EOA private key
+const SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+const EOA = "0xd8e1Fa4d571b6FCe89fb5A145D6397192632F1aA";
 
-const SCW_ADDRESS = process.env.SCW_ADDRESS; // your Smart Contract Wallet (required)
-if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS in .env");
-
-const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"; // BWAEZI token
-
-// WarehouseBalancerArb contract address (the one that needs BWZC approval)
-const WAREHOUSE_CONTRACT = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
-
-// --- ABI fragments ---
-const tokenIface = new ethers.Interface([
-  "function approve(address spender, uint256 amount) returns (bool)"
-]);
-
-// SCW ABI (SimpleAccount style - execute function)
-const scwIface = new ethers.Interface([
-  "function execute(address dest, uint256 value, bytes calldata func) external"
-]);
+// The SCW execute function: execute(address to, uint256 value, bytes data)
+const scwAbi = ["function execute(address to, uint256 value, bytes data) returns (bytes)"];
 
 async function main() {
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+  try {
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-  console.log("SCW:", SCW_ADDRESS);
-  console.log("Warehouse Contract:", WAREHOUSE_CONTRACT);
-  console.log("BWAEZI Token:", BWAEZI);
+    const ethToTransfer = "0.003";
+    const amountWei = ethers.parseEther(ethToTransfer);
 
-  const scw = new ethers.Contract(SCW_ADDRESS, scwIface, wallet);
+    console.log(`\n⛽ GAS TOP-UP: Moving ETH to EOA`);
+    console.log(`=================================`);
+    console.log(`From SCW: ${SCW}`);
+    console.log(`To EOA:   ${EOA}`);
+    console.log(`Amount:   ${ethToTransfer} ETH`);
 
-  console.log(`Approving Warehouse contract ${WAREHOUSE_CONTRACT} for unlimited BWAEZI...`);
+    const scwContract = new ethers.Contract(SCW, scwAbi, wallet);
 
-  // Encode approve(max) on BWAEZI token
-  const approveData = tokenIface.encodeFunctionData("approve", [
-    WAREHOUSE_CONTRACT,
-    ethers.MaxUint256
-  ]);
+    // execute(target, value, data) 
+    // target is EOA, value is the ETH, data is empty "0x"
+    console.log(`\n📤 Sending transaction...`);
+    
+    const tx = await scwContract.execute(
+      EOA, 
+      amountWei, 
+      "0x", 
+      {
+        gasLimit: 100_000n, // Simple ETH transfer via SCW is low gas
+        maxFeePerGas: ethers.parseUnits("0.3", "gwei"),
+        maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
+      }
+    );
 
-  // Execute via SCW - ONE ATTEMPT ONLY
-  const tx = await scw.execute(BWAEZI, 0, approveData);
-  console.log("TX sent:", tx.hash);
-  
-  // Wait for confirmation - will either succeed or throw
-  const receipt = await tx.wait();
-  
-  if (receipt.status === 1) {
-    console.log(`✅ Warehouse contract ${WAREHOUSE_CONTRACT} successfully approved for unlimited BWAEZI`);
-    console.log("🎉 Approval complete. Warehouse operations (bootstrap/cycles) can now run.");
-  } else {
-    console.log("❌ Approval failed - transaction reverted");
-    process.exit(1);
+    console.log(`✅ TX Sent: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
+
+    const receipt = await tx.wait();
+    
+    if (receipt.status === 1) {
+      const newBalance = await provider.getBalance(EOA);
+      console.log(`\n🎉 SUCCESS!`);
+      console.log(`New EOA Balance: ${ethers.formatEther(newBalance)} ETH`);
+    } else {
+      console.log(`\n❌ Transaction failed at the EVM level.`);
+    }
+
+  } catch (error) {
+    console.error(`\n❌ ERROR: ${error.message}`);
   }
 }
 
-main().catch(e => {
-  console.error("Fatal error:", e.message || e);
-  process.exit(1);
-});
+main();
