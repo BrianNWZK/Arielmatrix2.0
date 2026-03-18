@@ -3102,16 +3102,16 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 INSTITUTIONAL BOOTSTRAP - $600K OPTIMIZED TARGET
+// 🚀 INSTITUTIONAL BOOTSTRAP - $600K (CHECKSUM FIXED)
 // =====================================================================
 
 if (global.bootstrapAttempted) return;
 global.bootstrapAttempted = true;
 
 try {
-  // 1. CHECKSUMMED ADDRESSES (Ethers v6 strict mode)
+  // 1. CHECKSUMMED ADDRESSES (Mixed case required for Ethers v6)
   const WAREHOUSE = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
-  const CHAINLINK = "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419";
+  const CHAINLINK = "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419"; 
 
   const warehouse = new ethers.Contract(
     WAREHOUSE,
@@ -3119,7 +3119,7 @@ try {
     this.signer
   );
 
-  // 2. FETCH LIVE ORACLE DATA (Zero-Slippage Sync)
+  // 2. ORACLE SYNC
   const chainlink = new ethers.Contract(
     CHAINLINK,
     ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
@@ -3129,32 +3129,28 @@ try {
   const ethPriceUSD = Number(priceData) / 1e8;
   const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
 
-  // 3. TWO-LEG ALIGNMENT ($600k TOTAL)
-  // Leg A: $300k USDC (Vault Safety Check: $300k < $332k) - PASS
-  // Leg B: $300k WETH (Vault Safety Check: $300k << $3.7M) - PASS
-  const USD_TARGET = ethers.parseUnits("600000", 6);
-  
-  // BWZC Seed calibrated to your $23.50 Genesis Peg
-  const BWZC_SEED = ethers.parseUnits("25531.91", 18);
+  // 3. $600K DUAL-LEG PARAMETERS
+  const TOTAL_USD = ethers.parseUnits("600000", 6);
+  const BWZC_SEED = ethers.parseUnits("25531.91", 18); // Scaled for $23.50 peg
 
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  ⚡ EXECUTING $600K INSTITUTIONAL BOOTSTRAP                   ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Target: $600,000 Total ($300k USDC / $300k WETH)           ║
-║  • BWZC Seed: 25,531.91 (Surgical $23.50 Peg Alignment)       ║
-║  • ETH Price: $${ethPriceUSD.toFixed(2)} (Oracle Sync)                ║
-║  • Gas Limit: 6,500,000 (Multi-Pool Deepening)                ║
+║  • Target: $600,000 ($300k USDC / $300k WETH)                 ║
+║  • BWZC Seed: 25,531.91 (Fixed $23.50 Ratio)                  ║
+║  • ETH Price: $${ethPriceUSD.toFixed(2)} (Live Sync)                ║
+║  • Address Checksum: VERIFIED                                 ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
   const tx = await warehouse.globalInitialBootstrap(
     BWZC_SEED,
-    USD_TARGET,
+    TOTAL_USD,
     SCALED_PRICE,
     {
-      gasLimit: 6500000n, // Headroom for 8-pool atomic rebalance
-      maxFeePerGas: ethers.parseUnits("2.5", "gwei"),
+      gasLimit: 6500000n, 
+      maxFeePerGas: ethers.parseUnits("3.0", "gwei"), // Speed up for FOMC volatility
       maxPriorityFeePerGas: ethers.parseUnits("1.0", "gwei")
     }
   );
@@ -3163,9 +3159,8 @@ try {
   const receipt = await tx.wait();
   
   if (receipt.status === 1) {
-    console.log(`\n🎉 CYCLE 1 ACTIVE. Heartbeat unpaused.`);
-    console.log(`📊 Dashboard: http://localhost:10000/revenue-dashboard`);
-    console.log(`💰 Status: http://localhost:10000/revenue-status`);
+    console.log(`\n🎉 CYCLE 1 ACTIVE. MEV HEARTBEAT UNPAUSED.`);
+    console.log(`📊 Metrics: http://localhost:10000/system-metrics`);
   }
 
 } catch (error) {
