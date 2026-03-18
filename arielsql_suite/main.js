@@ -12,14 +12,16 @@ const SCW_ADDRESS = process.env.SCW_ADDRESS; // your Smart Contract Wallet (requ
 if (!SCW_ADDRESS) throw new Error("Missing SCW_ADDRESS in .env");
 
 const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2"; // BWAEZI token
+
+// WarehouseBalancerArb contract address (the one that needs BWZC approval)
 const WAREHOUSE_CONTRACT = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
 
 // --- ABI fragments ---
 const tokenIface = new ethers.Interface([
-  "function approve(address spender, uint256 amount) returns (bool)",
-  "function allowance(address owner, address spender) view returns (uint256)"
+  "function approve(address spender, uint256 amount) returns (bool)"
 ]);
 
+// SCW ABI (SimpleAccount style - execute function)
 const scwIface = new ethers.Interface([
   "function execute(address dest, uint256 value, bytes calldata func) external"
 ]);
@@ -32,51 +34,33 @@ async function main() {
   console.log("Warehouse Contract:", WAREHOUSE_CONTRACT);
   console.log("BWAEZI Token:", BWAEZI);
 
-  // =====================================================================
-  // CHECK IF APPROVAL ALREADY EXISTS
-  // =====================================================================
-  console.log("\n🔍 Checking existing allowance...");
-  
-  const token = new ethers.Contract(BWAEZI, [
-    'function allowance(address owner, address spender) view returns (uint256)'
-  ], provider);
-  
-  const currentAllowance = await token.allowance(SCW_ADDRESS, WAREHOUSE_CONTRACT);
-  console.log(`   Current allowance: ${ethers.formatEther(currentAllowance)} BWAEZI`);
-
-  // If allowance is already max (or very large), skip
-  if (currentAllowance >= ethers.parseUnits("1000000", 18)) {
-    console.log(`   ✅ Sufficient allowance already exists - skipping approval`);
-    console.log(`🎉 Warehouse contract ${WAREHOUSE_CONTRACT} already approved`);
-    return;
-  }
-
-  // =====================================================================
-  // SEND APPROVAL IF NEEDED
-  // =====================================================================
-  console.log(`\n📝 Approving Warehouse contract ${WAREHOUSE_CONTRACT} for unlimited BWAEZI...`);
-
   const scw = new ethers.Contract(SCW_ADDRESS, scwIface, wallet);
+
+  console.log(`Approving Warehouse contract ${WAREHOUSE_CONTRACT} for unlimited BWAEZI...`);
+
+  // Encode approve(max) on BWAEZI token
   const approveData = tokenIface.encodeFunctionData("approve", [
     WAREHOUSE_CONTRACT,
     ethers.MaxUint256
   ]);
 
-  const tx = await scw.execute(BWAEZI, 0, approveData, {
-    gasLimit: 200_000n,
-    maxFeePerGas: ethers.parseUnits("0.3", "gwei")
-  });
+  // Execute via SCW - ONE ATTEMPT ONLY
+  const tx = await scw.execute(BWAEZI, 0, approveData);
+  console.log("TX sent:", tx.hash);
   
-  console.log("   TX sent:", tx.hash);
-  console.log(`   View: https://etherscan.io/tx/${tx.hash}`);
+  // Wait for confirmation - will either succeed or throw
+  const receipt = await tx.wait();
   
-  await tx.wait();
-
-  console.log(`\n✅ Warehouse contract ${WAREHOUSE_CONTRACT} successfully approved for unlimited BWAEZI`);
-  console.log("🎉 Approval complete. Warehouse operations (bootstrap/cycles) can now run.");
+  if (receipt.status === 1) {
+    console.log(`✅ Warehouse contract ${WAREHOUSE_CONTRACT} successfully approved for unlimited BWAEZI`);
+    console.log("🎉 Approval complete. Warehouse operations (bootstrap/cycles) can now run.");
+  } else {
+    console.log("❌ Approval failed - transaction reverted");
+    process.exit(1);
+  }
 }
 
 main().catch(e => {
-  console.error("Fatal error:", e);
+  console.error("Fatal error:", e.message || e);
   process.exit(1);
 });
