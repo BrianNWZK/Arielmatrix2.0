@@ -3102,7 +3102,7 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// BOOTSTRAP FOR NEW CONTRACT - WITH SCW POINTER FIX
+// 🚀 FINAL MISSION: CALIBRATED BOOTSTRAP WITH LIVE CHAINLINK PRICE
 // =====================================================================
 
 // Circuit breaker - absolute one-time lock
@@ -3115,46 +3115,42 @@ global.bootstrapAttempted = true;
 try {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 BOOTSTRAP WITH SCW POINTER FIX                            ║
+║  🚀 FINAL BOOTSTRAP - LIVE CHAINLINK PRICE                   ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  • Contract: 0x78043417f7E15CF29cbB52cC584e11Ae33FE1542       ║
-║  • STEP 1: Fix SCW pointer                                    ║
-║  • STEP 2: Execute globalInitialBootstrap()                   ║
+║  • Using LIVE Chainlink ETH price                             ║
 ║  • ONE ATTEMPT ONLY - NO RETRIES                              ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
+
+  // =====================================================================
+  // 1. FETCH LIVE CHAINLINK PRICE
+  // =====================================================================
+  const chainlink = new ethers.Contract(
+    "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419",
+    ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
+    this.provider
+  );
+  
+  const [, priceData] = await chainlink.latestRoundData();
+  const ethPriceUSD = Number(priceData) / 1e8; // Chainlink returns 8 decimals
+  
+  // Scale to 18 decimals for the contract
+  const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
+
+  console.log(`\n🔔 LIVE MARKET CALIBRATION: $${ethPriceUSD.toFixed(2)}`);
 
   const warehouse = new ethers.Contract(
     "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542",
     [
       'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
-      'function adminSetAddress(bytes32 key, address value) external',
       'function cycleCount() view returns (uint256)'
     ],
     this.signer
   );
 
   // =====================================================================
-  // STEP 1: FIX THE SCW ADDRESS POINTER
-  // =====================================================================
-  const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
-  const ACTUAL_SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
-
-  console.log("\n🔧 STEP 1: Correcting SCW pointer in Warehouse...");
-  console.log(`   Setting scw → ${ACTUAL_SCW}`);
-  
-  const setAddrTx = await warehouse.adminSetAddress(SCW_KEY, ACTUAL_SCW, {
-    gasLimit: 150_000n,
-    maxFeePerGas: ethers.parseUnits("0.4", "gwei"),
-    maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
-  });
-  
-  console.log(`   Tx: ${setAddrTx.hash}`);
-  await setAddrTx.wait();
-  console.log(`   ✅ SCW pointer fixed`);
-
-  // =====================================================================
-  // STEP 2: CHECK IF ALREADY BOOTSTRAPPED
+  // 2. CHECK IF ALREADY BOOTSTRAPPED
   // =====================================================================
   try {
     const currentCycle = await warehouse.cycleCount();
@@ -3167,38 +3163,40 @@ try {
   }
 
   // =====================================================================
-  // STEP 3: EXECUTE BOOTSTRAP
+  // 3. EXECUTE BOOTSTRAP WITH LIVE PRICE
   // =====================================================================
-  console.log("\n🚀 STEP 2: Executing Global Initial Bootstrap...");
-
-  const BWZC_SEED_AMOUNT = ethers.parseUnits("170212", 18);
+  const BWZC_SEED = ethers.parseUnits("170212", 18);
   const USD_AMOUNT = ethers.parseUnits("4000000", 6);
-  const ETH_PRICE = ethers.parseUnits("2000", 18);
 
-  console.log(`📊 Parameters:`);
-  console.log(`   BWZC Seed: ${ethers.formatEther(BWZC_SEED_AMOUNT)}`);
+  console.log(`\n📊 Parameters:`);
+  console.log(`   BWZC Seed: ${ethers.formatEther(BWZC_SEED)}`);
   console.log(`   USD Amount: ${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
-  console.log(`   ETH Price: $${ethers.formatEther(ETH_PRICE)}`);
+  console.log(`   ETH Price: $${ethers.formatEther(SCALED_PRICE)} (live from Chainlink)`);
+
+  console.log(`\n📤 Sending Calibrated Transaction...`);
 
   const tx = await warehouse.globalInitialBootstrap(
-    BWZC_SEED_AMOUNT,
+    BWZC_SEED,
     USD_AMOUNT,
-    ETH_PRICE,
+    SCALED_PRICE,
     {
-      gasLimit: 4_000_000n,
-      maxFeePerGas: ethers.parseUnits("0.4", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
+      gasLimit: 4_500_000n,
+      maxFeePerGas: ethers.parseUnits("1.2", "gwei"),
+      maxPriorityFeePerGas: ethers.parseUnits("0.3", "gwei")
     }
   );
 
-  console.log(`\n✅ Transaction sent: ${tx.hash}`);
+  console.log(`✅ Transaction sent: ${tx.hash}`);
   console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
 
   const receipt = await tx.wait();
   
   if (receipt.status === 1) {
+    const finalCycle = await warehouse.cycleCount();
     console.log(`\n🎉✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅🎉`);
-    console.log(`   Gas used: ${receipt.gasUsed}`);
+    console.log(`   Cycle Count: ${finalCycle}`);
+    console.log(`   Gas Used: ${receipt.gasUsed}`);
+    console.log(`   System is now LIVE - MEV revenue loop should activate`);
   } else {
     console.log(`\n❌ Bootstrap failed`);
   }
