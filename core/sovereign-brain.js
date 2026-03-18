@@ -3103,79 +3103,82 @@ async initialize() {
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
    
 // =====================================================================
-// IDENTITY DIAGNOSTIC - SINGLE ATTEMPT, NO RETRIES
+// BOOTSTRAP FOR NEW CONTRACT - SINGLE ATTEMPT ONLY
 // =====================================================================
 
 // Circuit breaker - absolute one-time lock
-if (global.identityCheckDone) {
-  console.log("⏹️ Identity check already performed - exiting");
+if (global.bootstrapAttempted) {
+  console.log("⏹️ Bootstrap already attempted in this process - exiting");
   return;
 }
-global.identityCheckDone = true;
+global.bootstrapAttempted = true;
 
-async function checkIdentity() {
-  try {
-    console.log(`
+try {
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  📊 IDENTITY AUDIT - SINGLE ATTEMPT                           ║
+║  🚀 EXECUTING GLOBAL INITIAL BOOTSTRAP                        ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • One check only                                             ║
-║  • No retries                                                 ║
-║  • Will show exact authorization gap                          ║
+║  • New Contract: 0x78043417f7E15CF29cbB52cC584e11Ae33FE1542   ║
+║  • Using globalInitialBootstrap() - NO ORACLE NEEDED          ║
+║  • ETH Price: $2000 (passed directly)                         ║
+║  • ONE ATTEMPT ONLY - NO RETRIES                              ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
+  `);
 
-    const provider = this.provider;
-    const wallet = this.signer;
-    
-    const warehouse = new ethers.Contract(
-      LIVE.WAREHOUSE_CONTRACT,
-      [
-        'function owner() view returns (address)',
-        'function scw() view returns (address)'
-      ],
-      provider
-    );
+  const warehouse = new ethers.Contract(
+    "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542",
+    ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'],
+    this.signer
+  );
 
-    const [contractOwner, scwPointer] = await Promise.all([
-      warehouse.owner().catch(() => "⚠️ UNABLE TO READ"),
-      warehouse.scw().catch(() => "⚠️ UNABLE TO READ")
-    ]);
+  // Quick check if already bootstrapped (optional but safe)
+  const cycleCount = await warehouse.cycleCount().catch(() => 0);
+  if (cycleCount > 0) {
+    console.log("✅ Contract already bootstrapped (cycleCount > 0) - skipping");
+    return;
+  }
 
-    const walletAddress = await wallet.getAddress();
+  // Parameters for initial bootstrap
+  const BWZC_SEED_AMOUNT = ethers.parseUnits("170212", 18);  // Total BWZC to seed
+  const USD_AMOUNT = ethers.parseUnits("4000000", 6);        // 4M USDC (with 6 decimals)
+  const ETH_PRICE = ethers.parseUnits("2000", 18);           // $2000 ETH price estimate
 
-    console.log(`\n📊 RESULTS:`);
-    console.log(`   Contract Owner:  ${contractOwner}`);
-    console.log(`   Your EOA:        ${walletAddress}`);
-    console.log(`   SCW Pointer:     ${scwPointer}`);
-    console.log(`   Your SCW:        ${LIVE.SCW_ADDRESS}`);
+  console.log(`💰 Seed amount: ${ethers.formatEther(BWZC_SEED_AMOUNT)} BWZC`);
+  console.log(`💰 USD amount: ${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
+  console.log(`💰 ETH price: $${ethers.formatEther(ETH_PRICE)}`);
 
-    const isOwner = contractOwner.toLowerCase?.() === walletAddress.toLowerCase();
-    const isSCW = scwPointer.toLowerCase?.() === LIVE.SCW_ADDRESS.toLowerCase();
-
-    console.log(`\n📋 SUMMARY:`);
-    if (!isOwner) {
-      console.log(`   ❌ AUTHORIZATION GAP: Your EOA is NOT the owner`);
-      console.log(`   🔧 Solution: Call through SCW or transfer ownership`);
-    } else {
-      console.log(`   ✅ EOA is Owner - authorization should pass`);
+  const tx = await warehouse.globalInitialBootstrap(
+    BWZC_SEED_AMOUNT,
+    USD_AMOUNT,
+    ETH_PRICE,
+    {
+      gasLimit: 4_000_000n,
+      maxFeePerGas: ethers.parseUnits("0.3", "gwei"),
+      maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
     }
+  );
 
-    if (!isSCW) {
-      console.log(`   ⚠️ SCW pointer is wrong - may affect token pull`);
-    } else {
-      console.log(`   ✅ SCW pointer is correct`);
-    }
+  console.log(`✅ Transaction sent: ${tx.hash}`);
+  console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
 
-    console.log(`\n🏁 Identity check complete - no further attempts`);
+  const receipt = await tx.wait();
+  
+  if (receipt.status === 1) {
+    console.log(`\n🎉✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅🎉`);
+    console.log(`   Gas used: ${receipt.gasUsed}`);
+    console.log(`   Cycle count should now be 1`);
+  } else {
+    console.log(`\n❌ Bootstrap failed`);
+  }
 
-  } catch (error) {
-    console.error(`\n❌ Error: ${error.message}`);
+} catch (error) {
+  console.error(`\n❌ Error: ${error.message}`);
+  if (error.transactionHash) {
+    console.log(`Failed tx: https://etherscan.io/tx/${error.transactionHash}`);
   }
 }
 
-// Run once
-checkIdentity.call(this);
+console.log(`\n🏁 Bootstrap attempt complete - no further retries`);
    
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
