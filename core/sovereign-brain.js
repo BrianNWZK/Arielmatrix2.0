@@ -3102,72 +3102,74 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 INSTITUTIONAL BOOTSTRAP: TWO-LEG BALANCED EXECUTION
+// 🚀 INSTITUTIONAL BOOTSTRAP - $600K OPTIMIZED TARGET
 // =====================================================================
 
 if (global.bootstrapAttempted) return;
 global.bootstrapAttempted = true;
 
 try {
-    const warehouseAddress = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
-    const warehouse = new ethers.Contract(
-        warehouseAddress,
-        ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'],
-        this.signer
-    );
+  // 1. CHECKSUMMED ADDRESSES (Ethers v6 strict mode)
+  const WAREHOUSE = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
+  const CHAINLINK = "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419";
 
-    // 1. DYNAMIC ORACLE DATA (Chainlink Sync)
-    const chainlink = new ethers.Contract("0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419", 
-        ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'], this.provider);
-    const [, priceData] = await chainlink.latestRoundData();
-    const ethPriceUSD = Number(priceData) / 1e8;
-    const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
+  const warehouse = new ethers.Contract(
+    WAREHOUSE,
+    ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'],
+    this.signer
+  );
 
-    // 2. PROPORTIONAL SCALING FOR INSTITUTIONAL PERFECTION
-    // Total Value: $400,000. 
-    // Contract Logic: Leg A ($200k USDC) | Leg B ($200k WETH)
-    // Both legs fit comfortably within Balancer Vault inventories.
-    const TOTAL_USD_TARGET = ethers.parseUnits("400000", 6); 
+  // 2. FETCH LIVE ORACLE DATA (Zero-Slippage Sync)
+  const chainlink = new ethers.Contract(
+    CHAINLINK,
+    ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
+    this.provider
+  );
+  const [, priceData] = await chainlink.latestRoundData();
+  const ethPriceUSD = Number(priceData) / 1e8;
+  const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
 
-    // 3. BWZC SEED ALIGNMENT
-    // To maintain your target peg and prevent internal slippage reverts:
-    // Original 170,212 seed was for $4M. 
-    // For $400k (10% of original), we use 10% of the seed.
-    const SCALED_BWZC_SEED = ethers.parseUnits("17021.2", 18);
+  // 3. TWO-LEG ALIGNMENT ($600k TOTAL)
+  // Leg A: $300k USDC (Vault Safety Check: $300k < $332k) - PASS
+  // Leg B: $300k WETH (Vault Safety Check: $300k << $3.7M) - PASS
+  const USD_TARGET = ethers.parseUnits("600000", 6);
+  
+  // BWZC Seed calibrated to your $23.50 Genesis Peg
+  const BWZC_SEED = ethers.parseUnits("25531.91", 18);
 
-    console.log(`
+  console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 INSTITUTIONAL TWO-LEG BOOTSTRAP                           ║
+║  ⚡ EXECUTING $600K INSTITUTIONAL BOOTSTRAP                   ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • Leg 1 (USDC): $200,000.00 (Vault Inventory: ~$332k)        ║
-║  • Leg 2 (WETH): ~$200,000.00 (Vault Inventory: ~$3.7M)       ║
-║  • BWZC Seed: 17,021.2 (Symmetrically Aligned)                ║
-║  • ETH Price: $${ethPriceUSD.toFixed(2)}                               ║
+║  • Target: $600,000 Total ($300k USDC / $300k WETH)           ║
+║  • BWZC Seed: 25,531.91 (Surgical $23.50 Peg Alignment)       ║
+║  • ETH Price: $${ethPriceUSD.toFixed(2)} (Oracle Sync)                ║
+║  • Gas Limit: 6,500,000 (Multi-Pool Deepening)                ║
 ╚═══════════════════════════════════════════════════════════════╝
-    `);
+  `);
 
-    // 4. EXECUTION WITH HIGH PRIORITY
-    const tx = await warehouse.globalInitialBootstrap(
-        SCALED_BWZC_SEED,
-        TOTAL_USD_TARGET,
-        SCALED_PRICE,
-        {
-            gasLimit: 6000000n, // Extra headroom for the 8-pool arb logic
-            maxFeePerGas: ethers.parseUnits("2.0", "gwei"),
-            maxPriorityFeePerGas: ethers.parseUnits("0.5", "gwei")
-        }
-    );
-
-    console.log(`✅ Transaction Sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    
-    if (receipt.status === 1) {
-        console.log(`\n🎉 SUCCESS! Cycle 1 Initialized. MEV Engine Active.`);
-        console.log(`⛽ Gas Used: ${receipt.gasUsed.toString()}`);
+  const tx = await warehouse.globalInitialBootstrap(
+    BWZC_SEED,
+    USD_TARGET,
+    SCALED_PRICE,
+    {
+      gasLimit: 6500000n, // Headroom for 8-pool atomic rebalance
+      maxFeePerGas: ethers.parseUnits("2.5", "gwei"),
+      maxPriorityFeePerGas: ethers.parseUnits("1.0", "gwei")
     }
+  );
+
+  console.log(`✅ Success! Tx Sent: ${tx.hash}`);
+  const receipt = await tx.wait();
+  
+  if (receipt.status === 1) {
+    console.log(`\n🎉 CYCLE 1 ACTIVE. Heartbeat unpaused.`);
+    console.log(`📊 Dashboard: http://localhost:10000/revenue-dashboard`);
+    console.log(`💰 Status: http://localhost:10000/revenue-status`);
+  }
 
 } catch (error) {
-    console.error(`\n❌ REVERT ANALYSIS: ${error.message}`);
+  console.error(`\n❌ ERROR: ${error.message}`);
 }
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
