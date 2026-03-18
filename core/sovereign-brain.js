@@ -3101,7 +3101,6 @@ async initialize() {
   await this.rpc.init();
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
-   
 // =====================================================================
 // BOOTSTRAP FOR NEW CONTRACT - SINGLE ATTEMPT ONLY
 // =====================================================================
@@ -3111,6 +3110,7 @@ if (global.bootstrapAttempted) {
   console.log("⏹️ Bootstrap already attempted in this process - exiting");
   return;
 }
+global.bootstrapAttempted = true;
 
 try {
   console.log(`
@@ -3134,16 +3134,13 @@ try {
   const cycleCount = await warehouse.cycleCount().catch(() => 0);
   if (cycleCount > 0) {
     console.log("✅ Contract already bootstrapped (cycleCount > 0) - skipping");
-    global.bootstrapAttempted = true;
     return;
   }
 
-  global.bootstrapAttempted = true; // Mark as attempted before sending
-
   // Parameters for initial bootstrap
-  const BWZC_SEED_AMOUNT = ethers.parseUnits("170212", 18);
-  const USD_AMOUNT = ethers.parseUnits("4000000", 6);
-  const ETH_PRICE = ethers.parseUnits("2000", 18);
+  const BWZC_SEED_AMOUNT = ethers.parseUnits("170212", 18);  // Total BWZC to seed
+  const USD_AMOUNT = ethers.parseUnits("4000000", 6);        // 4M USDC (with 6 decimals)
+  const ETH_PRICE = ethers.parseUnits("2000", 18);           // $2000 ETH price estimate
 
   console.log(`💰 Seed amount: ${ethers.formatEther(BWZC_SEED_AMOUNT)} BWZC`);
   console.log(`💰 USD amount: ${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
@@ -3168,6 +3165,7 @@ try {
   if (receipt.status === 1) {
     console.log(`\n🎉✅✅✅ BOOTSTRAP SUCCESSFUL! ✅✅✅🎉`);
     console.log(`   Gas used: ${receipt.gasUsed}`);
+    console.log(`   Cycle count should now be 1`);
   } else {
     console.log(`\n❌ Bootstrap failed`);
   }
@@ -3180,6 +3178,7 @@ try {
 }
 
 console.log(`\n🏁 Bootstrap attempt complete - no further retries`);
+   
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
