@@ -3102,7 +3102,7 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// BOOTSTRAP FOR NEW CONTRACT - WITH CORRECT ABI ONLY
+// BOOTSTRAP FOR NEW CONTRACT - WITH SCW POINTER FIX
 // =====================================================================
 
 // Circuit breaker - absolute one-time lock
@@ -3115,64 +3115,83 @@ global.bootstrapAttempted = true;
 try {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 EXECUTING GLOBAL INITIAL BOOTSTRAP                        ║
+║  🚀 BOOTSTRAP WITH SCW POINTER FIX                            ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  • New Contract: 0x78043417f7E15CF29cbB52cC584e11Ae33FE1542   ║
-║  • Using globalInitialBootstrap() - NO ORACLE NEEDED          ║
-║  • ETH Price: $2000 (passed directly)                         ║
+║  • Contract: 0x78043417f7E15CF29cbB52cC584e11Ae33FE1542       ║
+║  • STEP 1: Fix SCW pointer                                    ║
+║  • STEP 2: Execute globalInitialBootstrap()                   ║
 ║  • ONE ATTEMPT ONLY - NO RETRIES                              ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 
-  // =====================================================================
-  // FIXED: Include cycleCount in the ABI
-  // =====================================================================
   const warehouse = new ethers.Contract(
     "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542",
     [
       'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
-      'function cycleCount() view returns (uint256)'  // Added this line
+      'function adminSetAddress(bytes32 key, address value) external',
+      'function cycleCount() view returns (uint256)'
     ],
     this.signer
   );
 
   // =====================================================================
-  // CHECK IF ALREADY BOOTSTRAPPED (optional)
+  // STEP 1: FIX THE SCW ADDRESS POINTER
+  // =====================================================================
+  const SCW_KEY = "0x7363770000000000000000000000000000000000000000000000000000000000";
+  const ACTUAL_SCW = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+
+  console.log("\n🔧 STEP 1: Correcting SCW pointer in Warehouse...");
+  console.log(`   Setting scw → ${ACTUAL_SCW}`);
+  
+  const setAddrTx = await warehouse.adminSetAddress(SCW_KEY, ACTUAL_SCW, {
+    gasLimit: 150_000n,
+    maxFeePerGas: ethers.parseUnits("0.4", "gwei"),
+    maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
+  });
+  
+  console.log(`   Tx: ${setAddrTx.hash}`);
+  await setAddrTx.wait();
+  console.log(`   ✅ SCW pointer fixed`);
+
+  // =====================================================================
+  // STEP 2: CHECK IF ALREADY BOOTSTRAPPED
   // =====================================================================
   try {
     const currentCycle = await warehouse.cycleCount();
     if (currentCycle > 0) {
-      console.log("✅ Contract already bootstrapped (cycleCount > 0) - skipping");
+      console.log("\n✅ Contract already bootstrapped (cycleCount > 0) - skipping");
       return;
     }
   } catch (cycleError) {
     console.log("ℹ️ Could not read cycleCount, proceeding anyway");
   }
 
-  // Parameters for initial bootstrap
+  // =====================================================================
+  // STEP 3: EXECUTE BOOTSTRAP
+  // =====================================================================
+  console.log("\n🚀 STEP 2: Executing Global Initial Bootstrap...");
+
   const BWZC_SEED_AMOUNT = ethers.parseUnits("170212", 18);
   const USD_AMOUNT = ethers.parseUnits("4000000", 6);
   const ETH_PRICE = ethers.parseUnits("2000", 18);
 
-  console.log(`\n📊 Parameters:`);
+  console.log(`📊 Parameters:`);
   console.log(`   BWZC Seed: ${ethers.formatEther(BWZC_SEED_AMOUNT)}`);
   console.log(`   USD Amount: ${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
   console.log(`   ETH Price: $${ethers.formatEther(ETH_PRICE)}`);
 
-  console.log(`\n📤 Sending transaction...`);
-  
   const tx = await warehouse.globalInitialBootstrap(
     BWZC_SEED_AMOUNT,
     USD_AMOUNT,
     ETH_PRICE,
     {
       gasLimit: 4_000_000n,
-      maxFeePerGas: ethers.parseUnits("0.3", "gwei"),
+      maxFeePerGas: ethers.parseUnits("0.4", "gwei"),
       maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
     }
   );
 
-  console.log(`✅ Transaction sent: ${tx.hash}`);
+  console.log(`\n✅ Transaction sent: ${tx.hash}`);
   console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
 
   const receipt = await tx.wait();
