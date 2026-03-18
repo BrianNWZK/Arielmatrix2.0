@@ -3102,78 +3102,64 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 FINAL SOVEREIGN BOOTSTRAP - SIGNER & CHECKSUM SYNC
+// 🚀 EMERGENCY BYPASS - $600K INSTITUTIONAL STRIKE
 // =====================================================================
 
 if (global.bootstrapAttempted) return;
 global.bootstrapAttempted = true;
 
-try {
-  // 1. ENSURE SIGNER IS CONNECTED TO PROVIDER
-  const activeSigner = this.signer.connect(this.provider);
-  
-  // 2. HARD-CODED CHECKSUM NORMALIZATION
-  const WAREHOUSE_ADDR = ethers.getAddress("0x78043417f7E15CF29cbB52cC584e11Ae33FE1542");
-  const CHAINLINK_ADDR = ethers.getAddress("0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419");
+(async () => {
+  try {
+    // 1. FORCE THE CHECKSUM (Permanent Fix for Ethers v6)
+    const rawWarehouse = "0x78043417f7E15CF29cbB52cC584e11Ae33FE1542";
+    const rawChainlink = "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419";
+    
+    const WAREHOUSE = ethers.getAddress(rawWarehouse);
+    const CHAINLINK = ethers.getAddress(rawChainlink);
 
-  const warehouse = new ethers.Contract(
-    WAREHOUSE_ADDR,
-    ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'],
-    activeSigner
-  );
+    // 2. BIND SIGNER
+    const activeSigner = this.signer.connect(this.provider);
+    const warehouse = new ethers.Contract(
+      WAREHOUSE,
+      ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'],
+      activeSigner
+    );
 
-  // 3. FETCH LIVE PRICE WITH CONNECTED PROVIDER
-  const chainlink = new ethers.Contract(
-    CHAINLINK_ADDR,
-    ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
-    this.provider
-  );
-  
-  const [, priceData] = await chainlink.latestRoundData();
-  const ethPriceUSD = Number(priceData) / 1e8;
-  const SCALED_PRICE = ethers.parseUnits(ethPriceUSD.toFixed(2), 18);
+    // 3. FETCH PRICE & ALIGN $600K TARGET
+    const oracle = new ethers.Contract(CHAINLINK, ['function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)'], this.provider);
+    const [, priceData] = await oracle.latestRoundData();
+    const SCALED_PRICE = ethers.parseUnits((Number(priceData) / 1e8).toFixed(2), 18);
 
-  // 4. INSTITUTIONAL $600K PARAMETERS
-  // Leg 1: $300k USDC | Leg 2: $300k WETH
-  const TOTAL_USD = ethers.parseUnits("600000", 6);
-  const BWZC_SEED = ethers.parseUnits("25531.91", 18); // Scaled for $23.50 Peg
+    // $600k total = $300k USDC + $300k WETH (Fits Balancer Vault limits)
+    const USD_AMOUNT = ethers.parseUnits("600000", 6);
+    const BWZC_SEED = ethers.parseUnits("25531.91", 18); // Scaled for $23.50 peg
 
-  console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║  ⚡ SOVEREIGN STRIKE: $600,000 BOOTSTRAP                      ║
-╠═══════════════════════════════════════════════════════════════╣
-║  • Warehouse: ${WAREHOUSE_ADDR}         ║
-║  • Signer: ${await activeSigner.getAddress()}                     ║
-║  • USD Target: $600,000 (Vault-Safe)                          ║
-║  • BWAEZI Seed: 25,531.91 (Ratio-Aligned)                     ║
-╚═══════════════════════════════════════════════════════════════╝
-  `);
+    console.log("🚀 BYPASS ACTIVE: DISPATCHING $600K BOOTSTRAP...");
 
-  const tx = await warehouse.globalInitialBootstrap(
-    BWZC_SEED,
-    TOTAL_USD,
-    SCALED_PRICE,
-    {
-      gasLimit: 7000000n, // Maximum headroom for 8-pool atomic rebalance
-      maxFeePerGas: ethers.parseUnits("5.0", "gwei"), // Ultra-priority
-      maxPriorityFeePerGas: ethers.parseUnits("2.0", "gwei")
+    // 4. THE STRIKE
+    const tx = await warehouse.globalInitialBootstrap(
+      BWZC_SEED,
+      USD_AMOUNT,
+      SCALED_PRICE,
+      {
+        gasLimit: 7000000n,
+        maxFeePerGas: ethers.parseUnits("6.0", "gwei"), // Skip the mempool queue
+        maxPriorityFeePerGas: ethers.parseUnits("2.5", "gwei")
+      }
+    );
+
+    console.log(`✅ TX SENT: ${tx.hash}`);
+    const receipt = await tx.wait();
+    
+    if (receipt.status === 1) {
+      console.log("🎉 SUCCESS: CYCLE 1 ACTIVE. SYSTEM UNPAUSED.");
     }
-  );
-
-  console.log(`✅ TX DISPATCHED: ${tx.hash}`);
-  const receipt = await tx.wait();
-  
-  if (receipt.status === 1) {
-    console.log(`\n🎉 SUCCESS: Cycle 1 Active. System Unpaused.`);
+  } catch (e) {
+    console.error(`❌ BYPASS FAILED: ${e.reason || e.message}`);
+    console.log("💡 Tip: Ensure SCW has 25,531.91 BWZC and approved the Warehouse.");
   }
-
-} catch (error) {
-  console.error(`\n❌ CRITICAL BOOTSTRAP ERROR:`);
-  console.error(`Reason: ${error.reason || error.message}`);
-  if (error.code === 'INVALID_ARGUMENT') {
-      console.log("💡 Suggestion: Check if the private key in your environment is correctly formatted.");
-  }
-}
+})();
+   
 // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
