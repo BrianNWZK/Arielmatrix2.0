@@ -3102,7 +3102,7 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 FINAL MISSION: CALIBRATED BOOTSTRAP WITH LIVE CHAINLINK PRICE
+// 🚀 FINAL BOOTSTRAP - LIVE CHAINLINK PRICE (WITH CHECKSUMMED ADDRESS)
 // =====================================================================
 
 // Circuit breaker - absolute one-time lock
@@ -3124,10 +3124,12 @@ try {
   `);
 
   // =====================================================================
-  // 1. FETCH LIVE CHAINLINK PRICE
+  // 1. FETCH LIVE CHAINLINK PRICE (WITH CHECKSUMMED ADDRESS)
   // =====================================================================
+  const CHAINLINK_ETH_USD = ethers.getAddress("0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419");
+  
   const chainlink = new ethers.Contract(
-    "0x5f4eC3Df9cbd43714fe2740f5e3616155c5b8419",
+    CHAINLINK_ETH_USD,
     ['function latestRoundData() view returns (uint80, int256 answer, uint256, uint256, uint80)'],
     this.provider
   );
