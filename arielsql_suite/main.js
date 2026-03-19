@@ -1,10 +1,9 @@
 import { ethers } from "ethers";
 
-// =====================================================================
-// 🔧 1. CANONICAL SETUP
-// =====================================================================
-const RPC_URL = "https://rpc.ankr.com/eth"; // Public RPC
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+// 1. CONFIGURATION
+const RPC_URL = "https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161";
+// staticNetwork: true prevents unnecessary "getNetwork" calls to the RPC
+const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, { staticNetwork: true });
 
 const ADDRESSES = {
     WAREHOUSE: ethers.getAddress("0x78043417f7E15CF29cbB52cC584e11Ae33FE1542"),
@@ -25,30 +24,25 @@ const ERROR_MAP = {
     '0x99ef4c96': 'BootstrapAlreadyCompleted()'
 };
 
-// =====================================================================
-// 📊 2. VAULT & SCW INSPECTOR
-// =====================================================================
+// 2. VAULT & SCW INSPECTOR
 async function checkInventory(usdTarget) {
     const usdc = new ethers.Contract(ADDRESSES.USDC, ['function balanceOf(address) view returns (uint256)'], provider);
     const bwzc = new ethers.Contract(ADDRESSES.BWZC, ['function balanceOf(address) view returns (uint256)'], provider);
 
     const vaultUsdc = await usdc.balanceOf(ADDRESSES.VAULT);
     const scwBwzc = await bwzc.balanceOf(ADDRESSES.SCW);
-
-    const requiredUsdcFlash = usdTarget / 2n; // 50% leg for flashloan
+    const requiredUsdcFlash = usdTarget / 2n;
 
     console.log("\n💰 INVENTORY CHECK");
     console.log(`Vault USDC: ${ethers.formatUnits(vaultUsdc, 6)} | Required: ${ethers.formatUnits(requiredUsdcFlash, 6)}`);
     console.log(`SCW BWZC:   ${ethers.formatUnits(scwBwzc, 18)}`);
 
     if (vaultUsdc < requiredUsdcFlash) {
-        console.log(`❌ CRITICAL: Vault is short by ${ethers.formatUnits(requiredUsdcFlash - vaultUsdc, 6)} USDC`);
+        console.log(`❌ Vault short by ${ethers.formatUnits(requiredUsdcFlash - vaultUsdc, 6)} USDC`);
     }
 }
 
-// =====================================================================
-// 🚀 3. SIMULATION ENGINE
-// =====================================================================
+// 3. SIMULATION ENGINE
 async function simulate(label, bwzcSeed, usdAmount, ethPrice) {
     const warehouse = new ethers.Contract(ADDRESSES.WAREHOUSE, [
         'function globalInitialBootstrap(uint256,uint256,uint256) external'
@@ -69,10 +63,10 @@ async function simulate(label, bwzcSeed, usdAmount, ethPrice) {
         
         if (data && data.startsWith('0x08c379a0')) {
             const reason = ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + data.slice(10))[0];
-            console.log(`📋 String Reason: "${reason}"`);
+            console.log(`📋 Reason: "${reason}"`);
         } else if (data) {
             const selector = data.slice(0, 10);
-            console.log(`📋 Custom Error: ${ERROR_MAP[selector] || selector}`);
+            console.log(`📋 Error: ${ERROR_MAP[selector] || selector}`);
         } else {
             console.log(`📋 Message: ${error.message}`);
         }
@@ -80,22 +74,31 @@ async function simulate(label, bwzcSeed, usdAmount, ethPrice) {
     }
 }
 
-// =====================================================================
-// 🏥 4. EXECUTION
-// =====================================================================
+// 4. MAIN EXECUTION LOOP
 async function main() {
+    try {
+        const block = await provider.getBlockNumber();
+        console.log(`✅ Connected to Infura (Block: ${block})`);
+    } catch (e) {
+        console.error("❌ Connection Failed. Check RPC URL.");
+        return;
+    }
+
     const usd600k = ethers.parseUnits("600000", 6);
+    const usd300k = ethers.parseUnits("300000", 6);
     const ethPrice = ethers.parseUnits("2200", 18);
     const bwzc600k = ethers.parseUnits("25531.91", 18);
+    const bwzc300k = ethers.parseUnits("12765.96", 18);
 
     await checkInventory(usd600k);
-
-    // Multi-stage test
-    await simulate("$600k Strike", bwzc600k, usd600k, ethPrice);
     
-    const usd300k = ethers.parseUnits("300000", 6);
-    const bwzc300k = ethers.parseUnits("12765.96", 18);
-    await simulate("$300k Strike", bwzc300k, usd300k, ethPrice);
+    // Check 600k first
+    const success600 = await simulate("$600k Strike", bwzc600k, usd600k, ethPrice);
+    
+    // If 600k fails, check 300k
+    if (!success600) {
+        await simulate("$300k Strike", bwzc300k, usd300k, ethPrice);
+    }
 }
 
-main();
+main().catch(console.error);
