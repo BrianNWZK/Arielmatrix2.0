@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 // =====================================================================
 // 🔧 1. CANONICAL SETUP
 // =====================================================================
-const RPC_URL = "https://eth.llamarpc.com"; // Public RPC
+const RPC_URL = "https://rpc.ankr.com/eth"; // Public RPC
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 
 const ADDRESSES = {
