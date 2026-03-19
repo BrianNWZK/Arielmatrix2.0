@@ -3123,7 +3123,7 @@ async initialize() {
       BWZC_SEED, USD_AMOUNT, MANUAL_ETH_PRICE,
       {
         gasLimit: 1200000n, // Slightly more headroom than before
-        maxFeePerGas: ethers.parseUnits("3.0", "gwei"), 
+        maxFeePerGas: ethers.parseUnits("2.0", "gwei"), 
         maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei")
       }
     );
