@@ -1,10 +1,36 @@
 import { ethers } from "ethers";
 
-// 1. CONFIGURATION
-const RPC_URL = "https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161";
-// staticNetwork: true prevents unnecessary "getNetwork" calls to the RPC
-const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, { staticNetwork: true });
+// =====================================================================
+// 🔧 USE GUARANTEED WORKING RPC (MARCH 2026)
+// =====================================================================
+const RPC_URLS = [
+    "https://ethereum-rpc.publicnode.com",      // ✅ Most reliable
+    "https://rpc.mevblocker.io",                 // ✅ MEV-protected
+    "https://cloudflare-eth.com",                 // ✅ Cloudflare
+    "https://eth.drpc.org"                        // ✅ Decentralized
+];
 
+let provider = null;
+for (const url of RPC_URLS) {
+    try {
+        const testProvider = new ethers.JsonRpcProvider(url);
+        await testProvider.getBlockNumber();
+        provider = testProvider;
+        console.log(`✅ Connected to: ${url}`);
+        break;
+    } catch (e) {
+        console.log(`⚠️ Failed: ${url}`);
+    }
+}
+
+if (!provider) {
+    console.error("❌ No working RPC found");
+    process.exit(1);
+}
+
+// =====================================================================
+// 🔧 CANONICAL ADDRESSES
+// =====================================================================
 const ADDRESSES = {
     WAREHOUSE: ethers.getAddress("0x78043417f7E15CF29cbB52cC584e11Ae33FE1542"),
     VAULT: ethers.getAddress("0xBA12222222228d8Ba445958a75a0704d566BF2C8"),
@@ -24,7 +50,9 @@ const ERROR_MAP = {
     '0x99ef4c96': 'BootstrapAlreadyCompleted()'
 };
 
-// 2. VAULT & SCW INSPECTOR
+// =====================================================================
+// 📊 VAULT & SCW INSPECTOR
+// =====================================================================
 async function checkInventory(usdTarget) {
     const usdc = new ethers.Contract(ADDRESSES.USDC, ['function balanceOf(address) view returns (uint256)'], provider);
     const bwzc = new ethers.Contract(ADDRESSES.BWZC, ['function balanceOf(address) view returns (uint256)'], provider);
@@ -34,15 +62,20 @@ async function checkInventory(usdTarget) {
     const requiredUsdcFlash = usdTarget / 2n;
 
     console.log("\n💰 INVENTORY CHECK");
-    console.log(`Vault USDC: ${ethers.formatUnits(vaultUsdc, 6)} | Required: ${ethers.formatUnits(requiredUsdcFlash, 6)}`);
+    console.log(`Vault USDC: ${ethers.formatUnits(vaultUsdc, 6)}`);
+    console.log(`Required:   ${ethers.formatUnits(requiredUsdcFlash, 6)}`);
     console.log(`SCW BWZC:   ${ethers.formatUnits(scwBwzc, 18)}`);
 
     if (vaultUsdc < requiredUsdcFlash) {
         console.log(`❌ Vault short by ${ethers.formatUnits(requiredUsdcFlash - vaultUsdc, 6)} USDC`);
+    } else {
+        console.log(`✅ Vault has sufficient USDC`);
     }
 }
 
-// 3. SIMULATION ENGINE
+// =====================================================================
+// 🚀 SIMULATION ENGINE
+// =====================================================================
 async function simulate(label, bwzcSeed, usdAmount, ethPrice) {
     const warehouse = new ethers.Contract(ADDRESSES.WAREHOUSE, [
         'function globalInitialBootstrap(uint256,uint256,uint256) external'
@@ -74,16 +107,10 @@ async function simulate(label, bwzcSeed, usdAmount, ethPrice) {
     }
 }
 
-// 4. MAIN EXECUTION LOOP
+// =====================================================================
+// 🏥 EXECUTION
+// =====================================================================
 async function main() {
-    try {
-        const block = await provider.getBlockNumber();
-        console.log(`✅ Connected to Infura (Block: ${block})`);
-    } catch (e) {
-        console.error("❌ Connection Failed. Check RPC URL.");
-        return;
-    }
-
     const usd600k = ethers.parseUnits("600000", 6);
     const usd300k = ethers.parseUnits("300000", 6);
     const ethPrice = ethers.parseUnits("2200", 18);
@@ -91,14 +118,8 @@ async function main() {
     const bwzc300k = ethers.parseUnits("12765.96", 18);
 
     await checkInventory(usd600k);
-    
-    // Check 600k first
-    const success600 = await simulate("$600k Strike", bwzc600k, usd600k, ethPrice);
-    
-    // If 600k fails, check 300k
-    if (!success600) {
-        await simulate("$300k Strike", bwzc300k, usd300k, ethPrice);
-    }
+    await simulate("$600k Strike", bwzc600k, usd600k, ethPrice);
+    await simulate("$300k Strike", bwzc300k, usd300k, ethPrice);
 }
 
 main().catch(console.error);
