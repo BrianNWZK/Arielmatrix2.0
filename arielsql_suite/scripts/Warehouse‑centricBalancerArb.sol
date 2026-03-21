@@ -1228,7 +1228,7 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
         scwWethProfit = (totalProfit / 2) - eoaWethFees - (poolDeepeningValue / 2);
     }
 
-    function getCurrentSpread() external view returns (uint256) {
+    function getCurrentSpread() external returns (uint256) {
         return _calculateCurrentSpread();
     }
 
