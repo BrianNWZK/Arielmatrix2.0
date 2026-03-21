@@ -98,14 +98,17 @@ interface IAsset {
     // Balancer treats assets as generic ERC20-like tokens
 }
 interface IBalancerVault {
-    function flashLoan(address recipient, address[] calldata tokens, uint256[] calldata amounts, bytes calldata userData) external;
+    enum SwapKind { GIVEN_IN, GIVEN_OUT }
     
-    struct JoinPoolRequest {
-        address[] assets;
-        uint256[] maxAmountsIn;
+    struct SingleSwap {
+        bytes32 poolId;
+        SwapKind kind;
+        address assetIn;   // ← address, NOT IAsset
+        address assetOut;  // ← address, NOT IAsset
+        uint256 amount;
         bytes userData;
-        bool fromInternalBalance;
     }
+
     
     function joinPool(bytes32 poolId, address sender, address recipient, JoinPoolRequest calldata request) external payable;
     
@@ -626,7 +629,7 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         }
     }
 
-    function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
+   function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
     if (!bootstrapCompleted) {
         emit BootstrapOverride("SpreadCheck", "Forcing 9999 BPS");
         return 9999; 
@@ -644,20 +647,26 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     return spreadBps;
 }
 
+
     function _calculateWETHAmount(uint256 usdAmount, uint256 ethPrice) internal pure returns (uint256) {
         return FullMath.mulDiv(usdAmount, 1e18, ethPrice);
     }
 
-    /**
- * @dev Smart Buy USDC (Balancer): Smart Guard version
+  
+
+
+/**
+ * @dev Smart Buy USDC (Balancer)
  */
-function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
+function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
+    if (amount == 0) return 0;
+
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWUSDCId,
-        kind: 0, // GIVEN_IN
-        assetIn: IAsset(usdc),
-        assetOut: IAsset(bwzc),
-        amount: usdcAmount,
+        kind: uint8(SwapKind.GIVEN_IN),
+        assetIn: usdc,
+        assetOut: bwzc,
+        amount: amount,
         userData: ""
     });
 
@@ -677,15 +686,17 @@ function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
 }
 
 /**
- * @dev Smart Buy WETH (Balancer): Smart Guard version
+ * @dev Smart Buy WETH (Balancer)
  */
-function _buyOnBalancerWETH(uint256 wethAmount) internal returns (uint256) {
+function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
+    if (amount == 0) return 0;
+
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWWETHId,
-        kind: 0, // GIVEN_IN
-        assetIn: IAsset(weth),
-        assetOut: IAsset(bwzc),
-        amount: wethAmount,
+        kind: uint8(SwapKind.GIVEN_IN),
+        assetIn: weth,
+        assetOut: bwzc,
+        amount: amount,
         userData: ""
     });
 
@@ -703,6 +714,7 @@ function _buyOnBalancerWETH(uint256 wethAmount) internal returns (uint256) {
         return 0;
     }
 }
+
 /**
  * @dev Smart Sell BWZC → USDC (Uniswap V3)
  */
@@ -799,6 +811,29 @@ function _sellOnUniswapV2USDC(uint256 bwzcAmount) internal returns (uint256) {
 }
 
 /**
+ * @dev Smart Sell BWZC → WETH (Uniswap V2)
+ */
+function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
+    if (bwzcAmount == 0) return 0;
+    address[] memory path = new address[](2);
+    path[0] = bwzc;
+    path[1] = weth;
+    
+    try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
+        bwzcAmount,
+        1, // minimal out to avoid revert
+        path,
+        address(this),
+        block.timestamp + 300
+    ) returns (uint256[] memory amounts) {
+        return amounts[1];
+    } catch {
+        emit SwapSkipped(weth, "Uniswap V2 WETH Leg Failed");
+        return 0;
+    }
+}
+
+/**
  * @dev Smart Sell BWZC → WETH (SushiSwap)
  */
 function _sellOnSushiSwapWETH(uint256 bwzcAmount) internal returns (uint256) {
@@ -834,7 +869,12 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
     path[0] = bwzc;
     path[1] = usdc;
     
-    uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), 1e18 * 10000);
+    uint256 minOut = FullMath.mulDiv(
+        bwzcAmount,
+        UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS),
+        1e18 * 10000
+    );
+
     try ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
         bwzcAmount,
         minOut,
@@ -853,28 +893,6 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
     }
 }
 
-/**
- * @dev Smart Sell BWZC → WETH (Uniswap V2)
- */
-function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
-    if (bwzcAmount == 0) return 0; // gas saver
-    address[] memory path = new address[](2);
-    path[0] = bwzc;
-    path[1] = weth;
-    
-    try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
-        bwzcAmount,
-        1, // minimal out to avoid revert
-        path,
-        address(this),
-        block.timestamp + 300
-    ) returns (uint256[] memory amounts) {
-        return amounts[1];
-    } catch {
-        emit SwapSkipped(weth, "Uniswap V2 WETH Leg Failed");
-        return 0;
-    }
-}
 
 /**
  * @dev Core Arbitrage Engine: Executes the "25% Strike" and "45% Wall" legs.
@@ -906,185 +924,6 @@ function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
         usdcProfit = usdcReceived > usdcAmount ? usdcReceived - usdcAmount : 0;
         wethProfit = wethReceived > wethAmount ? wethReceived - wethAmount : 0;
     }
-
-   
-function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
-    if (amount == 0) return 0;
-
-    IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
-        poolId: balBWUSDCId,
-        kind: IBalancerVault.SwapKind.GIVEN_IN,
-        assetIn: IAsset(usdc),
-        assetOut: IAsset(bwzc),
-        amount: amount,
-        userData: ""
-    });
-
-    IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
-        sender: address(this),
-        fromInternalBalance: false,
-        recipient: payable(address(this)),
-        toInternalBalance: false
-    });
-
-    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
-        return result;
-    } catch {
-        emit SwapSkipped(usdc, "Balancer USDC Strike Failed");
-        return 0;
-    }
-}
-
-function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
-    if (amount == 0) return 0;
-
-    IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
-        poolId: balBWWETHId,
-        kind: IBalancerVault.SwapKind.GIVEN_IN,
-        assetIn: IAsset(weth),
-        assetOut: IAsset(bwzc),
-        amount: amount,
-        userData: ""
-    });
-
-    IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
-        sender: address(this),
-        fromInternalBalance: false,
-        recipient: payable(address(this)),
-        toInternalBalance: false
-    });
-
-    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
-        return result;
-    } catch {
-        emit SwapSkipped(weth, "Balancer WETH Strike Failed");
-        return 0;
-    }
-}
-/**
- * @dev Smart Sell BWZC → USDC (Uniswap V3 Sovereign)
- */
-function _sellOnUniswapV3USDC_Sovereign(uint256 bwzcAmount) internal returns (uint256) {
-    if (bwzcAmount == 0) return 0; // gas saver
-    IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
-        tokenIn: bwzc,
-        tokenOut: usdc,
-        fee: uniV3Fee,
-        recipient: address(this),
-        deadline: block.timestamp + 300,
-        amountIn: bwzcAmount,
-        amountOutMinimum: 1, // full extraction, no slippage block
-        sqrtPriceLimitX96: 0
-    });
-    
-    try IUniswapV3Router(uniV3Router).exactInputSingle(params) returns (uint256 amountOut) {
-        return amountOut;
-    } catch {
-        emit SwapSkipped(usdc, "V3 USDC Wall Leg Failed");
-        return 0;
-    }
-}
-
-/**
- * @dev Smart Sell BWZC → WETH (Uniswap V3 Sovereign)
- */
-function _sellOnUniswapV3WETH_Sovereign(uint256 bwzcAmount) internal returns (uint256) {
-    if (bwzcAmount == 0) return 0; // gas saver
-    IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
-        tokenIn: bwzc,
-        tokenOut: weth,
-        fee: uniV3Fee,
-        recipient: address(this),
-        deadline: block.timestamp + 300,
-        amountIn: bwzcAmount,
-        amountOutMinimum: 1,
-        sqrtPriceLimitX96: 0
-    });
-
-    try IUniswapV3Router(uniV3Router).exactInputSingle(params) returns (uint256 amountOut) {
-        return amountOut;
-    } catch {
-        emit SwapSkipped(weth, "V3 WETH Wall Leg Failed");
-        return 0;
-    }
-}
-
-
-/**
- * @dev Smart Sell BWZC → USDC (Uniswap V2)
- */
-function _sellOnUniswapV2USDC(uint256 bwzcAmount) internal returns (uint256) {
-    if (bwzcAmount == 0) return 0; // gas saver
-    address[] memory path = new address[](2);
-    path[0] = bwzc;
-    path[1] = usdc;
-
-    uint256 minOut = FullMath.mulDiv(
-        bwzcAmount,
-        UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS),
-        1e18 * 10000
-    );
-
-    try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
-        bwzcAmount,
-        minOut,
-        path,
-        address(this),
-        block.timestamp + 300
-    ) returns (uint256[] memory amounts) {
-        return amounts[1];
-    } catch {
-        emit SwapSkipped(usdc, "Uniswap V2 USDC Leg Failed");
-        return 0;
-    }
-}
-
-/**
- * @dev Smart Sell BWZC → WETH (SushiSwap)
- */
-function _sellOnSushiSwapWETH(uint256 bwzcAmount) internal returns (uint256) {
-    if (bwzcAmount == 0) return 0; // gas saver
-    address[] memory path = new address[](2);
-    path[0] = bwzc;
-    path[1] = weth;
-
-    try ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
-        bwzcAmount,
-        1, // minimal out to avoid revert
-        path,
-        address(this),
-        block.timestamp + 300
-    ) returns (uint256[] memory amounts) {
-        return amounts[1];
-    } catch {
-        emit SwapSkipped(weth, "SushiSwap WETH Leg Failed");
-        return 0;
-    }
-}
-
-/**
- * @dev Smart Sell BWZC → USDC (SushiSwap)
- */
-function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
-    if (bwzcAmount == 0) return 0; // gas saver
-    address[] memory path = new address[](2);
-    path[0] = bwzc;
-    path[1] = usdc;
-
-    try ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
-        bwzcAmount,
-        1, // minimal out to avoid revert
-        path,
-        address(this),
-        block.timestamp + 300
-    ) returns (uint256[] memory amounts) {
-        return amounts[1];
-    } catch {
-        emit SwapSkipped(usdc, "SushiSwap USDC Leg Failed");
-        return 0;
-    }
-}
-
 
    function receiveFlashLoan(
     address[] calldata tokens,
