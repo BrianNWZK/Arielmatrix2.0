@@ -537,74 +537,80 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
    
 
    // Smart Guard Spread Requirement
-    function _calculateMinRequiredSpread() internal view returns (uint256) {
-    if (!bootstrapCompleted) return 0; // bootstrap bypass
-
-    uint256 dynamicBuffer = cycleCount > 100 ? 100 : 200; 
-    uint256 required = dynamicBuffer + BALANCER_FLASH_FEE_BPS + SLIPPAGE_TOLERANCE_BPS;
-
-    // Novelty: emit warning instead of halting when spread is tight
-    emit SpreadWarning(required, _calculateCurrentSpread());
-    return required;
-  }
-
-        uint256 deviationBps = (diff * 10000) / avg;
-
-        // Smart Guard Oracle Deviation
-        if (deviationBps > 100) { // >1% deviation
-        emit OracleDeviationWarning(deviationBps, BALANCER_PRICE_USD);
-        return (BALANCER_PRICE_USD, 50); // fallback with lower confidence
-      }
-        
-        if (valid == 0) {
-            // SMART GUARD: Stale price? Use the price from the LAST successful cycle.
-            return (lastCyclePrice > 0 ? lastCyclePrice : BALANCER_PRICE_USD, 0);
-        }
-        
-        try IChainlinkFeed(chainlinkEthUsd).latestRoundData() returns (uint80, int256 p, uint256, uint256 u, uint80) {
-            if (p > 0 && block.timestamp - u <= stalenessThreshold) {
-                prices[valid++] = uint256(p) * 1e10;
-            }
-        } catch {}
-        
-        try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData() returns (uint80, int256 p2, uint256, uint256 u2, uint80) {
-            if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
-                prices[valid++] = uint256(p2) * 1e10;
-            }
-        } catch {}
-        
-        if (uniV3EthUsdPool != address(0)) {
-            try IUniswapV3Pool(uniV3EthUsdPool).slot0() returns (uint160 sqrtPriceX96, int24, uint16, uint16, uint16, uint8, bool) {
-                uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
-                prices[valid++] = rawPrice * 1e12;
-            } catch {}
-        }
-        
-       confidence = valid;
-    if (valid >= 2) {
-    price = (prices[0] + prices[1]) / 2;
-    uint256 deviation = prices[0] > prices[1] ? prices[0] - prices[1] : prices[1] - prices[0];
-    uint256 deviationBps = FullMath.mulDiv(deviation, 10000, price);
-
-    if (deviationBps > 100) {
-        // Smart Guard: log deviation and fallback
-        emit OracleDeviationWarning(deviationBps, BALANCER_PRICE_USD);
-        return (BALANCER_PRICE_USD, confidence);
+   function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
+    if (!bootstrapCompleted) {
+        emit BootstrapOverride("SpreadCheck", "Forcing 9999 BPS");
+        return 9999; 
     }
 
-    emit OracleConsensus(price, confidence);
-    return (price, confidence);
+    uint256 balancerPrice = BALANCER_PRICE_USD;
+    uint256 uniswapPrice = _getUniswapV3Price();
+    
+    if (uniswapPrice <= balancerPrice) {
+        emit SpreadWarning(BALANCER_FLASH_FEE_BPS, 0);
+        return 0;
+    }
+    
+    spreadBps = FullMath.mulDiv(uniswapPrice - balancerPrice, 10000, balancerPrice);
+    return spreadBps;
+}
 
-  } else if (valid == 1) {
-    price = prices[0];
-    emit OracleConsensus(price, confidence);
-    return (price, confidence);
-
-  } else {
-    // Smart Guard: no valid feeds, fallback baseline
-    emit OracleConsensusWarning("Consensus failed", BALANCER_PRICE_USD);
-    return (BALANCER_PRICE_USD, 0);
-  }
+      function _getConsensusEthPrice() internal returns (uint256 price, uint8 confidence) {
+    uint256[] memory prices = new uint256[](3);
+    uint8 valid = 0;
+    
+    // Primary Chainlink feed
+    try IChainlinkFeed(chainlinkEthUsd).latestRoundData() returns (uint80, int256 p, uint256, uint256 u, uint80) {
+        if (p > 0 && block.timestamp - u <= stalenessThreshold) {
+            prices[valid++] = uint256(p) * 1e10;
+        }
+    } catch {}
+    
+    // Secondary Chainlink feed
+    try IChainlinkFeed(chainlinkEthUsdSecondary).latestRoundData() returns (uint80, int256 p2, uint256, uint256 u2, uint80) {
+        if (p2 > 0 && block.timestamp - u2 <= stalenessThreshold) {
+            prices[valid++] = uint256(p2) * 1e10;
+        }
+    } catch {}
+    
+    // Uniswap V3 ETH/USD pool as third source
+    if (uniV3EthUsdPool != address(0)) {
+        try IUniswapV3Pool(uniV3EthUsdPool).slot0() returns (uint160 sqrtPriceX96, int24, uint16, uint16, uint16, uint8, bool) {
+            uint256 rawPrice = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+            prices[valid++] = rawPrice * 1e12;
+        } catch {}
+    }
+    
+    confidence = valid;
+    
+    // SMART GUARD: Process results with fallbacks
+    if (valid >= 2) {
+        price = (prices[0] + prices[1]) / 2;
+        
+        // Calculate deviation between the two valid feeds
+        uint256 diff = prices[0] > prices[1] ? prices[0] - prices[1] : prices[1] - prices[0];
+        uint256 deviationBps = FullMath.mulDiv(diff, 10000, price);
+        
+        if (deviationBps > 100) {
+            // >1% deviation - use fallback with warning
+            emit OracleDeviationWarning(deviationBps, BALANCER_PRICE_USD);
+            return (BALANCER_PRICE_USD, 50);
+        }
+        
+        emit OracleConsensus(price, confidence);
+        return (price, confidence);
+        
+    } else if (valid == 1) {
+        price = prices[0];
+        emit OracleConsensus(price, confidence);
+        return (price, confidence);
+        
+    } else {
+        // No valid feeds - fallback to baseline
+        emit OracleConsensusWarning("Consensus failed", BALANCER_PRICE_USD);
+        return (BALANCER_PRICE_USD, 0);
+    }
+}
 
      function _getUniswapV3Price() internal view returns (uint256) {
         try IUniswapV3Pool(uniV3UsdcPool).slot0() returns (uint160 sqrtPriceX96, int24, uint16, uint16, uint16, uint8, bool) {
