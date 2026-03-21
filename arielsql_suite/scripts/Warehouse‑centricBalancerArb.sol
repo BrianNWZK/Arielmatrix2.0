@@ -301,7 +301,6 @@ library TickMath {
 contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     using SafeERC20 for IERC20;
     
-    uint256 public constant TOTAL_BOOTSTRAP_USD = 4_000_000 * 1e6;
     uint256 public constant BALANCER_PRICE_USD = 23_500_000;
     uint256 public constant UNIV3_TARGET_PRICE_USD = 100_000_000;
     uint256 public constant BALANCER_FLASH_FEE_BPS = 9;
@@ -310,10 +309,10 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     uint256 public constant DEEPENING_PERCENT_BPS = 300;
     uint256 public constant FEES_TO_EOA_BPS = 1500;
     uint256 public constant SCALE_INCREMENT_BPS = 500;
-    uint256 public constant MAX_SCALE_BPS = 5000;
+    uint256 public constant MAX_SCALE_BPS = 9000;
     uint256 public constant PROFIT_PER_CYCLE_USD = 184000 * 1e6;
     
-    uint256 public currentScaleFactorBps = 1000;
+    uint256 public currentScaleFactorBps = 5000; // 50%
     uint256 public cycleCount;
     uint256 public lastCycleTimestamp;
     
@@ -640,183 +639,230 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return FullMath.mulDiv(usdAmount, 1e18, ethPrice);
     }
 
-    function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
-        IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
-            poolId: balBWUSDCId,
-            kind: 0,
-            assetIn: usdc,
-            assetOut: bwzc,
-            amount: usdcAmount,
-            userData: ""
-        });
-        
-        IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
-            sender: address(this),
-            fromInternalBalance: false,
-            recipient: payable(address(this)),
-            toInternalBalance: false
-        });
-        
-        // BLOCKER REMOVED: Set minOut to 1 to allow Double-Seed Price Impact
-        uint256 result = IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300);
-        if (result == 0) revert SwapFailed();
-        return result;
+    /**
+ * @dev Smart Buy USDC (Balancer): Smart Guard version
+ */
+function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
+    IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
+        poolId: balBWUSDCId,
+        kind: 0,
+        assetIn: usdc,
+        assetOut: bwzc,
+        amount: usdcAmount,
+        userData: ""
+    });
+    
+    IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
+        sender: address(this),
+        fromInternalBalance: false,
+        recipient: payable(address(this)),
+        toInternalBalance: false
+    });
+    
+    uint256 result = IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300);
+    if (result == 0) {
+        emit SwapSkipped(usdc, "Balancer USDC Strike Failed");
+        return 0;
     }
+    return result;
+}
 
-    function _buyOnBalancerWETH(uint256 wethAmount) internal returns (uint256) {
-        IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
-            poolId: balBWWETHId,
-            kind: 0,
-            assetIn: weth,
-            assetOut: bwzc,
-            amount: wethAmount,
-            userData: ""
-        });
-        
-        IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
-            sender: address(this),
-            fromInternalBalance: false,
-            recipient: payable(address(this)),
-            toInternalBalance: false
-        });
-        
-        // BLOCKER REMOVED: Set minOut to 1 to allow Double-Seed Price Impact
-        uint256 result = IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300);
-        if (result == 0) revert SwapFailed();
-        return result;
+/**
+ * @dev Smart Buy WETH (Balancer): Smart Guard version
+ */
+function _buyOnBalancerWETH(uint256 wethAmount) internal returns (uint256) {
+    IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
+        poolId: balBWWETHId,
+        kind: 0,
+        assetIn: weth,
+        assetOut: bwzc,
+        amount: wethAmount,
+        userData: ""
+    });
+    
+    IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
+        sender: address(this),
+        fromInternalBalance: false,
+        recipient: payable(address(this)),
+        toInternalBalance: false
+    });
+    
+    uint256 result = IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300);
+    if (result == 0) {
+        emit SwapSkipped(weth, "Balancer WETH Strike Failed");
+        return 0;
     }
+    return result;
+}
 
-    function _sellOnUniswapV3USDC(uint256 bwzcAmount) internal returns (uint256) {
-        IQuoterV2.QuoteExactInputSingleParams memory quoteParams = IQuoterV2.QuoteExactInputSingleParams({
-            tokenIn: bwzc,
-            tokenOut: usdc,
-            amountIn: bwzcAmount,
-            fee: uniV3Fee,
-            sqrtPriceLimitX96: 0
-        });
-        
-        (uint256 quotedOut,,,) = IQuoterV2(quoterV2).quoteExactInputSingle(quoteParams);
-        uint256 minOut = FullMath.mulDiv(quotedOut, 10000 - SLIPPAGE_TOLERANCE_BPS, 10000);
-        
-        IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
-            tokenIn: bwzc,
-            tokenOut: usdc,
-            fee: uniV3Fee,
-            recipient: address(this),
-            deadline: block.timestamp + 300,
-            amountIn: bwzcAmount,
-            amountOutMinimum: minOut,
-            sqrtPriceLimitX96: 0
-        });
-        
-        uint256 result = IUniswapV3Router(uniV3Router).exactInputSingle(params);
-        if (result == 0) revert SwapFailed();
-        return result;
+/**
+ * @dev Smart Sell BWZC → USDC (Uniswap V3)
+ */
+function _sellOnUniswapV3USDC(uint256 bwzcAmount) internal returns (uint256) {
+    IQuoterV2.QuoteExactInputSingleParams memory quoteParams = IQuoterV2.QuoteExactInputSingleParams({
+        tokenIn: bwzc,
+        tokenOut: usdc,
+        amountIn: bwzcAmount,
+        fee: uniV3Fee,
+        sqrtPriceLimitX96: 0
+    });
+    
+    (uint256 quotedOut,,,) = IQuoterV2(quoterV2).quoteExactInputSingle(quoteParams);
+    uint256 minOut = FullMath.mulDiv(quotedOut, 10000 - SLIPPAGE_TOLERANCE_BPS, 10000);
+    
+    IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
+        tokenIn: bwzc,
+        tokenOut: usdc,
+        fee: uniV3Fee,
+        recipient: address(this),
+        deadline: block.timestamp + 300,
+        amountIn: bwzcAmount,
+        amountOutMinimum: minOut,
+        sqrtPriceLimitX96: 0
+    });
+    
+    uint256 result = IUniswapV3Router(uniV3Router).exactInputSingle(params);
+    if (result == 0) {
+        emit SwapSkipped(usdc, "Uniswap V3 USDC Leg Failed");
+        return 0;
     }
+    return result;
+}
 
-    function _sellOnUniswapV3WETH(uint256 bwzcAmount) internal returns (uint256) {
-        IQuoterV2.QuoteExactInputSingleParams memory quoteParams = IQuoterV2.QuoteExactInputSingleParams({
-            tokenIn: bwzc,
-            tokenOut: weth,
-            amountIn: bwzcAmount,
-            fee: uniV3Fee,
-            sqrtPriceLimitX96: 0
-        });
-        
-        (uint256 quotedOut,,,) = IQuoterV2(quoterV2).quoteExactInputSingle(quoteParams);
-        uint256 minOut = FullMath.mulDiv(quotedOut, 10000 - SLIPPAGE_TOLERANCE_BPS, 10000);
-        
-        IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
-            tokenIn: bwzc,
-            tokenOut: weth,
-            fee: uniV3Fee,
-            recipient: address(this),
-            deadline: block.timestamp + 300,
-            amountIn: bwzcAmount,
-            amountOutMinimum: minOut,
-            sqrtPriceLimitX96: 0
-        });
-        
-        uint256 result = IUniswapV3Router(uniV3Router).exactInputSingle(params);
-        if (result == 0) revert SwapFailed();
-        return result;
+/**
+ * @dev Smart Sell BWZC → WETH (Uniswap V3)
+ */
+function _sellOnUniswapV3WETH(uint256 bwzcAmount) internal returns (uint256) {
+    IQuoterV2.QuoteExactInputSingleParams memory quoteParams = IQuoterV2.QuoteExactInputSingleParams({
+        tokenIn: bwzc,
+        tokenOut: weth,
+        amountIn: bwzcAmount,
+        fee: uniV3Fee,
+        sqrtPriceLimitX96: 0
+    });
+    
+    (uint256 quotedOut,,,) = IQuoterV2(quoterV2).quoteExactInputSingle(quoteParams);
+    uint256 minOut = FullMath.mulDiv(quotedOut, 10000 - SLIPPAGE_TOLERANCE_BPS, 10000);
+    
+    IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
+        tokenIn: bwzc,
+        tokenOut: weth,
+        fee: uniV3Fee,
+        recipient: address(this),
+        deadline: block.timestamp + 300,
+        amountIn: bwzcAmount,
+        amountOutMinimum: minOut,
+        sqrtPriceLimitX96: 0
+    });
+    
+    uint256 result = IUniswapV3Router(uniV3Router).exactInputSingle(params);
+    if (result == 0) {
+        emit SwapSkipped(weth, "Uniswap V3 WETH Leg Failed");
+        return 0;
     }
+    return result;
+}
 
-    function _sellOnUniswapV2USDC(uint256 bwzcAmount) internal returns (uint256) {
-        address[] memory path = new address[](2);
-        path[0] = bwzc;
-        path[1] = usdc;
-        
-        uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), 1e18 * 10000);
-        uint256[] memory amounts = IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
-            bwzcAmount,
-            minOut,
-            path,
-            address(this),
-            block.timestamp + 300
-        );
-        
-        if (amounts[1] == 0) revert SwapFailed();
+/**
+ * @dev Smart Sell BWZC → USDC (Uniswap V2)
+ */
+function _sellOnUniswapV2USDC(uint256 bwzcAmount) internal returns (uint256) {
+    address[] memory path = new address[](2);
+    path[0] = bwzc;
+    path[1] = usdc;
+    
+    uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), 1e18 * 10000);
+    try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
+        bwzcAmount,
+        minOut,
+        path,
+        address(this),
+        block.timestamp + 300
+    ) returns (uint256[] memory amounts) {
+        if (amounts[1] == 0) {
+            emit SwapSkipped(usdc, "Uniswap V2 USDC Leg Failed");
+            return 0;
+        }
         return amounts[1];
+    } catch {
+        emit SwapSkipped(usdc, "Uniswap V2 USDC Leg Failed");
+        return 0;
     }
+}
 
-    function _sellOnSushiSwapWETH(uint256 bwzcAmount) internal returns (uint256) {
-        address[] memory path = new address[](2);
-        path[0] = bwzc;
-        path[1] = weth;
-        
-        (uint256 ethUsd,) = _getConsensusEthPrice();
-        uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), ethUsd * 10000);
-        uint256[] memory amounts = ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
-            bwzcAmount,
-            minOut,
-            path,
-            address(this),
-            block.timestamp + 300
-        );
-        
-        if (amounts[1] == 0) revert SwapFailed();
+/**
+ * @dev Smart Sell BWZC → WETH (SushiSwap)
+ */
+function _sellOnSushiSwapWETH(uint256 bwzcAmount) internal returns (uint256) {
+    address[] memory path = new address[](2);
+    path[0] = bwzc;
+    path[1] = weth;
+    
+    (uint256 ethUsd,) = _getConsensusEthPrice();
+    uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), ethUsd * 10000);
+    try ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
+        bwzcAmount,
+        minOut,
+        path,
+        address(this),
+        block.timestamp + 300
+    ) returns (uint256[] memory amounts) {
+        if (amounts[1] == 0) {
+            emit SwapSkipped(weth, "SushiSwap WETH Leg Failed");
+            return 0;
+        }
         return amounts[1];
+    } catch {
+        emit SwapSkipped(weth, "SushiSwap WETH Leg Failed");
+        return 0;
     }
+}
 
-    function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
-        address[] memory path = new address[](2);
-        path[0] = bwzc;
-        path[1] = usdc;
-        
-        uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), 1e18 * 10000);
-        uint256[] memory amounts = ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
-            bwzcAmount,
-            minOut,
-            path,
-            address(this),
-            block.timestamp + 300
-        );
-        
-        if (amounts[1] == 0) revert SwapFailed();
+/**
+ * @dev Smart Sell BWZC → USDC (SushiSwap)
+ */
+function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
+    address[] memory path = new address[](2);
+    path[0] = bwzc;
+    path[1] = usdc;
+    
+    uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), 1e18 * 10000);
+    try ISushiSwapRouter(sushiRouter).swapExactTokensForTokens(
+        bwzcAmount,
+        minOut,
+        path,
+        address(this),
+        block.timestamp + 300
+    ) returns (uint256[] memory amounts) {
+        if (amounts[1] == 0) {
+            emit SwapSkipped(usdc, "SushiSwap USDC Leg Failed");
+            return 0;
+        }
         return amounts[1];
+    } catch {
+        emit SwapSkipped(usdc, "SushiSwap USDC Leg Failed");
+        return 0;
     }
+}
 
-    function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
-        address[] memory path = new address[](2);
-        path[0] = bwzc;
-        path[1] = weth;
-        
-        (uint256 ethUsd,) = _getConsensusEthPrice();
-        uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), ethUsd * 10000);
-        uint256[] memory amounts = IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
-            bwzcAmount,
-            minOut,
-            path,
-            address(this),
-            block.timestamp + 300
-        );
-        
-        if (amounts[1] == 0) revert SwapFailed();
-        return amounts[1];
-    }
-
- /**
+/**
+ * @dev Smart Sell BWZC → WETH (Uniswap V2)
+ */
+function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
+    address[] memory path = new address[](2);
+    path[0] = bwzc;
+    path[1] = weth;
+    
+    (uint256 ethUsd,) = _getConsensusEthPrice();
+    uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), ethUsd * 10000);
+    try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
+        bwzcAmount,
+        minOut,
+        path,
+        address(this),
+        block.timestamp + 300
+    ) returns (uint256[] memory amounts) {
+        if ( /**
      * @dev Core Arbitrage Engine: Executes the "25% Strike" and "45% Wall" legs.
      * Refined for 100% inventory clearance and Smart Guard resilience.
      */
@@ -999,66 +1045,75 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
 }
 
 
-    function receiveFlashLoan(
-        address[] calldata tokens,
-        uint256[] calldata amounts,
-        uint256[] calldata feeAmounts,
-        bytes calldata userData
-    ) external override { 
-        // 1. Validation & State Lock
-        if (msg.sender != vault) revert("Not vault");
-        if (txState != TxState.IDLE) revert InvalidStateTransition();
-        if (tokens.length != 2) revert("Array Mismatch");
-        
-        txState = TxState.EXECUTING;
+   function receiveFlashLoan(
+    address[] calldata tokens,
+    uint256[] calldata amounts,
+    uint256[] calldata feeAmounts,
+    bytes calldata userData
+) external override {  
+    // 1. Validation & State Lock
+    if (msg.sender != vault) revert("Not vault");
+    if (txState != TxState.IDLE) revert InvalidStateTransition();
+    if (tokens.length != 2) revert("Array Mismatch");
+    
+    txState = TxState.EXECUTING;
 
-        // 2. Decode Data
-        (uint256 bwzcForArb, uint256 expUsdc, uint256 expWeth, uint256 deadline) = 
-            abi.decode(userData, (uint256, uint256, uint256, uint256));
-        
-        if (block.timestamp > deadline) revert DeadlineExpired();
+    // 2. Decode Data
+    (uint256 bwzcForArb, uint256 expUsdc, uint256 expWeth, uint256 deadline) =
+        abi.decode(userData, (uint256, uint256, uint256, uint256));
+    
+    if (block.timestamp > deadline) revert DeadlineExpired();
 
-        // 3. Execute Arbitrage
-        // Pulls seed tokens automatically within internal logic
-        (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) = 
-            _executePreciseArbitrage(amounts[0], amounts[1], bwzcForArb);
+    // 3. Execute Arbitrage
+    (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought) =
+        _executePreciseArbitrage(amounts[0], amounts[1], bwzcForArb);
 
-        // 4. Critical: Repay Flash Loan Principal + Fees
-        IERC20(usdc).safeTransfer(vault, amounts[0] + feeAmounts[0]);
-        IERC20(weth).safeTransfer(vault, amounts[1] + feeAmounts[1]);
+    // --- FIX: Validate repay balances AFTER trades complete ---
+    uint256 requiredUsdc = amounts[0] + feeAmounts[0];
+    uint256 requiredWeth = amounts[1] + feeAmounts[1];
+    uint256 usdcAvail = IERC20(usdc).balanceOf(address(this));
+    uint256 wethAvail = IERC20(weth).balanceOf(address(this));
 
-        // 5. Harvest V3 LP Fees to aggregate with current profit
-        (uint256 hUsdc, uint256 hWeth, uint256 hBwzc) = harvestAllFees();
-        
-        uint256 totalUsdcProfit = usdcProfit + hUsdc;
-        uint256 totalWethProfit = wethProfit + hWeth;
-        uint256 totalBwzcProfit = bwzcBought + hBwzc;
-
-        // 6. 3% Pool Deepening (Permanent Liquidity)
-        // This function handles the 300 BPS logic internally
-        uint256 bwzcDeepened = _deepenPoolsWithPrecision(totalUsdcProfit, totalWethProfit, totalBwzcProfit);
-
-        // 7. 15% EOA Performance Fee
-        uint256 usdcToEOA = FullMath.mulDiv(totalUsdcProfit, FEES_TO_EOA_BPS, 10000);
-        uint256 wethToEOA = FullMath.mulDiv(totalWethProfit, FEES_TO_EOA_BPS, 10000);
-        uint256 bwzcToEOA = FullMath.mulDiv(hBwzc, FEES_TO_EOA_BPS, 10000); // 15% of harvested BWZC
-        
-        if (usdcToEOA > 0) IERC20(usdc).safeTransfer(owner(), usdcToEOA);
-        if (wethToEOA > 0) IERC20(weth).safeTransfer(owner(), wethToEOA);
-        if (bwzcToEOA > 0) IERC20(bwzc).safeTransfer(owner(), bwzcToEOA);
-
-        // 8. Sweep 100% of Remainder to SCW (Institutional Custody)
-        _sweepToSCW();
-
-        // 9. State Updates & Events
-        emit CycleExecuted(cycleCount + 1, totalUsdcProfit, totalWethProfit, bwzcDeepened);
-        emit FeesDistributed(owner(), usdcToEOA, wethToEOA, bwzcToEOA);
-
-        if (bootstrapCompleted) cycleCount++;
-        lastCycleTimestamp = block.timestamp;
-        txState = TxState.IDLE;
+    if (usdcAvail < requiredUsdc || wethAvail < requiredWeth) {
+        _rollbackTransaction();
+        emit Rollback("Insufficient repay balance after arb");
+        return; // allow Balancer vault to revert safely
     }
 
+    // 4. Repay Flash Loan Principal + Fees
+    IERC20(usdc).safeTransfer(vault, requiredUsdc);
+    IERC20(weth).safeTransfer(vault, requiredWeth);
+
+    // 5. Harvest V3 LP Fees
+    (uint256 hUsdc, uint256 hWeth, uint256 hBwzc) = harvestAllFees();
+    
+    uint256 totalUsdcProfit = usdcProfit + hUsdc;
+    uint256 totalWethProfit = wethProfit + hWeth;
+    uint256 totalBwzcProfit = bwzcBought + hBwzc;
+
+    // 6. Pool Deepening
+    uint256 bwzcDeepened = _deepenPoolsWithPrecision(totalUsdcProfit, totalWethProfit, totalBwzcProfit);
+
+    // 7. Performance Fee
+    uint256 usdcToEOA = FullMath.mulDiv(totalUsdcProfit, FEES_TO_EOA_BPS, 10000);
+    uint256 wethToEOA = FullMath.mulDiv(totalWethProfit, FEES_TO_EOA_BPS, 10000);
+    uint256 bwzcToEOA = FullMath.mulDiv(hBwzc, FEES_TO_EOA_BPS, 10000);
+
+    if (usdcToEOA > 0) IERC20(usdc).safeTransfer(owner(), usdcToEOA);
+    if (wethToEOA > 0) IERC20(weth).safeTransfer(owner(), wethToEOA);
+    if (bwzcToEOA > 0) IERC20(bwzc).safeTransfer(owner(), bwzcToEOA);
+
+    // 8. Sweep remainder to SCW
+    _sweepToSCW();
+
+    // 9. State Updates & Events
+    emit CycleExecuted(cycleCount + 1, totalUsdcProfit, totalWethProfit, bwzcDeepened);
+    emit FeesDistributed(owner(), usdcToEOA, wethToEOA, bwzcToEOA);
+
+    if (bootstrapCompleted) cycleCount++;
+    lastCycleTimestamp = block.timestamp;
+    txState = TxState.IDLE;
+}
     
     function _sweepToSCW() internal {
         uint256 uRem = IERC20(usdc).balanceOf(address(this));
@@ -1360,122 +1415,124 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
     }
 
      // =====================================================================
-     //  INSTITUTIONAL REVENUE CYCLE (Cycles 1+)Production path 
+     //  Main Operational Engine: Executes automated arbitrage cycles.Aligned with v5.0 Smart Guards and Institutional 30/25/45 logic.
       // =====================================================================
-      /**
-     * @dev Main Operational Engine: Executes automated arbitrage cycles.
-     * Aligned with v5.0 Smart Guards and Institutional 30/25/45 logic.
-     */
-    function executeInstitutionalCycle() external nonReentrant whenNotPaused {
-        if (!bootstrapCompleted) revert("System not bootstrapped");
+     
+  function executeInstitutionalCycle() external nonReentrant whenNotPaused {
+    if (!bootstrapCompleted) revert("System not bootstrapped");
 
-        // 1. Get Live Price and Vault Depth (Using Smart Oracle Logic)
-        (uint256 ethPrice, ) = _getConsensusEthPrice();
-        uint256 vaultUsdc = IERC20(usdc).balanceOf(vault);
-        uint256 vaultWeth = IERC20(weth).balanceOf(vault);
+    // 1. Get Live Price and Vault Depth (Using Smart Oracle Logic)
+    (uint256 ethPrice, ) = _getConsensusEthPrice();
+    uint256 vaultUsdc = IERC20(usdc).balanceOf(vault);
+    uint256 vaultWeth = IERC20(weth).balanceOf(vault);
 
-        // 2. Calculate target total scaled amount for this cycle
-        uint256 totalTargetUsd = _calculateScaledAmount(TOTAL_BOOTSTRAP_USD, currentScaleFactorBps);
+    // 2. Independent targets based on vault depth
+    uint256 usdcTargetUsd = _calculateScaledAmount(vaultUsdc, currentScaleFactorBps);
+    uint256 wethTargetUsd = _calculateScaledAmount(
+        FullMath.mulDiv(vaultWeth, ethPrice, 1e18),
+        currentScaleFactorBps
+    );
 
-        // 3. Dynamic Allocation (Safety Margin: 90% USDC / 95% WETH)
-        // This ensures we never request more than the Vault can actually provide.
-        uint256 maxSafeUsdc = (vaultUsdc * 9000) / 10000;
-        uint256 maxSafeWethUsd = FullMath.mulDiv(vaultWeth, ethPrice, 1e18) * 9500 / 10000;
+    // 3. Apply safety margins independently (90% USDC / 95% WETH)
+    uint256 maxSafeUsdc = (vaultUsdc * 9000) / 10000;
+    uint256 maxSafeWethUsd = FullMath.mulDiv(vaultWeth, ethPrice, 1e18) * 9500 / 10000;
 
-        uint256 scaledUsdc;
-        uint256 scaledWethUsd;
+    uint256 scaledUsdc = usdcTargetUsd > maxSafeUsdc ? maxSafeUsdc : usdcTargetUsd;
+    uint256 scaledWethUsd = wethTargetUsd > maxSafeWethUsd ? maxSafeWethUsd : wethTargetUsd;
 
-        // Allocate: Prefer WETH (Deep Side), Cap USDC (Shallow Side)
-        if (totalTargetUsd / 2 > maxSafeUsdc) {
-            scaledUsdc = maxSafeUsdc;
-            scaledWethUsd = totalTargetUsd - scaledUsdc;
-        } else {
-            scaledUsdc = totalTargetUsd / 2;
-            scaledWethUsd = totalTargetUsd - scaledUsdc;
-        }
+    // Convert WETH USD value to WETH amount
+    uint256 scaledWeth = FullMath.mulDiv(scaledWethUsd, 1e18, ethPrice);
 
-        // Final Cap on WETH USD value to prevent Flashloan Reverts
-        if (scaledWethUsd > maxSafeWethUsd) {
-            scaledWethUsd = maxSafeWethUsd;
-        }
+    // 4. Flashloan Call (Alignment with Decoder)
+    bytes memory userData = abi.encode(
+        0,              // bwzcForArb (0 for standard cycles)
+        scaledUsdc,     // expectedUsdc
+        scaledWeth,     // expectedWeth
+        block.timestamp + 1 hours
+    );
 
-        uint256 scaledWeth = FullMath.mulDiv(scaledWethUsd, 1e18, ethPrice);
+    address[] memory tokens = new address[](2);
+    tokens[0] = usdc; 
+    tokens[1] = weth;
 
-        // 4. Flashloan Call (Alignment with Decoder)
-        // We pass '0' as the first param because there is no 'Seed' inventory used 
-        // in standard production cycles—only what is bought in the Strike.
-        bytes memory userData = abi.encode(
-            0,              // bwzcForArb (0 for standard cycles)
-            scaledUsdc,     // expectedUsdc
-            scaledWeth,     // expectedWeth
-            block.timestamp + 1 hours
-        );
+    uint256[] memory amounts = new uint256[](2);
+    amounts[0] = scaledUsdc; 
+    amounts[1] = scaledWeth;
 
-        address[] memory tokens = new address[](2);
-        tokens[0] = usdc; 
-        tokens[1] = weth;
+    // Execute atomic trade
+    IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
 
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = scaledUsdc; 
-        amounts[1] = scaledWeth;
+    // 5. Adaptive Institutional Scaling Logic
+    uint256 vaultUsdcUsd = vaultUsdc; // USDC already in USD terms
+    uint256 vaultWethUsd = FullMath.mulDiv(vaultWeth, ethPrice, 1e18);
+    uint256 vaultDepthUsd = vaultUsdcUsd + vaultWethUsd;
 
-        // Execute atomic trade
-        IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
+    uint256 increment = FullMath.mulDiv(vaultDepthUsd, SCALE_INCREMENT_BPS, 1e9);
 
-        // 5. Institutional Scaling Logic
-        // Incrementally increase size for the next cycle to capture deeper liquidity
-        if (currentScaleFactorBps < MAX_SCALE_BPS) {
-            currentScaleFactorBps += SCALE_INCREMENT_BPS;
-        }
-        
-        cycleCount++;
-        lastCycleTimestamp = block.timestamp;
+    if (currentScaleFactorBps + increment > MAX_SCALE_BPS) {
+        currentScaleFactorBps = MAX_SCALE_BPS;
+    } else {
+        currentScaleFactorBps += increment;
     }
 
-      // =====================================================================
+    cycleCount++;
+    lastCycleTimestamp = block.timestamp;
+}
+
+     // =====================================================================
      //  GLOBAL INITIAL BOOTSTRAP (Cycle 0 Only) Hardened to work with zero liquidity by using caller-supplied ETH price.
     // =====================================================================
-   function globalInitialBootstrap(
-        uint256 bwzcSeedAmount, 
-        uint256 usdAmount, 
-        uint256 ethPrice
-    ) external nonReentrant whenNotPaused {
-        if (msg.sender != owner() && msg.sender != scw) revert("Not authorized");
-        if (bootstrapCompleted) revert BootstrapAlreadyCompleted();
+     function globalInitialBootstrap(
+    uint256 bwzcSeedAmount, 
+    uint256 usdAmount, 
+    uint256 ethPrice
+) external nonReentrant whenNotPaused {
+    if (msg.sender != owner() && msg.sender != scw) revert("Not authorized");
+    if (bootstrapCompleted) revert BootstrapAlreadyCompleted();
 
-        IERC20(bwzc).safeTransferFrom(scw, address(this), bwzcSeedAmount);
+    // 1. Pull SEED BWZC (Used for Path 1: Initial Density)
+    IERC20(bwzc).safeTransferFrom(scw, address(this), bwzcSeedAmount);
 
-        // Path 1: SEED 30% Capital (forces $47 price)
-        uint256 seedUsdc = (usdAmount * 30) / 100;
-        uint256 seedWeth = FullMath.mulDiv(seedUsdc, 1e18, ethPrice);
-        
-        // Use half of bwzcSeedAmount for initial density (The "Seed")
-        _addToBalancerPool(balBWUSDCId, seedUsdc, bwzcSeedAmount / 4);
-        _addToBalancerPool(balBWWETHId, seedWeth, bwzcSeedAmount / 4);
+    // 2. Pull ARB BWZC (Used for Path 2: Shield Liquidity for Flashloan)
+    // This ensures the contract has inventory to sell during the arb leg
+    uint256 bwzcForArb = bwzcSeedAmount / 2;
+    IERC20(bwzc).safeTransferFrom(scw, address(this), bwzcForArb);
 
-        // Path 2: FLASHLOAN THE STRIKE (25% Buy Leg)
-        uint256 strikeUsdc = (usdAmount * 25) / 100;
-        uint256 strikeWeth = FullMath.mulDiv(strikeUsdc, 1e18, ethPrice);
-        
-        // --- FIX: ENCODE THE REMAINING BWZC FOR THE ARBITRAGE LEG ---
-        bytes memory userData = abi.encode(
-            bwzcSeedAmount / 2, // bwzcForArb: The remaining 50% for the 25/45 legs
-            strikeUsdc,         // expectedUsdc
-            strikeWeth,         // expectedWeth
-            block.timestamp + 1 hours
-        );
-        
-        address[] memory tokens = new address[](2);
-        tokens[0] = usdc; tokens[1] = weth;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = strikeUsdc; amounts[1] = strikeWeth;
+    // 3. Path 1: SEED 30% Capital (Balancer Join)
+    uint256 seedUsdc = (usdAmount * 30) / 100;
+    uint256 seedWeth = FullMath.mulDiv(seedUsdc, 1e18, ethPrice);
+    
+    // We use /4 to split the initial seed across both core pools
+    _safeJoinBalancer(balBWUSDCId, seedUsdc, bwzcSeedAmount / 4);
+    _safeJoinBalancer(balBWWETHId, seedWeth, bwzcSeedAmount / 4);
 
-        IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
-        
-        bootstrapCompleted = true; // Sets production guards ON for next time
-        cycleCount = 1;
-        emit EmergencyBootstrapPerformed(msg.sender, scw, bwzcSeedAmount, usdAmount, ethPrice, block.number);
-    }
+    // 4. Path 2: FLASHLOAN STRIKE (25% Capital)
+    uint256 strikeUsdc = (usdAmount * 25) / 100;
+    uint256 strikeWeth = FullMath.mulDiv(strikeUsdc, 1e18, ethPrice);
+    
+    // Encode the shield liquidity so receiveFlashLoan knows what it has to work with
+    bytes memory userData = abi.encode(
+        bwzcForArb, 
+        strikeUsdc, 
+        strikeWeth, 
+        block.timestamp + 1 hours
+    );
+    
+    address[] memory tokens = new address[](2);
+    tokens[0] = usdc; tokens[1] = weth;
+    uint256[] memory amounts = new uint256[](2);
+    amounts[0] = strikeUsdc; amounts[1] = strikeWeth;
+
+    // Trigger the cycle
+    IBalancerVault(vault).flashLoan(address(this), tokens, amounts, userData);
+    
+    // 5. Finalize State
+    bootstrapCompleted = true;
+    cycleCount = 1;
+    lastCycleTimestamp = block.timestamp;
+    
+    emit EmergencyBootstrapPerformed(msg.sender, scw, bwzcSeedAmount, usdAmount, ethPrice, block.number);
+}
     receive() external payable {}
     
     fallback() external payable {
