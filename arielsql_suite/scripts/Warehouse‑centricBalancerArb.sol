@@ -536,12 +536,12 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     }
 
    // Smart Guard Spread Requirement
-   function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
+  function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
     if (!bootstrapCompleted) {
         emit BootstrapOverride("SpreadCheck", "Forcing 9999 BPS");
         return 9999; 
     }
-
+    
     uint256 balancerPrice = BALANCER_PRICE_USD;
     uint256 uniswapPrice = _getUniswapV3Price();
     
@@ -622,31 +622,10 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         }
     }
 
-   function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
-    if (!bootstrapCompleted) {
-        emit BootstrapOverride("SpreadCheck", "Forcing 9999 BPS");
-        return 9999; 
-    }
-
-    uint256 balancerPrice = BALANCER_PRICE_USD;
-    uint256 uniswapPrice = _getUniswapV3Price();
-    
-    if (uniswapPrice <= balancerPrice) {
-        emit SpreadWarning(BALANCER_FLASH_FEE_BPS, 0);
-        return 0;
-    }
-    
-    spreadBps = FullMath.mulDiv(uniswapPrice - balancerPrice, 10000, balancerPrice);
-    return spreadBps;
-}
-
-
+  
     function _calculateWETHAmount(uint256 usdAmount, uint256 ethPrice) internal pure returns (uint256) {
         return FullMath.mulDiv(usdAmount, 1e18, ethPrice);
     }
-
-  
-
 
 function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
     if (amount == 0) return 0;
