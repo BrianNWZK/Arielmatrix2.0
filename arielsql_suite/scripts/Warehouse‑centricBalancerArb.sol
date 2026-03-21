@@ -94,6 +94,9 @@ interface IChainlinkFeed {
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
 }
 
+interface IAsset {
+    // Balancer treats assets as generic ERC20-like tokens
+}
 interface IBalancerVault {
     function flashLoan(address recipient, address[] calldata tokens, uint256[] calldata amounts, bytes calldata userData) external;
     
@@ -536,8 +539,6 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
         return FullMath.mulDiv(baseAmount, scaleFactorBps, 10000);
     }
 
-   
-
    // Smart Guard Spread Requirement
    function _calculateCurrentSpread() internal returns (uint256 spreadBps) {
     if (!bootstrapCompleted) {
@@ -653,26 +654,26 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
 function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWUSDCId,
-        kind: 0,
-        assetIn: usdc,
-        assetOut: bwzc,
+        kind: 0, // GIVEN_IN
+        assetIn: IAsset(usdc),
+        assetOut: IAsset(bwzc),
         amount: usdcAmount,
         userData: ""
     });
-    
+
     IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
         sender: address(this),
         fromInternalBalance: false,
         recipient: payable(address(this)),
         toInternalBalance: false
     });
-    
-    uint256 result = IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300);
-    if (result == 0) {
+
+    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300) returns (uint256 result) {
+        return result;
+    } catch {
         emit SwapSkipped(usdc, "Balancer USDC Strike Failed");
         return 0;
     }
-    return result;
 }
 
 /**
@@ -681,28 +682,27 @@ function _buyOnBalancerUSDC(uint256 usdcAmount) internal returns (uint256) {
 function _buyOnBalancerWETH(uint256 wethAmount) internal returns (uint256) {
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWWETHId,
-        kind: 0,
-        assetIn: weth,
-        assetOut: bwzc,
+        kind: 0, // GIVEN_IN
+        assetIn: IAsset(weth),
+        assetOut: IAsset(bwzc),
         amount: wethAmount,
         userData: ""
     });
-    
+
     IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
         sender: address(this),
         fromInternalBalance: false,
         recipient: payable(address(this)),
         toInternalBalance: false
     });
-    
-    uint256 result = IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300);
-    if (result == 0) {
+
+    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300) returns (uint256 result) {
+        return result;
+    } catch {
         emit SwapSkipped(weth, "Balancer WETH Strike Failed");
         return 0;
     }
-    return result;
 }
-
 /**
  * @dev Smart Sell BWZC → USDC (Uniswap V3)
  */
@@ -910,8 +910,7 @@ function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
    
 function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
     if (amount == 0) return 0;
-    
-    // Fix: Explicitly define the swap struct and cast addresses to IAsset
+
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWUSDCId,
         kind: IBalancerVault.SwapKind.GIVEN_IN,
@@ -920,14 +919,14 @@ function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
         amount: amount,
         userData: ""
     });
-    
+
     IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
         sender: address(this),
         fromInternalBalance: false,
         recipient: payable(address(this)),
         toInternalBalance: false
     });
-    
+
     try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
         return result;
     } catch {
@@ -938,7 +937,7 @@ function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
 
 function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
     if (amount == 0) return 0;
-    
+
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWWETHId,
         kind: IBalancerVault.SwapKind.GIVEN_IN,
@@ -947,14 +946,14 @@ function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
         amount: amount,
         userData: ""
     });
-    
+
     IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
         sender: address(this),
         fromInternalBalance: false,
         recipient: payable(address(this)),
         toInternalBalance: false
     });
-    
+
     try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
         return result;
     } catch {
@@ -962,7 +961,6 @@ function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
         return 0;
     }
 }
-
 /**
  * @dev Smart Sell BWZC → USDC (Uniswap V3 Sovereign)
  */
