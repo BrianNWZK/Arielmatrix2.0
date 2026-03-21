@@ -94,18 +94,14 @@ interface IChainlinkFeed {
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
 }
 
-interface IAsset {
-    // Balancer treats assets as generic ERC20-like tokens
-}
-
 interface IBalancerVault {
     enum SwapKind { GIVEN_IN, GIVEN_OUT }
     
     struct SingleSwap {
         bytes32 poolId;
-        SwapKind kind;        // ← Use the enum, not uint8
-        address assetIn;      // ← address, NOT IAsset
-        address assetOut;     // ← address, NOT IAsset
+        SwapKind kind;
+        address assetIn;
+        address assetOut;
         uint256 amount;
         bytes userData;
     }
@@ -652,29 +648,26 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
   
 
 
-/**
- * @dev Smart Buy USDC (Balancer)
- */
 function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
     if (amount == 0) return 0;
-
+    
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWUSDCId,
-        kind: uint8(SwapKind.GIVEN_IN),
+        kind: IBalancerVault.SwapKind.GIVEN_IN,  // ← Use the enum directly
         assetIn: usdc,
         assetOut: bwzc,
         amount: amount,
         userData: ""
     });
-
+    
     IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
         sender: address(this),
         fromInternalBalance: false,
         recipient: payable(address(this)),
         toInternalBalance: false
     });
-
-    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300) returns (uint256 result) {
+    
+    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
         return result;
     } catch {
         emit SwapSkipped(usdc, "Balancer USDC Strike Failed");
@@ -682,50 +675,37 @@ function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
     }
 }
 
-/**
- * @dev Smart Buy WETH (Balancer)
- */
 function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
     if (amount == 0) return 0;
-
+    
     IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
         poolId: balBWWETHId,
-        kind: uint8(SwapKind.GIVEN_IN),
+        kind: IBalancerVault.SwapKind.GIVEN_IN,  // ← Use the enum directly
         assetIn: weth,
         assetOut: bwzc,
         amount: amount,
         userData: ""
     });
-
+    
     IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
         sender: address(this),
         fromInternalBalance: false,
         recipient: payable(address(this)),
         toInternalBalance: false
     });
-
-    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp + 300) returns (uint256 result) {
+    
+    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
         return result;
     } catch {
         emit SwapSkipped(weth, "Balancer WETH Strike Failed");
         return 0;
     }
 }
-
 /**
- * @dev Smart Sell BWZC → USDC (Uniswap V3)
+ * @dev Smart Sell BWZC → USDC (Uniswap V3 Sovereign) - Bypasses quoter for bootstrap
  */
-function _sellOnUniswapV3USDC(uint256 bwzcAmount) internal returns (uint256) {
-    IQuoterV2.QuoteExactInputSingleParams memory quoteParams = IQuoterV2.QuoteExactInputSingleParams({
-        tokenIn: bwzc,
-        tokenOut: usdc,
-        amountIn: bwzcAmount,
-        fee: uniV3Fee,
-        sqrtPriceLimitX96: 0
-    });
-    
-    (uint256 quotedOut,,,) = IQuoterV2(quoterV2).quoteExactInputSingle(quoteParams);
-    uint256 minOut = FullMath.mulDiv(quotedOut, 10000 - SLIPPAGE_TOLERANCE_BPS, 10000);
+function _sellOnUniswapV3USDC_Sovereign(uint256 bwzcAmount) internal returns (uint256) {
+    if (bwzcAmount == 0) return 0;
     
     IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
         tokenIn: bwzc,
@@ -734,32 +714,23 @@ function _sellOnUniswapV3USDC(uint256 bwzcAmount) internal returns (uint256) {
         recipient: address(this),
         deadline: block.timestamp + 300,
         amountIn: bwzcAmount,
-        amountOutMinimum: minOut,
+        amountOutMinimum: 1, // full extraction, no slippage block
         sqrtPriceLimitX96: 0
     });
     
-    uint256 result = IUniswapV3Router(uniV3Router).exactInputSingle(params);
-    if (result == 0) {
-        emit SwapSkipped(usdc, "Uniswap V3 USDC Leg Failed");
+    try IUniswapV3Router(uniV3Router).exactInputSingle(params) returns (uint256 amountOut) {
+        return amountOut;
+    } catch {
+        emit SwapSkipped(usdc, "V3 USDC Wall Leg Failed");
         return 0;
     }
-    return result;
 }
 
 /**
- * @dev Smart Sell BWZC → WETH (Uniswap V3)
+ * @dev Smart Sell BWZC → WETH (Uniswap V3 Sovereign) - Bypasses quoter for bootstrap
  */
-function _sellOnUniswapV3WETH(uint256 bwzcAmount) internal returns (uint256) {
-    IQuoterV2.QuoteExactInputSingleParams memory quoteParams = IQuoterV2.QuoteExactInputSingleParams({
-        tokenIn: bwzc,
-        tokenOut: weth,
-        amountIn: bwzcAmount,
-        fee: uniV3Fee,
-        sqrtPriceLimitX96: 0
-    });
-    
-    (uint256 quotedOut,,,) = IQuoterV2(quoterV2).quoteExactInputSingle(quoteParams);
-    uint256 minOut = FullMath.mulDiv(quotedOut, 10000 - SLIPPAGE_TOLERANCE_BPS, 10000);
+function _sellOnUniswapV3WETH_Sovereign(uint256 bwzcAmount) internal returns (uint256) {
+    if (bwzcAmount == 0) return 0;
     
     IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
         tokenIn: bwzc,
@@ -768,18 +739,17 @@ function _sellOnUniswapV3WETH(uint256 bwzcAmount) internal returns (uint256) {
         recipient: address(this),
         deadline: block.timestamp + 300,
         amountIn: bwzcAmount,
-        amountOutMinimum: minOut,
+        amountOutMinimum: 1,
         sqrtPriceLimitX96: 0
     });
-    
-    uint256 result = IUniswapV3Router(uniV3Router).exactInputSingle(params);
-    if (result == 0) {
-        emit SwapSkipped(weth, "Uniswap V3 WETH Leg Failed");
+
+    try IUniswapV3Router(uniV3Router).exactInputSingle(params) returns (uint256 amountOut) {
+        return amountOut;
+    } catch {
+        emit SwapSkipped(weth, "V3 WETH Wall Leg Failed");
         return 0;
     }
-    return result;
 }
-
 /**
  * @dev Smart Sell BWZC → USDC (Uniswap V2)
  */
