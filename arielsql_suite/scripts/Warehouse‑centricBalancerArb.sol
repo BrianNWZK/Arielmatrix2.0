@@ -855,23 +855,28 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
  * @dev Smart Sell BWZC → WETH (Uniswap V2)
  */
 function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
+    if (bwzcAmount == 0) return 0; // gas saver
     address[] memory path = new address[](2);
     path[0] = bwzc;
     path[1] = weth;
     
-    (uint256 ethUsd,) = _getConsensusEthPrice();
-    uint256 minOut = FullMath.mulDiv(bwzcAmount, UNIV3_TARGET_PRICE_USD * (10000 - SLIPPAGE_TOLERANCE_BPS), ethUsd * 10000);
     try IUniswapV2Router(uniV2Router).swapExactTokensForTokens(
         bwzcAmount,
-        minOut,
+        1, // minimal out to avoid revert
         path,
         address(this),
         block.timestamp + 300
     ) returns (uint256[] memory amounts) {
-        if ( /**
-     * @dev Core Arbitrage Engine: Executes the "25% Strike" and "45% Wall" legs.
-     * Refined for 100% inventory clearance and Smart Guard resilience.
-     */
+        return amounts[1];
+    } catch {
+        emit SwapSkipped(weth, "Uniswap V2 WETH Leg Failed");
+        return 0;
+    }
+}
+
+ * @dev Core Arbitrage Engine: Executes the "25% Strike" and "45% Wall" legs.
+ * Refined for 100% inventory clearance and Smart Guard resilience.
+ */
     function _executePreciseArbitrage(uint256 usdcAmount, uint256 wethAmount, uint256 bwzcForArb)
         internal returns (uint256 usdcProfit, uint256 wethProfit, uint256 bwzcBought)
     {
