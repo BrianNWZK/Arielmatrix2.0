@@ -874,6 +874,7 @@ function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
     }
 }
 
+/**
  * @dev Core Arbitrage Engine: Executes the "25% Strike" and "45% Wall" legs.
  * Refined for 100% inventory clearance and Smart Guard resilience.
  */
@@ -905,7 +906,7 @@ function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
     }
 
    
-     /**
+/**
  * @dev Smart Buy USDC (Balancer): Try/Catch ensures the cycle doesn't break if one pool hiccups.
  */
 function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
