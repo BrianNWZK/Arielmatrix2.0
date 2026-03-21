@@ -3,7 +3,7 @@
  *
  * SOVEREIGN ORCHESTRATION ENGINE v19.0 — "Sovereign MEV + Warehouse Integration"
  * - Preserves ALL v17.0 features with enhanced warehouse integration
- * - Wires MEV with Contract Address: 0x78043417f7E15CF29cbB52cC584e11Ae33FE1542
+ * - Wires MEV with Contract Address: 0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6
  * - Implements dual paymaster wiring (A/B rotation) - NO BUNDLERS
  * - Enhanced bundle pipeline with contract execution hooks
  * - Strict nonce/ordering preserved
@@ -11,7 +11,7 @@
  * - Schedules 2-4 bundles per block with anti-bot hardening
  *
  * OPERATIONAL SEGREGATION:
- * - Warehouse Contract (0x78043417f7E15CF29cbB52cC584e11Ae33FE1542):
+ * - Warehouse Contract (0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6):
  *   CONTRACT_OPERATIONS = ALL LOADS ["bootstrap_4M_flashloan", "balancer_uni_arbitrage", "v3_nft_fee_harvest", "pool_deepening_3pct"]
  *   
  * - MEV System:
@@ -62,7 +62,7 @@ const LIVE = {
   ACTIVE_PAYMASTER: 'A', // Rotates based on health
   
   // WAREHOUSE CONTRACT (CRITICAL INTEGRATION)
-  WAREHOUSE_CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x78043417f7E15CF29cbB52cC584e11Ae33FE1542'),
+  WAREHOUSE_CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6'),
 
   TOKENS: {
     BWAEZI: addrStrict(process.env.BWAEZI_ADDRESS || '0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2'),
@@ -188,7 +188,7 @@ const LIVE = {
 
   // WAREHOUSE SPECIFIC CONFIGURATION
   WAREHOUSE: {
-    CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x78043417f7E15CF29cbB52cC584e11Ae33FE1542'),
+    CONTRACT: addrStrict(process.env.WAREHOUSE_CONTRACT || '0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6'),
     
     // OPERATIONAL SEGREGATION
     CONTRACT_OPERATIONS: [
@@ -267,7 +267,7 @@ console.log(`
 ║         SOVEREIGN MEV v19.0 - OPERATIONAL SEPARATION         ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                                                               ║
-║  WAREHOUSE CONTRACT (0x78043417f7E15CF29cbB52cC584e11Ae33FE1542):║
+║  WAREHOUSE CONTRACT (0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6):║
 ║  • Handles ALL flash loans & capital-intensive operations    ║
 ║  • Bootstrap, arbitrage with leverage, pool deepening        ║
 ║  • V3 NFT fee harvesting (capital safe)                      ║
@@ -3101,41 +3101,91 @@ async initialize() {
   await this.rpc.init();
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
-(async () => {
+// =====================================================================
+// ONE-TIME BOOTSTRAP – SAFE 75k USD STRIKE (Phase 1)
+// Paste this block early in initialize() or as guarded one-shot
+// =====================================================================
+const bootstrapExecuted = false; // ← set to true after success (persistent flag)
+
+// Guard: run only once
+if (!bootstrapExecuted && !await warehouse.bootstrapCompleted()) {
+  console.log("\n" + "=".repeat(70));
+  console.log("🚀 ONE-TIME BOOTSTRAP PHASE 1 – SAFE 75k STRIKE");
+  console.log("=".repeat(70));
+
   try {
-    const WAREHOUSE_ADDR = ethers.getAddress("0x78043417f7e15cf29cbb52cc584e11ae33fe1542");
-    const activeSigner = this.signer.connect(this.provider);
-    const warehouse = new ethers.Contract(WAREHOUSE_ADDR, 
-      ['function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external'], 
-      activeSigner);
+    const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
+    const activeSigner = this.signer.connect(this.provider); // or signer from context
 
-    // SCALE: $200,000 Total ($100k USDC / $100k WETH)
-    // Price: $2200 | Peg: $23.50
-    const MANUAL_ETH_PRICE = ethers.parseUnits("2200.00", 18); 
-    const USD_AMOUNT = ethers.parseUnits("200000", 6);
-    
-    // Seed: $200,000 / $23.50 = 8,510.64
-    const BWZC_SEED = ethers.parseUnits("8510.64", 18);
+    const warehouse = new ethers.Contract(
+      WAREHOUSE_ADDR,
+      [
+        'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
+        'function bootstrapCompleted() view returns (bool)'
+      ],
+      activeSigner
+    );
 
-    console.log(`⚡ EXECUTING SURGICAL BOOTSTRAP: $200,000...`);
+    // ────────────────────────────────────────────────
+    // PARAMETERS – SAFE 75k STRIKE (~$300k total usdAmount)
+    // ────────────────────────────────────────────────
+    const CURRENT_ETH_PRICE = 2150; // ← UPDATE LIVE before deploy
+    const MANUAL_ETH_PRICE = ethers.parseUnits(CURRENT_ETH_PRICE.toString(), 18);
 
+    // usdAmount = $300,000 → strike leg = 25% ≈ $75,000 total value
+    const USD_AMOUNT = ethers.parseUnits("300000", 6);
+
+    // BWZC seed using contract's internal price $23.50
+    // $300k × 1.1 buffer ÷ 23.5 ≈ 14,042.55 BWZC
+    const BWZC_SEED = ethers.parseUnits("14042.55", 18);
+
+    console.log("Parameters:");
+    console.log(` • usdAmount:    $${ethers.formatUnits(USD_AMOUNT, 6)}`);
+    console.log(` • strike value: ~$${Math.round(300000 * 0.25).toLocaleString()}`);
+    console.log(` • ETH price:    $${CURRENT_ETH_PRICE}`);
+    console.log(` • BWZC seed:    ${ethers.formatEther(BWZC_SEED)}`);
+
+    // Optional: quick SCW balance check (if you have BWZC contract instance)
+    // const scwBalance = await bwzc.balanceOf(LIVE.SCW_ADDRESS);
+    // if (scwBalance < BWZC_SEED) throw new Error("SCW: insufficient BWZC");
+
+    console.log("\nDispatching bootstrap transaction...");
+
+    const gasLimit = 1_400_000n; // safe upper bound
     const tx = await warehouse.globalInitialBootstrap(
-      BWZC_SEED, USD_AMOUNT, MANUAL_ETH_PRICE,
+      BWZC_SEED,
+      USD_AMOUNT,
+      MANUAL_ETH_PRICE,
       {
-        gasLimit: 1200000n, // Slightly more headroom than before
-        maxFeePerGas: ethers.parseUnits("2.0", "gwei"), 
-        maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei")
+        gasLimit,
+        maxFeePerGas: ethers.parseUnits("2.0", "gwei"),
+        maxPriorityFeePerGas: ethers.parseUnits("0.4", "gwei"),
       }
     );
 
-    console.log(`✅ TX DISPATCHED: ${tx.hash}`);
-    const receipt = await tx.wait();
-    if (receipt.status === 1) console.log("🎉 SUCCESS: SYSTEM ACTIVE");
+    console.log(`TX sent → ${tx.hash}`);
+    console.log(`Track: https://arbiscan.io/tx/${tx.hash}`);
 
+    const receipt = await tx.wait(1);
+
+    if (receipt.status === 1) {
+      console.log("\n🎉 BOOTSTRAP SUCCESS – CONTRACT NOW SELF-ACTIVATING");
+      console.log(`Block: ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      // Mark as done (you can use a file flag, env, or contract state)
+      bootstrapExecuted = true;
+    } else {
+      console.error("❌ Bootstrap reverted – check Arbiscan");
+    }
   } catch (e) {
-    console.error(`❌ FINAL ATTEMPT ERROR: ${e.message}`);
+    console.error("Bootstrap failed:", e.shortMessage || e.reason || e.message);
+    // Do NOT throw – let MEV continue (bootstrap can be retried manually)
   }
-})();
+} else {
+  console.log("Bootstrap already completed or executed – skipping");
+}
+   
    // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
