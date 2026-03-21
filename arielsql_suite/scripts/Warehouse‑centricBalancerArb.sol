@@ -97,26 +97,15 @@ interface IChainlinkFeed {
 interface IAsset {
     // Balancer treats assets as generic ERC20-like tokens
 }
+
 interface IBalancerVault {
     enum SwapKind { GIVEN_IN, GIVEN_OUT }
     
     struct SingleSwap {
         bytes32 poolId;
-        SwapKind kind;
-        address assetIn;   // ← address, NOT IAsset
-        address assetOut;  // ← address, NOT IAsset
-        uint256 amount;
-        bytes userData;
-    }
-
-    
-    function joinPool(bytes32 poolId, address sender, address recipient, JoinPoolRequest calldata request) external payable;
-    
-    struct SingleSwap {
-        bytes32 poolId;
-        uint8 kind;
-        address assetIn;
-        address assetOut;
+        SwapKind kind;        // ← Use the enum, not uint8
+        address assetIn;      // ← address, NOT IAsset
+        address assetOut;     // ← address, NOT IAsset
         uint256 amount;
         bytes userData;
     }
@@ -128,10 +117,18 @@ interface IBalancerVault {
         bool toInternalBalance;
     }
     
+    struct JoinPoolRequest {
+        address[] assets;
+        uint256[] maxAmountsIn;
+        bytes userData;
+        bool fromInternalBalance;
+    }
+    
+    function flashLoan(address recipient, address[] calldata tokens, uint256[] calldata amounts, bytes calldata userData) external;
     function swap(SingleSwap calldata singleSwap, FundManagement calldata funds, uint256 limit, uint256 deadline) external payable returns (uint256);
+    function joinPool(bytes32 poolId, address sender, address recipient, JoinPoolRequest calldata request) external payable;
     function getPoolTokens(bytes32 poolId) external view returns (address[] memory tokens, uint256[] memory balances, uint256);
 }
-
 interface IFlashLoanRecipient {
     function receiveFlashLoan(address[] calldata tokens, uint256[] calldata amounts, uint256[] calldata feeAmounts, bytes calldata userData) external;
 }
