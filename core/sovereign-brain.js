@@ -3102,90 +3102,130 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// ONE-TIME BOOTSTRAP – SAFE 75k USD STRIKE (Phase 1)
-// Paste this block early in initialize() or as guarded one-shot
+// 🚀 $1M BOOTSTRAP – FITS CURRENT GAS BALANCE (0.0032 ETH)
 // =====================================================================
-const bootstrapExecuted = false; // ← set to true after success (persistent flag)
 
 // Guard: run only once
-if (!bootstrapExecuted && !await warehouse.bootstrapCompleted()) {
+if (!this.bootstrapAttempted && !await this.warehouseContract?.bootstrapCompleted?.()) {
+  this.bootstrapAttempted = true;
+  
   console.log("\n" + "=".repeat(70));
-  console.log("🚀 ONE-TIME BOOTSTRAP PHASE 1 – SAFE 75k STRIKE");
+  console.log("🚀 $1M BOOTSTRAP – CONSERVATIVE START");
   console.log("=".repeat(70));
 
   try {
+    // =====================================================================
+    // CONTRACT INSTANCE
+    // =====================================================================
     const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
-    const activeSigner = this.signer.connect(this.provider); // or signer from context
+    const activeSigner = this.signer.connect(this.provider);
 
     const warehouse = new ethers.Contract(
       WAREHOUSE_ADDR,
       [
         'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
-        'function bootstrapCompleted() view returns (bool)'
+        'function bootstrapCompleted() view returns (bool)',
+        'function cycleCount() view returns (uint256)'
       ],
       activeSigner
     );
 
-    // ────────────────────────────────────────────────
-    // PARAMETERS – SAFE 75k STRIKE (~$300k total usdAmount)
-    // ────────────────────────────────────────────────
-    const CURRENT_ETH_PRICE = 2150; // ← UPDATE LIVE before deploy
-    const MANUAL_ETH_PRICE = ethers.parseUnits(CURRENT_ETH_PRICE.toString(), 18);
+    // =====================================================================
+    // PARAMETERS – $1M TOTAL → $250k Strike
+    // =====================================================================
+    const ETH_PRICE = 2150;  // Current market rate
+    const MANUAL_ETH_PRICE = ethers.parseUnits(ETH_PRICE.toString(), 18);
 
-    // usdAmount = $300,000 → strike leg = 25% ≈ $75,000 total value
-    const USD_AMOUNT = ethers.parseUnits("300000", 6);
+    // $1,000,000 total USD (6 decimals)
+    const USD_AMOUNT = ethers.parseUnits("1000000", 6);
 
-    // BWZC seed using contract's internal price $23.50
-    // $300k × 1.1 buffer ÷ 23.5 ≈ 14,042.55 BWZC
-    const BWZC_SEED = ethers.parseUnits("14042.55", 18);
+    // BWZC Seed: $1M ÷ $23.50 = 42,553 BWZC
+    const BWZC_SEED = ethers.parseUnits("42553", 18);
 
-    console.log("Parameters:");
-    console.log(` • usdAmount:    $${ethers.formatUnits(USD_AMOUNT, 6)}`);
-    console.log(` • strike value: ~$${Math.round(300000 * 0.25).toLocaleString()}`);
-    console.log(` • ETH price:    $${CURRENT_ETH_PRICE}`);
-    console.log(` • BWZC seed:    ${ethers.formatEther(BWZC_SEED)}`);
+    console.log("\n📊 BOOTSTRAP PARAMETERS:");
+    console.log(`   • Total USD:     $${ethers.formatUnits(USD_AMOUNT, 6).toLocaleString()}`);
+    console.log(`   • Strike Value:  $250,000 (25%)`);
+    console.log(`   • Strike USDC:   $187,500`);
+    console.log(`   • Strike WETH:   $62,500 (~29 ETH @ $2,150)`);
+    console.log(`   • BWZC Seed:     ${ethers.formatEther(BWZC_SEED)}`);
+    console.log(`   • ETH Price:     $${ETH_PRICE}`);
+    console.log(`   • Gas Limit:     1,500,000`);
+    console.log(`   • Est. Gas Cost: ~0.0027 ETH (~$5.80)`);
+    console.log(`   • Your Balance:  ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH`);
 
-    // Optional: quick SCW balance check (if you have BWZC contract instance)
-    // const scwBalance = await bwzc.balanceOf(LIVE.SCW_ADDRESS);
-    // if (scwBalance < BWZC_SEED) throw new Error("SCW: insufficient BWZC");
+    // =====================================================================
+    // CHECK SCW BWZC BALANCE
+    // =====================================================================
+    const bwzcToken = new ethers.Contract(
+      "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2",
+      ['function balanceOf(address) view returns (uint256)'],
+      this.provider
+    );
+    const scwBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
+    console.log(`\n💰 SCW BWZC Balance: ${ethers.formatEther(scwBalance)}`);
 
-    console.log("\nDispatching bootstrap transaction...");
+    if (scwBalance < BWZC_SEED) {
+      console.warn(`⚠️ SCW balance is ${ethers.formatEther(scwBalance)} but need ${ethers.formatEther(BWZC_SEED)}`);
+      console.warn(`   Continuing anyway (bootstrap may fail if insufficient)`);
+    } else {
+      console.log(`✅ SCW has sufficient BWZC balance`);
+    }
 
-    const gasLimit = 1_400_000n; // safe upper bound
+    // =====================================================================
+    // EXECUTE BOOTSTRAP
+    // =====================================================================
+    console.log("\n📤 Dispatching bootstrap transaction...");
+
     const tx = await warehouse.globalInitialBootstrap(
       BWZC_SEED,
       USD_AMOUNT,
       MANUAL_ETH_PRICE,
       {
-        gasLimit,
-        maxFeePerGas: ethers.parseUnits("2.0", "gwei"),
-        maxPriorityFeePerGas: ethers.parseUnits("0.4", "gwei"),
+        gasLimit: 1_500_000n,                    // ✅ Fits your 0.0032 ETH balance
+        maxFeePerGas: ethers.parseUnits("1.8", "gwei"),
+        maxPriorityFeePerGas: ethers.parseUnits("1.2", "gwei")
       }
     );
 
-    console.log(`TX sent → ${tx.hash}`);
-    console.log(`Track: https://arbiscan.io/tx/${tx.hash}`);
+    console.log(`\n✅ TX SENT: ${tx.hash}`);
+    console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
 
-    const receipt = await tx.wait(1);
+    // =====================================================================
+    // WAIT FOR CONFIRMATION
+    // =====================================================================
+    console.log("\n⏳ Waiting for confirmation...");
+    const receipt = await tx.wait();
 
     if (receipt.status === 1) {
-      console.log("\n🎉 BOOTSTRAP SUCCESS – CONTRACT NOW SELF-ACTIVATING");
-      console.log(`Block: ${receipt.blockNumber}`);
-      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
-
-      // Mark as done (you can use a file flag, env, or contract state)
-      bootstrapExecuted = true;
+      console.log("\n🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉");
+      console.log(`   • Block: ${receipt.blockNumber}`);
+      console.log(`   • Gas Used: ${receipt.gasUsed.toString()}`);
+      console.log(`   • Gas Cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
+      
+      // Verify final state
+      const cycle = await warehouse.cycleCount();
+      const boot = await warehouse.bootstrapCompleted();
+      console.log(`\n📊 FINAL STATE:`);
+      console.log(`   • Cycle Count: ${cycle}`);
+      console.log(`   • Bootstrap Completed: ${boot}`);
+      
+      // Mark as done
+      this.bootstrapCompleted = true;
+      console.log("\n✅ System is now SELF-AUTOMATING. Revenue cycles will start automatically.");
+      
     } else {
-      console.error("❌ Bootstrap reverted – check Arbiscan");
+      console.error("\n❌ Bootstrap reverted – check Etherscan for details");
+      this.bootstrapAttempted = false; // allow retry
     }
+    
   } catch (e) {
-    console.error("Bootstrap failed:", e.shortMessage || e.reason || e.message);
-    // Do NOT throw – let MEV continue (bootstrap can be retried manually)
+    console.error("\n❌ Bootstrap failed:", e.shortMessage || e.reason || e.message);
+    this.bootstrapAttempted = false; // allow retry
   }
+  
 } else {
-  console.log("Bootstrap already completed or executed – skipping");
+  console.log("✅ Bootstrap already completed – skipping");
 }
-   
    // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
