@@ -311,6 +311,7 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     uint256 public constant SCALE_INCREMENT_BPS = 500;
     uint256 public constant MAX_SCALE_BPS = 9000;
     uint256 public constant PROFIT_PER_CYCLE_USD = 184000 * 1e6;
+    uint256 public constant TOTAL_BOOTSTRAP_USD = 23_500_000;
     
     uint256 public currentScaleFactorBps = 5000; // 50%
     uint256 public cycleCount;
@@ -390,6 +391,7 @@ contract WarehouseBalancerArb is ReentrancyGuard, Ownable, IFlashLoanRecipient {
     event OracleConsensusWarning(string reason, uint256 fallbackPrice);
     event SwapWarning(string pool, string action, uint256 amount);
     event BootstrapOverride(string guard, string actionTaken);
+    event SwapSkipped(address token, string reason);
 
     constructor(
         address _scw,
@@ -906,29 +908,58 @@ function _sellOnUniswapV2WETH(uint256 bwzcAmount) internal returns (uint256) {
     }
 
    
-/**
- * @dev Smart Buy USDC (Balancer): Try/Catch ensures the cycle doesn't break if one pool hiccups.
- */
 function _buyOnBalancerUSDC(uint256 amount) internal returns (uint256) {
-    if (amount == 0) return 0; // gas saver
-    try IBalancerVault(vault).swap(singleSwapParamsUSDC, fundSettings, 1, block.timestamp) returns (uint256 result) {
+    if (amount == 0) return 0;
+    
+    // Fix: Explicitly define the swap struct and cast addresses to IAsset
+    IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
+        poolId: balBWUSDCId,
+        kind: IBalancerVault.SwapKind.GIVEN_IN,
+        assetIn: IAsset(usdc),
+        assetOut: IAsset(bwzc),
+        amount: amount,
+        userData: ""
+    });
+    
+    IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
+        sender: address(this),
+        fromInternalBalance: false,
+        recipient: payable(address(this)),
+        toInternalBalance: false
+    });
+    
+    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
         return result;
     } catch {
         emit SwapSkipped(usdc, "Balancer USDC Strike Failed");
-        return 0; 
+        return 0;
     }
 }
 
-/**
- * @dev Smart Buy WETH (Balancer)
- */
 function _buyOnBalancerWETH(uint256 amount) internal returns (uint256) {
-    if (amount == 0) return 0; // gas saver
-    try IBalancerVault(vault).swap(singleSwapParamsWETH, fundSettings, 1, block.timestamp) returns (uint256 result) {
+    if (amount == 0) return 0;
+    
+    IBalancerVault.SingleSwap memory ss = IBalancerVault.SingleSwap({
+        poolId: balBWWETHId,
+        kind: IBalancerVault.SwapKind.GIVEN_IN,
+        assetIn: IAsset(weth),
+        assetOut: IAsset(bwzc),
+        amount: amount,
+        userData: ""
+    });
+    
+    IBalancerVault.FundManagement memory fm = IBalancerVault.FundManagement({
+        sender: address(this),
+        fromInternalBalance: false,
+        recipient: payable(address(this)),
+        toInternalBalance: false
+    });
+    
+    try IBalancerVault(vault).swap(ss, fm, 1, block.timestamp) returns (uint256 result) {
         return result;
     } catch {
         emit SwapSkipped(weth, "Balancer WETH Strike Failed");
-        return 0; 
+        return 0;
     }
 }
 
@@ -1418,9 +1449,15 @@ function _sellOnSushiSwapUSDC(uint256 bwzcAmount) internal returns (uint256) {
         return _calculateCurrentSpread();
     }
 
-    function getMinRequiredSpread() external pure returns (uint256) {
-        return _calculateMinRequiredSpread();
-    }
+   function _calculateMinRequiredSpread() internal view returns (uint256) {
+    if (!bootstrapCompleted) return 0;
+    uint256 dynamicBuffer = cycleCount > 100 ? 100 : 200;
+    return dynamicBuffer + BALANCER_FLASH_FEE_BPS + SLIPPAGE_TOLERANCE_BPS;
+}
+
+function getMinRequiredSpread() external view returns (uint256) {
+    return _calculateMinRequiredSpread();
+}
 
     function getConsensusEthPrice() external returns (uint256 price, uint8 confidence) {
         return _getConsensusEthPrice();
