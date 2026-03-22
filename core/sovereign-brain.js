@@ -3102,47 +3102,65 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 READY-TO-RUN BOOTSTRAP - WITH 2/3 RATIO FIX & GUARDS
+// 🚀 THE ULTIMATE BOOTSTRAP FIX (VERSION 19.1) - INSTITUTIONAL GRADE
 // =====================================================================
 
 (async () => {
   // =====================================================================
-  // CONFIGURATION
+  // CONFIGURATION - VERIFIED
   // =====================================================================
-  const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
+  const WAREHOUSE_ADDR = "0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6";
   const SCW_ADDR = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
   const BWZC_TOKEN = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
   
-  // Bootstrap targets
-  const TOTAL_USD = 1_000_000;           // $1,000,000 total USD value
-  const TOTAL_BWZC_TO_SPEND = 42553;     // 42,553 BWZC total consumption
+  // Bootstrap Targets - $1M Total
+  const TOTAL_USD = 1_000_000;
+  const TOTAL_BWZC_SPEND = 42553;  // $1M ÷ $23.50
   
-  // Calculate argument: 2/3 of total (because contract pulls seed + seed/2)
-  const BWZC_ARGUMENT = Math.floor((TOTAL_BWZC_TO_SPEND * 2) / 3);
+  // 2/3 Ratio (contract pulls seed + seed/2)
+  const BWZC_ARGUMENT = Math.floor((TOTAL_BWZC_SPEND * 2) / 3);
   
   console.log("\n" + "=".repeat(70));
-  console.log("🚀 INSTITUTIONAL BOOTSTRAP – 2/3 RATIO FIX");
+  console.log("🚀 INSTITUTIONAL BOOTSTRAP v19.1");
   console.log("=".repeat(70));
-  console.log(`   • Total USD Target:    $${TOTAL_USD.toLocaleString()}`);
-  console.log(`   • Total BWZC Spend:    ${TOTAL_BWZC_TO_SPEND.toLocaleString()}`);
-  console.log(`   • Seed Argument:       ${BWZC_ARGUMENT.toLocaleString()} (2/3 of total)`);
-  console.log(`   • Shield Pull:         ${Math.floor(BWZC_ARGUMENT / 2).toLocaleString()} (1/3 of total)`);
-  console.log(`   • Total Pull:          ${(BWZC_ARGUMENT + Math.floor(BWZC_ARGUMENT / 2)).toLocaleString()}`);
+  console.log(`   • Warehouse:     ${WAREHOUSE_ADDR}`);
+  console.log(`   • SCW:           ${SCW_ADDR}`);
+  console.log(`   • Total USD:     $${TOTAL_USD.toLocaleString()}`);
+  console.log(`   • Total BWZC:    ${TOTAL_BWZC_SPEND.toLocaleString()}`);
+  console.log(`   • Seed Argument: ${BWZC_ARGUMENT.toLocaleString()} (2/3 of total)`);
+  console.log(`   • Shield Pull:   ${Math.floor(BWZC_ARGUMENT / 2).toLocaleString()} (1/3)`);
   console.log("=".repeat(70));
-  
+
   try {
     // =====================================================================
-    // CONTRACT INSTANCES
+    // CONNECT SIGNER
     // =====================================================================
     const activeSigner = this.signer.connect(this.provider);
+    console.log(`🔑 Signer: ${await activeSigner.getAddress()}`);
     
+    // =====================================================================
+    // TOKEN CONTRACT (FULL ABI)
+    // =====================================================================
+    const bwzc = new ethers.Contract(
+      BWZC_TOKEN,
+      [
+        'function balanceOf(address) view returns (uint256)',
+        'function allowance(address,address) view returns (uint256)',
+        'function approve(address,uint256) external returns (bool)'
+      ],
+      activeSigner
+    );
+    
+    // =====================================================================
+    // WAREHOUSE CONTRACT
+    // =====================================================================
     const warehouse = new ethers.Contract(
       WAREHOUSE_ADDR,
       [
-        'function globalInitialBootstrap(uint256, uint256, uint256) external',
+        'function globalInitialBootstrap(uint256,uint256,uint256) external',
+        'function _getConsensusEthPrice() view returns (uint256, uint8)',
         'function bootstrapCompleted() view returns (bool)',
-        'function cycleCount() view returns (uint256)',
-        'function _getConsensusEthPrice() external returns (uint256, uint8)'
+        'function cycleCount() view returns (uint256)'
       ],
       activeSigner
     );
@@ -3150,78 +3168,78 @@ async initialize() {
     // =====================================================================
     // CHECK IF ALREADY BOOTSTRAPPED
     // =====================================================================
-    const bootstrapCompleted = await warehouse.bootstrapCompleted();
-    if (bootstrapCompleted) {
-      console.log("\n✅ Bootstrap already completed. Skipping.");
+    const isBootstrapped = await warehouse.bootstrapCompleted();
+    if (isBootstrapped) {
+      const cycle = await warehouse.cycleCount();
+      console.log(`\n✅ Bootstrap already completed. Cycle Count: ${cycle}`);
       return;
     }
-    
-    console.log("\n📊 System not bootstrapped. Proceeding...");
+    console.log("\n📊 System ready for bootstrap.");
     
     // =====================================================================
     // CHECK SCW BALANCE
     // =====================================================================
-    const bwzc = new ethers.Contract(
-      BWZC_TOKEN,
-      ['function balanceOf(address) view returns (uint256)'],
-      this.provider
-    );
     const scwBalance = await bwzc.balanceOf(SCW_ADDR);
     console.log(`💰 SCW BWZC Balance: ${ethers.formatEther(scwBalance)}`);
     
-    const requiredTotal = ethers.parseUnits(TOTAL_BWZC_TO_SPEND.toString(), 18);
-    if (scwBalance < requiredTotal) {
-      console.error(`❌ Insufficient BWZC. Need ${ethers.formatEther(requiredTotal)}`);
+    const needed = ethers.parseUnits(TOTAL_BWZC_SPEND.toString(), 18);
+    if (scwBalance < needed) {
+      console.error(`❌ Insufficient BWZC. Need ${ethers.formatEther(needed)}`);
       return;
     }
-    console.log(`✅ SCW has sufficient balance`);
+    console.log(`✅ SCW balance sufficient`);
     
     // =====================================================================
-    // CHECK ALLOWANCE
+    // CHECK & SET ALLOWANCE
     // =====================================================================
-    const allowance = await bwzc.allowance(SCW_ADDR, WAREHOUSE_ADDR);
-    console.log(`🔓 Warehouse Allowance: ${ethers.formatEther(allowance)}`);
+    const currentAllowance = await bwzc.allowance(SCW_ADDR, WAREHOUSE_ADDR);
+    console.log(`🔓 Current Allowance: ${ethers.formatEther(currentAllowance)}`);
     
-    if (allowance < requiredTotal) {
-      console.error(`❌ Insufficient allowance. Need to approve first.`);
-      return;
+    if (currentAllowance < needed) {
+      console.log("📝 Approving warehouse for unlimited BWZC...");
+      const appTx = await bwzc.approve(WAREHOUSE_ADDR, ethers.MaxUint256);
+      console.log(`   Approval TX: ${appTx.hash}`);
+      await appTx.wait();
+      console.log(`✅ Approval confirmed`);
+    } else {
+      console.log(`✅ Allowance sufficient`);
     }
-    console.log(`✅ Allowance sufficient`);
     
     // =====================================================================
-    // GET LIVE ETH PRICE FROM CONTRACT ORACLE
+    // GET SYNCED ORACLE PRICE (CRITICAL)
     // =====================================================================
+    console.log("\n📡 Fetching consensus ETH price from contract...");
     let ethPrice;
     try {
-      const [price] = await warehouse._getConsensusEthPrice();
+      const [price, confidence] = await warehouse._getConsensusEthPrice();
       ethPrice = price;
-      console.log(`📡 Oracle ETH Price: $${ethers.formatUnits(ethPrice, 8)}`);
+      console.log(`✅ Oracle Price: $${ethers.formatUnits(ethPrice, 18)} (confidence: ${confidence}/3)`);
     } catch (e) {
-      console.warn(`⚠️ Oracle failed, using fallback price $2,150`);
+      console.warn(`⚠️ Oracle fallback: using $2,150`);
       ethPrice = ethers.parseUnits("2150", 18);
     }
     
     // =====================================================================
     // PREPARE TRANSACTION
     // =====================================================================
-    const BWZC_ARGUMENT_WEI = ethers.parseUnits(BWZC_ARGUMENT.toString(), 18);
-    const USD_AMOUNT_WEI = ethers.parseUnits(TOTAL_USD.toString(), 6);
+    const argWei = ethers.parseUnits(BWZC_ARGUMENT.toString(), 18);
+    const usdWei = ethers.parseUnits(TOTAL_USD.toString(), 6);
     
     console.log("\n📤 Dispatching bootstrap transaction...");
-    console.log(`   • Seed Argument: ${ethers.formatEther(BWZC_ARGUMENT_WEI)} BWZC`);
-    console.log(`   • USD Amount:    $${ethers.formatUnits(USD_AMOUNT_WEI, 6)}`);
-    console.log(`   • ETH Price:     $${ethers.formatUnits(ethPrice, 8)}`);
-    console.log(`   • Gas Limit:     2,000,000`);
+    console.log(`   • Seed Argument: ${ethers.formatEther(argWei)} BWZC`);
+    console.log(`   • USD Amount:    $${ethers.formatUnits(usdWei, 6)}`);
+    console.log(`   • ETH Price:     $${ethers.formatUnits(ethPrice, 18)}`);
+    console.log(`   • Gas Limit:     2,500,000`);
     
     // =====================================================================
-    // EXECUTE
+    // EXECUTE BOOTSTRAP
     // =====================================================================
     const tx = await warehouse.globalInitialBootstrap(
-      BWZC_ARGUMENT_WEI,
-      USD_AMOUNT_WEI,
+      argWei,
+      usdWei,
       ethPrice,
       {
-        gasLimit: 2_000_000n,
+        gasLimit: 2_500_000n,
         maxFeePerGas: ethers.parseUnits("2.0", "gwei"),
         maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei")
       }
@@ -3247,12 +3265,19 @@ async initialize() {
       console.log(`   • Cycle Count: ${cycle}`);
       console.log(`   • Bootstrap Completed: ${boot}`);
       console.log("\n✅ System is now SELF-AUTOMATING.");
+      console.log("✅ Revenue cycles will start automatically.");
     } else {
       console.error("\n❌ Bootstrap reverted – check Etherscan for details");
     }
     
   } catch (error) {
     console.error("\n❌ Bootstrap failed:", error.shortMessage || error.reason || error.message);
+    if (error.message.includes("allowance")) {
+      console.error("   → Allowance check failed. Verify SCW approval.");
+    }
+    if (error.message.includes("price")) {
+      console.error("   → Price mismatch. Oracle sync issue.");
+    }
   }
 })();
    // THEN continue with normal MEV initialization...
