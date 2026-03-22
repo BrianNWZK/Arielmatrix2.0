@@ -3102,130 +3102,159 @@ async initialize() {
   this.provider = this.rpc.getProvider();
   this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
 // =====================================================================
-// 🚀 $1M BOOTSTRAP – FITS CURRENT GAS BALANCE (0.0032 ETH)
+// 🚀 READY-TO-RUN BOOTSTRAP - WITH 2/3 RATIO FIX & GUARDS
 // =====================================================================
 
-// Guard: run only once
-if (!this.bootstrapAttempted && !await this.warehouseContract?.bootstrapCompleted?.()) {
-  this.bootstrapAttempted = true;
+(async () => {
+  // =====================================================================
+  // CONFIGURATION
+  // =====================================================================
+  const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
+  const SCW_ADDR = "0x59bE70F1c57470D7773C3d5d27B8D165FcbE7EB2";
+  const BWZC_TOKEN = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
+  
+  // Bootstrap targets
+  const TOTAL_USD = 1_000_000;           // $1,000,000 total USD value
+  const TOTAL_BWZC_TO_SPEND = 42553;     // 42,553 BWZC total consumption
+  
+  // Calculate argument: 2/3 of total (because contract pulls seed + seed/2)
+  const BWZC_ARGUMENT = Math.floor((TOTAL_BWZC_TO_SPEND * 2) / 3);
   
   console.log("\n" + "=".repeat(70));
-  console.log("🚀 $1M BOOTSTRAP – CONSERVATIVE START");
+  console.log("🚀 INSTITUTIONAL BOOTSTRAP – 2/3 RATIO FIX");
   console.log("=".repeat(70));
-
+  console.log(`   • Total USD Target:    $${TOTAL_USD.toLocaleString()}`);
+  console.log(`   • Total BWZC Spend:    ${TOTAL_BWZC_TO_SPEND.toLocaleString()}`);
+  console.log(`   • Seed Argument:       ${BWZC_ARGUMENT.toLocaleString()} (2/3 of total)`);
+  console.log(`   • Shield Pull:         ${Math.floor(BWZC_ARGUMENT / 2).toLocaleString()} (1/3 of total)`);
+  console.log(`   • Total Pull:          ${(BWZC_ARGUMENT + Math.floor(BWZC_ARGUMENT / 2)).toLocaleString()}`);
+  console.log("=".repeat(70));
+  
   try {
     // =====================================================================
-    // CONTRACT INSTANCE
+    // CONTRACT INSTANCES
     // =====================================================================
-    const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
     const activeSigner = this.signer.connect(this.provider);
-
+    
     const warehouse = new ethers.Contract(
       WAREHOUSE_ADDR,
       [
-        'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
+        'function globalInitialBootstrap(uint256, uint256, uint256) external',
         'function bootstrapCompleted() view returns (bool)',
-        'function cycleCount() view returns (uint256)'
+        'function cycleCount() view returns (uint256)',
+        'function _getConsensusEthPrice() external returns (uint256, uint8)'
       ],
       activeSigner
     );
-
+    
     // =====================================================================
-    // PARAMETERS – $1M TOTAL → $250k Strike
+    // CHECK IF ALREADY BOOTSTRAPPED
     // =====================================================================
-    const ETH_PRICE = 2150;  // Current market rate
-    const MANUAL_ETH_PRICE = ethers.parseUnits(ETH_PRICE.toString(), 18);
-
-    // $1,000,000 total USD (6 decimals)
-    const USD_AMOUNT = ethers.parseUnits("1000000", 6);
-
-    // BWZC Seed: $1M ÷ $23.50 = 42,553 BWZC
-    const BWZC_SEED = ethers.parseUnits("42553", 18);
-
-    console.log("\n📊 BOOTSTRAP PARAMETERS:");
-    console.log(`   • Total USD:     $${ethers.formatUnits(USD_AMOUNT, 6).toLocaleString()}`);
-    console.log(`   • Strike Value:  $250,000 (25%)`);
-    console.log(`   • Strike USDC:   $187,500`);
-    console.log(`   • Strike WETH:   $62,500 (~29 ETH @ $2,150)`);
-    console.log(`   • BWZC Seed:     ${ethers.formatEther(BWZC_SEED)}`);
-    console.log(`   • ETH Price:     $${ETH_PRICE}`);
-    console.log(`   • Gas Limit:     1,500,000`);
-    console.log(`   • Est. Gas Cost: ~0.0027 ETH (~$5.80)`);
-    console.log(`   • Your Balance:  ${ethers.formatEther(await this.provider.getBalance(this.signer.address))} ETH`);
-
+    const bootstrapCompleted = await warehouse.bootstrapCompleted();
+    if (bootstrapCompleted) {
+      console.log("\n✅ Bootstrap already completed. Skipping.");
+      return;
+    }
+    
+    console.log("\n📊 System not bootstrapped. Proceeding...");
+    
     // =====================================================================
-    // CHECK SCW BWZC BALANCE
+    // CHECK SCW BALANCE
     // =====================================================================
-    const bwzcToken = new ethers.Contract(
-      "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2",
+    const bwzc = new ethers.Contract(
+      BWZC_TOKEN,
       ['function balanceOf(address) view returns (uint256)'],
       this.provider
     );
-    const scwBalance = await bwzcToken.balanceOf(LIVE.SCW_ADDRESS);
-    console.log(`\n💰 SCW BWZC Balance: ${ethers.formatEther(scwBalance)}`);
-
-    if (scwBalance < BWZC_SEED) {
-      console.warn(`⚠️ SCW balance is ${ethers.formatEther(scwBalance)} but need ${ethers.formatEther(BWZC_SEED)}`);
-      console.warn(`   Continuing anyway (bootstrap may fail if insufficient)`);
-    } else {
-      console.log(`✅ SCW has sufficient BWZC balance`);
+    const scwBalance = await bwzc.balanceOf(SCW_ADDR);
+    console.log(`💰 SCW BWZC Balance: ${ethers.formatEther(scwBalance)}`);
+    
+    const requiredTotal = ethers.parseUnits(TOTAL_BWZC_TO_SPEND.toString(), 18);
+    if (scwBalance < requiredTotal) {
+      console.error(`❌ Insufficient BWZC. Need ${ethers.formatEther(requiredTotal)}`);
+      return;
     }
-
+    console.log(`✅ SCW has sufficient balance`);
+    
     // =====================================================================
-    // EXECUTE BOOTSTRAP
+    // CHECK ALLOWANCE
     // =====================================================================
+    const allowance = await bwzc.allowance(SCW_ADDR, WAREHOUSE_ADDR);
+    console.log(`🔓 Warehouse Allowance: ${ethers.formatEther(allowance)}`);
+    
+    if (allowance < requiredTotal) {
+      console.error(`❌ Insufficient allowance. Need to approve first.`);
+      return;
+    }
+    console.log(`✅ Allowance sufficient`);
+    
+    // =====================================================================
+    // GET LIVE ETH PRICE FROM CONTRACT ORACLE
+    // =====================================================================
+    let ethPrice;
+    try {
+      const [price] = await warehouse._getConsensusEthPrice();
+      ethPrice = price;
+      console.log(`📡 Oracle ETH Price: $${ethers.formatUnits(ethPrice, 8)}`);
+    } catch (e) {
+      console.warn(`⚠️ Oracle failed, using fallback price $2,150`);
+      ethPrice = ethers.parseUnits("2150", 18);
+    }
+    
+    // =====================================================================
+    // PREPARE TRANSACTION
+    // =====================================================================
+    const BWZC_ARGUMENT_WEI = ethers.parseUnits(BWZC_ARGUMENT.toString(), 18);
+    const USD_AMOUNT_WEI = ethers.parseUnits(TOTAL_USD.toString(), 6);
+    
     console.log("\n📤 Dispatching bootstrap transaction...");
-
+    console.log(`   • Seed Argument: ${ethers.formatEther(BWZC_ARGUMENT_WEI)} BWZC`);
+    console.log(`   • USD Amount:    $${ethers.formatUnits(USD_AMOUNT_WEI, 6)}`);
+    console.log(`   • ETH Price:     $${ethers.formatUnits(ethPrice, 8)}`);
+    console.log(`   • Gas Limit:     2,000,000`);
+    
+    // =====================================================================
+    // EXECUTE
+    // =====================================================================
     const tx = await warehouse.globalInitialBootstrap(
-      BWZC_SEED,
-      USD_AMOUNT,
-      MANUAL_ETH_PRICE,
+      BWZC_ARGUMENT_WEI,
+      USD_AMOUNT_WEI,
+      ethPrice,
       {
-        gasLimit: 1_500_000n,                    // ✅ Fits your 0.0032 ETH balance
-        maxFeePerGas: ethers.parseUnits("1.8", "gwei"),
-        maxPriorityFeePerGas: ethers.parseUnits("1.2", "gwei")
+        gasLimit: 2_000_000n,
+        maxFeePerGas: ethers.parseUnits("2.0", "gwei"),
+        maxPriorityFeePerGas: ethers.parseUnits("1.5", "gwei")
       }
     );
-
+    
     console.log(`\n✅ TX SENT: ${tx.hash}`);
     console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
-
+    
     // =====================================================================
     // WAIT FOR CONFIRMATION
     // =====================================================================
     console.log("\n⏳ Waiting for confirmation...");
     const receipt = await tx.wait();
-
+    
     if (receipt.status === 1) {
       console.log("\n🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉");
       console.log(`   • Block: ${receipt.blockNumber}`);
       console.log(`   • Gas Used: ${receipt.gasUsed.toString()}`);
-      console.log(`   • Gas Cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
       
-      // Verify final state
       const cycle = await warehouse.cycleCount();
       const boot = await warehouse.bootstrapCompleted();
       console.log(`\n📊 FINAL STATE:`);
       console.log(`   • Cycle Count: ${cycle}`);
       console.log(`   • Bootstrap Completed: ${boot}`);
-      
-      // Mark as done
-      this.bootstrapCompleted = true;
-      console.log("\n✅ System is now SELF-AUTOMATING. Revenue cycles will start automatically.");
-      
+      console.log("\n✅ System is now SELF-AUTOMATING.");
     } else {
       console.error("\n❌ Bootstrap reverted – check Etherscan for details");
-      this.bootstrapAttempted = false; // allow retry
     }
     
-  } catch (e) {
-    console.error("\n❌ Bootstrap failed:", e.shortMessage || e.reason || e.message);
-    this.bootstrapAttempted = false; // allow retry
+  } catch (error) {
+    console.error("\n❌ Bootstrap failed:", error.shortMessage || error.reason || error.message);
   }
-  
-} else {
-  console.log("✅ Bootstrap already completed – skipping");
-}
+})();
    // THEN continue with normal MEV initialization...
 console.log('\n📈 Continuing with MEV system initialization...');
    
