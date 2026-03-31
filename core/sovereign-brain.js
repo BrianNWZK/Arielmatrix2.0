@@ -148,7 +148,7 @@ const LIVE = {
     STRICT_ORDERING: true,
     PARALLEL_SIM_SLOTS: Number(process.env.PARALLEL_SIM_SLOTS || 4),
     NONCE_LOCK_MS: Number(process.env.NONCE_LOCK_MS || 8000),
-    GAS_BUMP_BPS: Number(process.env.GAS_BUMP_BPS || 150),
+    GAS_BUMP_BPS: Number(process.env.GAS_BUMP_BPS || 110),
     SIGNATURE_SALT: '',
   },
 
@@ -1140,11 +1140,15 @@ class ProductionSovereignCore {
       console.log(`📊 Bootstrap: ${ethers.formatEther(BWZC_SEED)} BWZC, $${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
       
       const tx = await warehouse.globalInitialBootstrap(
-        BWZC_SEED,
-        USD_AMOUNT,
-        ethers.parseUnits(ETH_PRICE.toString(), 18),
-        { gasLimit: 1_500_000n, maxFeePerGas: ethers.parseUnits("1.8", "gwei"), maxPriorityFeePerGas: ethers.parseUnits("1.2", "gwei") }
-      );
+  BWZC_SEED,
+  USD_AMOUNT,
+  ethers.parseUnits(ETH_PRICE.toString(), 18),
+  { 
+    gasLimit: 1_200_000n,                    // Reduced from 1.5M (sufficient)
+    maxFeePerGas: ethers.parseUnits("0.1", "gwei"),      // 2x current base fee (safe)
+    maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")  // Minimum to be included
+  }
+);
       
       console.log(`✅ TX SENT: ${tx.hash}`);
       const receipt = await tx.wait();
