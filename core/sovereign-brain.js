@@ -1123,8 +1123,9 @@ class ProductionSovereignCore {
     return this;
   }
   
-  async executeBootstrap() {
+ async executeBootstrap() {
     console.log('\n🚀 EXECUTING BOOTSTRAP (ONE TIME ONLY)...\n');
+    
     try {
       const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
       const warehouse = new ethers.Contract(
@@ -1133,51 +1134,156 @@ class ProductionSovereignCore {
         this.signer
       );
       
+      // =====================================================================
+      // STEP 1: FETCH ACTUAL VAULT LIQUIDITY
+      // =====================================================================
+      const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
+      const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+      const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+      
+      const usdcContract = new ethers.Contract(USDC, ['function balanceOf(address) view returns (uint256)'], this.provider);
+      const wethContract = new ethers.Contract(WETH, ['function balanceOf(address) view returns (uint256)'], this.provider);
+      
+      const vaultUsdcRaw = await usdcContract.balanceOf(BALANCER_VAULT);
+      const vaultWethRaw = await wethContract.balanceOf(BALANCER_VAULT);
+      
+      const vaultUsdc = Number(ethers.formatUnits(vaultUsdcRaw, 6));
+      const vaultWeth = Number(ethers.formatEther(vaultWethRaw));
+      
+      console.log(`\n📊 VAULT LIQUIDITY CHECK:`);
+      console.log(`   USDC in Vault: ${vaultUsdc.toLocaleString()} USDC`);
+      console.log(`   WETH in Vault: ${vaultWeth.toFixed(2)} WETH`);
+      
+      // =====================================================================
+      // STEP 2: CALCULATE SAFE AMOUNTS (USE 60% OF AVAILABLE LIQUIDITY)
+      // =====================================================================
+      const SAFE_PERCENT = 60;  // Use 60% of available vault liquidity
+      
+      // Strike is 25% of total bootstrap, so calculate max safe strike first
+      const safeStrikeUsdc = Math.floor(vaultUsdc * SAFE_PERCENT / 100);
+      const safeStrikeWeth = Math.floor(vaultWeth * SAFE_PERCENT / 100);
+      
+      // Total bootstrap amount (strike is 25%)
+      const safeUsdAmount = safeStrikeUsdc * 4;
+      
+      // Proportional BWZC seed (42,553 BWZC per $1,000,000 USDC)
+      const safeBwzcSeed = Math.floor(safeUsdAmount * 42553 / 1000000);
+      
+      // Calculate actual WETH needed for strike (based on ETH price)
       const ETH_PRICE = 2150;
-      const USD_AMOUNT = ethers.parseUnits("1000000", 6);
-      const BWZC_SEED = ethers.parseUnits("42553", 18);
+      const calculatedStrikeWeth = (safeUsdAmount * 0.25) / ETH_PRICE;
       
-      console.log(`📊 Bootstrap: ${ethers.formatEther(BWZC_SEED)} BWZC, $${ethers.formatUnits(USD_AMOUNT, 6)} USDC`);
+      console.log(`\n📊 SAFE BOOTSTRAP CALCULATION (${SAFE_PERCENT}% of vault liquidity):`);
+      console.log(`   Max Safe Strike USDC: ${safeStrikeUsdc.toLocaleString()} USDC`);
+      console.log(`   Max Safe Strike WETH: ${safeStrikeWeth.toFixed(2)} WETH`);
+      console.log(`   Calculated Strike WETH: ${calculatedStrikeWeth.toFixed(2)} WETH`);
+      console.log(`   → Using: ${Math.min(safeStrikeWeth, calculatedStrikeWeth).toFixed(2)} WETH`);
+      console.log(`   Total Bootstrap Amount: $${safeUsdAmount.toLocaleString()} USDC`);
+      console.log(`   BWZC Seed Needed: ${safeBwzcSeed.toLocaleString()} BWZC`);
       
-    const tx = await warehouse.globalInitialBootstrap(
-  BWZC_SEED,
-  USD_AMOUNT,
-  ethers.parseUnits(ETH_PRICE.toString(), 18),
-  { 
-    gasLimit: 1_200_000n,
-    maxFeePerGas: ethers.parseUnits("0.25", "gwei"),      // UPDATED: 0.25 GWEI (covers base fee)
-    maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")   // Priority fee remains
-  }
-);
+      // Validate we have enough BWZC in SCW
+      const bwzcContract = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
+      const scwBwzcRaw = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
+      const scwBwzc = Number(ethers.formatEther(scwBwzcRaw));
+      const totalBwzcNeeded = safeBwzcSeed + (safeBwzcSeed / 2);
       
-      console.log(`✅ TX SENT: ${tx.hash}`);
+      if (scwBwzc < totalBwzcNeeded) {
+        console.error(`\n❌ INSUFFICIENT BWZC IN SCW!`);
+        console.error(`   Need: ${totalBwzcNeeded.toLocaleString()} BWZC`);
+        console.error(`   Have: ${scwBwzc.toLocaleString()} BWZC`);
+        console.error(`   Shortfall: ${(totalBwzcNeeded - scwBwzc).toLocaleString()} BWZC`);
+        throw new Error("Insufficient BWZC balance in SCW");
+      }
+      
+      // Validate vault has enough for flashloan
+      if (vaultUsdc < safeStrikeUsdc) {
+        console.error(`\n❌ VAULT USDC INSUFFICIENT!`);
+        console.error(`   Need: ${safeStrikeUsdc.toLocaleString()} USDC`);
+        console.error(`   Have: ${vaultUsdc.toLocaleString()} USDC`);
+        throw new Error("Vault USDC insufficient for flashloan");
+      }
+      
+      if (vaultWeth < calculatedStrikeWeth) {
+        console.error(`\n❌ VAULT WETH INSUFFICIENT!`);
+        console.error(`   Need: ${calculatedStrikeWeth.toFixed(2)} WETH`);
+        console.error(`   Have: ${vaultWeth.toFixed(2)} WETH`);
+        throw new Error("Vault WETH insufficient for flashloan");
+      }
+      
+      // =====================================================================
+      // STEP 3: EXECUTE BOOTSTRAP WITH SAFE AMOUNTS
+      // =====================================================================
+      const ETH_PRICE_WEI = ethers.parseUnits(ETH_PRICE.toString(), 18);
+      const USD_AMOUNT_WEI = ethers.parseUnits(safeUsdAmount.toString(), 6);
+      const BWZC_SEED_WEI = ethers.parseEther(safeBwzcSeed.toString());
+      
+      console.log(`\n📤 EXECUTING BOOTSTRAP TRANSACTION:`);
+      console.log(`   BWZC Seed: ${ethers.formatEther(BWZC_SEED_WEI)} BWZC`);
+      console.log(`   USD Amount: $${ethers.formatUnits(USD_AMOUNT_WEI, 6)} USDC`);
+      console.log(`   ETH Price: $${ETH_PRICE}`);
+      console.log(`   Gas Limit: 1,500,000`);
+      console.log(`   Max Fee: 0.25 GWEI`);
+      console.log(`   Priority Fee: 0.05 GWEI`);
+      
+      const tx = await warehouse.globalInitialBootstrap(
+        BWZC_SEED_WEI,
+        USD_AMOUNT_WEI,
+        ETH_PRICE_WEI,
+        { 
+          gasLimit: 1_500_000n,
+          maxFeePerGas: ethers.parseUnits("0.25", "gwei"),
+          maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
+        }
+      );
+      
+      console.log(`\n✅ TX SENT: ${tx.hash}`);
+      console.log(`🔍 View on Etherscan: https://etherscan.io/tx/${tx.hash}`);
+      
+      // =====================================================================
+      // STEP 4: WAIT FOR CONFIRMATION
+      // =====================================================================
+      console.log(`\n⏳ Waiting for confirmation...`);
       const receipt = await tx.wait();
       
       if (receipt.status === 1) {
-        console.log(`🎉 BOOTSTRAP SUCCESSFUL! Block: ${receipt.blockNumber}`);
+        console.log(`\n🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉`);
+        console.log(`   Block: ${receipt.blockNumber}`);
+        console.log(`   Gas Used: ${receipt.gasUsed.toString()}`);
+        console.log(`   Effective Gas Price: ${ethers.formatUnits(receipt.gasPrice, "gwei")} GWEI`);
+        console.log(`   Total Gas Cost: ${ethers.formatEther(receipt.gasUsed * receipt.gasPrice)} ETH`);
+        
         this.bootstrapCompleted = true;
+        
+        // Verify final state
+        const cycleCount = await warehouse.cycleCount();
+        const bootstrapCompleted = await warehouse.bootstrapCompleted();
+        console.log(`\n📊 FINAL STATE:`);
+        console.log(`   Cycle Count: ${cycleCount}`);
+        console.log(`   Bootstrap Completed: ${bootstrapCompleted}`);
+        console.log(`\n✅ System is now SELF-AUTOMATING! Revenue cycles will start automatically.`);
+        
       } else {
-        console.error('❌ Bootstrap reverted');
+        console.error(`\n❌ Bootstrap reverted!`);
+        console.error(`   Check transaction on Etherscan for details.`);
       }
+      
     } catch (e) {
-      console.error('❌ Bootstrap failed:', e.shortMessage || e.reason || e.message);
+      console.error(`\n❌ Bootstrap failed:`, e.shortMessage || e.reason || e.message);
+      
+      // Provide helpful error messages
+      if (e.message.includes("insufficient funds")) {
+        console.error(`\n🔧 FIX: SCW needs more ETH for gas. Send at least 0.01 ETH to:`);
+        console.error(`   ${LIVE.SCW_ADDRESS}`);
+      } else if (e.message.includes("Vault USDC insufficient")) {
+        console.error(`\n🔧 FIX: Vault doesn't have enough USDC. Reduce bootstrap amount or wait for more liquidity.`);
+      } else if (e.message.includes("Vault WETH insufficient")) {
+        console.error(`\n🔧 FIX: Vault doesn't have enough WETH. Reduce bootstrap amount or wait for more liquidity.`);
+      } else if (e.message.includes("SCWInsufficientBWZC")) {
+        console.error(`\n🔧 FIX: SCW needs more BWZC tokens. Current balance: ${scwBwzc.toLocaleString()} BWZC`);
+        console.error(`   Need at least: ${totalBwzcNeeded.toLocaleString()} BWZC`);
+      }
     }
   }
-  
-  getStats() {
-    return {
-      system: { status: 'OPERATIONAL', version: LIVE.VERSION, uptime: process.uptime() },
-      mev: { profitVerifier: this.profitVerifier?.stats || { executedOps: 0, totalRevenueUSD: 0 } },
-      queues: this.bundleManager?.getQueueStats() || { pendingCount: 0 }
-    };
-  }
-  
-  async shutdown() {
-    if (this.blockCoordinator) this.blockCoordinator.stop();
-    console.log('🛑 Shutdown complete');
-  }
-}
-
 /* =========================================================================
    HTTP SERVER - PORT BINDING FOR RENDER
    ========================================================================= */
