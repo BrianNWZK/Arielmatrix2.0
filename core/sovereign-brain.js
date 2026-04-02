@@ -1287,61 +1287,35 @@ class ProductionSovereignCore {
 /* =========================================================================
    HTTP SERVER - PORT BINDING FOR RENDER
    ========================================================================= */
-// =========================================================================
-// START SERVER (Always start for Render)
-// =========================================================================
 
-const startServer = () => {
-  const app = express();
-  const PORT = process.env.PORT || 10000;
-  
-  app.get('/health', (req, res) => res.json({ 
-    status: 'HEALTHY', 
-    version: LIVE.VERSION, 
-    timestamp: new Date().toISOString() 
-  }));
-  
-  app.get('/', (req, res) => res.json({ 
-    status: 'OPERATIONAL', 
-    version: LIVE.VERSION, 
-    warehouse: LIVE.WAREHOUSE_CONTRACT,
-    message: 'Sovereign MEV Brain Active'
-  }));
-  
-  app.get('/revenue-status', (req, res) => res.json({
-    status: 'ACTIVE',
-    network: 'Mainnet',
-    version: LIVE.VERSION,
-    timestamp: new Date().toISOString()
-  }));
-  
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Server bound to port ${PORT}`);
-    console.log(`🌐 Health: http://localhost:${PORT}/health`);
-  });
-  
-  return server;
-};
+const PORT = process.env.PORT || 10000;
+const app = express();
 
-// Start everything
-const server = startServer();
+app.get('/health', (req, res) => {
+  res.json({ status: 'HEALTHY', version: LIVE.VERSION, timestamp: new Date().toISOString() });
+});
+
+app.get('/', (req, res) => {
+  res.json({ status: 'OPERATIONAL', version: LIVE.VERSION, warehouse: LIVE.WAREHOUSE_CONTRACT });
+});
+
+app.get('/revenue-status', (req, res) => {
+  res.json({ status: 'ACTIVE', network: 'Mainnet', version: LIVE.VERSION });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server bound to port ${PORT}`);
+});
+
 const core = new ProductionSovereignCore();
 
-// Initialize with delay to ensure server is ready
 setTimeout(async () => {
   try { 
     await core.initialize(); 
-    console.log(`\n✅ SOVEREIGN MEV BRAIN ${LIVE.VERSION} DEPLOYED — MAINNET ACTIVE`);
   } catch (err) { 
-    console.error('💥 Initialization error:', err.message);
+    console.error('Initialization error:', err.message);
   }
 }, 2000);
-
-// Handle shutdown
-process.on('SIGTERM', () => {
-  console.log('Shutting down...');
-  server.close(() => process.exit(0));
-});
 
 /* =========================================================================
    EXPORTS
