@@ -1222,7 +1222,7 @@ class ProductionSovereignCore {
       console.log(`   USD Amount: $${ethers.formatUnits(USD_AMOUNT_WEI, 6)} USDC`);
       console.log(`   ETH Price: $${ETH_PRICE}`);
       console.log(`   Gas Limit: 1,500,000`);
-      console.log(`   Max Fee: 0.25 GWEI`);
+      console.log(`   Max Fee: 0.18 GWEI`);
       console.log(`   Priority Fee: 0.05 GWEI`);
       
       const tx = await warehouse.globalInitialBootstrap(
