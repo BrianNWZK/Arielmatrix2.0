@@ -124,7 +124,7 @@ async function debugBootstrap() {
         
         if (bootstrapCompleted) {
             console.log("\n⚠️ BOOTSTRAP ALREADY COMPLETED! No action needed.");
-            return;
+            return { ready: false, alreadyBootstrapped: true };
         }
     } catch (e) {
         console.log(`   ❌ Cannot read contract state: ${e.message}`);
@@ -224,19 +224,15 @@ async function debugBootstrap() {
     console.log(`\n   Pool: BWAEZI/USDC`);
     console.log(`   Pool ID: ${CONFIG.BAL_BW_USDC_ID}`);
     
-    let poolUsdcTokens = [];
-    let poolUsdcBalances = [];
     let poolUsdcValid = false;
     
     try {
         const [tokens, balances] = await vault.getPoolTokens(CONFIG.BAL_BW_USDC_ID);
-        poolUsdcTokens = tokens;
-        poolUsdcBalances = balances;
         poolUsdcValid = true;
         
         console.log(`   ✅ Pool exists!`);
-        console.log(`   Token0: ${tokens[0]} ${tokens[0] === CONFIG.BWAEZI ? '(BWAEZI)' : tokens[0] === CONFIG.USDC ? '(USDC)' : ''}`);
-        console.log(`   Token1: ${tokens[1]} ${tokens[1] === CONFIG.BWAEZI ? '(BWAEZI)' : tokens[1] === CONFIG.USDC ? '(USDC)' : ''}`);
+        console.log(`   Token0: ${tokens[0]}`);
+        console.log(`   Token1: ${tokens[1]}`);
         console.log(`   Balance0: ${ethers.formatUnits(balances[0], tokens[0] === CONFIG.USDC ? usdcDecimals : bwaeziDecimals)}`);
         console.log(`   Balance1: ${ethers.formatUnits(balances[1], tokens[1] === CONFIG.USDC ? usdcDecimals : bwaeziDecimals)}`);
         
@@ -257,17 +253,15 @@ async function debugBootstrap() {
     console.log(`\n   Pool: BWAEZI/WETH`);
     console.log(`   Pool ID: ${CONFIG.BAL_BW_WETH_ID}`);
     
-    let poolWethTokens = [];
     let poolWethValid = false;
     
     try {
         const [tokens, balances] = await vault.getPoolTokens(CONFIG.BAL_BW_WETH_ID);
-        poolWethTokens = tokens;
         poolWethValid = true;
         
         console.log(`   ✅ Pool exists!`);
-        console.log(`   Token0: ${tokens[0]} ${tokens[0] === CONFIG.BWAEZI ? '(BWAEZI)' : tokens[0] === CONFIG.WETH ? '(WETH)' : ''}`);
-        console.log(`   Token1: ${tokens[1]} ${tokens[1] === CONFIG.BWAEZI ? '(BWAEZI)' : tokens[1] === CONFIG.WETH ? '(WETH)' : ''}`);
+        console.log(`   Token0: ${tokens[0]}`);
+        console.log(`   Token1: ${tokens[1]}`);
         console.log(`   Balance0: ${ethers.formatUnits(balances[0], tokens[0] === CONFIG.WETH ? wethDecimals : bwaeziDecimals)}`);
         console.log(`   Balance1: ${ethers.formatUnits(balances[1], tokens[1] === CONFIG.WETH ? wethDecimals : bwaeziDecimals)}`);
         
@@ -354,21 +348,18 @@ async function debugBootstrap() {
         
         if (!hasAllowance) {
             console.log("\n   1. APPROVE WAREHOUSE CONTRACT:");
-            console.log(`      ```javascript`);
             console.log(`      const bwaezi = new ethers.Contract("${CONFIG.BWAEZI}", ERC20_ABI, signer);`);
-            console.log(`      await bwaezi.appendApproval("${CONFIG.WAREHOUSE}", ethers.MaxUint256);`);
-            console.log(`      ````);
+            console.log(`      await bwaezi.approve("${CONFIG.WAREHOUSE}", ethers.MaxUint256);`);
         }
         
         if (!vaultHasEnoughUsdc || !vaultHasEnoughWeth) {
             console.log("\n   2. REDUCE BOOTSTRAP AMOUNT:");
             const maxSafeUsdc = vaultUsdc * 80n / 100n;
             const maxSafeUsdAmount = maxSafeUsdc * 4n;
-            const maxSafeBwzcSeed = maxSafeUsdAmount * requiredBwzcSeed / ethers.parseUnits("1000000", usdcDecimals);
             
             console.log(`      Recommended values:`);
             console.log(`      - usdAmount: ${ethers.formatUnits(maxSafeUsdAmount, usdcDecimals)} USDC`);
-            console.log(`      - bwzcSeedAmount: ${ethers.formatEther(maxSafeBwzcSeed)} BWZC`);
+            console.log(`      - bwzcSeedAmount: ${ethers.formatEther(maxSafeUsdAmount * requiredBwzcSeed / ethers.parseUnits("1000000", usdcDecimals))} BWZC`);
             console.log(`      - ethPrice: 2150000000000000000000 ($${2150})`);
         }
         
