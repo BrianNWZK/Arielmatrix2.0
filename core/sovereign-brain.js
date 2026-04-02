@@ -1287,35 +1287,23 @@ class ProductionSovereignCore {
 /* =========================================================================
    HTTP SERVER - PORT BINDING FOR RENDER
    ========================================================================= */
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const app = express();
+  const PORT = process.env.PORT || 10000;
 
-const PORT = process.env.PORT || 10000;
-const app = express();
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'HEALTHY', version: LIVE.VERSION, timestamp: new Date().toISOString() });
-});
-
-app.get('/', (req, res) => {
-  res.json({ status: 'OPERATIONAL', version: LIVE.VERSION, warehouse: LIVE.WAREHOUSE_CONTRACT });
-});
-
-app.get('/revenue-status', (req, res) => {
-  res.json({ status: 'ACTIVE', network: 'Mainnet', version: LIVE.VERSION });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server bound to port ${PORT}`);
-});
-
-const core = new ProductionSovereignCore();
-
-setTimeout(async () => {
-  try { 
-    await core.initialize(); 
-  } catch (err) { 
-    console.error('Initialization error:', err.message);
-  }
-}, 2000);
+  app.get('/health', (req, res) => res.json({ 
+    status: 'HEALTHY', 
+    version: LIVE.VERSION,
+    timestamp: new Date().toISOString() 
+  }));
+  
+  const server = app.listen(PORT, '0.0.0.0', () => console.log(`✅ Server bound to port ${PORT}`));
+  
+  const core = new ProductionSovereignCore();
+  setTimeout(async () => {
+    try { await core.initialize(); } catch (err) { console.error('💥 Initialization error:', err.message); }
+  }, 2000);
+}
 
 /* =========================================================================
    EXPORTS
