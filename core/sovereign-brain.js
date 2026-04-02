@@ -1123,7 +1123,7 @@ class ProductionSovereignCore {
     return this;
   }
   
- async executeBootstrap() {
+async executeBootstrap() {
     console.log('\n🚀 EXECUTING BOOTSTRAP (ONE TIME ONLY)...\n');
     
     try {
@@ -1155,63 +1155,84 @@ class ProductionSovereignCore {
       console.log(`   WETH in Vault: ${vaultWeth.toFixed(2)} WETH`);
       
       // =====================================================================
-      // STEP 2: CALCULATE SAFE AMOUNTS (USE 60% OF AVAILABLE LIQUIDITY)
+      // STEP 2: GENIUS CALCULATION - PROPORTIONAL TO TARGET RATIO
       // =====================================================================
+      const ETH_PRICE = 2150;
+      const TARGET_USDC_PER_BWZC = 23.5;  // Balancer price target
+      const TARGET_WETH_PER_BWZC = TARGET_USDC_PER_BWZC / ETH_PRICE; // 0.010930232558139535 WETH per BWZC
+      
       const SAFE_PERCENT = 60;  // Use 60% of available vault liquidity
       
-      // Strike is 25% of total bootstrap, so calculate max safe strike first
-      const safeStrikeUsdc = Math.floor(vaultUsdc * SAFE_PERCENT / 100);
-      const safeStrikeWeth = Math.floor(vaultWeth * SAFE_PERCENT / 100);
+      // Calculate max safe strike from vault liquidity
+      const maxSafeStrikeUsdc = Math.floor(vaultUsdc * SAFE_PERCENT / 100);
+      const maxSafeTotalUsd = maxSafeStrikeUsdc * 4;
       
-      // Total bootstrap amount (strike is 25%)
-      const safeUsdAmount = safeStrikeUsdc * 4;
+      // Calculate proportional BWZC seed based on TARGET RATIO
+      // For USDC pool: BWZC = USDC / 23.5
+      const proportionalBwzcSeed = Math.floor(maxSafeTotalUsd / TARGET_USDC_PER_BWZC);
       
-      // Proportional BWZC seed (42,553 BWZC per $1,000,000 USDC)
-      const safeBwzcSeed = Math.floor(safeUsdAmount * 42553 / 1000000);
+      // Validate this matches the 42,553 per $1M formula
+      const expectedBwzcPerMillion = 42553;
+      const calculatedBwzcPerMillion = proportionalBwzcSeed / (maxSafeTotalUsd / 1000000);
       
-      // Calculate actual WETH needed for strike (based on ETH price)
-      const ETH_PRICE = 2150;
+      console.log(`\n📊 GENIUS PROPORTIONAL CALCULATION:`);
+      console.log(`   Target USDC/BWZC Ratio: ${TARGET_USDC_PER_BWZC}`);
+      console.log(`   Target WETH/BWZC Ratio: ${TARGET_WETH_PER_BWZC.toFixed(12)}`);
+      console.log(`   Proportional BWZC Seed: ${proportionalBwzcSeed.toLocaleString()} BWZC`);
+      console.log(`   Formula Check: ${calculatedBwzcPerMillion.toFixed(0)} BWZC per $1M (expected: ${expectedBwzcPerMillion})`);
+      
+      // Use the proportional amount
+      const safeUsdAmount = maxSafeTotalUsd;
+      const safeBwzcSeed = proportionalBwzcSeed;
+      
+      // Calculate strike amounts
+      const safeStrikeUsdc = Math.floor(safeUsdAmount * 0.25);
       const calculatedStrikeWeth = (safeUsdAmount * 0.25) / ETH_PRICE;
       
-      console.log(`\n📊 SAFE BOOTSTRAP CALCULATION (${SAFE_PERCENT}% of vault liquidity):`);
-      console.log(`   Max Safe Strike USDC: ${safeStrikeUsdc.toLocaleString()} USDC`);
-      console.log(`   Max Safe Strike WETH: ${safeStrikeWeth.toFixed(2)} WETH`);
-      console.log(`   Calculated Strike WETH: ${calculatedStrikeWeth.toFixed(2)} WETH`);
-      console.log(`   → Using: ${Math.min(safeStrikeWeth, calculatedStrikeWeth).toFixed(2)} WETH`);
-      console.log(`   Total Bootstrap Amount: $${safeUsdAmount.toLocaleString()} USDC`);
-      console.log(`   BWZC Seed Needed: ${safeBwzcSeed.toLocaleString()} BWZC`);
+      console.log(`\n📊 FINAL BOOTSTRAP AMOUNTS:`);
+      console.log(`   Total Bootstrap: $${safeUsdAmount.toLocaleString()} USDC`);
+      console.log(`   BWZC Seed: ${safeBwzcSeed.toLocaleString()} BWZC`);
+      console.log(`   Strike USDC (25%): ${safeStrikeUsdc.toLocaleString()} USDC`);
+      console.log(`   Strike WETH: ${calculatedStrikeWeth.toFixed(2)} WETH`);
+      console.log(`   Seed USDC (30%): ${(safeUsdAmount * 0.3).toLocaleString()} USDC`);
+      console.log(`   Seed WETH: ${((safeUsdAmount * 0.3) / ETH_PRICE).toFixed(2)} WETH`);
       
-      // Validate we have enough BWZC in SCW
+      // =====================================================================
+      // STEP 3: VALIDATE SUFFICIENT BALANCES
+      // =====================================================================
       const bwzcContract = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
       const scwBwzcRaw = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
       const scwBwzc = Number(ethers.formatEther(scwBwzcRaw));
-      const totalBwzcNeeded = safeBwzcSeed + (safeBwzcSeed / 2);
+      const totalBwzcNeeded = safeBwzcSeed + (safeBwzcSeed / 2); // Seed + Arb inventory
+      
+      console.log(`\n📊 SCW BALANCE CHECK:`);
+      console.log(`   SCW BWZC: ${scwBwzc.toLocaleString()} BWZC`);
+      console.log(`   Needed: ${totalBwzcNeeded.toLocaleString()} BWZC`);
       
       if (scwBwzc < totalBwzcNeeded) {
-        console.error(`\n❌ INSUFFICIENT BWZC IN SCW!`);
-        console.error(`   Need: ${totalBwzcNeeded.toLocaleString()} BWZC`);
-        console.error(`   Have: ${scwBwzc.toLocaleString()} BWZC`);
-        console.error(`   Shortfall: ${(totalBwzcNeeded - scwBwzc).toLocaleString()} BWZC`);
-        throw new Error("Insufficient BWZC balance in SCW");
+        throw new Error(`Insufficient BWZC: need ${totalBwzcNeeded.toLocaleString()}, have ${scwBwzc.toLocaleString()}`);
+      }
+      
+      // Check SCW ETH balance
+      const scwEthRaw = await this.provider.getBalance(LIVE.SCW_ADDRESS);
+      const scwEth = Number(ethers.formatEther(scwEthRaw));
+      console.log(`   SCW ETH: ${scwEth.toFixed(6)} ETH`);
+      
+      if (scwEth < 0.0001) {
+        console.warn(`   ⚠️ Low ETH! Send 0.0001 ETH to ${LIVE.SCW_ADDRESS}`);
       }
       
       // Validate vault has enough for flashloan
       if (vaultUsdc < safeStrikeUsdc) {
-        console.error(`\n❌ VAULT USDC INSUFFICIENT!`);
-        console.error(`   Need: ${safeStrikeUsdc.toLocaleString()} USDC`);
-        console.error(`   Have: ${vaultUsdc.toLocaleString()} USDC`);
-        throw new Error("Vault USDC insufficient for flashloan");
+        throw new Error(`Vault USDC insufficient: need ${safeStrikeUsdc.toLocaleString()}, have ${vaultUsdc.toLocaleString()}`);
       }
       
       if (vaultWeth < calculatedStrikeWeth) {
-        console.error(`\n❌ VAULT WETH INSUFFICIENT!`);
-        console.error(`   Need: ${calculatedStrikeWeth.toFixed(2)} WETH`);
-        console.error(`   Have: ${vaultWeth.toFixed(2)} WETH`);
-        throw new Error("Vault WETH insufficient for flashloan");
+        throw new Error(`Vault WETH insufficient: need ${calculatedStrikeWeth.toFixed(2)}, have ${vaultWeth.toFixed(2)}`);
       }
       
       // =====================================================================
-      // STEP 3: EXECUTE BOOTSTRAP WITH SAFE AMOUNTS
+      // STEP 4: EXECUTE BOOTSTRAP
       // =====================================================================
       const ETH_PRICE_WEI = ethers.parseUnits(ETH_PRICE.toString(), 18);
       const USD_AMOUNT_WEI = ethers.parseUnits(safeUsdAmount.toString(), 6);
@@ -1222,7 +1243,7 @@ class ProductionSovereignCore {
       console.log(`   USD Amount: $${ethers.formatUnits(USD_AMOUNT_WEI, 6)} USDC`);
       console.log(`   ETH Price: $${ETH_PRICE}`);
       console.log(`   Gas Limit: 1,500,000`);
-      console.log(`   Max Fee: 0.18 GWEI`);
+      console.log(`   Max Fee: 0.2 GWEI`);
       console.log(`   Priority Fee: 0.05 GWEI`);
       
       const tx = await warehouse.globalInitialBootstrap(
@@ -1231,16 +1252,16 @@ class ProductionSovereignCore {
         ETH_PRICE_WEI,
         { 
           gasLimit: 1_500_000n,
-          maxFeePerGas: ethers.parseUnits("0.25", "gwei"),
+          maxFeePerGas: ethers.parseUnits("0.2", "gwei"),
           maxPriorityFeePerGas: ethers.parseUnits("0.05", "gwei")
         }
       );
       
       console.log(`\n✅ TX SENT: ${tx.hash}`);
-      console.log(`🔍 View on Etherscan: https://etherscan.io/tx/${tx.hash}`);
+      console.log(`🔍 View: https://etherscan.io/tx/${tx.hash}`);
       
       // =====================================================================
-      // STEP 4: WAIT FOR CONFIRMATION
+      // STEP 5: WAIT FOR CONFIRMATION
       // =====================================================================
       console.log(`\n⏳ Waiting for confirmation...`);
       const receipt = await tx.wait();
@@ -1263,28 +1284,27 @@ class ProductionSovereignCore {
         console.log(`\n✅ System is now SELF-AUTOMATING! Revenue cycles will start automatically.`);
         
       } else {
-        console.error(`\n❌ Bootstrap reverted!`);
-        console.error(`   Check transaction on Etherscan for details.`);
+        console.error(`\n❌ Bootstrap reverted! Check transaction on Etherscan.`);
       }
       
     } catch (e) {
       console.error(`\n❌ Bootstrap failed:`, e.shortMessage || e.reason || e.message);
       
-      // Provide helpful error messages
       if (e.message.includes("insufficient funds")) {
-        console.error(`\n🔧 FIX: SCW needs more ETH for gas. Send at least 0.01 ETH to:`);
-        console.error(`   ${LIVE.SCW_ADDRESS}`);
+        console.error(`\n🔧 Send 0.01 ETH to: ${LIVE.SCW_ADDRESS}`);
       } else if (e.message.includes("Vault USDC insufficient")) {
-        console.error(`\n🔧 FIX: Vault doesn't have enough USDC. Reduce bootstrap amount or wait for more liquidity.`);
+        console.error(`\n🔧 Reduce bootstrap amount. Try: ${Math.floor(vaultUsdc * 0.4 * 4).toLocaleString()} USDC`);
       } else if (e.message.includes("Vault WETH insufficient")) {
-        console.error(`\n🔧 FIX: Vault doesn't have enough WETH. Reduce bootstrap amount or wait for more liquidity.`);
+        console.error(`\n🔧 Reduce bootstrap amount. Vault WETH: ${vaultWeth.toFixed(2)}`);
       } else if (e.message.includes("SCWInsufficientBWZC")) {
-        console.error(`\n🔧 FIX: SCW needs more BWZC tokens. Current balance: ${scwBwzc.toLocaleString()} BWZC`);
-        console.error(`   Need at least: ${totalBwzcNeeded.toLocaleString()} BWZC`);
+        console.error(`\n🔧 Need more BWZC. Current: ${scwBwzc.toLocaleString()}, Need: ${totalBwzcNeeded.toLocaleString()}`);
+      } else if (e.message.includes("execution reverted")) {
+        console.error(`\n🔧 Contract internal error. Check:_safeJoinBalancer may be failing.`);
+        console.error(`   The contract needs the _joinBalancerDirect fix for zero-liquidity pools.`);
       }
     }
   }
-}  
+}
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
