@@ -1162,7 +1162,7 @@ async executeBootstrap() {
       // STEP 2: CALCULATE SAFE AMOUNTS (USE 60% OF AVAILABLE LIQUIDITY)
       // =====================================================================
       const SAFE_PERCENT = 60;  // Use 60% of available vault liquidity
-      const ETH_PRICE = 2150;
+      const ETH_PRICE = 2050;
       const TARGET_RATIO = 23.5;  // Target USDC per BWZC
       
       // Strike is 25% of total bootstrap
