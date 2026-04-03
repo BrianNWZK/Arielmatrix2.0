@@ -1203,8 +1203,8 @@ async executeBootstrap() {
       const scwEth = Number(ethers.formatEther(scwEthRaw));
       console.log(`   SCW ETH: ${scwEth.toFixed(6)} ETH (for gas)`);
       
-      if (scwEth < 0.003) {
-        console.warn(`   ⚠️ Low ETH balance! Send at least 0.005 ETH to ${LIVE.SCW_ADDRESS}`);
+      if (scwEth < 0.0001) {
+        console.warn(`   ⚠️ Low ETH balance! Send at least 0.0001 ETH to ${LIVE.SCW_ADDRESS}`);
       } else {
         console.log(`   ✅ SCW has sufficient ETH for gas`);
       }
