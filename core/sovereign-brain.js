@@ -1128,71 +1128,56 @@ async executeBootstrap() {
     
     try {
       const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
-      const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
-      const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-      const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-      const BWAEZI = "0x54D1c2889B08caD0932266eaDE15EC884FA0CdC2";
-      
-      const BAL_BW_USDC_ID = "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706";
-      const BAL_BW_WETH_ID = "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707";
       
       // =====================================================================
-      // STEP 1: Get ACTUAL pool balances directly from Balancer Vault
+      // STEP 1: Get current pool balances to calculate proportional amounts
       // =====================================================================
-      const vault = new ethers.Contract(
-        BALANCER_VAULT,
-        ['function getPoolTokens(bytes32) view returns (address[], uint256[], uint256)'],
+      const warehouseView = new ethers.Contract(
+        WAREHOUSE_ADDR,
+        [
+          'function getPoolBalances() external view returns (uint256, uint256, uint256)',
+          'function bootstrapCompleted() view returns (bool)',
+          'function cycleCount() view returns (uint256)',
+          'function scw() view returns (address)',
+          'function usdc() view returns (address)',
+          'function weth() view returns (address)',
+          'function bwzc() view returns (address)',
+          'function vault() view returns (address)',
+          'function balBWUSDCId() view returns (bytes32)',
+          'function balBWWETHId() view returns (bytes32)'
+        ],
         this.provider
       );
       
-      // Get USDC pool tokens and balances
-      const [tokens1, balances1] = await vault.getPoolTokens(BAL_BW_USDC_ID);
-      console.log(`\n📊 BALANCER USDC POOL (Direct Query):`);
-      console.log(`   Token0: ${tokens1[0]} ${tokens1[0].toLowerCase() === BWAEZI.toLowerCase() ? '(BWAEZI)' : tokens1[0].toLowerCase() === USDC.toLowerCase() ? '(USDC)' : ''}`);
-      console.log(`   Token1: ${tokens1[1]} ${tokens1[1].toLowerCase() === BWAEZI.toLowerCase() ? '(BWAEZI)' : tokens1[1].toLowerCase() === USDC.toLowerCase() ? '(USDC)' : ''}`);
-      console.log(`   Balance0: ${ethers.formatEther(balances1[0])} (if BWZC) or ${ethers.formatUnits(balances1[0], 6)} (if USDC)`);
-      console.log(`   Balance1: ${ethers.formatEther(balances1[1])} (if BWZC) or ${ethers.formatUnits(balances1[1], 6)} (if USDC)`);
+      // Check if already bootstrapped
+      const bootstrapCompleted = await warehouseView.bootstrapCompleted();
+      if (bootstrapCompleted) {
+        console.log('✅ Contract already bootstrapped!');
+        return;
+      }
       
-      // Determine which index is USDC and which is BWZC
-      let usdcIndex1 = tokens1[0].toLowerCase() === USDC.toLowerCase() ? 0 : 
-                       tokens1[1].toLowerCase() === USDC.toLowerCase() ? 1 : -1;
-      let bwzcIndex1 = tokens1[0].toLowerCase() === BWAEZI.toLowerCase() ? 0 : 
-                       tokens1[1].toLowerCase() === BWAEZI.toLowerCase() ? 1 : -1;
+      // Get current pool balances
+      const poolBalances = await warehouseView.getPoolBalances();
+      const currentUsdc = Number(ethers.formatUnits(poolBalances[0], 6));
+      const currentWeth = Number(ethers.formatEther(poolBalances[1]));
+      const currentBwzc = Number(ethers.formatEther(poolBalances[2]));
       
-      const poolUsdc = usdcIndex1 === 0 ? Number(ethers.formatUnits(balances1[0], 6)) : 
-                       usdcIndex1 === 1 ? Number(ethers.formatUnits(balances1[1], 6)) : 0;
-      const poolBwzc = bwzcIndex1 === 0 ? Number(ethers.formatEther(balances1[0])) : 
-                       bwzcIndex1 === 1 ? Number(ethers.formatEther(balances1[1])) : 0;
+      console.log(`\n📊 CURRENT POOL BALANCES:`);
+      console.log(`   USDC in Balancer Pool: ${currentUsdc.toFixed(2)} USDC`);
+      console.log(`   WETH in Balancer Pool: ${currentWeth.toFixed(6)} WETH`);
+      console.log(`   BWZC in Balancer Pool: ${currentBwzc.toFixed(6)} BWZC`);
       
-      console.log(`\n   ✅ USDC Balance: ${poolUsdc.toFixed(2)} USDC`);
-      console.log(`   ✅ BWZC Balance: ${poolBwzc.toFixed(6)} BWZC`);
-      
-      // Get WETH pool tokens and balances
-      const [tokens2, balances2] = await vault.getPoolTokens(BAL_BW_WETH_ID);
-      console.log(`\n📊 BALANCER WETH POOL (Direct Query):`);
-      console.log(`   Token0: ${tokens2[0]} ${tokens2[0].toLowerCase() === BWAEZI.toLowerCase() ? '(BWAEZI)' : tokens2[0].toLowerCase() === WETH.toLowerCase() ? '(WETH)' : ''}`);
-      console.log(`   Token1: ${tokens2[1]} ${tokens2[1].toLowerCase() === BWAEZI.toLowerCase() ? '(BWAEZI)' : tokens2[1].toLowerCase() === WETH.toLowerCase() ? '(WETH)' : ''}`);
-      
-      let wethIndex2 = tokens2[0].toLowerCase() === WETH.toLowerCase() ? 0 : 
-                       tokens2[1].toLowerCase() === WETH.toLowerCase() ? 1 : -1;
-      let bwzcIndex2 = tokens2[0].toLowerCase() === BWAEZI.toLowerCase() ? 0 : 
-                       tokens2[1].toLowerCase() === BWAEZI.toLowerCase() ? 1 : -1;
-      
-      const poolWeth = wethIndex2 === 0 ? Number(ethers.formatEther(balances2[0])) : 
-                       wethIndex2 === 1 ? Number(ethers.formatEther(balances2[1])) : 0;
-      const poolBwzc2 = bwzcIndex2 === 0 ? Number(ethers.formatEther(balances2[0])) : 
-                        bwzcIndex2 === 1 ? Number(ethers.formatEther(balances2[1])) : 0;
-      
-      console.log(`\n   ✅ WETH Balance: ${poolWeth.toFixed(6)} WETH`);
-      console.log(`   ✅ BWZC Balance: ${poolBwzc2.toFixed(6)} BWZC`);
-      
-      // Calculate actual ratio
-      const currentRatio = poolUsdc > 0 && poolBwzc > 0 ? poolUsdc / poolBwzc : 23.5;
-      console.log(`\n📊 CURRENT POOL RATIO: ${currentRatio.toFixed(2)} USDC/BWZC (Target: 23.5)`);
+      // Calculate current ratio
+      const currentRatio = currentUsdc > 0 && currentBwzc > 0 ? currentUsdc / currentBwzc : 23.5;
+      console.log(`   Current USDC/BWZC Ratio: ${currentRatio.toFixed(2)} (Target: 23.5)`);
       
       // =====================================================================
       // STEP 2: Fetch vault liquidity
       // =====================================================================
+      const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
+      const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+      const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+      
       const usdcContract = new ethers.Contract(USDC, ['function balanceOf(address) view returns (uint256)'], this.provider);
       const wethContract = new ethers.Contract(WETH, ['function balanceOf(address) view returns (uint256)'], this.provider);
       
@@ -1207,7 +1192,7 @@ async executeBootstrap() {
       console.log(`   WETH in Vault: ${vaultWeth.toFixed(2)} WETH`);
       
       // =====================================================================
-      // STEP 3: Calculate safe bootstrap amounts
+      // STEP 3: Calculate safe bootstrap amounts (60% of vault liquidity)
       // =====================================================================
       const ETH_PRICE = 2150;
       const SAFE_PERCENT = 60;
@@ -1216,21 +1201,24 @@ async executeBootstrap() {
       const safeStrikeUsdc = Math.floor(vaultUsdc * SAFE_PERCENT / 100);
       const safeUsdAmount = safeStrikeUsdc * 4;
       
-      // Use TARGET_RATIO for proportional calculation (not corrupted pool ratio)
-      const seedUsdc = safeUsdAmount * 0.3;
-      const proportionalBwzcSeed = Math.floor(seedUsdc / TARGET_RATIO);
+      // Calculate proportional BWZC based on CURRENT pool ratio (not hardcoded)
+      const seedUsdc = safeUsdAmount * 0.3;  // 30% for seeding
+      const proportionalBwzcSeed = Math.floor(seedUsdc / currentRatio);
+      
+      // Total BWZC needed (seed + arb inventory)
       const totalBwzcNeeded = proportionalBwzcSeed + Math.floor(proportionalBwzcSeed / 2);
       
-      console.log(`\n📊 BOOTSTRAP CALCULATION (using Target Ratio ${TARGET_RATIO}):`);
+      console.log(`\n📊 PROPORTIONAL BOOTSTRAP CALCULATION:`);
       console.log(`   Total Bootstrap: $${safeUsdAmount.toLocaleString()} USDC`);
       console.log(`   Seed USDC (30%): ${seedUsdc.toLocaleString()} USDC`);
+      console.log(`   Current Pool Ratio: ${currentRatio.toFixed(2)} USDC/BWZC`);
       console.log(`   Proportional BWZC Seed: ${proportionalBwzcSeed.toLocaleString()} BWZC`);
       console.log(`   Total BWZC Needed: ${totalBwzcNeeded.toLocaleString()} BWZC`);
       
       // =====================================================================
       // STEP 4: Check SCW balances
       // =====================================================================
-      const bwzcContract = new ethers.Contract(BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
+      const bwzcContract = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
       const scwBwzcRaw = await bwzcContract.balanceOf(LIVE.SCW_ADDRESS);
       const scwBwzc = Number(ethers.formatEther(scwBwzcRaw));
       
@@ -1242,82 +1230,94 @@ async executeBootstrap() {
         throw new Error(`Insufficient BWZC: need ${totalBwzcNeeded.toLocaleString()}, have ${scwBwzc.toLocaleString()}`);
       }
       
-      // Check ETH balance
+      // Check ETH balance for gas
       const scwEth = Number(ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS)));
       if (scwEth < 0.005) {
         console.warn(`⚠️ Low ETH: ${scwEth.toFixed(6)} ETH. Send 0.01 ETH to ${LIVE.SCW_ADDRESS}`);
       }
       
       // =====================================================================
-      // STEP 5: Execute bootstrap using direct calls
+      // STEP 5: Execute bootstrap using DIRECT contract calls (Option 1)
       // =====================================================================
+      
+      // Get contract addresses and pool IDs
+      const scwAddr = await warehouseView.scw();
+      const usdcAddr = await warehouseView.usdc();
+      const wethAddr = await warehouseView.weth();
+      const bwzcAddr = await warehouseView.bwzc();
+      const vaultAddr = await warehouseView.vault();
+      const balBWUSDCId = await warehouseView.balBWUSDCId();
+      const balBWWETHId = await warehouseView.balBWWETHId();
+      
       console.log(`\n📤 EXECUTING BOOTSTRAP VIA DIRECT CALLS...`);
       
+      // Create signer contract for state-changing calls
       const warehouse = new ethers.Contract(
         WAREHOUSE_ADDR,
         [
+          // Existing functions we need
           'function _addToBalancerPool(bytes32 poolId, uint256 stableAmount, uint256 bwzcAmount) external',
-          'function _sweepToSCW() external'
+          'function _sweepToSCW() external',
+          'function bootstrapCompleted() view returns (bool)'
         ],
         this.signer
       );
       
-      // Transfer BWZC to contract
-      const bwzcToken = new ethers.Contract(BWAEZI, [
+      // Step 5a: Transfer BWZC from SCW to contract
+      console.log(`   1. Transferring ${proportionalBwzcSeed.toLocaleString()} BWZC from SCW to contract...`);
+      const bwzcToken = new ethers.Contract(bwzcAddr, [
         'function transferFrom(address from, address to, uint256 amount) external returns (bool)',
-        'function approve(address spender, uint256 amount) external returns (bool)',
-        'function allowance(address owner, address spender) external view returns (uint256)'
+        'function approve(address spender, uint256 amount) external returns (bool)'
       ], this.signer);
       
-      const seedWei = ethers.parseEther(proportionalBwzcSeed.toString());
-      const arbWei = ethers.parseEther(Math.floor(proportionalBwzcSeed / 2).toString());
-      
-      // Check allowance
+      // Check approval
       const allowance = await bwzcToken.allowance(LIVE.SCW_ADDRESS, WAREHOUSE_ADDR);
-      if (allowance < seedWei + arbWei) {
-        console.log(`   Approving ${(proportionalBwzcSeed + Math.floor(proportionalBwzcSeed / 2)).toLocaleString()} BWZC...`);
-        const approveTx = await bwzcToken.approve(WAREHOUSE_ADDR, seedWei + arbWei);
+      const neededWei = ethers.parseEther(totalBwzcNeeded.toString());
+      if (allowance < neededWei) {
+        console.log(`   Approving ${totalBwzcNeeded.toLocaleString()} BWZC...`);
+        const approveTx = await bwzcToken.approve(WAREHOUSE_ADDR, neededWei);
         await approveTx.wait();
         console.log(`   ✅ Approval complete`);
       }
       
       // Transfer seed BWZC
-      console.log(`   Transferring ${proportionalBwzcSeed.toLocaleString()} BWZC from SCW to contract...`);
+      const seedWei = ethers.parseEther(proportionalBwzcSeed.toString());
       const transferTx = await bwzcToken.transferFrom(LIVE.SCW_ADDRESS, WAREHOUSE_ADDR, seedWei);
       await transferTx.wait();
       console.log(`   ✅ Seed BWZC transferred`);
       
-      // Transfer arb BWZC
-      console.log(`   Transferring ${Math.floor(proportionalBwzcSeed / 2).toLocaleString()} BWZC for arb inventory...`);
+      // Transfer arb BWZC (half of seed)
+      const arbBwzc = Math.floor(proportionalBwzcSeed / 2);
+      const arbWei = ethers.parseEther(arbBwzc.toString());
       const transferArbTx = await bwzcToken.transferFrom(LIVE.SCW_ADDRESS, WAREHOUSE_ADDR, arbWei);
       await transferArbTx.wait();
       console.log(`   ✅ Arb BWZC transferred`);
       
-      // Seed Balancer USDC pool
+      // Step 5b: Seed Balancer USDC pool
       const seedUsdcWei = ethers.parseUnits(Math.floor(seedUsdc).toString(), 6);
-      console.log(`   Seeding Balancer USDC pool with ${ethers.formatUnits(seedUsdcWei, 6)} USDC and ${proportionalBwzcSeed} BWZC...`);
+      console.log(`   2. Seeding Balancer USDC pool with ${ethers.formatUnits(seedUsdcWei, 6)} USDC and ${proportionalBwzcSeed} BWZC...`);
       try {
-        const joinUsdcTx = await warehouse._addToBalancerPool(BAL_BW_USDC_ID, seedUsdcWei, seedWei);
+        const joinUsdcTx = await warehouse._addToBalancerPool(balBWUSDCId, seedUsdcWei, seedWei);
         await joinUsdcTx.wait();
         console.log(`   ✅ USDC pool seeded`);
       } catch (e) {
-        console.log(`   ⚠️ USDC pool join: ${e.message}`);
+        console.log(`   ⚠️ USDC pool join may have failed: ${e.message}`);
       }
       
-      // Seed Balancer WETH pool
-      const seedWethAmount = seedUsdc / ETH_PRICE;
+      // Step 5c: Seed Balancer WETH pool
+      const seedWethAmount = (seedUsdc / ETH_PRICE);
       const seedWethWei = ethers.parseEther(seedWethAmount.toFixed(18));
-      console.log(`   Seeding Balancer WETH pool with ${ethers.formatEther(seedWethWei)} WETH and ${proportionalBwzcSeed} BWZC...`);
+      console.log(`   3. Seeding Balancer WETH pool with ${ethers.formatEther(seedWethWei)} WETH and ${proportionalBwzcSeed} BWZC...`);
       try {
-        const joinWethTx = await warehouse._addToBalancerPool(BAL_BW_WETH_ID, seedWethWei, seedWei);
+        const joinWethTx = await warehouse._addToBalancerPool(balBWWETHId, seedWethWei, seedWei);
         await joinWethTx.wait();
         console.log(`   ✅ WETH pool seeded`);
       } catch (e) {
-        console.log(`   ⚠️ WETH pool join: ${e.message}`);
+        console.log(`   ⚠️ WETH pool join may have failed: ${e.message}`);
       }
       
-      // Sweep remaining tokens
-      console.log(`   Sweeping remaining tokens to SCW...`);
+      // Step 5d: Sweep any remaining tokens to SCW
+      console.log(`   4. Sweeping remaining tokens to SCW...`);
       try {
         const sweepTx = await warehouse._sweepToSCW();
         await sweepTx.wait();
@@ -1326,14 +1326,32 @@ async executeBootstrap() {
         console.log(`   ⚠️ Sweep failed: ${e.message}`);
       }
       
-      console.log(`\n🎉 BOOTSTRAP SEQUENCE COMPLETE!`);
-      console.log(`   Check contract state with: warehouse.cycleCount()`);
-      this.bootstrapCompleted = true;
+      // Step 5e: Verify bootstrap state
+      const finalState = await warehouseView.bootstrapCompleted();
+      const finalCycle = await warehouseView.cycleCount();
+      
+      if (finalState || finalCycle > 0) {
+        console.log(`\n🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉`);
+        console.log(`   Cycle Count: ${finalCycle}`);
+        console.log(`   Bootstrap Completed: ${finalState}`);
+        this.bootstrapCompleted = true;
+      } else {
+        console.log(`\n⚠️ Bootstrap may need the flashloan step.`);
+        console.log(`   Cycle Count: ${finalCycle}`);
+        console.log(`   Consider calling executeInstitutionalCycle() manually.`);
+      }
       
     } catch (e) {
       console.error(`\n❌ Bootstrap failed:`, e.shortMessage || e.reason || e.message);
+      
+      if (e.message.includes("insufficient funds")) {
+        console.error(`\n🔧 Send 0.01 ETH to: ${LIVE.SCW_ADDRESS}`);
+      } else if (e.message.includes("execution reverted")) {
+        console.error(`\n🔧 Contract function reverted. Check Etherscan for details.`);
+      }
     }
   }
+}
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
