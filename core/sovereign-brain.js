@@ -1267,9 +1267,10 @@ async executeBootstrap() {
     // Do NOT reset guard on failure — prevent immediate retry/gas waste
     if (e.message.includes("insufficient funds")) {
       console.error(`\n🔧 Send a tiny top-up (~0.0005 ETH) to SCW if needed: ${LIVE.SCW_ADDRESS}`);
-    }
-  }
-}
+     }
+   }
+ }
+}   
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
