@@ -1124,7 +1124,15 @@ class ProductionSovereignCore {
   }
   
 async executeBootstrap() {
-  console.log('\n🚀 EXECUTING CALIBRATED BOOTSTRAP (ONE TIME ONLY)...\n');
+  // STRICT GUARD: Prevent any repeat execution or gas waste
+  if (this.bootstrapExecuted || this.bootstrapCompleted) {
+    console.log('✅ Bootstrap already completed or in progress — skipping to avoid gas waste.');
+    return;
+  }
+
+  console.log('\n🚀 EXECUTING CALIBRATED BOOTSTRAP (ONE TIME ONLY — STRICT GUARD ACTIVE)...\n');
+
+  this.bootstrapExecuted = true; // Lock immediately to prevent re-entrancy/repeats
 
   try {
     const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
@@ -1138,7 +1146,17 @@ async executeBootstrap() {
       this.signer
     );
 
-    // Live pool liquidity (respects your current $23.50 state)
+    // Double-check on-chain (in case of race)
+    const alreadyCompleted = await warehouse.bootstrapCompleted();
+    if (alreadyCompleted) {
+      console.log('✅ On-chain bootstrapCompleted is true — skipping.');
+      this.bootstrapCompleted = true;
+      return;
+    }
+
+    // =====================================================================
+    // LIVE POOL READ (respects current $23.50 Balancer price)
+    // =====================================================================
     const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
     const BAL_BW_USDC_ID = "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706";
     const BAL_BW_WETH_ID = "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707";
@@ -1160,65 +1178,98 @@ async executeBootstrap() {
     const poolWeth = Number(ethers.formatEther(wethBals[wethIdx]));
     const poolBwzcW = Number(ethers.formatUnits(wethBals[bwzcIdxW], 18));
 
-    console.log(`\n📊 LIVE POOL (currently $23.50 BWZC):`);
+    console.log(`\n📊 CURRENT BALANCER POOL ($23.50 anchor):`);
     console.log(`   USDC Pool: ${poolUsdc.toLocaleString()} USDC + ${poolBwzcU.toFixed(4)} BWZC`);
     console.log(`   WETH Pool: ${poolWeth.toFixed(6)} WETH + ${poolBwzcW.toFixed(4)} BWZC`);
 
-    // Calibrated safe pre-seed (50% of current pool — fits $23.50 state perfectly)
-    const SAFE_SCALE = 0.50;
+    // =====================================================================
+    // CALIBRATED SAFE PRE-SEED (fits current small pools, no ratio revert risk)
+    // =====================================================================
+    const SAFE_SCALE = 0.50;           // Conservative — prevents oversize strike
     const ETH_PRICE = 2050;
+    const ANCHOR_PRICE = 23.5;         // Matches contract hardcoded $23.50
+
     const seedUsdc = Math.floor(poolUsdc * SAFE_SCALE);
     const seedWeth = Math.floor(poolWeth * SAFE_SCALE);
     const safeUsdAmount = Math.floor((seedUsdc + seedWeth * ETH_PRICE) * 4);
 
-    const safeBwzcSeed = Math.floor(safeUsdAmount / 23.5); // Match contract's $23.50 anchor
+    const safeBwzcSeed = Math.floor(safeUsdAmount / ANCHOR_PRICE);
     const totalBwzcNeeded = safeBwzcSeed + Math.floor(safeBwzcSeed / 2);
 
-    console.log(`\n📊 CALIBRATED 30/25/45 BOOTSTRAP (fits current $23.50 pool):`);
-    console.log(`   Pre-seed: ~${seedUsdc.toLocaleString()} USDC + ${seedWeth.toFixed(4)} WETH`);
-    console.log(`   Total Bootstrap: $${safeUsdAmount.toLocaleString()}`);
-    console.log(`   BWZC Seed: ${safeBwzcSeed.toLocaleString()} | Total Needed: ${totalBwzcNeeded.toLocaleString()}`);
+    console.log(`\n📊 CALIBRATED 30/25/45 BOOTSTRAP (safe for $23.50 state):`);
+    console.log(`   Pre-seed liquidity: ~${seedUsdc.toLocaleString()} USDC + ${seedWeth.toFixed(4)} WETH`);
+    console.log(`   Total Bootstrap USD: $${safeUsdAmount.toLocaleString()}`);
+    console.log(`   BWZC Seed: ${safeBwzcSeed.toLocaleString()} BWZC`);
 
-    // Balance checks (your current SCW ETH is sufficient)
+    // =====================================================================
+    // BALANCE VALIDATION
+    // =====================================================================
     const bwzcContract = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
     const scwBwzc = Number(ethers.formatEther(await bwzcContract.balanceOf(LIVE.SCW_ADDRESS)));
-    if (scwBwzc < totalBwzcNeeded) throw new Error(`Insufficient BWZC: need ${totalBwzcNeeded}, have ${scwBwzc}`);
+
+    if (scwBwzc < totalBwzcNeeded) {
+      throw new Error(`Insufficient BWZC in SCW: need ~${totalBwzcNeeded}, have ${scwBwzc}`);
+    }
 
     const scwEth = Number(ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS)));
-    console.log(` SCW ETH: ${scwEth.toFixed(6)} (sufficient for gas)`);
+    console.log(` SCW ETH: ${scwEth.toFixed(6)} — sufficient for gas at current ~0.10 gwei`);
 
-    // Dynamic ultra-cheap gas (current 0.10 gwei market)
+    // =====================================================================
+    // ULTRA-OPTIMIZED GAS (current cheap market)
+    // =====================================================================
     const ETH_PRICE_WEI = ethers.parseUnits(ETH_PRICE.toString(), 18);
     const USD_AMOUNT_WEI = ethers.parseUnits(safeUsdAmount.toString(), 6);
     const BWZC_SEED_WEI = ethers.parseEther(safeBwzcSeed.toString());
 
     const feeData = await this.provider.getFeeData();
     const baseFee = feeData.maxFeePerGas || ethers.parseUnits("0.15", "gwei");
-    const estimatedGas = await warehouse.globalInitialBootstrap.estimateGas(BWZC_SEED_WEI, USD_AMOUNT_WEI, ETH_PRICE_WEI);
-    const gasLimit = (estimatedGas * 125n) / 100n;
 
-    const maxFeePerGas = (baseFee * 120n) / 100n;
-    const maxPriorityFeePerGas = ethers.parseUnits("0.01", "gwei");
+    const estimatedGas = await warehouse.globalInitialBootstrap.estimateGas(
+      BWZC_SEED_WEI, USD_AMOUNT_WEI, ETH_PRICE_WEI
+    );
+    const gasLimit = (estimatedGas * 125n) / 100n; // 25% buffer only
 
-    const tx = await warehouse.globalInitialBootstrap(BWZC_SEED_WEI, USD_AMOUNT_WEI, ETH_PRICE_WEI, {
-      gasLimit, maxFeePerGas, maxPriorityFeePerGas
-    });
+    const maxFeePerGas = (baseFee * 120n) / 100n;        // +20%
+    const maxPriorityFeePerGas = ethers.parseUnits("0.01", "gwei"); // market ~0
 
-    console.log(`\n✅ TX SENT: ${tx.hash} (cost ~$0.005–0.01 at current gas)`);
+    console.log(`\n📤 SENDING TX (optimized gas — expected cost <$0.01):`);
+    console.log(`   Gas Limit: ${gasLimit} (est ${estimatedGas})`);
+    console.log(`   Max Fee: ${ethers.formatUnits(maxFeePerGas, "gwei")} gwei | Priority: 0.01 gwei`);
+
+    const tx = await warehouse.globalInitialBootstrap(
+      BWZC_SEED_WEI, USD_AMOUNT_WEI, ETH_PRICE_WEI,
+      { gasLimit, maxFeePerGas, maxPriorityFeePerGas }
+    );
+
+    console.log(`\n✅ TX SENT: ${tx.hash}`);
     console.log(`🔍 https://etherscan.io/tx/${tx.hash}`);
 
     const receipt = await tx.wait();
+
     if (receipt.status === 1) {
-      console.log(`\n🎉 BOOTSTRAP SUCCESSFUL! Pools now deepened at $23.50 anchor.`);
-      console.log(`   Gas used: ${receipt.gasUsed} | Total cost: ~${ethers.formatEther(receipt.gasUsed * (receipt.gasPrice || maxFeePerGas))} ETH`);
+      const gasCost = ethers.formatEther(receipt.gasUsed * (receipt.gasPrice || maxFeePerGas));
+      console.log(`\n🎉 BOOTSTRAP SUCCESSFUL!`);
+      console.log(`   Block: ${receipt.blockNumber} | Gas Used: ${receipt.gasUsed}`);
+      console.log(`   Total Cost: ~${gasCost} ETH`);
+
+      const cycleCount = await warehouse.cycleCount();
+      const bootstrapCompleted = await warehouse.bootstrapCompleted();
+      console.log(`\n📊 FINAL: Cycle ${cycleCount} | Bootstrap Completed: ${bootstrapCompleted}`);
+      console.log(`\n✅ System now self-automating — institutional ramp active!`);
+
       this.bootstrapCompleted = true;
+    } else {
+      console.error(`\n❌ Reverted — check Etherscan for reason.`);
     }
 
   } catch (e) {
-    console.error(`\n❌ Error:`, e.shortMessage || e.reason || e.message);
-   }
- }
-}   
+    console.error(`\n❌ Bootstrap error:`, e.shortMessage || e.reason || e.message);
+    // Do NOT reset guard on failure — prevent immediate retry/gas waste
+    if (e.message.includes("insufficient funds")) {
+      console.error(`\n🔧 Send a tiny top-up (~0.0005 ETH) to SCW if needed: ${LIVE.SCW_ADDRESS}`);
+    }
+  }
+}
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
