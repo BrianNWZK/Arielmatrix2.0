@@ -1364,9 +1364,10 @@ async executeBootstrap() {
         console.error(`   2. Insufficient vault liquidity for flashloan`);
         console.error(`   3. SCW approval issue`);
         console.error(`\n   Check the transaction on Etherscan for the exact revert reason.`);
-      }
+     }
     }
   }
+}
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
