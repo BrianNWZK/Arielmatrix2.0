@@ -1124,211 +1124,63 @@ class ProductionSovereignCore {
   }
   
 async executeBootstrap() {
-  console.log('\n🚀 EXECUTING OPTIMIZED MICRO-INSTITUTIONAL BOOTSTRAP...\n');
+  console.log('\n🚀 EXECUTING BOOTSTRAP...\n');
 
-  try {
-    const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
-    const warehouse = new ethers.Contract(
-      WAREHOUSE_ADDR,
-      [
-        'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
-        'function cycleCount() view returns (uint256)',
-        'function bootstrapCompleted() view returns (bool)'
-      ],
-      this.signer
-    );
+  const WAREHOUSE_ADDR = ethers.getAddress("0x9098Fe6512b2d00b1dc7bFa63C62904476BA7fE6");
+  const warehouse = new ethers.Contract(
+    WAREHOUSE_ADDR,
+    [
+      'function globalInitialBootstrap(uint256 bwzcSeedAmount, uint256 usdAmount, uint256 ethPrice) external',
+      'function cycleCount() view returns (uint256)',
+      'function bootstrapCompleted() view returns (bool)'
+    ],
+    this.signer
+  );
 
-    // =====================================================================
-    // STEP 1: FETCH ACTUAL BALANCER POOL (NOT VAULT) LIQUIDITY
-    // =====================================================================
-    const BALANCER_VAULT = "0xba12222222228d8ba445958a75a0704d566bf2c8";
-    const POOL_ID_USDC = "0x6659db7c55c701bc627fa2855bfbbc6d75d6fd7a000200000000000000000706"; // BWAEZI/USDC
-    const POOL_ID_WETH = "0x9b143788f52daa8c91cf5162fb1b981663a8a1ef000200000000000000000707"; // BWAEZI/WETH
+  // Fixed safe amounts - no complex calculations
+  const usdAmount = 40000;  // $40,000 total bootstrap
+  const bwzcSeedAmount = 426;  // 40,000 / 94 = ~425.5
+  const ETH_PRICE = 2050;
 
-    const vault = new ethers.Contract(BALANCER_VAULT, [
-      'function getPoolTokens(bytes32) view returns (address[], uint256[], uint256)'
-    ], this.provider);
+  console.log(`📊 Bootstrap: $${usdAmount.toLocaleString()} | BWZC Seed: ${bwzcSeedAmount}`);
 
-    // Get USDC pool state
-    const [usdcTokens, usdcBals] = await vault.getPoolTokens(POOL_ID_USDC);
-    const usdcIndex = usdcTokens.findIndex(t => t.toLowerCase() === LIVE.TOKENS.USDC.toLowerCase());
-    const bwzcUsdcIndex = usdcTokens.findIndex(t => t.toLowerCase() === LIVE.TOKENS.BWAEZI.toLowerCase());
-    const currentUsdcPool = usdcIndex >= 0 ? Number(ethers.formatUnits(usdcBals[usdcIndex], 6)) : 2.0;
-    const currentBwzcUsdc = bwzcUsdcIndex >= 0 ? Number(ethers.formatEther(usdcBals[bwzcUsdcIndex])) : 0.085;
+  // Simple gas settings
+  const block = await this.provider.getBlock('latest');
+  const baseFee = block?.baseFeePerGas || ethers.parseUnits("0.1", "gwei");
+  const maxFeePerGas = baseFee * 120n / 100n;
+  const maxPriorityFeePerGas = ethers.parseUnits("0.01", "gwei");
+  const gasLimit = 500_000n;
 
-    // Get WETH pool state (for validation only)
-    const [wethTokens, wethBals] = await vault.getPoolTokens(POOL_ID_WETH);
-    const wethIndex = wethTokens.findIndex(t => t.toLowerCase() === LIVE.TOKENS.WETH.toLowerCase());
-    const currentWethPool = wethIndex >= 0 ? Number(ethers.formatEther(wethBals[wethIndex])) : 0.0006;
-    const currentBwzcWeth = bwzcUsdcIndex >= 0 ? Number(ethers.formatEther(wethBals[bwzcUsdcIndex])) : 0.085;
+  console.log(`⛽ Gas: ${ethers.formatUnits(maxFeePerGas, "gwei")} gwei | Limit: ${gasLimit}`);
 
-    // Calculate current pool ratios
-    const usdcRatio = currentUsdcPool / currentBwzcUsdc;
-    const wethRatio = (currentWethPool * 2050) / currentBwzcWeth;
-    
-    console.log(`\n📊 CURRENT BALANCER POOL STATE:`);
-    console.log(`   USDC Pool: $${currentUsdcPool.toFixed(2)} USDC | ${currentBwzcUsdc.toFixed(6)} BWZC | Price: $${usdcRatio.toFixed(2)}/BWZC`);
-    console.log(`   WETH Pool: ${currentWethPool.toFixed(6)} WETH | ${currentBwzcWeth.toFixed(6)} BWZC | Price: $${wethRatio.toFixed(2)}/BWZC`);
-    console.log(`   Target: $94/BWZC (will be achieved after bootstrap)`);
+  const ETH_PRICE_WEI = ethers.parseUnits(ETH_PRICE.toString(), 18);
+  const USD_AMOUNT_WEI = ethers.parseUnits(usdAmount.toString(), 6);
+  const BWZC_SEED_WEI = ethers.parseEther(bwzcSeedAmount.toString());
 
-    // =====================================================================
-    // STEP 2: SAFE MICRO CALCULATION (FITS DUST POOL + CONTRACT DESIGN)
-    // =====================================================================
-    const TARGET_PEG = 94;           // From your seeding logs
-    const MAX_POOL_FACTOR = 25;      // Pre-seed ~25x current pool (safe depth without revert)
+  console.log(`\n📤 Sending transaction...`);
+  
+  const tx = await warehouse.globalInitialBootstrap(
+    BWZC_SEED_WEI,
+    USD_AMOUNT_WEI,
+    ETH_PRICE_WEI,
+    { gasLimit, maxFeePerGas, maxPriorityFeePerGas }
+  );
 
-    let usdAmount = Math.floor(currentUsdcPool * MAX_POOL_FACTOR * 4); // 25% strike scaling
-    usdAmount = Math.max(40000, Math.min(150000, usdAmount)); // $40k–$150k safe institutional start
+  console.log(`✅ TX SENT: ${tx.hash}`);
+  console.log(`🔍 https://etherscan.io/tx/${tx.hash}`);
 
-    // Adjust based on current pool ratio (use the lower of the two pools for safety)
-    const currentPrice = Math.min(usdcRatio, wethRatio);
-    let adjustedUsdAmount = usdAmount;
-    
-    if (currentPrice < 50) {
-      // Pool is severely mispriced, use smaller bootstrap
-      adjustedUsdAmount = Math.floor(usdAmount * 0.5);
-      console.log(`\n⚠️ Pool mispriced at $${currentPrice.toFixed(2)}. Reducing bootstrap to $${adjustedUsdAmount.toLocaleString()}`);
-    }
+  const receipt = await tx.wait();
 
-    const finalUsdAmount = adjustedUsdAmount;
-    const bwzcSeedAmount = Math.floor(finalUsdAmount / TARGET_PEG);
-    const totalBwzcNeeded = Math.floor(bwzcSeedAmount * 1.5);
-
-    console.log(`\n📊 SAFE MICRO-INSTITUTIONAL CALCULATION:`);
-    console.log(`   Current Pool: $${currentUsdcPool.toFixed(2)} USDC`);
-    console.log(`   Target Multiplier: ${MAX_POOL_FACTOR}x → Pre-seed target: $${(currentUsdcPool * MAX_POOL_FACTOR).toFixed(0)}`);
-    console.log(`   Total usdAmount: $${finalUsdAmount.toLocaleString()}`);
-    console.log(`   BWZC Seed: ${bwzcSeedAmount.toLocaleString()} BWZC`);
-    console.log(`   Pre-seed (30%): ~$${(finalUsdAmount * 0.3).toFixed(0)} → adds real depth`);
-    console.log(`   Strike (25%): ~$${(finalUsdAmount * 0.25).toFixed(0)} → enables arb`);
-
-    // =====================================================================
-    // STEP 3: SCW BALANCE VALIDATION
-    // =====================================================================
-    const bwzcContract = new ethers.Contract(LIVE.TOKENS.BWAEZI, ['function balanceOf(address) view returns (uint256)'], this.provider);
-    const scwBwzc = Number(ethers.formatEther(await bwzcContract.balanceOf(LIVE.SCW_ADDRESS)));
-
-    if (scwBwzc < totalBwzcNeeded) {
-      throw new Error(`Insufficient BWZC: need ${totalBwzcNeeded.toLocaleString()}, have ${scwBwzc.toLocaleString()}`);
-    }
-    console.log(`\n✅ SCW BWZC sufficient: ${scwBwzc.toLocaleString()}`);
-
-    // Check SCW ETH for gas (at 0.103 gwei, this tx ~$0.004–0.008)
-    const scwEth = Number(ethers.formatEther(await this.provider.getBalance(LIVE.SCW_ADDRESS)));
-    console.log(`   SCW ETH: ${scwEth.toFixed(6)} ETH (>> enough for gas)`);
-    
-    // Check approval (critical!)
-    const allowance = await bwzcContract.allowance(LIVE.SCW_ADDRESS, WAREHOUSE_ADDR);
-    const allowanceBwzc = Number(ethers.formatEther(allowance));
-    if (allowanceBwzc < totalBwzcNeeded) {
-      console.log(`\n⚠️ Low allowance: ${allowanceBwzc.toLocaleString()} BWZC (need ${totalBwzcNeeded.toLocaleString()})`);
-      console.log(`   Run: await bwzcContract.approve(WAREHOUSE_ADDR, ethers.MaxUint256)`);
-      throw new Error(`Insufficient allowance`);
-    }
-    console.log(`   ✅ Allowance sufficient: ${allowanceBwzc.toLocaleString()} BWZC`);
-
-    // =====================================================================
-    // STEP 4: ULTRA-OPTIMIZED GAS (0.103 gwei market)
-    // =====================================================================
-    const block = await this.provider.getBlock('latest');
-    const baseFee = block?.baseFeePerGas || ethers.parseUnits("0.1", "gwei");
-
-    const gasLimit = 420_000n;                    // Conservative but safe (actual ~150-250k)
-    const maxPriorityFeePerGas = ethers.parseUnits("0.01", "gwei"); // Minimal priority
-    const maxFeePerGas = baseFee * 115n / 100n;   // Only 15% buffer — ultra cheap
-
-    const estimatedCostEth = Number(gasLimit) * 0.113 / 1e9;
-    const estimatedCostUsd = estimatedCostEth * 2050;
-
-    console.log(`\n⛽ GAS OPTIMIZATION (0.103 gwei market):`);
-    console.log(`   Base Fee: ${ethers.formatUnits(baseFee, "gwei")} gwei`);
-    console.log(`   Max Fee: ${ethers.formatUnits(maxFeePerGas, "gwei")} gwei`);
-    console.log(`   Priority: ${ethers.formatUnits(maxPriorityFeePerGas, "gwei")} gwei`);
-    console.log(`   Gas Limit: ${gasLimit.toString()}`);
-    console.log(`   Est. Cost: ~$${estimatedCostUsd.toFixed(3)} (${estimatedCostEth.toFixed(6)} ETH)`);
-
-    // =====================================================================
-    // STEP 5: EXECUTE BOOTSTRAP
-    // =====================================================================
-    const ETH_PRICE_WEI = ethers.parseUnits("2050", 18);
-    const USD_AMOUNT_WEI = ethers.parseUnits(finalUsdAmount.toString(), 6);
-    const BWZC_SEED_WEI = ethers.parseEther(bwzcSeedAmount.toString());
-
-    console.log(`\n📤 EXECUTING BOOTSTRAP TRANSACTION:`);
-    console.log(`   BWZC Seed: ${ethers.formatEther(BWZC_SEED_WEI)} BWZC`);
-    console.log(`   USD Amount: $${ethers.formatUnits(USD_AMOUNT_WEI, 6)} USDC`);
-    console.log(`   ETH Price: $${ethers.formatUnits(ETH_PRICE_WEI, 18)}`);
-
-    const tx = await warehouse.globalInitialBootstrap(
-      BWZC_SEED_WEI,
-      USD_AMOUNT_WEI,
-      ETH_PRICE_WEI,
-      {
-        gasLimit,
-        maxFeePerGas,
-        maxPriorityFeePerGas
-      }
-    );
-
-    console.log(`\n✅ TX SENT: ${tx.hash}`);
-    console.log(`🔍 https://etherscan.io/tx/${tx.hash}`);
-
-    console.log(`\n⏳ Waiting for confirmation...`);
-    const receipt = await tx.wait();
-
-    if (receipt.status === 1) {
-      const actualGasCost = receipt.gasUsed * (receipt.gasPrice || maxFeePerGas);
-      const actualGasEth = Number(ethers.formatEther(actualGasCost));
-      
-      console.log(`\n🎉🎉🎉 BOOTSTRAP SUCCESSFUL! 🎉🎉🎉`);
-      console.log(`   Block: ${receipt.blockNumber}`);
-      console.log(`   Gas Used: ${receipt.gasUsed.toString()}`);
-      console.log(`   Actual Gas Cost: ${actualGasEth.toFixed(6)} ETH (~$${(actualGasEth * 2050).toFixed(2)})`);
-
-      this.bootstrapCompleted = true;
-
-      const cycleCount = await warehouse.cycleCount();
-      const completed = await warehouse.bootstrapCompleted();
-      console.log(`\n📊 FINAL STATE: Cycle ${cycleCount} | Bootstrap: ${completed}`);
-
-      // Verify pool after bootstrap
-      await new Promise(r => setTimeout(r, 5000));
-      const [newTokens, newBalances] = await vault.getPoolTokens(POOL_ID_USDC);
-      const newUsdcPool = Number(ethers.formatUnits(newBalances[usdcIndex], 6));
-      const newBwzcPool = Number(ethers.formatEther(newBalances[bwzcUsdcIndex]));
-      
-      console.log(`\n📊 POOL EVOLUTION:`);
-      console.log(`   Before: $${currentUsdcPool.toFixed(2)} USDC | ${currentBwzcUsdc.toFixed(6)} BWZC`);
-      console.log(`   After: $${newUsdcPool.toFixed(2)} USDC | ${newBwzcPool.toFixed(6)} BWZC`);
-      console.log(`   New Price: $${(newUsdcPool / newBwzcPool).toFixed(2)}/BWZC`);
-
-      console.log(`\n✅ INSTITUTIONAL REVENUE ENGINE ACTIVE!`);
-      console.log(`   Auto-scaling via currentScaleFactorBps (50% → 90%) to $23.5M target.`);
-
-    } else {
-      console.error(`\n❌ Bootstrap reverted! Check Etherscan for exact reason.`);
-      console.error(`   TX: https://etherscan.io/tx/${tx.hash}`);
-    }
-
-  } catch (e) {
-    console.error(`\n❌ Bootstrap failed:`, e.shortMessage || e.reason || e.message);
-
-    if (e.message.includes("insufficient funds") || e.message.includes("gas")) {
-      console.error(`\n🔧 SCW needs slightly more ETH. Send 0.001 ETH to ${LIVE.SCW_ADDRESS}`);
-    } else if (e.message.includes("allowance")) {
-      console.error(`\n🔧 Need to approve warehouse contract for BWZC. Run:`);
-      console.error(`   const bwzc = new ethers.Contract("${LIVE.TOKENS.BWAEZI}", erc20Abi, signer);`);
-      console.error(`   await bwzc.approve("${WAREHOUSE_ADDR}", ethers.MaxUint256);`);
-    } else if (e.message.includes("reverted")) {
-      console.error(`\n🔧 Likely causes:`);
-      console.error(`   1. Pre-seed too large for current dust pool ratio`);
-      console.error(`   2. Try lowering usdAmount manually to $20,000`);
-      console.error(`   3. Check if both Balancer pools exist and have liquidity`);
-      console.error(`\n   Current pool prices: USDC: $${(currentUsdcPool / currentBwzcUsdc).toFixed(2)} | WETH: $${((currentWethPool * 2050) / currentBwzcWeth).toFixed(2)}`);
-     }
-   }
- }
-}   
+  if (receipt.status === 1) {
+    console.log(`\n🎉 BOOTSTRAP SUCCESSFUL!`);
+    this.bootstrapCompleted = true;
+    const cycleCount = await warehouse.cycleCount();
+    console.log(`📊 Cycle ${cycleCount} | Bootstrap Complete`);
+    console.log(`✅ Revenue engine active!`);
+  } else {
+    console.error(`\n❌ Reverted: https://etherscan.io/tx/${tx.hash}`);
+  }
+}
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
