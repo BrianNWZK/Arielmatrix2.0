@@ -1179,8 +1179,9 @@ async executeBootstrap() {
     console.log(`✅ Revenue engine active!`);
   } else {
     console.error(`\n❌ Reverted: https://etherscan.io/tx/${tx.hash}`);
-  }
-}
+   }
+ }
+}   
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
