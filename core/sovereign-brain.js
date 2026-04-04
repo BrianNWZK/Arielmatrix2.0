@@ -1325,9 +1325,10 @@ async executeBootstrap() {
       console.error(`   2. Try lowering usdAmount manually to $20,000`);
       console.error(`   3. Check if both Balancer pools exist and have liquidity`);
       console.error(`\n   Current pool prices: USDC: $${(currentUsdcPool / currentBwzcUsdc).toFixed(2)} | WETH: $${((currentWethPool * 2050) / currentBwzcWeth).toFixed(2)}`);
-    }
-  }
-}
+     }
+   }
+ }
+}   
 // =========================================================================
 // HTTP SERVER - PORT BINDING FOR RENDER
 // =========================================================================
